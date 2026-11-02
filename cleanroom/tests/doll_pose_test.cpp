@@ -243,6 +243,27 @@ void TestNearest() {
 	EXPECT(dp::NearestPose(a, kBones, alike, 4, nullptr, 2) == -1, "two corpses lying alike: still no answer");
 	const float (*half[4])[16] = {nullptr, a, b, nullptr};
 	EXPECT(dp::NearestPose(a, kBones, half, 4, nullptr, 2) == 1, "a frame not read: the other frame of the candidate");
+	{   // 0.197.5 (Serg: «труп мерцает после смерти»): three corpses lying alike - by the entity the game draws, not by the matrices
+		static dp::Pose corpses[3];
+		for (int i = 0; i < 3; ++i) {
+			corpses[i] = dp::Pose{};
+			corpses[i].self = 0x1000u + 0x100u * i;
+			corpses[i].entity = 0x00300010u + i;   // (a version in the high bits)
+			corpses[i].nParts = 2;
+			corpses[i].parts[0] = 0x00300050u + 2 * i;
+			corpses[i].parts[1] = 0x00300051u + 2 * i;
+		}
+		EXPECT(dp::ByEntity(corpses, 3, 0x00000011u) == 1, "its root's entity drawn (another version in the high bits): that corpse");
+		EXPECT(dp::ByEntity(corpses, 3, 0x00300054u) == 2, "one of its parts drawn: that corpse");
+		EXPECT(dp::ByEntity(corpses, 3, 0x00300099u) == -1, "an entity of none of them (a living one of the model, the game's own corpse): none");
+		EXPECT(dp::ByEntity(corpses, 3, 0) == -1 && dp::ByEntity(corpses, 3, 0xFFFFFu) == -1, "no entity drawn: none");
+		corpses[2].parts[1] = corpses[0].entity;   // two bodies claim it
+		EXPECT(dp::ByEntity(corpses, 3, corpses[0].entity) == -1, "two bodies say it is theirs: none");
+		corpses[2].parts[1] = 0x00300055u;
+		dp::Pose same[2] = {corpses[1], corpses[1]};
+		EXPECT(dp::ByEntity(same, 2, 0x00000011u) >= 0, "one body's two poses (a made one and a fading one): it");
+		EXPECT(dp::ByEntity(nullptr, 3, 0x11u) == -1, "no candidates: none");
+	}
 	float far[kBones][16];
 	Mats(far);
 	for (int i = 0; i < kBones; ++i) far[i][14] += 2.0f;

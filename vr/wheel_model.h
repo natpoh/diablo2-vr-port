@@ -51,6 +51,7 @@ struct View {
     Tab tab = Tab::Skills;
     bool flipHigh = false;   // the Settings tab's flip arrows at its page tabs' row (the game look, vr/tiles_geom.h kFlipHigh)
     int flipPlace = 0;   // where the window stands along its pages (vr/wheel_flip.h: 0 Skills, 1 + the Settings page): the dots, the arrows
+    int flipAt = 0, flipCount = kFlipPlaces;   // ... among the places the view shows (VR F1 - F3: not F4's body; Party only while it is on)
     hset::Model settings;
     hset::Hit settingsHover;
     // The editor's category strip ([openxr] skill_categories; idea after bearstonem/d2r-pcvr, MIT): `catStrip` it is shown (on, and the cache
@@ -106,6 +107,7 @@ struct In {
     bool rowOff = false;          // the second row of buttons is off (the left trigger has its own action): View::rowOff
     bool editFirst = false;       // [openxr] skill_panel_edit_first: a tap on a slot of the first page opens its skill list (held kPickHoldS: picks it for the trigger)
     bool held = false;            // the pointing hand's trigger is down (the frames after its edge: the long press of editFirst)
+    bool noPick = false;          // VR F1 - F3 (the window alone): no slot is picked for the trigger - a slot's tap edits it, as editFirst's does
     uint64_t nowMs = 0;           // GetTickCount64, the snapshot's clock
     const Snapshot* snap = nullptr;
     Reply reply;                  // the newest answer to a request
@@ -207,10 +209,13 @@ public:
         settingsSeen_ = ~0ull;
     }
     // Where the window stands along its pages, for the dots and the arrows (the controller says it every frame).
-    void SetPlace(int place) {
+    void SetPlace(int place, int view = 0, bool party = true) {
         place = std::clamp(place, 0, kFlipPlaces - 1);
-        if (place == v_.flipPlace) return;
+        const int at = FlipIndex(place, view, party), count = FlipCount(view, party);
+        if (place == v_.flipPlace && at == v_.flipAt && count == v_.flipCount) return;
         v_.flipPlace = place;
+        v_.flipAt = at;
+        v_.flipCount = count;
         ++v_.revision;
     }
     // The tab shown (the controller's flips and the chord's switch).
@@ -327,7 +332,7 @@ public:
                               : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run, in.flipHigh)
                                                          : HitTest(v_.page, in.u, in.v, v_.hover, v_.options, strip, run);
             int shown = hover;
-            if ((shown == kFlipPrev && v_.flipPlace <= 0) || (shown == kFlipNext && v_.flipPlace >= kFlipPlaces - 1)) shown = kNone;   // (no arrow there)
+            if ((shown == kFlipPrev && v_.flipAt <= 0) || (shown == kFlipNext && v_.flipAt >= v_.flipCount - 1)) shown = kNone;   // (no arrow there)
             if (shown != v_.hover && shown != kNone && out.feedback == Feedback::None) out.feedback = Feedback::Hover;
             v_.hover = shown;
             // (a click in the frame the look changed is not acted on: the player still sees the old picture)
@@ -472,7 +477,10 @@ private:
                 CloseNow();
                 out->feedback = Feedback::Selected;
             } else if (h >= 0 && h < kSlotCount) {
-                if (in.editFirst) {   // a tap edits the slot, the trigger held picks it for the trigger: decided in Step when it is let go or has been held
+                if (in.noPick) {   // VR F1 - F3: the trigger casts nothing of ours there (the game's own buttons cast the slots): the tap edits it
+                    EditSlot(h, in, snap, fresh, Page::Wheel, out);
+                    Options();
+                } else if (in.editFirst) {   // a tap edits the slot, the trigger held picks it for the trigger: decided in Step when it is let go or has been held
                     pressSlot_ = h;
                     pressAt_ = in.time;
                 } else {

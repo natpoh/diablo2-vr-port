@@ -162,6 +162,8 @@ void SetGrabWanted(bool on);
 // ... GrabTick: vrcam's timer, after Tick: when the touch's tick keeps no bodies (no melee weapon swung - a bow, bare hands, hit by touch off), the same read-only scan
 // of who is near and their limbs is made for the grab alone (ok: vrcam's Frame::ok; heroRender: the hero in world units, as the bow's poll has it).
 void GrabTick(bool ok, const float heroRender[3], float upm);
+// [weight] death_ragdoll_flat: outside F4 the bodies kept for the deaths alone (the scan, the server's hostile word, the skeletons); ok: in a game area, no menu.
+void DeathFlatTick(bool ok, const float heroRender[3], float upm);
 bool GrabBodies(monsterbodies::Snapshot* out, bool swayed = false);   // (swayed: as drawn, the doll's sway in - [weight] grab_wrap lays the hand on that)
 // [weight] grab_items (vr/item_grab.h): the items lying on the ground within 3 m of the hero, each at its cell on the hero's floor in render metres (read only). SetItemsWanted:
 // scanned at all; ItemsTick: vrcam's timer (every 50 ms at most; heroRender as GrabTick's); GroundItems: the last scan's, *fresh when it is under 200 ms old. Any thread.
@@ -316,6 +318,13 @@ bool BowWanted();
 void SetLeapWanted(bool on);
 // Inside one of the game's target lookups (its UI thread): the live client monster of this id now, 0 for none (the leap's monster, handed to the game's lookups).
 uintptr_t MonsterUnit(uint32_t id);
+// [input] vr_body_pick_hand (vr/vr_body_pick.h): the same poll for the monster the aiming hand points at (F4); Install hooks the server's lookup for it too.
+void SetPickWanted(bool on);
+bool PickWanted();
+// Inside one of the game's lookups (its UI thread): the live client object of this id now, 0 for none.
+uintptr_t ObjectUnit(uint32_t id);
+// The server's verdict on a polled monster, any thread: 1 hostile and nothing between, 0 not (or a wall), -1 not known (not polled, or too old).
+int Hostile(uint32_t id);
 size_t PolledMonsters(PolledMonster* out, size_t max, bool* polled = nullptr);
 
 // ---- the monsters near a point, for the shield bash (vr/unit_scan.h) --------------------------------------------------------------

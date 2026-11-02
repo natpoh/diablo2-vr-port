@@ -39,7 +39,24 @@ constexpr float kMinMs = 0.8f;            // the speed the killing push gives th
 constexpr float kMaxMs = 2.5f;            // ... at most this (it lands a step or so from where the game keeps its corpse, never across the room)
 constexpr float kAwayMs = 1.0f;           // a death by no blow of the hand: pushed this fast away from the hero
 constexpr float kLieS = 30.0f;            // how long the library is told it lies (the most it takes): it is taken off the library long before
-constexpr uint64_t kGoneMs = 1000;        // a dead unit not in the scan this long: gone (the game took its corpse away, or it is out of the scan's reach)
+constexpr uint64_t kGoneMs = 1000;        // a dead unit not in the scan this long: gone (the game took its corpse away)
+// The dead are looked for this far round the hero (game grid units, twice a cell): everywhere the game keeps units near - a corpse is held as it lies for as
+// long as its unit is the game's at all. 0.197.4 (Serg: «через 2 секунды труп прыгает туда, где игра его положила»): the living's 24 units (about 7 m) were the
+// reach, our ragdoll lands a few metres from the game's corpse, the hero walked up to ours - the game's corpse fell out of the scan, was taken for gone and
+// let go of, and the game's own corpse drawn at its place.
+constexpr float kDeadReachUnits = 120.0f;
+constexpr int kMaxDeadListed = 64;        // the dead listed at once (the nearest)
+// The body's own motion handed to the fall: its walk only - a pelvis read twice from two rigs (two monsters close together, a model made again) gave up to
+// 8 m/s and threw corpses 6 - 11 m (0.197.4's log)
+constexpr float kDeathVelMs = 1.5f;
+inline void DeathVel(const float vel[3], float out[3]) {
+    out[0] = out[1] = out[2] = 0.0f;
+    if (!vel || !std::isfinite(vel[0] + vel[2])) return;
+    const float l = std::sqrt(vel[0] * vel[0] + vel[2] * vel[2]);
+    const float k = l > kDeathVelMs ? kDeathVelMs / l : 1.0f;
+    out[0] = vel[0] * k;
+    out[2] = vel[2] * k;
+}
 constexpr uint64_t kEaseMs = 300;         // a kept corpse back in reach eases in over this (vr/melee_touch.cpp kPoseEaseMs eases it out)
 constexpr float kSameRootM = 2.0f;        // its skeleton is the one it died in: the same instance, standing within this of where it was last read (metres; the
                                           // game eases a dead unit's model to its cell - 0.5 m lost the corpse there and it was drawn as the game's, 0.196.1)
@@ -164,6 +181,69 @@ inline Push KillingPush(const Blow* blow, const float chest[3], float massKg, co
     return p;
 }
 
+// [weight] death_ragdoll_flat (Serg: «режим 2д падение монстров при смерти по дуге оружия»): in the views with no hands of ours (VR F1-F3, the flat game) the
+// blow is the game's own attack animation - the hero's weapon as the game swings it. The pose hook keeps where his two weapon bones are drawn, frame by frame
+// (skel::WeaponTrail: the world, and where his model stands); the push a kill falls by is the fastest step of either weapon within kArcWindowS before the kill
+// was seen - the arc's way there (the swing's tangent), less the hero's own walk (his model's step), its speed times kFlatHeftKg (the steel and the arm) over
+// the body's mass, held between kMinMs and kMaxMs, at its chest. No weapon moving that fast (a spell, an arrow, a hireling's blow, standing still): away from
+// the hero, as KillingPush (a missile flies from him to it).
+struct ArcSample {
+    double t = 0.0;              // s (one clock for all samples and the kill)
+    float root[3] = {};          // where his model stands, render metres
+    float p[2][3] = {};          // each weapon bone (0 right, 1 left), render metres
+    bool ok[2] = {false, false};
+};
+struct Arc {
+    bool ok = false;
+    float vel[3] = {};           // m/s: the arc's way and speed at its fastest
+    float speed = 0.0f;
+    int hand = -1;
+};
+constexpr double kArcWindowS = 0.45;   // the game's hit lands after the weapon's fastest frames, the death is seen up to a scan (30 ms) after it
+constexpr double kArcLateS = 0.05;     // ... and a sample a little after the kill is seen still the same swing
+constexpr float kArcMinMs = 1.5f;      // slower: no swing (a spell, a bow, a stand)
+constexpr float kArcMaxMs = 40.0f;     // faster: a jump (a teleport, a model made again) - no step of a swing
+constexpr float kFlatHeftKg = 6.0f;    // the steel and the arm behind the game's blow
+// a step between two samples this long counts: closer, no speed (the hero is posed more than once a frame - two poses 3 ms apart gave 25 - 40 m/s, 0.197.4);
+// longer, a gap
+constexpr double kArcMinStepS = 0.008, kArcMaxStepS = 0.1;
+// The swing at the kill (s: n samples, oldest first; tKill: when the death was seen).
+inline Arc ArcAt(const ArcSample* s, int n, double tKill) {
+    Arc a;
+    if (!s || n < 2 || !std::isfinite(tKill)) return a;
+    for (int i = 1; i < n; ++i) {
+        const ArcSample& b = s[i];
+        const ArcSample& w = s[i - 1];
+        const double dt = b.t - w.t;
+        if (!(dt >= kArcMinStepS && dt <= kArcMaxStepS) || b.t < tKill - kArcWindowS || b.t > tKill + kArcLateS) continue;
+        for (int h = 0; h < 2; ++h) {
+            if (!b.ok[h] || !w.ok[h]) continue;
+            float v[3];
+            for (int k = 0; k < 3; ++k) v[k] = static_cast<float>(((b.p[h][k] - w.p[h][k]) - (b.root[k] - w.root[k])) / dt);
+            const float sp = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (!std::isfinite(sp) || sp > kArcMaxMs || sp <= a.speed) continue;
+            a.speed = sp;
+            a.hand = h;
+            std::memcpy(a.vel, v, sizeof a.vel);
+        }
+    }
+    a.ok = a.speed >= kArcMinMs;
+    if (!a.ok) { a = Arc{}; }
+    return a;
+}
+// The push of the game's blow (ArcAt) - else away from the hero.
+inline Push ArcPush(const Arc& arc, const float chest[3], float massKg, const float hero[3]) {
+    if (!arc.ok || !(arc.speed > 1e-4f) || !chest) return KillingPush(nullptr, chest, massKg, hero);
+    Push p;
+    const float kg = std::isfinite(massKg) ? std::clamp(massKg, 5.0f, 2000.0f) : 50.0f;
+    p.byBlow = true;
+    p.swingMs = arc.speed;
+    p.gaveMs = std::clamp(kFlatHeftKg * arc.speed / kg, kMinMs, kMaxMs);
+    std::memcpy(p.point, chest, sizeof p.point);
+    for (int k = 0; k < 3; ++k) p.impulse[k] = arc.vel[k] / arc.speed * p.gaveMs * kg;
+    return p;
+}
+
 // What a death's body in the library does next, by its phase: wait while it falls (or a hand holds it); kept once it lies (the library has it still on the
 // ground: LYING - or a step into the get-up it may have begun within one step); fell anew if it died on its feet (staggering, walking home, back).
 enum class Next { Wait, Keep, Fell };
@@ -220,15 +300,21 @@ public:
             if (id && k.id == id) return &k;
         return nullptr;
     }
-    // Every corpse not in the scan's dead for kGoneMs (dead[]: the ids in it now) dropped; the ids that are seen get seenMs. How many dropped.
-    int Forget(const uint32_t* dead, int nDead, uint64_t nowMs) {
+    // Every corpse not in the scan's dead for kGoneMs (dead[]: the ids in it now) dropped; the ids that are seen get seenMs. How many dropped (their ids into
+    // ids[], up to maxIds: the log's).
+    int Forget(const uint32_t* dead, int nDead, uint64_t nowMs, uint32_t* ids = nullptr, int maxIds = 0) {
         int dropped = 0;
         for (Corpse& k : c_) {
             if (!k.id) continue;
             bool there = false;
             for (int i = 0; i < nDead && !there; ++i) there = dead[i] == k.id;
             if (there) k.seenMs = nowMs;
-            else if (nowMs - k.seenMs > kGoneMs) { k = Corpse{}; --n_; ++dropped; }
+            else if (nowMs - k.seenMs > kGoneMs) {
+                if (ids && dropped < maxIds) ids[dropped] = k.id;
+                k = Corpse{};
+                --n_;
+                ++dropped;
+            }
         }
         return dropped;
     }

@@ -89,6 +89,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "flat_ground.h"   // [input] flat_aim_ground: the mouse's point on raised ground (pure part, tested)
 #include "flat_shift.h"    // [camera] flat_shift_x / _y: the flat picture moved on the screen, and where the hero is on it (pure part, tested)
 #include "flat_body.h"     // [input] flat_body_pick: a body or an object clicked by its body in flat F2 / F3 (pure part, tested)
+#include "vr_body_pick.h"  // [input] vr_body_pick, vr_body_pick_hand: the same in VR, along each view's ray (pure part, tested)
 #include "unit_scan.h"     // ... the client's unit hash, the walk hit by touch uses
 #include "portal_oval.h"   // [render] flat_portal_no_oval: the town portal's black oval not drawn in flat F2 / F3 (pure part, tested)
 #include "portal_auto.h"   // [input] portal_look_horizon / portal_auto: flat, after a portal and into one (pure part, tested)
@@ -264,6 +265,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "potion_hide.h"
 #include "knock_props.h"   // [weight] knock_props: the level's small props knocked about (drawn only)
 #include "world_contact.h"   // [weight] world_contact: the weapon and the bare hands meet the level's walls (drawn only)
+#include "own_models.h"      // [weight] world_contact: the entities of our item models (the belt's bottles), never walls
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "head_shadow.h"          // [arms] head_shadow: the hidden head still casts its shadow
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon

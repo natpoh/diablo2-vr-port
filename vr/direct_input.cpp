@@ -53,6 +53,8 @@ constexpr ULONGLONG kStaleMs = 1000;      // frames older than this: direct mode
 
 // F4 only (vr/view_gate.h): in every other view nothing of this layer acts - the key is as good as 0 there.
 bool ViewOk() { return viewgate::F4(); }
+// F4, or the overlay's own sources in VR F1 - F3 (direct_input.h kSrcPanel / kSrcPanelView): what may take, tap or hold an action now.
+bool SourceOk(Source src) { return ViewOk() || (PanelSource(src) && viewgate::Flat()); }
 constexpr ULONGLONG kTapMs = 65;          // Tap(): held this long
 constexpr int kMaxListeners = 16;
 constexpr int kPulses = 8;
@@ -101,12 +103,13 @@ Table g_table = DefaultTable();   // the world layer; the menu layer is the game
 bool g_tableChanged = true;       // Feed hands it to the layout once
 std::atomic<bool> g_secondRow{true};   // layout::SecondRowOn(g_table): the left trigger is the second row
 bool g_secondRowSaid = false;
-Table g_flatTable = WithoutPanels(DefaultTable());   // the same without the skill panel's long press: VR F1-F3's controller
+Table g_flatTable = WithoutPanels(DefaultTable());   // the same without F4's pause and quiver: VR F1-F3's controller
 bool g_flatTableChanged = true;
 
 // -- the sources of the gestures --------------------------------------------------------------------------------------
 std::atomic<uint16_t> g_cmdSrc[layout::kCommands];   // bit per Source: who holds the command
 std::atomic<ULONGLONG> g_tapUntil[layout::kCommands];
+std::atomic<ULONGLONG> g_panelTapUntil[layout::kCommands];   // kSrcPanel's taps (RUN / WALK): the ones VR F1 - F3 have too
 std::atomic<uint16_t> g_actSrc[kActionBits];
 std::atomic<uint32_t> g_take[2];                      // this frame's takes: Button bits | kTakeTrigger | kTakeSqueeze
 std::atomic<uint32_t> g_takenLast[2];                 // the takes of the frame before: what TakenLastFrame says
@@ -160,6 +163,7 @@ struct FeedState {
     bool panelWas = false;   // Outputs.skillPanel the frame before: the request is its rising edge
     bool pauseWas = false;   // Outputs.pause the frame before (the same)
     uint8_t quiverWas = 0;   // Outputs.quiver the frame before: a step is its rising edge
+    bool flatPanelWas = false;   // the VR F1 - F3 controller's Outputs.skillPanel the frame before (the overlay's request is its rising edge too)
     // the walk in VR F1-F3 (walkflat): the left stick through a release gate of its own, the frame number the pad poll sees
     ReleaseGate walkGate;
     bool walkWas = false;
@@ -266,6 +270,7 @@ std::string NarrowAscii(const wchar_t* w) {
 void ClearHeld() {
     for (auto& c : g_cmdSrc) c.store(0);
     for (auto& t : g_tapUntil) t.store(0);
+    for (auto& t : g_panelTapUntil) t.store(0);
     for (auto& a : g_actSrc) a.store(0);
     g_take[0].store(0); g_take[1].store(0);
     AcquireSRWLockExclusive(&g_pulseLock);
@@ -281,7 +286,7 @@ Frame MakeFrame(const D2RVR_XrInput& in, bool menu, bool direct, uint32_t counte
     f.session = session;
     f.epoch = epoch;
     // (another view: kInMenu too - a detector that only knows the menu flag stands down as well)
-    f.flags = (in.focused ? kFocused : 0u) | (menu || otherView ? kInMenu : 0u) | (direct ? kDirect : 0u) | (otherView ? kOtherView : 0u);
+    f.flags = (in.focused ? kFocused : 0u) | (menu || otherView ? kInMenu : 0u) | (direct ? kDirect : 0u) | (otherView ? kOtherView : 0u) | (menu ? kGameMenu : 0u);
     f.displayTime = in.displayTime;
     f.time = (double)in.displayTime * 1e-9;
     auto pose = [](const D2RVR_XrPose& p, Pose* o) {
@@ -355,7 +360,8 @@ void HideTaken(D2RVR_XrInput* in, const uint32_t take[2]) {
 }
 
 // The plugin's own controller in VR F1-F3 ([direct] flat_controller, vr/walk_flat.h): the F4 layout over the frame's controls - through a release gate of its
-// own, in the menu layer while a panel is open - minus the skill panel's long press. Its pad takes the left stick from FeedWalk (the walk's own gate and the
+// own, in the menu layer while a panel is open - minus what only F4 has (WithoutPanels). Its long press of the right stick click asks for the overlay (the
+// skill panel's window) as F4's does. Its pad takes the left stick from FeedWalk (the walk's own gate and the
 // belt's hold: while the left trigger is held for a flick the sticks are the flick's, not the game's); the actions and the game's key commands it holds go the
 // way BodyWalk's would (link::ActionsHeld / CommandsHeld). Called by Feed in a flat view, after FeedWalk; nothing of the F4 world is touched.
 std::atomic<bool> g_vendor{false};   // a vendor's panel is open (SetVendorOpen)
@@ -381,6 +387,8 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
         o.pad.ly = s.walkLY;
     }
     if (s.beltHolding) { o.pad.lx = o.pad.ly = o.pad.rx = o.pad.ry = 0; }   // a flick's trigger is held: the sticks are the belt's
+    if (o.skillPanel && !s.flatPanelWas) g_panelAt.store(GetTickCount64());   // a long press asks for the overlay, once (TakeSkillPanelToggle)
+    s.flatPanelWas = o.skillPanel;
     o.skillPanel = false;
     o.pause = false;
     o.quiver = 0;
@@ -442,12 +450,14 @@ void Command(uint32_t cmd, bool down, Source src) {
     if (down) g_cmdSrc[cmd].fetch_or(bit); else g_cmdSrc[cmd].fetch_and((uint16_t)~bit);
 }
 
-void Tap(uint32_t cmd) {
-    if (cmd < layout::kCommands && ViewOk()) g_tapUntil[cmd].store(GetTickCount64() + kTapMs);
+void Tap(uint32_t cmd, Source src) {
+    if (cmd >= layout::kCommands || !SourceOk(src)) return;
+    g_tapUntil[cmd].store(GetTickCount64() + kTapMs);
+    if (PanelSource(src)) g_panelTapUntil[cmd].store(GetTickCount64() + kTapMs);
 }
 
 void Action(uint32_t actBits, bool down, Source src) {
-    if (src >= kSrcCount || (down && !ViewOk())) return;
+    if (src >= kSrcCount || (down && !SourceOk(src))) return;
     const uint16_t bit = (uint16_t)(1u << src);
     for (int i = 0; i < kActionBits; ++i)
         if (actBits & (1u << i)) { if (down) g_actSrc[i].fetch_or(bit); else g_actSrc[i].fetch_and((uint16_t)~bit); }
@@ -475,8 +485,8 @@ void PadPulseEnd(const PadPress& p) {
     ReleaseSRWLockExclusive(&g_pulseLock);
 }
 
-void Take(int hand, uint32_t buttons, Source) {
-    if (hand < 0 || hand > 1 || !ViewOk()) return;
+void Take(int hand, uint32_t buttons, Source src) {
+    if (hand < 0 || hand > 1 || !SourceOk(src)) return;
     g_take[hand].fetch_or(buttons);
 }
 
@@ -554,7 +564,7 @@ void LoadSettings(const wchar_t* ini) {
     AcquireSRWLockExclusive(&g_cfgLock);
     g_table = t;
     g_tableChanged = true;
-    g_flatTable = WithoutPanels(t);   // VR F1-F3's controller: the same rebinding, without the skill panel's long press
+    g_flatTable = WithoutPanels(t);   // VR F1-F3's controller: the same rebinding, without F4's pause and quiver
     g_flatTableChanged = true;
     ReleaseSRWLockExclusive(&g_cfgLock);
     static int was = -1;
@@ -787,7 +797,8 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
         const float x = in->hand[h].stickX, y = in->hand[h].stickY;
         lean[h] = std::isfinite(x) && std::isfinite(y) ? std::sqrt(x * x + y * y) : 0.0f;
     }
-    if (f4) HideTaken(in, take);   // (another view: nothing is taken from BodyWalk's hands either)
+    // (another view: nothing is taken from BodyWalk's hands either - but in VR F1-F3 what the overlay takes, the only taker there: SourceOk)
+    if (f4 || viewgate::Flat()) HideTaken(in, take);
 
     // VR F1-F3: the one thing that acts outside F4 - the left stick's walk (walkflat). Nothing of the layout runs there.
     if (!f4 && g_on.load() && (g_walkFlat.load() || g_beltFlat.load() || g_flatCtl.load()) && viewgate::Flat()) {
@@ -973,8 +984,10 @@ uint32_t LayoutActions() {
 
 uint32_t InjectedActions() {
     uint32_t a = 0;
-    if (!ViewOk()) return 0;
-    for (int i = 0; i < kActionBits; ++i) if (g_actSrc[i].load()) a |= 1u << i;
+    // (VR F1 - F3: only what the overlay's own sources hold - its game view buttons)
+    const uint16_t mask = ViewOk() ? 0xFFFFu : viewgate::Flat() ? (uint16_t)((1u << kSrcPanel) | (1u << kSrcPanelView)) : 0u;
+    if (!mask) return 0;
+    for (int i = 0; i < kActionBits; ++i) if (g_actSrc[i].load() & mask) a |= 1u << i;
     return a;
 }
 
@@ -988,8 +1001,12 @@ void LayoutCommands(uint64_t out[2]) {
 
 void InjectedCommands(uint64_t out[2]) {
     out[0] = out[1] = 0;
-    if (!ViewOk()) return;
     const ULONGLONG now = GetTickCount64();
+    if (!ViewOk()) {   // VR F1 - F3: the overlay's taps alone (RUN / WALK)
+        if (!viewgate::Flat()) return;
+        for (uint32_t c = 0; c < layout::kCommands; ++c) if (now < g_panelTapUntil[c].load()) out[c / 64] |= 1ull << (c % 64);
+        return;
+    }
     for (uint32_t c = 0; c < layout::kCommands; ++c)
         if (g_cmdSrc[c].load() || now < g_tapUntil[c].load()) out[c / 64] |= 1ull << (c % 64);
 }

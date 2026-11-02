@@ -422,8 +422,8 @@ struct World {
     Step ClickTab(int i) { return ClickPx(CentreX(tiles::TabRect(i)), CentreY(tiles::TabRect(i))); }
     // a page of the Settings tab: its tab on the sheet, and a World page's button under it (World is one tab of four pages)
     Step ClickPage(int page) {
-        Step s = ClickSheet(hset::kTab(hset::TabOf(page)));
-        if (hset::IsWorldPage(page) && page != hset::kPageWorld) s = ClickSheet(hset::kWorldSub(page - hset::kPageWorld));
+        Step s = ClickSheet(hset::TabRect(hset::TabOf(page), c.SettingsModel().View()));   // (the view's strip: VR F1 - F3 have fewer tabs)
+        if (hset::HasSubRow(page) && page != hset::SubFirst(page)) s = ClickSheet(hset::kSubBtn(page - hset::SubFirst(page), hset::SubCount(page)));   // (World's, Controls' buttons)
         if (page == hset::kPageParty) s = ClickSheet(hset::kPreviewBtn);   // the Co-op page's Party button (Party is that tab's second page)
         return s;
     }
@@ -715,7 +715,7 @@ static void TestPagesOnWindow() {
         World w;
         w.LongPress();
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageVideo));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         CHECK(w.c.SettingsModel().page == hset::kPageVideo);
         w.ClickSheet(hset::kPreset(4));   // 2560
         CHECK(w.c.SettingsModel().Dirty() && w.c.SettingsModel().DraftPick() == hset::video::Square(2560));
@@ -750,7 +750,7 @@ static void TestPagesOnWindow() {
         World w;
         w.LongPress();
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageVideo));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         const float mid = hset::kSlTrack.y + 0.5f * hset::kSlTrack.h;
         w.AimSheet((float)hset::kSlX0, mid);
         w.Hand(1, 0, 0, 0);
@@ -786,10 +786,10 @@ static void TestPagesOnWindow() {
         World w;
         w.LongPress();
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageVideo));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         w.ClickSheet(hset::kPreset(1));
         CHECK(w.c.SettingsModel().Dirty());
-        w.ClickSheet(hset::kTab(hset::kPageBody));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageBody)));
         w.AimRect(hset::kCalibrate);
         w.Hand(1, 0, 0, 0);
         w.Next();
@@ -821,7 +821,7 @@ static void TestPagesOnWindow() {
         World w;
         w.LongPress();
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageBody));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageBody)));
         w.ClickSheet(hset::kCalibrate);
         w.host.calibrating = true;
         w.Run(5);
@@ -1012,7 +1012,7 @@ static void TestLivePagesOnWindow() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageBelt));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageBelt)));
         CHECK(w.c.SettingsModel().page == hset::kPageBelt);
         const int up = hset::KeyAt(hset::kPageBelt, 0);
         const Step s = w.ClickSheet(hset::kInc(0));
@@ -1038,7 +1038,7 @@ static void TestLivePagesOnWindow() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageMelee));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageMelee)));
         CHECK(w.c.SettingsModel().page == hset::kPageMelee && hset::KeyAt(hset::kPageMelee, 6) == hset::kKeyMeleeDirect);
         CHECK(w.c.SettingsModel().Get()[hset::kKeyMeleeDirect] < 0.5f);
         w.ClickSheet(hset::kToggle(6, hset::kPageMelee));
@@ -1057,10 +1057,10 @@ static void TestLivePagesOnWindow() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        w.ClickSheet(hset::kTab(hset::kPageKeysL));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageKeysL)));
         CHECK(w.c.SettingsModel().page == hset::kPageKeysL);
         const int lt = hset::KeyAt(hset::kPageKeysL, 0);
-        w.ClickSheet(hset::kInc(0));
+        w.ClickSheet(hset::kInc(0, hset::kPageKeysL));
         CHECK(w.c.SettingsModel().Dirty() && !w.c.SettingsModel().LiveOnly());
         bool early = false;
         for (int i = 0; i < 60; ++i) if (w.Next().settings.what == hset::Do::Save) early = true;
@@ -1232,7 +1232,7 @@ static void TestPaint(const char* dumpDir) {
         }
     }
     // states: a hovered button, an edited preset, a measured body
-    w.ClickSheet(hset::kTab(hset::kPageVideo));
+    w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
     const std::vector<uint32_t> before = Paint(w.c.ViewNow());
     w.ClickSheet(hset::kPreset(4));
     const std::vector<uint32_t> edited = Paint(w.c.ViewNow());
@@ -1250,13 +1250,13 @@ static void TestPaint(const char* dumpDir) {
     w.host.ini.values[hset::kKeyVersion] = w.host.ini.file[hset::kKeyVersion] = 1.0f;
     w.host.ini.values[hset::kKeyEye] = w.host.ini.file[hset::kKeyEye] = 1.62f;
     w.host.ini.values[hset::kKeySpan] = w.host.ini.file[hset::kKeySpan] = 1.71f;
-    w.ClickSheet(hset::kTab(hset::kPageBody));
+    w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageBody)));
     w.Run(2);
     const std::vector<uint32_t> measured = Paint(w.c.ViewNow());
     CHECK(measured != pages[hset::kPageBody]);
     if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_body_measured.bmp", measured, tiles::kW, tiles::kH);
     // the view page with the lit F4, and a hovered tab
-    w.ClickSheet(hset::kTab(hset::kPageView));
+    w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
     w.AimPx(CentreX(tiles::TabRect(0)), CentreY(tiles::TabRect(0)));
     w.Hand(1, 0, 0, 0);
     w.Next();
@@ -1268,7 +1268,7 @@ static void TestPaint(const char* dumpDir) {
         World a;
         a.LongPress();
         a.ClickTab(1);
-        a.ClickSheet(hset::kTab(hset::kPageVideo));
+        a.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         View unlit = a.c.ViewNow();
         unlit.settingsHover = {};
         for (const hset::Rect& r : {hset::kPreset(3), hset::kPreset(6), hset::kClose, hset::kRecentre}) {
@@ -1656,14 +1656,14 @@ static void TestPreviewButton() {
     w.LongPress();
     w.ClickTab(1);
     for (int page : {hset::kPageLife, hset::kPageLook}) {
-        const Step t = w.ClickSheet(hset::kTab(page));
+        const Step t = w.ClickSheet(hset::kTab(hset::TabOf(page)));
         CHECK(t.settings.what == hset::Do::Nothing && w.c.SettingsModel().page == page && w.c.Open());   // opening a page starts nothing
         const Step s = w.ClickSheet(hset::kPreviewBtn);
         CHECK(s.settings.what == hset::Do::Preview && w.c.Open() && !w.c.SettingsModel().Dirty());
         const Step again = w.ClickSheet(hset::kPreviewBtn);
         CHECK(again.settings.what == hset::Do::Preview && w.c.Open());
     }
-    w.ClickSheet(hset::kTab(hset::kPageHud));
+    w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageHud)));
     const Step other = w.ClickSheet(hset::kPreviewBtn);   // (the same place on another page is nothing of the kind)
     CHECK(other.settings.what != hset::Do::Preview);
 }
@@ -1682,7 +1682,7 @@ static void TestCoopOnWindow(const char* dumpDir) {
     w.host.ini.coop = st;
     w.LongPress();
     w.ClickTab(1);
-    const Step t = w.ClickSheet(hset::kTab(hset::kPageCoop));
+    const Step t = w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageCoop)));
     CHECK(t.settings.what == hset::Do::Nothing && w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 1 + hset::kPageCoop && w.c.SettingsModel().CoopReady());
     const std::vector<uint32_t> page = Paint(w.c.ViewNow());
     if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_coop.bmp", page, tiles::kW, tiles::kH);
@@ -1729,7 +1729,7 @@ static void TestCoopOnWindow(const char* dumpDir) {
     n.host.ini.coop = missing;
     n.LongPress();
     n.ClickTab(1);
-    n.ClickSheet(hset::kTab(hset::kPageCoop));
+    n.ClickSheet(hset::kTab(hset::TabOf(hset::kPageCoop)));
     CHECK(n.ClickSheet(hset::kToggle(hset::coop::kEnabled)).settings.what == hset::Do::Nothing && !n.c.SettingsModel().CoopReady());
     const std::vector<uint32_t> none = Paint(n.c.ViewNow());
     CHECK(none != page);
@@ -1749,7 +1749,7 @@ static void TestCoopOnWindow(const char* dumpDir) {
     g.host.ini.coop = st;
     g.LongPress();
     g.ClickTab(1);
-    g.ClickSheet(hset::kTab(hset::kPageCoop));
+    g.ClickSheet(hset::kTab(hset::TabOf(hset::kPageCoop)));
     View high = g.c.ViewNow();
     high.flipHigh = true;
     const std::vector<uint32_t> game = Paint(high);
@@ -1790,7 +1790,7 @@ static void TestWorldOnWindow(const char* dumpDir) {
         }
     }
     CHECK(saved);   // (a moment after the click, by itself)
-    w.ClickSheet(hset::kTab(hset::kPageMelee));
+    w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageMelee)));
     CHECK(w.c.SettingsModel().page == hset::kPageMelee);
 }
 
@@ -1807,29 +1807,29 @@ static void TestFlipController() {
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageVideo && w.c.FlipPlace() == 3);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 4);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 4);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 5);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 5);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 6);
+        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 6);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 7);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 8);
+        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 8);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 9);
+        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 9);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 10);
+        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 10);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 11);
+        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 11);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 12);
-        Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 13);
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 12);
         for (int i = 0; i < hset::kWorldPages; ++i) {   // the World tab's four pages, one flick each
             Flick(w, 1.0f);
-            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 14 + i);
+            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 13 + i);
         }
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 17);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 18);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
@@ -1847,7 +1847,7 @@ static void TestFlipController() {
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
-        CHECK(w.c.FlipPlace() == 5 && w.c.SettingsModel().page == hset::kPageLife);
+        CHECK(w.c.FlipPlace() == 5 && w.c.SettingsModel().page == hset::kPageKeysR);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         CHECK(w.c.FlipPlace() == 3 && w.c.SettingsModel().page == hset::kPageVideo);
@@ -1861,7 +1861,7 @@ static void TestFlipController() {
         // the left stick flips too, and a flick of the Settings tab keeps its draft
         Flick(w, 1.0f, 0);
         CHECK(w.c.FlipPlace() == 1);
-        w.ClickSheet(hset::kTab(hset::kPageVideo));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         w.ClickSheet(hset::kPreset(4));
         CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 3);
         Flick(w, 1.0f);
@@ -2010,7 +2010,7 @@ static void TestFlipController() {
         w.ClickPx(CentreX(prev), CentreY(prev));
         CHECK(w.c.FlipPlace() == 18 && w.c.SettingsModel().page == hset::kPageParty);
         // the laser's click on a page tab of the sheet moves the place too, the same order
-        w.ClickSheet(hset::kTab(hset::kPageView));
+        w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
         // and on the Skills tab of the strip: place 0; the Settings tab of the strip: the page it was on
         w.ClickTab(0);
@@ -2065,14 +2065,17 @@ static void TestFlipPaint() {
     std::vector<uint32_t> places[kFlipPlaces];
     for (int i = 0; i < kFlipPlaces; ++i) {
         v.flipPlace = i;
+        v.flipAt = i;
         places[i] = Paint(v);
         for (int j = 0; j < i; ++j) CHECK(places[i] != places[j]);   // the dots, the arrows
     }
     // the dots and the arrows are the only difference between two places of the same tab (the Skills tab at 0 and the same picture told it is at 1)
     {
         v.flipPlace = 0;
+        v.flipAt = 0;
         const std::vector<uint32_t> a = Paint(v);
         v.flipPlace = 1;
+        v.flipAt = 1;
         const std::vector<uint32_t> b = Paint(v);
         int x0 = tiles::kW, y0 = tiles::kH, x1 = -1, y1 = -1;
         for (int y = 0; y < tiles::kH; ++y)
@@ -2091,6 +2094,7 @@ static void TestFlipPaint() {
     }
     // a lit arrow: the changed pixels stay in its zone
     v.flipPlace = 2;
+    v.flipAt = 2;
     const std::vector<uint32_t> cold = Paint(v);
     for (int i = 0; i < 2; ++i) {
         View lit = v;
@@ -2106,6 +2110,7 @@ static void TestFlipPaint() {
     }
     // the hints are on the Settings tab too, and not in the editor
     v.flipPlace = 3;
+    v.flipAt = 3;
     v.tab = Tab::Settings;
     const std::vector<uint32_t> onSettings = Paint(v);
     View noTabs = v;
@@ -2116,6 +2121,7 @@ static void TestFlipPaint() {
     View editor = w.c.ViewNow();
     editor.page = Page::PickSlot;
     editor.flipPlace = 2;
+    editor.flipAt = 2;
     View editorPlain = editor;
     editorPlain.tabs = false;
     CHECK(Paint(editor) == Paint(editorPlain));   // (the editor's pages: no strip, no hints)
@@ -2172,6 +2178,133 @@ static void TestHands() {
     }
 }
 
+// The overlay in every VR view (Serg, 2026-11-02: "игровой оверлей ... во все режимы ф1 ф2 ф3, убрать только то что не относится"): which pages and rows each
+// view shows, and the window in VR F1 - F3 - opened by the same long press, the Settings tab's pages those views have, nothing picked for the trigger,
+// nothing cast; F4 as it was.
+static void TestViews() {
+    using namespace hset;
+    // the pages: F4 (and 0, not known) every one; F1 - F3 not F4's body
+    const int bodyPages[] = {kPageVibration, kPageLife, kPageLook, kPageBody, kPageBelt, kPageMelee, kPageWorld, kPageWorldReact, kPageWorldGrab, kPageWorldMore};
+    const int allPages[] = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
+    for (int view = 0; view <= 4; ++view) {
+        const bool flat = view >= 1 && view <= 3;
+        for (int p : bodyPages) CHECK(PageShown(p, view) == !flat);
+        for (int p : allPages) CHECK(PageShown(p, view));
+        int tabs = 0;
+        for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
+        CHECK(tabs == (flat ? 7 : 14));   // View, Options, Video, Controls, HUD, Co-op, Guide - or all fourteen
+        // the strip: the shown tabs inside it and apart, in order; one not shown has no place
+        int lastEnd = 0;
+        for (int t = 0; t < kTabCount; ++t) {
+            const hset::Rect r = TabRect(t, view);
+            if (!TabShown(t, view)) { CHECK(r.w == 0 && r.h == 0); continue; }
+            CHECK(r.x >= 32 && r.x + r.w <= 32 + 960 && r.x > lastEnd && r.w >= kTabNameW[t] + 8);
+            lastEnd = r.x + r.w;
+            float u = (r.x + 0.5f * r.w) / kW, v = (r.y + 0.5f * r.h) / kH;
+            CHECK((HitTest(kPageView, u, v, view) == Hit{Kind::Tab, TabPage(t), 0}));
+        }
+        // the rows: Options without "Menus as a panel", HUD with the toolbar type alone (the plates are F4's hook), the rest as in F4
+        CHECK(RowsOn(kPageOptions, view) == RowsOn(kPageOptions) - (flat ? 1 : 0));
+        CHECK(RowsOn(kPageHud, view) == (flat ? 1 : 3) && KeyAt(kPageHud, 0, view) == kKeyBarPlace);
+        CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == 6 && RowsOn(kPageKeysR, view) == 6);
+        for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
+        // the flips: Skills and the pages shown (Party with it, while it is on)
+        CHECK(FlipCount(view) == (flat ? 10 : kFlipPlaces) && FlipCount(view, false) == (flat ? 9 : kFlipPlaces - 1));
+    }
+    // Controls: one tab, two pages, a button each on top
+    CHECK(TabOf(kPageKeysL) == TabOf(kPageKeysR) && TabPage(kTabControls) == kPageKeysL && !std::strcmp(kTabNames[kTabControls], "Controls") && HasSubRow(kPageKeysR));
+    for (int i = 0; i < kKeysPages; ++i) {
+        const hset::Rect b = kSubBtn(i, kKeysPages);
+        const float u = (b.x + 0.5f * b.w) / kW, v = (b.y + 0.5f * b.h) / kH;
+        CHECK((HitTest(kPageKeysL, u, v) == Hit{Kind::Tab, kPageKeysL + i, 0}) && (HitTest(kPageKeysR, u, v) == Hit{Kind::Tab, kPageKeysL + i, 0}));
+    }
+    // the model: a page the view does not show gives way to View, and cannot be clicked to
+    {
+        hset::Model m;
+        hset::Snapshot snap;
+        snap.ready = true;
+        m.Open(snap);
+        m.SetView(4);
+        m.Click({Kind::Tab, kPageMelee, 0});
+        CHECK(m.page == kPageMelee);
+        m.SetView(2);
+        CHECK(m.page == kPageView);
+        m.Click({Kind::Tab, kPageBelt, 0});
+        CHECK(m.page == kPageView);
+        m.Click({Kind::Tab, kPageHud, 0});
+        CHECK(m.page == kPageHud);
+        const int plates = IndexOf(L"hud", L"ordinary_mob_bars");
+        m.Click({Kind::Change, plates, 1});
+        CHECK(!m.Dirty());   // (a row F2 does not show)
+    }
+
+    // the window in VR F1, F2, F3: the frame as the input layer makes it there (another view: kInMenu with kOtherView; no direct mode)
+    for (int view = 1; view <= 3; ++view) {
+        World w;
+        w.f4 = false;
+        w.c.SetView(view);
+        w.f.flags = di::kFocused | di::kInMenu | di::kOtherView;
+        w.Run(2);
+        w.Hand(0, 0, 0.9f, 0);   // the left grip + the right click: the controller's swap there, not the wheel's chord (the long press is the way in)
+        w.Next();
+        w.Hand(1, 0, 0, di::kStick);
+        Step s = w.Next();
+        CHECK(!w.c.Open() && !(s.take[1] & di::kStick));
+        w.Hand(0, 0, 0, 0);
+        w.Hand(1, 0, 0, 0);
+        w.Run(2);
+        s = w.LongPress();
+        CHECK(w.c.Open() && s.feedback == Feedback::Opened && w.c.ViewNow().tabs);
+        s = w.Next();
+        CHECK((s.take[1] & di::kTakeTrigger) && (s.take[0] & di::kTakeStick));   // the window has the hands, as in F4
+        w.ClickTab(1);
+        CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().View() == view && w.c.SettingsModel().page == kPageView);
+        CHECK(w.c.ViewNow().flipCount == 10 && w.c.ViewNow().flipAt == 1);
+        const int along[] = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
+        for (size_t i = 1; i < sizeof along / sizeof along[0]; ++i) {
+            Flick(w, 1.0f);
+            CHECK(w.c.SettingsModel().page == along[i] && w.c.ViewNow().flipAt == (int)i + 1);
+        }
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == kPageGuide && w.c.Open());   // the end
+        w.ClickPage(kPageKeysR);   // Controls, then its Right button
+        CHECK(w.c.SettingsModel().page == kPageKeysR);
+        // closed again (B): nothing picked, the trigger casts nothing
+        w.Hand(1, 0, 0, di::kSecondary);
+        w.Next();
+        w.Hand(1, 0, 0, 0);
+        w.Run(3);
+        CHECK(!w.c.Open());
+        w.Hand(1, 1.0f, 0, 0);
+        s = w.Next();
+        s = w.Next();
+        CHECK(!s.casting && w.c.Selected() < 0 && !(s.take[1] & di::kTakeTrigger));
+        w.Hand(1, 0, 0, 0);
+        w.Next();
+        // a game menu open: no window
+        w.f.flags |= di::kGameMenu;
+        w.LongPress();
+        CHECK(!w.c.Open());
+    }
+    {   // a view that is not VR (the flat game): stood down, as ever
+        World w;
+        w.f4 = false;
+        w.c.SetView(0);
+        w.f.flags = di::kFocused | di::kInMenu | di::kOtherView;
+        w.LongPress();
+        CHECK(!w.c.Open());
+    }
+    {   // F4 as it was: every page along the flips
+        World w;
+        w.LongPress();
+        w.Run(2);
+        w.ClickTab(1);
+        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces);
+        w.ClickSheet(kTab(TabOf(kPageMelee)));
+        CHECK(w.c.SettingsModel().page == kPageMelee);
+    }
+}
+
 int main(int argc, char** argv) {
     const char* dump = argc == 3 && !std::strcmp(argv[1], "--dump") ? argv[2] : nullptr;
     TestStrip();
@@ -2196,6 +2329,7 @@ int main(int argc, char** argv) {
     TestCoopOnWindow(dump);
     TestWorldOnWindow(dump);
     TestFlipPaint();
+    TestViews();
     std::printf("%d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

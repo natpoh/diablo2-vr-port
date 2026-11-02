@@ -114,6 +114,15 @@ inline Angles FromHand(const HandAngles& h, int eye) {
     const float outer = c(h.outer) * k, inner = c(h.inner) * k;
     return eye == 0 ? Angles{-outer, inner, c(h.up) * k, -c(h.down) * k} : Angles{-inner, outer, c(h.up) * k, -c(h.down) * k};
 }
+// Inside for two fovs given as ANGLES (radians: XrFovf's, eyeframe::Fov's) - what OpenFrame has. Inside works in tangents: the angles handed
+// to it as they were (0.181 - 0.197.4) cut each eye's part from the wrong place - a Quest 3's 54 / 40 (martin, ALVR) the left eye's picture
+// x 0 - 0.945 instead of 0 - 0.805 and the whole height, submitted with fov -54 / +50.8 instead of -54 / +40. Right where the compositor honours
+// the submitted fov (the box and its fov agree), but ALVR lays each image over the headset's own view: straight ahead shown ~11 deg outward in
+// each eye - the world "as if the eyes were swapped" with runtime_fov=1, which "swap eyes" could not undo (2026-11-02).
+inline Window WindowOf(const Angles& drawn, const Angles& want) {
+    return Inside(FromAngles(drawn.l, drawn.r, drawn.u, drawn.d), FromAngles(want.l, want.r, want.u, want.d));
+}
+
 // The other way: the runtime's left eye's fov (radians) as the sliders' numbers (degrees), for D2R VR Settings to show and to copy.
 inline HandAngles ToHand(float l, float r, float u, float d) {
     constexpr float k = 180.0f / 3.14159265f;
@@ -137,6 +146,32 @@ inline float Ndc(float tanX, float scale, float off) { return scale * tanX - off
 // projection. How far (uv, + right) the right eye's layer must move for a label to be in the same direction in both eyes: half the off-axis
 // terms apart - vrcam's projection shift, the D2R_DepthFog.fx LabelAxisR. 0 for centred (or identical) eyes.
 inline float RightLayerShift(const Tan& left, const Tan& right) { return 0.5f * (Projection(left).offX - Projection(right).offX); }
+
+// [openxr] fov_override_centred (on, with fov_override): the hand's angles drawn the way runtime_fov=1 draws the runtime's - one centred frustum
+// that holds both eyes' (Centred), no off-axis term - and each eye's own part of it cut into an image of its own, handed in whole with exactly
+// that part's fov (xr.cpp CropFor: runtime_fov's own cut, both eyes from one game frame and eyes by turns alike). The headset gets what
+// fov_override always gave it - each eye whole, with its own angles to under half a pixel - but the game lays its interface out ONCE, on the
+// centred picture: a label, the toolbar, the map, the pointer at one pixel of it is one direction in both eyes, so they meet. Drawn off-axis
+// the same pixel was another direction in each eye (half the off-axis terms apart: a quarter of the width with a Quest 3's 54 / 40): the
+// labels and the interface doubled (Serg, 2026-11-02, PS VR2 50 / 45 / 50 / 50; martin, Quest 3 on ALVR).
+struct HandDraw {
+    Tan drawn;       // the frustum both eyes are drawn with
+    Window win[2];   // each eye's own view in that picture: left, right
+};
+inline Tan HandTan(const HandAngles& h, int eye) {
+    const Angles a = FromHand(h, eye);
+    return FromAngles(a.l, a.r, a.u, a.d);
+}
+inline HandDraw HandCentred(const HandAngles& h) {
+    HandDraw d;
+    const Tan l = HandTan(h, 0), r = HandTan(h, 1);
+    d.drawn = Centred(l, r);
+    d.win[0] = Inside(d.drawn, l);
+    d.win[1] = Inside(d.drawn, r);
+    return d;
+}
+// The direction (tangent across, + right) of a column of an eye's submitted image: `u` from its left edge (0 .. 1) under that image's fov.
+inline float DirectionAt(float u, const Tan& t) { return t.l + u * (t.r - t.l); }
 
 // The two eyes are mirror images (each the other's flipped left for right) - what the replayed right eye needs (vrcam: the right
 // eye made from the left pass's projection with its off-axis term moved by twice the shift). Within `tol` of the scales.

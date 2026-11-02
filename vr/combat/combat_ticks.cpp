@@ -400,7 +400,9 @@ void MeleeTouchTick() {
         const bool bowWant = bowpitchwire::On() && BowInHand() && inWorld && viewgate::F4();
         // [gameplay] leap_by_gaze: and for a Barbarian (F4), whose Leap Attack goes at the monster the gaze is on
         const bool leapWant = g_set.leapByGaze.load() && skel::HeroClass() == 4 && viewgate::F4();
-        const bool want = ((meleetouch::ThrowWanted() && ThrownInHand()) || bowWant || leapWant) && inWorld;
+        // [input] vr_body_pick_hand: and for the monster the aiming hand points at (F4)
+        const bool pickWant = meleetouch::PickWanted() && viewgate::F4();
+        const bool want = ((meleetouch::ThrowWanted() && ThrownInHand()) || bowWant || leapWant || pickWant) && inWorld;
         meleetouch::ThrowPoll(want ? (uintptr_t)g_heroUnit.load() : 0);
         const float heroRender[3] = {g_heroPosNow[0], g_heroPosNow[1], g_heroPosNow[2]};
         bowpitchwire::Poll(bowWant, bowdrawwire::Drawing() || bowdrawwire::AimLive() || g_aHeld.load() || g_skillHeld.load(), (uintptr_t)g_heroUnit.load(), heroRender,
@@ -442,6 +444,11 @@ void MeleeTouchTick() {
         meleetouch::GrabTick(f.ok, heroRender, f.upm);
         meleetouch::ItemsTick(f.ok, heroRender, f.upm);   // [weight] grab_items: the items lying near
         meleetouch::BarrelsStep();   // [gameplay] melee_touch_barrels: the press on a barrel the swing went through, held until it breaks
+        // [weight] death_ragdoll_flat: outside F4 (VR F1-F3, the flat game) the bodies for the deaths, the hero where the look-at has him; the world's scale
+        // from his own eyes (ViewHeight is the third-person camera's height there), as in F4
+        float eye = 0.0f, lift = 0.0f;
+        const float deathUpm = skel::HeroEye(&eye, &lift) && eye > 1.0f ? eye / UserEyeHeightM() : f.upm;
+        meleetouch::DeathFlatTick(g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen(), heroRender, deathUpm);
     }
     {   // [weight] knock_props (vr/knock_props.h): the level's props near the hero, the blades hit by touch just drew, the physics thread's knocks
         knockprops::Frame kf;

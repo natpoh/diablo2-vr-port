@@ -114,6 +114,7 @@ std::atomic<bool> g_throwWanted{false};   // [hands] throw_autoaim_deg: the mons
 std::atomic<bool> g_moveWanted{false};    // [weight] grab_moves_unit: the server's game is wanted for the knockback (vr/grab_move.cpp)
 std::atomic<bool> g_bowWanted{false};     // [bow] pitch_aim: ... and for a bow's or crossbow's shot aimed by its line (vr/bow_pitch_wire.cpp)
 std::atomic<bool> g_leapWanted{false};    // [gameplay] leap_by_gaze: ... and for the monster a Barbarian's Leap Attack looks at
+std::atomic<bool> g_pickWanted{false};    // [input] vr_body_pick_hand: ... and for the monster the aiming hand points at (F4)
 // [gameplay] melee_touch_thrown: a javelin, throwing knife or throwing axe is swung too (a point-blank throw by the game's own attack), and what
 // the touch needs of the throw by gesture (vr/throw_gesture_wire.h), by function pointers so this module does not depend on it (vrcam wires them).
 std::atomic<bool> g_thrownTouch{true};
@@ -221,7 +222,7 @@ struct Scan {
     std::array<Player, playerbodies::kTouchPlayers> p;
     size_t np = 0;
     // [weight] death_ragdoll: the monsters within the scan's reach the game has dying or dead, with their rows' flags (only while it is on)
-    std::array<knockdown::Dead, 32> dead;
+    std::array<knockdown::Dead, deathragdoll::kMaxDeadListed> dead;
     size_t nd = 0;
 };
 
@@ -292,8 +293,8 @@ bool ScanUnits(float heroX, float heroZ, float upm, float floorM, Scan* out) {
     out->nd = 0;
     if (knockdown::DeathWanted()) {   // [weight] death_ragdoll: the dying and the dead near (unit_scan.h DyingNear - the walk the living's scan makes)
         unitscan::Dying dying[std::tuple_size<decltype(Scan::dead)>::value];
-        const size_t nd = unitscan::DyingNear([](void* d, uintptr_t s, size_t bytes) { return Read(d, s, bytes); }, d2rsig::Addr(RVA_UNITS), heroX, heroZ, 24.0f,
-                                              dying, std::size(dying));
+        const size_t nd = unitscan::DyingNear([](void* d, uintptr_t s, size_t bytes) { return Read(d, s, bytes); }, d2rsig::Addr(RVA_UNITS), heroX, heroZ,
+                                              deathragdoll::kDeadReachUnits, dying, std::size(dying));   // (far beyond the living's 24: a kept corpse is never out of it)
         for (size_t i = 0; i < nd; ++i) {   // its MonStats row's flags through its own monster data (the chain the plates read: deathragdoll::UnitRowFlags)
             uint32_t flags = 0;
             const bool rowOk = deathragdoll::UnitRowFlags(dying[i].unit, [](uintptr_t a, auto& v) { return Read(&v, a, sizeof v); }, &flags);
@@ -675,6 +676,9 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
             dollpose::Pose& p = made[n];
             if (!dollpose::Build(rig, upm, body, limbs, nl, &p)) continue;
             p.self = g.self;
+            p.entity = g.entity;   // (the skinning tells monsters alike apart by the entity drawn: dollpose::ByEntity)
+            p.nParts = std::min(g.nParts, dollpose::Pose::kParts);
+            for (int k = 0; k < p.nParts; ++k) p.parts[k] = g.parts[k];
             p.id = id;
             p.tickMs = now;
             skel::WorldPoses(g.self, &p.poseCur, &p.posePrev, &p.skel);   // (the skinning finds it by them: headshadow's composite)
@@ -911,7 +915,7 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
 // press asks its own verdict at the touch (Verdicted below, in the strike path), which this does not change.
 std::atomic<bool> g_npcBodies{false};
 void PublishBodies(const Scan& s, ULONGLONG now, const float heroRender[3], float upm) {
-    if (!BodiesWanted()) return;
+    if (!BodiesWanted() && !(knockdown::DeathFlatWanted() && !viewgate::F4())) return;   // ([weight] death_ragdoll_flat: the bodies outside F4, for the deaths alone)
     const bool npcs = g_npcBodies.load() || g_grabWanted.load();   // ([weight] grab_bodies: an ally is grabbed too - Bodies leaves them out for the rest)
     size_t order[std::tuple_size<decltype(Scan::c)>::value];
     bool hostile[std::tuple_size<decltype(Scan::c)>::value];
@@ -1838,6 +1842,36 @@ void SetGrabWanted(bool on) {
     if (g_grabWanted.exchange(on) != on)
         Log(on ? "melee touch: grab bodies on ([weight] grab_bodies: an empty hand's grip holds a monster's or an NPC's body - the doll follows the hand by its weight, the game's units stay where they are)"
                : "melee touch: grab bodies off");
+}
+// [weight] death_ragdoll_flat: outside F4 (VR F1-F3, the flat game) the touch keeps no bodies - here the same read-only scan, the server's word on who is hostile,
+// and the skeletons, so the knock-down's tick sees the living as they die and the dead (knockdown::Tick, the deaths alone outside F4). Nothing is pressed or sent.
+void DeathFlatTick(bool ok, const float heroRender[3], float upm) {
+    if (!ok || viewgate::F4() || !knockdown::DeathFlatWanted() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;
+    const ULONGLONG now = GetTickCount64();
+    upm = std::clamp(upm, 1.0f, 12.0f);
+    const stroke::Vec grid = meleetouch::GridPlane({heroRender[0], heroRender[1], heroRender[2]});
+    if (now - g_lastScanAt >= 100 || now < g_lastScanAt) {   // who is near, and the server asked whether they are hostile (as the touch's own scan)
+        g_lastScanAt = now;
+        g_bodiesScanAt = now;
+        if (!ScanUnits(grid.x, grid.z, upm, heroRender[1] / upm, &g_scan)) { g_scan.n = 0; return; }
+        g_heroId.store(g_scan.heroId);
+        size_t probes = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_verdictMutex);
+            g_probeCount = 0;
+            for (size_t i = 0; i < g_scan.n && g_probeCount < g_probeIds.size(); ++i)
+                if (g_scan.c[i].d2 <= 14.0f * 14.0f) g_probeIds[g_probeCount++] = g_scan.c[i].id;
+            probes = g_probeCount;
+        }
+        PublishBodies(g_scan, now, heroRender, upm);
+        if (probes) AskVerdicts(now);
+    } else if (now - g_bodiesScanAt >= 30 || now < g_bodiesScanAt) {   // ... every 30 ms where they are (the dying among them) ...
+        g_bodiesScanAt = now;
+        Scan s;
+        if (ScanUnits(grid.x, grid.z, upm, heroRender[1] / upm, &s)) PublishBodies(s, now, heroRender, upm);
+    } else if (now - g_rigsAt >= 10 || now < g_rigsAt) {   // ... and between, their skeletons as the game poses them (every 10 ms)
+        RepublishBodies(now, heroRender, upm);
+    }
 }
 bool GrabBodies(monsterbodies::Snapshot* out, bool swayed) { return out && GrabBodiesNow(out, swayed); }
 bool GrabDollOn() { return g_swayWanted.load() && dolllib::Loaded(); }
@@ -3153,7 +3187,7 @@ bool PressDown() {
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_statusWanted.load() && !g_moveWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
+    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_pickWanted.load() && !g_statusWanted.load() && !g_moveWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
         GetTickCount64() < retryAt)
         return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
@@ -3187,6 +3221,13 @@ void SetBowWanted(bool on) { g_bowWanted.store(on); }
 bool BowWanted() { return g_bowWanted.load(); }
 void SetLeapWanted(bool on) { g_leapWanted.store(on); }
 uintptr_t MonsterUnit(uint32_t id) { return id ? ClientUnit(id, 1) : 0; }
+void SetPickWanted(bool on) { g_pickWanted.store(on); }
+bool PickWanted() { return g_pickWanted.load(); }
+uintptr_t ObjectUnit(uint32_t id) { return id ? ClientUnit(id, 2) : 0; }
+int Hostile(uint32_t id) {
+    const Know k = Verdicted(id, GetTickCount64());
+    return k == Know::Yes ? 1 : k == Know::No ? 0 : -1;
+}
 
 void ThrowPoll(uintptr_t heroUnit) {
     const ULONGLONG now = GetTickCount64();
@@ -3199,7 +3240,7 @@ void ThrowPoll(uintptr_t heroUnit) {
     };
     UnitBytes hero;
     float hx = 0.0f, hz = 0.0f;
-    if (!(g_throwWanted.load() || g_bowWanted.load() || g_leapWanted.load()) || !viewgate::F4() || !heroUnit || !Read(hero.b, heroUnit, sizeof hero.b) || U32(hero, 0) != 0 || !GridOf(hero, &hx, &hz)) {
+    if (!(g_throwWanted.load() || g_bowWanted.load() || g_leapWanted.load() || g_pickWanted.load()) || !viewgate::F4() || !heroUnit || !Read(hero.b, heroUnit, sizeof hero.b) || U32(hero, 0) != 0 || !GridOf(hero, &hx, &hz)) {
         clear();
         return;
     }

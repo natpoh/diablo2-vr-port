@@ -487,7 +487,7 @@ void KeyValues(const std::wstring& ini, modfiles::ModFacts& mf) {
     const std::wstring def = ini.substr(0, ini.find_last_of(L'\\')) + L"\\d2r_vr.default.ini";
     const bool hasDef = Exists(def);
     L("key values (d2r_vr.ini%s):", hasDef ? " / the shipped d2r_vr.default.ini" : "");
-    const struct { const wchar_t *s, *k; } keys[] = {{L"render", L"no_reshade"}, {L"openxr", L"on"}, {L"openxr", L"runtime_fov"}, {L"openxr", L"fov_override"},
+    const struct { const wchar_t *s, *k; } keys[] = {{L"render", L"no_reshade"}, {L"openxr", L"on"}, {L"openxr", L"runtime_fov"}, {L"openxr", L"fov_override"}, {L"openxr", L"fov_override_centred"},
                                                      {L"openxr", L"flat_distance_m"}, {L"openxr", L"flat_width_m"}, {L"stereo", L"afr"},
                                                      {L"stereo", L"pair_per_tick"}, {L"stereo", L"replay_right"}, {L"hud", L"hide"}, {L"hud", L"bar_place"},
                                                      {L"mode", L"platform"}};

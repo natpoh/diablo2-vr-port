@@ -33,6 +33,8 @@ struct Cap {
     float height = 0.0f, radius = 0.0f;
     bool body = true;           // a monster or NPC; false: an object
     uint32_t cls = 0;
+    uint32_t id = 0;            // [input] vr_body_pick_hand (vr/vr_body_pick.h): the unit's id, looked up again when the game asks
+    bool npc = false;           // ... a body whose MonStats row says NPC (one to talk to, never to attack)
 };
 
 // A body's size from its MonStats row (footprint bytes 8 / 9, pixel height byte 13); known false: no row.

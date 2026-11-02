@@ -1199,69 +1199,9 @@ void LogStack(DWORD tid) {
         LogF("vrcam: watchdog -   %s+0x%llX", m.c_str(), (unsigned long long)(base ? pcs[i] - base : pcs[i]));
     }
 }
-// Every thread's stack to d2rloader\logs\d2r_vr_hang.txt, written straight to the file
-// (the log itself may be what is stuck) with the modules looked up from a list taken
-// beforehand (GetModuleHandleEx takes the loader lock a stuck thread may hold).
-struct Mod { uint64_t base, end; char name[64]; };
-std::vector<Mod> g_mods;
-void ListModules() {   // psapi reads the module list in place: no thread made, no loader lock
-    g_mods.clear();
-    HMODULE mods[1024];
-    DWORD need = 0;
-    if (!K32EnumProcessModules(GetCurrentProcess(), mods, sizeof mods, &need)) return;
-    for (DWORD i = 0; i < need / sizeof(HMODULE) && i < 1024; ++i) {
-        MODULEINFO mi{};
-        if (!K32GetModuleInformation(GetCurrentProcess(), mods[i], &mi, sizeof mi)) continue;
-        Mod m{(uint64_t)mi.lpBaseOfDll, (uint64_t)mi.lpBaseOfDll + mi.SizeOfImage, {}};
-        K32GetModuleBaseNameA(GetCurrentProcess(), mods[i], m.name, sizeof m.name);
-        g_mods.push_back(m);
-    }
-}
-void DumpAllStacks() {
-    ListModules();
-    wchar_t path[MAX_PATH];
-    wcscpy_s(path, g_iniPath);
-    if (wchar_t* slash = wcsrchr(path, L'\\')) *slash = 0;
-    wcscat_s(path, L"\\..\\logs\\d2r_vr_hang.txt");
-    FILE* f = _wfopen(path, L"w");
-    if (!f) return;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-    THREADENTRY32 te{sizeof te};
-    const DWORD me = GetCurrentThreadId(), pid = GetCurrentProcessId();
-    static uint8_t copy[65536];
-    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
-        if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
-        HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
-        if (!th) continue;
-        CONTEXT c{}; c.ContextFlags = CONTEXT_FULL;
-        size_t copied = 0;
-        if (SuspendThread(th) != (DWORD)-1) {
-            if (GetThreadContext(th, &c) && c.Rsp) {
-                MEMORY_BASIC_INFORMATION mbi{};
-                if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
-                    copied = (size_t)std::min<DWORD64>(sizeof copy, (DWORD64)mbi.BaseAddress + mbi.RegionSize - c.Rsp);
-                    memcpy(copy, (void*)c.Rsp, copied);
-                }
-            }
-            ResumeThread(th);
-        }
-        CloseHandle(th);
-        fprintf(f, "thread %lu%s\n", te.th32ThreadID, te.th32ThreadID == pairtime::g_drawThread.load() ? " (draw)" : "");
-        if (!copied) continue;
-        DWORD64 pcs[24];
-        const int n = drawprof::UnwindCopy(c, copy, copied, pcs);
-        for (int i = 0; i < n; ++i) {
-            const Mod* m = nullptr;
-            for (const Mod& x : g_mods) if (pcs[i] >= x.base && pcs[i] < x.end) { m = &x; break; }
-            fprintf(f, "    %s+0x%llX\n", m ? m->name : "?", (unsigned long long)(m ? pcs[i] - m->base : pcs[i]));
-        }
-    }
-    CloseHandle(snap);
-    fclose(f);
-}
 DWORD WINAPI Watchdog(void*) {
     bool told = false;
-    Log("vrcam: replay - watchdog running (no present for 3 s while replaying: every thread's stack to d2r_vr_hang.txt)");
+    Log("vrcam: replay - watchdog running (no present for 3 s while replaying: the fences and the pairs to the log; every thread's stack is the hang watchdog's, vr/diag/crash.cpp)");
     // By the presents' count: g_presentAt, cleared at every pair's start, stayed 0 when the
     // game hung inside a pair with its left present held - no dump (2026-10-09, an area change).
     uint32_t seen = 0;
@@ -1274,7 +1214,6 @@ DWORD WINAPI Watchdog(void*) {
         GuardWatch((pairtime::UsNow() - since) / 1000.0);   // [debug] stall_guard: the queue freed, or the device removed for the report
         if (told) continue;
         told = true;
-        DumpAllStacks();   // first, to its own file: the log may be the stuck thing
         Log("vrcam: watchdog - no present for 3 s while replaying:");
         for (const QFence& x : g_qf)
             LogF("vrcam: watchdog -   queue %p (type %d): our fence signalled %llu, done %llu", (void*)x.q, (int)x.q->GetDesc().Type,

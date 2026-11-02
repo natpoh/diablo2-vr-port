@@ -16,7 +16,7 @@ namespace hsetview {
 namespace {
 
 constexpr uint32_t kAction[4] = {D2RVR_ACT_VIEW_1, D2RVR_ACT_VIEW_2, D2RVR_ACT_VIEW_5, D2RVR_ACT_VIEW_4};
-constexpr directinput::Source kSource = directinput::kSrcOther7;
+constexpr directinput::Source kSource = directinput::kSrcPanelView;   // (the overlay's: it holds the action in VR F1 - F3 too)
 constexpr ULONGLONG kHoldMs = 120;
 
 std::atomic<uint32_t> g_held{0};

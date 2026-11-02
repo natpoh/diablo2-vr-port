@@ -25,6 +25,7 @@
 
 #include "knock_props.h"
 #include "melee_boxes.h"
+#include "own_models.h"
 #include "skeletons.h"
 #include "world_walls.h"
 
@@ -106,7 +107,7 @@ struct Result {
     const char* why = "";
     std::vector<worldwalls::Box> walls;   // render metres
     worldwalls::Counts counts;
-    unsigned own = 0;                     // pieces hanging on the hero, left out
+    unsigned own = 0;                     // pieces hanging on the hero or of our own models (the belt's bottles), left out
     unsigned units = 0, unitsKnown = 0;   // pieces of units (an NPC, a monster, a merc, an item), left out; the units' skeletons known
     float feet[3] = {};                   // render metres
     double ms = 0;
@@ -128,7 +129,9 @@ Result Work(const Request& r) {
     const char* unitsWhy = "";
     if (!skel::UnitEntities(&units, &unitsWhy)) units.clear();
     res.unitsKnown = (unsigned)units.size();
-    if (!knockprops::LevelBoxes(r.hero, r.upm, kScanRadiusM, &KnowsPreset, &es, &why, ownRoot, &res.own, &units, &res.units)) {
+    static std::vector<uint32_t> ours;   // (the models we draw as the game's own - the belt's bottles, what a hand holds: his own, never walls; the scan's worker only)
+    ownmodels::Copy(&ours);
+    if (!knockprops::LevelBoxes(r.hero, r.upm, kScanRadiusM, &KnowsPreset, &es, &why, ownRoot, &res.own, &units, &res.units, &ours)) {
         res.why = why;
         return res;
     }
@@ -362,7 +365,7 @@ void Tick(const Frame& f) {
         using worldwalls::Why;
         LogF("world contact: half a minute - %u scans (%.1f ms each, worst %.1f%s%s); the last: %u pieces near, %u of them in the solids catalogue (%u prefabs' by their id alone, %u laid stretched: "
              "the renderer's box not the mesh's), %u laid by their own box (game objects not in it %u, no mesh %u), %u parts -> %u walls in %u bodies (%u of them pieces joined) "
-             "(left out: the hero's own gear %u, units' (NPCs, monsters, mercs, items: %u skeletons) %u, movable props %u, foliage %u, not in the catalogue and big %u or moving %u, tiny %u; parts low %u, high %u, round the hero %u, not boxes %u, beyond the nearest %u); "
+             "(left out: the hero's own gear and our models on him (the belt's bottles) %u, units' (NPCs, monsters, mercs, items: %u skeletons) %u, movable props %u, foliage %u, not in the catalogue and big %u or moving %u, tiny %u; parts low %u, high %u, round the hero %u, not boxes %u, beyond the nearest %u); "
              "the weapon %u steps with walls (%.1f us each, worst %.0f), %u strikes, %u back into the hand; the bare hands %u steps (%.1f us each), %u held at a wall, %u back to the controller",
              g_scans, g_scans ? g_scanMs / g_scans : 0.0, g_scanWorst, g_failed ? ", failed: " : "", g_failed ? g_lastWhy : "", k.seen, k.matched, k.byId, k.stretched, k.objects,
              k.why[(int)Why::kUnknown], k.why[(int)Why::kNoParts], k.parts, k.kept, k.bodies, k.joined, g_lastOwn, g_lastUnitsKnown, g_lastUnits, k.why[(int)Why::kMovable], k.why[(int)Why::kFoliage], k.why[(int)Why::kBig], k.why[(int)Why::kMoving],

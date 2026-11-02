@@ -38,6 +38,7 @@ struct Settings {
     float massScale = 1.0f;     // [weight] monster_weight_pct / 100
     bool balance = true;        // [weight] grab_balance: held standing and pulled, it steps after the pull (only a pull its legs cannot catch takes it off its feet)
     float strength = 1.0f;      // [weight] strength / 100: the hands that hold a body (each at most D2RF_HAND_MAX_FORCE x it - a body's weight shows in them)
+    bool deathFlatOn = false;   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, along the arc of the game's own swing (skel::WeaponTrail)
     bool deathOn = false;       // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell (vr/death_ragdoll.h; and the bodies)
 };
 void Configure(const Settings& s);
@@ -46,7 +47,8 @@ void Configure(const Settings& s);
 void SetFormStrength(float factor);
 bool Wanted();        // either of them on
 bool ThrowWanted();
-bool DeathWanted();   // [weight] death_ragdoll: the touch's scan lists the dying and the dead (Tick's dead)
+bool DeathWanted();   // [weight] death_ragdoll (F4) / death_ragdoll_flat (the other views): the touch's scan lists the dying and the dead (Tick's dead)
+bool DeathFlatWanted();   // [weight] death_ragdoll_flat: meleetouch::DeathFlatTick keeps the bodies outside F4 for it
 
 // The weight model's thread: a push it gave body id (N s, render world; point in it); swingMs the weapon's own speed into the body, heftKg the steel and the arm
 // behind it (vr/knock_trigger.h: a blow needs both a fast swing and a hard push).

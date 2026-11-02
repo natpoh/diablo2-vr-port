@@ -1224,6 +1224,28 @@ void RemoteCopiesFrame() {
     g_remoteDrawn.erase(std::remove_if(g_remoteDrawn.begin(), g_remoteDrawn.end(), [](const RemoteDrawn& r) { return r.dead; }), g_remoteDrawn.end());
 }
 
+// ---- the item models we place, told to the readers of the level (vr/own_models.h) ----
+// [weight] world_contact's scan takes the level's entities with a parent for its pieces: our instances' meshes hang on a root of ours with no parent, never on the
+// hero, so the belt's bottles were laid by their renderer's boxes as walls round his hips and the weapons stopped on them (Serg, 0.197.1, a weapon in each hand).
+// Every entity of the belt's bottles, the emptied ones, the items in a hand and the other players' copies, five times a second (the scan reads twice a second).
+void PublishOwnModels() {
+    static ULONGLONG at = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (at && now - at < 200) return;
+    at = now;
+    std::vector<uint32_t> ents;
+    const auto add = [&](void* inst) {
+        uint32_t e[64];
+        const int n = Entities(inst, e, 64);
+        ents.insert(ents.end(), e, e + n);
+    };
+    for (const Bottle& b : g_bottles) if (!b.dead) add(b.inst.p);
+    for (const Loose& l : g_loose) if (!l.dead) add(l.inst.p);
+    for (const HeldCopy& c : g_copies) if (!c.dead) add(c.inst.p);
+    for (const RemoteDrawn& r : g_remoteDrawn) if (!r.dead) add(r.inst.p);
+    ownmodels::Publish(std::move(ents));
+}
+
 // ---- [sky] game_sky: our painted sky as the game's own dome (docs/game_sky_entity.md) ----
 // A UnitDefinition of ours (tools/game_sky/make_sky_dome.py: the dome model, UnlitMaterial with our act 1 panorama in BC6H, lightMask 0,
 // shadowMask 0) in the mod's data, loaded by the game's own loader and placed as the belt's potions are; then laid every frame with its
@@ -2038,6 +2060,7 @@ void Work() {
     BeltFrame(g_fullBody.load());
     if (g_set.weightGrabItems.load() || !g_copies.empty()) HeldItemFrame(g_fullBody.load());   // [weight] grab_items: the copy of an item taken off the ground
     if (g_remoteCopiesOn.load()) RemoteCopiesFrame();   // [multiplayer] pose_share_held: the other players' potions and items
+    PublishOwnModels();   // ([weight] world_contact: the belt's bottles and what the hands hold are never walls)
     SkyDomeFrame();   // [sky] game_sky: our sky as the game's own dome
     CaveDomeFrame();  // [sky] game_dome_caves: a black dome round the eye underground
     CeilingFrame();   // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock

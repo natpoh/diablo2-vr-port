@@ -34,6 +34,8 @@ bool FullBody() { return false; }
 // VR F1, F2, F3 - the views BodyWalk's input belongs to (viewgate::Flat): the only place outside F4 where direct input acts, and only
 // for the left stick's walk ([direct] walk_flat_views).
 bool FlatViews() { return g_set.platform.load() == 1 && !FullBody(); }
+// The VR view's number, F1 = 1 ... F4 = 4 (vrView: 3 is the table, F3), 0 in the flat game: the overlay's Settings pages are the view's (viewgate::Number).
+int VrViewNow() { return g_set.platform.load() == 1 ? g_set.vrView.load() : 0; }
 // First person whose hero the game animates (flat, or VR view 3): turned only
 // about the vertical, mouse and W A S D, the interface in the picture.
 #if D2RVR_FIRST_PERSON

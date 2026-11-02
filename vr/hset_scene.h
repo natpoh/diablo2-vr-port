@@ -250,11 +250,13 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text(uitext::Tr("vr.hset.title", "HEADSET SETTINGS"), {32, 22, 640, 50}, Face::Bold, Role::Accent);
         b.Text("D2R VR", {760, 22, 232, 50}, Face::Small, Role::Quiet, Align::Center);
     }
-    for (int i = 0; i < kTabCount; ++i) b.Button(kTab(i), TabName(i), {Kind::Tab, TabPage(i), 0}, TabOf(m.page) == i, true, Role::Text, Part::Tab);
-    if (IsWorldPage(m.page))   // -- the World tab's four pages: a button each, the one shown lit (a flick goes along them too) ----------------------------
-        for (int i = 0; i < kWorldPages; ++i)
-            b.Button(kWorldSub(i), PageName(kPageWorld + i), {Kind::Tab, kPageWorld + i, 0}, m.page == kPageWorld + i, true,
-                     m.page == kPageWorld + i ? Role::Accent : Role::Text, Part::Choice);
+    for (int i = 0; i < kTabCount; ++i)   // (the view's tabs only: VR F1 - F3 leave out F4's body, hset_defs.h TabShown)
+        if (TabShown(i, m.View())) b.Button(TabRect(i, m.View()), TabName(i), {Kind::Tab, TabPage(i), 0}, TabOf(m.page) == i, true, Role::Text, Part::Tab);
+    if (HasSubRow(m.page)) {   // -- a tab of several pages (World's four, Controls' two): a button each, the one shown lit (a flick goes along them too) ------
+        const int first = SubFirst(m.page), n = SubCount(m.page);
+        for (int i = 0; i < n; ++i)
+            b.Button(kSubBtn(i, n), PageName(first + i), {Kind::Tab, first + i, 0}, m.page == first + i, true, m.page == first + i ? Role::Accent : Role::Text, Part::Choice);
+    }
 
     const bool canEdit = m.ready && !m.Busy();
     if (m.page == kPageVideo) {
@@ -406,9 +408,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     }
     const int pg = m.page, step = RowStep(pg);
     const bool close = CloseRows(pg);   // seven rows: the two lines of a row's name a little smaller and closer
-    const bool world = IsWorldPage(pg);   // under the World pages' buttons: closer still, the name in the normal face (D2R VR Settings' longer labels fit it)
+    const bool world = HasSubRow(pg);   // under a tab's page buttons (World, Controls): closer still, the name in the normal face (D2R VR Settings' longer labels fit it)
     for (int r = 0; r < kRowsMax; ++r) {
-        const int key = KeyAt(pg, r);
+        const int key = KeyAt(pg, r, m.View());   // (the view's rows: VR F1 - F3 leave out F4's, hset_defs.h KeyShown)
         if (key < 0) break;
         const Def& d = kDefs[key];
         const int y = RowY(r, pg);

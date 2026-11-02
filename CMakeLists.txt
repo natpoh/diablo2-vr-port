@@ -291,6 +291,10 @@ target_compile_options(direct_hit_mode_test PRIVATE /utf-8 /W4 /EHsc /permissive
 add_executable(melee_direct_client_test cleanroom/tests/melee_direct_client_test.cpp)
 target_include_directories(melee_direct_client_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(melee_direct_client_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# the hang watchdog's rule (vr/diag/hang_watch.h): stacks at 5 s without a present, a minidump at 15 s, a long frame that came back said so, pure.
+add_executable(hang_watch_test cleanroom/tests/hang_watch_test.cpp)
+target_include_directories(hang_watch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(hang_watch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(melee_touch_test cleanroom/tests/melee_touch_test.cpp)
 target_include_directories(melee_touch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(melee_touch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1003,6 +1007,10 @@ target_compile_options(room_walk_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(walk_flat_test cleanroom/tests/walk_flat_test.cpp)
 target_include_directories(walk_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(walk_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Why W A S D do not walk in flat F2 / F3 (vr/flat_keys_why.h): the verdict's order (the plugin's reasons before the game's) and its log line.
+add_executable(flat_keys_why_test cleanroom/tests/flat_keys_why_test.cpp)
+target_include_directories(flat_keys_why_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(flat_keys_why_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Belt potions in VR F1, F2, F3 ([direct] belt_flick_flat_views, vr/belt_flick.h): the left trigger held and a flick of a thumbstick - the directions,
 # one potion per flick, the middle in between, the trigger, both sticks, a diagonal.
 add_executable(belt_flick_test cleanroom/tests/belt_flick_test.cpp)
@@ -1233,6 +1241,10 @@ target_compile_options(flat_shift_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_body_test cleanroom/tests/flat_body_test.cpp)
 target_include_directories(flat_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(flat_body_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [input] vr_body_pick, vr_body_pick_hand (vr/vr_body_pick.h, issue #15): the same capsules in VR - which ray each view picks along, what F4's hand answers.
+add_executable(vr_body_pick_test cleanroom/tests/vr_body_pick_test.cpp)
+target_include_directories(vr_body_pick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(vr_body_pick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(portal_oval_test cleanroom/tests/portal_oval_test.cpp)
 target_include_directories(portal_oval_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(portal_oval_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

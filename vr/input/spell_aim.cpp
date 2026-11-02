@@ -441,6 +441,18 @@ uintptr_t NearbySewerWarp() {
 }
 
 thread_local bool t_touchAnswer = false;   // [debug] melee_press_trace: the lookup was answered with the touched monster
+
+// [input] vr_body_pick_hand (vr/vr_body_pick.h, F4): the resolver's two lookups and the map click's answer the unit the aiming hand points at - a hostile
+// monster for an attack, an object or an NPC for interact (skill 357) - after everything above has had its say (leap, smite, touch, a directed cast's none).
+// The cast flags' look (0x145534) only swaps the target the game found itself: none found, none - the cast stays in place, the hero never runs after what
+// only the hand picked. None of ours: the game's answer.
+void* HandAnswer(uintptr_t ret, int skill, void* game) {
+    if (!g_set.vrBodyPickHand.load() || !viewgate::F4()) return game;
+    if (ret != g_spellTargetRet && ret != g_spellHoverRet && ret != g_clickTargetRet && !(ret == g_dispatchTargetRet && game)) return game;
+    if (skill < 0 && g_heroUnit.load()) skill = SpellSkill(g_heroUnit.load());
+    const uintptr_t hand = VrHandTarget(vrbody::AskOf(skill));
+    return hand ? (void*)hand : game;
+}
 int LookupOf(uintptr_t ret) {
     return ret == g_dispatchTargetRet ? presstrace::kDispatch : ret == g_spellTargetRet ? presstrace::kResolver : ret == g_spellHoverRet ? presstrace::kHover
          : ret == g_clickTargetRet ? presstrace::kClick : -1;
@@ -451,7 +463,7 @@ void* SpellTargetFor(void* mgr, int skill, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(skill);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellTarget(mgr, skill);   // asked anyway while a shot is traced: to say what the game found
-        return DispatchAnswer(off ? nullptr : t, off, t);
+        return DispatchAnswer(off ? nullptr : HandAnswer(ret, skill, t), off, t);
     }
     if (shieldsmite::Casting()) {   // [gameplay] shield_smite: the monster the shield touched is the cast's target
         if (const int where = ret == g_spellTargetRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
@@ -461,7 +473,7 @@ void* SpellTargetFor(void* mgr, int skill, uintptr_t ret) {
     if ((g_spellCast.directed && ret == g_spellTargetRet) || ClickTargetOff(ret)) return nullptr;
     void* t = OrigSpellTarget(mgr, skill);
     if (!t && skill == kInteractSkill) t = reinterpret_cast<void*>(NearbySewerWarp());   // the Kurast sewer stairs, standing
-    return t;
+    return HandAnswer(ret, skill, t);   // [input] vr_body_pick_hand
 }
 void* HookSpellTarget(void* mgr, int skill) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
@@ -477,7 +489,7 @@ void* SpellHoverFor(int index, uintptr_t ret) {
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(-1);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellHover(index);
-        return DispatchAnswer(off ? nullptr : t, off, t);
+        return DispatchAnswer(off ? nullptr : HandAnswer(ret, -1, t), off, t);
     }
     if (shieldsmite::Casting()) {   // [gameplay] shield_smite, as HookSpellTarget
         if (const int where = ret == g_spellHoverRet ? 1 : ret == g_clickTargetRet ? 2 : 0)
@@ -485,7 +497,7 @@ void* SpellHoverFor(int index, uintptr_t ret) {
     }
     if (void* t = TouchedTarget(ret)) { t_touchAnswer = true; return t; }
     if ((g_spellCast.directed && ret == g_spellHoverRet) || ClickTargetOff(ret)) return nullptr;
-    return OrigSpellHover(index);
+    return HandAnswer(ret, -1, OrigSpellHover(index));   // [input] vr_body_pick_hand
 }
 void* HookSpellHover(int index) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
@@ -656,7 +668,7 @@ void InstallSlotSkillHook() {
 }
 
 void InstallSpellAimHooks() {
-    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load()) || !OrigAttackPoint) return;   // the point's hook in first
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load()) || !OrigAttackPoint) return;   // the point's hook in first
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
         !Matches(RVA_CTRL_HANDLER, kSigCtrlHandler, sizeof kSigCtrlHandler) || !Matches(RVA_CTRL_SKILL, kSigCtrlSkill, sizeof kSigCtrlSkill) ||

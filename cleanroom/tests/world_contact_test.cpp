@@ -8,8 +8,9 @@
 // weapon bounces a little off and follows the controller back; a wall turned 45 degrees stops it on its own face; a wall that comes up round the weapon
 // leaves it alone until it is clear (no throw); a controller far past the wall puts the weapon back in the hand through it, once; a bare hand stays on
 // the face and slides along it, goes round a corner by the side face, never through a thin wall, and goes back to its controller past the return gap;
-// the renderer's pieces judged as walls (vr/world_walls.h: a wall kept, a cup, a floor, a canopy over the hero left out; a turned piece's box); and the cost of a
-// step against a room of walls.
+// the renderer's pieces judged as walls (vr/world_walls.h: a wall kept, a cup, a floor, a canopy over the hero left out; a turned piece's box); the belt's bottles
+// (our models drawn as the game's own: ownbody::Ours) never walls - a blade in each hand swept through their places is not stopped; and the cost of a step against
+// a room of walls.
 
 #include "hold.h"
 #include "walls.h"
@@ -119,8 +120,8 @@ Run Swing(hh::Kind kind, F path, double secs, const std::vector<hw::Wall>& walls
 		r.farSide = std::max(r.farSide, past);
 		r.tips.push_back(tip);
 		if (g_table && name)
-			std::printf("  %-20s t %.3f  ctl (%.2f %.2f %.2f)  tip (%.3f %.3f %.3f)  walls %d depth %.1f cm approach %.2f face %d%s\n", name, t, in[0].pose.pos.x, in[0].pose.pos.y,
-			            in[0].pose.pos.z, tip.x, tip.y, tip.z, c.walls, c.depth * 100, c.approach, c.face, c.returned ? " RETURNED" : "");
+			std::printf("  %-20s t %.3f  ctl (%.2f %.2f %.2f)  tip (%.3f %.3f %.3f)  walls %d depth %.1f cm approach %.2f face %d%s%s\n", name, t, in[0].pose.pos.x, in[0].pose.pos.y,
+			            in[0].pose.pos.z, tip.x, tip.y, tip.z, c.walls, c.depth * 100, c.approach, c.face, c.returned ? " RETURNED" : "", c.ignored ? " left alone" : "");
 		lastTip = tip;
 	}
 	r.returns = h.WallReturns();
@@ -585,6 +586,100 @@ void TestWorldWalls() {
 	       grown ? grown->half[0] : 0.0f, grown ? grown->half[1] : 0.0f);
 }
 
+// The belt's bottles (Serg, 0.197.1, a weapon in each hand: "оружие стукается об коллизию бутылочек"): the models we draw as the game's own (vr/engine/engitem.cpp) are
+// placed under a root of ours with no parent, so ownbody::HangsOn never finds them on the hero, and their renderer's box made them walls round his hips. With their
+// entities known (vr/own_models.h, ownbody::Ours) they are left out with his own gear: a blade in each hand - a sword in the right, an axe in the left - swept
+// down through the bottles' places goes through untouched; without that, the same sweep stops on them. A torch beside him (a game object of the level) is still a wall.
+void TestBeltBottles() {
+	const float upm = 4.0f, feet[3] = { 0, 0, 0 };
+	const uint32_t hero = 0x00005u;
+	struct Ent { uint32_t id, parent; float x, y, z, sx, sy, sz; };
+	// four bottles on an arc round his hips, each our root (no parent) and its mesh under it - its box as the renderer may have it (taller than the glass);
+	// his sword on his back under his back part; a torch a metre off under a preset root
+	std::vector<Ent> ents {
+		{ 0x00091u, 0x100090u, 0.30f, 0.75f, -0.05f, 0.10f, 0.40f, 0.10f }, { 0x00093u, 0x00092u, 0.28f, 0.75f, 0.12f, 0.10f, 0.40f, 0.10f },
+		{ 0x00095u, 0x00094u, -0.30f, 0.75f, -0.05f, 0.10f, 0.40f, 0.10f }, { 0x00097u, 0x00096u, -0.28f, 0.75f, 0.12f, 0.10f, 0.40f, 0.10f },
+		{ 0x00021u, 0x00020u, 0.0f, 0.9f, 0.25f, 0.10f, 0.9f, 0.10f },
+		{ 0x00031u, 0x00030u, 1.0f, 0.0f, -1.0f, 0.15f, 1.6f, 0.15f },
+	};
+	auto parentOf = [&](uint32_t index, uint32_t* parent) {
+		switch (index) {
+		case 0x00090: case 0x00092: case 0x00094: case 0x00096: *parent = 0xFFFFFu; return true;   // our roots: no parent
+		case 0x00020: *parent = 0x100005u; return true;                                            // his back part
+		case 0x00030: *parent = 0xFFFFFu; return true;                                             // a preset root
+		default: return false;
+		}
+	};
+	// the scan's word: what engitem publishes is every entity of its instances, by index, sorted
+	const std::vector<uint32_t> ours { 0x00090u, 0x00091u, 0x00092u, 0x00093u, 0x00094u, 0x00095u, 0x00096u, 0x00097u };
+	EXPECT(ownbody::Ours(0x00091u, 0x100090u, ours.data(), ours.size(), parentOf), "a bottle's mesh (under our root, another version of its id) is ours");
+	EXPECT(ownbody::Ours(0x00090u, 0xFFFFFu, ours.data(), ours.size(), parentOf), "our root itself is ours");
+	EXPECT(!ownbody::Ours(0x00031u, 0x00030u, ours.data(), ours.size(), parentOf), "the torch is not");
+	EXPECT(!ownbody::Ours(0x00091u, 0x100090u, nullptr, 0, parentOf), "nothing published: nothing is ours");
+	EXPECT(!ownbody::HangsOn(0x100090u, hero, parentOf), "a bottle never hangs on him by its parents (why it was a wall)");
+	auto lay = [&](bool filter) {
+		std::vector<worldwalls::Entity> es;
+		for (const Ent& n : ents) {
+			if (ownbody::HangsOn(n.parent, hero, parentOf)) continue;
+			if (filter && ownbody::Ours(n.id, n.parent, ours.data(), ours.size(), parentOf)) continue;
+			worldwalls::Entity e;
+			e.id = n.id;
+			const float m[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, n.x * upm, n.y * upm, n.z * upm, 1 };
+			std::memcpy(e.world, m, sizeof m);
+			const float lo[3] = { -n.sx * 0.5f * upm, 0, -n.sz * 0.5f * upm }, hi[3] = { n.sx * 0.5f * upm, n.sy * upm, n.sz * 0.5f * upm };
+			std::memcpy(e.lo, lo, sizeof lo);
+			std::memcpy(e.hi, hi, sizeof hi);
+			es.push_back(e);
+		}
+		worldsolids::Catalog cat;   // (none: each is laid by its own box - a game object not in it)
+		worldwalls::Counts c;
+		std::vector<hw::Wall> walls;
+		for (const worldwalls::Box& b : worldwalls::Choose(es, cat, upm, feet, &c)) {
+			hw::Wall w;
+			w.c = { b.c[0], b.c[1], b.c[2] };
+			for (int i = 0; i < 3; ++i) w.axis[i] = { b.axis[i][0], b.axis[i][1], b.axis[i][2] };
+			w.half = { b.half[0], b.half[1], b.half[2] };
+			w.id = b.id;
+			w.body = b.body;
+			walls.push_back(w);
+		}
+		return walls;
+	};
+	const std::vector<hw::Wall> before = lay(false), after = lay(true);
+	std::printf("belt bottles: %zu walls without our models known (the four bottles and the torch), %zu with them\n", before.size(), after.size());
+	EXPECT(before.size() == 5, "without them the bottles are walls (the scene is what Serg met): %zu", before.size());
+	EXPECT(after.size() == 1, "with them only the torch is: %zu", after.size());
+	// a blade in each hand pointing down, its tip at the bottles' middle height, swept from ahead of the hips to behind them along the bottles' line (2.5 m/s)
+	const Q down = QFromAxisAngle({ 1, 0, 0 }, -1.5707963);
+	int stoppedBefore = 0;
+	for (int side = 0; side < 2; ++side) {
+		const double x = side == 0 ? 0.29 : -0.29;
+		const hh::Kind kind = side == 0 ? hh::Kind::Sword : hh::Kind::Axe;
+		const char* name = side == 0 ? "right sword" : "left axe";
+		const double y = 0.95 - RestTipZ(kind);   // (the tip's z at rest: minus its length)
+		auto path = [x, y, down](double t) { return Pose { { x, y, -0.5 + 1.0 * Smooth(t / 0.4) }, down }; };
+		const Run free = Swing(kind, path, 0.6, {}, false);
+		const Run old = Swing(kind, path, 0.6, before, true, name);
+		const Run now = Swing(kind, path, 0.6, after, true, name);
+		int through = 0;   // the free sweep's tip inside a bottle's box: the steps it passes through their places
+		for (const V3& t : free.tips)
+			for (size_t k = 0; k + 1 < before.size(); ++k)   // (the torch is the last)
+				if (Inside(before[k], t) > 0) { ++through; break; }
+		double apart = 0;   // the swept tip from the one with nothing in its way, at every step
+		for (size_t i = 0; i < free.tips.size() && i < now.tips.size(); ++i) apart = std::max(apart, Len(Sub(free.tips[i], now.tips[i])));
+		std::printf("belt bottles, %s: its tip through the bottles' places %d steps; as before %d steps on a bottle (%.2f m/s into it, %d left alone inside one); now %d steps on a "
+		            "wall, %d left alone, the tip at most %.2f mm off the free sweep's\n", name, through, old.contactSteps, old.maxApproach, old.ignoredSteps, now.contactSteps,
+		            now.ignoredSteps, apart * 1000);
+		stoppedBefore += old.contactSteps > 0;
+		EXPECT(through >= 4, "%s: the sweep goes through the bottles' places: %d steps", name, through);
+		EXPECT(now.contactSteps == 0 && now.ignoredSteps == 0, "%s: now no wall is in its way: %d steps on one, %d inside one", name, now.contactSteps, now.ignoredSteps);
+		EXPECT(apart < 0.001, "%s: it sweeps as with nothing in its way: %.2f mm off", name, apart * 1000);
+	}
+	// (the sword's long blade comes at so small a box over its corner - in at its top and its front at once - and the walls leave it alone inside: heft/walls.h finds no
+	// face it came in by; the axe's short blade is held on the bottle's face, as Serg felt)
+	EXPECT(stoppedBefore >= 1, "as before the bottles stop a blade: %d of 2", stoppedBefore);
+}
+
 }   // namespace
 
 int main(int argc, char** argv) {
@@ -598,6 +693,7 @@ int main(int argc, char** argv) {
 	TestReturn();
 	TestHand();
 	TestWorldWalls();
+	TestBeltBottles();
 	TestSteppedWall();
 	TestCost();
 	if (g_fails) {

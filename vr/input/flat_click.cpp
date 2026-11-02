@@ -1,5 +1,6 @@
 // vr/input/flat_click.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M10); what it gives: vr/input/input.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../death_ragdoll.h"   // UnitRowFlags: a monster's MonStats row flags (an NPC: [input] vr_body_pick_hand)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -72,11 +73,13 @@ bool FloorFilter(uint64_t* f) noexcept {
 // [input] flat_body_pick (vr/flat_body.h, from sajmonsoft's flat fork): the monsters, NPCs and objects round the hero as upright capsules,
 // read again at most ten times a second on the game's thread (the mouse's point asks every frame). The client's unit hash (unit_scan.h,
 // the walk hit by touch uses), a body's size from its MonStats row (0x975B0), an object's from its Objects.txt id (flat_pick_obj.inc).
+// [input] vr_body_pick / vr_body_pick_hand use the same list in VR (vr/vr_body_pick.h), from the mouse's point and the controller's lookups.
 namespace flatobj {
 #include "../flat_pick_obj.inc"
 }
-struct FlatBodies { flatbody::Cap c[flatbody::kBodyCap + flatbody::kObjCap]; int n = 0; ULONGLONG at = 0; };
-FlatBodies g_flatBodies;   // the game's thread only
+struct FlatBodies { flatbody::Cap c[flatbody::kBodyCap + flatbody::kObjCap]; int n = 0; ULONGLONG at = 0; float floorY = 0.0f; };
+FlatBodies g_flatBodies;   // under g_flatBodiesLock (the mouse's point and the controller's lookups ask it)
+SRWLOCK g_flatBodiesLock = SRWLOCK_INIT;
 bool FlatStatsRow(uint8_t bank, uint32_t cls, uint8_t f[16]) noexcept {
     const uintptr_t fn = d2rsig::Addr(RVA_FLAT_MONSTATS);
     uintptr_t row = 0;
@@ -95,8 +98,10 @@ void FlatBodyScan() {
     if (!table || !LookAtNow(look)) return;
     // the look-at is the hero as drawn: his place on the grid is it less its height's push (flat_ground.h); every unit on his floor
     const float floorY = look[1], gx = look[0] - floorY * flatground::kShear, gz = look[2] - floorY * flatground::kShear;
+    s.floorY = floorY;
     auto read = [](void* d, uintptr_t src, size_t n) { return src >= 0x10000 && SafeRead(d, (const void*)src, n); };
-    struct RowMemo { uint32_t key = ~0u; uint8_t f[3] = {}; bool ok = false; };
+    auto readv = [](uintptr_t src, auto& v) { return src >= 0x10000 && SafeRead(&v, (const void*)src, sizeof v); };
+    struct RowMemo { uint32_t key = ~0u; uint8_t f[3] = {}; bool ok = false, npc = false; };
     static RowMemo rows[512];
     // keep the nearest `cap` of a kind in [base, base + count)
     auto keep = [&](int base, int& count, int cap, const flatbody::Cap& c) {
@@ -112,12 +117,13 @@ void FlatBodyScan() {
         if (d2 < farD) s.c[farthest] = c;
     };
     int bodies = 0, objects = 0;
-    unitscan::EachUnit(read, table, unitscan::kMonster, [&](uintptr_t, const unitscan::Unit& u) {
+    unitscan::EachUnit(read, table, unitscan::kMonster, [&](uintptr_t at, const unitscan::Unit& u) {
         const uint32_t mode = unitscan::Field32(u, unitscan::kOffMode);
         if (mode == 0 || mode == 12) return true;   // dying, dead
         flatbody::Cap c;
         if (!unitscan::Place(read, u, &c.x, &c.z)) return true;
         c.cls = unitscan::Field32(u, unitscan::kOffClass);
+        c.id = unitscan::Field32(u, unitscan::kOffId);
         const uint8_t bank = u.b[unitscan::kOffBank];
         RowMemo& m = rows[(c.cls * 3u + bank) & 511u];
         const uint32_t key = (uint32_t)bank << 16 | (c.cls & 0xFFFF);
@@ -126,8 +132,11 @@ void FlatBodyScan() {
             m.key = key;
             m.ok = FlatStatsRow(bank, c.cls, f);
             if (m.ok) { m.f[0] = f[8]; m.f[1] = f[9]; m.f[2] = f[13]; }
+            uint32_t flags = 0;   // its MonStats row's flags (not the size row above, death_ragdoll.h): an NPC is one to talk to
+            m.npc = deathragdoll::UnitRowFlags(at, readv, &flags) && (flags & deathragdoll::kRowNpc);
         }
         flatbody::BodySize(m.f[0], m.f[1], m.f[2], m.ok, &c.height, &c.radius);
+        c.npc = m.npc;
         c.floorY = floorY;
         keep(0, bodies, flatbody::kBodyCap, c);
         return true;
@@ -148,12 +157,25 @@ void FlatBodyScan() {
         c.radius = flatbody::ObjRadius(packed);
         c.body = false;
         c.cls = cls;
+        c.id = unitscan::Field32(u, unitscan::kOffId);
         keep(flatbody::kBodyCap, objects, flatbody::kObjCap, c);
         return true;
     });
     // one list: the bodies, then the objects
     for (int i = 0; i < objects; ++i) s.c[bodies + i] = s.c[flatbody::kBodyCap + i];
     s.n = bodies + objects;
+}
+
+// The first body or object the ray meets before tFloor (flat_body.h Pick: the cell its body stands for), the list read again first when old.
+// *met: that capsule; *n: how many stood round the hero.
+bool BodyCell(const float o[3], const float d[3], float tFloor, flatbody::Hit* hit, flatbody::Cap* met, int* n) {
+    AcquireSRWLockExclusive(&g_flatBodiesLock);
+    FlatBodyScan();
+    const bool ok = g_flatBodies.n > 0 && flatbody::Pick(g_flatBodies.c, g_flatBodies.n, o, d, tFloor, hit);
+    if (ok) *met = g_flatBodies.c[hit->index];
+    *n = g_flatBodies.n;
+    ReleaseSRWLockExclusive(&g_flatBodiesLock);
+    return ok;
 }
 
 // [input] portal_auto (vr/portal_auto.h, from sajmonsoft's flat fork): while FlatPortalFrame aims at a portal, the game's mouse point is its place
@@ -172,6 +194,89 @@ bool PortalUnderPointer() {
     return hover && SafeRead(tc, hover, sizeof tc) && tc[0] == 2 && PortalClass(tc[1]);
 }
 
+// [input] vr_body_pick (vr/vr_body_pick.h): VR, the game's mouse point - F1 - F3's pointer and crosshair, F4's shift + click along the hand ([bow]
+// mode 2) - by a body too, along the very ray the game's mouse code was just handed (d2rcam's LastPick says whose: our camera through the pixel, or
+// the aim's ray override; the game's own camera, nothing). The ground the ray meets: the game's floor world, as flat's. Nothing else of flat's here.
+bool VrMouseGround(void* mgr, float* x, float* y, uint64_t pixel, bool gameOk) {
+    if (!x || !y || !mgr || !g_enabled.load() || !g_set.vrBodyPick.load()) return gameOk;
+    float px[2];
+    memcpy(px, &pixel, sizeof px);
+    vrbody::MouseAsk a;
+    a.platform = 1;
+    a.view = viewgate::Number();
+    a.vrKey = true;
+    a.menu = gamestate::MenuOpen();
+    d2rcam::LastPickInfo li{};
+    if (d2rcam::LastPick(&li)) {
+        a.pickSeen = vrbody::SamePick(px[0], px[1], li.px, li.py, GetTickCount64() - li.at);
+        a.pickBy = li.by;
+    }
+    const vrbody::Ray ray = vrbody::MouseRay(a);
+    float o[3], d[3];
+    if (ray == vrbody::Ray::Aim) {
+        for (int i = 0; i < 3; ++i) { o[i] = g_aimO[i].load(); d[i] = g_aimD[i].load(); }
+    } else if (ray != vrbody::Ray::Pixel || !d2rcam::PickRay(px[0], px[1], o, d)) {
+        return gameOk;
+    }
+    uint64_t filter = 0;
+    float floor[3] = {NAN, NAN, NAN};
+    const bool floorOk = FloorFilter(&filter) && MouseRayHit(mgr, &filter, pixel, 0, floor);
+    const float tFloor = floorOk ? (floor[0] - o[0]) * d[0] + (floor[1] - o[1]) * d[1] + (floor[2] - o[2]) * d[2] : INFINITY;
+    flatbody::Hit hit;
+    flatbody::Cap c;
+    int n = 0;
+    if (!BodyCell(o, d, tFloor, &hit, &c, &n)) return gameOk;
+    *x = hit.cellX;
+    *y = hit.cellZ;
+    static ULONGLONG told = 0;
+    if (GetTickCount64() - told > 10000) {
+        told = GetTickCount64();
+        LogF("vrcam: VR F%d: a %s (class %u) under the %s picked by its body, not its feet ([input] vr_body_pick; %d bodies and objects round the hero)",
+             a.view, c.body ? (c.npc ? "NPC" : "monster") : "object", c.cls, ray == vrbody::Ray::Aim ? "hand's aim" : "pointer", n);
+    }
+    return true;
+}
+
+// [input] vr_body_pick_hand (vr/vr_body_pick.h): F4, what the aiming hand points at (HandRay) - the first body or object along it before the hero's
+// floor as drawn. One pick every 30 ms at most (the interact target is asked every frame); the server's verdict asked of the one met only.
+bool HandRay(float* o, float* d, float* dRaw = nullptr);   // (vr/input/aim.cpp)
+uintptr_t VrHandTarget(vrbody::Ask ask) {
+    vrbody::HandAsk h;
+    h.key = g_set.vrBodyPickHand.load();
+    h.f4 = h.key && viewgate::F4();
+    h.on = g_enabled.load();
+    h.menu = h.f4 && gamestate::MenuOpen();
+    if (!vrbody::HandWanted(h)) return 0;
+    struct Last { ULONGLONG at = 0; bool met = false; flatbody::Cap cap; int n = 0; };
+    static Last last;   // the game's UI thread
+    const ULONGLONG now = GetTickCount64();
+    if (now - last.at >= 30) {
+        last.at = now;
+        last.met = false;
+        float o[3], d[3];
+        if (HandRay(o, d)) {
+            AcquireSRWLockExclusive(&g_flatBodiesLock);
+            FlatBodyScan();
+            const int i = vrbody::HandMet(g_flatBodies.c, g_flatBodies.n, o, d, g_flatBodies.floorY);
+            if (i >= 0) { last.cap = g_flatBodies.c[i]; last.met = true; }
+            last.n = g_flatBodies.n;
+            ReleaseSRWLockExclusive(&g_flatBodiesLock);
+        }
+    }
+    if (!last.met) return 0;
+    const flatbody::Cap& c = last.cap;
+    const int verdict = c.body ? meleetouch::Hostile(c.id) : -1;
+    if (!vrbody::Answers(ask, c, verdict)) return 0;
+    const uintptr_t unit = c.body ? meleetouch::MonsterUnit(c.id) : meleetouch::ObjectUnit(c.id);   // (gone since: none - the game's own answer)
+    static ULONGLONG told[2] = {};
+    if (unit && now - told[(int)ask] > 3000) {
+        told[(int)ask] = now;
+        LogF("vrcam: F4: the %s goes to the %s the hand points at (class %u, id %u; [input] vr_body_pick_hand; %d bodies and objects round the hero)",
+             ask == vrbody::Ask::Interact ? "interact" : "attack", c.body ? (c.npc ? "NPC" : "monster") : "object", c.cls, c.id, last.n);
+    }
+    return unit;
+}
+
 bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool gameOk = OrigMouseGround(mgr, x, y, pixel);
     if (g_portalForce.load(std::memory_order_acquire) && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
@@ -180,6 +285,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
         *y = g_portalForceZ.load() / flatground::kRenderPerCell;
         return true;
     }
+    if (g_set.platform.load() == 1) return VrMouseGround(mgr, x, y, pixel, gameOk);   // [input] vr_body_pick
     // (unticked, [debug] flat_pick still works it out for its lines; only the tick hands it to the game)
     const bool apply = g_set.flatAimGround.load();
     const bool bodyPick = g_set.flatBodyPick.load() && !gamestate::MenuOpen();
@@ -193,19 +299,19 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     if (bodyPick) {   // [input] flat_body_pick: a body or an object met before the ground - the cell its body stands for goes to the game
         float px[2], o[3], d[3];
         memcpy(px, &pixel, sizeof px);
-        FlatBodyScan();
-        if (g_flatBodies.n > 0 && d2rcam::PickRay(px[0], px[1], o, d)) {
+        if (d2rcam::PickRay(px[0], px[1], o, d)) {
             const float tFloor = floorOk ? (floor[0] - o[0]) * d[0] + (floor[1] - o[1]) * d[1] + (floor[2] - o[2]) * d[2] : INFINITY;
             flatbody::Hit hit;
-            if (flatbody::Pick(g_flatBodies.c, g_flatBodies.n, o, d, tFloor, &hit)) {
+            flatbody::Cap c;
+            int n = 0;
+            if (BodyCell(o, d, tFloor, &hit, &c, &n)) {
                 *x = hit.cellX;
                 *y = hit.cellZ;
                 static bool told = false;
                 if (!told) {
                     told = true;
-                    const flatbody::Cap& c = g_flatBodies.c[hit.index];
                     LogF("vrcam: flat: a %s (class %u) picked by its body, not its feet ([input] flat_body_pick; %d bodies and objects round the hero)",
-                         c.body ? "monster or NPC" : "object", c.cls, g_flatBodies.n);
+                         c.body ? "monster or NPC" : "object", c.cls, n);
                 }
                 return true;
             }
@@ -240,7 +346,8 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
 // Flat only, with the camera's own hooks; tried twice a second until the bytes are there (the physics code may decrypt late).
 void InstallMouseGroundHook() {
     static int misses = 0;
-    if (!g_ctx || g_mouseGround.load() != 0 || g_set.platform.load() != 0) return;
+    // flat: [input] flat_aim_ground; VR: [input] vr_body_pick, once it is ticked
+    if (!g_ctx || g_mouseGround.load() != 0 || g_set.platform.load() > 1 || (g_set.platform.load() == 1 && !g_set.vrBodyPick.load())) return;
     if (!Matches(RVA_MOUSE_GROUND, kSigMouseGround, sizeof kSigMouseGround) || !Matches(RVA_RAYCAST_MOUSE, kSigRaycastMouse, sizeof kSigRaycastMouse) ||
         !Matches(RVA_SCENE, kSigScene, sizeof kSigScene)) {
         if (g_inWorld.load() && ++misses >= 20) {
@@ -252,8 +359,12 @@ void InstallMouseGroundHook() {
     }
     const bool in = d2rsig::Hook(RVA_MOUSE_GROUND, kSigMouseGround, sizeof kSigMouseGround, (void*)&HookMouseGround, (void**)&OrigMouseGround);
     g_mouseGround.store(in ? 1 : 2);
-    Log(in ? "vrcam: flat: mouse ground hook in - the mouse's point follows the ground drawn under the crosshair ([input] flat_aim_ground)"
-           : "vrcam: flat: mouse ground hook FAILED - on raised ground the aim is the game's own (off from first person)");
+    if (g_set.platform.load() == 1)
+        Log(in ? "vrcam: VR: mouse ground hook in - the pointer, the crosshair and the hand's shift + click aim pick a monster, an NPC or an object by its body ([input] vr_body_pick)"
+               : "vrcam: VR: mouse ground hook FAILED - units are picked by their feet, as the game has it");
+    else
+        Log(in ? "vrcam: flat: mouse ground hook in - the mouse's point follows the ground drawn under the crosshair ([input] flat_aim_ground)"
+               : "vrcam: flat: mouse ground hook FAILED - on raised ground the aim is the game's own (off from first person)");
 }
 
 // [input] flat_portal_no_oval / [render] portal_no_oval (vr/portal_oval.h, from sajmonsoft's flat fork): 0xFA1700(render mesh, model path, file,

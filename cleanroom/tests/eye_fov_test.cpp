@@ -188,6 +188,93 @@ void TestLayerShift() {
     CHECK(Near(RightLayerShift(c, c), 0.0f));
 }
 
+// [openxr] fov_override_centred: the hand's angles drawn with one centred frustum and each eye's part cut whole (Serg's PS VR2 numbers, martin's
+// Quest 3 on ALVR). The headset gets each eye with its own angles, as fov_override always gave it; the interface, laid out once on the centred
+// picture, is one direction in both eyes - drawn off-axis it was not (the labels doubled).
+void TestHandCentred() {
+    const HandAngles hands[2] = {{50.0f, 45.0f, 50.0f, 50.0f}, {54.0f, 40.0f, 44.0f, 55.0f}};
+    const int sizes[2][2] = {{2000, 2040}, {3056, 3212}};   // (Serg's, martin's picture)
+    for (int k = 0; k < 2; ++k) {
+        const HandAngles& h = hands[k];
+        const int W = sizes[k][0], H = sizes[k][1];
+        const HandDraw d = HandCentred(h);
+        const Tan eye[2] = {HandTan(h, 0), HandTan(h, 1)};
+        // drawn centred: no off-axis term (the camera's projection the same in both eyes - and the game's light bins take it as centred),
+        // holding both eyes' views
+        const Proj p = Projection(d.drawn);
+        CHECK(Near(p.offX, 0.0f) && Near(p.offY, 0.0f));
+        for (int e = 0; e < 2; ++e) CHECK(d.drawn.l <= eye[e].l && d.drawn.r >= eye[e].r && d.drawn.u >= eye[e].u && d.drawn.d <= eye[e].d);
+        // the same window xr.cpp computes from the angles it has (WindowOf: OpenFrame's drawn fov and the hand's, radians)
+        const Angles dr{std::atan(d.drawn.l), std::atan(d.drawn.r), std::atan(d.drawn.u), std::atan(d.drawn.d)};
+        for (int e = 0; e < 2; ++e) {
+            const Window w = WindowOf(dr, FromHand(h, e));
+            CHECK(Near(w.x0, d.win[e].x0, 1e-5f) && Near(w.x1, d.win[e].x1, 1e-5f) && Near(w.y0, d.win[e].y0, 1e-5f) && Near(w.y1, d.win[e].y1, 1e-5f));
+        }
+        // each eye's cut in whole pixels: its fov within half a pixel of the hand's - what fov_override submitted before, the 3D unchanged
+        const float px = (d.drawn.r - d.drawn.l) / W, py = (d.drawn.u - d.drawn.d) / H;
+        Sub s[2];
+        for (int e = 0; e < 2; ++e) {
+            s[e] = Pixels(d.drawn, d.win[e], W, H);
+            CHECK(Near(s[e].tan.l, eye[e].l, 0.5f * px) && Near(s[e].tan.r, eye[e].r, 0.5f * px) && Near(s[e].tan.u, eye[e].u, 0.5f * py) &&
+                  Near(s[e].tan.d, eye[e].d, 0.5f * py));
+        }
+        CHECK(s[0].x == 0 && s[1].x + s[1].w == W && s[0].w == s[1].w && s[0].h == s[1].h && s[0].y == s[1].y);   // mirrored: left from the left edge
+        // a world direction lands in the cut image where it landed in the off-axis whole image (columns of the image, under a pixel apart)
+        for (int e = 0; e < 2; ++e)
+            for (float deg = -35.0f; deg <= 35.0f; deg += 5.0f) {
+                const float t = std::tan(deg * kD);
+                const float cut = (t - s[e].tan.l) / (s[e].tan.r - s[e].tan.l), offAxis = (t - eye[e].l) / (eye[e].r - eye[e].l);
+                CHECK(std::fabs(cut - offAxis) * s[e].w < 1.0f);
+            }
+        // the interface: a pixel of the one layout (column x of the drawn picture) is ONE direction in both eyes - the direction it has in the
+        // centred picture; drawn off-axis the same pixel of each eye's own layout was a direction apart by the off-axis terms (both outward:
+        // beyond the infinite, never meeting - doubled)
+        float apartOld = 0.0f;
+        for (float x = 0.25f; x <= 0.75f; x += 0.05f) {
+            const float c = DirectionAt(x, d.drawn);
+            for (int e = 0; e < 2; ++e) {
+                const float u = (x * W - s[e].x) / s[e].w;   // its column in the eye's cut image
+                CHECK(Near(DirectionAt(u, s[e].tan), c, 1e-5f));
+            }
+            apartOld = std::max(apartOld, std::fabs(std::atan(DirectionAt(x, eye[0])) - std::atan(DirectionAt(x, eye[1]))) / kD);
+        }
+        CHECK(apartOld > 5.0f);   // (11 deg at 50 / 45, 30 at 54 / 40, over the middle half of the picture)
+        std::printf("  hand %.0f/%.0f/%.0f/%.0f: drawn centred %.1f %.1f %.1f %.1f deg, left cut x %d-%d y %d-%d of %dx%d (%.0f %% of the width); "
+                    "the interface was up to %.1f deg apart off-axis, now 0\n", h.outer, h.inner, h.up, h.down, std::atan(d.drawn.l) / kD,
+                    std::atan(d.drawn.r) / kD, std::atan(d.drawn.u) / kD, std::atan(d.drawn.d) / kD, s[0].x, s[0].x + s[0].w, s[0].y, s[0].y + s[0].h, W, H,
+                    100.0f * s[0].w / W, apartOld);
+    }
+}
+
+// runtime_fov=1 cut with the angles handed to Inside as if they were tangents (OpenFrame, 0.181 - 0.197.4): martin's Quest 3 runtime view
+// (-54 40 44 -55, the eyes mirrored) cut from the wrong place - the box and its fov still agree (right where the fov is honoured), but over the
+// headset's own view (ALVR) straight ahead shows ~11 deg outward in each eye. WindowOf (tangents) cuts exactly the headset's view.
+void TestRuntimeCutInAngles() {
+    const Angles view[2] = {{-54.0f * kD, 40.0f * kD, 44.0f * kD, -55.0f * kD}, {-40.0f * kD, 54.0f * kD, 44.0f * kD, -55.0f * kD}};
+    const Tan headset[2] = {FromAngles(view[0].l, view[0].r, view[0].u, view[0].d), FromAngles(view[1].l, view[1].r, view[1].u, view[1].d)};
+    const Tan c = Centred(headset[0], headset[1]);
+    const Angles drawn{std::atan(c.l), std::atan(c.r), std::atan(c.u), std::atan(c.d)};
+    const int W = 3056, H = 3212;
+    float before[2] = {}, now[2] = {};
+    for (int e = 0; e < 2; ++e) {
+        const Window wrong = Inside({drawn.l, drawn.r, drawn.u, drawn.d}, headset[e]);   // (the old call: radians as the drawn tangents)
+        const Window right = WindowOf(drawn, view[e]);
+        const Window ref = Inside(c, headset[e]);
+        CHECK(Near(right.x0, ref.x0, 1e-5f) && Near(right.x1, ref.x1, 1e-5f) && Near(right.y0, ref.y0, 1e-5f) && Near(right.y1, ref.y1, 1e-5f));
+        if (e == 0) CHECK(wrong.x1 > 0.9f && right.x1 < 0.82f && right.x1 > 0.79f && Near(wrong.y0, 0.0f) && right.y0 > 0.15f);
+        const Sub sw = Pixels(c, wrong, W, H), sr = Pixels(c, right, W, H);
+        // shown over the headset's own view (ALVR): the cut image laid over it whatever fov it came with
+        before[e] = ShownOffDeg(c, sw, W, headset[e], 0.0f);
+        now[e] = ShownOffDeg(c, sr, W, headset[e], 0.0f);
+        float worst = 0.0f;
+        for (float deg = -35.0f; deg <= 35.0f; deg += 5.0f) worst = std::max(worst, std::fabs(ShownOffDeg(c, sr, W, headset[e], std::tan(deg * kD))));
+        CHECK(worst < 0.05f);
+    }
+    CHECK(before[0] < -8.0f && before[1] > 8.0f);   // straight ahead: the left eye's to the left, the right eye's to the right - never meeting
+    std::printf("  runtime_fov=1 cut, martin's Quest 3: straight ahead shown %.1f / %.1f deg off by a headset-only compositor before, %.3f / %.3f now\n",
+                before[0], before[1], now[0], now[1]);
+}
+
 void TestNotMirrored() {
     const Tan odd = Deg(-60.1f, 45.1f, 40.0f, -50.0f);
     CHECK(!Mirrored(kLeft, odd));   // a different height: the replayed right eye would be off (vrcam says so in the log)
@@ -200,6 +287,8 @@ int main() {
     TestCompositor();
     TestHand();
     TestLayerShift();
+    TestHandCentred();
+    TestRuntimeCutInAngles();
     TestNotMirrored();
     std::printf("eye_fov_test: %d checks, %d failed\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

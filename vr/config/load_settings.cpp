@@ -809,6 +809,9 @@ void LoadSettings() {
     g_set.flatClickShoot.store(IniB(L"input", L"flat_click_shoot", true));
     g_set.flatAimGround.store(IniB(L"input", L"flat_aim_ground", true));
     g_set.flatBodyPick.store(IniB(L"input", L"flat_body_pick", true));
+    g_set.vrBodyPick.store(IniB(L"input", L"vr_body_pick", true));
+    g_set.vrBodyPickHand.store(IniB(L"input", L"vr_body_pick_hand", false));
+    meleetouch::SetPickWanted(g_set.vrBodyPickHand.load());   // vr_body_pick_hand: the monsters near the hero and the server's verdicts (F4)
     g_set.flatPortalNoOval.store(IniB(L"input", L"flat_portal_no_oval", true));
     g_set.portalNoOval.store(IniB(L"render", L"portal_no_oval", false));
     g_set.portalLookHorizon.store(IniB(L"input", L"portal_look_horizon", false));
@@ -1454,7 +1457,8 @@ void LoadSettings() {
         ks.lieMs = std::clamp(IniF(L"weight", L"knock_down_lie_ms", 1500.0f), 0.0f, 10000.0f);
         ks.massScale = std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f) * 0.01f;
         ks.strength = g_set.weightStrength.load() * 0.01f;
-        ks.deathOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"death_ragdoll", false);   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
+        ks.deathOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"death_ragdoll", false);
+        ks.deathFlatOn = IniB(L"weight", L"death_ragdoll_flat", false);   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, by the game's own swing (no bodies key needed)   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
@@ -1462,6 +1466,7 @@ void LoadSettings() {
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||
                             knockdown::Wanted());   // ... through the skinning composite ([weight] knock_down draws its bodies the same way)
+    headshadow::SetDollAnyView(knockdown::DeathFlatWanted());   // [weight] death_ragdoll_flat: the dead's poses in VR F1 / F3 too (Serg's exception to F4 only)
     headshadow::SetAttachWriter(knockdown::Wanted() ? &knockdown::OnXform : nullptr);   // [weight] knock_down: a knocked-down body's weapon stays in its hand
     headshadow::SetBeforeDraw(knockdown::Wanted() ? &knockdown::BeforeDraw : nullptr);  // ... its bounds grown again just before each draw collect of it
     skel::SetRagdollAll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_all", false));   // [weight] monster_ragdoll_all

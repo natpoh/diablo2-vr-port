@@ -219,12 +219,12 @@ inline Table DefaultTable(bool stickMap = true, bool pauseButton = true) {
     return t;
 }
 
-// The same table without what only F4 has: the plugin's own skill panel (the wheel / the tiles, asked for by a long press) - VR F1-F3 have none. What is
-// left is the game's own: pad buttons, triggers, the sticks, actions (attack, interact, inventory, map, swap, views, recentre) and key commands. A control
-// whose hold line was only that panel stops being hold-or-tap, so its plain line acts at once.
+// The same table without what only F4 has: the pause menu's long press (Esc is F4's, the keyboard's is the game's in the other views) and the javelin
+// quiver's steps (F4's alone). What is left is the game's own - pad buttons, triggers, the sticks, actions (attack, interact, inventory, map, swap,
+// views, recentre) and key commands - and the long press that asks for the overlay, the skill panel's window (Serg, 2026-11-02: VR F1-F3 have it too;
+// vr/wheel_controller.h). A control whose hold line was only what is stripped stops being hold-or-tap, so its plain line acts at once.
 inline Table WithoutPanels(Table t) {
-    // (and the pause menu's long press: Esc is F4's, the keyboard's is the game's in the other views; and the javelin quiver's steps: F4's alone)
-    auto strip = [](Binding* b) { for (Out& o : b->out) if (o.kind == kOutSkillPanel || o.kind == kOutPause || o.kind == kOutQuiver) o = Out{}; };
+    auto strip = [](Binding* b) { for (Out& o : b->out) if (o.kind == kOutPause || o.kind == kOutQuiver) o = Out{}; };
     for (int i = 0; i < kCtlCount; ++i) { strip(&t.plain[i]); strip(&t.chord[i]); strip(&t.hold[i]); strip(&t.touch[i]); }
     return t;
 }

@@ -271,6 +271,8 @@ struct Settings {
     std::atomic<bool>  flatClickShoot{true}; // [input] flat_click_shoot: flat mouse look, a click with no target under the crosshair = a shot there, never a walk
     std::atomic<bool>  flatAimGround{true};  // [input] flat_aim_ground: flat with our camera, the mouse's point is the cell of the ground drawn under it (raised floors)
     std::atomic<bool>  flatBodyPick{true};   // [input] flat_body_pick: flat F2 / F3, a unit or object clicked by its body (vr/flat_body.h)
+    std::atomic<bool>  vrBodyPick{true};     // [input] vr_body_pick: VR, the game's mouse point (F1 - F3's pointer and crosshair, F4's shift + click aim) by the body too (vr/vr_body_pick.h)
+    std::atomic<bool>  vrBodyPickHand{false};   // [input] vr_body_pick_hand: VR F4, the pad's attack and interact go to the unit the aiming hand points at (vr/vr_body_pick.h)
     std::atomic<bool>  flatPortalNoOval{true};   // [input] flat_portal_no_oval: flat F2 / F3, the town portal's black oval not drawn (vr/portal_oval.h)
     std::atomic<bool>  portalNoOval{false};      // [render] portal_no_oval: the same in VR, F2 / F3 / F4 (F1 from above keeps it)
     std::atomic<bool>  portalLookHorizon{false}; // [input] portal_look_horizon: flat F3, the look back to the horizon after a portal or waypoint (vr/portal_auto.h)

@@ -37,6 +37,7 @@ bool FlatNoPad();
 extern std::atomic<bool> g_flatPadTouched;
 extern std::atomic<int> g_keyMove;
 extern std::atomic<uint32_t> g_keyMoveCalls;
+extern std::atomic<bool> g_keyMoveGateOk;
 bool VrKeyWalk();
 void InstallKeyMoveHook();
 void InstallStickHook();
@@ -107,7 +108,10 @@ void GrabHandsStep(skel::Input* in);
 // town portal's oval
 constexpr uint64_t RVA_FLAT_UNITS = 0x2A23910, RVA_FLAT_MONSTATS = 0x975B0;
 void InstallMapClickHook();
-void InstallMouseGroundHook();   // [input] flat_aim_ground (flat only)
+void InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_body_pick (VR)
+// [input] vr_body_pick_hand (vr/vr_body_pick.h): F4, the unit the aiming hand points at that answers the controller's lookup `ask`, 0 none (the game's
+// answer stays). The game's UI thread, inside its lookups.
+uintptr_t VrHandTarget(vrbody::Ask ask);
 void PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
 bool PortalClass(uint32_t cls);
 extern std::atomic<bool> g_portalForce, g_portalHover;

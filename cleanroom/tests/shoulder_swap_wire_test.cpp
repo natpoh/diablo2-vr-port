@@ -46,7 +46,7 @@ uint32_t g_takeMask = 0, g_tapCmd = 0;
 Source g_takeSrc = kSrcLayout;
 bool Listen(FrameFn fn, void*) { g_fn = fn; return true; }
 void Take(int hand, uint32_t buttons, Source src) { ++g_takes; g_takeHand = hand; g_takeMask = buttons; g_takeSrc = src; }
-void Tap(uint32_t cmd) { ++g_taps; g_tapCmd = cmd; }
+void Tap(uint32_t cmd, Source) { ++g_taps; g_tapCmd = cmd; }
 }   // namespace directinput
 
 namespace {

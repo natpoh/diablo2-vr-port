@@ -367,6 +367,13 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
         g_interactTargetAt.store(GetTickCount64());
         return ours;
     }
+    // [input] vr_body_pick_hand (vr/vr_body_pick.h, F4): the object or NPC the aiming hand points at. Where A only attacks the game is still
+    // answered its own (none): only our interact press (ApplyActions) is told there is a target.
+    if (const uintptr_t hand = VrHandTarget(vrbody::Ask::Interact)) {
+        g_interactTarget.store(hand);
+        g_interactTargetAt.store(GetTickCount64());
+        return f == 0 ? r : hand;
+    }
     g_interactTarget.store(t);
     g_interactTargetAt.store(GetTickCount64());
     return r;

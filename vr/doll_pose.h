@@ -60,7 +60,30 @@ struct Pose {
     uintptr_t poseCur = 0, posePrev = 0;   // its SkeletonInstance's world poses (+0x20, +0x28) when made: the skinning finds it by them...
     uintptr_t skel = 0;                    // ... or by its granny_skeleton (shared by every monster of its model) and the pose's own matrices (NearestPose)
     Knock knock;                           // [weight] knock_down: knocked off its feet (weight > 0)
+    // ... or, before the matrices, by the entity the game is drawing when it skins (ByEntity): its root's and its parts' (0: not known)
+    static constexpr int kParts = 24;
+    uint32_t entity = 0;
+    uint32_t parts[kParts] = {};
+    int nParts = 0;
 };
+
+// The candidate whose entity - its root or one of its parts - the game is drawing now (`drawn`, the draw collect's; compared by the entity's slot, its low 20
+// bits), when exactly one is; else -1. [weight] death_ragdoll, 0.197.5 (Serg: «труп мерцает после смерти»): three zombie corpses lying in the same last frame
+// of their death animation have the same matrices - a skinning from a copy of one was refused as one of three alike and drawn as the game's, the next from its
+// own pose drawn ours: the corpse flickered between the two. The entity drawn tells them apart.
+inline bool SameSlot(uint32_t a, uint32_t b) { return a && b && (a & 0xFFFFFu) == (b & 0xFFFFFu) && (a & 0xFFFFFu) != 0xFFFFFu; }
+inline int ByEntity(const Pose* cands, int k, uint32_t drawn) {
+    if (!cands || k <= 0 || !drawn) return -1;
+    int found = -1;
+    for (int c = 0; c < k; ++c) {
+        bool is = SameSlot(cands[c].entity, drawn);
+        for (int i = 0; i < cands[c].nParts && i < Pose::kParts && !is; ++i) is = SameSlot(cands[c].parts[i], drawn);
+        if (!is) continue;
+        if (found >= 0 && cands[found].self != cands[c].self) return -1;   // (two bodies say it is theirs: not known)
+        found = c;
+    }
+    return found;
+}
 
 // What Build needs of the rig: the entity's model -> world rows (3x3), where it stands (world units), its skeleton's parents (parents come first: the game
 // keeps them so), and its limb capsules (world units) by bone.

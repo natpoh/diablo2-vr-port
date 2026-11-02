@@ -14,6 +14,7 @@ int ViewNow();            // [mode]: the view the Home page, F1..F4 or F12 picke
 int ViewCount();
 bool FullBody();          // VR first person with the body on the player's (F4)
 bool FlatViews();         // VR F1, F2, F3
+int VrViewNow();          // the VR view, 1 = F1 ... 4 = F4; 0 not VR (viewgate::Number)
 bool InsideFree();        // flat F3
 bool NativeHeadView();    // native OpenXR draws it with the head as the camera (F4, F2)
 int NativeMode();         // xr::kViewsHead / kViewsWindow / kViewsRoom

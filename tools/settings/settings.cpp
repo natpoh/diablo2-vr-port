@@ -126,6 +126,7 @@ struct Item {
     bool sub = false;                        // Group: a sub-heading inside the group above it (Sub) - it stays in that group's column
     int across = 0;                          // ... the ticks after it in a grid beside its name, up to this many to a row; 0 = a line of its own
     bool big = false;                        // Button: a large one (the Home page's START)
+    bool reversed = false;                   // Toggle: ticked writes 0, unticked 1 - the inverse of its key (Home's Xbox controller over [direct] flat_controller)
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
@@ -258,6 +259,11 @@ Item InColumn(int column, Item i) { i.col = column; return i; }
 Item Sub(const wchar_t* title, int across = 0) { Item i = Group(title); i.sub = true; i.across = across; return i; }
 // A large push button (taller, bigger letters).
 Item Big(Item i) { i.big = true; return i; }
+// A tick box that is the inverse of its key: ticked = 0 (Item::reversed).
+Item Reversed(Item i) { i.reversed = true; return i; }
+// Whether a tick box (Toggle, Invert) shows ticked for the value v, and the value a tick or untick writes.
+bool Ticked(const Item& it, float v) { return it.kind == Kind::Invert ? v < 0.0f : (v != 0.0f) != it.reversed; }
+float TickValue(const Item& it, bool on) { return it.kind == Kind::Invert ? (on ? -1.0f : 1.0f) : (on != it.reversed ? 1.0f : 0.0f); }
 
 // Greyed out while section/key is not `value` (a tick box: 1 = ticked); nests for several.
 Item Needs(const wchar_t* section, const wchar_t* key, float value, Item i) {
@@ -311,6 +317,28 @@ constexpr const wchar_t* kDrawDistanceTip = L"Sets five things at once, near (1)
                                             L"radius), in caves at the radius - so nothing pops out of the void. 3: 2 rings, models out to 200. Farther "
                                             L"costs processor time (more rooms and models each frame); nearer is lighter. The line under it says what "
                                             L"is set now. Custom: one of the single values was changed by hand - moving the slider sets them all again. Live.";
+// [openxr] fov_override and its sliders: on the Stereo tab and on Home (under the views) both
+constexpr const wchar_t* kFovOverrideTip =
+    L"For headsets or streamers whose picture stays distorted (e.g. an Apple Vision Pro via ALVR: the world cross-eyed or stretched "
+    L"while it looks right with SteamVR's menu up). On: each eye is drawn with the four angles below and handed to the headset with "
+    L"exactly them, the whole picture - \"Each eye exactly as the headset gives it\" and the two choices under it do nothing. Start "
+    L"from the headset's own angles (the button), then turn the sliders with the game running until the world looks right - the "
+    L"picture changes at once - and tell us the numbers, so we can make them automatic. The angles are the LEFT eye's, from the middle "
+    L"of its view: outer = to the left, inner = towards the nose; the right eye gets their mirror. Off (the default): the headset's "
+    L"own angles.";
+// [openxr] fov_override_centred (on): fov_override's eyes drawn centred and each one's part cut whole (vr/eye_fov.h HandCentred) - the interface meets
+constexpr const wchar_t* kFovCentredTip =
+    L"On (the default): both eyes are drawn as one centred picture, as wide and as tall each way as the angles' widest and tallest side, "
+    L"and each eye's own part of it goes to the headset with exactly the angles above - the headset gets the same as with it off, but the "
+    L"game lays its interface out once for both eyes, so the item names, the names over monsters, the toolbar, the map and the pointer "
+    L"are single and in place in every view (a few percent of the width is drawn and not shown). Off: each eye drawn off-centre with "
+    L"exactly the angles - every pixel shown, but the interface comes apart between the eyes (doubled). Not with frame generation "
+    L"(Home): then always off-centre. Live.";
+constexpr const wchar_t* kFovOuterTip = L"How far each eye's view reaches to its outer side (the left eye's left, the right eye's right), in degrees from the middle. Live.";
+constexpr const wchar_t* kFovInnerTip = L"How far each eye's view reaches towards the nose, in degrees from the middle. Live.";
+constexpr const wchar_t* kFovUpTip = L"How far each eye's view reaches up, in degrees from the middle. Live.";
+constexpr const wchar_t* kFovDownTip = L"How far each eye's view reaches down, in degrees from the middle. Live.";
+constexpr const wchar_t* kFovFromHeadsetTip = L"Copies the angles the headset's runtime gave at the game's last headset session (the line below) into the four sliders.";
 // [ceiling] game_ceiling (shared/game_ceiling.h): on the Ceiling tab and the ReShade page both
 constexpr const wchar_t* kGameCeilingTip = L"Our effect: the vault through the fog shader - ReShade's, or D2R VR's own without ReShade. The game: "
                                            L"a slab of the game's own cave rock, made from your game's files, that the game draws and lights "
@@ -583,6 +611,21 @@ std::vector<Item> g_items = {
           L"Switch in the game with F1 - F3 (F12 goes round). F3: the game lies on the floor of your room. "
           L"The game does not get F1 - F4.")),
 #endif
+    // A stereo picture that looks wrong (2026-11-02, Serg's wish: a player's F2/F3/F4 looked as if the eyes were swapped, and swapping them
+    // did nothing; Stereo > "Set each eye's angles by hand" with its sliders fixed it): the advice under the views, where everyone sees it
+    // (StereoHintStatus), and that box itself - the same key and words as on the Stereo tab, its sliders on the page while it is ticked.
+    Only(kVr, Status(L"stereo_hint", L"")),
+    Only(kVr, Toggle(L"openxr", L"fov_override", L"Set each eye's angles by hand", 0, kFovOverrideTip)),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Slider(L"openxr", L"fov_outer", L"Angle: outer (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovOuterTip))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Slider(L"openxr", L"fov_inner", L"Angle: inner (deg)", 10.0f, 85.0f, 0.01f, 45.0f, kFovInnerTip))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Slider(L"openxr", L"fov_up", L"Angle: up (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovUpTip))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Slider(L"openxr", L"fov_down", L"Angle: down (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovDownTip))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Button(L"@run", L"fov_from_headset", L"Set the sliders to the headset's own angles", kFovFromHeadsetTip))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Status(L"fov_headset", L""))),
+    Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Toggle(L"openxr", L"fov_override_centred", L"Names and interface single in both eyes", 1, kFovCentredTip))),
+    // An Xbox controller in VR (2026-11-02, Serg's wish, the second player asking): the inverse of [direct] flat_controller (Stereo), one key -
+    // ticked writes 0, so in F1-F3 the real pad alone drives the game. Its words are TR's (FillPadItem): the Stereo box's key has other English.
+    Only(kVr, Needs(L"openxr", L"direct_input", 1, Reversed(Toggle(L"direct", L"flat_controller", nullptr, 1)))),
     // One slider over the distance keys set apart on Performance, World and Sky (2026-10-28, the author's wish: players asked how to
     // trade distance for frames). "@distance": its stops are shared/draw_distance.h; nothing of its own is kept - it shows the stop the
     // keys match, else Custom (ReadDrawDistance), and a stop writes them all (WriteDrawDistance). The single sliders stay where they are;
@@ -1297,6 +1340,14 @@ std::vector<Item> g_items = {
     Only(kFlat, Toggle(L"input", L"flat_body_pick", L"Flat: click a monster, an NPC or a chest by its body", 1,
            L"Third and first person: monsters, NPCs, doors, shrines, chests and portals near you are clicked by their body, not only by "
            L"their feet (from sajmonsoft's flat fork). Unticked: by the feet, as the game's own view from above has it.")),
+    // [input] vr_body_pick, vr_body_pick_hand (GitHub issue #15, vr/vr_body_pick.h): the same in VR, along each view's ray
+    Only(kVr, Toggle(L"input", L"vr_body_pick", L"VR: point at a monster, an NPC or a chest by its body", 1,
+           L"The mouse pointer (F1, F3), the crosshair (F2 with mouse look) and the hand's Shift + click aim pick monsters, NPCs, doors, shrines, "
+           L"chests and portals near you by their body, not only by their feet. The game still decides the hit. Unticked: by the feet.")),
+    Only(kVr, Toggle(L"input", L"vr_body_pick_hand", L"VR F4: attack and interact go to what your hand points at", 0,
+           L"First person with the controllers: point the aiming hand at a monster's body and the attack goes to it; at a chest, a door, a shrine, "
+           L"a portal or an NPC and interact goes to it. Only when nothing else aims the press (a spell along the hand, hit by touch, leap by gaze); "
+           L"the game still decides reach and hit. Unticked: the game's own auto-target.")),
     Only(kFlat, Toggle(L"input", L"flat_portal_no_oval", L"Flat: no black oval in the town portal", 1,
            L"Third and first person: the portal's black oval, which stands still while the blue ring turns to the camera, is not drawn; "
            L"the ring is (from sajmonsoft's flat fork). For portals seen from then on. Unticked: drawn as the game has it.")),
@@ -1636,7 +1687,7 @@ std::vector<Item> g_items = {
            L"own part of it goes to the headset, an image of its own with exactly the headset's view (about a fifth of the width and a tenth "
            L"of the height is drawn and not shown).\n"
            L"The headset's own angles: each eye drawn off-centre with exactly the headset's angles and handed in whole - what \"Set each eye's "
-           L"angles by hand\" with the headset's own numbers does. Every pixel is shown, but the game draws its interface once for both eyes, "
+           L"angles by hand\" with the headset's own numbers and \"Names and interface single in both eyes\" unticked does. Every pixel is shown, but the game draws its interface once for both eyes, "
            L"so the names over monsters and items can come apart, and some effects can differ between the eyes.\n"
            L"Off: our own view, below. With frame generation on (Home), Centred does nothing (the headset went black with the two together). "
            L"The picture is stretched to the window's shape (Resolution: \"Use the headset's recommended size\" keeps it sharp). Live."),
@@ -1650,25 +1701,14 @@ std::vector<Item> g_items = {
     // [openxr] fov_override (off): each eye's angles by hand - drawn and submitted whole with exactly them (vr/eye_fov.h HandAngles). A stopgap for a
     // headset or streamer whose picture stays distorted (an Apple Vision Pro on ALVR, 2026-10-26): the angles that look right are the ones its
     // runtime assumes, and the player's numbers let it be made automatic. The left eye's angles; the right eye's are their mirror. Live.
-    Toggle(L"openxr", L"fov_override", L"Set each eye's angles by hand", 0,
-           L"For headsets or streamers whose picture stays distorted (e.g. an Apple Vision Pro via ALVR: the world cross-eyed or stretched "
-           L"while it looks right with SteamVR's menu up). On: each eye is drawn with the four angles below and handed to the headset with "
-           L"exactly them, the whole picture - \"Each eye exactly as the headset gives it\" and the two choices under it do nothing. Start "
-           L"from the headset's own angles (the button), then turn the sliders with the game running until the world looks right - the "
-           L"picture changes at once - and tell us the numbers, so we can make them automatic. The angles are the LEFT eye's, from the middle "
-           L"of its view: outer = to the left, inner = towards the nose; the right eye gets their mirror. Off (the default): the headset's "
-           L"own angles."),
-    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_outer", L"Angle: outer (deg)", 10.0f, 85.0f, 0.01f, 50.0f,
-           L"How far each eye's view reaches to its outer side (the left eye's left, the right eye's right), in degrees from the middle. Live.")),
-    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_inner", L"Angle: inner (deg)", 10.0f, 85.0f, 0.01f, 45.0f,
-           L"How far each eye's view reaches towards the nose, in degrees from the middle. Live.")),
-    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_up", L"Angle: up (deg)", 10.0f, 85.0f, 0.01f, 50.0f,
-           L"How far each eye's view reaches up, in degrees from the middle. Live.")),
-    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_down", L"Angle: down (deg)", 10.0f, 85.0f, 0.01f, 50.0f,
-           L"How far each eye's view reaches down, in degrees from the middle. Live.")),
-    Needs(L"openxr", L"fov_override", 1, Button(L"@run", L"fov_from_headset", L"Set the sliders to the headset's own angles",
-           L"Copies the angles the headset's runtime gave at the game's last headset session (the line below) into the four sliders.")),
+    Toggle(L"openxr", L"fov_override", L"Set each eye's angles by hand", 0, kFovOverrideTip),
+    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_outer", L"Angle: outer (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovOuterTip)),
+    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_inner", L"Angle: inner (deg)", 10.0f, 85.0f, 0.01f, 45.0f, kFovInnerTip)),
+    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_up", L"Angle: up (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovUpTip)),
+    Needs(L"openxr", L"fov_override", 1, Slider(L"openxr", L"fov_down", L"Angle: down (deg)", 10.0f, 85.0f, 0.01f, 50.0f, kFovDownTip)),
+    Needs(L"openxr", L"fov_override", 1, Button(L"@run", L"fov_from_headset", L"Set the sliders to the headset's own angles", kFovFromHeadsetTip)),
     Status(L"fov_headset", L""),
+    Needs(L"openxr", L"fov_override", 1, Toggle(L"openxr", L"fov_override_centred", L"Names and interface single in both eyes", 1, kFovCentredTip)),
     // The eye distance (IPD) of native OpenXR's stereo pair: the runtime's own (automatic) or the player's, for a headset that did not pick it up.
     Toggle(L"openxr", L"ipd_auto", L"Eye distance: from the headset", 1,
            L"On (the default): the distance between the two eyes of the stereo picture is what the headset's runtime says (the position of each "
@@ -4714,6 +4754,13 @@ std::vector<Item> g_items = {
            L"game keeps the corpse. Bosses and monsters that burst when they die keep the game's own death. Only the drawing: the kill, the loot and where the "
            L"corpse is stay the game's. A corpse farther than about 6 m is drawn as the game has it. Works without the knock-down above. Needs the weight library "
            L"with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). F4. Unticked: the game's own death animation.")))),
+    // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, along the arc of the game's own swing (vr/death_ragdoll.h ArcAt; Serg's exception to F4 only)
+    Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll - F1-F3 and flat play (a test)", 0,
+           L"Ticked: in the views where your hands are not in the game - VR F1, F2, F3 and playing on the monitor - a humanoid monster the game kills falls as a "
+           L"ragdoll instead of playing its own death animation, pushed along the arc of your weapon as the game swings it in your hero's attack (a spell, an arrow, "
+           L"a hireling's kill: a little away from you), and stays lying as it fell for as long as the game keeps the corpse. Bosses and monsters that burst when "
+           L"they die keep the game's own death. Only the drawing: the kill, the loot and where the corpse is stay the game's. F4 uses the setting above (your "
+           L"own blow). Needs the weight library with the knock-down (d2r_vr_weight.dll in d2rloader\\d2r_vr_libs). Unticked: the game's own death animation."),
     // [weight] npc_bodies (until 0.183 [debug] npc_bodies - a debug key only draws or logs): the non-hostile units are bodies for the weapon too
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"npc_bodies", L"Town NPCs and allies have bodies too", 0,
            L"Ticked, with the bodies above: the town's NPCs, hirelings and every other unit the game does not call hostile have bodies too - a capsule on each limb, from "
@@ -6721,7 +6768,7 @@ void SyncTwins(const Item& from) {
             break;
         case Kind::Toggle:
         case Kind::Invert:
-            SendMessageW(o.ctl, BM_SETCHECK, (o.kind == Kind::Toggle ? v != 0.0f : v < 0.0f) ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(o.ctl, BM_SETCHECK, Ticked(o, v) ? BST_CHECKED : BST_UNCHECKED, 0);
             break;
         case Kind::Choice: SendMessageW(o.ctl, CB_SETCURSEL, ToPos(o, v), 0); break;
         default: break;
@@ -6894,8 +6941,7 @@ void Build(HWND page) {
             it.modes &= groupModes;
             const float v = ReadValue(it);
             it.ctl = Make(page, L"BUTTON", it.label, BS_AUTOCHECKBOX | BS_MULTILINE | WS_TABSTOP, id);   // (BS_MULTILINE: long words wrap - LayoutPage gives the lines)
-            const bool on = it.kind == Kind::Toggle ? v != 0.0f : v < 0.0f;
-            SendMessageW(it.ctl, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(it.ctl, BM_SETCHECK, Ticked(it, v) ? BST_CHECKED : BST_UNCHECKED, 0);
             break;
         }
         }
@@ -6971,9 +7017,7 @@ void RefreshControls() {
         }
         case Kind::Toggle:
         case Kind::Invert: {
-            const float v = ReadValue(it);
-            const bool on = it.kind == Kind::Toggle ? v != 0.0f : v < 0.0f;
-            SendMessageW(it.ctl, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+            SendMessageW(it.ctl, BM_SETCHECK, Ticked(it, ReadValue(it)) ? BST_CHECKED : BST_UNCHECKED, 0);
             break;
         }
         case Kind::Choice: SendMessageW(it.ctl, CB_SETCURSEL, ToPos(it, ReadValue(it)), 0); break;
@@ -8129,6 +8173,10 @@ void FovFromHeadset() {
     }
     RefreshControls();
 }
+// Home > View: what to do when the stereo picture looks wrong - the box under it (the Stereo tab's own, here too).
+void StereoHintStatus() {
+    SetStatus(L"stereo_hint", kWarn, TR(L"status.stereo_hint", L"Stereo looks wrong - eyes swapped, double image in F2/F3/F4? Tick this and adjust the angles."));
+}
 void UpdateIpdStatus() {
     if (g_platform != 1) return;
     wchar_t path[MAX_PATH];
@@ -8263,6 +8311,7 @@ void RefreshStatus() {
     UpdateLayersNote();        // ... and the OpenXR layers the game found at its last session ([openxr] block_listed_layers)
     UpdateFrameCapStatus();    // the frame cap in the file and the one VR writes for this choice
     FrameGenStatus();   // [openxr] frame_generation: OFXR Bridge in d2r_vr_libs\ofxr, and its button
+    StereoHintStatus();   // View: when the stereo looks wrong, Stereo > "Set each eye's angles by hand"
     const std::wstring dir = BodyWalkDir();
     // Standalone or Steam build: whichever settings file was written last.
     std::wstring cfg;
@@ -8823,6 +8872,22 @@ void FillLanguageItem() {
         g_langChoiceCodes.push_back(f.code);
     }
     it->max = (float)it->choices.size() - 1;
+}
+// Home's "Use an Xbox controller (gamepad) in VR": [direct] flat_controller reversed. Its own words (TR here; the item is left out of the
+// table's keys, which the Stereo tab's box of the same key has).
+void FillPadItem() {
+    for (Item& i : g_items) {
+        if (!i.reversed || wcscmp(i.section, L"direct") != 0 || wcscmp(i.key, L"flat_controller") != 0) continue;
+        i.tr = true;
+        i.label = TR(L"home.xbox_pad.label", L"Use an Xbox controller (gamepad) in VR");
+        i.tip = TR(L"home.xbox_pad.tip",
+                   L"Ticked: in VR F1, F2 and F3 a real Xbox controller (gamepad) drives the game alone - F2 (third person) and F3 (the game on "
+                   L"the floor) are the views for it; the VR controllers no longer press buttons there (they still walk and drink belt potions). F4 (first person) stays made for the VR "
+                   L"controllers. Unticked (the default): a real gamepad works too, the VR controllers are added to it. The same key as Stereo > "
+                   L"\"Play with the controllers in F1, F2, F3 without BodyWalk\", the other way round. Greyed while \"Controls without BodyWalk\" "
+                   L"(Stereo) is off: then BodyWalk's controls are the controls. Mouse and keyboard instead: Controls > Mouse and keyboard > "
+                   L"\"Mouse look in VR views F2 and F4 too\"; F9 in the game frees the pointer. Live.");
+    }
 }
 float ReadLanguage() {
     const std::wstring s = LanguageSetting();
@@ -10927,15 +10992,12 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
-                else if (wcscmp(it.key, L"fov_from_headset") == 0) FovFromHeadset();
-                else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
+                else if (wcscmp(it.key, L"fov_from_headset") == 0) FovFromHeadset();                else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));
                 if (wcscmp(it.section, L"headset_shot") == 0) AskHeadsetShot(wcscmp(it.key, L"video_take") == 0);
             } else if (HIWORD(w) == BN_CLICKED && (it.kind == Kind::Toggle || it.kind == Kind::Invert)) {
-                const bool on = SendMessageW(it.ctl, BM_GETCHECK, 0, 0) == BST_CHECKED;
-                if (it.kind == Kind::Toggle) WriteValue(it, on ? 1.0f : 0.0f);
-                else WriteValue(it, on ? -1.0f : 1.0f);
+                WriteValue(it, TickValue(it, SendMessageW(it.ctl, BM_GETCHECK, 0, 0) == BST_CHECKED));
                 if (wcscmp(it.section, L"@ui") == 0) FollowWeapon();
                 if (wcscmp(it.section, L"direct") == 0) RefreshControls();   // left_stick_map, pause_button: what the button list calls "the standard" moved
                 UpdateEnabled();
@@ -11319,6 +11381,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             AddGameCodeTab();
             AddRoomsRows();
             FillLanguageItem();
+            FillPadItem();
             const int r = WriteLangTemplate(argv[2]);
             LocalFree(argv);
             return r;
@@ -11366,6 +11429,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     AddGameCodeTab();
     AddRoomsRows();
     FillLanguageItem();
+    FillPadItem();
     TranslateItems();
     FillRelayChoices();   // the relays of d2r-rooms.ini after the drop-down's first entry, which is translated by now
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored

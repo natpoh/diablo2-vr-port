@@ -784,6 +784,13 @@ struct HeroXform { uintptr_t comp = 0; uintptr_t self = 0; uint32_t entity = 0; 
 void SetGameBase(uintptr_t base);
 // On: the hook notes the hero even while it changes nothing in his pose (needed to find his facing).
 void TrackHero(bool on);
+// [weight] death_ragdoll_flat: the hook keeps where the hero's two weapon bones (R_ / L_weapon_attach, else the hands) are drawn on each of his poses - in every
+// view, the game's own swing - and where his model stands (world units; t: seconds of the performance counter, WeaponTrailNow's clock). On: kept; off: none.
+struct WeaponTrailSample { double t = 0.0; float root[3] = {}; float p[2][3] = {}; bool ok[2] = {false, false}; };
+void SetWeaponTrail(bool on);
+int WeaponTrail(WeaponTrailSample* out, int max);   // the newest `max` (or fewer), oldest first
+double WeaponTrailNow();                            // the trail's clock now
+unsigned WeaponTrailNoted();                        // samples kept since the last call (the log)
 // Resolved now (cheap: a few reads; a new SkeletonInstance costs one pass over the storage).
 // False with *why set when the chain does not read.
 bool HeroTransform(HeroXform* out, const char** why = nullptr);

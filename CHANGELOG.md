@@ -1,5 +1,28 @@
 # What's new in D2R VR
 
+## 0.198.0
+
+From the test builds 0.197.1 - 0.197.6.
+
+- **Freeze fix**: the laser's instant item tooltips are off for now (`[openxr] laser_tooltips` is ignored): forcing the game's tooltip and
+  its comparison could hang the game in its text layout. The tooltip shows after the game's own delay; the comparison with Shift or the
+  other hand's trigger.
+- **Hang watchdog in every mode**: if the game's main thread stops for 5 s, every thread's stack is written next to the logs
+  (d2r_vr_hang.txt) - send it with your logs.
+- **Click monsters by the body in VR** (`[input] vr_body_pick`, `vr_body_pick_hand`): the pointer, the crosshair and in F4 the hand pick a
+  monster, an NPC, a chest or a portal by its body, not only its feet (as flat F2 / F3 already did).
+- **The right-stick overlay in F1, F2 and F3 too** (hold the right stick); F4-only rows are hidden there. Left and Right are one
+  **Controls** page now.
+- **Settings, Home tab**: "Stereo looks wrong?" - the per-eye angle box and its sliders right on Home, and **"Use an Xbox
+  controller (gamepad) in VR"** (the pad drives F1-F3).
+- **Per-eye angles by hand no longer double the labels and the interface**: both eyes are drawn as one centred picture and each eye
+  gets its own cut. The "Centred" eye cut (`runtime_fov=1`) took each eye from the wrong side - likely the swapped eyes some Quest /
+  ALVR players saw.
+- **Weapons no longer stop on the belt potions** (with world contact on they were read as walls).
+- **A killed humanoid falls as a ragdoll** (`[weight] death_ragdoll`, now on), **also in 2D** along the blow's arc (`death_ragdoll_flat`):
+  the corpse stays where it fell. Known issue: corpses can flicker - untick the box if it bothers you (KNOWN_ISSUES #28).
+- The log says why held W A S D don't walk in flat F2 / F3 (for the 'WASD stops after a menu' reports).
+
 ## 0.197.0
 
 From the test builds 0.196.1 - 0.196.2: monsters you grab, throw and kill behave better (still being worked on).

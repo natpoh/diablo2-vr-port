@@ -21,12 +21,17 @@
 // show) ends the guide (Step::guideEnd); the offer's Measure now hides the window like Calibrate body and brings it back on the guide's first page.
 //
 // The window flips like pages (vr/wheel_flip.h): a flick of a thumbstick left / right, or a tap of the left / right grip, moves one place along
-// SKILLS | SETTINGS: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right | Guide (stopping at the ends), and so does a click on the arrow at the window's edge; dots at its foot
+// SKILLS | SETTINGS: View | Options | Video | Controls (Left, Right) | Vibration | HUD | Life | Look | Body | Belt | Melee | World | Co-op | Guide (stopping at the
+// ends; VR F1 - F3 step over the pages they do not show), and so does a click on the arrow at the window's edge; dots at its foot
 // show where it stands. With the tab strip the window takes both thumbsticks while it is up (the hero neither walks nor turns with them) and after it
 // closes until each is back in the middle.
 //
-// Only in VR first person (F4: viewgate::F4(), passed in as `f4`): in any other view the panel stands down - closed, nothing taken from
-// the layout, no press, no flag - and starts fresh when F4 comes back.
+// VR first person (F4: viewgate::F4(), passed in as `f4`) has all of it. VR F1, F2 and F3 (SetView 1 - 3; Serg, 2026-11-02: "игровой оверлей ... во
+// все режимы ф1 ф2 ф3") have the WINDOW alone, opened and closed the same ways: the Skills tab's slots edited (the game's own assignment), RUN / WALK,
+// and the Settings pages those views have (hset_defs.h PageShown: not F4's body) - no slot is picked for the trigger and nothing of ours casts (the
+// controller's B / X / Y are the game's own skill buttons there), no slot controls, no first-start guide. Any other view (the flat game, a VR view
+// not told): the panel stands down - closed, nothing taken from the layout, no press, no flag. A change between F4, F1 - F3 and the rest starts it
+// fresh.
 //
 // The chord: the other hand's grip held + the pointing hand's thumbstick click. In direct input's layout the pointing
 // (right) stick click is "swap weapons" and the left grip is the chord modifier; nothing is bound to the two together, and
@@ -133,6 +138,8 @@ class Controller {
     bool triggerTaken_ = false, aTaken_ = false;   // SetControlsTaken
     bool triggerSkill_ = false;        // TriggerCastsSkill
     bool secondRow_ = true;            // SetSecondRow
+    int view_ = 4;                     // SetView: 4 F4, 1 - 3 VR F1 - F3 (the window alone), 0 another view
+    int mode_ = -1;                    // the frame before's: 4 F4, 1 the window alone (VR F1 - F3), 0 stood down; -1 none yet
     bool closeArmed_ = false;          // the right stick click was let go since the panel opened: a long press of it closes the panel
     double closeHoldAt_ = -1.0;        // when that long press began (< 0: not pressed)
     struct Held {
@@ -176,6 +183,9 @@ public:
     // gesture holds it (the frame before's takes). Such a grip is no modifier: it does not arm the Settings tab's both-grips chord (which takes both stick clicks), does not make the
     // wheel's grip + click chord, and does not keep the right A / right trigger from their A / RT slots (a skill there casts with the weapon held). Set before every Frame; false = as before.
     void SetGripsTaken(bool left, bool right) { gripTaken_[0] = left; gripTaken_[1] = right; }
+    // The game's VR view, 1 = F1 ... 4 = F4, 0 not a VR view (vr/view_gate.h Number): with `f4` false, 1 - 3 is the window alone (see the top). Set before
+    // every Frame; 4 = as before (not F4: stood down).
+    void SetView(int view) { view_ = view >= 0 && view <= 4 ? view : 0; }
     const Settings& Config() const { return cfg_; }
     // This frame the right trigger is the game's RT slot (or LT + RT with the left trigger held) and that slot holds a skill: a pull of it casts that skill,
     // and the layout's attack does not see it (the melee rule asks - vr/melee_trigger.h). False where the slot controls are off, in another view, with a
@@ -221,15 +231,20 @@ public:
         out.layer.heightM = PanelHeightM(cfg_);
         out.layer.style = cfg_.style;
         if (f.session != session_) { session_ = f.session; Reset(); }
-        if (!f4) {   // another view: nothing of ours acts. Whatever was under way ends (the panel closes, the pick is forgotten, the controls
-                     // it held are let go, no press, no flag), and F4 starts fresh
+        const bool flat = !f4 && hset::FlatView(view_);   // VR F1 - F3: the window alone
+        const int mode = f4 ? 4 : flat ? 1 : 0;
+        if (mode != mode_) { if (mode_ >= 0) Reset(); mode_ = mode; }   // (F4, F1 - F3, another view: each starts fresh)
+        if (!f4 && !flat) {   // another view: nothing of ours acts. Whatever was under way ends (the panel closes, the pick is forgotten, the controls
+                              // it held are let go, no press, no flag), and F4 starts fresh
             if (!standing_) { Reset(); standing_ = true; }
             return out;
         }
         standing_ = false;
-        const bool focused = (f.flags & kFocused) != 0, inMenu = (f.flags & kInMenu) != 0;
+        // (in another view than F4 the input layer sets kInMenu too: there the game's own menu is kGameMenu)
+        const bool focused = (f.flags & kFocused) != 0, inMenu = (f.flags & (flat ? kGameMenu : kInMenu)) != 0;
         const bool allowed = focused && !inMenu;
         const bool tabsOn = TabsOn(cfg_) && host != nullptr;
+        const int pageView = flat ? view_ : tabsOn ? host->view : 4;   // the view the Settings pages are shown for (hset_defs.h PageShown)
         const bool measuring = tabsOn && host->calibrating;   // the T-pose measurement has the hands: no window, whatever is asked
         const bool allowedUi = allowed && !measuring;         // (the cast and the pointer are `allowed`'s: they are not the window's life)
         const int P = cfg_.pointerHand, M = 1 - P;
@@ -250,8 +265,9 @@ public:
         const bool back = backNow && !backWas_;
         backWas_ = backNow;
 
-        // the chord is the way in mode 0, and the fallback in mode 1 where the plugin is not the input (the long press cannot come then)
-        const bool chordOk = cfg_.openMode == 0 || (f.flags & kDirect) == 0;
+        // the chord is the way in mode 0, and the fallback in mode 1 where the plugin is not the input (the long press cannot come then) - in F4: VR F1 - F3
+        // are never direct mode, and their own controller sends the long press (the left grip + the right click stay its swap there)
+        const bool chordOk = cfg_.openMode == 0 || (!flat && (f.flags & kDirect) == 0);
         const bool chordHeld = chordOk && modGrip[M] && !modGrip[P] && hm.active && hp.active;
         // an unplaced wheel is placed where the head looks as it opens; no head, no wheel
         const bool wasOpen = model_.Open();
@@ -291,7 +307,7 @@ public:
         }
         const bool resumeNow = tabsOn && resume_ && !wasOpen && allowedUi && f.head.valid == 1;   // Calibrate body: the measurement is over
         // the first-start guide asks for the window (its first start): up on Settings > Guide once the ini is read (the offer can measure)
-        const bool guideNow = tabsOn && !resumeNow && host->openGuide >= 0 && !wasOpen && allowedUi && f.head.valid == 1 && host->ini.ready;
+        const bool guideNow = tabsOn && !flat && !resumeNow && host->openGuide >= 0 && !wasOpen && allowedUi && f.head.valid == 1 && host->ini.ready;
         const bool toggle = allowedUi && (wasOpen || f.head.valid == 1) &&   // (a held place is not a place to hang it)
                             ((stickEdge && chordHeld) || request || holdClose || chordToggle || resumeNow || guideNow);
         if (toggle && !wasOpen) panel_ = PanelFor(f.head, cfg_);
@@ -317,7 +333,7 @@ public:
         bool closeAsked = false;
         if (tabsOn && wasOpen) {
             settings_.SetEnv(host->env);
-            settings_.SetView(host->view);
+            settings_.SetView(pageView);
             settings_.SetSpanInUse(host->spanInUse);
             settings_.SetPlayers(host->players, f.time * 1000.0);
             settings_.SetParty(host->party, f.time * 1000.0);
@@ -325,7 +341,7 @@ public:
             if (tabNow == Tab::Settings && !toggle) {
                 float su = 0.0f, sv = 0.0f;
                 if (ph.dist > 0.0f) tiles::SheetPoint(ph.u, ph.v, &su, &sv);
-                if (pointer) settingsHover = hset::HitTest(settings_.page, su, sv);
+                if (pointer) settingsHover = hset::HitTest(settings_.page, su, sv, settings_.View());
                 settingsAct = clicker_.Step(settings_, settingsHover, pointer, click, trig, ph.dist > 0.0f, su * float(tiles::kSheetW), f.time * 1000.0);
                 if (settingsAct.what == hset::Do::Close || settingsAct.what == hset::Do::Calibrate || settingsAct.what == hset::Do::View ||
                     settingsAct.what == hset::Do::GuideDone || (settingsAct.what == hset::Do::Party && settingsAct.party.what == hset::party::Ask::OpenPanel))
@@ -373,6 +389,7 @@ public:
         in.rowOff = !secondRow_;
         in.editFirst = cfg_.editFirst;
         in.held = trig;   // (the long press on a slot, editFirst)
+        in.noPick = flat;
         const Out mo = model_.Step(in);
         out.feedback = mo.feedback;
         out.request = mo.request;
@@ -382,7 +399,7 @@ public:
         if (tabsOn) {
             if (open && wasOpen && model_.Current().page == Page::Wheel && !closeAsked) {   // the flips: a flick, a tap, a click on an arrow
                 const int step = flick != 0 ? flick : mo.flip;
-                const int here = FlipPlace(), there = FlipTo(here, step);
+                const int here = FlipPlace(), there = FlipTo(here, step, settings_.View(), settings_.PartyOn());
                 if (step != 0 && there != here) {
                     model_.SetTab(there == 0 ? Tab::Skills : Tab::Settings);
                     if (there > 0) settings_.Click({hset::Kind::Tab, there - 1, 0});
@@ -402,7 +419,7 @@ public:
                     }
                 }
                 settings_.SetEnv(host->env);
-                settings_.SetView(host->view);
+                settings_.SetView(pageView);
                 settings_.SetSpanInUse(host->spanInUse);
                 settings_.SetPlayers(host->players, f.time * 1000.0);
                 settings_.SetParty(host->party, f.time * 1000.0);
@@ -413,7 +430,7 @@ public:
                 clicker_.Reset();
             }
             model_.SetSettings(settings_, open && model_.Current().tab == Tab::Settings ? settingsHover : hset::Hit{});
-            model_.SetPlace(open ? FlipPlace() : 0);
+            model_.SetPlace(open ? FlipPlace() : 0, settings_.View(), settings_.PartyOn());
             out.settings = settingsAct;
             if ((settingsAct.what == hset::Do::Save || settingsAct.what == hset::Do::Coop) && out.feedback == Feedback::None) out.feedback = Feedback::Applied;
             out.wantStore = open || resume_ || chord_.Arming() || toggle || host->openGuide >= 0;
@@ -424,7 +441,7 @@ public:
         ci.time = f.time;
         ci.slot = model_.Selected();
         ci.trigger = hp.trigger;
-        ci.allowed = allowed && !open && !castBlocked_;
+        ci.allowed = allowed && !open && !castBlocked_ && !flat;   // (VR F1 - F3: nothing is picked, nothing cast)
         const CastGate::Out co = cast_.Step(ci);
         out.casting = co.casting;
         out.buttons = co.buttons;
@@ -436,7 +453,7 @@ public:
         if (cfg_.slotControls) {
             SlotControls::In si;
             si.time = f.time;
-            si.allowed = allowedUi && !open && !wasOpen && (f.flags & (kDirect | kUiUp | kOtherView)) == kDirect;
+            si.allowed = allowedUi && !open && !wasOpen && !flat && (f.flags & (kDirect | kUiUp | kOtherView)) == kDirect;
             si.triggerFree = !castBlocked_ && !triggerTaken_ && model_.Selected() < 0 && !co.casting;
             si.aFree = !aTaken_ && !co.casting;
             si.trigger = f.hand[1].trigger;

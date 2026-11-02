@@ -139,6 +139,7 @@ struct Cfg {
     bool fovCrop = true;      // fov_crop: each eye's fov narrowed to the window's aspect (sharper, black above and below)
     bool symmetric = true;    // each eye's fov made as wide to the left as to the right (symmetric_fov)
     bool fovOverride = false;   // fov_override: each eye drawn and submitted whole with the angles set by hand (fov_outer / inner / up / down) - vr/eye_fov.h HandAngles
+    bool fovOverrideCentred = true;   // fov_override_centred: ... drawn centred, each eye's part cut whole (the interface meets) - vr/eye_fov.h HandCentred; 0 = off-axis
     eyefov::HandAngles hand;
     int runtimeFovMode = 1;   // runtime_fov 0 / 1 / 2 (below); runtimeFov = 1
     bool runtimeFov = true;   // runtime_fov (on): each eye drawn and submitted exactly with the runtime's own fov - symmetric_fov and fov_crop then do nothing (vr/eye_fov.h)
@@ -327,9 +328,14 @@ bool g_bridgeIn = false;
 // log was off, and its source checks the submitted fov only for being finite) - while the old symmetric_fov / fov_crop path is the one it
 // was measured working with (50-60 -> 80-90 frames a second). So the eyes are drawn and submitted that way then (OpenFrame tells it).
 bool RuntimeFovNow() { return g_cfg.runtimeFov && !g_bridgeIn; }
-// Each eye drawn and submitted whole with exactly its own angles, off-axis (OpenFrame): [openxr] fov_override (the angles set by hand) or
-// runtime_fov=2 (the runtime's own - what fov_override with the headset's own numbers did for the Apple Vision Pro on ALVR, 2026-10-26).
-bool ExactEyes() { return g_cfg.fovOverride || g_cfg.runtimeFovMode == 2; }
+// [openxr] fov_override with fov_override_centred (on): the angles set by hand drawn with one centred frustum that holds both eyes', each eye's
+// part cut into its swapchain and submitted whole with exactly its angles (vr/eye_fov.h HandCentred; runtime_fov's cut, CropFor) - the game's
+// interface laid out once for both eyes, so it meets. Not with OFXR Bridge (the headset went black with runtime_fov's cut and the bridge).
+bool HandCentredNow() { return g_cfg.fovOverride && g_cfg.fovOverrideCentred && !g_bridgeIn; }
+// Each eye drawn and submitted whole with exactly its own angles, off-axis (OpenFrame): [openxr] fov_override (the angles set by hand) without
+// fov_override_centred, or runtime_fov=2 (the runtime's own - what fov_override with the headset's own numbers did for the Apple Vision Pro on
+// ALVR, 2026-10-26).
+bool ExactEyes() { return g_cfg.fovOverride ? !HandCentredNow() : g_cfg.runtimeFovMode == 2; }
 bool g_routeTold = false;   // which runtime_fov route is in force, told once a session (OpenFrame)
 void TellEyes(const XrView views[2], const eyeframe::Quat q[2], const eyeframe::Frame& fr) {
     if (g_eyesTold) return;
@@ -4723,7 +4729,10 @@ bool OpenFrame(Kind kind) {
                 want[0] = want[1] = {atanf(t.l), atanf(t.r), atanf(t.u), atanf(t.d)};
             }
             NoteRuntimeFov(g_views[0].fov);   // (the runtime's own, for D2R VR Settings beside fov_override's sliders)
-            if (g_cfg.fovOverride)   // [openxr] fov_override: exactly the angles set by hand - not centred, not cropped, not canted; each eye's whole image
+            if (HandCentredNow()) {   // [openxr] fov_override + fov_override_centred: one centred frustum holding both hands' views (each eye's part cut below)
+                const eyefov::Tan c = eyefov::HandCentred(g_cfg.hand).drawn;
+                want[0] = want[1] = {atanf(c.l), atanf(c.r), atanf(c.u), atanf(c.d)};
+            } else if (g_cfg.fovOverride)   // [openxr] fov_override: exactly the angles set by hand - not centred, not cropped, not canted; each eye's whole image
                 for (int e = 0; e < 2; ++e) {
                     const eyefov::Angles h = eyefov::FromHand(g_cfg.hand, e);
                     want[e] = {h.l, h.r, h.u, h.d};
@@ -4735,14 +4744,15 @@ bool OpenFrame(Kind kind) {
             for (int e = 0; e < 2; ++e) g_fovUsed[e] = {fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d};
             // [openxr] runtime_fov: drawn with the centred frustum that holds both runtime views (above), each eye's own view is the part of
             // the picture submitted (CloseFrame) - not for canted displays, whose eyes are drawn turned (each eye's whole picture, as above)
+            // fov_override_centred: each eye's part is its hand's view (fov_override is never canted). Angles both (WindowOf: the cut in tangents)
             for (int e = 0; e < 2; ++e) {
                 const XrFovf& rt = g_views[e].fov;
-                g_winUsed[e] = RuntimeFovNow() && !fr.canted && !ExactEyes()
-                                   ? eyefov::Inside({fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d},
-                                                    eyefov::FromAngles(rt.angleLeft, rt.angleRight, rt.angleUp, rt.angleDown))
-                                   : eyefov::Window{};
+                const eyefov::Angles drawn{fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d};
+                g_winUsed[e] = HandCentredNow() ? eyefov::WindowOf(drawn, eyefov::FromHand(g_cfg.hand, e))
+                             : RuntimeFovNow() && !fr.canted && !ExactEyes() ? eyefov::WindowOf(drawn, {rt.angleLeft, rt.angleRight, rt.angleUp, rt.angleDown})
+                                                                             : eyefov::Window{};
             }
-            if (g_cfg.runtimeFov && !ExactEyes() && !g_routeTold) {
+            if (g_cfg.runtimeFov && !g_cfg.fovOverride && !ExactEyes() && !g_routeTold) {
                 g_routeTold = true;
                 Log(g_bridgeIn ? "vrcam: openxr - runtime_fov is ON but OFXR Bridge (frame generation) is in this session: the eyes are drawn and submitted the "
                                  "old way (symmetric_fov / fov_crop) - the headset went black with runtime_fov and the bridge together; switch frame "
@@ -5198,10 +5208,10 @@ void ShotFrame(const XrCompositionLayerBaseHeader* const* layers, uint32_t nl, c
     const char* mode = g_pairMode == kViewsWindow ? "F1's window in the room (views_3d)" : g_pairMode == kViewsRoom ? "F3's room (views_3d)" : "the head's camera";
     add("Path: native OpenXR - runtime %s, headset %s, at most %u layers a frame, the headset's frame every %.2f ms\n", g_runtimeName[0] ? g_runtimeName : "?",
         g_systemName[0] ? g_systemName : "?", g_maxLayers, g_fs.predictedDisplayPeriod / 1e6);
-    add("Settings in force: [openxr] runtime_fov %d%s, symmetric_fov %d, fov_crop %d, fov_override %d, canted_eyes %d, ipd_auto %d (ipd_mm %.1f); "
+    add("Settings in force: [openxr] runtime_fov %d%s, symmetric_fov %d, fov_crop %d, fov_override %d (centred %d), canted_eyes %d, ipd_auto %d (ipd_mm %.1f); "
         "[stereo] eyes by turns %d, turn_warp %d; [headset_shot] grid %d, video recording now %d\n",
         g_cfg.runtimeFovMode, RuntimeFovNow() ? "" : " (not in force: the frame-generation bridge)", g_cfg.symmetric ? 1 : 0, g_cfg.fovCrop ? 1 : 0,
-        g_cfg.fovOverride ? 1 : 0, g_cfg.cantedEyes ? 1 : 0, g_cfg.ipdAuto ? 1 : 0, g_cfg.ipdManualM * 1000.0f, g_cfg.byTurns ? 1 : 0,
+        g_cfg.fovOverride ? 1 : 0, HandCentredNow() ? 1 : 0, g_cfg.cantedEyes ? 1 : 0, g_cfg.ipdAuto ? 1 : 0, g_cfg.ipdManualM * 1000.0f, g_cfg.byTurns ? 1 : 0,
         g_cfg.turnWarp ? 1 : 0, headgrid::On() ? 1 : 0, headclip::Wanted() ? 1 : 0);
     if (g_kind == kPair)
         add("The eyes this frame: left %s%s, right %s%s; each eye's picture %ux%u of the game's %ux%u\n",
@@ -5779,21 +5789,34 @@ void LoadSettings(const wchar_t* ini) {
         static int said = -1;
         static eyefov::HandAngles saidHand{};
         g_cfg.fovOverride = f(L"fov_override", 0.0f) != 0.0f;
+        g_cfg.fovOverrideCentred = f(L"fov_override_centred", 1.0f) != 0.0f;   // ... drawn centred, each eye's part cut whole (1), or off-axis (0); live
         g_cfg.hand = {f(L"fov_outer", 50.0f), f(L"fov_inner", 45.0f), f(L"fov_up", 50.0f), f(L"fov_down", 50.0f)};
         const eyefov::HandAngles& h = g_cfg.hand;
-        const bool changed = said != (int)g_cfg.fovOverride ||
+        const int now = g_cfg.fovOverride ? (g_cfg.fovOverrideCentred ? 2 : 1) : 0;
+        const bool changed = said != now ||
                              (g_cfg.fovOverride && (h.outer != saidHand.outer || h.inner != saidHand.inner || h.up != saidHand.up || h.down != saidHand.down));
         if (on && changed) {
             if (g_cfg.fovOverride) {
                 const eyefov::Angles l = eyefov::FromHand(h, 0);
                 const float k = 57.29578f;
-                LogF("vrcam: openxr - fov_override ON: both eyes drawn and submitted whole with the angles set by hand - outer %.2f, inner %.2f, up %.2f, "
-                     "down %.2f deg (left eye's fov %.2f %.2f %.2f %.2f, the right eye's its mirror; runtime_fov, symmetric_fov and fov_crop do nothing)",
-                     -l.l * k, l.r * k, l.u * k, -l.d * k, l.l * k, l.r * k, l.u * k, l.d * k);
+                if (g_cfg.fovOverrideCentred) {
+                    const eyefov::HandDraw d = eyefov::HandCentred(h);
+                    LogF("vrcam: openxr - fov_override ON: each eye submitted whole with the angles set by hand - outer %.2f, inner %.2f, up %.2f, down %.2f "
+                         "deg (left eye's fov %.2f %.2f %.2f %.2f, the right eye's its mirror) - both drawn with one centred frustum %.2f %.2f %.2f %.2f, "
+                         "each eye's part cut (left x %.3f-%.3f y %.3f-%.3f of the picture), so the game's interface meets in both eyes "
+                         "([openxr] fov_override_centred=1; not with frame generation); runtime_fov, symmetric_fov and fov_crop do nothing",
+                         -l.l * k, l.r * k, l.u * k, -l.d * k, l.l * k, l.r * k, l.u * k, l.d * k, atanf(d.drawn.l) * k, atanf(d.drawn.r) * k,
+                         atanf(d.drawn.u) * k, atanf(d.drawn.d) * k, d.win[0].x0, d.win[0].x1, d.win[0].y0, d.win[0].y1);
+                } else {
+                    LogF("vrcam: openxr - fov_override ON: both eyes drawn off-axis and submitted whole with the angles set by hand - outer %.2f, inner %.2f, "
+                         "up %.2f, down %.2f deg (left eye's fov %.2f %.2f %.2f %.2f, the right eye's its mirror; [openxr] fov_override_centred=0: the "
+                         "game's interface, drawn once, comes apart between the eyes; runtime_fov, symmetric_fov and fov_crop do nothing)",
+                         -l.l * k, l.r * k, l.u * k, -l.d * k, l.l * k, l.r * k, l.u * k, l.d * k);
+                }
             } else if (said >= 0) {
                 Log("vrcam: openxr - fov_override off: the runtime's angles again");
             }
-            said = (int)g_cfg.fovOverride;
+            said = now;
             saidHand = h;
         }
     }
@@ -5941,7 +5964,7 @@ void LoadSettings(const wchar_t* ini) {
                  !g_cfg.laser ? "off" : g_cfg.laserHand ? "the right hand" : "the left hand");
         }
         // the game's item tooltip at once under the laser: its hooks go in with the laser's (panelinput::Install), unticked they pass through
-        g_cfg.laserTooltips = f(L"laser_tooltips", 0.0f) != 0.0f;
+        g_cfg.laserTooltips = false;   // 0.197.1: off whatever [openxr] laser_tooltips says - the tooltip hooks left out while a freeze in the game's text layout is looked into (was: f(L"laser_tooltips", 0.0f) != 0.0f)
         g_cfg.laserCompareHold = f(L"laser_compare_hold", 1.0f) != 0.0f;
         {   // [hud] map_top_down / map_rotate / map_compass: the map in the hand (F4), live
             g_cfg.mapTopDown = GetPrivateProfileIntW(L"hud", L"map_top_down", 0, ini) != 0;
@@ -6452,7 +6475,7 @@ bool TurnTexture(ID3D12Resource*& r, const D3D12_RESOURCE_DESC& want, D3D12_RESO
 // Both eyes from one game frame and eyes by turns alike (by turns keeps and makes whole pictures, TurnFinish copies the box). The box in the
 // picture's pixels (`w` x `h` the whole picture), and its fov.
 bool CropFor(int eye, uint32_t w, uint32_t h, eyefov::Sub* out) {
-    if (!RuntimeFovNow() || g_pairMode == kViewsWindow || g_winUsed[eye].Whole()) return false;
+    if (!(RuntimeFovNow() || HandCentredNow()) || g_pairMode == kViewsWindow || g_winUsed[eye].Whole()) return false;
     const XrFovf& f = g_fovUsed[eye];
     *out = eyefov::Pixels(eyefov::FromAngles(f.angleLeft, f.angleRight, f.angleUp, f.angleDown), g_winUsed[eye], (int)w, (int)h);
     return out->w > 0 && out->h > 0;

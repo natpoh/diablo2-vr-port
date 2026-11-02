@@ -8808,13 +8808,56 @@ void PoseLegsOnly(uintptr_t self, const Hero& h) {
 
 #endif
 
+// [weight] death_ragdoll_flat: where the hero's two weapon bones are drawn on each of his poses (the game's own swing, every view) and where his model stands -
+// the arc a kill's body falls along (vr/death_ragdoll.h ArcAt). A ring of the last kTrail poses, world units, the performance counter's seconds.
+std::atomic<bool> g_trailWanted{false};
+SRWLOCK g_trailLock = SRWLOCK_INIT;
+constexpr int kTrail = 64;
+WeaponTrailSample g_trail[kTrail];
+int g_trailNext = 0, g_trailCount = 0;
+std::atomic<unsigned> g_trailNoted{0};
+double TrailClock() {
+    static const double perS = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return static_cast<double>(f.QuadPart); }();
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return static_cast<double>(t.QuadPart) / perS;
+}
+// the hero's pose just made (the hook, after the game's): each weapon bone (else the hand) through his model's matrix
+void NoteTrail(uintptr_t self, const Hero& hero) {
+    uintptr_t world = 0, mats = 0;
+    int32_t count = 0;
+    if (!Get(self + 0x20, &world) || !Get(world, &count) || count <= 0 || !Get(world + 4, &mats) || !mats) return;
+    HeroXform hx;
+    Mat model;
+    if (!HeroTransform(&hx) || hx.self != self || (hx.parent & 0xFFFFFu) != 0xFFFFFu || !SafeCopy(model.m, (const void*)hx.comp, sizeof model)) return;
+    WeaponTrailSample w;
+    w.t = TrailClock();
+    w.root[0] = model.m[12]; w.root[1] = model.m[13]; w.root[2] = model.m[14];
+    for (int side = 0; side < 2; ++side) {
+        const int b = hero.weapon[side] >= 0 ? hero.weapon[side] : hero.hand[side];
+        Mat bm;
+        if (b < 0 || b >= count || !SafeCopy(bm.m, (const void*)(mats + (uintptr_t)b * sizeof(Mat)), sizeof bm)) continue;
+        const V3 at = Through(model, Pos(bm));
+        if (!std::isfinite(at.x + at.y + at.z)) continue;
+        w.p[side][0] = at.x; w.p[side][1] = at.y; w.p[side][2] = at.z;
+        w.ok[side] = true;
+    }
+    if (!w.ok[0] && !w.ok[1]) return;
+    AcquireSRWLockExclusive(&g_trailLock);
+    g_trail[g_trailNext] = w;
+    g_trailNext = (g_trailNext + 1) % kTrail;
+    g_trailCount = std::min(g_trailCount + 1, kTrail);
+    ReleaseSRWLockExclusive(&g_trailLock);
+    g_trailNoted.fetch_add(1, std::memory_order_relaxed);
+}
+
 void Arms(uintptr_t self) {
     Input in;
     AcquireSRWLockShared(&g_inLock); in = g_in; ReleaseSRWLockShared(&g_inLock);
     // The hero is looked for even while nothing is done to him: his SkeletonInstance is what
     // vrcam's facing is found from (HeroTransform), and that is needed before the body can turn.
     const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet);   // ([body] doll_feet: in every view)
-    if (!active && !g_trackHero.load()) return;
+    if (!active && !g_trackHero.load() && !g_trailWanted.load(std::memory_order_relaxed)) return;   // ([weight] death_ragdoll_flat: the weapon's trail in every view)
     uintptr_t modelInst = 0, skel = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
     const auto key = std::make_pair(self, skel);
@@ -8901,6 +8944,7 @@ void Arms(uintptr_t self) {
             NoteDoll("doll: taken again after %llu ms - rig %p%s", (unsigned long long)(GetTickCount64() - g_dollLetGoAt.load()), (void*)self,
                      self == g_heroSelf.load() ? " (the same rig)" : " (a new rig: the model rebuilt - a weapon swap, an area, a load - or another one nearer the look-at)");
         NoteHero(self);
+        if (g_trailWanted.load(std::memory_order_relaxed)) NoteTrail(self, *hero);   // [weight] death_ragdoll_flat: the game's swing, before anything of ours
         g_rigPosedAt[std::clamp(hero->form, 0, 2)].store(GetTickCount64());   // [shapeshift] which body ours is in (the log of a swap)
         // the hero's class, from OUR rig only (the per-class wrist depth and D2R VR Settings read it): Learn met every player's rig and a second player's Amazon
         // took our class for hers (the 2026-10-26 two-PC test's log learned amazon, barbarian, druid, necromancer rigs)
@@ -9599,6 +9643,7 @@ void PoseMonsterDoll(uintptr_t self) {
 // 0.188.7 (Serg: "нпс не шевелятся"): matched by the instance's own pose pointer for the first seconds only - the game skins from copies of it. So: by the
 // pointer when it is the instance's own, else by the skeleton (the model) and the pose's own matrices against each such monster's pose now (NearestPose).
 std::atomic<unsigned> g_dollByPointer{0}, g_dollByMatch{0}, g_dollUnmatched{0};
+std::atomic<unsigned> g_dollByEntity{0};   // [weight] death_ragdoll: skinnings from a copy told apart by the entity drawn (dollpose::ByEntity)
 std::atomic<unsigned> g_knockSkinned{0}, g_knockRefused{0};   // [weight] knock_down: skinnings handed a copy laid on a knocked-down body's joints / whose joints did not read
 bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     const MonsterPoseByWorldFn src = g_monsterPoseByWorld.load(std::memory_order_relaxed);
@@ -9609,7 +9654,11 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     if (k <= 0) return false;
     if (!mats) return true;   // (the composite's look first)
     int pick = exact ? 0 : -1;
-    if (!exact) {
+    if (!exact) {   // [weight] death_ragdoll: the entity the game draws now names the body - corpses alike in their matrices are not alike in it
+        pick = dollpose::ByEntity(cands, std::min(k, 8), headshadow::DrawEntity());
+        if (pick >= 0) g_dollByEntity.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!exact && pick < 0) {
         static thread_local float now[16][dollpose::kMatchBones][16];   // each candidate's this frame's and last frame's pose (their first bones)
         const float (*ptrs[16])[16] = {};
         const int m = std::min(n, dollpose::kMatchBones);
@@ -9644,8 +9693,9 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     const ULONGLONG t = GetTickCount64();
     ULONGLONG was = toldAt.load();
     if (t - was >= 5000 && toldAt.compare_exchange_strong(was, t)) {
-        NoteDoll("monster ragdoll pose - the last 5 s, skinnings of struck monsters' models: %u by their own pose, %u by matching its matrices, %u of another monster of "
-                 "the model (left as the game has it)", g_dollByPointer.exchange(0), g_dollByMatch.exchange(0), g_dollUnmatched.exchange(0));
+        NoteDoll("monster ragdoll pose - the last 5 s, skinnings of struck monsters' models: %u by their own pose, %u by the entity drawn, %u by matching its "
+                 "matrices, %u of another monster of the model (left as the game has it)", g_dollByPointer.exchange(0), g_dollByEntity.exchange(0),
+                 g_dollByMatch.exchange(0), g_dollUnmatched.exchange(0));
         const unsigned knocked = g_knockSkinned.exchange(0), refused = g_knockRefused.exchange(0);
         if (knocked + refused)
             NoteDoll("knock down - the last 5 s: %u skinnings drew a knocked-down body from the copy laid on its joints%s", knocked,
@@ -9736,6 +9786,22 @@ int PoseNow(uintptr_t self, float (*m)[16], int max) {
     return SafeCopy(m, (const void*)mats, sizeof(Mat) * (size_t)count) ? count : 0;
 }
 void TrackHero(bool on) { g_trackHero.store(on); }
+void SetWeaponTrail(bool on) {
+    if (g_trailWanted.exchange(on) == on) return;
+    AcquireSRWLockExclusive(&g_trailLock);
+    g_trailNext = g_trailCount = 0;
+    ReleaseSRWLockExclusive(&g_trailLock);
+}
+int WeaponTrail(WeaponTrailSample* out, int max) {
+    if (!out || max <= 0) return 0;
+    AcquireSRWLockShared(&g_trailLock);
+    const int n = std::min(max, g_trailCount);
+    for (int i = 0; i < n; ++i) out[i] = g_trail[(g_trailNext - n + i + kTrail) % kTrail];
+    ReleaseSRWLockShared(&g_trailLock);
+    return n;
+}
+double WeaponTrailNow() { return TrailClock(); }
+unsigned WeaponTrailNoted() { return g_trailNoted.exchange(0); }
 uint32_t HeroGen() { return g_heroGen.load(); }
 bool HeroPosedLately(unsigned ms) { const ULONGLONG seen = g_heroSeen.load(); return seen && GetTickCount64() - seen < ms; }
 

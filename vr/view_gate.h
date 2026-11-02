@@ -16,6 +16,10 @@
 // THE ONE EXCEPTION, movement (2026-10-15, "now movement in F1-F3 without BodyWalk"): Flat() is true in VR F1, F2, F3 - the views BodyWalk's
 // input still belongs to - and only vr/direct_input.cpp's walk-only feed asks it ([direct] walk_flat_views): the controller's left stick
 // walks the hero there, nothing else of direct input acts (no attack, gesture, panel, pulse, command or action).
+//
+// AND THE OVERLAY (2026-11-02, Serg: "игровой оверлей ... во все режимы ф1 ф2 ф3"): the skill panel's window, opened by the long press of the right
+// stick click, is in VR F1, F2, F3 too - its Skills tab and the Settings pages those views have (vr/wheel_controller.h, vr/hset_defs.h PageShown).
+// Number() tells it which view it stands in; direct input lets its own sources (directinput::kSrcPanel / kSrcPanelView) take and tap there.
 #pragma once
 
 #include <atomic>
@@ -48,6 +52,18 @@ inline void SetFlat(Fn fn) { FlatSlot().store(fn, std::memory_order_release); }
 inline bool Flat() {
     const Fn fn = FlatSlot().load(std::memory_order_acquire);
     return fn ? fn() : false;
+}
+
+// The VR view's number, 1 = F1 ... 4 = F4, 0 not VR. Registered by vrcam next to Set; nothing registered: 4 if F4() says so, else 0.
+using NumberFn = int (*)();
+inline std::atomic<NumberFn>& NumberSlot() {
+    static std::atomic<NumberFn> slot{nullptr};
+    return slot;
+}
+inline void SetNumber(NumberFn fn) { NumberSlot().store(fn, std::memory_order_release); }
+inline int Number() {
+    const NumberFn fn = NumberSlot().load(std::memory_order_acquire);
+    return fn ? fn() : F4() ? 4 : 0;
 }
 
 // A module that has to END something when the view changes keeps one of these (its own thread only): Step(F4()) is

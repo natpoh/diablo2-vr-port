@@ -921,7 +921,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.197.0";
+static const char g_info_version[] = "0.198.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1015,6 +1015,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
     viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
     viewgate::SetFlat(&FlatViews);   // ... except the left stick's walk in VR F1-F3 ([direct] walk_flat_views, vr/walk_flat.h): movement only
+    viewgate::SetNumber(&VrViewNow);   // ... and the overlay (the skill panel's window) in every VR view: which one it stands in
     directinput::SetFlatGate(&FlatControllerGate);   // ... and the plugin's own controller as the game's pad there while BodyWalk is not running ([direct] flat_controller)
     directinput::SetPressSink(&FlatPressSink);   // ... with it off, a control pressed there that nothing of the plugin takes is said in the log
     directinput::SetBeltSink(&BeltFlickSink);   // ... and the belt potions of a thumbstick's flick with the left trigger held ([direct] belt_flick_flat_views, vr/belt_flick.h)

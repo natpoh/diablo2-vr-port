@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.182), what we already know
+What is broken or unfinished right now (D2R VR 0.198), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -155,6 +155,10 @@ still on the screen.
 ---
 
 ## Stereo, frame rate and DLSS
+
+> **Stereo looks wrong** (eyes swapped, double image, depth off in F2/F3/F4)?
+> Tick Settings > Stereo > "Set each eye's angles by hand" and adjust Angle:
+> outer, inner, up and down (the same box and sliders are on Home, under the views).
 
 ### 7. DLSS in "Stereo - one pass, two pictures" uses one DLSS for both eyes [repo]
 
@@ -421,6 +425,16 @@ player's own game archives; that part was not ported in 0.172 (the walls and sta
 `vr/roof_sides.h`, [render] roofs_two_sided). Also not ported: a VR "ENTER SEWERS" prompt.
 
 ---
+
+### 28. Monster corpses flicker after a ragdoll death [repo]
+
+**What you see:** with *Weapon Weight > Monsters' bodies > "A killed humanoid falls as a ragdoll"* on (`[weight] death_ragdoll`, and
+`death_ragdoll_flat` in 2D), a killed monster falls as our ragdoll and lies where it fell, but its corpse flickers - most when several
+monsters of one kind lie near each other. **Workaround:** untick the box (the game's own death animation, no flicker).
+
+**What we know:** our frozen corpse pose is handed to the game's skinning per drawn entity (0.197.6, vr/doll_pose, head_shadow's
+DrawEntity); the flicker is still there, so another frame or another eye still gets the game's own pose. Being fixed for the next
+version.
 
 ## Settings app and smaller things
 

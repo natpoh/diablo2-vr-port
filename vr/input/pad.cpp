@@ -1,5 +1,6 @@
 // vr/input/pad.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M10); what it gives: vr/input/input.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../flat_keys_why.h"   // why W A S D do not walk in flat F2 / F3 (FlatPadTick)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -616,6 +617,8 @@ void InputLogPad(const XINPUT_GAMEPAD& got, const XINPUT_GAMEPAD& fin, bool mirr
 // Twice a second: says when the game loses or gets back its pads, and when W A
 // S D are held but the game never asks for a keyboard move (its UI is on a pad:
 // the "controller" option, or a pad's press - a mouse click asks for the mouse).
+// In flat F2 / F3 and VR F2 with vr_keys_walk a held key that does not walk says why, once per change (vr/flat_keys_why.h) - the reports of 2026-11-01
+// ("W A S D stop after a menu until a view switch") had no line saying whose it was.
 void FlatPadTick() {
     static int told = -1;
     const int now = FlatNoPad() ? 1 : 0;
@@ -628,6 +631,28 @@ void FlatPadTick() {
     static ULONGLONG lastTold = 0;
     const uint32_t calls = g_keyMoveCalls.load();
     const bool keys = (GetAsyncKeyState('W') | GetAsyncKeyState('A') | GetAsyncKeyState('S') | GetAsyncKeyState('D')) & 0x8000;
+    // flat F2 / F3 (the mouse look's views; F1 is the game's own camera), and VR F2 with [input] vr_keys_walk - a monitor without a headset
+    // plays there with the shipped ini (platform=1): its keys walk through VrKeyInput, with or without the mouse look, a menu or not
+    const bool vrF2 = g_set.platform.load() == 1 && g_set.vrKeyWalk.load() && ViewNow() == 2;
+    if (g_keyMove.load() == 1 && ((FlatKeyMode() && ViewNow() != 1) || vrF2)) {
+        static flatkeys::Watch watch;
+        flatkeys::Facts f;
+        f.keysHeld = keys;
+        f.mouseLook = vrF2 || g_mouseLookOn.load();
+        f.cameraOn = g_enabled.load();
+        f.inWorld = g_inWorld.load();
+        f.menuOpen = !vrF2 && gamestate::MenuOpen();
+        f.focused = GameFocused();
+        f.chatOpen = f.focused && ChatOpen();
+        f.gameAsked = calls != lastCalls;
+        f.gateOk = g_keyMoveGateOk.load(std::memory_order_relaxed);
+        flatkeys::Why say;
+        if (watch.Step(flatkeys::Decide(f), &say))
+            LogF("vrcam: %s: W A S D held - %s (view F%d; mouse look %d, our camera %d, in a game %d, menu %d, in front %d, chat %d)", vrF2 ? "VR" : "flat",
+                 flatkeys::Text(say), ViewNow(), g_mouseLookOn.load(), f.cameraOn, f.inWorld, gamestate::MenuOpen(), f.focused, f.chatOpen);
+        lastCalls = calls;
+        return;   // (the line below is this one's GameNotAsking)
+    }
     if (g_keyMove.load() == 1 && ((FlatKeyMode() && ShooterActive()) || VrKeyWalk()) && GameFocused() && keys && calls == lastCalls &&
         GetTickCount64() - lastTold > 10000) {
         lastTold = GetTickCount64();

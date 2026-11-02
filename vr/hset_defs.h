@@ -3,7 +3,7 @@
 // d2r_vr.ini). One line a key; a new tick box of a feature is one line more. Pages are the panel's tabs
 // (at most kMaxPages, at most kRowsPerPage rows each - kRowsMax on a page that stands them closer); a toggle is a key with min 0, max 1, step 1.
 //
-// Fourteen pages: View, Options, Life, Look, HUD, Belt, Melee, Left, Right and Vibration are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
+// The pages: View, Options, Left, Right (one tab: Controls), Vibration, HUD, Life, Look, Belt, Melee and World's four are rows of this table; Video (the VR render size, vr/hset_video.h), Body (the
 // T-pose measurement, vr/hset_body.h), Co-op (the D2R Rooms plugin's relay bridge: its own d2r-rooms.ini, not d2r_vr.ini; vr/hset_coop.h) and Guide (the
 // first-start guide, vr/first_start.h; vr/hset_scene.h) are drawn by hand; Video and Body own the keys
 // at the end of the table, which have no row (kNoPage) - but for the Body page's one table row on top, how you play (standing / seated):
@@ -32,25 +32,48 @@ constexpr int kMaxPages = 19;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
-// hset_model.h kTab). After HUD come the belt's page, the hit-by-touch page (Melee), the two key-binding pages (Left, Right) and the co-op relay
-// bridge (Co-op), Vibration, then World; the first-start guide stays the last.
+// hset_model.h kTab). The order (Serg, 2026-11-02: "пересмотреть структуру"): what every view has first - View, Options, Video, Controls (the
+// two key-binding pages, Left and Right, under one tab) - then the controllers' Vibration, the interface (HUD, the low-life vignette's Life and
+// Look), the body's pages (Body, Belt, Melee, World), Co-op with its Party page, and the first-start guide last. In VR F1-F3 the pages and rows
+// of F4's body are not shown (PageShown / KeyShown below).
 // World (Serg, 2026-10-31: the basic world-interaction switches on one page, "выноси весь список") is one TAB of four pages - Contact,
 // Monsters react, Grab, More - that follow each other like any pages (a flick, a grip's tap) and are picked by a row of four buttons on top
 // (hset_model.h kWorldSub). So a page is not always a tab: kTabCount tabs, TabOf / TabPage between the two.
 // Party (Serg, 2026-11-01: invite to a party from the headset, vr/hset_party.h) has no tab either: it is the Co-op tab's second page, reached by
 // the Co-op page's Party button (the bottom bar) and back by its Relay button; a flick passes it between World's pages and the Guide.
 enum Page : int {
-    kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageBody = 3, kPageLife = 4, kPageLook = 5, kPageHud = 6,
-    kPageBelt = 7, kPageMelee = 8, kPageKeysL = 9, kPageKeysR = 10, kPageCoop = 11, kPageVibration = 12,
-    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageParty = 17, kPageGuide = 18
+    kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageKeysL = 3, kPageKeysR = 4, kPageVibration = 5, kPageHud = 6,
+    kPageLife = 7, kPageLook = 8, kPageBody = 9, kPageBelt = 10, kPageMelee = 11,
+    kPageWorld = 12, kPageWorldReact = 13, kPageWorldGrab = 14, kPageWorldMore = 15, kPageCoop = 16, kPageParty = 17, kPageGuide = 18
 };
 constexpr int kPageCount = 19;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
-constexpr int kTabWorld = kPageWorld, kTabGuide = kPageWorld + 1, kTabCount = kTabGuide + 1;
+// Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
+// buttons on top as World's four are.
+constexpr int kKeysPages = 2;    // kPageKeysL, kPageKeysR
+constexpr bool IsKeysPage(int page) { return page >= kPageKeysL && page < kPageKeysL + kKeysPages; }
+// A tab of several pages (World, Controls): a row of buttons on top, one a page; its first page, how many.
+constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page); }
+constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : page; }
+constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : 1; }
+// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, else the page itself.
+constexpr int LeadOf(int page) { return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page; }
+constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
 // The tab a page is under, and the page a tab opens.
-constexpr int TabOf(int page) { return IsWorldPage(page) ? kTabWorld : page == kPageGuide ? kTabGuide : page == kPageParty ? kPageCoop : page; }
-constexpr int TabPage(int tab) { return tab == kTabWorld ? kPageWorld : tab == kTabGuide ? kPageGuide : tab; }
+constexpr int TabOf(int page) {
+    int t = 0;
+    for (int p = 0; p < LeadOf(page); ++p) if (StartsTab(p)) ++t;
+    return t;
+}
+constexpr int TabPage(int tab) {
+    for (int p = 0; p < kPageCount; ++p)
+        if (StartsTab(p) && tab-- == 0) return p;
+    return kPageGuide;
+}
+constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
+static_assert(kTabCount == 14 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop),
+              "fourteen tabs over the nineteen pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 128 bits: the Vibration page took the
@@ -99,7 +122,7 @@ struct Def {
 };
 
 inline constexpr Def kDefs[] = {
-    // page 0: how the picture stands
+    // View: how the picture stands
     {L"screen", L"menu_distance_m", "Panel distance", "A panel open in the game: inventory, stash, trader",
      1.6f, 0.5f, 8.0f, 0.1f, "%.1f m", "", "", 0},
     {L"openxr", L"flat_distance_m", "Screen distance", "Menus, loading screens, the flat views F1 and F3",
@@ -110,7 +133,7 @@ inline constexpr Def kDefs[] = {
      1.0f, 0.2f, 1.5f, 0.05f, "%.2f", "", "", 0},
     {L"stereo", L"user_height_m", "Your height", "World and hands scale; BodyWalk's Body Height wins",
      1.75f, 1.10f, 2.30f, 0.01f, "%.2f m", "", "", 0},
-    // page 1: options
+    // Options
     {L"openxr", L"laser", "Laser on menus", "Point a controller at a menu and it is the mouse",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
     {L"openxr", L"laser_hand", "Laser hand", "The hand the laser comes from",
@@ -136,7 +159,7 @@ inline constexpr Def kDefs[] = {
     // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too (seven rows): the
     // next key needs a page of its own - kMaxPages and the tabs' places in the tile window and the panel).
     //
-    // page 4, Life, and page 5, Look: the low-life vignette ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life edits the same
+    // Life and Look: the low-life vignette ([hud] low_hp_*, vr/low_hp.h; D2R VR Settings > UI: F4 body > Low life edits the same
     // keys). Ranges and defaults are lowhp::Config's, in the ini's units: percent for the threshold and the size. The steps are coarser than D2R VR
     // Settings' sliders (5 percent, 0.05) so the panel's buttons get somewhere in a few presses; a value off the grid in the file is shown on it.
     {L"hud", L"low_hp_vignette", "Low life: red vignette", "The edges beat red while your life is low (F4)",
@@ -161,7 +184,7 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageLook},
     {L"hud", L"low_hp_haptics_strength", "Pulse strength", "Stronger the lower your life; this scales it",
      1.0f, 0.1f, 2.0f, 0.1f, "%.1f", "", "", kPageLook},
-    // page 7, Belt: where the belt's potions hang on the hero ([hands] belt_models_*, the keys of D2R VR Settings > UI: F4 body > Belt potions;
+    // Belt: where the belt's potions hang on the hero ([hands] belt_models_*, the keys of D2R VR Settings > UI: F4 body > Belt potions;
     // shared with the plugin's placing of them in vrcam.cpp). Up and out are parts of his eye height as there; right / left is a shift of the
     // whole arc across him (+ to his right), turn swings the arc round him (+ to his right), degrees. Live: the plugin follows the ini.
     {L"hands", L"belt_models_up", "Belt height", "How high on you, in parts of your eye height",
@@ -182,7 +205,7 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 1.0f, 1.0f, "", "Grip", "Trigger + grip", kPageBelt, true},
     // (the spread, [hands] belt_models_arc, and the potions' size, [hands] belt_models_scale, are in D2R VR Settings only)
     //
-    // page 8, Melee: the "Hit by touch" group of D2R VR Settings > Strikes - the tick, its two numbers and the trigger's tick, the same keys, ranges and defaults as there
+    // Melee: the "Hit by touch" group of D2R VR Settings > Strikes - the tick, its two numbers and the trigger's tick, the same keys, ranges and defaults as there
     // ([gameplay] melee_touch, melee_min_speed, melee_stroke_start_cm, melee_touch_only; the plugin follows the ini live, vr/vrcam.cpp, vr/stroke_tuning.h). Live, F4 only.
     // The rest of the Strikes tab (thrown weapons, which contact counts, the kinds, Direct hit's Fully on and its numbers) stays in D2R VR Settings.
     {L"gameplay", L"melee_touch", "Hit by touch", "The blade you swing through a monster hits it (F4)",
@@ -211,7 +234,7 @@ inline constexpr Def kDefs[] = {
     {L"gameplay", L"melee_direct_client", "Direct hit as the file has it", "0 off, 1 by the rules, 2 fully on",
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage, true},
     //
-    // pages 9 and 10, Left and Right: the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
+    // Left and Right (the Controls tab's two pages): the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is
     // the range, 0 = the first pick, one past the last = a line the list does not name, "Custom"). Not live: a binding is applied with Apply.
     // The keys are the rows of hset::keys::kSlots, in that order (a test holds the two together). Chords and the other long presses stay
@@ -229,7 +252,7 @@ inline constexpr Def kDefs[] = {
     {L"direct", L"right_stick_hold", "Right stick, long press", "[direct] right_stick_hold", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_menu", "Right menu button", "[direct] right_menu", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     //
-    // page 12, Vibration (Serg, 2026-10-31: the vibration on a tab of its own, in D2R VR Settings and in the headset): [openxr] haptics, its strength and the
+    // Vibration (Serg, 2026-10-31: the vibration on a tab of its own, in D2R VR Settings and in the headset): [openxr] haptics, its strength and the
     // extra pulses after bearstonem/d2r-pcvr (MIT; vr/haptics.h Extras) - the keys, defaults and ranges of D2R VR Settings > Vibration (its steps coarser).
     // The extras' other keys (the low mana share, the game rumble's strength, the pad mute, the motor) stay in D2R VR Settings. Live, F4 only.
     {L"openxr", L"haptics", "Controller vibration", "Pulses in the controllers on what happens (F4)",
@@ -247,7 +270,7 @@ inline constexpr Def kDefs[] = {
     {L"openxr", L"haptics_game_rumble", "The game's own rumble", "A hit taken, a skill used: as the game rumbles a pad",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageVibration, true},
     //
-    // pages 13 - 16, World (one tab): the basic switches of the world's touch, from D2R VR Settings' Weapon / Strikes / Hands tabs - the same keys and
+    // World (one tab of four pages): the basic switches of the world's touch, from D2R VR Settings' Weapon / Strikes / Hands tabs - the same keys and
     // defaults, their labels as there without "(a test)" (shortened where a row has no room: a test measures them), the line under each from the tooltip. Live: each is
     // written by itself a moment after the click, the other pages' rule; the plugin follows what it follows live. Hit by touch is the Melee page's row too.
     // Contact: what stops your weapon and hands - walls, your own body ([weight] own_body), the monsters' bodies and what they hold. The walls and your own body
@@ -329,11 +352,11 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage},
     {L"calibration", L"arm_span_m", "Measured arm span", "Metres, grip to grip",
      0.0f, 0.0f, 3.0f, 0.0001f, "%.2f m", "", "", kNoPage, true},
-    // page 3, Body: its one table row, above the hand-drawn part - how the game is played ([calibration] seated, vr/calibration.h; D2R VR
+    // Body: its one table row, above the hand-drawn part - how the game is played ([calibration] seated, vr/calibration.h; D2R VR
     // Settings > Body has it next to the measurement). Seated: the recentre sets the hero's eye height, Calibrate reads the arm span only. Live.
     {L"calibration", L"seated", "How you play", "Seated: Recentre sets the eye height; Calibrate reads the arm span",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Standing", "Seated", kPageBody, true},
-    // page 6, HUD. [hud] bar_place is the toolbar type's row: its value box shows the type's name (vr/hset_names.h), a click steps the type
+    // HUD. [hud] bar_place is the toolbar type's row: its value box shows the type's name (vr/hset_names.h), a click steps the type
     // and takes [hud] hide to at least 1 with it (the model, hset_model.h), "In the picture" being hide 0; hide has no row of its own.
     {L"hud", L"bar_place", "Toolbar type", "Life and mana on the wrists, or the whole toolbar",
      5.0f, 0.0f, 5.0f, 1.0f, "%.0f", "", "", kPageHud},
@@ -416,15 +439,15 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
-                                               "Contact", "Monsters react", "Grab", "More", "Party", "Guide"};
-constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Body", "Life", "Look", "HUD", "Belt", "Melee", "Left", "Right", "Co-op", "Vibration",
-                                              "World", "Guide"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
+                                               "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Guide"};
+constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
+                                              "World", "Co-op", "Guide"};
 // The tabs' font (vr/hset_paint.cpp: Segoe UI, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
 // Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths did for
-// fourteen (939 of 960); fifteen (World) take 24. tools/hset_test.cpp measures them again.
+// fourteen (939 of 960); fifteen (World) take 24, and so do fourteen again (Controls in place of Left and Right). tools/hset_test.cpp measures them again.
 constexpr int kTabFontPx = 24;
-constexpr int kTabNameW[kTabCount] = {40, 67, 49, 42, 30, 40, 39, 33, 51, 32, 45, 53, 79, 51, 50};
+constexpr int kTabNameW[kTabCount] = {40, 67, 49, 72, 79, 39, 30, 40, 42, 33, 51, 51, 53, 50};
 // The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
 // a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
 // faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.
@@ -446,17 +469,41 @@ inline const char* TabName(int tab) { return uitext::Tr(TabKey(tab), kTabNames[t
 // The low-life vignette's two pages: while one is open the plugin previews the vignette (vr/low_hp_game.h SetPreview).
 constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageLook; }
 
-constexpr int RowsOn(int page) {
+// -- what a view shows -----------------------------------------------------------------------------------------------------------------------------
+// The overlay is in every VR view (Serg, 2026-11-02: "игровой оверлей ... во все режимы ф1 ф2 ф3, убрать только то что не относится"): in VR F1, F2, F3
+// (view 1 - 3) the pages and rows of F4's body are not shown - what the plugin does there in F4 only (vr/view_gate.h): the controllers' pulses
+// (vr/haptics.cpp), the low-life vignette (vr/low_hp.h), the T-pose measurement, the belt's potions, hit by touch and World's weapon, hands and
+// bodies; and on the pages that stay, a menu as a panel in front ([openxr] menu_3d: F4's pair) and the monsters' plates (vr/mob_bars.cpp: hooked
+// in F4 only). View 4 (F4) and 0 (not known: D2R VR Settings' own panel, a test) show everything, as before.
+constexpr bool FlatView(int view) { return view >= 1 && view <= 3; }
+constexpr bool F4OnlyPage(int page) {
+    return page == kPageVibration || page == kPageLife || page == kPageLook || page == kPageBody || page == kPageBelt || page == kPageMelee || IsWorldPage(page);
+}
+constexpr bool F4OnlyKey(int key) {
+    return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||
+                                        key == IndexOf(L"hud", L"ordinary_mob_bars"));
+}
+constexpr bool PageShown(int page, int view) { return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)); }
+constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key)); }
+constexpr bool TabShown(int tab, int view) { return tab >= 0 && tab < kTabCount && PageShown(TabPage(tab), view); }
+static_assert(IndexOf(L"openxr", L"menu_3d") >= 0 && IndexOf(L"hud", L"monster_height") >= 0 && IndexOf(L"hud", L"ordinary_mob_bars") >= 0,
+              "the rows F1 - F3 do not show are in the table");
+
+// A page's rows in a view (0 / 4: all of them; F1 - F3 leave out F4's: KeyShown above).
+constexpr bool OnPage(int key, int page, int view) {
+    return (kDefs[key].page == page || (kDefs[key].also >= 0 && kDefs[key].also == page)) && KeyShown(key, view);
+}
+constexpr int RowsOn(int page, int view = 0) {
     int n = 0;
-    for (const Def& d : kDefs) if (d.page == page || (d.also >= 0 && d.also == page)) ++n;
+    for (int i = 0; i < kCount; ++i) if (OnPage(i, page, view)) ++n;
     return n;
 }
 static_assert(RowsOn(kPageView) <= kViewRow, "the first page's table rows leave its last row to the game view's buttons");
-// The index in kDefs of the row-th key of a page, -1 past the end.
-constexpr int KeyAt(int page, int row) {
+// The index in kDefs of the row-th key of a page in a view, -1 past the end.
+constexpr int KeyAt(int page, int row, int view = 0) {
     int seen = 0;
     for (int i = 0; i < kCount; ++i)
-        if (kDefs[i].page == page || (kDefs[i].also >= 0 && kDefs[i].also == page)) {
+        if (OnPage(i, page, view)) {
             if (seen == row) return i;
             ++seen;
         }

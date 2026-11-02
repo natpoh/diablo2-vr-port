@@ -82,6 +82,7 @@ potionhide::EntitySet g_marked;   // the entities hung on the hero's head: not i
 std::atomic<unsigned> g_subs{0}, g_shadowCalls{0}, g_skips{0}, g_marks{0};
 
 thread_local int t_pass = kPassNone;   // the pass of the ModelDrawCollect call this thread is in
+thread_local uint32_t t_entity = 0;    // ... and the entity it draws (DrawEntity: [weight] death_ragdoll tells corpses alike apart by it)
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 template <typename... A> void LogF(const char* fmt, A... a) {
@@ -146,6 +147,7 @@ std::atomic<uintptr_t> g_oursSkel{0}, g_oursCur{0}, g_oursPrev{0};
 std::atomic<uint64_t> g_oursGen{0};
 std::atomic<ULONGLONG> g_oursAt{0};
 std::atomic<bool> g_poseView{true};   // vr/body/pose_views.h AnyAllowed (SetPoseView): VR F1 / F3 none of our poses to the skinning
+std::atomic<bool> g_dollAnyView{false};   // [weight] death_ragdoll_flat (SetDollAnyView): the monsters' poses (the dead's) in VR F1 / F3 too - nothing else of ours there
 std::atomic<unsigned> g_oursSubs[3];   // skinnings handed our pose: the eyes' passes, the shadows', outside a draw collect
 
 // Our pose for this world pose of the hero's skeleton (its matrices into m, n of them): true when there is a fresh one; *gen its gen.
@@ -357,8 +359,9 @@ int DollPose(uintptr_t skeleton, uintptr_t pose, uintptr_t* out) {
 __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose, uintptr_t indices, uintptr_t count, uintptr_t out) {
     const int pass = t_pass;
     CountSkin(skeleton, pose, pass);
-    if (!g_poseView.load(std::memory_order_relaxed)) return g_origComposite(skeleton, pose, indices, count, out);   // VR F1 / F3: the game's own, whole
-    if (g_dollWanted.load(std::memory_order_relaxed) && g_poseView.load(std::memory_order_relaxed) && g_dollFaults.load(std::memory_order_relaxed) == 0 && pose &&
+    const bool poseView = g_poseView.load(std::memory_order_relaxed);
+    if (!poseView && !g_dollAnyView.load(std::memory_order_relaxed)) return g_origComposite(skeleton, pose, indices, count, out);   // VR F1 / F3: the game's own, whole
+    if (g_dollWanted.load(std::memory_order_relaxed) && g_dollFaults.load(std::memory_order_relaxed) == 0 && pose &&
         pose != g_cur.load(std::memory_order_relaxed) &&
         pose != g_prev.load(std::memory_order_relaxed)) {   // [weight] monster_ragdoll_pose: a struck monster, drawn turned
         uintptr_t turned = 0;
@@ -370,6 +373,7 @@ __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose,
         }
         if (r < 0 && g_dollFaults.fetch_add(1) == 0) Log("head shadow: a fault reading a monster's pose for its doll - the monsters' turns are written into their poses as before");
     }
+    if (!poseView) return g_origComposite(skeleton, pose, indices, count, out);   // VR F1 / F3: nothing else of ours (the hero, the others)
     if (pass != kPassNone && pose) {
         const uintptr_t cur = g_cur.load(std::memory_order_relaxed), prev = g_prev.load(std::memory_order_relaxed);
         if (cur && (pose == cur || pose == prev)) {
@@ -410,9 +414,12 @@ __declspec(noinline) uintptr_t HookDraw(uintptr_t a1, uintptr_t a2, uintptr_t a3
         return 0;   // as the game's own early return for a model faded to nothing: no draw call made for this pass
     }
     const int was = t_pass;
+    const uint32_t wasEntity = t_entity;
     t_pass = pass;
+    t_entity = (uint32_t)entity;
     const uintptr_t r = g_origDraw(a1, a2, a3, entity, a5, a6, a7, a8, a9, a10, a11);
     t_pass = was;
+    t_entity = wasEntity;
     return r;
 }
 
@@ -476,6 +483,8 @@ void WantForPose(bool on) {
     if (g_oursWanted.exchange(on) != on && on) Log("hero pose: the game's skinning composite is asked for - the hero is drawn from a copy of his pose holding the bones as we "
                                                  "finished them ([body] legs_rear)");
 }
+void SetDollAnyView(bool on) { g_dollAnyView.store(on); }
+uint32_t DrawEntity() { return t_entity; }
 void SetPoseView(bool allowed) {
     if (g_poseView.exchange(allowed) != allowed) LogF("hero pose: %s", allowed ? "our poses to the skinning again" : "VR F1 / F3 - the skinning gets the game's own poses only");
 }

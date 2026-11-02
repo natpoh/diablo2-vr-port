@@ -731,7 +731,7 @@ DWORD WINAPI UpdateThread(void*) {
             InstallKeyMoveHook();
             InstallStickHook();
             InstallMapClickHook();
-            InstallMouseGroundHook();   // [input] flat_aim_ground (flat only)
+            InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_body_pick (VR)
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
             InstallRoomHeightHook();    // [render] floors_stay, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it

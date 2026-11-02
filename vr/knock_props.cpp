@@ -1291,7 +1291,7 @@ bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out
 bool IsMovable(uint32_t presetId, const float local[3]) { return g_catalogReady.load() && g_catalog.Find(presetId, local) >= 0; }
 
 bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why, uint32_t ownRoot, unsigned* ownLeft,
-                const std::vector<uint32_t>* units, unsigned* unitLeft) {
+                const std::vector<uint32_t>* units, unsigned* unitLeft, const std::vector<uint32_t>* ours) {
     if (ownLeft) *ownLeft = 0;
     if (unitLeft) *unitLeft = 0;
     static std::atomic<int> s_boundsPool{-1}, s_idPool{-1};
@@ -1330,9 +1330,11 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
     }
     if (nearby.empty()) return true;
     // the hero's own: an entity whose parents lead up to him (by the entities' index, their low 20 bits) - his parts, his weapons, what hangs on his back;
-    // a unit's: one holding a unit's skeleton or whose parents lead up to one (an NPC standing still, its weapon)
+    // a unit's: one holding a unit's skeleton or whose parents lead up to one (an NPC standing still, its weapon); ours: a model we draw as the game's own (the belt's
+    // bottles), with no parent - his own too
     const bool anyUnit = units && !units->empty();
-    if (ownRoot || anyUnit) {
+    const bool anyOurs = ours && !ours->empty();
+    if (ownRoot || anyUnit || anyOurs) {
         std::unordered_map<uint32_t, uint32_t> byIndex;
         for (size_t i = 0; i < nearby.size(); ++i) byIndex[nearby[i].id & kNoParent] = uint32_t(i);
         std::vector<E> kept;
@@ -1345,7 +1347,10 @@ bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, st
         };
         const auto isUnit = [&](uint32_t index) { return anyUnit && std::binary_search(units->begin(), units->end(), index); };
         for (const E& e : nearby) {
-            if (ownbody::HangsOn(e.parent, ownRoot, parentOf)) { if (ownLeft) ++*ownLeft; continue; }
+            if (ownbody::HangsOn(e.parent, ownRoot, parentOf) || (anyOurs && ownbody::Ours(e.id, e.parent, ours->data(), ours->size(), parentOf))) {
+                if (ownLeft) ++*ownLeft;
+                continue;
+            }
             if (unitmodels::OfUnit(e.id, e.parent, isUnit, parentOf)) { if (unitLeft) ++*unitLeft; continue; }
             kept.push_back(e);
         }

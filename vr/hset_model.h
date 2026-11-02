@@ -93,25 +93,33 @@ struct Rect {
 // The tabs share the 960 pixels under the title in proportion to their names' widths (hset_defs.h kPageNameW, + 16 for the tab's edges and the text's
 // margin): "Options" gets a wide one, "Life" a narrow one, so a page more does not squeeze the long names out of their tab (eleven pages at an even 87
 // pixels would not hold "Options" in either painter; fourteen by their letters held neither "Options" nor "HUD").
-constexpr int TabWeightTo(int i) {   // the weights of the first i tabs (a tab is not always a page: hset_defs.h TabOf)
+// A view shows only its tabs (hset_defs.h TabShown: VR F1 - F3 not F4's body): they share the strip among themselves, a tab not shown has no place.
+constexpr int TabWeightTo(int i, int view = 0) {   // the weights of the first i tabs shown (a tab is not always a page: hset_defs.h TabOf)
     int w = 0;
-    for (int k = 0; k < i; ++k) w += kTabNameW[k] + 16;
+    for (int k = 0; k < i; ++k) if (TabShown(k, view)) w += kTabNameW[k] + 16;
     return w;
 }
-constexpr int kTabX(int i) { return 32 + 960 * TabWeightTo(i) / TabWeightTo(kTabCount); }
-constexpr Rect kTab(int i) { return {kTabX(i), 84, kTabX(i + 1) - kTabX(i) - 8, 52}; }
+constexpr int kTabX(int i, int view = 0) { return 32 + 960 * TabWeightTo(i, view) / TabWeightTo(kTabCount, view); }
+constexpr Rect TabRect(int i, int view) {
+    if (!TabShown(i, view)) return {0, 0, 0, 0};
+    const int x = kTabX(i, view), next = 32 + 960 * (TabWeightTo(i, view) + kTabNameW[i] + 16) / TabWeightTo(kTabCount, view);
+    return {x, 84, next - x - 8, 52};
+}
+constexpr Rect kTab(int i) { return TabRect(i, 0); }
 constexpr int kRowY0 = 156, kRowStep = 66, kRowH = 56;
 // A page with more rows than kRowsPerPage (the Melee page's seven, up to kRowsMax) stands them closer, its last one still above the status line.
 // The rows' rectangles take the page (-1, as the other pages: the usual step).
 constexpr int kRowStepClose = 58, kRowHClose = 50;
-// The World pages: their four buttons on top (Contact, Monsters react, Grab, More: a Tab hit of that page), the rows under them closer still (seven
-// rows and the buttons above the status line: the row's name in the normal face, hset_scene.h).
-constexpr Rect kWorldSub(int i) { return {32 + i * 244, 144, 228, 42}; }
+// A tab of several pages (hset_defs.h HasSubRow: World's four - Contact, Monsters react, Grab, More - and Controls' two, Left and Right): their buttons
+// on top (a Tab hit of that page), sharing the rows' width; the rows under them closer still (seven rows and the buttons above the status line: the
+// row's name in the normal face, hset_scene.h).
+constexpr Rect kSubBtn(int i, int n) { return {32 + i * (960 + 16) / n, 144, (960 + 16) / n - 16, 42}; }
+constexpr Rect kWorldSub(int i) { return kSubBtn(i, kWorldPages); }
 constexpr int kWorldRowY0 = 200, kWorldRowStep = 52, kWorldRowH = 46;
-constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || IsWorldPage(page)); }
-constexpr int RowStep(int page) { return IsWorldPage(page) ? kWorldRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
-constexpr int RowH(int page) { return IsWorldPage(page) ? kWorldRowH : CloseRows(page) ? kRowHClose : kRowH; }
-constexpr int RowY(int row, int page) { return (IsWorldPage(page) ? kWorldRowY0 : kRowY0) + row * RowStep(page); }
+constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || HasSubRow(page)); }
+constexpr int RowStep(int page) { return HasSubRow(page) ? kWorldRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
+constexpr int RowH(int page) { return HasSubRow(page) ? kWorldRowH : CloseRows(page) ? kRowHClose : kRowH; }
+constexpr int RowY(int row, int page) { return (HasSubRow(page) ? kWorldRowY0 : kRowY0) + row * RowStep(page); }
 constexpr Rect kDec(int row, int page = -1) { return {584, RowY(row, page), 72, RowH(page)}; }
 constexpr Rect kVal(int row, int page = -1) { return {664, RowY(row, page), 248, RowH(page)}; }
 constexpr Rect kInc(int row, int page = -1) { return {920, RowY(row, page), 72, RowH(page)}; }
@@ -217,13 +225,13 @@ struct Players {
 // How long the row waits for the game to show the count it was asked for before it takes the answer as a no.
 constexpr double kPlayersWaitMs = 1500.0;
 
-// The atlas' u, v (0..1 from its top left) to the button there.
-inline Hit HitTest(int page, float u, float v) {
+// The atlas' u, v (0..1 from its top left) to the button there, in a view (hset_defs.h PageShown: 0 / 4 everything, VR F1 - F3 not F4's body).
+inline Hit HitTest(int page, float u, float v, int view = 0) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return {};
     const float x = u * kW, y = v * kH;
-    for (int i = 0; i < kTabCount; ++i) if (kTab(i).Contains(x, y)) return {Kind::Tab, TabPage(i), 0};   // (a tab opens its first page)
-    if (IsWorldPage(page))
-        for (int i = 0; i < kWorldPages; ++i) if (kWorldSub(i).Contains(x, y)) return {Kind::Tab, kPageWorld + i, 0};
+    for (int i = 0; i < kTabCount; ++i) if (TabRect(i, view).Contains(x, y)) return {Kind::Tab, TabPage(i), 0};   // (a tab opens its first page)
+    if (HasSubRow(page))
+        for (int i = 0; i < SubCount(page); ++i) if (kSubBtn(i, SubCount(page)).Contains(x, y)) return {Kind::Tab, SubFirst(page) + i, 0};
     if (kApply.Contains(x, y)) return {Kind::Apply, -1, 0};
     if (kClose.Contains(x, y)) return {Kind::Close, -1, 0};
     if (kRecentre.Contains(x, y)) return {Kind::Recentre, -1, 0};
@@ -265,7 +273,7 @@ inline Hit HitTest(int page, float u, float v) {
         if (kSpanInc.Contains(x, y)) return {Kind::Span, -1, 1};
     }
     for (int r = 0; r < kRowsMax; ++r) {
-        const int key = KeyAt(page, r);
+        const int key = KeyAt(page, r, view);
         if (key < 0) break;
         if (IsToggle(kDefs[key])) {
             if (kToggle(r, page).Contains(x, y)) return {Kind::Change, key, 1};
@@ -380,12 +388,14 @@ public:
     bool PlayPending() const { return Edited(kKeySeated); }
     // What the plugin knows of the picture (the game's size now, the headset's numbers); the picture follows it.
     const video::Env& Env() const { return env_; }
-    // The game's view now (the plugin's, 1 = F1 ... 4 = F4; 0 = not known): the button of it is lit.
+    // The game's view now (the plugin's, 1 = F1 ... 4 = F4; 0 = not known): the button of it is lit, and the pages and rows shown are the view's
+    // (hset_defs.h PageShown, KeyShown: VR F1 - F3 not F4's body). A page the view does not show gives way to the first one.
     int View() const { return view_; }
     void SetView(int v) {
         v = v >= 1 && v <= kViews ? v : 0;
         if (v == view_) return;
         view_ = v;
+        if (!PageShown(page, view_)) page = kPageView;
         ++revision;
     }
     // The Body page's Arm span: the span the hero's arms are fitted to now (from the plugin), shown while none is stored.
@@ -585,6 +595,7 @@ public:
                 return a;
             case Kind::Tab:
                 if (hit.index == kPageParty && !PartyOn()) return a;   // the Co-op page's Party button is not there while the page is off
+                if (!PageShown(hit.index, view_)) return a;           // (a page of F4's body, in VR F1 - F3)
                 if (hit.index >= 0 && hit.index < PageCount() && hit.index != page) {
                     page = hit.index;
                     if (page == kPageGuide) guideShown_ = true;
@@ -629,7 +640,7 @@ public:
                     a.players = to;
                     return a;
                 }
-                if (!ready || Busy() || hit.index < 0 || hit.index >= kCount) return a;
+                if (!ready || Busy() || hit.index < 0 || hit.index >= kCount || !KeyShown(hit.index, view_)) return a;
                 if (hit.index == kKeyBarPlace) {   // the HUD page's toolbar type: a step over bar_place and hide together (shared/toolbar_type.h)
                     int h = (int)std::lround(draft_[kKeyHide]), p = (int)std::lround(draft_[kKeyBarPlace]);
                     const float wasHide = draft_[kKeyHide], wasPlace = draft_[kKeyBarPlace];

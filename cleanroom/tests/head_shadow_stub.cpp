@@ -17,5 +17,6 @@ void SetPoseView(bool) {}   // ... nor its views
 void WantForDoll(bool) {}
 void SetDollSkin(bool (*)(uintptr_t, uintptr_t, float (*)[16], int)) {}
 bool DollSkinningIn() { return false; }
+uint32_t DrawEntity() { return 0; }   // [weight] death_ragdoll: no ModelDrawCollect here
 
 }  // namespace headshadow

@@ -176,6 +176,11 @@ void NoteHeroLegs(const int* bones, const float (*at)[3], int count);
 void WantForPose(bool on);
 // vr/body/pose_views.h AnyAllowed (skel::SetPoseView): false - the composite hands the game's own poses on, ours (the hero's) and the monsters' turned not
 void SetPoseView(bool allowed);
+// [weight] death_ragdoll_flat: the monsters' poses (a killed humanoid falling, a corpse lying as it fell) handed to the skinning in VR F1 / F3 as well - only
+// those (the hero's, the other heroes' stay the game's there). Off: none there, as before.
+void SetDollAnyView(bool on);
+// The entity the ModelDrawCollect this thread is in draws (0: not in one) - the skinning's composite runs inside it ([weight] death_ragdoll: dollpose::ByEntity).
+uint32_t DrawEntity();
 void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n);
 // [multiplayer] pose_share_hero (0.193.0, Serg: the other player saw his hero "with the game's standard animations" - "on 185 it was fine"): another player's
 // rig as PoseRemoteHero (or PoseLegsOnly) finished it - the skinning met the game's own pose there, not ours written into it, as it did our own hero's

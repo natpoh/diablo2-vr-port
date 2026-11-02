@@ -5,7 +5,8 @@
 // go, and vrcam's SetView then does what the F-keys do (the ini's [mode] vr_mode, the camera, the flat picture's mode).
 //
 // The numbering is the actions' old one (vrcam's kVrOf): F1 = VIEW_1 (from above), F2 = VIEW_2 (third person), F3 = VIEW_5 (the table: the
-// game on your floor), F4 = VIEW_4 (the body). Held only while the view is F4 (directinput::Action does nothing elsewhere), and let go
+// game on your floor), F4 = VIEW_4 (the body). Held in F4 and in VR F1 - F3 (the overlay's source, directinput::kSrcPanelView; elsewhere
+// directinput::Action does nothing), and let go
 // whatever the view is, so a stale hold cannot press again when F4 comes back. Used by the settings panel of its own
 // (vr/xr_headset_settings.h) and by the skill panel's Settings tab (vr/skill_wheel.cpp). Any thread; the draw thread's in practice.
 

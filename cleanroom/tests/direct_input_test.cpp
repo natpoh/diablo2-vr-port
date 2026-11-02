@@ -760,9 +760,10 @@ static void TestQuiverOutputs() {
     o = At(L, Mode::World, 50, {{kLY, 1.0f}, {kRB, 1.0f}});
     CHECK(o.quiver == 3);                                   // both
     o = At(L, Mode::World, 60, {});
-    // VR F1-F3 have no quiver (nor a skill panel): stripped from the table
+    // VR F1-F3 have no quiver: stripped from the table - but the overlay's long press stays (Serg, 2026-11-02: the skill panel's window in every VR view)
     const Table w = WithoutPanels(tb);
     CHECK(w.plain[kRB].out[0].kind == kOutNone && w.plain[kLY].out[0].kind == kOutNone && w.plain[kLY].out[1].kind == kOutPad);
+    CHECK(WithoutPanels(DefaultTable()).hold[kRStick].out[0].kind == kOutSkillPanel && WithoutPanels(DefaultTable()).hold[kLMenu].out[0].kind == kOutNone);
     // in a menu the layout is the menu's: no quiver
     o = At(L, Mode::Menu, 70, {{kRB, 1.0f}});
     CHECK(o.quiver == 0);
@@ -1613,16 +1614,29 @@ static void TestFlatController() {
     in = Walking(true, 0.0f, 0.0f); in.hand[0].buttons = kSecondary; frame();
     CHECK(pad() && (fp.buttons & pad::kY) != 0);
     idle();
-    // the menu button: the inventory; the right stick's click: the weapon swap AT ONCE (the skill panel's long press is F4's, not here)
+    // the menu button: the inventory; the right stick's click: hold-or-tap as in F4 (Serg, 2026-11-02: the overlay in every VR view) - a quick click is
+    // the weapon swap after its release, a long press asks for the overlay (the skill panel's window) and swaps nothing
     in = Walking(true, 0.0f, 0.0f); in.hand[0].buttons = kMenuButton; frame();
     CHECK((FlatActions() & act::kInventory) != 0);
     idle();
-    in = Walking(true, 0.0f, 0.0f); in.hand[1].buttons = kStick; frame();
-    CHECK((FlatActions() & act::kSwap) != 0);
-    for (int i = 0; i < 20; ++i) frame();
-    Sleep(600);   // (a long press: F4 would ask for its skill panel now)
-    frame();
-    CHECK(!TakeSkillPanelToggle());
+    bool sawSwap = false;
+    auto stickFor = [&](int ms, bool down) {
+        for (int t = 0; t < ms; t += 15) {
+            in = Walking(true, 0.0f, 0.0f);
+            if (down) in.hand[1].buttons = kStick;
+            frame();
+            if (FlatActions() & act::kSwap) sawSwap = true;
+            Sleep(15);
+        }
+    };
+    stickFor(45, true);
+    CHECK(!sawSwap);   // (a tap or a hold: not known yet)
+    stickFor(150, false);
+    CHECK(sawSwap && !TakeSkillPanelToggle());
+    sawSwap = false;
+    stickFor(600, true);
+    stickFor(150, false);
+    CHECK(!sawSwap && TakeSkillPanelToggle() && !TakeSkillPanelToggle());   // the request, once
     idle();
     // the left stick's click: Alt (show items), the game's own key command, held
     in = Walking(true, 0.0f, 0.0f); in.hand[0].buttons = kStick; frame();

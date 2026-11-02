@@ -51,6 +51,7 @@ constexpr float kWalkedOffM = 0.6f;       // the game walked the body this far f
 constexpr int kMaxInfo = 24;
 
 std::atomic<bool> g_on{false}, g_throwOn{false}, g_impaleOn{false}, g_deathOn{false};
+std::atomic<bool> g_deathFlatOn{false};   // [weight] death_ragdoll_flat: the same falls in the views with no hands of ours (VR F1-F3, the flat game), by the game's swing
 std::mutex g_mutex;   // (the settings, the bodies read, the pending knocks - between the weight model's thread and the timer's)
 Settings g_set;
 knocktrigger::Tracker g_tracker;
@@ -135,8 +136,37 @@ SRWLOCK g_frozenLock = SRWLOCK_INIT;
 FrozenBones g_frozen[deathragdoll::kMaxCorpses];   // (under g_frozenLock)
 // ... and what drawing a kept corpse needs of its skeleton, kept from its last read (the timer's thread): a tick its skeleton is not among the bodies' (the
 // nearest 16 of them, a scan missed) it is drawn from this - never eased to the game's pose and back for it (the corpse pulled toward the game's place)
-struct CorpseSkel { uint32_t id = 0; uintptr_t self = 0; int bones = 0; int16_t joint[D2RF_JOINTS] = {}; int16_t parent[dollpose::kMaxBones] = {}; float m3[9] = {}, root[3] = {}; };
+struct CorpseSkel {
+    uint32_t id = 0; uintptr_t self = 0; int bones = 0; int16_t joint[D2RF_JOINTS] = {}; int16_t parent[dollpose::kMaxBones] = {}; float m3[9] = {}, root[3] = {};
+    uint32_t entity = 0, parts[skel::MonsterRig::kMaxParts] = {}; int nParts = 0;   // (its entities: the skinning tells corpses alike apart by them)
+};
 CorpseSkel g_corpseSkel[deathragdoll::kMaxCorpses];
+CorpseSkel g_downSkel[D2RF_MAX_DOWN];   // ... and a FALLING dead body's (by its slot in g_down): drawn and frozen from it the ticks its skeleton is not read (0.197.4: a
+                                        // body falling out of the bodies' 6 m was let go of after a second and drawn as the game's)
+void SaveSkel(CorpseSkel& sk, uint32_t id, const skel::MonsterRig& g) {
+    sk.id = id;
+    sk.self = g.self;
+    sk.bones = g.bones;
+    std::memcpy(sk.joint, g.joint, sizeof sk.joint);
+    std::memcpy(sk.parent, g.parent, sizeof(int16_t) * static_cast<size_t>(std::min(g.bones, dollpose::kMaxBones)));
+    std::memcpy(sk.m3, g.m3, sizeof sk.m3);
+    std::memcpy(sk.root, g.root, sizeof sk.root);
+    sk.entity = g.entity;
+    sk.nParts = std::min(g.nParts, skel::MonsterRig::kMaxParts);
+    std::memcpy(sk.parts, g.parts, sizeof(uint32_t) * static_cast<size_t>(sk.nParts));
+}
+void LoadSkel(const CorpseSkel& sk, skel::MonsterRig& out) {
+    out.self = sk.self;
+    out.bones = sk.bones;
+    std::memcpy(out.joint, sk.joint, sizeof out.joint);
+    std::memcpy(out.parent, sk.parent, sizeof(int16_t) * static_cast<size_t>(std::min(sk.bones, dollpose::kMaxBones)));
+    std::memcpy(out.m3, sk.m3, sizeof out.m3);
+    std::memcpy(out.root, sk.root, sizeof out.root);
+    out.entity = sk.entity;
+    out.nParts = sk.nParts;
+    std::memcpy(out.parts, sk.parts, sizeof(uint32_t) * static_cast<size_t>(sk.nParts));
+    out.joints = true;
+}
 std::atomic<unsigned> g_frozenDrawn{0}, g_corpseUnread{0};
 std::atomic<unsigned> g_hangByComponent{0}, g_hangChildren{0}, g_hangMoved{0};          // ... written through its own component; parts on parts; components no longer its
 std::atomic<unsigned> g_carried{0}, g_carryMissed{0};
@@ -281,6 +311,8 @@ void SetFormStrength(float factor) {
 
 void Configure(const Settings& s) {
     const bool was = g_on.exchange(s.on), wasThrow = g_throwOn.exchange(s.throwOn), wasImpale = g_impaleOn.exchange(s.impaleOn), wasDeath = g_deathOn.exchange(s.deathOn);
+    const bool wasDeathFlat = g_deathFlatOn.exchange(s.deathFlatOn);
+    skel::SetWeaponTrail(s.deathFlatOn);   // (the game's swing kept for it, in every view)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         g_set = s;
@@ -331,14 +363,21 @@ void Configure(const Settings& s) {
                          "of its own death animation and lies as it fell while the game keeps its corpse; bosses and the ones that burst are the game's (F4; only "
                          "the drawing)" : "death ragdoll: off");
     }
+    if (s.deathFlatOn != wasDeathFlat) {
+        if (s.deathFlatOn) falllib::Probe();
+        LogF(s.deathFlatOn ? "death ragdoll flat: on ([weight] death_ragdoll_flat) - in VR F1-F3 and the flat game a humanoid monster the game kills falls as a "
+                             "ragdoll along the arc of your weapon as the game swings it (away from you for a spell or a missile) and lies as it fell; F4 keeps "
+                             "death_ragdoll's own (only the drawing)" : "death ragdoll flat: off");
+    }
 }
 
 bool Wanted() {
     return g_on.load(std::memory_order_relaxed) || g_throwOn.load(std::memory_order_relaxed) || g_impaleOn.load(std::memory_order_relaxed) ||
-           g_deathOn.load(std::memory_order_relaxed);
+           g_deathOn.load(std::memory_order_relaxed) || g_deathFlatOn.load(std::memory_order_relaxed);
 }
 bool ThrowWanted() { return g_throwOn.load(std::memory_order_relaxed); }
-bool DeathWanted() { return g_deathOn.load(std::memory_order_relaxed); }
+bool DeathWanted() { return viewgate::F4() ? g_deathOn.load(std::memory_order_relaxed) : g_deathFlatOn.load(std::memory_order_relaxed); }
+bool DeathFlatWanted() { return g_deathFlatOn.load(std::memory_order_relaxed); }
 
 void OnStabEntered(uint32_t id, int side, float speed) {
     if (!g_impaleOn.load(std::memory_order_relaxed) || !id || side < 0 || side > 1) return;
@@ -598,7 +637,17 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     } publish{laid, nLaid};
     const float dt = lastMs ? std::min(0.1f, static_cast<float>(nowMs - lastMs) * 0.001f) : 0.0f;
     lastMs = nowMs;
-    if (!Wanted() || !viewgate::F4() || !(upm > 1e-3f) || !rigs || !units || !rigOf) {
+    // F4: everything of the knock-down; the other views ([weight] death_ragdoll_flat): the deaths alone (nothing pushes, holds or impales there). A view changed:
+    // every body let go of first - what one view drew is not carried into the other.
+    const bool f4 = viewgate::F4(), flatDeaths = !f4 && g_deathFlatOn.load(std::memory_order_relaxed);
+    static int lastView = -1;
+    if (lastView >= 0 && lastView != (f4 ? 1 : 0)) {
+        std::lock_guard<std::mutex> lock(g_lib);
+        if (g_corpses.Count()) LogF("death ragdoll: %d kept corpses released - the view changed (F4 and the other views draw their own): the game's own from here", g_corpses.Count());
+        if (g_any || g_corpses.Count()) ResetLocked();
+    }
+    lastView = f4 ? 1 : 0;
+    if (!Wanted() || !(f4 || flatDeaths) || !(upm > 1e-3f) || !rigs || !units || !rigOf) {
         std::lock_guard<std::mutex> lock(g_lib);
         for (auto& s : g_downSelves) s.store(0);
         for (auto& s : g_deadSelves) s.store(0);
@@ -691,13 +740,13 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     Strongest strongest;
     float lieS = 1.5f;
     // [weight] death_ragdoll: the deaths the scan reports, each decided once (vr/death_ragdoll.h) - ours start from the unit's last read alive (a tick ago)
-    const bool deathOn = g_deathOn.load(std::memory_order_relaxed);
+    const bool deathOn = f4 ? g_deathOn.load(std::memory_order_relaxed) : flatDeaths;
     struct Death { Info info; deathragdoll::Push push; int mode; };
     Death deaths[8];
     int nDeaths = 0;
-    uint32_t deadIds[64];
+    uint32_t deadIds[deathragdoll::kMaxDeadListed];
     int nDeadIds = 0;
-    for (int i = 0; deathOn && dead && i < nDead && nDeadIds < 64; ++i) deadIds[nDeadIds++] = dead[i].id;
+    for (int i = 0; deathOn && dead && i < nDead && nDeadIds < deathragdoll::kMaxDeadListed; ++i) deadIds[nDeadIds++] = dead[i].id;
     static unsigned leftBoss = 0, leftNotSeen = 0, leftNotHostile = 0, leftFull = 0;   // (the 5 s line's)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -712,6 +761,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             float heroM[3];
             const bool heroKnown = heroRender && std::isfinite(heroRender[0] + heroRender[1] + heroRender[2]);
             for (int k = 0; k < 3 && heroKnown; ++k) heroM[k] = heroRender[k] / upm;
+            bool arcRead = false;   // ([weight] death_ragdoll_flat: the game's swing, read once a tick when a kill needs it)
+            deathragdoll::Arc arc;
             for (int i = 0; i < nDead && dead; ++i) {
                 const Dead& u = dead[i];
                 if (!u.id || g_told.Has(u.id)) continue;
@@ -731,8 +782,29 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 Death& d = deaths[nDeaths++];
                 d.info = *was;
                 d.mode = u.mode;
-                d.push = deathragdoll::KillingPush(g_blows.Last(u.id, static_cast<double>(nowMs) * 0.001), was->joint[D2RF_CHEST], was->body.massKg,
-                                                   heroKnown ? heroM : nullptr);
+                if (f4) {
+                    d.push = deathragdoll::KillingPush(g_blows.Last(u.id, static_cast<double>(nowMs) * 0.001), was->joint[D2RF_CHEST], was->body.massKg,
+                                                       heroKnown ? heroM : nullptr);
+                } else {   // [weight] death_ragdoll_flat: along the arc of the game's own swing of the hero's weapon (skel::WeaponTrail), else away from him
+                    if (!arcRead) {
+                        arcRead = true;
+                        skel::WeaponTrailSample w[48];
+                        const int nw = skel::WeaponTrail(w, 48);
+                        deathragdoll::ArcSample a[48];
+                        for (int k = 0; k < nw; ++k) {
+                            a[k].t = w[k].t;
+                            for (int c = 0; c < 3; ++c) {
+                                a[k].root[c] = w[k].root[c] / upm;
+                                a[k].p[0][c] = w[k].p[0][c] / upm;
+                                a[k].p[1][c] = w[k].p[1][c] / upm;
+                            }
+                            a[k].ok[0] = w[k].ok[0];
+                            a[k].ok[1] = w[k].ok[1];
+                        }
+                        arc = deathragdoll::ArcAt(a, nw, skel::WeaponTrailNow());
+                    }
+                    d.push = deathragdoll::ArcPush(arc, was->joint[D2RF_CHEST], was->body.massKg, heroKnown ? heroM : nullptr);
+                }
             }
         }
         std::memcpy(g_info, fresh, sizeof(Info) * static_cast<size_t>(nf));
@@ -920,8 +992,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             k.id = f.id;
             std::memcpy(k.joint, f.joint, sizeof k.joint);
             k.have = f.have;
-            std::memcpy(k.vel, f.vel, sizeof k.vel);
-            k.vel[1] = 0.0f;
+            deathragdoll::DeathVel(f.vel, k.vel);   // (its walk only: a pelvis read off two rigs is no motion)
             k.floorY = f.body.floorY;
             k.massKg = f.body.massKg;
             std::memcpy(k.impulse, push.impulse, sizeof k.impulse);
@@ -949,6 +1020,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         }
         d->death = true;
         d->self = f.self;
+        for (size_t r = 0; r < nr; ++r)   // (its skeleton as read at its death: drawn from it the ticks it is not among the bodies')
+            if (rigs[r].self == f.self && rigs[r].bones == f.bones && rigs[r].joints) SaveSkel(g_downSkel[d - g_down], f.id, rigs[r]);
         std::memcpy(d->rootW, f.root, sizeof d->rootW);
         d->bones = f.bones;
         d->diedMs = d->seenMs = nowMs;
@@ -957,7 +1030,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         g_any = true;
         ++fell;
         char by[96];
-        if (push.byBlow) snprintf(by, sizeof by, "by your blow (swung at %.1f m/s)", push.swingMs);
+        if (push.byBlow) snprintf(by, sizeof by, f4 ? "by your blow (swung at %.1f m/s)" : "along your weapon's arc (the game's swing, %.1f m/s)", push.swingMs);
         else snprintf(by, sizeof by, "away from you (no blow of your hand on it a moment before)");
         LogF("death ragdoll: %u ('%s', %.0f kg, %.2f m) killed (mode %d) - falls as a ragdoll from the pose it died in, pushed %.1f m/s %s%s%s", f.id, f.model,
              f.body.massKg, f.body.height, deaths[i].mode, push.gaveMs, by, was ? " - it was " : "", was ? PhaseName(g_downPhase[was - g_down].load()) : "");
@@ -1006,6 +1079,9 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         pose.id = id;
         pose.bones = g->bones;
         pose.tickMs = nowMs;
+        pose.entity = g->entity;   // (the skinning tells bodies alike apart by the entity drawn: dollpose::ByEntity)
+        pose.nParts = std::min(g->nParts, dollpose::Pose::kParts);
+        for (int k = 0; k < pose.nParts; ++k) pose.parts[k] = g->parts[k];
         skel::WorldPoses(g->self, &pose.poseCur, &pose.posePrev, &pose.skel);
         pose.knock.weight = std::clamp(weight, 0.0f, 1.0f);
         std::memcpy(pose.knock.joint, g->joint, sizeof pose.knock.joint);
@@ -1062,12 +1138,21 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             if (g_down[s].id == p.id) g_downPhase[s].store(p.phase);
         if (d->death) {   // [weight] death_ragdoll: the game killed it - it falls, and once it lies still it is kept as it lies (the library's slot freed)
             const skel::MonsterRig* dg = deadRig(d->self, d->rootW, d->bones);
+            CorpseSkel& dsk = g_downSkel[d - g_down];
+            static skel::MonsterRig unreadDown;   // (the timer's thread)
+            if (dg) {
+                SaveSkel(dsk, p.id, *dg);
+            } else if (deathOn && listedDead(p.id) && dsk.id == p.id && dsk.self == d->self) {   // its unit still the game's dead, only not among the bodies read
+                LoadSkel(dsk, unreadDown);
+                dg = &unreadDown;
+                g_corpseUnread.fetch_add(1, std::memory_order_relaxed);
+            }
             if (!dg || !deathOn || !listedDead(p.id)) {
                 if (!deathOn || nowMs - d->seenMs > kGoneMs) {
                     falllib::LetGo(p.id, 0);
                     ++gone;
                     LogF("death ragdoll: %u let go of while %s - %s", p.id, PhaseName(p.phase),
-                         !deathOn ? "switched off" : dg ? "the game took its corpse away" : "its skeleton not read for a second (out of reach, or gone)");
+                         !deathOn ? "switched off" : dg ? "the game took its corpse away (its unit is not among the game's dead any more)" : "its skeleton never read since it died");
                 }
                 continue;
             }
@@ -1115,20 +1200,14 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 for (int k = 0; k < deathragdoll::kMaxCorpses; ++k) {   // its skeleton kept for the ticks it is not read (the slot of the corpse it is, by its place in the table)
                     const deathragdoll::Corpse* kc = g_corpses.At(k);
                     if (!kc || kc->id != p.id) continue;
-                    CorpseSkel& sk = g_corpseSkel[k];
-                    sk.id = p.id;
-                    sk.self = dg->self;
-                    sk.bones = dg->bones;
-                    std::memcpy(sk.joint, dg->joint, sizeof sk.joint);
-                    std::memcpy(sk.parent, dg->parent, sizeof(int16_t) * static_cast<size_t>(std::min(dg->bones, dollpose::kMaxBones)));
-                    std::memcpy(sk.m3, dg->m3, sizeof sk.m3);
-                    std::memcpy(sk.root, dg->root, sizeof sk.root);
+                    SaveSkel(g_corpseSkel[k], p.id, *dg);
                 }
                 falllib::LetGo(p.id, 0);
                 ++kept;
                 char room[120] = "";
                 if (out) snprintf(room, sizeof room, " (%d kept: %u, kept longest ago, made room - drawn as the game has it)", deathragdoll::kMaxCorpses, out);
-                LogF("death ragdoll: %u lies still %.1f s after it died, its hips %.2f m from where the game has its corpse - drawn so while the game keeps it%s",
+                LogF("death ragdoll: %u frozen where it lies, %.1f s after it died (its hips %.2f m from the game's corpse) - its bones as they came to rest, held "
+                     "until the game takes the corpse away; no physics, nothing of the game's moved%s",
                      p.id, (nowMs - d->diedMs) / 1000.0f, c.offM, room);
             }
             if (tell && at < (int)sizeof said - 140)
@@ -1194,9 +1273,16 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     // the game's; back in reach ours eases in again); one the scan has not had dead for a second is gone (the game took the corpse, or it is far)
     int corpsesDrawn = 0;
     if (!deathOn) {
-        if (g_corpses.Count()) g_corpses.Reset();
+        if (g_corpses.Count()) {
+            LogF("death ragdoll: %d kept corpses released - switched off: the game's own from here", g_corpses.Count());
+            g_corpses.Reset();
+        }
     } else {
-        gone += static_cast<unsigned>(g_corpses.Forget(deadIds, nDeadIds, nowMs));
+        uint32_t releasedIds[deathragdoll::kMaxCorpses];
+        const int released = g_corpses.Forget(deadIds, nDeadIds, nowMs, releasedIds, deathragdoll::kMaxCorpses);
+        gone += static_cast<unsigned>(released);
+        for (int i = 0; i < released; ++i)
+            LogF("death ragdoll: %u released - its unit is not among the game's dead any more (the corpse taken away, raised, exploded, or the area left)", releasedIds[i]);
         static skel::MonsterRig unread;   // (the timer's thread) a kept corpse's skeleton as last read, for a tick it is not among the bodies'
         uintptr_t keep[deathragdoll::kMaxCorpses] = {};
         int nKeep = 0;
@@ -1213,14 +1299,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 std::memcpy(sk.m3, g->m3, sizeof sk.m3);
                 std::memcpy(sk.root, g->root, sizeof sk.root);
             } else if (sk.id == c->id && sk.self == c->self && listedDead(c->id)) {
-                unread.self = sk.self;   // (its unit still the game's dead: its skeleton is there, only not among the nearest read)
-                unread.bones = sk.bones;
-                std::memcpy(unread.joint, sk.joint, sizeof unread.joint);
-                std::memcpy(unread.parent, sk.parent, sizeof(int16_t) * static_cast<size_t>(std::min(sk.bones, dollpose::kMaxBones)));
-                std::memcpy(unread.m3, sk.m3, sizeof unread.m3);
-                std::memcpy(unread.root, sk.root, sizeof unread.root);
-                unread.entity = 0;
-                unread.nParts = 0;
+                LoadSkel(sk, unread);   // (its unit still the game's dead: its skeleton is there, only not among the nearest read)
                 g = &unread;
                 g_corpseUnread.fetch_add(1, std::memory_order_relaxed);
             }
@@ -1246,6 +1325,12 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                      "hostile, %u with no room in the library", fell, kept, gone, g_corpses.Count(), corpsesDrawn, leftBoss, leftNotSeen, leftNotHostile, leftFull);
             fell = kept = gone = leftBoss = leftNotSeen = leftNotHostile = leftFull = 0;
             const unsigned hangPut = g_hangPut.exchange(0), hangBack = g_hangBack.exchange(0), hangNoStore = g_hangNoStore.exchange(0), hangNoPose = g_hangNoPose.exchange(0);
+            if (!f4) {   // [weight] death_ragdoll_flat: the game's swing kept (the pose hook's weapon bones), what the kills' arc is read from
+                skel::WeaponTrailSample w[48];
+                const int nw = skel::WeaponTrail(w, 48);
+                LogF("death ragdoll flat - the last 5 s: the hero's weapon bones noted on %u of his poses (%d kept now%s)", skel::WeaponTrailNoted(), nw,
+                     nw > 0 && skel::WeaponTrailNow() - w[nw - 1].t > 0.5 ? ", the newest older than half a second: his pose not read lately" : "");
+            }
             const unsigned frozenDrawn = g_frozenDrawn.exchange(0), corpseUnread = g_corpseUnread.exchange(0);
             if (g_corpses.Count())
                 LogF("death ragdoll - the last 5 s: the kept corpses drawn from their bones as they came to rest %u times (skinnings), %u ticks drawn from their "

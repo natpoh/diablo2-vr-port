@@ -186,9 +186,20 @@ uintptr_t HookTextDraw(const char* text, const int32_t* box, const void* style, 
     return OrigTextDraw(text, box, style, k > 0.0f ? scale * k : scale);
 }
 
+// 0.197.1 (Serg, 2026-11-02): all of the game's item-label code is left alone until the freezes are understood - rivas_10's game hung in the
+// game's text layout (0x90xxxx, between TextDraw and TextMeasure, which these hooks wrap) on 0.194 and 0.197. No label hook goes in: labels_size,
+// labels_alpha on the floor, labels_far, labels_depth_body and labels_whole_eye do nothing; the labels are the game's own.
+constexpr bool kLabelHooksOff = false;   // 0.197.4: back on - without them the labels doubled in the headset (Serg); the laser tooltips stay off
+void TellLabelHooksOff() {
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) Log("vrcam: item-label hooks OFF in this build (0.197.1: the game's label and text code left alone while a freeze is "
+                                  "looked into) - labels_size / labels_alpha on the floor / labels_far / labels_depth_body / labels_whole_eye do nothing");
+}
+
 // The first time the floor wants them; quiet while the label code is still
 // encrypted (D2R decrypts a page the first time it runs: labels shown once).
 void InstallLabelHooks() {
+    if (kLabelHooksOff) { TellLabelHooksOff(); return; }
     static bool paintFailed = false, sizeFailed = false, drawIn = false;
     static int misses = 0;
     if (!g_ctx || !g_inWorld.load() || !g_set.labelsNativeFloor.load()) return;
@@ -258,6 +269,7 @@ uint64_t HookInterfaceSize() {
 
 // Twice a second while ticked and in a world; once in, the hook stays (the tick is read in it, live). LabelLayout's page is encrypted until a label is first laid out.
 void InstallLabelArea() {
+    if (kLabelHooksOff) { TellLabelHooksOff(); return; }
     static bool failed = false;
     if (g_labelAreaIn.load() || failed || !g_ctx || !g_inWorld.load() || !g_set.labelsWholeEye.load()) return;
     uint8_t call[5] = {0xE8};

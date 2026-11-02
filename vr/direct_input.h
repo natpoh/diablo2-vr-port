@@ -86,6 +86,8 @@ enum FrameFlags : uint32_t {
     kOtherView = 1u << 4,   // the view is not F4 (viewgate::F4() false): nothing added after the base mod acts - a detector
                             // drops what it has under way and does nothing. kInMenu is set with it, so a detector that only
                             // knows kInMenu stands down too
+    kGameMenu = 1u << 5,    // a menu or panel is open in the game (or no game yet), whatever the view: kInMenu without the other view's share
+                            // (the skill panel's window, which VR F1 - F3 have too, asks it there)
 };
 
 struct Frame {
@@ -162,7 +164,9 @@ bool TakePauseToggle();
 
 // -- what a gesture does ---------------------------------------------------------------------------------------------
 // Outside F4 (viewgate::F4() false) Command, Tap, Action (down), PadPulse, Take and Haptic do nothing and what is held is
-// let go: a gesture that forgets to stand down in another view still cannot press, take or pulse anything.
+// let go: a gesture that forgets to stand down in another view still cannot press, take or pulse anything. THE ONE EXCEPTION: the
+// overlay (the skill panel's window, Serg 2026-11-02: in every VR view) - its sources, kSrcPanel and kSrcPanelView below, Take, Tap and
+// hold an Action in VR F1 - F3 (viewgate::Flat()) too; nothing else does.
 
 // Who is asking: a command, a pad button or an action stays held while ANY source holds it, so two gestures (or a
 // gesture and the layout) never let go of each other's press. kSrcLayout is the plugin's own layout.
@@ -172,14 +176,18 @@ enum Source : uint8_t {
     kSrcOther0, kSrcOther1, kSrcOther2, kSrcOther3, kSrcOther4, kSrcOther5, kSrcOther6, kSrcOther7,
     kSrcCount
 };
+// The overlay's own: the skill panel's window (its takes, RUN / WALK's tap) and its Settings' game view buttons (vr/hset_view.cpp). The only sources
+// that act in VR F1 - F3 too (see above).
+constexpr Source kSrcPanel = kSrcOther5, kSrcPanelView = kSrcOther7;
+constexpr bool PanelSource(Source s) { return s == kSrcPanel || s == kSrcPanelView; }
 
 // A key command of the game (shared/d2r_vr_shared.h kD2RVRCommands: potions 0x17..0x1A, skills F1..F16 0x0E..0x15
 // and 0x2E..0x35, swap weapons 0x2C, Alt 0x25 ...) held down or let go. The game's own executor presses it on its UI
 // thread (vr/gamecmd.cpp) with every one of the game's gates, as a key would: a command the game refuses is not
 // taken and nothing else happens. A source that holds a command is let go when the session ends.
 void Command(uint32_t cmd, bool down, Source src = kSrcOther0);
-// One press and release as a tap of a key (a potion drunk from the hand): gamecmd's Tap.
-void Tap(uint32_t cmd);
+// One press and release as a tap of a key (a potion drunk from the hand): gamecmd's Tap. kSrcPanel's (RUN / WALK) also in VR F1 - F3.
+void Tap(uint32_t cmd, Source src = kSrcOther0);
 
 // A D2RVRAction bit set (shared/d2r_vr_shared.h: D2RVR_ACT_ATTACK, INTERACT, INVENTORY, MAP, SWAP, VIEW_*,
 // RECENTER) held or let go: what BodyWalk's "D2R: ..." actions do. Attack is the game's own attack on the pad

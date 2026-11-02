@@ -161,6 +161,113 @@ int main() {
 		const dr::Push m = dr::KillingPush(nullptr, chest, NAN, hero);
 		EXPECT(std::isfinite(m.impulse[2]) && m.impulse[2] > 0.0f, "a mass not known: a man's");
 	}
+	{   // [weight] death_ragdoll_flat (Serg: «режим 2д падение монстров при смерти по дуге оружия»): the push from the game's own swing of the hero's weapon
+		// a right-hand swing: the weapon bone round the hero over 0.3 s at 90 Hz, slow at its ends, at its fastest crossing in front of him going +x; he stands still
+		dr::ArcSample s[40];
+		int n = 0;
+		const double t0 = 10.0;
+		for (int i = 0; i < 30; ++i, ++n) {
+			const double t = t0 + i / 90.0;
+			const float u = static_cast<float>(i) / 29.0f;
+			const float ang = -1.2f + 2.4f * (0.5f - 0.5f * std::cos(3.14159265f * u));   // -69 .. +69 deg about the hero, radius 0.9 m, fastest in the middle
+			const float r = 0.9f;
+			s[n].t = t;
+			s[n].ok[0] = true;
+			s[n].p[0][0] = r * std::sin(ang);
+			s[n].p[0][1] = 1.2f;
+			s[n].p[0][2] = r * std::cos(ang);
+		}
+		const double tKill = t0 + 29 / 90.0 + 0.03;   // seen a scan after the swing's last frame
+		const dr::Arc a = dr::ArcAt(s, n, tKill);
+		const float want = 0.9f * 2.4f * 0.5f * 3.14159265f / (29.0f / 90.0f);   // the peak angular speed times the radius: ~10.5 m/s (a step's chord a little under)
+		EXPECT(a.ok && a.hand == 0 && std::fabs(a.speed - want) < 0.3f, "the swing read: %.2f m/s (want %.2f), hand %d", a.speed, want, a.hand);
+		EXPECT(a.vel[0] > 0.0f && std::fabs(a.vel[1]) < 1e-3f && std::fabs(a.vel[2]) < 0.1f * a.speed, "its way: across in front of the hero, level (%.2f %.2f %.2f)", a.vel[0],
+		       a.vel[1], a.vel[2]);
+		// the same swing while he runs +z at 5 m/s: his model's step taken off - the same arc
+		dr::ArcSample run[40];
+		for (int i = 0; i < n; ++i) {
+			run[i] = s[i];
+			const float dz = 5.0f * static_cast<float>(s[i].t - t0);
+			run[i].root[2] = dz;
+			run[i].p[0][2] += dz;
+		}
+		const dr::Arc ar = dr::ArcAt(run, n, tKill);
+		EXPECT(ar.ok && std::fabs(ar.speed - a.speed) < 0.02f && std::fabs(ar.vel[2] - a.vel[2]) < 0.05f, "running: the arc the same (%.2f vs %.2f m/s)", ar.speed, a.speed);
+		// the push: the arc's way, heft x speed over the mass, held; at the chest
+		const float arcChest[3] = {0.5f, 1.3f, 1.0f}, hero[3] = {0.0f, 0.0f, 0.0f};
+		const dr::Push p = dr::ArcPush(a, arcChest, 33.0f, hero);
+		EXPECT(p.byBlow && std::fabs(p.gaveMs - std::clamp(dr::kFlatHeftKg * a.speed / 33.0f, dr::kMinMs, dr::kMaxMs)) < 1e-4f, "a fallen of 33 kg: %.2f m/s", p.gaveMs);
+		const float j = std::sqrt(p.impulse[0] * p.impulse[0] + p.impulse[1] * p.impulse[1] + p.impulse[2] * p.impulse[2]);
+		EXPECT(std::fabs(j - p.gaveMs * 33.0f) < 1e-2f && p.impulse[0] > 0.0f && p.point[1] == 1.3f, "the impulse along the arc, at the chest");
+		const dr::Push heavy = dr::ArcPush(a, arcChest, 400.0f, hero);
+		EXPECT(std::fabs(heavy.gaveMs - dr::kMinMs) < 1e-4f, "a heavy one still falls (the least)");
+		// a swing long over, too slow, a jump, a gap, the left hand's
+		EXPECT(!dr::ArcAt(s, n, tKill + 1.0).ok, "a swing a second before the kill: no arc");
+		dr::ArcSample slow[40];
+		for (int i = 0; i < n; ++i) {
+			slow[i] = s[i];
+			for (int k = 0; k < 3; ++k) slow[i].p[0][k] *= 0.1f;
+		}
+		EXPECT(!dr::ArcAt(slow, n, tKill).ok, "the weapon hardly moving (a cast, a stand): no arc");
+		const dr::Push away = dr::ArcPush(dr::ArcAt(slow, n, tKill), arcChest, 33.0f, hero);
+		EXPECT(!away.byBlow && away.impulse[2] > 0.0f && std::fabs(away.gaveMs - dr::kAwayMs) < 1e-4f, "no arc: away from the hero");
+		dr::ArcSample jump[3] = {};
+		jump[0].t = 1.0; jump[1].t = 1.011; jump[2].t = 1.022;
+		for (int i = 0; i < 3; ++i) jump[i].ok[0] = true;
+		jump[1].p[0][0] = 3.0f;   // 270 m/s: a model made again
+		jump[2].p[0][0] = 3.0f;
+		EXPECT(!dr::ArcAt(jump, 3, 1.03).ok, "a jump is no swing");
+		dr::ArcSample gap[2] = {};
+		gap[0].t = 1.0; gap[1].t = 1.3; gap[0].ok[0] = gap[1].ok[0] = true; gap[1].p[0][0] = 1.0f;
+		EXPECT(!dr::ArcAt(gap, 2, 1.3).ok, "a gap between samples: no speed from it");
+		dr::ArcSample left[40];
+		for (int i = 0; i < n; ++i) {
+			left[i] = slow[i];
+			left[i].ok[1] = true;
+			std::memcpy(left[i].p[1], s[i].p[0], sizeof left[i].p[1]);
+		}
+		const dr::Arc al = dr::ArcAt(left, n, tKill);
+		EXPECT(al.ok && al.hand == 1, "the left hand's swing (two weapons): its arc");
+		EXPECT(!dr::ArcAt(nullptr, 5, tKill).ok && !dr::ArcAt(s, 1, tKill).ok, "no samples: none");
+	}
+	{   // 0.197.4, Serg: «через 2 секунды труп прыгает туда, где игра его положила» - a kept corpse was let go of when its unit fell out of the dead scan
+		// (24 units round the hero, our ragdoll a few metres from the game's corpse); bodies thrown 6 - 11 m by a pelvis read off two rigs; arc speeds from
+		// two poses 3 ms apart
+		EXPECT(dr::kDeadReachUnits >= 100.0f, "the dead are looked for far beyond the living's 24 units (%.0f)", dr::kDeadReachUnits);
+		float v[3];
+		const float fast[3] = {6.0f, 3.0f, -8.0f};
+		dr::DeathVel(fast, v);
+		EXPECT(std::fabs(std::sqrt(v[0] * v[0] + v[2] * v[2]) - dr::kDeathVelMs) < 1e-4f && v[1] == 0.0f && v[0] > 0.0f && v[2] < 0.0f,
+		       "a body's motion of 10 m/s handed to its fall as its walk at most (%.2f %.2f %.2f)", v[0], v[1], v[2]);
+		const float walk[3] = {0.6f, 0.0f, 0.3f};
+		dr::DeathVel(walk, v);
+		EXPECT(v[0] == 0.6f && v[2] == 0.3f, "a walk handed as it is");
+		const float bad[3] = {NAN, 0.0f, 0.0f};
+		dr::DeathVel(bad, v);
+		EXPECT(v[0] == 0.0f && v[2] == 0.0f, "not a number: none");
+		dr::DeathVel(nullptr, v);
+		EXPECT(v[0] == 0.0f, "none: none");
+		// released: the ids dropped, for the log
+		dr::Corpses k;
+		dr::Corpse c;
+		for (uint32_t id = 1; id <= 3; ++id) {
+			c.id = id;
+			c.seenMs = 1000;
+			k.Keep(c);
+		}
+		const uint32_t listed[1] = {2};
+		uint32_t ids[4] = {};
+		const int n = k.Forget(listed, 1, 1000 + dr::kGoneMs + 1, ids, 4);
+		EXPECT(n == 2 && ((ids[0] == 1 && ids[1] == 3) || (ids[0] == 3 && ids[1] == 1)) && k.Count() == 1 && k.Of(2), "released: the unlisted two, their ids told");
+		// two poses 3 ms apart are no step of a swing
+		dr::ArcSample twin[3] = {};
+		twin[0].t = 1.0; twin[1].t = 1.003; twin[2].t = 1.014;
+		for (int i = 0; i < 3; ++i) twin[i].ok[0] = true;
+		twin[1].p[0][0] = 0.09f;   // 30 m/s between the two close poses
+		twin[2].p[0][0] = 0.12f;   // 2.7 m/s over the frame
+		const dr::Arc a = dr::ArcAt(twin, 3, 1.02);
+		EXPECT(a.ok && a.speed < 3.0f, "the frame's step read, not the two close poses' (%.1f m/s)", a.speed);
+	}
 	{   // the phases
 		EXPECT(dr::OnPhase(D2RF_FALLING) == dr::Next::Wait, "falling: wait");
 		EXPECT(dr::OnPhase(D2RF_HELD) == dr::Next::Wait, "held by a hand: wait");

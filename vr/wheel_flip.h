@@ -1,8 +1,9 @@
 #pragma once
 // Flipping the skill panel's window like pages: a FLICK of a thumbstick to the left or right, or a TAP of a grip (the left one back, the
 // right one forward - what a shoulder button does in a menu), moves one step along the window's pages:
-//   Skills | Settings: View | Options | Video | Body | Life | Look | HUD | Belt | Melee | Left | Right | Co-op | Guide
-// (fourteen places: the Skills tab, then the Settings tab's thirteen pages), and stops at the ends - one flick, one page, no wrap-around.
+//   Skills | Settings: View | Options | Video | Left | Right | Vibration | HUD | Life | Look | Body | Belt | Melee | World's four | Co-op | Party | Guide
+// (twenty places: the Skills tab, then the Settings tab's nineteen pages), and stops at the ends - one flick, one page, no wrap-around. A page the
+// view does not show (VR F1 - F3: not F4's body, hset_defs.h PageShown) is stepped over, and so is Party while it is off.
 // Pure: no Windows, no OpenXR, no game; a frame's stick and grip values in, a step (-1, 0, +1) out (cleanroom/tests/headset_tabs_test.cpp).
 //
 // The flick has a dead zone and a re-arm: the stick must be pushed past kFlickOn, mostly sideways (more along x than along y), and then
@@ -24,8 +25,30 @@ constexpr float kFlickSideways = 1.6f;   // along x at least this many times alo
 constexpr float kGripOn = 0.55f, kGripOff = 0.20f;
 constexpr double kTapMaxS = 0.30;
 
-// Where a step of `dir` (-1 / +1) goes from `place` (0..kFlipPlaces - 1): the next place, or the same one at an end.
-inline int FlipTo(int place, int dir) { return std::clamp(place + (dir < 0 ? -1 : dir > 0 ? 1 : 0), 0, kFlipPlaces - 1); }
+// Where a step of `dir` (-1 / +1) goes from `place` (0..kFlipPlaces - 1) in a view (0 / 4: every page): the next place shown, or the same one at an
+// end. `party`: the Party page is there ([openxr] headset_party).
+inline int FlipTo(int place, int dir, int view = 0, bool party = true) {
+    const int d = dir < 0 ? -1 : dir > 0 ? 1 : 0;
+    place = std::clamp(place, 0, kFlipPlaces - 1);
+    if (d == 0) return place;
+    for (int p = place + d; p >= 0 && p < kFlipPlaces; p += d)
+        if (p == 0 || (hset::PageShown(p - 1, view) && (party || p - 1 != hset::kPageParty))) return p;
+    return place;
+}
+// The places a view shows (the dots at the window's foot), and how many of them stand before `place`.
+inline bool FlipShown(int place, int view = 0, bool party = true) {
+    return place == 0 || (place > 0 && place < kFlipPlaces && hset::PageShown(place - 1, view) && (party || place - 1 != hset::kPageParty));
+}
+inline int FlipCount(int view = 0, bool party = true) {
+    int n = 0;
+    for (int p = 0; p < kFlipPlaces; ++p) n += FlipShown(p, view, party) ? 1 : 0;
+    return n;
+}
+inline int FlipIndex(int place, int view = 0, bool party = true) {
+    int n = 0;
+    for (int p = 0; p < place && p < kFlipPlaces; ++p) n += FlipShown(p, view, party) ? 1 : 0;
+    return n;
+}
 
 class Flipper {
     bool latched_[2] = {false, false};   // the stick has been pushed (counted or not) and is not back in the middle yet

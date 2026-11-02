@@ -188,7 +188,7 @@ static void TestDefs() {
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 19 && PageCount() <= kMaxPages && kTabCount == 15, "nineteen pages under fifteen tabs (View ... Vibration, World's four, Party under Co-op, Guide)");
+    CHECK(PageCount() == 19 && PageCount() <= kMaxPages && kTabCount == 14, "nineteen pages under fourteen tabs (Controls' two, World's four, Party under Co-op)");
     CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -1631,7 +1631,7 @@ static void TestPagesHands() {
     {   // First-start guide: the panel stays, on the Guide page (the panel still has both hands)
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         FrameOut o = r.Click(1, kGuideBtn);
         CHECK(o.open && !o.justClosed && o.action.what == Do::Nothing && r.c.model.page == kPageGuide, "First-start guide shows the guide's page in the panel");
         CHECK(o.pad[1].trigger == 0.0f && !(o.pad[1].buttons & kTrigger), "the trigger that pressed it is not the game's");
@@ -1640,7 +1640,7 @@ static void TestPagesHands() {
     {   // the button hands the hands to the measurement; the panel comes back when it ends
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         CHECK(r.c.model.page == kPageBody, "on the Body page");
         float u, v;
         Centre(kCalibrate, &u, &v);
@@ -1683,7 +1683,7 @@ static void TestPagesHands() {
         r.Click(1, kInc(0));
         CHECK(r.c.model.Dirty(), "an edit");
         const float md = r.c.model.Get()[KeyAt(0, 0)];
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         r.Click(1, kCalibrate);
         r.calibrating = true;
         r.Run(300);
@@ -1694,7 +1694,7 @@ static void TestPagesHands() {
     {   // the key switched off (or another view than F4) meanwhile: it does not come back
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         r.Click(1, kCalibrate);
         r.calibrating = true;
         r.Run(200);
@@ -1710,7 +1710,7 @@ static void TestPagesHands() {
     {   // the head not tracked when the measurement ends: it waits for it
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         r.Click(1, kCalibrate);
         r.calibrating = true;
         r.Run(200);
@@ -1736,14 +1736,14 @@ static void TestPagesHands() {
         Rig r;
         r.snap = Snap(false);
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         FrameOut o = r.Click(1, kCalibrate);
         CHECK(o.action.what == Do::Nothing && r.c.Open() && !r.c.Resuming(), "no ini, no measurement");
     }
     {   // the chord closes the panel as before, whatever page it is on, and does not come back
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBody));
+        r.Click(1, kTab(TabOf(kPageBody)));
         r.Grips(true);
         r.Run(400);
         r.ClickStick(0);
@@ -1752,7 +1752,7 @@ static void TestPagesHands() {
     {   // the slider follows the beam while the trigger is held, also off the track, and stays where it was let go
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageVideo));
+        r.Click(1, kTab(TabOf(kPageVideo)));
         const float mid = (kSlTrack.y + 0.5f * kSlTrack.h) / kH;
         r.Point(1, (float)kSlX0 / kW, mid);
         r.Step();
@@ -1781,7 +1781,7 @@ static void TestPagesHands() {
     {   // a press elsewhere on the panel and a drag over the slider does not touch it
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageVideo));
+        r.Click(1, kTab(TabOf(kPageVideo)));
         float u, v;
         Centre(kPreset(3), &u, &v);
         r.Point(1, u, v);
@@ -1798,7 +1798,7 @@ static void TestPagesHands() {
     {   // the steppers at the slider's ends repeat while the trigger is held
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageVideo));
+        r.Click(1, kTab(TabOf(kPageVideo)));
         float u, v;
         Centre(kSlInc, &u, &v);
         r.Point(1, u, v);
@@ -2545,7 +2545,7 @@ static void TestBelt() {
     {   // the panel of its own: a change of a live key comes out of Step as a Save by itself
         Rig r;
         r.Open();
-        r.Click(1, kTab(kPageBelt));
+        r.Click(1, kTab(TabOf(kPageBelt)));
         const int up = KeyAt(kPageBelt, 0);
         r.Click(1, kInc(0));
         CHECK(r.c.model.Dirty() && r.c.model.LiveOnly() && r.c.model.page == kPageBelt, "a belt change waiting in the panel of its own");
@@ -2891,9 +2891,9 @@ static void TestKeys() {
     for (int slot = 0; slot < kBindCount; ++slot) {
         const int page = slot < 6 ? kPageKeysL : kPageKeysR;
         float u, v;
-        Centre(kDec(slot % 6), &u, &v);
+        Centre(kDec(slot % 6, page), &u, &v);
         CHECK((HitTest(page, u, v) == Hit{Kind::Change, KeyRow(slot), -1}), "< of a binding row");
-        Centre(kInc(slot % 6), &u, &v);
+        Centre(kInc(slot % 6, page), &u, &v);
         CHECK((HitTest(page, u, v) == Hit{Kind::Change, KeyRow(slot), 1}), "> of a binding row");
     }
 }
@@ -2914,7 +2914,7 @@ static void TestHud() {
     CHECK(!barKey, "no key of the bar in the room anywhere in the table");
     CHECK(kDefs[place].min == 0.0f && kDefs[place].max == 5.0f && kDefs[hide].min == 0.0f && kDefs[hide].max == 2.0f, "the plugin's ranges for bar_place and hide");
     CHECK(kDefs[height].min == -60.0f && kDefs[height].max == 40.0f && IsToggle(kDefs[plates]), "the plate's height as the plugin clamps it; the plates are a tick");
-    CHECK(Inside(kTab(kPageHud)) && !Overlap(kTab(kPageVideo), kTab(kPageHud)) && !Overlap(kTab(kPageBody), kTab(kPageHud)), "its tab is inside the atlas, apart");
+    CHECK(Inside(kTab(TabOf(kPageHud))) && !Overlap(kTab(TabOf(kPageVideo)), kTab(TabOf(kPageHud))) && !Overlap(kTab(TabOf(kPageBody)), kTab(TabOf(kPageHud))), "its tab is inside the atlas, apart");
 
     const std::wstring path = g_dir + L"\\hud.ini";
     auto apply = [&](Model& m, std::initializer_list<Hit> clicks, Action* got = nullptr) {
@@ -3320,8 +3320,8 @@ static void TestMelee() {
     CHECK(kTab(kTabCount - 1).x + kTab(kTabCount - 1).w <= 32 + 960, "the strip ends where the rows do");
     for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
     for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) == kTabNameW[i], "kTabNameW is the names' width in that font (the strip is shared by it)");
-    CHECK(kTab(kPageOptions).w > kTab(kPageView).w && kTab(kPageView).w >= kTab(kPageHud).w && kTab(kPageMelee).w > kTab(kPageBody).w, "a longer name has the wider tab");
-    CHECK(kTab(kPageHud).w > kTab(kPageLife).w && kTab(kPageHud).w >= GdiWidth("HUD", kTabFontPx, FW_SEMIBOLD) + 8, "a three-letter name gets what its letters need (HUD's capitals are wide: wider than Life's tab)");
+    CHECK(kTab(TabOf(kPageOptions)).w > kTab(TabOf(kPageView)).w && kTab(TabOf(kPageView)).w >= kTab(TabOf(kPageHud)).w && kTab(TabOf(kPageMelee)).w > kTab(TabOf(kPageBody)).w, "a longer name has the wider tab");
+    CHECK(kTab(TabOf(kPageHud)).w > kTab(TabOf(kPageLife)).w && kTab(TabOf(kPageHud)).w >= GdiWidth("HUD", kTabFontPx, FW_SEMIBOLD) + 8, "a three-letter name gets what its letters need (HUD's capitals are wide: wider than Life's tab)");
     for (int i = 0; i < kTabCount; ++i) {
         float u, v;
         Centre(kTab(i), &u, &v);
@@ -3598,7 +3598,7 @@ static void TestGuide() {
         CHECK(!q.c.Open() && o.guideEnd == 0, "an ordinary panel says nothing of the guide");
         Rig b;   // glanced at it by the Body page's button and closed
         b.Open();
-        b.Click(1, kTab(kPageBody));
+        b.Click(1, kTab(TabOf(kPageBody)));
         b.Click(1, kGuideBtn);
         CHECK(b.c.Open() && b.c.model.page == kPageGuide, "the Body page's button stays in the panel");
         o = b.Click(1, kClose);
@@ -4114,7 +4114,7 @@ static void TestWorld() {
           "skeleton bones: 64 - 1024 by 16, as the Settings slider");
     // names: the tab one, its pages theirs; a page's name fits its button, a row's two lines fit the row (the faces the panel paints them in)
     CHECK(!std::strcmp(kTabNames[kTabWorld], "World") && TabOf(kPageWorldGrab) == kTabWorld && TabPage(kTabWorld) == kPageWorld && TabOf(kPageGuide) == kTabGuide &&
-              TabPage(kTabGuide) == kPageGuide && TabOf(kPageVibration) == kPageVibration,
+              TabPage(kTabGuide) == kPageGuide && TabOf(kPageVibration) == kTabControls + 1,
           "the World tab holds the four pages; Guide the last tab");
     for (int i = 0; i < kWorldPages; ++i) CHECK(GdiWidth(kPageNames[kPageWorld + i], 30, FW_SEMIBOLD) <= kWorldSub(i).w - 16, "a World page's name fits its button");
     for (const Want& w : rows) {
@@ -4243,7 +4243,7 @@ static bool HasLabel(const Scene& sc, const std::string& t, Item* got = nullptr)
 }
 static void TestParty() {
     // the page and its place: under the Co-op tab, no tab of its own
-    CHECK(!std::strcmp(kPageNames[kPageParty], "Party") && TabOf(kPageParty) == kPageCoop && TabPage(TabOf(kPageParty)) == kPageCoop && kPageGuide == kPageCount - 1,
+    CHECK(!std::strcmp(kPageNames[kPageParty], "Party") && TabOf(kPageParty) == TabOf(kPageCoop) && TabPage(TabOf(kPageParty)) == kPageCoop && kPageGuide == kPageCount - 1,
           "the Party page is the Co-op tab's second page; the Guide stays the last");
     const Def& key = kDefs[kKeyPartyOn];
     CHECK(!wcscmp(key.section, L"openxr") && !wcscmp(key.key, L"headset_party") && IsToggle(key) && key.def == 1.0f && key.page == kNoPage,

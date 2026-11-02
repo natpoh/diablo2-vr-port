@@ -201,7 +201,7 @@ public:
         // the hand that pulls its trigger while it points at the panel takes the beam
         for (int h = 0; h < 2; ++h) if (primed_ && rise[h] && ph[h].hit) ptr_ = h;
         o.hand = ptr_;
-        hover = ph[ptr_].hit ? HitTest(model.page, ph[ptr_].u, ph[ptr_].v) : Hit{};
+        hover = ph[ptr_].hit ? HitTest(model.page, ph[ptr_].u, ph[ptr_].v, model.View()) : Hit{};
 
         Action act;
         if (primed_ && in.focused) {

@@ -636,15 +636,15 @@ void DrawTabs(Canvas& cv, Fonts& fonts, const View& v) {
 // The flip hints (the window flips like pages): an arrow at each edge where there is a place back / on - lit under the beam - and the places as dots at
 // the foot, the one the window stands at gold.
 void DrawFlipHints(Canvas& cv, const View& v) {
-    const int places = wheel::kFlipPlaces;
+    const int places = v.flipCount;   // (the places the view shows: VR F1 - F3 not F4's body)
     for (int i = 0; i < places; ++i) {
-        const float x = tiles::DotX(i, places), y = tiles::kDotY, r = i == v.flipPlace ? 8.0f : 6.0f;
-        const bool on = i == v.flipPlace;
+        const float x = tiles::DotX(i, places), y = tiles::kDotY, r = i == v.flipAt ? 8.0f : 6.0f;
+        const bool on = i == v.flipAt;
         RoundRect(cv, Rect{x - r - 2.0f, y - r - 2.0f, x + r + 2.0f, y + r + 2.0f}, r + 2.0f, Col{8, 8, 10}, 0.85f, Col{0, 0, 0}, 0.0f, 0.0f);
         RoundRect(cv, Rect{x - r, y - r, x + r, y + r}, r, on ? kGoldBright : Col{66, 68, 76}, 0.98f, on ? Col{255, 238, 178} : Col{104, 106, 116}, 1.0f, 1.6f);
     }
     for (int i = 0; i < 2; ++i) {
-        if (i == 0 ? v.flipPlace <= 0 : v.flipPlace >= places - 1) continue;   // nothing that way
+        if (i == 0 ? v.flipAt <= 0 : v.flipAt >= places - 1) continue;   // nothing that way
         const bool hot = v.hover == tiles::FlipCell(i);
         const bool high = v.flipHigh && v.tab == wheel::Tab::Settings;   // (the game look's Settings tab: at the ends of the page tabs' row)
         const Rect z = tiles::FlipRect(i, high);

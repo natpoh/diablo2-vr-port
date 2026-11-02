@@ -185,9 +185,11 @@ void OnFrame(const directinput::Frame& f, void*) {
     if (!g_on.load()) return;
     const bool have = wheelgame::Latest(&g_snap, &g_snapRevision);
     if (!have && (g_snap.ready || g_snap.session)) g_snap = wheel::Snapshot{};   // (no game state: nothing to show)
-    // F4 only (vr/view_gate.h): in another view the controller stands down. The long press's request is taken (and, outside the
-    // long-press mode or F4, dropped) every frame so that it cannot open the panel late.
+    // F4 has all of it; VR F1 - F3 the window alone (vr/wheel_controller.h, vr/view_gate.h Number); in another view the controller stands down. The
+    // long press's request is taken (and, outside the long-press mode or those views, dropped) every frame so that it cannot open the panel late.
     const bool f4 = viewgate::F4();
+    const int viewNo = f4 ? 4 : viewgate::Flat() ? viewgate::Number() : 0;
+    g_ctl.SetView(viewNo);
     const bool request = directinput::TakeSkillPanelToggle();
     // a bow wielded in F4 with the draw on shoots by a draw only: the pointing hand's trigger is the bow draw's (kept from the layout), so
     // the picked slot is not cast with it either (the draw's own release still presses its skill slot)
@@ -209,13 +211,13 @@ void OnFrame(const directinput::Frame& f, void*) {
     if (tabs) {   // the Settings tab's side: the ini as its thread reads it, the picture's sizes, the T-pose measurement
         if (g_storeOn) host.ini = hset::store::Read();
         host.env = g_env;
-        host.view = 4;   // (the window is F4's)
+        host.view = viewNo ? viewNo : 4;   // (the pages shown are the view's: VR F1 - F3 not F4's body)
         host.spanInUse = calib::SpanInUseM();   // the Body page's Arm span, while nothing is stored
         host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageParty) partycmd::Watch();   // the Party page: the roster read on
         host.party = partycmd::Now();
         host.calibrating = calib::Running();
-        host.openGuide = firststart::OpenRequest();   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp)
+        host.openGuide = f4 ? firststart::OpenRequest() : -1;   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp; F4's)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord
     }
     const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr);
@@ -227,7 +229,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
     if (s.guideEnd) firststart::PanelEnded(s.guideEnd == 1);   // the guide's page was on show and the window closed
     for (int h = 0; h < 2; ++h) {
-        if (s.take[h]) directinput::Take(h, s.take[h], directinput::kSrcOther0);
+        if (s.take[h]) directinput::Take(h, s.take[h], directinput::kSrcPanel);   // (the overlay's source: it takes in VR F1 - F3 too)
         g_lastTake[h] = s.take[h];
     }
     // the cast: the game's own pad buttons, pulsed while the trigger is down (the modifier and the button each held as the game wants); with the slot
@@ -250,7 +252,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
     if (s.request) wheelgame::Submit(s.req);
     // RUN / WALK: the game's own key command, through the game's own executor (vr/gamecmd.cpp), pressed once - as its key would
-    if (s.runWalk) directinput::Tap((uint32_t)wheel::kRunWalkCommand);
+    if (s.runWalk) directinput::Tap((uint32_t)wheel::kRunWalkCommand, directinput::kSrcPanel);
     Haptic(s.feedback, g_ctl.Config().pointerHand);
     g_layer = s.layer;
     g_view = g_ctl.ViewNow();
@@ -370,7 +372,7 @@ void SetSettingsHost(const hset::video::Env& env) {
 }
 
 void Tick() {
-    if (!g_on.load() || !viewgate::F4()) return;   // (another view: nothing of ours reads the game)
+    if (!g_on.load() || (!viewgate::F4() && !viewgate::Flat())) return;   // (another view than F4 and VR F1 - F3: nothing of ours reads the game)
     wheelgame::Tick(true, g_open.load());
 }
 

@@ -1,11 +1,13 @@
 // vr/diag/crash.cpp - crash reports: the start's steps and the log's first minutes to a file of our own, an exception the game dies of
 // to d2r_vr_crash.txt (cut from vr/vrcam.cpp, docs/plan_modules.md M1)
 #include "diag.h"
+#include "hang_watch.h"
 #include "../vrcam_internal.h"
 #include "../log_async.h"
 
 #include <dbghelp.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 
 #include <atomic>
 #include <cstdarg>
@@ -216,6 +218,160 @@ void Dump(EXCEPTION_POINTERS* ep) {
     Line(ok ? "vrcam: minidump d2rloader\\logs\\d2r_vr_crash.dmp written" : "vrcam: the minidump could not be written");
 }
 
+// The hang watchdog (vr/diag/hang_watch.h), every mode: presents standing still for 5 s - every thread's stack and the draw
+// thread's registers to d2r_vr_hang.txt, then the draw thread looked at 12 times more (a spin shows the loop's extent, a wait
+// the same place); 15 s - a minidump beside it (d2r_vr_hang.dmp). All of it straight to the files from our own memory, before
+// any log line: the stuck thread may hold the log's lock or the heap's.
+static char g_hangBuf[196608];
+static size_t g_hangLen = 0;
+static uint8_t g_hangStack[65536];
+void HAdd(const char* fmt, ...) {
+    if (g_hangLen >= sizeof g_hangBuf - 1) return;
+    va_list ap;
+    va_start(ap, fmt);
+    const int n = vsnprintf(g_hangBuf + g_hangLen, sizeof g_hangBuf - g_hangLen, fmt, ap);
+    va_end(ap);
+    if (n > 0) g_hangLen = std::min(g_hangLen + (size_t)n, sizeof g_hangBuf - 1);
+}
+void HAddWhere(DWORD64 pc) {
+    for (int i = 0; i < g_modCount; ++i)
+        if (pc >= g_modInfo[i].base && pc < g_modInfo[i].end) { HAdd("%s+0x%llX", g_modInfo[i].name, pc - g_modInfo[i].base); return; }
+    HAdd("0x%llX", pc);
+}
+#pragma optimize("", off)
+static size_t CopyStack(const CONTEXT& c) noexcept {   // the stack from rsp up, as much as is committed and fits
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!c.Rsp || !VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT) return 0;
+    const size_t n = (size_t)std::min<DWORD64>(sizeof g_hangStack, (DWORD64)mbi.BaseAddress + mbi.RegionSize - c.Rsp);
+    __try { memcpy(g_hangStack, (const void*)c.Rsp, n); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    return n;
+}
+#pragma optimize("", on)
+// One thread stopped for its context and a copy of its stack, then let go; false: it could not be looked at.
+static bool LookAt(DWORD tid, CONTEXT* c, size_t* copied) {
+    HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, tid);
+    if (!th) return false;
+    *copied = 0;
+    bool ok = false;
+    if (SuspendThread(th) != (DWORD)-1) {
+        memset(c, 0, sizeof *c);
+        c->ContextFlags = CONTEXT_FULL;
+        if (GetThreadContext(th, c)) { ok = true; *copied = CopyStack(*c); }
+        ResumeThread(th);
+    }
+    CloseHandle(th);
+    return ok;
+}
+static void HAddFrames(const CONTEXT& c, size_t copied, int most) {
+    DWORD64 pcs[drawprof::kDepth];
+    const int n = copied ? drawprof::UnwindCopy(c, g_hangStack, copied, pcs) : 0;
+    if (!n) { HAdd("    "); HAddWhere(c.Rip); HAdd(" (no stack read)\r\n"); return; }
+    for (int i = 0; i < n && i < most; ++i) { HAdd("    "); HAddWhere(pcs[i]); HAdd("\r\n"); }
+}
+static void HangFile(double stoodMs, uint32_t presents) {
+    ListMods();
+    g_hangLen = 0;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    const DWORD draw = pairtime::g_drawThread.load(), me = GetCurrentThreadId(), pid = GetCurrentProcessId();
+    HAdd("==== %04d-%02d-%02d %02d:%02d:%02d.%03d - D2R VR vrcam %s - no present for %.1f s (%u presents before), %.0f s after the plugin loaded ====\r\n",
+         t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, g_version, stoodMs / 1000.0, presents,
+         (GetTickCount64() - g_installedAt) / 1000.0);
+    HAdd("the game's draw thread (presents): %lu; the start's last step: %s\r\n", draw, g_step);
+    if (draw) {   // its registers, for the PDB (releases\pdb\<version>) and the game's image
+        CONTEXT c;
+        size_t copied = 0;
+        if (LookAt(draw, &c, &copied))
+            HAdd("draw thread registers:\r\nrip %016llX rsp %016llX rbp %016llX\r\nrax %016llX rbx %016llX rcx %016llX rdx %016llX\r\n"
+                 "rsi %016llX rdi %016llX r8  %016llX r9  %016llX\r\nr10 %016llX r11 %016llX r12 %016llX r13 %016llX\r\nr14 %016llX r15 %016llX\r\n"
+                 "xmm0 %08X %08X xmm1 %08X %08X xmm2 %08X %08X xmm3 %08X %08X\r\n",
+                 c.Rip, c.Rsp, c.Rbp, c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15,
+                 (unsigned)c.Xmm0.Low, (unsigned)(c.Xmm0.Low >> 32), (unsigned)c.Xmm1.Low, (unsigned)(c.Xmm1.Low >> 32),
+                 (unsigned)c.Xmm2.Low, (unsigned)(c.Xmm2.Low >> 32), (unsigned)c.Xmm3.Low, (unsigned)(c.Xmm3.Low >> 32));
+    }
+    HAdd("every thread:\r\n");
+    if (HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0); snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{sizeof te};
+        for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID != pid || te.th32ThreadID == me) continue;
+            CONTEXT c;
+            size_t copied = 0;
+            if (!LookAt(te.th32ThreadID, &c, &copied)) continue;
+            HAdd("thread %lu%s\r\n", te.th32ThreadID, te.th32ThreadID == draw ? " (draw)" : "");
+            HAddFrames(c, copied, drawprof::kDepth);
+        }
+        CloseHandle(snap);
+    }
+    if (draw) {   // where it is over 1.2 s: one place each time = a wait or a tight loop there; several = the loop's extent
+        HAdd("the draw thread again, every 100 ms (the top 8 frames):\r\n");
+        for (int i = 0; i < 12; ++i) {
+            Sleep(100);
+            CONTEXT c;
+            size_t copied = 0;
+            if (!LookAt(draw, &c, &copied)) break;
+            HAdd("  look %d:\r\n", i + 1);
+            HAddFrames(c, copied, 8);
+        }
+    }
+    HAdd("modules:\r\n");
+    for (int i = 0; i < g_modCount; ++i) HAdd("    %016llX %8llX %s\r\n", g_modInfo[i].base, g_modInfo[i].end - g_modInfo[i].base, g_modInfo[i].name);
+    wchar_t a[MAX_PATH], b[MAX_PATH];
+    wcscpy_s(a, g_dir); wcscat_s(a, L"d2r_vr_hang.txt");
+    wcscpy_s(b, g_dir); wcscat_s(b, L"d2r_vr_hang_prev.txt");
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);   // the one before kept (a long load's file does not take a hang's place)
+    HANDLE f = CreateFileW(a, GENERIC_WRITE, FILE_SHARE_READ, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD w = 0;
+    WriteFile(f, g_hangBuf, (DWORD)g_hangLen, &w, nullptr);
+    CloseHandle(f);
+}
+static bool HangDump() {
+    if (!g_miniDump || !g_dir[0]) return false;
+    wchar_t path[MAX_PATH];
+    wcscpy_s(path, g_dir);
+    wcscat_s(path, L"d2r_vr_hang.dmp");
+    HANDLE f = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    const BOOL ok = g_miniDump(GetCurrentProcess(), GetCurrentProcessId(), f,
+                               (MINIDUMP_TYPE)(MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules | MiniDumpWithIndirectlyReferencedMemory),
+                               nullptr, nullptr, nullptr);
+    CloseHandle(f);
+    return ok != FALSE;
+}
+static std::atomic<bool> g_hangStop{false};
+static HANDLE g_hangThread = nullptr;
+static DWORD WINAPI HangWatch(void*) {
+    hangwatch::Watch w;
+    bool told = false;
+    while (!g_hangStop.load()) {
+        Sleep(500);
+        const HWND wnd = w.started ? GameWindow() : nullptr;
+        const hangwatch::Act a = hangwatch::Step(w, pairtime::g_presents.load(std::memory_order_relaxed), (double)GetTickCount64(), wnd && IsIconic(wnd));
+        if (w.started && !told) {
+            told = true;
+            Log("vrcam: hang watchdog - watching the presents (any mode): none for 5 s - every thread's stack to d2rloader\\logs\\d2r_vr_hang.txt, for 15 s - a minidump d2r_vr_hang.dmp");
+        }
+        switch (a) {
+        case hangwatch::Act::Stacks:
+            HangFile((double)GetTickCount64() - w.movedAtMs, w.seen);
+            Line("vrcam: hang watchdog - no present for 5 s: every thread's stack went to d2rloader\\logs\\d2r_vr_hang.txt");   // (not the log yet: its lock may be what stands)
+            break;
+        case hangwatch::Act::Dump: {
+            const bool ok = HangDump();
+            Line(ok ? "vrcam: hang watchdog - still no present after 15 s: minidump d2rloader\\logs\\d2r_vr_hang.dmp written" : "vrcam: hang watchdog - the minidump could not be written");
+            Log(ok ? "vrcam: hang watchdog - no present for 15 s: every thread's stack in d2rloader\\logs\\d2r_vr_hang.txt (at 5 s), minidump d2r_vr_hang.dmp"
+                   : "vrcam: hang watchdog - no present for 15 s: every thread's stack in d2rloader\\logs\\d2r_vr_hang.txt (at 5 s); the minidump could not be written");
+            break;
+        }
+        case hangwatch::Act::Back:
+            LogF("vrcam: hang watchdog - presents again after %.1f s: a long frame (a load?), not a hang - d2r_vr_hang.txt holds where it stood", w.stoodMs / 1000.0);
+            break;
+        default: break;
+        }
+    }
+    return 0;
+}
+
 LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
     const DWORD me = GetCurrentThreadId();
     if (g_filterThread.load() == me) return EXCEPTION_CONTINUE_SEARCH;   // a filter chained back to ours
@@ -279,6 +435,7 @@ void Install(const char* version) {
     }
     g_prev = SetUnhandledExceptionFilter(&Unhandled);
     g_veh = AddVectoredExceptionHandler(0, &Vectored);
+    g_hangThread = CreateThread(nullptr, 0, &HangWatch, nullptr, 0, nullptr);   // idle until the game's first present
     char line[160];
     snprintf(line, sizeof line, "D2R VR vrcam %s starting - this file is the log's first two minutes, written as it goes", version);
     Line(line);
@@ -294,6 +451,8 @@ void Keep() {
 }
 
 void Uninstall() {
+    g_hangStop.store(true);
+    if (g_hangThread) { WaitForSingleObject(g_hangThread, 2000); CloseHandle(g_hangThread); g_hangThread = nullptr; }
     if (g_veh) { RemoveVectoredExceptionHandler(g_veh); g_veh = nullptr; }
     const LPTOP_LEVEL_EXCEPTION_FILTER cur = SetUnhandledExceptionFilter(g_prev);
     if (cur != &Unhandled) SetUnhandledExceptionFilter(cur);   // not ours any more: left as it was

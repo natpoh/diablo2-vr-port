@@ -120,12 +120,15 @@ bool PresetPieces(const float (*places)[3], int n, std::vector<PresetPiece>* out
 // units (null: none): the entities holding a unit's skeleton by their index, sorted (skel::UnitEntities) - an entity that is one or hangs on one (an NPC's,
 // a monster's, a merc's, another player's body parts and gear; an item's, a missile's) is left out (Serg, 0.192.39: "НПС тоже принимается за твёрдый объект");
 // *unitLeft how many.
+// ours (null: none): the entities of the models we draw as the game's own by their index, sorted (vr/own_models.h: the belt's bottles, what a hand holds) - placed
+// with no parent, so never found hanging on the hero; they and what hangs on them are left out with his own (Serg, 0.197.1: the weapons stopped on the belt's
+// bottles), counted in *ownLeft.
 struct LevelEntity { uint32_t id; float world[16]; float lo[3], hi[3]; uint32_t preset; float local[3]; };
 using KnowsFn = bool (*)(uint32_t presetId);
 // [weight] world_contact: is the preset entity with this id at this place (its transform's local position) a prop the catalogue knows - one knock props / grab props
 // move (never a wall)? False with no catalogue. Any thread (the catalogue is read once, at Init).
 bool IsMovable(uint32_t presetId, const float local[3]);
 bool LevelBoxes(const float hero[3], float upm, float radiusM, KnowsFn knows, std::vector<LevelEntity>* out, const char** why, uint32_t ownRoot = 0,
-                unsigned* ownLeft = nullptr, const std::vector<uint32_t>* units = nullptr, unsigned* unitLeft = nullptr);
+                unsigned* ownLeft = nullptr, const std::vector<uint32_t>* units = nullptr, unsigned* unitLeft = nullptr, const std::vector<uint32_t>* ours = nullptr);
 
 }  // namespace knockprops

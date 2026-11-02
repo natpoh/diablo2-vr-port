@@ -71,6 +71,7 @@ using KeyMoveFn = uint64_t (*)();
 KeyMoveFn OrigKeyMove;
 std::atomic<int> g_keyMove{0};               // the hook: 0 not in yet, 1 in, 2 not possible (another build) - the old pad way then
 std::atomic<uint32_t> g_keyMoveCalls{0};     // how often the game asked: still while W is held = its UI is on the pad
+std::atomic<bool> g_keyMoveGateOk{true};     // the game's last answer with our vector: its own gates passed (flatkeys::Facts::gateOk)
 
 // Flat play through the keyboard move: on while the hook is in or may still go in.
 bool FlatKeyMode() { return g_set.platform.load() == 0 && g_set.flatKeyMove.load() && g_keyMove.load() != 2; }
@@ -209,6 +210,7 @@ uint64_t HookKeyMove() {
     const uint64_t r = OrigKeyMove();
     for (int i = 0; i < 4; ++i) keys[i] = keep[i];
     const bool ok = r != 0;
+    g_keyMoveGateOk.store(ok, std::memory_order_relaxed);
     static ULONGLONG lastLog = 0;
     if (const ULONGLONG now = GetTickCount64(); now - lastLog >= 1000) {
         lastLog = now;
