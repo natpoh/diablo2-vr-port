@@ -162,8 +162,9 @@ void SetGrabWanted(bool on);
 // ... GrabTick: vrcam's timer, after Tick: when the touch's tick keeps no bodies (no melee weapon swung - a bow, bare hands, hit by touch off), the same read-only scan
 // of who is near and their limbs is made for the grab alone (ok: vrcam's Frame::ok; heroRender: the hero in world units, as the bow's poll has it).
 void GrabTick(bool ok, const float heroRender[3], float upm);
-// [weight] death_ragdoll_flat: outside F4 the bodies kept for the deaths alone (the scan, the server's hostile word, the skeletons); ok: in a game area, no menu.
-void DeathFlatTick(bool ok, const float heroRender[3], float upm);
+// [weight] death_ragdoll_flat: outside F4 the bodies kept for the deaths alone (the scan, the server's hostile word, the skeletons); [weight] death_ragdoll /
+// knock_down: in F4 the same while the touch's tick keeps none (a menu open, the weapon let go). ok: in a game area - a menu open too (the dead stay drawn).
+void DeathTick(bool ok, const float heroRender[3], float upm);
 bool GrabBodies(monsterbodies::Snapshot* out, bool swayed = false);   // (swayed: as drawn, the doll's sway in - [weight] grab_wrap lays the hand on that)
 // [weight] grab_items (vr/item_grab.h): the items lying on the ground within 3 m of the hero, each at its cell on the hero's floor in render metres (read only). SetItemsWanted:
 // scanned at all; ItemsTick: vrcam's timer (every 50 ms at most; heroRender as GrabTick's); GroundItems: the last scan's, *fresh when it is under 200 ms old. Any thread.
@@ -171,10 +172,11 @@ void SetItemsWanted(bool on);
 void ItemsTick(bool ok, const float heroRender[3], float upm);
 int GroundItems(itemgrab::Item* out, int max, bool* fresh);
 // [gameplay] melee_touch_barrels (vr/barrel_touch.h): a counting stroke of the held weapon through a barrel, pot, urn or basket presses the game's own
-// interact on it (the hero breaks it as with A). SetBarrelsWanted: on / off (vrcam's settings); BarrelsStep: vrcam's timer, after Tick - the press held
+// interact on it (the hero breaks it as with A). SetBarrelsWanted: on / off and the swing's least speed, m/s ([gameplay] melee_touch_barrels_min_speed:
+// its own gate, not the monsters' melee_min_speed nor strike_by_force) - vrcam's settings; BarrelsStep: vrcam's timer, after Tick - the press held
 // until the object breaks, let go after barreltouch::kHoldS; BarrelPressTarget: the object's client unit while the press is in flight (0: none) - the pad
 // hook presses interact, the interact target hook answers with it. F4 only. Any thread (BarrelsStep: the timer's).
-void SetBarrelsWanted(bool on);
+void SetBarrelsWanted(bool on, float minSpeed);
 void BarrelsStep();
 uintptr_t BarrelPressTarget();
 bool GrabDollOn();

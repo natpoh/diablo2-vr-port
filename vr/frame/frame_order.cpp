@@ -159,7 +159,7 @@ bool NativePairBegin() {
         where.inWorld = g_inWorld.load();
         float tanX = 0.0f, tanY = 0.0f;   // how wide the eyes' view is (the runtime's field of view): the vignette's size is an angle of it
         xr::Eyes eyes{};
-        if (native && lowhp::Enabled() && NativeEyes(&eyes)) {
+        if (native && (lowhp::Enabled() || lowhp::ManaEnabled()) && NativeEyes(&eyes)) {   // ([hud] low_mp_vignette uses the height)
             tanX = lowhp::HalfTan(eyes.tanL[0], eyes.tanR[0], eyes.tanL[1], eyes.tanR[1]);
             tanY = lowhp::HalfTan(eyes.tanD[0], eyes.tanU[0], eyes.tanD[1], eyes.tanU[1]);
         }
@@ -615,7 +615,7 @@ DWORD WINAPI UpdateThread(void*) {
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
         skillwheel::Tick();   // [openxr] skill_wheel: the controller's skill slots read on the UI thread (a no-op when off)
-        lowhp::Tick((lowhp::Enabled() || haptics::ManaWanted()) && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette, [openxr] haptics_low_mana: the hero's stats, 5 a second (a no-op when off)
+        lowhp::Tick((lowhp::Enabled() || lowhp::ManaEnabled() || haptics::ManaWanted()) && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette, [openxr] haptics_low_mana: the hero's stats, 5 a second (a no-op when off)
         merctint::Tick(merctint::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] merc_tint: the merc and its life, 5 a second (a no-op when off)
         handvitals::Tick(g_enabled.load() && g_inWorld.load());   // [hud] hand_vitals: the hero's life and mana, 5 a second (a no-op when off or outside F4)
         wriststatus::Tick(g_enabled.load() && g_inWorld.load());   // [hud] wrist_status: the hero's companions and effects, 5 a second (a no-op when off or outside F4)

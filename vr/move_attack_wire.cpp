@@ -15,6 +15,12 @@
 // getter the server's own Attack uses), the walk command 0xFEFE0 (the command the controller sends for the stick), the command flags 0x8AFD0
 // (a read), the client's player 0x9A480; read: the game's type (gnGameType 0x2A233F4, geGameType 0x32EF888) for the log's role. Every call
 // and read behind an SEH guard: a fault turns the option off for the session.
+//
+// The flat key ([gameplay] flat_move_while_attacking, our hero in the monitor's F2 / F3 with W A S D, or VR F1 / F2 / F3 with the left stick):
+// the same hooks, its own key. Its rate is
+// kept on the mouse: vrcam's map click hook (vr/input/flat_click.cpp) asks HoldClick for every click, and a press held back in the hold is
+// made again here, after the controller's update, through the game's own map click 0xFE3B0 (its hooked entry, so the plugin's own click
+// rules apply to it as to any click).
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -41,6 +47,7 @@ namespace {
 constexpr uint64_t RVA_GATE = 0x42D840, RVA_MODE_ALLOWED = 0x42BFB0, RVA_TRIGGER = 0x42A940, RVA_EVENT_FRAME = 0x48B230, RVA_UNIT_WEAPON = 0x34B000;
 constexpr uint64_t RVA_CTRL_UPDATE = 0x14C540, RVA_WALK_DIR = 0xFEFE0, RVA_CMD_FLAGS = 0x8AFD0, RVA_CLIENT_PLAYER = 0x9A480;
 constexpr uint64_t RVA_CLIENT_GAME_TYPE = 0x2A233F4, RVA_LAUNCH_GAME_TYPE = 0x32EF888;   // gnGameType, geGameType (move_attack.h RoleOf)
+constexpr uint64_t RVA_MAP_CLICK = 0xFE3B0;   // the game's map click (hooked by vrcam: its entry leads through the plugin's click rules)
 // mov [rsp+8],rbx; mov [rsp+10h],rbp; mov [rsp+18h],rsi (the two gates and the trigger begin alike)
 const uint8_t kSigGate[15] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18};
 const uint8_t kSigModeAllowed[15] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18};
@@ -72,9 +79,16 @@ using CtrlUpdateFn = void (*)(uintptr_t mgr, uint32_t player, uint32_t dt);
 using WalkDirFn = void (*)(uintptr_t unit, const float* dir, float mag, bool run);   // dir in rdx, mag in xmm2, run in r9b
 using CmdFlagsFn = uint16_t (*)();
 using ClientPlayerFn = uintptr_t (*)(uint32_t index);
+using MapClickFn = uint64_t (*)(void* unit, int type, int x, int y, uint64_t flags);
 
 void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{false}, g_faulted{false};
+std::atomic<uint8_t> g_flatScope{kScopeNone};   // [gameplay] flat_move_while_attacking (ScopeOfKey)
+std::atomic<int (*)()> g_flatViewFn{nullptr};      // vrcam: the monitor game's view (1 F1, 2 F2, 3 F3; 0 in VR) - for the log
+std::atomic<bool (*)()> g_flatCameraFn{nullptr};   // vrcam: one of the flat key's views (the monitor's F2 / F3, VR F1 / F2 / F3)
+ClickHold g_clicks;                       // the flat game's mouse in the hold (the game's thread: its click and its controller update)
+SRWLOCK g_clickLock = SRWLOCK_INIT;
+uintptr_t g_clickUnit = 0;                // the unit a held-back press was made for (under g_clickLock)
 std::atomic<int> g_state{0};   // 0 not tried, 1 in, 2 not possible
 GateFn g_origGate = nullptr;
 GateFn g_origModeAllowed = nullptr;
@@ -82,6 +96,7 @@ TriggerFn g_origTrigger = nullptr;
 CtrlUpdateFn g_origCtrl = nullptr;
 std::atomic<uint32_t> g_heroId{0};        // our hero's id, from the client's player (the same id on the server)
 std::atomic<uint64_t> g_holdUntil{0};     // the rate of OUR hero: no attack of ours before this (our clock); a joined hero's is in g_heroes
+std::atomic<uint32_t> g_ownCuts{0};      // walks our server let in for our hero (the per-attack log)
 std::atomic<uint64_t> g_ownSeenMs{0};     // when the server in this process last noted our hero's blow (our clock): our server is here
 SRWLOCK g_lock = SRWLOCK_INIT;
 Heroes g_heroes;                          // every hero's last blow and next-attack frame (the server's thread writes, the client's reads)
@@ -132,7 +147,20 @@ bool CallWalkDir(uintptr_t unit, const float* dir, float mag, bool run) noexcept
 void Fault(const char* where) {
     if (!g_faulted.exchange(true)) Say("vrcam: move while attacking - %s faulted: the option is OFF for this session (the game's own stop again)", where);
 }
-bool Live() { return g_on.load(std::memory_order_relaxed) && !g_faulted.load(std::memory_order_relaxed); }
+bool Live() {
+    return (g_on.load(std::memory_order_relaxed) || g_flatScope.load(std::memory_order_relaxed) != kScopeNone) && !g_faulted.load(std::memory_order_relaxed);
+}
+bool FlatCamera() {
+    const auto fn = g_flatCameraFn.load(std::memory_order_acquire);
+    return fn && fn();
+}
+// Our own hero's scope in the view he is in now (move_attack.h OwnScope).
+uint8_t OwnScopeNow() { return OwnScope(g_on.load(std::memory_order_relaxed), viewgate::F4(), FlatCamera(), g_flatScope.load(std::memory_order_relaxed)); }
+bool CallMapClick(uintptr_t unit, const Click& c) noexcept {
+    const uintptr_t fn = d2rsig::Addr(RVA_MAP_CLICK);
+    if (!fn) return false;
+    __try { reinterpret_cast<MapClickFn>(fn)(reinterpret_cast<void*>(unit), c.type, c.x, c.y, c.flags); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 
 Fired FiredOf(uint32_t id) {
     AcquireSRWLockShared(&g_lock);
@@ -198,8 +226,10 @@ int HookTrigger(uintptr_t game, uintptr_t unit, int code, int arg) {
 int Judge(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int original) {
     GateAsk a;
     a.original = original;
-    a.on = true;
+    a.on = g_on.load(std::memory_order_relaxed);
     a.f4 = viewgate::F4();
+    a.flatCamera = FlatCamera();
+    a.flatScope = g_flatScope.load(std::memory_order_relaxed);
     a.player = ServerPlayer(game, unit, &a.heroId, &a.mode, &a.own);
     a.newMode = (uint32_t)newMode;
     a.target = target != 0;
@@ -212,6 +242,7 @@ int Judge(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int ori
     if (why == GateWhy::Let) {
         const int32_t left = FramesLeft(a.endFrame, a.nowFrame);
         if (a.own) {
+            g_ownCuts.fetch_add(1, std::memory_order_relaxed);
             g_holdUntil.store(GetTickCount64() + (uint64_t)left * kFrameMs, std::memory_order_release);   // our pad holds our next attack
         } else {
             AcquireSRWLockExclusive(&g_lock);
@@ -264,6 +295,9 @@ struct Sent {
     uint64_t lastMs = 0;
 };
 Sent g_sent;   // the controller's thread only
+AttackLog g_story;          // the per-attack log (the controller's thread)
+uint32_t g_stories = 0;
+constexpr uint32_t kStoriesMax = 40;
 
 // The role, for the log and for whether our client may send the early walk: decided once our server has noted our hero (single player or
 // host), or - with none - 0.6 s after our hero's first attack of the game (someone else hosts, or online).
@@ -291,6 +325,19 @@ Role JudgeRole(uintptr_t unit, uint32_t clientMode, uint64_t now) {
     return r;
 }
 
+// The flat game's mouse: a press held back in the hold whose button was let go before its end is made now, through the game's own click.
+void ReplayClick(uintptr_t unit, uint64_t now) {
+    AcquireSRWLockExclusive(&g_clickLock);
+    if (!g_clicks.Pending()) { ReleaseSRWLockExclusive(&g_clickLock); return; }
+    const Click c = g_clicks.Due(now, g_holdUntil.load(std::memory_order_acquire));
+    const uintptr_t was = g_clickUnit;
+    ReleaseSRWLockExclusive(&g_clickLock);
+    if (!c.valid || was != unit) return;   // nothing due yet, or another hero now (a new game)
+    if (!CallMapClick(unit, c)) { Fault("the map click (0xFE3B0)"); return; }
+    static int told = 0;
+    if (++told <= 12) Say("vrcam: move while attacking - flat: the %s click pressed in the cut animation's rest is made now, as the game would have taken it", c.type == 0 ? "left" : "right");
+}
+
 // After the controller's own update of a player: the hero's id for the server's side and, while a cut attack plays, the stick's walk.
 void AfterCtrl(uintptr_t mgr, uint32_t player) {
     uintptr_t unit = 0;
@@ -300,14 +347,18 @@ void AfterCtrl(uintptr_t mgr, uint32_t player) {
     g_heroId.store(head[kUnitId / 4], std::memory_order_relaxed);
     const uintptr_t rec = mgr + player * kRecStride;
     NudgeAsk a;
-    a.on = true;
+    a.on = g_on.load(std::memory_order_relaxed);
     a.nowMs = GetTickCount64();
     a.clientMode = head[kUnitMode / 4];
     a.role = JudgeRole(unit, a.clientMode, a.nowMs);
     a.f4 = viewgate::F4();
-    if (!a.f4 || !ClientMaySend(a.role) || g_state.load(std::memory_order_relaxed) != 1) return;   // a joined client: nothing extra is ever sent (nor
-    // with the gate that lets the walk in missing - a walk the server dropped would leave our client's hero out of step)
-    a.weapon = WeaponQualifies(gamestate::WeaponType());
+    ReplayClick(unit, a.nowMs);   // the flat key's views: a mouse press held back in the hold, once the hold is over
+    const bool flatViews = !a.f4 && FlatCamera();
+    const uint8_t flatScope = g_flatScope.load(std::memory_order_relaxed);
+    const uint32_t weapon = gamestate::WeaponType();
+    a.weapon = WeaponQualifies(weapon);
+    a.flatOn = flatViews && flatScope != kScopeNone;
+    a.flatWeapon = a.flatOn && WeaponIn(flatScope, weapon);
     a.menu = gamestate::MenuOpen();
     a.heroId = head[kUnitId / 4];
     a.fired = FiredOf(a.heroId);
@@ -315,31 +366,73 @@ void AfterCtrl(uintptr_t mgr, uint32_t player) {
     int32_t skill = -1;
     uint8_t stamina = 0, forced = 0;
     float threshold = 0.0f;
-    if (!Read(grid, rec + kRecGrid, sizeof grid) || !Read(&skill, rec + kRecSkill, sizeof skill) || !Read(&stamina, rec + kRecStamina, 1) ||
-        !Read(&forced, rec + kRecForcedWalk, 1) || !Read(&threshold, mgr + kMgrRunThreshold, sizeof threshold))
-        return;
+    const bool recRead = Read(grid, rec + kRecGrid, sizeof grid) && Read(&skill, rec + kRecSkill, sizeof skill) && Read(&stamina, rec + kRecStamina, 1) &&
+                         Read(&forced, rec + kRecForcedWalk, 1) && Read(&threshold, mgr + kMgrRunThreshold, sizeof threshold);
     a.skillHeld = skill != -1;
     a.stick = grid[0] * grid[0] + grid[1] * grid[1] > 1e-8f;
     if (a.fired.atMs != g_sent.noteMs || a.fired.endFrame != g_sent.noteEnd) g_sent = {a.fired.atMs, a.fired.endFrame, 0, 0};
     a.sentForThis = g_sent.count;
     a.lastSentMs = g_sent.lastMs;
-    if (!Nudge(a)) return;
-    uint16_t flags = 0;
-    if (!CallCmdFlags(&flags)) { Fault("the command flags (0x8AFD0)"); return; }
-    const Walk w = MakeWalk(grid[0], grid[1], (flags >> 8) != 0, stamina != 0, forced != 0, threshold);
-    if (!w.ok) return;
-    if (!CallWalkDir(unit, w.dir, w.mag, w.run)) { Fault("the walk command (0xFEFE0)"); return; }
-    ++g_sent.count;
-    g_sent.lastMs = a.nowMs;
-    static int told = 0;
-    if (++told <= 12)
-        Say("vrcam: move while attacking - the stick's walk sent during the attack's rest (mode %u, %s, strength %.2f, try %u)", a.clientMode, w.run ? "run" : "walk",
-            w.mag, g_sent.count);
-    if (g_sent.count == kMaxSends) {
-        static int toldMiss = 0;
-        if (++toldMiss <= 6)
-            Say("vrcam: move while attacking - %u walks sent and the client still shows the attack: either it only plays the animation out while the hero walks, "
-                "or the server did not take them (see 'the walk cut' lines above)", kMaxSends);
+    // the per-attack log, and when the client's hero began this attack: only this attack's own blow lets a walk out
+    const uint32_t cutsNow = g_ownCuts.load(std::memory_order_relaxed);
+    AttackStory st;
+    const bool ended = g_story.Begin(a.clientMode, cutsNow, a.nowMs, &st);
+    a.attackSinceMs = g_story.Since();
+    // (a joined client: nothing extra is ever sent - Role; nor with the gate that lets the walk in missing: a walk the server dropped would leave
+    // our client's hero out of step)
+    NudgeWhy why = recRead ? JudgeNudge(a) : NudgeWhy::NotAttack;
+    bool sentNow = false;
+    const bool hooksIn = g_state.load(std::memory_order_relaxed) == 1;
+    if (why == NudgeWhy::Send && !hooksIn) why = NudgeWhy::Off;
+    if (why == NudgeWhy::Send) {
+        uint16_t flags = 0;
+        if (!CallCmdFlags(&flags)) { Fault("the command flags (0x8AFD0)"); return; }
+        const Walk w = MakeWalk(grid[0], grid[1], (flags >> 8) != 0, stamina != 0, forced != 0, threshold);
+        if (w.ok) {
+            const bool flatPath = !(a.on && a.f4 && a.weapon);
+            // the flat key: the rate hold from now (the pad's attack button off at the next poll, the mouse's clicks at once) - with the button
+            // held the game's controller would repeat the attack as soon as the hero walks; the server's answer below arms it as well
+            if (flatPath) {
+                const uint64_t until = NoteEndMs(a.fired);
+                uint64_t was = g_holdUntil.load(std::memory_order_relaxed);
+                while (until > was && !g_holdUntil.compare_exchange_weak(was, until)) {}
+            }
+            if (!CallWalkDir(unit, w.dir, w.mag, w.run)) { Fault("the walk command (0xFEFE0)"); return; }
+            ++g_sent.count;
+            sentNow = true;
+            g_sent.lastMs = a.nowMs;
+            static int told = 0;
+            if (++told <= 12)
+                Say("vrcam: move while attacking - the %s walk sent during the attack's rest (mode %u, %s, strength %.2f, grid %.2f %.2f, attack button %s, try %u)",
+                    flatPath ? "flat key's" : "stick's", a.clientMode, w.run ? "run" : "walk", w.mag, grid[0], grid[1], a.skillHeld ? "held" : "free", g_sent.count);
+            if (g_sent.count == kMaxSends) {
+                static int toldMiss = 0;
+                if (++toldMiss <= 6)
+                    Say("vrcam: move while attacking - %u walks sent and the client still shows the attack: either it only plays the animation out while the hero walks, "
+                        "or the server did not take them (see 'the walk cut' lines above)", kMaxSends);
+            }
+        }
+    }
+    g_story.Note(why, sentNow, cutsNow, a.fired.valid && a.fired.heroId == a.heroId ? a.fired.atMs : 0);
+    // one line an attack of ours, the first kStoriesMax of a session with the flat key on: walked on, or why not; and whether its blow came
+    if (ended && flatScope != kScopeNone && ++g_stories <= kStoriesMax) {   // (only with the flat key on: the F4 box is on for everyone, and a line costs)
+        const int vr = viewgate::Number();
+        char view[40];
+        if (a.f4) snprintf(view, sizeof view, "VR F4");
+        else if (vr > 0) snprintf(view, sizeof view, "VR F%d", vr);
+        else {
+            const auto fv = g_flatViewFn.load(std::memory_order_acquire);
+            const int n = fv ? fv() : 0;
+            if (n > 0) snprintf(view, sizeof view, "monitor F%d%s", n, flatViews ? "" : ", no camera");
+            else snprintf(view, sizeof view, flatViews ? "monitor, our camera" : "monitor, no camera");
+        }
+        const bool serverHere = a.role == Role::Single || a.role == Role::Host;
+        Say("vrcam: move while attacking - attack %u (%s, mode %u, weapon kind %u, %llu ms on the client): %s; blow noted by our server: %s; walks sent %u, let in by "
+            "our server %u (keys: F4 %d, flat %u; hooks %s; role %s)",
+            g_stories, view, st.mode, weapon, (unsigned long long)st.ms, StoryText(st),
+            st.noted ? "yes" : serverHere ? "NO - the attack ended before its blow" : "no (no server here)", st.sent, st.cuts, a.on ? 1 : 0, (unsigned)flatScope,
+            hooksIn ? "in" : "NOT in", RoleText(a.role));
+        if (serverHere && !st.noted && st.sent) Say("vrcam: move while attacking - a walk of ours ended attack %u before its blow: a bug, please send this log", g_stories);
     }
 }
 
@@ -351,6 +444,42 @@ void HookCtrlUpdate(uintptr_t mgr, uint32_t player, uint32_t dt) {
 }  // namespace
 
 void SetLogger(void (*log)(const char*)) { g_log = log; }
+
+void SetFlatCameraFn(bool (*fn)()) { g_flatCameraFn.store(fn, std::memory_order_release); }
+void SetFlatViewFn(int (*fn)()) { g_flatViewFn.store(fn, std::memory_order_release); }
+
+void SetFlatWanted(int key) {
+    const uint8_t s = ScopeOfKey(key);
+    if (g_flatScope.exchange(s) != s && g_log)
+        g_log(s == kScopeNone ? "vrcam: move while attacking - flat: [gameplay] flat_move_while_attacking=0: in the flat game the hero stands out the attack's animation, as in the game"
+              : s == kScopeReach ? "vrcam: move while attacking - flat: [gameplay] flat_move_while_attacking=1 (changes the game): in the monitor's F2 / F3 and VR F1 / F2 / F3 with a spear, polearm, javelin, "
+                                   "bow or crossbow W A S D / the left stick walk on as soon as the blow or the shot is out; the next attack goes when the animation would have ended"
+                                 : "vrcam: move while attacking - flat: [gameplay] flat_move_while_attacking=2 (changes the game): in the monitor's F2 / F3 and VR F1 / F2 / F3 with any weapon W A S D / the left stick walk on as soon "
+                                   "as the blow or the shot is out; the next attack goes when the animation would have ended");
+}
+
+bool HoldClick(void* unit, int type, int x, int y, uint64_t flags) {
+    if (!unit || !MouseAttackClick(type)) return false;
+    const bool mine = Live() && g_state.load(std::memory_order_relaxed) == 1 && !viewgate::F4() && FlatCamera() &&
+                      g_flatScope.load(std::memory_order_relaxed) != kScopeNone;
+    const uint64_t now = GetTickCount64(), until = g_holdUntil.load(std::memory_order_acquire);
+    AcquireSRWLockExclusive(&g_clickLock);
+    if (!mine) {
+        g_clicks.Reset();
+        ReleaseSRWLockExclusive(&g_clickLock);
+        return false;
+    }
+    const bool held = g_clicks.Take(now, until, type, x, y, flags);
+    if (held) g_clickUnit = (uintptr_t)unit;
+    ReleaseSRWLockExclusive(&g_clickLock);
+    if (held) {
+        static std::atomic<int> told{0};
+        if (MousePress(type) && told.fetch_add(1) < 12)
+            Say("vrcam: move while attacking - flat: a %s click in the cut animation's rest waits %u ms for the game's attack rate", type == 0 ? "left" : "right",
+                (unsigned)(until - now));
+    }
+    return held;
+}
 
 void SetWanted(bool on) {
     if (g_on.exchange(on) != on && g_log)
@@ -364,7 +493,7 @@ bool Wanted() { return g_on.load(); }
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if (!g_on.load() || g_state.load() != 0 || GetTickCount64() < retryAt) return;
+    if (!(g_on.load() || g_flatScope.load() != kScopeNone) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_GATE) || !d2rsig::Addr(RVA_MODE_ALLOWED) || !d2rsig::Addr(RVA_TRIGGER) || !d2rsig::Addr(RVA_EVENT_FRAME) || !d2rsig::Addr(RVA_UNIT_WEAPON) ||
         !d2rsig::Addr(RVA_CTRL_UPDATE) || !d2rsig::Addr(RVA_WALK_DIR) || !d2rsig::Addr(RVA_CMD_FLAGS) || !d2rsig::Addr(RVA_CLIENT_PLAYER))
@@ -392,7 +521,7 @@ void Install() {
 
 PadOut Pad(uint64_t nowMs, uint16_t attackBits) {
     static RateHold hold;   // the pad poll's thread only
-    if (!Live() || !viewgate::F4()) {
+    if (!Live() || OwnScopeNow() == kScopeNone) {   // VR first person, or the flat key's views with a pad / VR controller ([gameplay] flat_move_while_attacking)
         hold.Reset();
         return {};
     }

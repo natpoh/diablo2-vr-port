@@ -41,7 +41,7 @@ const D2RL::PluginContext* g_ctx = nullptr;
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
 // the settings (Configure, the update thread; read by the draw thread)
-std::atomic<bool> g_on{false}, g_pulse{false}, g_flip{false};
+std::atomic<bool> g_on{false}, g_pulse{false}, g_flip{false}, g_pulseEq{false};
 std::atomic<int> g_hand{0}, g_style{kStyleOrbs}, g_orbHands{0};
 std::atomic<float> g_size{8.0f}, g_height{6.0f}, g_opacity{1.0f}, g_cone{35.0f}, g_low{0.30f};
 std::atomic<float> g_orbSize{5.0f}, g_orbOpacity{0.95f};
@@ -64,6 +64,7 @@ Config Current() {
     c.opacity = g_opacity.load(std::memory_order_relaxed);
     c.coneDeg = g_cone.load(std::memory_order_relaxed);
     c.pulse = g_pulse.load(std::memory_order_relaxed);
+    c.pulseEq = g_pulseEq.load(std::memory_order_relaxed);
     c.lowFrac = g_low.load(std::memory_order_relaxed);
     c.flip = g_flip.load(std::memory_order_relaxed);
     c.style = g_style.load(std::memory_order_relaxed);
@@ -315,6 +316,7 @@ void Configure(const Config& config) {
     g_opacity.store(c.opacity);
     g_cone.store(c.coneDeg);
     g_pulse.store(c.pulse);
+    g_pulseEq.store(c.pulseEq);
     g_low.store(c.lowFrac);
     g_flip.store(c.flip);
     g_orbHands.store(c.orbHands);

@@ -54,6 +54,7 @@ struct Settings {
     std::atomic<bool>  mapDirection{true};  // [hud] map_direction: an arrow on the hero's marker of the game's map, the way our camera looks (vr/map_direction.h)
     std::atomic<bool>  mapTurn{false};      // [hud] map_rotate or map_compass: the way the head looks, for the map in the hand (vr/map_turn.h, xr.cpp)
     std::atomic<bool>  mapRotateFlat{false};   // [hud] map_rotate_flat: the corner map in the picture round and turned, the camera's way up (MapRotateFlatTick)
+    std::atomic<int>   mapCorner{0};         // [hud] map_corner: 0 either, 1 left, 2 right - where [hud] map_rotate_flat puts a whole-screen map
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
     std::atomic<float> barNearTop{0.0f}, barNearThird{0.0f}, barNearInside{0.0f};   // bar_near per view

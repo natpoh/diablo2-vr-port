@@ -48,7 +48,7 @@ void SetFormStrength(float factor);
 bool Wanted();        // either of them on
 bool ThrowWanted();
 bool DeathWanted();   // [weight] death_ragdoll (F4) / death_ragdoll_flat (the other views): the touch's scan lists the dying and the dead (Tick's dead)
-bool DeathFlatWanted();   // [weight] death_ragdoll_flat: meleetouch::DeathFlatTick keeps the bodies outside F4 for it
+bool DeathFlatWanted();   // [weight] death_ragdoll_flat: meleetouch::DeathTick keeps the bodies outside F4 for it
 
 // The weight model's thread: a push it gave body id (N s, render world; point in it); swingMs the weapon's own speed into the body, heftKg the steel and the arm
 // behind it (vr/knock_trigger.h: a blow needs both a fast swing and a hard push).
@@ -89,6 +89,15 @@ void BeforeDraw(uint32_t entity, bool eyes);
 // [weight] death_ragdoll (skel::SetFrozenPoseSource; the render workers): a kept corpse's bones as they came to rest - kept in the world, given in the model's
 // frame for the model standing at m3 / root now (n bones). False: none kept for that skeleton.
 bool FrozenBonesOf(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n);
+// [weight] death_ragdoll: the kept corpses' own table - the ONE source of a kept corpse's drawn pose (0.199.5, Serg / locaine: «трупы дёргаются» while a
+// weapon is held). Made by Tick for every kept corpse (its frozen bones, weight 1, never faded, eased or crowded out of the moving bodies' 16), a corpse not
+// refreshed one tick keeps its last entry (up to kKeptFreshMs); emptied when the corpse is released. Any thread (the render workers ask per skinning).
+// KeptPosesForSkin: the kept corpses of this skeleton (exact: one whose instance's own world pose this is - then it alone); IsKept: self is one of them.
+bool KeptPose(uintptr_t self, dollpose::Pose* out);
+int KeptPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);
+bool IsKept(uintptr_t self);
+// ... who made the bodies this Tick is called for (the log's count of the table's refreshes): 0 the touch's tick, 1 the grab's, 2 the dead's (meleetouch::DeathTick)
+void NoteTickBy(int who);
 
 // The touch's timer, every tick the bodies are made: the scan's units (ids, their game modes), the rigs read and which rig each unit is (rigOf), the hero
 // (world units). Puts a pose for every body drawn out of the game's pose into made[n..cap) (replacing one for the same skeleton) and returns the new count.

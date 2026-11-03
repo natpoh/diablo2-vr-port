@@ -23,4 +23,16 @@ void Install();
 // animation would have ended; one pressed in that time is pressed then. Off, or not F4: an empty answer.
 PadOut Pad(uint64_t nowMs, uint16_t attackBits);
 
+// The flat game ([gameplay] flat_move_while_attacking: 0 off, 1 the F4 option's weapons, 2 every weapon), live: our hero in the monitor's F2 / F3 or VR F1 / F2 / F3
+// walks on with W A S D once the blow is out. The same hooks as above (Install puts them in once either key asks).
+void SetFlatWanted(int key);
+// vrcam, once: true in the flat key's views (the monitor's F2 / F3 with our camera, VR F1 / F2 / F3).
+void SetFlatCameraFn(bool (*fn)());
+// vrcam, once: the monitor game's view number (1 F1, 2 F2, 3 F3; 0 in VR) - the per-attack log names the view.
+void SetFlatViewFn(int (*fn)());
+// vrcam's map click hook, first thing, for every click of our hero: true = the click waits for the game's attack rate (the hook answers 1,
+// as the game does for a click it took, and does not call the game). Only in the flat key's views with the key on; a press held back is made
+// again by the plugin when the cut animation would have ended.
+bool HoldClick(void* unit, int type, int x, int y, uint64_t flags);
+
 }  // namespace moveattack

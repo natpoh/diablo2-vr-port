@@ -881,6 +881,10 @@ void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn);
 // the model's frame, the model standing at m3 / root now) for SkeletonInstance self; false: none kept for it (laid on the game's pose then). Null: none.
 using FrozenPoseFn = bool (*)(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n);
 void SetFrozenPoseSource(FrozenPoseFn fn);
+// ... and an entity's parent in the renderer's tree (knockprops::EntityParent): the skinning finds a body by the root of the entity drawn - its anchor
+// (vr/skin_anchor.h), before any matching of matrices. None: the old ways only.
+using EntityParentFn = bool (*)(uint32_t entity, uint32_t* parent);
+void SetEntityParentSource(EntityParentFn fn);
 // A SkeletonInstance's world poses: this frame's (+0x20) and the last's (+0x28). False when they do not read.
 bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton = nullptr);
 // [weight] knock_down: a SkeletonInstance's world pose as the game made it (the model's frame) into m - its bone count, 0 when it does not read or has more

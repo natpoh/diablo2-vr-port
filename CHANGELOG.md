@@ -1,9 +1,45 @@
 # What's new in D2R VR
 
+## 0.200.0
+
+- **Corpses lie still**: a killed monster's ragdoll no longer jumps back to the game's corpse when a menu opens (inventory, map, Esc), no
+  longer flickers when several monsters of one kind lie dead (each corpse is found by an anchor - the root of what the game draws - not
+  searched for every frame), and no longer twitches while a weapon is held (a kept corpse has one source for its pose).
+- **Low life and low mana by how far the vignette closes in** (Settings > UI: F4 body): the red vignette's equalizer - 12 sliders, 60 %
+  down to 5 % of your life - sets how much of the view it covers at each step (`[hud] low_hp_cover_eq`). New: a **blue vignette at the
+  bottom at low mana** (`[hud] low_mp_vignette`) with its own equalizer (`low_mp_cover_eq`); the red one stays readable over it. The life
+  and mana balls on the wrists beat with them (`[hud] hand_vitals_pulse_eq`).
+- **Keep moving after each blow in the 2D views** (`[gameplay] flat_move_while_attacking`, any weapon; it changes the game's rule that
+  an attack plays to its end): in the monitor's F2 / F3 and the headset's F1 / F2 / F3, W A S D or the left stick walk on the moment the
+  blow is out - the swing still lands first, the next attack waits for the game's attack rate. When you host, your setting counts for the
+  players who joined you.
+- **The corner map turns in more views**: in the headset's F3 (the game on the floor) it turns with your head; in the flat game the
+  whole-screen map (Tab) is put in the corner while it turns.
+- Flat play: "A killed humanoid falls as a ragdoll" is on the World tab of Settings in flat mode too (it was on a VR-only tab).
+- The game's sky dome ships at 1000 m.
+
+- **Barrels and pots break by a hit again with "strike by force" on** (it judged monsters only, so no pot ever broke), and from an easy swing:
+  their own least speed, `[gameplay] melee_touch_barrels_min_speed` = 2 m/s (Settings > Strikes, under "Break barrels and pots by hitting
+  them"), not the monsters' speed. The hero still breaks them his own way, as with A.
+
+- **Each game's logs are kept for 30 days** (`[support] session_logs`, on; Settings > Home > D2R VR): every game gets a folder of its
+  own, *d2rloader\logs\sessions\<date_time>*, with the mod's and D2RLoader's logs and crash reports - the next start no longer writes over
+  them, so a problem from a long game can still be looked at later. Folders older than the days (30) go, and the oldest while all of
+  them are over the size (2000 MB).
+
+- **The mod backs up your saves** (`[support] save_backups`, on; Settings > Home > D2R VR "Back up my saves"): a power cut while the game
+  saves can leave a character or the shared stash as a file of zeros the game cannot load, and D2RLoader's own save backups skip this mod.
+  Now your characters, shared stashes and their key and map files are copied into *Saved Games\Diablo II Resurrected\D2R VR Backups\<date_time>*
+  when the game starts and whenever one is saved (each copy written through to the disk first), only good files - a zeroed one is never
+  copied, and the log names it with the folder of its last good copy. Folders older than the days (30) go, and the oldest while all are
+  over the size (500 MB); the newest copy of each file always stays. The game's own save files are only read.
+
 ## 0.199.0
 
-- **Direct hit is on as the mod comes** ("By the rules", with the two-handed swing through a group): a touch of your weapon is a hit at once,
-  no waiting for the game's attack animation or walking up. It and "the game moves what you carry and throw" are now in one block,
+- **Direct hit "By the rules" is on as the mod comes** (with the two-handed swing through a group): the first touch of your weapon on a
+  monster is a hit at once, no waiting for the game's attack animation or walking up. Then the hero's attack speed counts: a touch on the
+  same monster sooner is the game's normal attack; after that only a real swing (speed, force, swing length) is a direct hit again.
+  "Fully on" (every touch a direct hit) stays off, not recommended. It and "the game moves what you carry and throw" are now in one block,
   *Strikes > Attention: these change the game's own logic*, with a warning: they make the game's server do what its own rules would not.
   Untick them to play by the game's own rules. Everything else in the mod (hit by touch, weapon weight, ragdolls) is only another way of
   input - the game decides.

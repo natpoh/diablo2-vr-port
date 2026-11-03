@@ -706,7 +706,12 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         if (md.ok) hud::SetMapHeading(md.x, md.y);
     }
     if (g_set.mapRotateFlat.load() && !FullBody()) {   // [hud] map_rotate_flat: the corner map on the screen turned so this way is up (F4 has its own)
-        const mapdir::Dir md = mapdir::OnGround(f.camF, f.scrR, f.scrU, f.mirX, f.mirY);
+        float a[3] = {f.camF[0], f.camF[1], f.camF[2]};
+        if (TableView()) {   // VR F3: the head's way across the floor, held while it looks straight down at the diorama (mapturn::HeadHold)
+            static mapturn::HeadHold floorHold;
+            if (floorHold.Update(fwd.x, fwd.z)) { const V3 h = Facing(floorHold.roomYaw, 0.0f); a[0] = h.x; a[1] = h.y; a[2] = h.z; }
+        }
+        const mapdir::Dir md = mapdir::OnGround(a, f.scrR, f.scrU, f.mirX, f.mirY);
         if (md.ok) hud::SetMapFlatHeading(md.x, md.y);
     }
     if (mapAheadOk) {   // [hud] map_rotate / map_compass: the same way for the map in the hand, held while looking down at it (xr.cpp turns it)

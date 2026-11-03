@@ -998,8 +998,8 @@ void TestHlsl(const std::string& fxPath) {
     Expect(fx.find("float3(0.30, 0.005, 0.005)") != std::string::npos, "the effect's default colour is float3(0.30, 0.005, 0.005)");
     Expect(fx.find("uniform float2 LowHpFov < hidden = true; > = float2(0.0, 0.0);") != std::string::npos, "the effect's default field of view is none");
     Expect(fx.find("uniform float LowHpAlpha < hidden = true; > = 0.0;") != std::string::npos, "the effect's opacity defaults to 0 (off)");
-    Expect(fx.find("LowHp(Phantom(pos, uv, 0, false), uv)") != std::string::npos && fx.find("LowHp(Phantom(pos, uv, 1, false), uv)") != std::string::npos,
-           "both eyes' passes run it");
+    Expect(fx.find("LowHp(LowMp(Phantom(pos, uv, 0, false), uv), uv)") != std::string::npos && fx.find("LowHp(LowMp(Phantom(pos, uv, 1, false), uv), uv)") != std::string::npos,
+           "both eyes' passes run it - last, over the mana's blue ([hud] low_mp_vignette), so the red is never covered");
 
     const std::string src =
         "cbuffer Uniforms : register(b0) { float LowHpAlpha; float3 pad0; float4 LowHpShape; float3 LowHpColor; float pad1; float2 LowHpFov; float2 pad2; };\n"

@@ -2063,6 +2063,63 @@ void TestBeat() {
     }
 }
 
+// [hud] hand_vitals_pulse_eq: each ball beats with its vignette (In::follow, lowhp::BeatNow), the life's and the mana's; off or no vignette up: as before
+void TestFollow() {
+    printf("beat with the vignettes\n");
+    // off: In::follow changes nothing (the life ball as the plain pulse, the mana ball still)
+    {
+        State a, b;
+        In in = Base();
+        in.cfg.pulse = true;
+        in.v = handvitals::FromStats(100 * 256, 1000 * 256, 40 * 256, 400 * 256);
+        In fol = in;
+        fol.follow[0] = 0.77f;
+        fol.follow[1] = 0.66f;
+        bool same = true;
+        for (int i = 0; i < 400; ++i) {
+            in.time += 1.0 / 90.0;
+            fol.time = in.time;
+            const Set x = Step(a, in), y = Step(b, fol);
+            same = same && x.orb[kLife].glow == y.orb[kLife].glow && x.orb[kMana].glow == y.orb[kMana].glow && x.orb[kLife].radius == y.orb[kLife].radius &&
+                   x.orb[kMana].radius == y.orb[kMana].radius;
+        }
+        Expect(same, "pulse_eq off: the vignettes' beats change nothing");
+    }
+    // on: each ball takes its vignette's level as it is, throbbing with it; -1 (that vignette not up) leaves it as before
+    {
+        State st, plain;
+        In in = Base();
+        in.cfg.pulse = true;
+        in.cfg.pulseEq = true;
+        in.v = handvitals::FromStats(100 * 256, 1000 * 256, 40 * 256, 400 * 256);   // 10% life, 10% mana
+        In ref = in;
+        ref.cfg.pulseEq = false;
+        bool life = true, mana = true, throb = true, alone = true;
+        for (int i = 0; i < 400; ++i) {
+            in.time += 1.0 / 90.0;
+            ref.time = in.time;
+            const float lv = 0.5f + 0.5f * std::sin((float)i * 0.1f), mv = 0.5f + 0.5f * std::cos((float)i * 0.13f);
+            in.follow[0] = i < 200 ? lv : -1.0f;   // the red goes down half way through
+            in.follow[1] = mv;
+            const Set s = Step(st, in), r = Step(plain, ref);
+            if (i < 200) life = life && Near(s.orb[kLife].glow, lv, 1e-6f);
+            else alone = alone && s.orb[kLife].glow == r.orb[kLife].glow;
+            mana = mana && Near(s.orb[kMana].glow, mv, 1e-6f);
+            throb = throb && Near(s.orb[kMana].radius, 0.025f * (1.0f + kThrob * mv), 1e-6f) && s.orb[kMana].radius <= 0.025f * (1.0f + kThrob) + 1e-7f;
+        }
+        Expect(life, "the life ball's glow is the red's beat");
+        Expect(mana, "the mana ball's glow is the blue's beat");
+        Expect(throb, "and it throbs with it, within 5%%");
+        Expect(alone, "the red not up: the life ball beats on its own as before");
+        // out of range or not a number: held in range / left alone
+        in.follow[0] = 7.0f;
+        in.follow[1] = NAN;
+        in.time += 1.0 / 90.0;
+        const Set o = Step(st, in);
+        Expect(o.orb[kLife].glow == 1.0f && o.orb[kMana].glow == 0.0f, "a level over 1 is 1; not a number is no beat");
+    }
+}
+
 // ---- the uniforms -------------------------------------------------------------------------------------------------------------------------------
 
 void TestPack() {
@@ -3808,6 +3865,7 @@ int main(int argc, char** argv) {
     TestFade();
     TestState();
     TestBeat();
+    TestFollow();
     TestPack();
     TestGlobesGeometry();
     TestShader(dir);

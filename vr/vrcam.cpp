@@ -919,7 +919,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.199.0";
+static const char g_info_version[] = "0.200.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1008,9 +1008,11 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     g_iniPath[n] = 0;
     wcscat_s(g_iniPath, L"d2r_vr.ini");
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
+    sessionlogs::Start();   // [support] session_logs: this game's logs into logs\sessions\<its start>, kept 30 days
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
     gpufault::EnableDred(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0);   // [debug] dred, on unless the ini says 0
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
+    savebackups::Start();   // [support] save_backups: the saves copied before the game opens them, then whenever one changes (power cuts zero them)
     viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
     viewgate::SetFlat(&FlatViews);   // ... except the left stick's walk in VR F1-F3 ([direct] walk_flat_views, vr/walk_flat.h): movement only
     viewgate::SetNumber(&VrViewNow);   // ... and the overlay (the skill panel's window) in every VR view: which one it stands in
@@ -1029,6 +1031,9 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     firststart::SetLogger(&Log);
     standstill::SetLogger(&Log);
     moveattack::SetLogger(&Log);
+    // [gameplay] flat_move_while_attacking's views: the monitor's F2 / F3 (our camera), and VR F1 / F2 / F3 (the left stick's walk, walk_flat_views)
+    moveattack::SetFlatCameraFn([] { return (g_set.platform.load() == 0 && g_enabled.load()) || FlatViews(); });
+    moveattack::SetFlatViewFn([] { return g_set.platform.load() == 0 ? (int)g_set.flatView.load() : 0; });   // the per-attack log's view
     straywalk::SetLogger(&Log);
     shottrace::SetLogger(&Log);
     straywalk::SetAttackFn(&standstill::AttackActive);
@@ -1095,6 +1100,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     weight::SetStabEnterSink(&knockdown::OnStabEntered);   // [weight] impale_drag: a stab that goes in may carry the body on the blade
     weight::SetBodyPushSink(&HealthPushBody);   // meleetouch::PushBody, counted for [debug] health
     skel::SetMonsterPoseByWorldSource(&HealthMonsterPosesForSkin);   // [weight] monster_ragdoll_pose: the skinning draws a struck monster from a turned copy (meleetouch::MonsterPosesForSkin, counted)
+    skel::SetEntityParentSource(&knockprops::EntityParent);   // [weight] death_ragdoll: the skinning finds a body by its entity's root (vr/skin_anchor.h)
     skel::SetFrozenPoseSource(&knockdown::FrozenBonesOf);   // [weight] death_ragdoll: a resting corpse drawn from its bones as they came to rest
     skel::SetMonsterPoseSource(&HealthMonsterPose);   // (meleetouch::MonsterPose, counted) [weight] monster_ragdoll_pose: the hook turns a struck monster's bones   // [weight] monster_ragdoll: ... and the weapon's pushes back to them
     skel::SetGripHandStep(&griplib::HandStep, &griplib::Abi);
@@ -1242,8 +1248,10 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
     crash::Uninstall();
+    savebackups::Stop();   // [support] save_backups: what the game wrote at its exit backed up, the thread joined
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back
     meleedirectclient::ShutdownNet();   // [gameplay] melee_direct_client_cleave: the channel given back
     logasync::Shutdown();   // [debug] log_async: the lines that wait are written, its thread joined, before the context goes
+    sessionlogs::Stop();   // [support] session_logs: the last copy, after the lines that waited
     g_ctx = nullptr;
 }

@@ -122,6 +122,36 @@ inline Round RoundOnScreen(const Turn& t, const float box[4], float w, float h) 
     r.ok = r.map.ok && r.radius[0] > 0.0f && r.radius[1] > 0.0f;
     return r;
 }
+// Where [hud] map_rotate_flat acts, and why not elsewhere (vrcam's MapRotateFlatTick; its log names the reason at every change).
+// platform 0 the monitor, 1 VR; view: F1..F4 (ViewNow); camera: our camera on (g_enabled); classic: the map in the picture (ClassicNow).
+// VR F3 (the game on the floor, Serg's "2D" in the headset with F1): turned too - our camera there is the head over the diorama, so up is
+// where the head looks across the game's ground (held while it looks straight down at the floor, as F4's map in the hand). VR F1 (the game
+// in a window) not: its camera is the game's from above, the window does not turn with the head, north stays up as the left stick walks.
+enum class FlatWhy { On, OnFloor, KeyOff, NotInGame, CameraOff, F1, F4, MapOutOfPicture };
+inline FlatWhy FlatGate(bool key, bool inGame, int platform, int view, bool camera, bool classic) {
+    if (!key) return FlatWhy::KeyOff;
+    if (platform == 1 && view == 4) return FlatWhy::F4;   // (before the camera: F4 has its own map_rotate, whatever the camera does)
+    if (view == 1) return FlatWhy::F1;
+    if (!inGame) return FlatWhy::NotInGame;
+    if (!camera) return FlatWhy::CameraOff;
+    if (!classic) return FlatWhy::MapOutOfPicture;
+    return platform == 1 && view == 3 ? FlatWhy::OnFloor : FlatWhy::On;
+}
+inline bool FlatTurns(FlatWhy w) { return w == FlatWhy::On || w == FlatWhy::OnFloor; }
+inline const char* FlatWhyText(FlatWhy w) {
+    switch (w) {
+        case FlatWhy::On: return "turned with the camera, round about the hero, the camera's way up";
+        case FlatWhy::OnFloor: return "turned with the head, round about the hero, the way you look across the floor up";
+        case FlatWhy::KeyOff: return "as the game draws it (the key is off)";
+        case FlatWhy::NotInGame: return "not turned - not in a game";
+        case FlatWhy::CameraOff: return "not turned - our camera is off (F12)";
+        case FlatWhy::F1: return "not turned - F1: the game's camera from above and its window never turn, north stays up";
+        case FlatWhy::F4: return "not turned - VR F4: the map in the hand turns by [hud] map_rotate, the screen has no map";
+        case FlatWhy::MapOutOfPicture: return "not turned - the map is hung in the room, not in the picture ([hud_third] / [hud_floor] classic 1)";
+    }
+    return "?";
+}
+
 // The share's uv for a screen point p (uv), as the effect does it; false outside the circle.
 inline bool RoundAt(const Round& r, float px, float py, float* u, float* v) {
     if (!r.ok) return false;

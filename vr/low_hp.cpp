@@ -50,6 +50,20 @@ const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_on{false}, g_gentle{false}, g_haptics{false};
 std::atomic<float> g_threshold{0.30f}, g_start{0.25f}, g_end{0.85f}, g_saturation{0.8f}, g_radius{0.40f}, g_softness{0.80f}, g_round{2.5f},
     g_hapticsStrength{1.0f};
+std::atomic<bool> g_coverEq{false};                 // [hud] low_hp_cover_eq and its points (% cover)
+std::atomic<float> g_coverPct[eq::kBands];
+std::atomic<float> g_cover{-1.0f}, g_mpCover{-1.0f};   // the cover now (Heartbeat::Out::cover) of the red and of the blue, -1 = their own size
+// [hud] low_mp_vignette (vr/low_mp.h): its settings (ConfigureMana; the draw thread's Frame reads them under the lock), the mana as the UI
+// thread last read it (float bits | known << 32) and when, its beat (the draw thread's) and what the effect is handed
+std::atomic<bool> g_mpOn{false};
+std::mutex g_mpLock;
+lowmp::Config g_mpCfg;
+std::atomic<uint64_t> g_mana{0}, g_manaAt{0};
+Heartbeat g_mpBeat;
+std::atomic<float> g_mpAlpha{0.0f};
+// each beat now, 0 - 1 with its fade, and whether it is up (BeatNow: the hand's medallion beats in step)
+std::atomic<float> g_beatLevel[2];
+std::atomic<bool> g_beating[2];
 // the view's width and height as the tangent of the half-angle (xr's field of view of this pair; 0 = not known)
 std::atomic<float> g_tanX{0.0f}, g_tanY{0.0f};
 
@@ -123,15 +137,23 @@ void StoreLife(const Life& l) {
     g_lifeAt.store(GetTickCount64());
 }
 
+void StoreMana(const Life& m) {   // (the mana in a Life: its frac; its "dead", no mana, means nothing here)
+    uint32_t bits;
+    memcpy(&bits, &m.frac, sizeof bits);
+    g_mana.store((uint64_t)bits | (m.known ? 1ull << 32 : 0ull));
+    g_manaAt.store(GetTickCount64());
+}
+
 void __cdecl ReadJob(const PluginContext*, void* user) noexcept {
     if (!g_queued.Claim(uiticket::FromUser(user))) return;
     int32_t life = 0, maxLife = 0;
     int32_t mana = 0, maxMana = 0;
-    const bool wantMana = haptics::ManaWanted();
+    const bool wantMana = haptics::ManaWanted() || g_mpOn.load(std::memory_order_relaxed);
     const Read r = ReadLife(&life, &maxLife, wantMana ? &mana : nullptr, wantMana ? &maxMana : nullptr);
-    if (wantMana) {   // [openxr] haptics_low_mana: the same sanity bounds as the life's (a maximum under one point: no mana to warn of)
+    if (wantMana) {   // [openxr] haptics_low_mana, [hud] low_mp_vignette: the same sanity bounds as the life's (a maximum under one point: no mana to warn of)
         const Life m = r == Read::Ok ? LifeFromStats(mana, maxMana) : Life{};
         haptics::Mana(m.known, m.frac);
+        StoreMana(m);
     }
     if (r == Read::Ok) {
         const Life l = LifeFromStats(life, maxLife);
@@ -173,7 +195,15 @@ Config CurrentConfig() {
     c.softness = g_softness.load(std::memory_order_relaxed);
     c.roundness = g_round.load(std::memory_order_relaxed);
     c.hapticsStrength = g_hapticsStrength.load(std::memory_order_relaxed);
+    c.coverEq.on = g_coverEq.load(std::memory_order_relaxed);
+    for (int k = 0; k < eq::kBands; ++k) c.coverEq.cover[k] = g_coverPct[k].load(std::memory_order_relaxed);
     return c;
+}
+
+// A beat's level for the medallion: the two beats alone (0 at rest, 1 at the top of the first), times the fade and - with an equalizer - the
+// cover's strength (a vignette the equalizer has at 0 here is not there: neither is the beat on the wrist).
+float BeatLevel(const Heartbeat::Out& o, bool gentle) {
+    return o.amount * Beats01(o.phase, ShapeFor(gentle)) * (o.cover >= 0.0f ? eq::Strength(o.cover) : 1.0f);
 }
 
 bool PageLeased() { return GetTickCount64() < g_pageUntil.load(std::memory_order_relaxed); }
@@ -211,6 +241,15 @@ void Configure(const Config& config) {
     g_softness.store(c.softness);
     g_round.store(c.roundness);
     g_hapticsStrength.store(c.hapticsStrength);
+    for (int k = 0; k < eq::kBands; ++k) g_coverPct[k].store(c.coverEq.cover[k]);
+    const bool wasEq = g_coverEq.exchange(c.coverEq.on);
+    if (c.on && (c.coverEq.on != wasEq || c.on != was)) {   // the equalizer's points, told as it comes on (and when it goes off)
+        char b[300];
+        int n = snprintf(b, sizeof b, "vrcam: low life vignette - its size %s", c.coverEq.on ? "by the equalizer ([hud] low_hp_cover_eq), % cover at" : "the one slider (low_hp_radius)");
+        for (int k = 0; c.coverEq.on && k < eq::kBands && n > 0 && n < (int)sizeof b; ++k)
+            n += snprintf(b + n, sizeof b - n, " %d%%:%.0f", eq::kLifePct[k], c.coverEq.cover[k]);
+        Log(b);
+    }
     if (c.on != was) {
         char b[300];
         snprintf(b, sizeof b, "vrcam: low life vignette %s ([hud] low_hp_vignette; from %.0f%% life, intensity %.2f up to %.2f, red %.2f, reaches %.0f%% in%s%s)",
@@ -228,6 +267,7 @@ void SetPreview(bool on, const Config& draft, int page) {
         std::lock_guard<std::mutex> lock(g_previewLock);
         if (on) {
             g_previewCfg = Sanitized(draft);
+            g_previewCfg.coverEq = CurrentConfig().coverEq;   // the headset panel has no equalizer rows: its preview closes in as the ini says (D2R VR Settings sets it)
             if (page != g_previewPage) g_window.Stop();   // another page: the preview of the one before is over
             g_previewPage = page;
         } else {
@@ -245,7 +285,7 @@ void PlayPreview() {
 }
 
 void Tick(bool wantRead) {
-    if (!wantRead || !(g_on.load(std::memory_order_relaxed) || haptics::ManaWanted()) || !g_ctx || !g_threads || !g_threads->runOnUiThread || g_dead.load()) return;
+    if (!wantRead || !(g_on.load(std::memory_order_relaxed) || g_mpOn.load(std::memory_order_relaxed) || haptics::ManaWanted()) || !g_ctx || !g_threads || !g_threads->runOnUiThread || g_dead.load()) return;
     static ULONGLONG next = 0;
     const ULONGLONG now = GetTickCount64();
     if (now < next) return;
@@ -283,8 +323,32 @@ void Frame(const Where& where, bool menuOpen, float tanX, float tanY) {
         in.frac = PreviewFrac(Sanitized(cfg).threshold);
     }
     const Heartbeat::Out out = g_beat.Step(cfg, in);
+    g_cover.store(out.cover);
     g_alpha.store(out.alpha);
     g_frameAt.store(GetTickCount64());
+    g_beating[0].store(out.amount > 0.0f);
+    g_beatLevel[0].store(BeatLevel(out, cfg.gentle));
+
+    {   // [hud] low_mp_vignette: the mana's blue at the bottom - the same beat, fed the mana (in the life's preview it beats as it really is)
+        lowmp::Config mc;
+        {
+            std::lock_guard<std::mutex> lock(g_mpLock);
+            mc = g_mpCfg;
+        }
+        mc.on = g_mpOn.load(std::memory_order_relaxed);
+        const uint64_t mana = g_mana.load(), mat = g_manaAt.load();
+        const double mage = mat ? (double)(GetTickCount64() - mat) : -1.0;
+        float mfrac;
+        const uint32_t mbits = (uint32_t)mana;
+        memcpy(&mfrac, &mbits, sizeof mfrac);
+        const bool heroDead = ((life >> 33) & 1) != 0 && ((life >> 32) & 1) != 0;
+        const Heartbeat::Out mo = g_mpBeat.Step(lowmp::BeatConfig(mc), lowmp::BeatIn(InView(where), menuOpen, ((mana >> 32) & 1) != 0 && Fresh(mage) && !g_dead.load(),
+                                                                                  mfrac, heroDead, in.dt));
+        g_mpCover.store(mo.cover);
+        g_mpAlpha.store(mo.alpha);
+        g_beating[1].store(mo.amount > 0.0f);
+        g_beatLevel[1].store(BeatLevel(mo, false));
+    }
 
     if (out.active != g_wasActive) {   // told as it comes and goes (not more than once a second)
         g_wasActive = out.active;
@@ -293,7 +357,7 @@ void Frame(const Where& where, bool menuOpen, float tanX, float tanY) {
             g_toldEdge = t;
             char b[200];
             snprintf(b, sizeof b, "vrcam: low life vignette - life %.0f%%: %s (%.0f beats a minute at most %.2f opacity)", in.frac * 100.0f,
-                     out.active ? "coming up" : "going out", Bpm(out.severity, cfg.gentle), PeakAlpha(out.severity, Sanitized(cfg)));
+                     out.active ? "coming up" : "going out", out.bpm, PeakAlpha(out.severity, Sanitized(cfg)));
             Log(b);
         }
     }
@@ -329,7 +393,48 @@ bool Current(Uniforms* out) {
     if (GetTickCount64() - g_frameAt.load(std::memory_order_relaxed) > 250) return false;
     const float a = g_alpha.load(std::memory_order_relaxed);
     if (!(a > 0.0f)) return false;
-    *out = MakeUniforms(a, ActiveConfig(), g_tanX.load(std::memory_order_relaxed), g_tanY.load(std::memory_order_relaxed));
+    *out = MakeUniforms(a, ActiveConfig(), g_tanX.load(std::memory_order_relaxed), g_tanY.load(std::memory_order_relaxed), g_cover.load(std::memory_order_relaxed));
+    return true;
+}
+
+void ConfigureMana(const lowmp::Config& config) {
+    const lowmp::Config c = lowmp::Sanitized(config);
+    {
+        std::lock_guard<std::mutex> lock(g_mpLock);
+        g_mpCfg = c;
+    }
+    if (g_mpOn.exchange(c.on) != c.on) {
+        char b[300];
+        int n = snprintf(b, sizeof b, "vrcam: low mana vignette %s ([hud] low_mp_vignette; from %.0f%% mana, intensity %.2f up to %.2f, %s",
+                         c.on ? "on" : "off", c.threshold * 100.0f, c.intensityStart, c.intensityEnd, c.coverEq.on ? "% cover by the equalizer at" : "");
+        if (!c.coverEq.on && n > 0 && n < (int)sizeof b) n += snprintf(b + n, sizeof b - n, "%.0f%% up from the bottom", c.height * 100.0f);
+        for (int k = 0; c.coverEq.on && k < eq::kBands && n > 0 && n < (int)sizeof b; ++k) n += snprintf(b + n, sizeof b - n, " %d%%:%.0f", eq::kLifePct[k], c.coverEq.cover[k]);
+        if (n > 0 && n < (int)sizeof b) snprintf(b + n, sizeof b - n, ")");
+        Log(b);
+        if (!c.on) g_mpAlpha.store(0.0f);
+    }
+}
+
+bool ManaEnabled() { return g_mpOn.load(std::memory_order_relaxed); }
+
+bool CurrentMana(lowmp::Uniforms* out) {
+    if (!ManaEnabled()) return false;
+    if (GetTickCount64() - g_frameAt.load(std::memory_order_relaxed) > 250) return false;   // (as the life's: no pair stepped it lately, nothing)
+    const float a = g_mpAlpha.load(std::memory_order_relaxed);
+    if (!(a > 0.0f)) return false;
+    lowmp::Config c;
+    {
+        std::lock_guard<std::mutex> lock(g_mpLock);
+        c = g_mpCfg;
+    }
+    *out = lowmp::MakeUniforms(a, c, g_tanY.load(std::memory_order_relaxed), g_mpCover.load(std::memory_order_relaxed));
+    return true;
+}
+
+bool BeatNow(bool mana, float* level) {
+    const int i = mana ? 1 : 0;
+    if (!g_beating[i].load(std::memory_order_relaxed) || GetTickCount64() - g_frameAt.load(std::memory_order_relaxed) > 250) return false;
+    if (level) *level = g_beatLevel[i].load(std::memory_order_relaxed);
     return true;
 }
 

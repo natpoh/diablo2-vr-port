@@ -48,6 +48,33 @@ int main() {
         Check(k.Step(false, 0, 0, 1000) == -1, "not wanted: nothing");
         Check(k.Step(true, 0, 0, 1001) == 2, "wanted again: at once");
     }
+    {   // [hud] map_rotate_flat: the overlay put in a corner while the turn is wanted, put back once it is not
+        FlatLease l;
+        Check(l.Step(false, 0, 0, 1000) == -1 && !l.Moved(), "flat: not wanted, overlay: nothing");
+        Check(l.Step(true, 0, 0, 1000) == 2 && l.Moved(), "flat: wanted, overlay -> right");
+        Check(l.Step(true, 0, 0, 1500) == -1, "flat: not again within a second");
+        Check(l.Step(true, 2, 0, 1600) == -1, "flat: in the corner: nothing");
+        Check(l.Step(false, 2, 0, 1700) == 0 && !l.Moved(), "flat: not wanted any more: back to the whole screen");
+        Check(l.Step(false, 0, 0, 1800) == -1, "flat: back: nothing more");
+    }
+    {   // a corner map of the player's is never touched, and never put to the whole screen
+        FlatLease l;
+        Check(l.Step(true, 1, 0, 1000) == -1 && l.Step(false, 1, 0, 2000) == -1, "flat: the player's left corner kept, on and off");
+        Check(l.Step(true, 2, 1, 3000) == -1 && l.Step(false, 2, 1, 4000) == -1, "flat: the player's right corner kept, on and off");
+    }
+    {   // the player moves the map while the lease holds it: theirs from then on
+        FlatLease l;
+        Check(l.Step(true, 0, 0, 1000) == 2, "flat: moved to the right");
+        Check(l.Step(true, 1, 0, 1100) == -1 && !l.Moved(), "flat: the player put it left: not ours any more");
+        Check(l.Step(false, 1, 0, 1200) == -1, "flat: off: the player's left corner stays");
+    }
+    {   // the map mode not read: nothing either way
+        FlatLease l;
+        Check(l.Step(true, -1, 0, 1000) == -1, "flat: unknown mode: nothing");
+        Check(l.Step(true, 0, 1, 2000) == 1, "flat: map_corner left -> left");
+        Check(l.Step(false, -1, 1, 3000) == -1 && l.Moved(), "flat: unknown while going off: wait");
+        Check(l.Step(false, 1, 1, 3100) == 0, "flat: then back");
+    }
     std::printf(g_fails ? "minimap_side_test: %d failed\n" : "minimap_side_test: all passed\n", g_fails);
     return g_fails ? 1 : 0;
 }

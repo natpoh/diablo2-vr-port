@@ -37,6 +37,7 @@ void SkyTick() {
     prophook::Tick();
     gamefog::Tick();
     depthsrc::Tick();   // [render] depth_fix_mode 2: what became of the frames, every 20 s
+    kurastprobe::Tick();   // [world] kurast_boat: the log says where the Kurast Docks' canoe is drawn, once a visit
     static uint32_t seenGen = ~0u;
     static std::string biome;
     static int palette = -1;

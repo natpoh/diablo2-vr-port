@@ -53,23 +53,38 @@ void MapDirectionTick() {
 }
 
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen), every tick: the corner map in the picture round about the hero and turned so our camera's
-// way is up - where our camera turns and the map is in the picture: flat F2 / F3, VR F2 with [hud_third] classic 0. Not F1 (the game's camera
-// from above never turns: north stays up the screen anyway), not the floor (VR F3), not F4 (its map in the hand has [hud] map_rotate). The log
-// names the mode at every change.
+// way is up - where our camera turns and the map is in the picture: flat F2 / F3, VR F2 / F3 with [hud_third] / [hud_floor] classic 0 (VR F3:
+// the head's way across the floor). Not F1 (the game's camera from above never turns: north stays up the screen anyway), not F4 (its map in
+// the hand has [hud] map_rotate). The log
+// names the view and the reason at every change of either (mapturn::FlatGate), and while it is wanted whether it is drawn (hud MapTurnState:
+// the effect not running, no corner map in the interface, or drawn) - a second after it changes, so a map opened or a view passed through is
+// not a line each.
 void MapRotateFlatTick() {
-    const bool key = g_set.mapRotateFlat.load();
-    const int view = ViewNow();
-    const bool want = key && g_enabled.load() && g_inWorld.load() && view != 1 && !TableView() && !FullBody() && ClassicNow();
-    hud::SetMapRotateFlat(want);
-    static int told = -1;
-    const int mode = !key ? 0 : want ? 1 : 2;
-    if (mode == told) return;
-    told = mode;
-    const char* where = g_set.platform.load() == 1 ? "VR" : "flat";
-    if (mode == 0) LogF("vrcam: map on the screen as the game draws it ([hud] map_rotate_flat=0)");
-    else if (mode == 1) LogF("vrcam: map on the screen turned with the camera ([hud] map_rotate_flat=1): %s F%d, round about the hero, the camera's way up", where, view);
-    else LogF("vrcam: map on the screen not turned here ([hud] map_rotate_flat=1, %s F%d%s): flat F2 / F3 and VR F2 with the map in the picture only", where, view,
-              !g_enabled.load() ? ", our camera off" : !g_inWorld.load() ? ", not in a game" : "");
+    const int platform = g_set.platform.load(), view = ViewNow();
+    const mapturn::FlatWhy why = mapturn::FlatGate(g_set.mapRotateFlat.load(), g_inWorld.load(), platform, view, g_enabled.load(), ClassicNow());
+    hud::SetMapRotateFlat(mapturn::FlatTurns(why));
+    // only a corner map has a box to turn: the game's whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
+    gamestate::SetMapSideFlat(mapturn::FlatTurns(why) ? g_set.mapCorner.load() : -1);
+    const char* where = platform == 1 ? "VR" : "flat";
+    static int toldKey = -1;
+    const int key = (int)why * 100 + platform * 10 + view;
+    if (key != toldKey) {
+        toldKey = key;
+        LogF("vrcam: map on the screen ([hud] map_rotate_flat=%d, %s F%d): %s", why == mapturn::FlatWhy::KeyOff ? 0 : 1, where, view, mapturn::FlatWhyText(why));
+    }
+    static int toldState = 0, seen = 0;
+    static ULONGLONG seenAt = 0;
+    const int state = hud::MapTurnState();
+    const ULONGLONG now = GetTickCount64();
+    if (state != seen) { seen = state; seenAt = now; }
+    if (state == 0) { toldState = 0; return; }
+    if (state == toldState || now - seenAt < 1000) return;
+    toldState = state;
+    static const char* const kState[] = {"", "NOT drawn - D2R_DepthFog.fx is not running or too old (it draws the map back; ReShade's or the plugin's own runtime)",
+                                         "waiting - no corner map in the game's interface (shut with Tab, not found, or the whole-screen map not "
+                                         "put in a corner: a gamestate line says so)",
+                                         "drawn turned"};
+    LogF("vrcam: map on the screen turned (%s F%d): %s", where, view, kState[state]);
 }
 
 // [openxr] hand_inventory (vr/hand_inventory.h, "the walk with the inventory up"): the game's walk is locked while its controller inventory

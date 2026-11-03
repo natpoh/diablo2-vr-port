@@ -134,6 +134,18 @@ std::atomic<unsigned> g_hangPut{0}, g_hangBack{0}, g_hangNoStore{0}, g_hangNoPos
 struct FrozenBones { uintptr_t self = 0; int n = 0; float w[knockpose::kMaxBones][16]; };
 SRWLOCK g_frozenLock = SRWLOCK_INIT;
 FrozenBones g_frozen[deathragdoll::kMaxCorpses];   // (under g_frozenLock)
+// [weight] death_ragdoll: the kept corpses' poses, their one source (KeptPosesForSkin). Before 0.199.6 a kept corpse went through the moving bodies' list
+// with the living - 16 places shared with the swaying and the knocked down (one crowded out: Carry faded it toward the game's pose, back the next tick),
+// faded at once by a tick missed (dollpose::Faded took its weight under 0.999: no frozen bones, the game's live pose under its joints), eased in again from
+// the game's pose after any 150 ms gap (deathragdoll::Drawn) - each a twitch while the touch made poses (a weapon in hand), none with the weapon dropped (no
+// poses: the game's corpse, still). Here: weight 1, frozen, kept while the corpse is.
+constexpr uint64_t kKeptFreshMs = 2000;   // an entry not refreshed this long is not handed (its instance's pose pointers may be another's by then)
+SRWLOCK g_keptLock = SRWLOCK_INIT;
+dollpose::Pose g_kept[deathragdoll::kMaxCorpses];   // (under g_keptLock)
+int g_nKept = 0;
+std::atomic<int> g_nKeptNow{0};
+std::atomic<int> g_tickBy{0};
+std::atomic<unsigned> g_keptBy[3], g_keptCarried{0};
 // ... and what drawing a kept corpse needs of its skeleton, kept from its last read (the timer's thread): a tick its skeleton is not among the bodies' (the
 // nearest 16 of them, a scan missed) it is drawn from this - never eased to the game's pose and back for it (the corpse pulled toward the game's place)
 struct CorpseSkel {
@@ -277,6 +289,10 @@ void ResetLocked() {
     g_any = false;
     g_corpses.Reset();   // (back in F4 the corpses are the game's: none taken again - Decide finds them dead already)
     g_told.Reset();
+    AcquireSRWLockExclusive(&g_keptLock);
+    g_nKept = 0;
+    g_nKeptNow.store(0);
+    ReleaseSRWLockExclusive(&g_keptLock);
     for (auto& k : g_corpseSkel) k = CorpseSkel{};
     AcquireSRWLockExclusive(&g_frozenLock);
     for (auto& f : g_frozen) { f.self = 0; f.n = 0; }
@@ -604,6 +620,53 @@ void ForgetFrozen(const uintptr_t* keep, int nKeep) {
     ReleaseSRWLockExclusive(&g_frozenLock);
 }
 }  // namespace
+
+bool KeptPose(uintptr_t self, dollpose::Pose* out) {
+    if (!self || !out || g_nKeptNow.load(std::memory_order_relaxed) == 0) return false;
+    const uint64_t now = GetTickCount64();
+    bool found = false;
+    AcquireSRWLockShared(&g_keptLock);
+    for (int k = 0; k < g_nKept && !found; ++k)
+        if (g_kept[k].self == self && now - g_kept[k].tickMs <= kKeptFreshMs) {
+            *out = g_kept[k];
+            found = true;
+        }
+    ReleaseSRWLockShared(&g_keptLock);
+    return found;
+}
+
+int KeptPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact) {
+    if (exact) *exact = false;
+    if (!out || max <= 0 || g_nKeptNow.load(std::memory_order_relaxed) == 0) return 0;
+    const uint64_t now = GetTickCount64();
+    int n = 0;
+    AcquireSRWLockShared(&g_keptLock);
+    for (int k = 0; k < g_nKept; ++k) {
+        const dollpose::Pose& p = g_kept[k];
+        if (now - p.tickMs > kKeptFreshMs) continue;
+        if (worldPose && (p.poseCur == worldPose || p.posePrev == worldPose)) {   // the instance's own pose: it alone
+            out[0] = p;
+            n = 1;
+            if (exact) *exact = true;
+            break;
+        }
+        if (skeleton && p.skel == skeleton && n < max) out[n++] = p;
+    }
+    ReleaseSRWLockShared(&g_keptLock);
+    return n;
+}
+
+bool IsKept(uintptr_t self) {
+    if (!self || g_nKeptNow.load(std::memory_order_relaxed) == 0) return false;
+    const uint64_t now = GetTickCount64();
+    bool found = false;
+    AcquireSRWLockShared(&g_keptLock);
+    for (int k = 0; k < g_nKept && !found; ++k) found = g_kept[k].self == self && now - g_kept[k].tickMs <= kKeptFreshMs;
+    ReleaseSRWLockShared(&g_keptLock);
+    return found;
+}
+
+void NoteTickBy(int who) { g_tickBy.store(who, std::memory_order_relaxed); }
 
 bool FrozenBonesOf(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n) {
     if (!self || !mats || !m3 || !root || n <= 0) return false;
@@ -1072,9 +1135,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     said[0] = 0;
     // A pose for the skinning: rig g laid on the knock-down's joints at atModel (the model's frame) by weight - replacing one for the same skeleton (out of the
     // game's pose: its sway turns give way); lay: its bodies laid on it too (LayBodies - a living body's; the dead are no bodies of the scan).
-    const auto emit = [&](const skel::MonsterRig* g, uint32_t id, float weight, const float (*atModel)[3], bool lay) {
-        if (n >= cap) return;
-        dollpose::Pose pose;
+    const auto build = [&](const skel::MonsterRig* g, uint32_t id, float weight, const float (*atModel)[3], dollpose::Pose& pose) {
+        pose = dollpose::Pose{};
         pose.self = g->self;
         pose.id = id;
         pose.bones = g->bones;
@@ -1089,6 +1151,11 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         std::memcpy(pose.knock.m3, g->m3, sizeof pose.knock.m3);
         std::memcpy(pose.knock.root, g->root, sizeof pose.knock.root);
         std::memcpy(pose.knock.at, atModel, sizeof pose.knock.at);
+    };
+    const auto emit = [&](const skel::MonsterRig* g, uint32_t id, float weight, const float (*atModel)[3], bool lay) {
+        if (n >= cap) return;
+        dollpose::Pose pose;
+        build(g, id, weight, atModel, pose);
         if (nSelves < kMaxSelves) selves[nSelves++] = g->self;
         int slot = n;
         for (int s = 0; s < n; ++s)
@@ -1286,13 +1353,30 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         static skel::MonsterRig unread;   // (the timer's thread) a kept corpse's skeleton as last read, for a tick it is not among the bodies'
         uintptr_t keep[deathragdoll::kMaxCorpses] = {};
         int nKeep = 0;
+        static dollpose::Pose keptNew[deathragdoll::kMaxCorpses], keptWas[deathragdoll::kMaxCorpses];   // (the timer's thread) the kept table made anew
+        int nKept = 0, nWas = 0;
+        AcquireSRWLockShared(&g_keptLock);
+        nWas = g_nKept;
+        for (int k = 0; k < nWas; ++k) keptWas[k] = g_kept[k];
+        ReleaseSRWLockShared(&g_keptLock);
+        const auto carryKept = [&](const deathragdoll::Corpse& c) {   // not refreshed this tick: its last entry, while fresh enough
+            for (int k = 0; k < nWas && nKept < deathragdoll::kMaxCorpses; ++k)
+                if (keptWas[k].id == c.id && keptWas[k].self == c.self && nowMs - keptWas[k].tickMs <= kKeptFreshMs) {
+                    keptNew[nKept++] = keptWas[k];
+                    g_keptCarried.fetch_add(1, std::memory_order_relaxed);
+                    return;
+                }
+        };
         for (int i = 0; i < deathragdoll::kMaxCorpses; ++i) {
             deathragdoll::Corpse* c = g_corpses.At(i);
             CorpseSkel& sk = g_corpseSkel[i];
             if (!c) { sk = CorpseSkel{}; continue; }
             if (sk.id != c->id) sk = CorpseSkel{};   // (another corpse in this slot now)
             keep[nKeep++] = c->self;
-            if (c->drawnMs == nowMs) continue;   // (kept this tick: drawn above)
+            if (c->drawnMs == nowMs) {   // (kept this tick: drawn above, from its fall's last pose; the table has it from the next)
+                carryKept(*c);
+                continue;
+            }
             const skel::MonsterRig* g = deadRig(c->self, c->root, c->bones);
             if (g) {   // read: where its model is now, for the next tick it is not
                 std::memcpy(c->root, g->root, sizeof c->root);
@@ -1303,18 +1387,28 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 g = &unread;
                 g_corpseUnread.fetch_add(1, std::memory_order_relaxed);
             }
-            if (!g) continue;
+            if (!g) { carryKept(*c); continue; }
             float atModel[D2RF_JOINTS][3];
             bool ok = true;
             for (int j = 0; j < D2RF_JOINTS && ok; ++j) ok = knockpose::ToModel(g->m3, g->root, upm, c->at[j], atModel[j]);
-            if (!ok) continue;
+            if (!ok) { carryKept(*c); continue; }
             deathragdoll::Drawn(*c, nowMs);
-            const float w = deathragdoll::Weight(nowMs, c->backMs);
-            emit(g, c->id, w, atModel, false);
-            if (w >= 0.999f) markFrozen(g->self);
+            if (nSelves < kMaxSelves) selves[nSelves++] = g->self;   // (drawn out of the game's pose: what hangs on its bones goes with them)
             if (nDeadSelves < kMaxSelves) deadSelves[nDeadSelves++] = g->self;
+            if (nKept < deathragdoll::kMaxCorpses) {   // its pose to the kept table, whole - not to the moving bodies' list (made), never eased or faded
+                dollpose::Pose& kp = keptNew[nKept++];
+                build(g, c->id, 1.0f, atModel, kp);
+                kp.knock.kept = true;
+                kp.knock.frozen = true;   // (FrozenBonesOf finds none for it: the skinning lays it on its joints instead)
+                g_keptBy[std::clamp(g_tickBy.load(std::memory_order_relaxed), 0, 2)].fetch_add(1, std::memory_order_relaxed);
+            }
             ++corpsesDrawn;
         }
+        AcquireSRWLockExclusive(&g_keptLock);
+        for (int k = 0; k < nKept; ++k) g_kept[k] = keptNew[k];
+        g_nKept = nKept;
+        g_nKeptNow.store(nKept, std::memory_order_relaxed);
+        ReleaseSRWLockExclusive(&g_keptLock);
         ForgetFrozen(keep, nKeep);
         static uint64_t deathToldAt = 0;
         if (nowMs - deathToldAt >= 5000) {
@@ -1335,6 +1429,10 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             if (g_corpses.Count())
                 LogF("death ragdoll - the last 5 s: the kept corpses drawn from their bones as they came to rest %u times (skinnings), %u ticks drawn from their "
                      "skeleton as last read (not among the bodies read then)", frozenDrawn, corpseUnread);
+            const unsigned byTouch = g_keptBy[0].exchange(0), byGrab = g_keptBy[1].exchange(0), byDead = g_keptBy[2].exchange(0), carried = g_keptCarried.exchange(0);
+            if (g_corpses.Count() || byTouch + byGrab + byDead + carried)
+                LogF("death ragdoll - kept corpses, their one source (the kept table), the last 5 s: %d in it now; refreshed %u times by the touch's tick, %u by the "
+                     "grab's, %u by the dead's tick, %u corpse-ticks not refreshed (their last entry handed on)", g_nKeptNow.load(), byTouch, byGrab, byDead, carried);
             const unsigned hangByComponent = g_hangByComponent.exchange(0), hangChildren = g_hangChildren.exchange(0), hangMoved = g_hangMoved.exchange(0);
             if (hangPut + hangBack + hangNoStore + hangNoPose || g_nHangs.load())
                 LogF("death ragdoll - the last 5 s: what hangs on the bodies (%d parts known, the dead's and those drawn away) put on the dead as drawn %u times "

@@ -65,4 +65,30 @@ public:
     }
 };
 
+// [hud] map_rotate_flat (vr/map_turn.h): the flat game's map turned - only a corner map has a box of its own to turn, and a flat player
+// often has the whole-screen overlay ("AutoMapMode" 0: manager, 0.199.8, 2026-11-03 - nothing to turn). While the turn is wanted the
+// overlay is put in a corner by the same setter (this session only); once it is not wanted any more (the key off, F1, a menu of the game's
+// own...) the map is put back to the whole screen - only if this lease moved it and it is still in that corner, so a player's own choice
+// made meanwhile is never undone. A map already in a corner is never touched. Step: the mode to set now, or -1.
+class FlatLease {
+    uint64_t setAt = 0;
+    int moved = 0;   // the corner this lease put the map in (1 left, 2 right), 0 none
+public:
+    int Step(bool want, int mode, int mapCorner, uint64_t now) {
+        if (mode < 0) return -1;   // (not read: nothing known, nothing done)
+        if (moved && mode != 0 && mode != moved) moved = 0;   // the player put it elsewhere: theirs now
+        if (!want) {
+            setAt = 0;
+            if (moved && mode == moved) { moved = 0; return 0; }   // back to the whole screen it was
+            return -1;
+        }
+        if (mode != 0) return -1;
+        if (setAt && now - setAt < 1000) return -1;   // (asked again a second later if the game put it back)
+        setAt = now ? now : 1;
+        moved = CornerFor(mapCorner);
+        return moved;
+    }
+    bool Moved() const { return moved != 0; }
+};
+
 }   // namespace minimapside

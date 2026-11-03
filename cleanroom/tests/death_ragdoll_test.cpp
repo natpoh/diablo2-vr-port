@@ -9,6 +9,7 @@
 // after the scan stops listing them. The deaths decided once, forgotten when gone. The same skeleton: the instance, its bones, where it stood.
 
 #include "../../vr/death_ragdoll.h"
+#include "../../vr/doll_pose.h"
 
 #include <cmath>
 #include <cstdio>
@@ -66,6 +67,22 @@ struct Mem {
 }  // namespace
 
 int main() {
+	{   // 0.199.5 «трупы дёргаются» (weapon in hand): why a kept corpse could not go through the moving bodies' list - the kept table (vr/knock_down.cpp) is its one source now
+		dollpose::Pose kept;
+		kept.self = 0x10;
+		kept.bones = 30;
+		kept.knock.weight = 1.0f;
+		kept.knock.frozen = true;
+		dollpose::Pose made[16], old[1] = {kept};
+		const int n = dollpose::Carry(made, 0, 16, old, 1, 1000, 300);   // one tick it was not made (crowded out of the 16, its skeleton not read)
+		EXPECT(n == 1 && made[0].fadeFromMs == 1000, "a corpse missed one tick is carried as fading");
+		const dollpose::Pose drawn = dollpose::Faded(made[0], 1.0f - 16.0f / 300.0f);   // (one frame later, as MonsterPosesForSkin eases it)
+		EXPECT(drawn.knock.weight < 0.999f, "... and one frame of that fade takes it off its frozen bones (weight %.3f): a twitch", drawn.knock.weight);
+		dr::Corpse c;
+		dr::Drawn(c, 1000);
+		dr::Drawn(c, 1000 + dr::kBackGapMs + 1);   // a 151 ms gap between two ticks that drew it
+		EXPECT(dr::Weight(1000 + dr::kBackGapMs + 1, c.backMs) == 0.0f, "a 151 ms gap eased a kept corpse in again from the game's pose");
+	}
 	{   // whose death is ours
 		const char* why = nullptr;
 		EXPECT(dr::Decide(true, kEnabled | kKillable, true, 20, true, &why) == dr::Start::Ours && !why, "an ordinary monster read alive 20 ms ago is ours");

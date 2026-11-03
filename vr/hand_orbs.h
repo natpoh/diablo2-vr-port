@@ -63,7 +63,7 @@ struct Orb {
     float radius = 0.0f;   // metres
     float fill = 0.0f;     // 0 - 1, eased
     float opacity = 0.0f;  // 0 - 1: the setting, faded with the distance
-    float glow = 0.0f;     // 0 - 1: the low-life heartbeat (life only)
+    float glow = 0.0f;     // 0 - 1: the low-life heartbeat (life; with [hud] hand_vitals_pulse_eq the mana's too)
     int kind = kLife;
     int side = 1;          // the skeleton's: 0 right, 1 left
     V3 axis{0.0f, 1.0f, 0.0f};   // the way the liquid fills (unit): the fixed direction of the wrist's frame the setting chose (FillAxis), the level rising along it
@@ -500,6 +500,7 @@ struct In {
     double time = 0.0;       // seconds, any origin, monotonic
     int shieldWrist = -1;    // the wrist that wears the shield (ShieldWrist; the caller gives -1 outside VR F4): its ball rolls to the other side of the wrist when cfg.orbUnderShield is ticked
     int heroClass = -1;      // the hero playing now (skel::HeroClass(): 0 amazon ... 7 warlock), -1 not known: its depth offset (Config::orbClassZCm) goes on both wrists' Z
+    float follow[2] = {-1.0f, -1.0f};   // [life, mana] the vignette's beat now (lowhp::BeatNow, 0 - 1 with its fade), -1 = that vignette is not up: with cfg.pulseEq the ball beats with it
 };
 
 inline float Ease(float now, float target, float dt) {
@@ -547,6 +548,12 @@ inline Set Step(State& st, const In& in) {
         st.phase -= std::floor(st.phase);
     }
     const float glow = st.beat > 0.0f ? st.beat * lowhp::Beats01(st.phase, lowhp::ShapeFor(true)) : 0.0f;
+    // [hud] hand_vitals_pulse_eq: each ball beats with its vignette while that one is up - the life's with the red (its equalizer), the mana's with the
+    // blue at the bottom - the same moment, the same rate; with the vignette not up, the life's ball as above and the mana's still
+    float glows[2] = {glow, 0.0f};
+    if (cfg.pulseEq)
+        for (int k = 0; k < 2; ++k)
+            if (in.follow[k] >= 0.0f && std::isfinite(in.follow[k])) glows[k] = std::clamp(in.follow[k], 0.0f, 1.0f);
 
     const float baseR = cfg.orbSizeCm * 0.005f;
     const bool both = BothOnOne(cfg);
@@ -554,8 +561,8 @@ inline Set Step(State& st, const In& in) {
         Orb& o = out.orb[kind];
         o.kind = kind;
         o.side = SideOf(cfg, kind);
-        o.glow = kind == kLife ? glow : 0.0f;
-        o.radius = baseR * (1.0f + (kind == kLife ? kThrob * glow : 0.0f));
+        o.glow = glows[kind];
+        o.radius = baseR * (1.0f + kThrob * glows[kind]);
         const float lateral = both ? (kind == kLife ? -1.0f : 1.0f) * (baseR + 0.5f * kGapM) : 0.0f;
         const float under = Eased(st.under[o.side & 1]);
         Place p = cfg.orbOnBone ? OnBone(in.arm[o.side], cfg, o.side, lateral, under) : Place{};   // [hud] hand_vitals_orb_on_bone; no box: the spot's numbers, as before

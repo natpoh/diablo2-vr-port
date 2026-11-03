@@ -326,6 +326,11 @@ ULONGLONG g_barrelsAt = 0;
 barreltouch::Presser g_barrelPress;           // vrcam's timer thread (Tick, BarrelsStep)
 std::atomic<uintptr_t> g_barrelTarget{0};     // the press in flight, for vrcam's pad and target hooks
 std::atomic<ULONGLONG> g_barrelTargetAt{0};
+// [gameplay] melee_touch_barrels_min_speed: a barrel's own stroke gate (Serg 2026-11-03: the monsters' 6 m/s let few swings break a pot) - each
+// hand's own engine on the same blade samples, before the force path (strike_by_force judges only monsters and never reached the barrels)
+stroke::Engine g_barrelEngine[2];
+std::atomic<float> g_barrelSpeed{2.0f};
+std::atomic<bool> g_barrelsTell{false};       // the on / off line waits for the log (the settings are read before it is there)
 
 bool ObjectRow(const UnitBytes& u, barreltouch::Row* r) {
     const uintptr_t data = U64(u, 0x10);
@@ -638,6 +643,7 @@ constexpr ULONGLONG kPoseEaseMs = 300;    // a monster let go of (it died, it we
                                           // (bearstonem/d2r-pcvr's ease back, feat/monster-limb-push e865def, MIT)
 
 float g_knockHero[3] = {};   // [weight] knock_down: the hero where the bodies were last made (world units; the timer's thread)
+int g_publishBy = 0;         // ... and whose tick made them: 0 the touch's, 1 the grab's (GrabTick), 2 the dead's (DeathTick) - the log's (the timer's thread)
 // The poses of the hostile humanoids whose dolls sway now: their limbs' and bodies' offsets (the doll's state) as turns of their own bones.
 void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULONGLONG now, float upm) {
     static dollpose::Pose made[16];
@@ -690,6 +696,7 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
         knockdown::Unit units[monsterbodies::kMax];
         const int nu = std::min(g_nHostile, monsterbodies::kMax);
         for (int m = 0; m < nu; ++m) units[m] = {g_hostile[m].id, g_hostile[m].mode, g_hostile[m].hostile};
+        knockdown::NoteTickBy(g_publishBy);   // (the kept table's refreshes counted by who made the bodies)
         n = knockdown::Tick(rigs, nr, units, nu, rigOf, now, upm, g_knockHero, made, n, 16, g_dead, g_nDead);
     }
     AcquireSRWLockExclusive(&g_posesLock);
@@ -1829,6 +1836,8 @@ void GrabTick(bool ok, const float heroRender[3], float upm) {
     if (!(g_grabWanted.load() || g_ownBodyWanted.load()) || !ok || !viewgate::F4() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;   // ([weight] own_body too: his body with hit by touch off)
     const ULONGLONG now = GetTickCount64();
     if (now >= g_touchBodiesAt && now - g_touchBodiesAt < 60) return;   // the touch's tick keeps them (a melee weapon swung)
+    g_publishBy = 1;
+    struct Back { ~Back() { g_publishBy = 0; } } back;
     upm = std::clamp(upm, 1.0f, 12.0f);
     if (now - g_bodiesScanAt >= 30 || now < g_bodiesScanAt) {   // who is near (the same read-only scan as the touch's), every 30 ms ...
         g_bodiesScanAt = now;
@@ -1846,9 +1855,18 @@ void SetGrabWanted(bool on) {
 }
 // [weight] death_ragdoll_flat: outside F4 (VR F1-F3, the flat game) the touch keeps no bodies - here the same read-only scan, the server's word on who is hostile,
 // and the skeletons, so the knock-down's tick sees the living as they die and the dead (knockdown::Tick, the deaths alone outside F4). Nothing is pressed or sent.
-void DeathFlatTick(bool ok, const float heroRender[3], float upm) {
-    if (!ok || viewgate::F4() || !knockdown::DeathFlatWanted() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;
+// [weight] death_ragdoll / knock_down, F4: the same whenever the touch's own tick keeps no bodies - a menu open, the weapon let go, no melee weapon swung.
+// A menu open is no reason to stop: the poses made here go stale in kPoseFreshMs and every corpse (and a knocked-down body) is drawn as the game has it,
+// at its own place - and back once the menu closes (0.199.0, sangee1234: «the corpses are moving ... best when I open the inventory»).
+void DeathTick(bool ok, const float heroRender[3], float upm) {
+    const bool f4 = viewgate::F4();
+    if (!ok || !(f4 ? knockdown::Wanted() && BodiesWanted() : knockdown::DeathFlatWanted()) || !heroRender ||
+        !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2]))
+        return;
     const ULONGLONG now = GetTickCount64();
+    if (f4 && now >= g_touchBodiesAt && now - g_touchBodiesAt < 60) return;   // the touch's tick keeps them (a melee weapon swung)
+    g_publishBy = 2;
+    struct Back { ~Back() { g_publishBy = 0; } } back;
     upm = std::clamp(upm, 1.0f, 12.0f);
     const stroke::Vec grid = meleetouch::GridPlane({heroRender[0], heroRender[1], heroRender[2]});
     if (now - g_lastScanAt >= 100 || now < g_lastScanAt) {   // who is near, and the server asked whether they are hostile (as the touch's own scan)
@@ -1955,6 +1973,7 @@ void SetPoseWanted(bool on) {
 }
 bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
     if (!PosesWanted() || !out) return false;
+    if (knockdown::KeptPose(self, out)) return true;   // [weight] death_ragdoll: a kept corpse's one source
     bool found = false;
     AcquireSRWLockShared(&g_posesLock);
     for (int i = 0; i < g_nPoses && !found; ++i)
@@ -1974,24 +1993,52 @@ bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
 }
 int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact) {
     if (exact) *exact = false;
-    if (!PosesWanted() || !out || max <= 0 || g_nPosesNow.load(std::memory_order_relaxed) == 0) return 0;   // (every skinning asks)
+    if (!PosesWanted() || !out || max <= 0) return 0;
+    // [weight] death_ragdoll: the kept corpses from their own table (knockdown::KeptPosesForSkin) - their one source, whole, never faded; their entries in the
+    // moving bodies' list (the tick a corpse came to rest) are left out below
+    bool keptExact = false;
+    const int nk = knockdown::KeptPosesForSkin(skeleton, worldPose, out, max, &keptExact);
+    if (keptExact) {
+        if (exact) *exact = true;
+        return nk;
+    }
+    if (g_nPosesNow.load(std::memory_order_relaxed) == 0) return nk;   // (every skinning asks)
+    static thread_local dollpose::Pose moving[16];
     int n = 0;
+    bool movingExact = false;
     AcquireSRWLockShared(&g_posesLock);
     for (int i = 0; i < g_nPoses; ++i)   // the instance's own pose first
         if (worldPose && (g_poses[i].poseCur == worldPose || g_poses[i].posePrev == worldPose)) {
-            out[0] = g_poses[i];
+            moving[0] = g_poses[i];
             n = 1;
-            if (exact) *exact = true;
+            movingExact = true;
             break;
         }
     if (!n)   // ... else every pose of a monster of this skeleton (its model): the caller tells them apart by their matrices
-        for (int i = 0; i < g_nPoses && n < max; ++i)
-            if (skeleton && g_poses[i].skel == skeleton) out[n++] = g_poses[i];
+        for (int i = 0; i < g_nPoses && n < 16; ++i)
+            if (skeleton && g_poses[i].skel == skeleton) moving[n++] = g_poses[i];
     ReleaseSRWLockShared(&g_posesLock);
+    {
+        int m = 0;
+        for (int i = 0; i < n; ++i)
+            if (!knockdown::IsKept(moving[i].self)) moving[m++] = moving[i];
+        if (movingExact && m == 0) movingExact = false;
+        n = m;
+    }
+    if (movingExact) {
+        out[0] = moving[0];
+        n = 1;
+        if (exact) *exact = true;
+    } else {
+        int k = nk;
+        for (int i = 0; i < n && k < max; ++i) out[k++] = moving[i];
+        n = k;
+    }
     const ULONGLONG now = GetTickCount64();
     int k = 0;
     for (int i = 0; i < n; ++i) {
         dollpose::Pose p = out[i];
+        if (p.knock.kept) { out[k++] = p; continue; }   // (the kept table's: its own freshness, knockdown::kKeptFreshMs)
         if (now - p.tickMs > kPoseFreshMs) continue;
         if (p.fadeFromMs) {
             const float w = 1.0f - static_cast<float>(now - p.fadeFromMs) / static_cast<float>(kPoseEaseMs);
@@ -2641,6 +2688,20 @@ void Tick(const Frame& f) {
         const int side = sb.side;
         stroke::Sweep sweep;
         const bool swept = g_engine[side].Step(sb.s, sweep);
+        if (g_barrelsWanted.load() && viewgate::F4()) {   // [gameplay] melee_touch_barrels: the barrel's own gate, whatever judges the monsters
+            static float applied[2] = {-1.0f, -1.0f};
+            const int hand = side & 1;
+            const float bs = g_barrelSpeed.load();
+            if (applied[hand] != bs) {
+                applied[hand] = bs;
+                const stroke::Params p = stroke::ParamsFor(stroke::Clamp({bs, g_startCm.load()}));
+                g_barrelEngine[hand].SetParams(p);
+                LogF("melee touch: barrels' gate, %c hand - a swing through a barrel or pot counts from %.2f m/s after %.0f cm of movement ([gameplay] "
+                     "melee_touch_barrels_min_speed; the monsters' gate stays its own)", hand ? 'L' : 'R', p.strokeSpeed, p.onsetExcursion * 100.0f);
+            }
+            stroke::Sweep bsw;
+            if (g_barrelEngine[hand].Step(sb.s, bsw)) BarrelTouch(side, bsw, grid, upm, heroY, now);
+        }
         // [gameplay] melee_head_volume: the head's own volume swept with the blade - from where it was the pose before to where it is now, the stroke's own
         stroke::Sweep hsweep[meleeboxes::kHeads];
         bool hswept[meleeboxes::kHeads] = {};
@@ -2823,7 +2884,6 @@ void Tick(const Frame& f) {
             g_sweepAt[side] = now;
         }
         if (tswept) ++g_n.thrustSweeps;
-        if (g_barrelsWanted.load() && viewgate::F4()) BarrelTouch(side, swept ? sweep : tsweep, grid, upm, heroY, now);   // [gameplay] melee_touch_barrels
         if (!haveFresh) {
             haveFresh = true;
             freshOk = ScanUnits(grid.x, grid.z, upm, heroY, &fresh);
@@ -3467,13 +3527,15 @@ void ItemsTick(bool ok, const float heroRender[3], float upm) {
     g_itemsAt = now;
 }
 // [gameplay] melee_touch_barrels
-void SetBarrelsWanted(bool on) {
-    if (g_barrelsWanted.exchange(on) != on)
-        Log(on ? "melee touch: barrels on ([gameplay] melee_touch_barrels: a swing of the held weapon through a barrel, pot, urn or basket presses the game's own "
-                 "interact on it - the hero breaks it his own way, as with A; F4, with hit by touch)"
-               : "melee touch: barrels off");
+void SetBarrelsWanted(bool on, float minSpeed) {
+    g_barrelSpeed.store(std::isfinite(minSpeed) ? minSpeed : 2.0f);
+    if (g_barrelsWanted.exchange(on) != on) g_barrelsTell.store(true);
 }
 void BarrelsStep() {
+    if (g_ctx && g_barrelsTell.exchange(false))
+        Log(g_barrelsWanted.load() ? "melee touch: barrels on ([gameplay] melee_touch_barrels: a swing of the held weapon through a barrel, pot, urn or basket presses the game's "
+                                     "own interact on it - the hero breaks it his own way, as with A; F4, with hit by touch; its own speed, melee_touch_barrels_min_speed)"
+                                   : "melee touch: barrels off");
     const bool on = g_barrelsWanted.load() && viewgate::F4();
     if (!g_barrelPress.Pressing()) {
         const unsigned ev = g_barrelPress.Step((double)GetTickCount64() / 1000.0, 0);   // (a press asked and ended in the same step is not left untold)

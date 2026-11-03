@@ -96,4 +96,32 @@ inline State Lower(const std::string& json, std::string* out, std::string* why) 
     return kLowered;
 }
 
+// The boat's placement height as a preset text has it (the mod's file, read by vrcam's probe): false when the entity or its position is not there.
+inline bool PlacedY(const std::string& json, double* y) {
+    const size_t id = json.find(kId);
+    if (id == std::string::npos) return false;
+    const size_t pos = json.find("\"position\":{", id);
+    const size_t end = json.find("{\"type\":\"Entity\"", id);
+    if (pos == std::string::npos || (end != std::string::npos && pos > end)) return false;
+    const size_t at = json.find("\"y\":", pos);
+    if (at == std::string::npos || (end != std::string::npos && at > end)) return false;
+    *y = std::strtod(json.c_str() + at + 4, nullptr);
+    return true;
+}
+
+// ---- where the renderer DRAWS it (vr/world/kurast_probe.cpp, once a visit to the town) ----
+// The canoe's hull, canoe01_06 of pf_canoe01_07.json: its place under the canoe's prefab as the game's file writes it, and the same place
+// should the renderer keep the prefab's pieces flattened under the game's own placement at y 50. The game's own placement itself: prefab014's.
+constexpr float kHull[3] = {65.32859f, -2.769694f, 210.1064f};
+constexpr float kHullFlatSky[3] = {65.32859f, 47.230306f, 210.1064f};
+constexpr float kPlacementSky[3] = {0.0f, 50.0f, 0.0f};
+// A hull drawn this high over the water's plane (-3.508) is in the sky; under it, on the water. Render units, as the preset's.
+constexpr float kDrawnSkyFrom = 20.0f;
+
+enum Drawn { kDrawnUnknown, kDrawnOnWater, kDrawnInSky };
+inline Drawn Judge(bool hullFound, float hullWorldY, bool skyPlacementFound) {
+    if (hullFound) return hullWorldY >= kDrawnSkyFrom ? kDrawnInSky : kDrawnOnWater;
+    return skyPlacementFound ? kDrawnInSky : kDrawnUnknown;
+}
+
 }  // namespace kurastboat

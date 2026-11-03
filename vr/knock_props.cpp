@@ -1494,6 +1494,13 @@ bool EntityWorld(uint32_t entity, float m[16]) {
            FiniteN(m, 16);
 }
 
+bool EntityParent(uint32_t entity, uint32_t* parent) {
+    Storage s;
+    uint32_t i = 0;
+    return parent && s.Load(g_transformsObject.load()) && s.elem == kTransformSize && s.Dense(entity, i) &&
+           ReadBytes(s.payload + uintptr_t(i) * kTransformSize + 0xC0, parent, sizeof *parent);
+}
+
 bool PutEntityWorld(uint32_t entity, const float m[16]) {
     Storage s;
     uint32_t i = 0;

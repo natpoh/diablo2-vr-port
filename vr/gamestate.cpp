@@ -379,6 +379,9 @@ int ThrustOf(const std::string& code) {
 // The corner map for the hand kept in a corner (vr/minimap_side.h; the setter is bearstonem/d2r-pcvr's finding, MIT):
 // -1 off, else [hud] map_corner - set by vrcam in VR with [hud] map=1. Plain data only here (__try).
 std::atomic<int> g_mapSideCorner{-1};
+// [hud] map_rotate_flat (minimapside::FlatLease): -1 not wanted, else [hud] map_corner - the flat game's whole-screen map put in a corner while
+// it is to turn, put back after. Set by vrcam's MapRotateFlatTick.
+std::atomic<int> g_mapSideFlat{-1};
 // [hud] map_click_big (vr/map_laser.h): the map made big by the laser - the game's whole-screen map (mode 0) by the same setter, put back in its
 // corner by the Keeper once it is let go. Set by xr.cpp.
 std::atomic<bool> g_mapBig{false};
@@ -467,9 +470,12 @@ void MaintainMapSide(bool havePlayer) {
     static minimapside::Globals globals;
     static minimapside::Keeper keeper;
     static int told = 0;
-    const int corner = g_mapSideCorner.load();
+    static minimapside::FlatLease flatLease;
+    const int corner = g_mapSideCorner.load(), flatCorner = g_mapSideFlat.load();
     const bool want = corner >= 0 && havePlayer && g_menu.load() == 0;
-    if (!want || checked < 0) return;
+    // [hud] map_rotate_flat: wanted, or a map this lease moved to give back (no menu up either way; the hand's own keeping goes first)
+    const bool flat = !want && corner < 0 && havePlayer && g_menu.load() == 0 && (flatCorner >= 0 || flatLease.Moved());
+    if ((!want && !flat) || checked < 0) return;
     const uint64_t now = GetTickCount64();
     if (checked == 0) {
         if (triedAt && now - triedAt < 5000) return;
@@ -505,6 +511,25 @@ void MaintainMapSide(bool havePlayer) {
             return;
         }
         bigAt = 0;
+    }
+    if (flat) {
+        const int set = flatLease.Step(flatCorner >= 0, mode, flatCorner, now);
+        if (set < 0) return;
+        if (!CallMapSetter(d2rsig::Addr(minimapside::kSetterRva), set)) {
+            checked = -1;
+            Log("gamestate: the game's map-mode setter faulted - not called again");
+            return;
+        }
+        static int flatTold = 0;
+        if (flatTold < 10) {
+            ++flatTold;
+            Log(set ? (set == 1 ? "gamestate: [hud] map_rotate_flat - the game's whole-screen map put in the left corner to be turned (the game's own setter, this "
+                                  "session only; its options keep the player's choice)"
+                                : "gamestate: [hud] map_rotate_flat - the game's whole-screen map put in the right corner to be turned (the game's own setter, this "
+                                  "session only; its options keep the player's choice)")
+                    : "gamestate: [hud] map_rotate_flat - the map put back to the whole screen, as the player had it (the turn is not wanted now)");
+        }
+        return;
     }
     const int set = keeper.Step(true, mode, corner, now);
     if (set < 0) return;
@@ -1500,6 +1525,7 @@ bool SetAutoMap(bool open) {
     return g_threads->runOnUiThread(g_ctx, &DispatchAutoMap, open ? (void*)1 : nullptr) == Threads::Result::Success;
 }
 void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }
+void SetMapSideFlat(int corner) { g_mapSideFlat.store(std::clamp(corner, -1, 2)); }
 void SetMapBig(bool big) { g_mapBig.store(big); }
 // [hud] map_stick_zoom: the big map's zoom wanted (the game's units; 0 = the game's own), and what its last draw was really given (0: none)
 void SetBigMapZoom(float wanted) { bigzoom::g_wanted.store(std::isfinite(wanted) && wanted > 0.0f ? wanted : 0.0f); if (!(wanted > 0.0f)) bigzoom::g_drawn.store(0.0f); }

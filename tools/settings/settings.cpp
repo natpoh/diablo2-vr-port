@@ -73,6 +73,8 @@
 #include "ceiling_levels.h"   // the Ceiling tab's rooms in the game's order, with the levels each covers (checked by dome_assets_test)
 #include "../../vr/direct_remap.h"   // [direct]: the list of controller buttons ("@remap" rows), read and written by the plugin's own parser (tested)
 #include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
+#include "../../vr/low_hp_eq.h"      // [hud] low_hp_cover_eq / low_mp_cover_eq: the vignettes' equalizer - its points and range (tested: low_hp_eq_test)
+#include "../../vr/low_mp.h"         // [hud] low_mp_vignette: the low-mana blue's band keys and defaults (low_mp_cover_eq_<percent>; tested: low_mp_test)
 #include "../../vr/ui_text_tables.h" // the headset's words that live in the plugin's tables, with their keys (--lang-template lists them for lang\en.txt)
 #include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
 #include "rooms_bridge.h"    // the Multiplayer tab's D2R Rooms bridge: its d2r-rooms.ini and d2r-rooms-status.json, the plugin's formats (tested: rooms_bridge_test)
@@ -129,6 +131,7 @@ struct Item {
     bool big = false;                        // Button: a large one (the Home page's START)
     bool reversed = false;                   // Toggle: ticked writes 0, unticked 1 - the inverse of its key (Home's Xbox controller over [direct] flat_controller)
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
+    int band = -1, bands = 0;                // Slider: a band of an equalizer (Band) - a vertical slider, the top its highest; band 0 starts the row of `bands` side by side, its number box and name under it
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
@@ -264,6 +267,8 @@ Item Sub(const wchar_t* title, int across = 0) { Item i = Group(title); i.sub = 
 Item Big(Item i) { i.big = true; return i; }
 // A tick box that is the inverse of its key: ticked = 0 (Item::reversed).
 Item Reversed(Item i) { i.reversed = true; return i; }
+// A slider as band k of an equalizer of n (Item::band): the n follow one another, each a vertical slider with its number and its short name under it.
+Item Band(int k, int n, Item i) { i.band = k; i.bands = n; return i; }
 // Whether a tick box (Toggle, Invert) shows ticked for the value v, and the value a tick or untick writes.
 bool Ticked(const Item& it, float v) { return it.kind == Kind::Invert ? v < 0.0f : (v != 0.0f) != it.reversed; }
 float TickValue(const Item& it, bool on) { return it.kind == Kind::Invert ? (on ? -1.0f : 1.0f) : (on != it.reversed ? 1.0f : 0.0f); }
@@ -279,6 +284,27 @@ Item NeedsEither(const wchar_t* section, const wchar_t* key, const wchar_t* orKe
 
 // The items of "Low life: red heartbeat vignette" (UI: F4 body): greyed unless native OpenXR is on and the vignette ticked.
 Item LowLife(Item i) { return Needs(L"openxr", L"on", 1, Needs(L"hud", L"low_hp_vignette", 1, i)); }
+// One point of its equalizer ([hud] low_hp_cover_eq_<percent>, vr/low_hp_eq.h): a band, how far the red closes in at that share of the life;
+// greyed unless the equalizer is ticked as well. The blue's the same ([hud] low_mp_cover_eq_<percent>, vr/low_mp.h).
+constexpr const wchar_t* kBandNames[lowhp::eq::kBands] = {L"60%", L"55%", L"50%", L"45%", L"40%", L"35%", L"30%", L"25%", L"20%", L"15%", L"10%", L"5%"};
+constexpr const wchar_t* kCoverBandTip = L"How far the red closes in while your life is at this share of its maximum, 0 - 100: how far in from the edges of the view it "
+                                         L"reaches, in % of the view's angle (100 = up to the very middle, the whole view red). A small value is also fainter (under 30 the red "
+                                         L"fades with it), 0 = no vignette at this life. Between two bands it goes in a straight line of your life; above 60% it is the 60% "
+                                         L"band's, under 5% the 5% band's. Bands above \"Low life: from\" never show. Live.";
+Item CoverBand(int k) {
+    return LowLife(Needs(L"hud", L"low_hp_cover_eq", 1, Band(k, lowhp::eq::kBands, Slider(L"hud", lowhp::kCoverKeys[k], kBandNames[k], lowhp::eq::kCoverMin,
+                                                                                          lowhp::eq::kCoverMax, 1, lowhp::Config::kCoverDefault[k], kCoverBandTip))));
+}
+// The items of "Low mana: blue vignette at the bottom" (UI: F4 body, vr/low_mp.h): greyed unless native OpenXR is on and the blue ticked.
+Item LowMana(Item i) { return Needs(L"openxr", L"on", 1, Needs(L"hud", L"low_mp_vignette", 1, i)); }
+constexpr const wchar_t* kManaBandTip = L"How far up the blue reaches while your mana is at this share of its maximum, 0 - 100: in % of the view's half-height from "
+                                        L"the bottom edge (100 = up to the middle of the view). A small value is also fainter (under 30 the blue fades with it), 0 = no "
+                                        L"blue at this mana. Between two bands it goes in a straight line of your mana; above 60% it is the 60% band's, under 5% the 5% "
+                                        L"band's. Bands above \"Low mana: from\" never show. Live.";
+Item ManaBand(int k) {
+    return LowMana(Needs(L"hud", L"low_mp_cover_eq", 1, Band(k, lowhp::eq::kBands, Slider(L"hud", lowmp::kCoverKeys[k], kBandNames[k], lowhp::eq::kCoverMin,
+                                                                                          lowhp::eq::kCoverMax, 1, lowmp::Config::kCoverDefault[k], kManaBandTip))));
+}
 
 // On the page only while section/key (a Choice) has one of the values in `mask` (bit v = value v).
 Item ShowFor(const wchar_t* section, const wchar_t* key, unsigned mask, Item i) {
@@ -357,13 +383,16 @@ constexpr const wchar_t* kMapDirectionTip =
     L"show which way you look. Ticked: a small gold arrow beside your hero's marker in the middle of the game's mini map (and of the "
     L"whole-screen map) points where the camera looks - in the picture, and on the map in the hand. Drawn over the game's map only; the map "
     L"and what is on it are the game's. F1 and the floor (VR F3) as before. Unticked: the map as before. Live.";
-// [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2
+// [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2 / F3
 constexpr const wchar_t* kMapRotateFlatTip =
-    L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 with the map in the picture): drawn round about "
-    L"your hero, seen from straight above, and turned so the way the camera looks is up - turn the mouse and the map turns with you. The "
-    L"gold arrow (Arrow on the map) then always points up. Only the corner map: the whole-screen map (Tab) stays as the game draws it. Not "
-    L"F1 (the game's camera never turns there) and not VR F4 (its map in the hand has its own Turns with you). Needs D2R_DepthFog.fx on "
-    L"(it draws the map back). Unticked: the map as the game draws it. Live.";
+    L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round "
+    L"about your hero, seen from straight above, and turned so the way the camera looks is up - turn the mouse and the map turns with you. "
+    L"VR F3 (the game on your floor): the way your head looks across the floor is up - walk round the game and the map turns. The gold "
+    L"arrow (Arrow on the map) then points up. Only a corner map can turn: with the game's map in the middle of the screen (its whole-screen "
+    L"map) it is put in the top right corner while it turns (Corner map is: left puts it left) and back to the whole screen when it does not - "
+    L"for this session only, the game's options keep your choice. Not F1 (the "
+    L"game's camera and its window never turn there) and not VR F4 (its map in the hand has its own Turns with you). Needs D2R_DepthFog.fx "
+    L"on (it draws the map back). Unticked: the map as the game draws it. Live.";
 // [hud] map_top_down / map_rotate / map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist map): the map in the hand, VR F4
 constexpr const wchar_t* kMapTopDownTip =
     L"The map in your hand (Corner map: out of the picture), VR F4: seen from straight above instead of slanted - the game's isometric map "
@@ -765,6 +794,17 @@ std::vector<Item> g_items = {
            L"where the eye looks straight ahead, a magenta ring at the picture's own middle, a big L or R. With the eyes right, the two grids "
            L"become one and stay still on the world; seen double, tilted or swimming, a screenshot or video with it shows which eye is off. "
            L"Live. Only in the headset (the window on the monitor has none).")),
+    // [support] save_backups (vr/diag/save_backups.cpp): the game's saves copied into Saved Games\Diablo II Resurrected\D2R VR Backups\<time>
+    // at the start and when one changes, only good ones (a power cut zeroes them), removed after the days.
+    Toggle(L"support", L"save_backups", L"Back up my saves", 1,
+           L"Power cuts can leave a character or the shared stash as a file of zeros the game cannot load. Ticked: your characters, shared "
+           L"stashes and their key and map files are copied into Saved Games > Diablo II Resurrected > D2R VR Backups > the date and time - "
+           L"when the game starts and whenever one is saved. A broken (zeroed) file is never copied over a good one. To restore, close the "
+           L"game and copy the files from the newest folder that has them back into Diablo II Resurrected. Unticked: no backups, as before."),
+    Needs(L"support", L"save_backups", 1, Slider(L"support", L"save_backups_days", L"Keep the save backups for (days)", 1, 180, 1, 30,
+           L"A backup folder is removed this many days after it (at a start). The newest copy of each file always stays.")),
+    Needs(L"support", L"save_backups", 1, Slider(L"support", L"save_backups_max_mb", L"At most (MB) for all save backups", 100, 5000, 100, 500,
+           L"While all the folders are over this, the oldest go first. One backup is some hundred KB.")),
     // D2R VR Headset Report (tools/headset_report: D2R_VR_Headset_Report.exe beside this program) - one text report of what the headset's
     // OpenXR runtime gives, for a picture that is doubled, cross-eyed or stretched or hands at the waist. [support] is this program's own (vrcam
     // never reads it). Ticked: the button makes the report into the logs folder Collect logs packs, and Collect logs makes one first. Unticked: as before.
@@ -777,6 +817,14 @@ std::vector<Item> g_items = {
            L"Close the game, put the headset on and hold both controllers in front of you, then click. About 20 s; the report opens in Notepad "
            L"and goes into the Collect logs zip. With the game running it only lists the OpenXR runtime and layers from the registry.")),
     ShowFor(L"support", L"headset_report", 2u, Status(L"hreport", L"Headset report: close the game, put the headset on, click the button")),
+    // [support] session_logs (vr/diag/session_logs.cpp): each game's logs in d2rloader\logs\sessions\<its start>, removed after the days.
+    Toggle(L"support", L"session_logs", L"Keep each game's logs", 1,
+           L"Each game's logs are kept in a folder of their own (the logs folder > sessions > the game's date and time), so the next start no "
+           L"longer writes over them - for a problem you only report later. Unticked: one log, written over at each start, as before."),
+    Needs(L"support", L"session_logs", 1, Slider(L"support", L"session_logs_days", L"Keep the games' logs for (days)", 1, 90, 1, 30,
+           L"A game's folder is removed this many days after it (at a start).")),
+    Needs(L"support", L"session_logs", 1, Slider(L"support", L"session_logs_max_mb", L"At most (MB) for all of them", 200, 10000, 100, 2000,
+           L"While all the folders are over this, the oldest go first. A game's logs are about 1 - 10 MB.")),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -1354,6 +1402,22 @@ std::vector<Item> g_items = {
     Only(kFlat, Toggle(L"input", L"flat_portal_no_oval", L"Flat: no black oval in the town portal", 1,
            L"Third and first person: the portal's black oval, which stands still while the blue ring turns to the camera, is not drawn; "
            L"the ring is (from sajmonsoft's flat fork). For portals seen from then on. Unticked: drawn as the game has it.")),
+    // [gameplay] flat_move_while_attacking (Serg 2026-11-03: «на 2д режиме изнутри или от 3 лица ... при ударе можно было стрейфится», vr/move_attack.h):
+    // the F4 option's cut for the 2D views - the monitor's F2 / F3 and the headset's F1 / F2 / F3 (he plays those) - its own key; the game alone cannot do
+    // it (its server drops a walk until the attack's last frame), so a warning. Shown in both modes.
+    Warning(L"flat_move_attack_warn", L"Changes the game's own logic: in Diablo II the hero stands until his attack's animation is over. The choice below "
+            L"has the game's server let the walk in as soon as the blow is out. Off = the game's own rule."),
+    Choice(L"gameplay", L"flat_move_while_attacking", L"2D views: strafe after each blow (changes the game)", 0,
+           {L"Off", L"Spear and bow", L"Every weapon"},
+           L"The monitor's third and first person (F2, F3) with W A S D, and the headset's F1, F2, F3 with the left stick: with a walk held the "
+           L"hero walks on - sideways, back or ahead, where the camera looks - as soon as the blow lands or the arrow or javelin leaves, instead "
+           L"of standing out the rest of the attack's animation; with the attack button or the mouse held as well he strikes, steps, strikes. In "
+           L"the game a walk asked for before the animation's last frame is thrown away by its server; this lets the walk in there. The stand "
+           L"before the blow stays, and the attack is the game's: hit chance, damage, mana, arrows - and the attack speed: the next attack (a "
+           L"click, a held mouse button, the attack or skill buttons) waits until the cut animation would have ended, and goes then. Only the "
+           L"plain attacks and throws: not spells, kicks or Zeal / Fend / Strafe. Spear and bow: spears, polearms, javelins, bows and crossbows. "
+           L"Every weapon: swords, axes, maces, claws and bare hands too. Single player, or a TCP/IP game you host - then for the joined players' "
+           L"heroes too (the wider of this and the VR F4 box, whatever view they play in); joined to someone else's game the host's setting decides. VR F4 has its own box (Weapon Adjust); the monitor's F1: as before. Off: the game's own stop. Live."),
     Only(kVr, Toggle(L"input", L"vr_keys_walk", L"VR view F2 like flat: mouse look, crosshair, W A S D", 1,
            L"Third person with the mouse and keyboard, as in flat mode: the mouse turns the camera, the pointer is the crosshair "
            L"in the middle (its depth: UI: F2 behind tab), a click goes there - on a monster an attack, on an item a pick-up, "
@@ -2004,6 +2068,7 @@ std::vector<Item> g_items = {
     Slider(L"hud_floor", L"map_size", L"Map size, %", 30, 300, 1, 100,
            L"The corner map (Tab) smaller or larger, about its own corner. Needs D2R_DepthFog.fx on in ReShade (it draws "
            L"the map back); without it the game's own map stays. The mouse pointer lies on the game's ground by itself here."),
+    Needs(L"hud_floor", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
     Slider(L"hud_floor", L"map_near", L"Map nearer / farther", -10, 10, 0.1f, 0,
            L"Real stereo only: + brings the map towards the eyes, - pushes it behind the screen; 0 = where the game puts it."),
     Slider(L"hud_floor", L"map_x", L"Map left / right, %", -50, 50, 1, 0,
@@ -2409,6 +2474,15 @@ std::vector<Item> g_items = {
     LowLife(Needs(L"openxr", L"haptics", 1, Needs(L"hud", L"low_hp_haptics", 1, Slider(L"hud", L"low_hp_haptics_strength", L"Heartbeat in the controllers: strength", 0.1f, 2, 0.05f, 1,
            L"A scale on the pulse's strength: 1 = about half the motor's strength at the lowest life, and weaker the higher your "
            L"life. The pulse is never stronger than four fifths of the motor, so 2 is plenty. Live.")))),
+    // [hud] low_hp_cover_eq, low_hp_cover_eq_60 ... _5 (vr/low_hp_eq.h): how far the red closes in, a band each 5% of the life
+    LowLife(Toggle(L"hud", L"low_hp_cover_eq", L"How far it closes in, by life (equalizer): % of the view at each % of your life", 0,
+           L"Set how far the red closes in over your view at which life: a band each 5% of your life, from 60% down to 5%, each 0 - 100 - how far in from "
+           L"the edges it reaches, in % of the view's angle (100 = the whole view). A small value is fainter too, 0 = none at that life. Between two bands it "
+           L"goes in a straight line of your life. Ticked, the bands take the place of \"Vignette size\"; the intensity sliders still set how solid the red "
+           L"is, and the heartbeat is as ever. The bands start from the size's default (40 at 30% of your life), less above, more below. Off: \"Vignette "
+           L"size\" as before. Live.")),
+    CoverBand(0), CoverBand(1), CoverBand(2), CoverBand(3), CoverBand(4), CoverBand(5),
+    CoverBand(6), CoverBand(7), CoverBand(8), CoverBand(9), CoverBand(10), CoverBand(11),
     Needs(L"openxr", L"on", 1, Toggle(L"hud", L"merc_tint", L"Wounded mercenary tinted red (F4)", 0,
            L"VR first person (F4). While your mercenary is under the threshold below of its life, the effect tints its body red, "
            L"so you see when it needs a potion. Drawn by the plugin over the finished picture: the merc is found and its life only "
@@ -2418,6 +2492,35 @@ std::vector<Item> g_items = {
            L"The red comes on while the mercenary's life is under this share of its maximum. Live."))),
     Needs(L"openxr", L"on", 1, Needs(L"hud", L"merc_tint", 1, Slider(L"hud", L"merc_tint_strength", L"Mercenary tint: strength", 0.1f, 1, 0.05f, 0.6f,
            L"How far the mercenary's colours go toward the red: 1 = fully red. Live."))),
+    Group(L"Low mana: blue vignette at the bottom", L"A warning when your mana is low (native OpenXR, F4): a deep blue band rises from the bottom edge of your view and beats like the red one, at "
+          L"the red's rate. Only the bottom, so it never covers the red of low life: where both are, the red is drawn over the blue. Needs the new D2R_DepthFog.fx."),
+    // [hud] low_mp_vignette, low_mp_threshold, low_mp_intensity_start / _end, low_mp_height, low_mp_softness, low_mp_cover_eq (vr/low_mp.h)
+    Needs(L"openxr", L"on", 1, Toggle(L"hud", L"low_mp_vignette", L"Blue vignette at the bottom at low mana", 0,
+           L"Native OpenXR, first person (F4). While your mana is under the threshold below, a deep blue band rises from the bottom edge of what you see and "
+           L"beats - the double beat of the red one. The sides and the top stay clear, so the "
+           L"red of low life all round is never covered (where both are, the red is drawn over the blue). Never there when you are dead, in a menu or outside "
+           L"a game. No pulse in the controllers (the low-mana alert in the left hand is Haptics' own). Needs the new D2R_DepthFog.fx in ReShade, copied in "
+           L"with the DLL. Off: the picture exactly as before. Live.")),
+    LowMana(Slider(L"hud", L"low_mp_threshold", L"Low mana: from, % of your mana", 10, 60, 1, 30,
+           L"The blue comes on when your mana falls under this share of its maximum and goes out a little above it. Live.")),
+    LowMana(Slider(L"hud", L"low_mp_intensity_start", L"Intensity just under the threshold", 0.05f, 1, 0.05f, 0.2f,
+           L"How blue the bottom edge is at the top of a beat when your mana has only just fallen under the threshold. Between this and the next slider the "
+           L"intensity follows your mana in a straight line. Live.")),
+    LowMana(Slider(L"hud", L"low_mp_intensity_end", L"Intensity with no mana", 0.05f, 1, 0.05f, 0.55f,
+           L"How blue the bottom edge is at the top of a beat when your mana is gone. Live.")),
+    LowMana(Slider(L"hud", L"low_mp_height", L"Height, % of the view from the bottom", 10, 60, 1, 25,
+           L"How far up from the bottom edge the blue reaches, in % of the view's half-height (its ANGLE, from the headset's own field of view): 25 = the "
+           L"lowest quarter of the lower half. Keep it lower than the red's size so the red stays readable. Live.")),
+    LowMana(Slider(L"hud", L"low_mp_softness", L"Edge: softness", 0, 1, 0.05f, 0.8f,
+           L"How gradually the blue builds up from its top: 1 = a smooth fade all the way down, 0 = a short ramp and then flat colour to the edge. Live.")),
+    // [hud] low_mp_cover_eq, low_mp_cover_eq_60 ... _5: how far up the blue reaches, a band each 5% of the mana
+    LowMana(Toggle(L"hud", L"low_mp_cover_eq", L"How far up it reaches, by mana (equalizer): % at each % of your mana", 0,
+           L"Set how far up the blue reaches at which mana: a band each 5% of your mana, from 60% down to 5%, each 0 - 100 - in % of the view's half-height "
+           L"from the bottom edge (100 = up to the middle). A small value is fainter too, 0 = none at that mana. Between two bands it goes in a straight line of "
+           L"your mana. Ticked, the bands take the place of \"Height\"; the intensity sliders still set how solid the blue is, and the beat is as ever. The "
+           L"bands start from the height's default (25 at 30% of your mana). Off: \"Height\" as before. Live.")),
+    ManaBand(0), ManaBand(1), ManaBand(2), ManaBand(3), ManaBand(4), ManaBand(5),
+    ManaBand(6), ManaBand(7), ManaBand(8), ManaBand(9), ManaBand(10), ManaBand(11),
     Group(L"Quest and level-up notices", L"The game's notices (\"Quest log updated\", new skill or stat points) cannot be seen in the headset in F4. Tick to show them on a small card in the room in front of you (native OpenXR), for the seconds you set."),
     Needs(L"openxr", L"on", 1, Toggle(L"hud", L"notice_card", L"Quest and level-up notices on a card in the room (F4)", 0,
            L"VR first person (F4), native OpenXR. The game's own notice (\"Quest log updated\", new skill or stat points) sits low in the "
@@ -2741,6 +2844,10 @@ std::vector<Item> g_items = {
     ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_pulse", L"Soft heartbeat at low life", 0,
            L"While your life is under the low-life threshold (the one of the red heartbeat vignette above) the life ball glows and swells softly like a "
            L"heart (50 - 72 beats a minute, never flashing). Live.")),
+    // [hud] hand_vitals_pulse_eq (vr/hand_orbs.h Step, In::follow)
+    ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_pulse_eq", L"Balls beat with the vignettes", 0,
+           L"While the red low-life vignette is up the life ball glows and swells with ITS beat - the same moment, the same rate - and while the blue low-mana vignette is up the mana ball beats with the blue (UI: F4 body). A vignette that is off or not up: the "
+           L"life ball as above, the mana ball still. Off: the balls exactly as before. Live.")),
     // The wrist status (vr/wrist_status.h): what the hero has, as small icons and counters over a wrist turned to the eyes - a feature of its own, its tick first, the rest live only while it is ticked
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Toggle(L"hud", L"wrist_status", L"Wrist status: summons, mercenary, buffs, auras, curses (F4)", 0,
            L"Small icons and counters that come up beside the medallions when the BACK of a wrist is turned to your eyes (VR first person, F4, native OpenXR). By default the left wrist shows "
@@ -3052,6 +3159,14 @@ std::vector<Item> g_items = {
            L"and keeps it inside the mod (mods\\D2R-VR\\D2R-VR.mpq); nothing of the game itself changes, nor anything you play with. "
            L"Takes effect at the next start of the game (a game already running keeps the canoe where it was). Off: the file is taken out "
            L"again, the canoe as the game has it."),
+    // [weight] death_ragdoll_flat in flat mode: its own tick lives on the VR-only Weapon Weight tab, hidden here (Serg 2026-11-03: «это все скрыто на 2д режиме»)
+    Only(kFlat, Group(L"Monsters (flat play)", L"How the monsters you fight are drawn when you play on the monitor.")),
+    Only(kFlat, Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll (a test)", 0,
+           L"Ticked: a humanoid monster the game kills falls as a ragdoll instead of playing its own death animation, pushed along the arc of your "
+           L"weapon as the game swings it in your hero's attack (a spell, an arrow, a hireling's kill: a little away from you), and stays lying as it "
+           L"fell for as long as the game keeps the corpse. Bosses and monsters that burst when they die keep the game's own death. Only the drawing: "
+           L"the kill, the loot and where the corpse is stay the game's. Needs the weight library with the knock-down (d2r_vr_weight.dll in "
+           L"d2rloader\\d2r_vr_libs). Unticked: the game's own death animation.")),
 
     Tab(L"Sky"),
     Group(L"Sky and fog", L"Who draws the sky and the distance fog: the game itself (new) or our effect (old) - one choice for both."),
@@ -4224,6 +4339,10 @@ std::vector<Item> g_items = {
            L"monster) presses the game's interact on that object, as A does, so the hero kicks or breaks it with his own animation - its loot, "
            L"traps and explosions are the game's. Chests, doors, shrines and quest objects keep their normal controls, and A still works. The "
            L"object's size is an estimate from its footprint. Unticked: as before, only A breaks them. Live. F4 only.")),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_touch_barrels", 1, Slider(L"gameplay", L"melee_touch_barrels_min_speed",
+           L"... a swing that breaks them, from (m/s)", 0.3f, 20.0f, 0.1f, 2.0f,
+           L"The least speed of a swing through a barrel or pot that breaks it - its own, not the monsters' (\"the least blade speed that hits\" above), and also with "
+           L"strike by force. 2: an easy swing. Live."))),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_touch_thrown", 1, Toggle(L"gameplay", L"melee_touch_thrown_held",
            L"A thrown weapon is the weapon in your hand from the start (no grip needed to hit)", 0,
            L"A javelin, a throwing knife or a throwing axe is the weapon in your hand from the moment it is equipped, like a sword: it hits "
@@ -6764,8 +6883,12 @@ void UpdateSafeScreenStatus() {
 }
 
 int Steps(const Item& it) { return (int)std::lround((it.max - it.min) / it.step); }
-float FromPos(const Item& it, int pos) { return it.min + pos * it.step; }
-int ToPos(const Item& it, float v) { return std::max(0, std::min(Steps(it), (int)std::lround((v - it.min) / it.step))); }
+// (a band's vertical slider has its lowest position at the top: turned over, so its highest value is up)
+float FromPos(const Item& it, int pos) { return it.min + (it.band >= 0 ? Steps(it) - pos : pos) * it.step; }
+int ToPos(const Item& it, float v) {
+    const int pos = std::max(0, std::min(Steps(it), (int)std::lround((v - it.min) / it.step)));
+    return it.band >= 0 ? Steps(it) - pos : pos;
+}
 
 void ShowValue(const Item& it, float v) {
     wchar_t buf[32];
@@ -6968,8 +7091,8 @@ void Build(HWND page) {
         case Kind::Slider: {
             const float v = ReadValue(it);
             it.modes &= groupModes;
-            it.name = Make(page, L"STATIC", it.label, kLabel, -1);
-            it.ctl = Make(page, TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | TBS_FIXEDLENGTH | WS_TABSTOP, id);
+            it.name = Make(page, L"STATIC", it.label, it.band >= 0 ? kLabel | SS_CENTER : kLabel, -1);   // (SS_LEFT is 0: a band's name centred under it)
+            it.ctl = Make(page, TRACKBAR_CLASSW, L"", (it.band >= 0 ? TBS_VERT | TBS_BOTH : TBS_HORZ) | TBS_NOTICKS | TBS_FIXEDLENGTH | WS_TABSTOP, id);
             SendMessageW(it.ctl, TBM_SETRANGEMIN, FALSE, 0);
             SendMessageW(it.ctl, TBM_SETRANGEMAX, FALSE, Steps(it));
             SendMessageW(it.ctl, TBM_SETPAGESIZE, 0, std::max(1, Steps(it) / 20));
@@ -7004,7 +7127,7 @@ void Build(HWND page) {
         it.tab = tab;
         AddTip(it.name, it.tip);
         AddTip(it.ctl, it.tip);
-        if (it.cell >= 0 && it.kind == Kind::Slider) AddTip(it.value, it.tip);   // (a table's slider shows its number box only)
+        if ((it.cell >= 0 || it.band >= 0) && it.kind == Kind::Slider) AddTip(it.value, it.tip);   // (a table's slider shows its number box only; a band's box is under it)
     }
     g_tabCount = tab + 1;
     for (Item& it : g_items)
@@ -7256,6 +7379,15 @@ void LayoutPage() {
                 else if (it.kind == Kind::Slider) places.push_back({it.value, cx, ry + S(5), w2, S(22)});
                 else places.push_back({it.ctl, cx + std::max(0, w2 / 2 - S(8)), ry + S(4), S(24), S(24)});
                 if (it.cell == 0) y += rowH;
+                continue;
+            }
+            if (it.band >= 0 && it.kind == Kind::Slider) {   // an equalizer's band (Band): side by side, a tall vertical slider, its number box and its name under it
+                const int bands = std::max(1, it.bands), cw = colW / bands, slideH = S(120), bandH = slideH + S(52);
+                const int bx = x + it.band * cw, top = it.band == 0 ? y : y - bandH, sw = std::min(cw, S(30));
+                places.push_back({it.ctl, bx + (cw - sw) / 2, top + S(4), sw, slideH});
+                places.push_back({it.value, bx + S(2), top + S(8) + slideH, cw - S(4), S(20)});
+                places.push_back({it.name, bx, top + S(30) + slideH, cw, S(20)});
+                if (it.band == 0) y += bandH;
                 continue;
             }
             switch (it.kind) {
@@ -10951,6 +11083,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
     case WM_MOUSEWHEEL: ScrollTo(g_scrollY - GET_WHEEL_DELTA_WPARAM(w) * 3 * S(kRowH) / WHEEL_DELTA); return 0;
     case WM_VSCROLL: {
+        if (l) return SendMessageW(wnd, WM_HSCROLL, w, l);   // a band's vertical slider (Item::band): as any slider's move; no control = the page's own scroll bar
         SCROLLINFO si{sizeof si, SIF_ALL};
         GetScrollInfo(wnd, SB_VERT, &si);
         int y = g_scrollY;

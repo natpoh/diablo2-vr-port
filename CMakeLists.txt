@@ -194,6 +194,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/death_ragdoll_test.cpp") 
     target_include_directories(death_ragdoll_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(death_ragdoll_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/skin_anchor_test.cpp")   # [weight] death_ragdoll: the skinning finds a body by the root of the entity drawn (vr/skin_anchor.h)
+    add_executable(skin_anchor_test cleanroom/tests/skin_anchor_test.cpp)
+    target_include_directories(skin_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(skin_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/doll_view_test.cpp")   # [weight] monster_ragdoll (probe): what goes to the doll library and what is drawn of it (vr/doll_view.h)
     add_executable(doll_view_test cleanroom/tests/doll_view_test.cpp)
     target_include_directories(doll_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -295,6 +300,10 @@ target_compile_options(melee_direct_client_test PRIVATE /utf-8 /W4 /EHsc /permis
 add_executable(hang_watch_test cleanroom/tests/hang_watch_test.cpp)
 target_include_directories(hang_watch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(hang_watch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [support] save_backups' rules (vr/diag/save_backups_rule.h): which save files, a good save (not zeroed), when to back up, which old folders go.
+add_executable(save_backups_test tools/save_backups_test.cpp)
+target_include_directories(save_backups_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(save_backups_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 add_executable(melee_touch_test cleanroom/tests/melee_touch_test.cpp)
 target_include_directories(melee_touch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(melee_touch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -547,10 +556,12 @@ target_sources(d2rl-vrcam PRIVATE vr/frame_gen_lib.cpp)   # [openxr] frame_gener
 target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1: the grip library d2r_vr_grip.dll, when it is beside the plugin (shared/d2r_vr_grip.h)
 target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
 # vr/vrcam.cpp in modules (docs/plan_modules.md): M1 the observers
-target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
 target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
+target_sources(d2rl-vrcam PRIVATE vr/diag/save_backups.cpp)   # [support] save_backups: the game's saves copied into Saved Games\...\D2R VR Backups
 target_sources(d2rl-vrcam PRIVATE vr/world/area.cpp)   # M4 the area
+target_sources(d2rl-vrcam PRIVATE vr/world/kurast_probe.cpp)   # [world] kurast_boat: where the Kurast Docks' canoe is drawn (the log, once a visit)
 target_sources(d2rl-vrcam PRIVATE vr/view/view_state.cpp)   # M5 which view
 target_sources(d2rl-vrcam PRIVATE vr/sky/dome_atlas.cpp)   # [sky] dome_in_game_colour: the game samples our baked picture for the dome
 target_sources(d2rl-vrcam PRIVATE vr/sky/sky_choice.cpp)   # M6 who draws the sky, the fog, the ceiling
@@ -1054,6 +1065,10 @@ target_link_libraries(hset_test PRIVATE user32 gdi32)
 target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The headset's Players row: the game's own /players N (vr/players_cmd.cpp; its pure part vr/players_cmd_core.h), checked against the game's image snapshot
 # when there is one (dump_loader/D2R_image.bin). Run: players_cmd_test.exe [<snapshot>]
+# [support] session_logs' rules (vr/diag/session_logs_rule.h): which files a game's folder copies, the folder names, which old folders go.
+add_executable(session_logs_test tools/session_logs_test.cpp)
+target_include_directories(session_logs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(session_logs_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 add_executable(players_cmd_test tools/players_cmd_test.cpp)
 target_include_directories(players_cmd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_definitions(players_cmd_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -1464,6 +1479,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/low_hp_test.cpp")   # (no
     target_link_libraries(low_hp_test PRIVATE d3d11 d3dcompiler)
     target_compile_options(low_hp_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [hud] low_hp_cover_eq / low_mp_cover_eq (vr/low_hp_eq.h): how far the vignettes close in at points of the life, and the Heartbeat with it off (as before) and on.
+add_executable(low_hp_eq_test cleanroom/tests/low_hp_eq_test.cpp)
+target_include_directories(low_hp_eq_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(low_hp_eq_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] low_mp_vignette (vr/low_mp.h): the low mana's blue at the bottom - its settings, its band, its beat (the life's Heartbeat fed the mana),
+# and the effect's own HLSL (reshade/D2R_DepthFog.fx, LowMp) on WARP against the C++ mirror.
+add_executable(low_mp_test cleanroom/tests/low_mp_test.cpp)
+target_include_directories(low_mp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_definitions(low_mp_test PRIVATE LOWMP_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx")
+target_link_libraries(low_mp_test PRIVATE d3d11 d3dcompiler)
+target_compile_options(low_mp_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 # [hud] hand_vitals (vr/hand_vitals.h): life and mana on the hand when the palm turns to the face. The palm test, the fade, the panel's pose
 # and the numbers' maths are pure and tested (hand_vitals_test, which also draws the panel at several levels: hand_vitals_test.exe

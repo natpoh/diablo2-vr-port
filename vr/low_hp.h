@@ -14,7 +14,8 @@
 // changes the overlay's opacity only - its shape never moves. The pulse stays moderate (the rest between beats is
 // a third of the peak), the top rate is capped at 90 beats a minute (3 pulses a second, the usual limit for
 // flashing), and "gentle" is slower still (at most 72 a minute, 2.4 pulses a second), softer in its attack and lower
-// in opacity.
+// in opacity. With [hud] low_hp_cover_eq the player sets how far the red closes in at points of the life instead of one size
+// (vr/low_hp_eq.h: the cover, which also fades a small vignette); the beat is the same.
 //
 // The settings are all sliders (D2R VR Settings, UI: F4 body > Low life): the threshold; the intensity just under it
 // and at no life (a straight line of how low the life is between them, the same line the haptic pulse follows); the
@@ -35,6 +36,8 @@
 #include <cmath>
 #include <cstdint>
 
+#include "low_hp_eq.h"
+
 namespace lowhp {
 
 // ---- the settings --------------------------------------------------------------------------------------------
@@ -51,7 +54,15 @@ struct Config {
     bool gentle = false;           // [hud] low_hp_gentle
     bool haptics = false;          // [hud] low_hp_haptics
     float hapticsStrength = 1.0f;  // [hud] low_hp_haptics_strength: a scale on the pulse's amplitude
+    eq::Bands coverEq = CoverDefaults();   // [hud] low_hp_cover_eq, low_hp_cover_eq_<percent>: how far the red closes in at points of the life (vr/low_hp_eq.h); off = radius
+
+    // The points' defaults: a little at 60%, the size's own default (40) at its default threshold (30%), nearly all the view at 5%.
+    static constexpr float kCoverDefault[eq::kBands] = {20, 22, 25, 28, 32, 36, 40, 46, 54, 64, 76, 90};
+    static eq::Bands CoverDefaults() { return eq::Filled(kCoverDefault); }
 };
+constexpr const wchar_t* kCoverKeys[eq::kBands] = {L"low_hp_cover_eq_60", L"low_hp_cover_eq_55", L"low_hp_cover_eq_50", L"low_hp_cover_eq_45",
+                                                   L"low_hp_cover_eq_40", L"low_hp_cover_eq_35", L"low_hp_cover_eq_30", L"low_hp_cover_eq_25",
+                                                   L"low_hp_cover_eq_20", L"low_hp_cover_eq_15", L"low_hp_cover_eq_10", L"low_hp_cover_eq_5"};
 
 constexpr float kThresholdMin = 0.10f, kThresholdMax = 0.60f, kIntensityMin = 0.05f, kIntensityMax = 1.0f;
 constexpr float kRadiusMin = 0.20f, kRadiusMax = 0.95f, kRoundMin = 2.0f, kRoundMax = 6.0f;
@@ -73,6 +84,7 @@ inline Config Sanitized(Config c) {
     c.softness = Clamp(c.softness, 0.0f, 1.0f, d.softness);
     c.roundness = Clamp(c.roundness, kRoundMin, kRoundMax, d.roundness);
     c.hapticsStrength = Clamp(c.hapticsStrength, kHapticsStrengthMin, kHapticsStrengthMax, d.hapticsStrength);
+    c.coverEq = eq::Sanitized(c.coverEq, Config::kCoverDefault);
     return c;
 }
 inline float ThresholdFromPercent(float percent) { return percent * 0.01f; }
@@ -236,6 +248,7 @@ public:
         float severity = 0.0f;   // 0 at the threshold, 1 at no life
         bool active = false;     // under the threshold (with its hysteresis)
         Beats beat;              // a beat started in this step (for the haptic pulse)
+        float cover = -1.0f;     // [hud] low_hp_cover_eq: how far the colour closes in now (0 - 1, eq::CoverAt of the life), -1 = the config's own size
     };
 
     Out Step(const Config& config, const In& in) {
@@ -248,7 +261,10 @@ public:
         const float dt = std::isfinite(in.dt) ? std::clamp(in.dt, 0.0f, kMaxStep) : 0.0f;
         const bool usable = in.lifeKnown && !in.dead && !in.menu && std::isfinite(in.frac) && in.frac > 0.0f;
         const bool hard = !usable;   // dead, a menu, no read: out fast
-        if (usable) sev_ = Severity(in.frac, cfg.threshold);
+        if (usable) {
+            sev_ = Severity(in.frac, cfg.threshold);
+            frac_ = in.frac;
+        }
         // the threshold and its hysteresis
         if (!usable) active_ = false;
         else if (active_) { if (in.frac > std::min(1.0f, cfg.threshold + kHysteresis)) active_ = false; }
@@ -275,6 +291,10 @@ public:
         out.severity = sev_;
         out.active = active_;
         out.alpha = amount * PeakAlpha(sev_, cfg) * Pulse(phase_, cfg.gentle);
+        if (cfg.coverEq.on) {   // the cover at this life: how far in (the effect's shape: ShapeOf's reach) and, when small, fainter
+            out.cover = eq::CoverAt(cfg.coverEq, frac_);
+            out.alpha *= eq::Strength(out.cover);
+        }
         return out;
     }
 
@@ -286,6 +306,7 @@ private:
     float fade_ = 0.0f;     // 0 - 1, linear in time (the eased amount is made of it)
     float phase_ = 0.0f;
     float sev_ = 0.0f;      // the last usable read's severity, kept while the tint fades out
+    float frac_ = 1.0f;     // and its life (the equalizer's rate)
 };
 
 // The controllers' pulse on a beat ([hud] low_hp_haptics, through [openxr] haptics): the lower the life, the stronger
@@ -366,11 +387,15 @@ struct Shape {
     float inner, outer, roundness;
     float tanX = 0.0f, tanY = 0.0f;   // the field of view (HalfTan), 0 = not known
 };
-inline Shape ShapeOf(const Config& config, float tanX = 0.0f, float tanY = 0.0f) {
+// `cover` (0 - 1, the equalizer's: Heartbeat::Out::cover) is the reach instead of the config's radius - up to the whole view (1: the clear
+// middle is gone); -1 = the radius.
+constexpr float kCoverReachMin = 0.02f;
+inline Shape ShapeOf(const Config& config, float tanX = 0.0f, float tanY = 0.0f, float cover = -1.0f) {
     const Config c = Sanitized(config);
+    const float reach = cover >= 0.0f && std::isfinite(cover) ? std::clamp(cover, kCoverReachMin, 1.0f) : c.radius;
     Shape s;
-    s.inner = 1.0f - c.radius;
-    s.outer = s.inner + (c.radius + kOverEdge) * (kShortestRamp + (1.0f - kShortestRamp) * c.softness);
+    s.inner = 1.0f - reach;
+    s.outer = s.inner + (reach + kOverEdge) * (kShortestRamp + (1.0f - kShortestRamp) * c.softness);
     s.roundness = c.roundness;
     s.tanX = tanX;
     s.tanY = tanY;
@@ -401,11 +426,11 @@ struct Uniforms {
     float color[3] = {0.30f, 0.005f, 0.005f};
     float fov[2] = {0.0f, 0.0f};
 };
-inline Uniforms MakeUniforms(float alpha, const Config& config, float tanX = 0.0f, float tanY = 0.0f) {
+inline Uniforms MakeUniforms(float alpha, const Config& config, float tanX = 0.0f, float tanY = 0.0f, float cover = -1.0f) {
     Uniforms u;
     u.alpha = Clamp(alpha, 0.0f, 1.0f, 0.0f);
     const bool fov = tanX > 0.0f && tanY > 0.0f && std::isfinite(tanX) && std::isfinite(tanY);
-    const Shape s = ShapeOf(config, fov ? tanX : 0.0f, fov ? tanY : 0.0f);
+    const Shape s = ShapeOf(config, fov ? tanX : 0.0f, fov ? tanY : 0.0f, cover);
     u.shape[0] = s.inner;
     u.shape[1] = s.outer;
     u.shape[2] = s.roundness;

@@ -661,6 +661,9 @@ void FlatPickClick(void* unit, int type, int x, int y, uint64_t flags) {
 }
 
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
+    // [gameplay] flat_move_while_attacking: after W A S D cut an attack's rest, the mouse's next attack waits until that animation would have
+    // ended (the game's attack rate) - answered 1 as the game answers a click it took, so a held button goes on repeating (vr/move_attack.h ClickHold)
+    if (moveattack::HoldClick(unit, type, x, y, flags)) return 1;
     const bool mouseType = type == 0 || type == 1 || type == 3 || type == 4;
     // nothing under the pointer? the game's own lookup (HoverUnit), asked once for whoever needs it
     int bareKnown = -1;

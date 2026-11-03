@@ -534,6 +534,25 @@ template <class RT> void LowHpUniforms(RT* rt) {
     }
 }
 
+// [hud] low_mp_vignette (vr/low_mp.h): the low mana's blue at the bottom, the same way (an older effect without LowMpAlpha: told once, nothing).
+template <class RT> void LowMpUniforms(RT* rt) {
+    static bool sent = false;
+    lowmp::Uniforms u;
+    const bool on = lowhp::CurrentMana(&u);
+    if (!on && !sent) return;
+    if (on && rt->find_uniform_variable("D2R_DepthFog.fx", "LowMpAlpha").handle == 0) {
+        static bool told = false;
+        if (!told) { told = true; Log("vrcam: low mana vignette - D2R_DepthFog.fx has no LowMpAlpha: it is an older one, copy the new one in (the vignette needs the DLL and the effect together)"); }
+        return;
+    }
+    sent = on;
+    SetFloat(rt, "LowMpAlpha", on ? u.alpha : 0.0f);
+    if (on) {
+        SetFloats(rt, "LowMpShape", u.shape, 4);
+        SetFloats(rt, "LowMpColor", u.color, 3);
+    }
+}
+
 // Not in the main menu: its scene got the fog of act 2 (its biome is act2_frontend_biome).
 // The HUD's per-eye shift (D2R_DepthFog.fx PS_Hud): only in AFR stereo, in a game area.
 bool HudWanted() { return AfrOn() && g_set.uiShift.load() > 0.0f && g_inWorld.load(); }
@@ -673,7 +692,7 @@ SkyView SkyBack(int e) {   // under g_skyLock
 // the picture each present for 48 pixels nobody reads, and they showed in the headset's corner (PC2, 2026-10-26: PS_StampR 0.12 ms a frame)
 bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load() && g_set.stampPixels.load() && !xr::Running(); }
 // [hud] low_hp_vignette rides on D2R_DepthFog.fx: the effect stays on for it in VR first person on native OpenXR.
-bool LowHpWanted() { return lowhp::Enabled() && g_enabled.load() && FullBody() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }
+bool LowHpWanted() { return (lowhp::Enabled() || lowhp::ManaEnabled()) && g_enabled.load() && FullBody() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }
 
 // Who draws the sky and the fog (OurFogWanted, FogCannot, FogWanted, OurSkyWanted): vr/sky/sky_choice.cpp
 // [sky] bright_<period>: the sky's multiplier for this moment of the game's day (EffectsBegin, a present behind at most) - the open-air
@@ -1696,6 +1715,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     }
     SetFloat(rt, "NearPlane", g_lastNear.load());
     LowHpUniforms(rt);   // [hud] low_hp_vignette
+    LowMpUniforms(rt);   // [hud] low_mp_vignette
     const FogNumbers fogNow = FogNumbersNow();   // (the open air's, the caves', or the Arcane Sanctuary's own: [fog] arcane_own)
     SetFloat(rt, "FogStart", fogNow.start);
     SetFloat(rt, "FogEnd", fogNow.end);
@@ -2377,6 +2397,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                         }
                     }
                 }
+                for (int k = 0; k < 2; ++k)   // [hud] hand_vitals_pulse_eq: the vignettes' beats, for the balls to beat in step
+                    if (!lowhp::BeatNow(k == 1, &in.follow[k])) in.follow[k] = -1.0f;
                 const handorbs::Set set = handorbs::Step(orbState, in);
                 float fit = 0.0f;
                 uint64_t srv = 0;

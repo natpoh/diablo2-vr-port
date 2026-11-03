@@ -105,7 +105,21 @@ void LoadSettings() {
         lh.gentle = IniB(L"hud", L"low_hp_gentle", false);
         lh.haptics = IniB(L"hud", L"low_hp_haptics", false);
         lh.hapticsStrength = IniF(L"hud", L"low_hp_haptics_strength", lh.hapticsStrength);
+        lh.coverEq.on = IniB(L"hud", L"low_hp_cover_eq", false);   // how far the red closes in at points of the life (vr/low_hp_eq.h); off = low_hp_radius
+        for (int k = 0; k < lowhp::eq::kBands; ++k) lh.coverEq.cover[k] = IniF(L"hud", lowhp::kCoverKeys[k], lowhp::Config::kCoverDefault[k]);
         lowhp::Configure(lh);
+    }
+    {   // [hud] low_mp_vignette (vr/low_mp.h): a blue band at the bottom at low mana, its height by its own equalizer if ticked; VR F4 on native OpenXR only
+        lowmp::Config mp;
+        mp.on = IniB(L"hud", L"low_mp_vignette", false);
+        mp.threshold = IniF(L"hud", L"low_mp_threshold", mp.threshold * 100.0f) * 0.01f;
+        mp.intensityStart = IniF(L"hud", L"low_mp_intensity_start", mp.intensityStart);
+        mp.intensityEnd = IniF(L"hud", L"low_mp_intensity_end", mp.intensityEnd);
+        mp.height = IniF(L"hud", L"low_mp_height", mp.height * 100.0f) * 0.01f;
+        mp.softness = IniF(L"hud", L"low_mp_softness", mp.softness);
+        mp.coverEq.on = IniB(L"hud", L"low_mp_cover_eq", false);   // how far up the blue reaches at points of the mana; off = low_mp_height
+        for (int k = 0; k < lowhp::eq::kBands; ++k) mp.coverEq.cover[k] = IniF(L"hud", lowmp::kCoverKeys[k], lowmp::Config::kCoverDefault[k]);
+        lowhp::ConfigureMana(mp);
     }
     {   // [hud] merc_tint (vr/merc_tint.h): the wounded merc tinted red by the effect, VR F4 only; off by default
         merctint::Config mt;
@@ -130,6 +144,7 @@ void LoadSettings() {
         hv.opacity = IniF(L"hud", L"hand_vitals_opacity", 1.0f);
         hv.coneDeg = IniF(L"hud", L"hand_vitals_cone", 35.0f);
         hv.pulse = IniB(L"hud", L"hand_vitals_pulse", false);
+        hv.pulseEq = IniB(L"hud", L"hand_vitals_pulse_eq", false);   // the balls beat with the low life / low mana vignettes (their equalizers); off = as before
         hv.lowFrac = IniF(L"hud", L"low_hp_threshold", 30.0f) * 0.01f;   // the low-life vignette's threshold: under it the pulse starts
         hv.flip = IniB(L"debug", L"hand_vitals_flip", false);
         hv.style = wrists ? (IniF(L"hud", L"wrist_look", 0.0f) >= 0.5f ? handvitals::kStyleGlobes : handvitals::kStyleOrbs)
@@ -216,6 +231,7 @@ void LoadSettings() {
     // can be made taller above (hide_up_pct) and below (hide_down_pct), percent of the picture's height; [debug] hide_strip_tint paints the strip a see-through magenta to see its edges.
     hud::SetToolbarCut(IniF(L"hud", L"hide_up_pct", 0.0f), IniF(L"hud", L"hide_down_pct", 0.0f), IniB(L"debug", L"hide_strip_tint", false));
     hud::SetMapCorner((int)IniF(L"hud", L"map_corner", 0.0f));
+    g_set.mapCorner.store(std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2));
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
     g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));   // the corner map on the screen turned with the camera: MapRotateFlatTick
@@ -1117,9 +1133,11 @@ void LoadSettings() {
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
     meleetouch::SetClawHits(g_set.clawHits.load());   // [shapeshift] claw_hits: the form's paws strike by touch
-    meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false));   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
+    meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false),   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
+                                 IniF(L"gameplay", L"melee_touch_barrels_min_speed", 2.0f));   // ... from this swing speed, its own gate
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)
+    moveattack::SetFlatWanted((int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
     straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
     shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)

@@ -2,7 +2,7 @@
 // frame. Each of these returns the picture as it is while its switches are off - a full-screen pass and a copy of the picture (COLOR) for nothing:
 //   PS_Hud(R)       Hud: the picture unless HudShift != 0 (and the overlays not apart: then always the picture)
 //   PS_GameHud(R)   GameHud: the picture unless LabelsOn / GameBarOn / GameMapOn (the same with the overlays apart)
-//   PS_Phantom(R)   LowHp(Phantom): the picture unless one of Phantom's switches or LowHpAlpha (the same with the overlays apart)
+//   PS_Phantom(R)   LowHp(LowMp(Phantom)): the picture unless one of Phantom's switches, LowHpAlpha or LowMpAlpha (the same with the overlays apart)
 //   PS_TableKey(R)  TableKey: the picture unless TableKeyOn
 //   PS_Stamp(R)     Stamp: the picture unless StampOn
 //   PS_DistBlurV    DistBlurDown: the picture unless DistBlurOn ([render] distance_blur) - and PS_DistBlurH(R), what only it reads, with it
@@ -28,7 +28,7 @@
 namespace fxpasskeep {
 
 inline constexpr const char* kPhantom[] = {"HitboxOn", "PaOn", "OrbOn", "MercOn", "PhantomOn", "BoneOn", "DbgOn"};   // bools
-inline constexpr const char* kPhantomF[] = {"QvN", "AfOn", "LowHpAlpha"};                                         // 0 draws nothing
+inline constexpr const char* kPhantomF[] = {"QvN", "AfOn", "LowHpAlpha", "LowMpAlpha"};                                      // 0 draws nothing
 // what FogLight leaves unread: the fog over the void (VoidFog*), the torches and the glow for the ceiling (Fire, Torch*, VoidGlow*), the
 // ceiling's height map and domes (the rest)
 inline constexpr const char* kLight[] = {"PS_VoidFog", "PS_VoidFogBlurH", "PS_VoidFogBlurV", "PS_Fire", "PS_TorchCands", "PS_TorchCandsR",

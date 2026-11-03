@@ -3362,8 +3362,27 @@ float3 LowHp(float3 c, float2 uv)
     return k > 0.0 ? lerp(c, LowHpColor, k) : c;
 }
 // LOWHP-END
-float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 0, false), uv); }
-float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(Phantom(pos, uv, 1, false), uv); }
+// vrcam [hud] low_mp_vignette (vr/low_mp.h, native OpenXR first person only): a deep blue band rising from the BOTTOM edge while the
+// hero's mana is low, beating like the life's red (its own rate, vr/low_hp_eq.h). Only the bottom, so the red all round stays readable:
+// the passes lay the blue first and the life's red over it (LowHp(LowMp(...))). LowMpAlpha = 0 (the default, all vrcam sends while it is
+// off or the mana is fine) is the picture bit for bit. LowMpShape: where it starts and where it is full, in parts of the view's vertical
+// angle from the middle row (1 = the bottom edge's middle), and z the half-height as a tangent of the view (0 = the picture's own v).
+uniform float LowMpAlpha < hidden = true; > = 0.0;                                       // how much of the blue at the bottom edge now, 0 = off
+uniform float4 LowMpShape < hidden = true; > = float4(0.75, 1.10, 0.0, 0.0);             // inner, outer, tan of the half-height
+uniform float3 LowMpColor < hidden = true; > = float3(0.01, 0.07, 0.36);                 // deep mana blue
+// LOWMP-BEGIN (cleanroom/tests/low_mp_test.cpp compiles the text between these marks and runs it against vr/low_mp.h's Apply)
+float3 LowMp(float3 c, float2 uv)
+{
+    [branch] if (LowMpAlpha <= 0.0) return c;
+    float y = max(0.0, uv.y * 2.0 - 1.0);
+    if (LowMpShape.z > 0.0)
+        y = atan(y * LowMpShape.z) / atan(LowMpShape.z);   // the angle it looks at (0 - 1 of the view's half-height)
+    const float k = saturate(LowMpAlpha) * smoothstep(LowMpShape.x, LowMpShape.y, y);
+    return k > 0.0 ? lerp(c, LowMpColor, k) : c;
+}
+// LOWMP-END
+float3 PS_Phantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(LowMp(Phantom(pos, uv, 0, false), uv), uv); }
+float3 PS_PhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : LowHp(LowMp(Phantom(pos, uv, 1, false), uv), uv); }
 
 float3 PS_GameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, 1.0, LayerOwnEye ? 1.0 : 0.0); }
 float3 PS_GameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return OverlaysApart ? tex2D(FogColorSmp, uv).rgb : GameHud(uv, -1.0, LayerOwnEye ? -1.0 : 0.0); }
@@ -3375,10 +3394,10 @@ float3 PS_OvGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target 
 float3 PS_OvGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0, -1.0); }
 float3 PS_OvMadeGameHud(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, 1.0, -1.0); }
 float3 PS_OvMadeGameHudR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return GameHud(uv, -1.0, 1.0); }
-float3 PS_OvPhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, false), uv); }
-float3 PS_OvPhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1, false), uv); }
-float3 PS_OvMadePhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 0, true), uv); }
-float3 PS_OvMadePhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(Phantom(pos, uv, 1, true), uv); }
+float3 PS_OvPhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(LowMp(Phantom(pos, uv, 0, false), uv), uv); }
+float3 PS_OvPhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(LowMp(Phantom(pos, uv, 1, false), uv), uv); }
+float3 PS_OvMadePhantom(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(LowMp(Phantom(pos, uv, 0, true), uv), uv); }
+float3 PS_OvMadePhantomR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return LowHp(LowMp(Phantom(pos, uv, 1, true), uv), uv); }
 
 // The frame's stamp for FlatVR: when vrcam built this frame's view, and so
 // which head pose it is drawn for. 48 black/white pixels at the right end of

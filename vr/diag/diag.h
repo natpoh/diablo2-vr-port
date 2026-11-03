@@ -4,6 +4,7 @@
 //   pairtime    where a pair's time goes; drawprof [debug] profile_draw; cbcmp [debug] cb_compare; rtrace [debug] replay_trace
 //               (vr/diag/pair_probes.cpp)
 //   crash       the start's steps and the log's first minutes to a file, an exception the game dies of to d2r_vr_crash.txt (vr/diag/crash.cpp)
+//   sessionlogs [support] session_logs: each game's logs in logs\sessions\<its start>, kept session_logs_days (vr/diag/session_logs.cpp)
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -79,5 +80,10 @@ void Step(const char* name);
 void Mark(const char* what);
 uint32_t AvTotal();
 }  // namespace crash
+
+namespace sessionlogs {
+void Start();   // after crash::Install (g_iniPath set): the folder's thread, the old folders tidied
+void Stop();    // the last copy, the thread joined
+}  // namespace sessionlogs
 
 }  // namespace vrc

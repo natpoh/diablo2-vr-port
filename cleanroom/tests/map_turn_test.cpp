@@ -161,6 +161,20 @@ int main() {
         const float qPx = r.radius[0] * sw / z;                                                             // share px per q on the screen
         Check(Near(std::fabs(det), qPx * qPx, 0.5f), "flat round: the map at its own scale");
     }
+    {   // [hud] map_rotate_flat's gate: flat F2 / F3 and VR F2 / F3 with the map in the picture; F4 named as F4 whatever the camera (Serg's
+        // 0.199.7 logs: VR F4 all session, the start's "our camera off" read as the reason)
+        Check(FlatGate(true, true, 0, 2, true, true) == FlatWhy::On && FlatGate(true, true, 0, 3, true, true) == FlatWhy::On, "gate: flat F2, F3 on");
+        Check(FlatGate(true, true, 1, 2, true, true) == FlatWhy::On, "gate: VR F2 with the map in the picture on");
+        Check(FlatGate(true, true, 1, 2, true, false) == FlatWhy::MapOutOfPicture, "gate: VR F2 with the map hung in the room");
+        Check(FlatGate(true, true, 1, 4, false, true) == FlatWhy::F4 && FlatGate(true, false, 1, 4, true, false) == FlatWhy::F4, "gate: VR F4 is F4");
+        Check(FlatGate(true, true, 0, 1, false, true) == FlatWhy::F1 && FlatGate(true, true, 1, 1, true, true) == FlatWhy::F1, "gate: F1 never");
+        Check(FlatGate(true, true, 1, 3, true, true) == FlatWhy::OnFloor && FlatTurns(FlatWhy::OnFloor), "gate: VR F3, the floor: turned by the head");
+        Check(FlatGate(true, true, 1, 3, true, false) == FlatWhy::MapOutOfPicture, "gate: VR F3 with the map hung in the room");
+        Check(!FlatTurns(FlatWhy::F1) && !FlatTurns(FlatWhy::F4) && FlatTurns(FlatWhy::On), "gate: F1, F4 never turn");
+        Check(FlatGate(true, true, 0, 2, false, true) == FlatWhy::CameraOff && FlatGate(true, false, 0, 2, true, true) == FlatWhy::NotInGame, "gate: camera off, menus");
+        Check(FlatGate(false, true, 0, 2, true, true) == FlatWhy::KeyOff, "gate: the key off");
+        for (int w = 0; w <= (int)FlatWhy::MapOutOfPicture; ++w) Check(FlatWhyText((FlatWhy)w)[0] != '?', "gate: every reason has its text");
+    }
     {   // a bad box or stretch: no map, or a clamped one
         Check(!MapFor(For(true, false, true, 0.0f), 0.0f, H, 1.0f).ok, "no width: no map");
         Check(MapFor(For(true, false, true, 0.0f), W, H, NAN).ok, "a stretch that is not a number: taken as 1");

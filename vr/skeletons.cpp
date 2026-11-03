@@ -87,6 +87,7 @@
 #include "unit_models.h"   // [weight] world_contact: the units' skeletons (UnitEntities)
 #include "knock_pose.h"         // [weight] knock_down: a knocked-down body laid on the library's joints
 #include "bone_segments.h"   // [weight] monster_ragdoll_all: bodies from bone segments
+#include "skin_anchor.h"     // [weight] death_ragdoll: the skinning finds a body by the root of the entity drawn
 #include "corpse_watch.h"    // [weight] monster_ragdoll: a corpse is no doll
 #include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
 
@@ -9597,6 +9598,7 @@ using ComputeFn = void (*)(uintptr_t self, float a, float b, bool c);
 ComputeFn g_orig = nullptr;
 std::atomic<MonsterPoseFn> g_monsterPose{nullptr};   // [weight] monster_ragdoll_pose: meleetouch::MonsterPose (vrcam)
 std::atomic<FrozenPoseFn> g_frozenPose{nullptr};   // [weight] death_ragdoll: a resting corpse's bones (SetFrozenPoseSource)
+std::atomic<EntityParentFn> g_entityParent{nullptr};   // ... an entity's parent (SetEntityParentSource): the skinning's anchor, vr/skin_anchor.h
 std::atomic<MonsterPoseByWorldFn> g_monsterPoseByWorld{nullptr};   // ... and by the world pose the skinning is handed (meleetouch::MonsterPosesForSkin)
 // ... the game's own pose of each monster the hook turned, as the game made it this frame: the bodies are read from it (MonsterRigs), not from the turned
 // one - else the doll would push a limb its own turn has already moved, and again
@@ -9644,6 +9646,8 @@ void PoseMonsterDoll(uintptr_t self) {
 // pointer when it is the instance's own, else by the skeleton (the model) and the pose's own matrices against each such monster's pose now (NearestPose).
 std::atomic<unsigned> g_dollByPointer{0}, g_dollByMatch{0}, g_dollUnmatched{0};
 std::atomic<unsigned> g_dollByEntity{0};   // [weight] death_ragdoll: skinnings from a copy told apart by the entity drawn (dollpose::ByEntity)
+std::atomic<unsigned> g_dollByAnchor{0}, g_anchorOther{0}, g_anchorNoDraw{0}, g_anchorNoRoot{0}, g_anchorLooks{0};   // ... by the drawn entity's root (vr/skin_anchor.h)
+std::atomic<unsigned> g_keptSkinFrozen{0}, g_keptSkinJoints{0};   // [weight] death_ragdoll: skinnings of kept corpses (the kept table's) - frozen bones / joints
 std::atomic<unsigned> g_knockSkinned{0}, g_knockRefused{0};   // [weight] knock_down: skinnings handed a copy laid on a knocked-down body's joints / whose joints did not read
 bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     const MonsterPoseByWorldFn src = g_monsterPoseByWorld.load(std::memory_order_relaxed);
@@ -9654,11 +9658,38 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     if (k <= 0) return false;
     if (!mats) return true;   // (the composite's look first)
     int pick = exact ? 0 : -1;
-    if (!exact) {   // [weight] death_ragdoll: the entity the game draws now names the body - corpses alike in their matrices are not alike in it
-        pick = dollpose::ByEntity(cands, std::min(k, 8), headshadow::DrawEntity());
-        if (pick >= 0) g_dollByEntity.fetch_add(1, std::memory_order_relaxed);
+    bool anchored = false;   // the drawn entity's root read: it says whose draw this is, no matrices asked
+    if (!exact) {   // [weight] death_ragdoll: the anchor - the root of the entity the game draws now names the body; corpses alike in their matrices are not
+        const uint32_t drawn = headshadow::DrawEntity();
+        const EntityParentFn parentOf = g_entityParent.load(std::memory_order_relaxed);
+        if (!drawn) {
+            g_anchorNoDraw.fetch_add(1, std::memory_order_relaxed);
+        } else if (parentOf) {
+            static thread_local skinanchor::Cache roots;   // (each skinning thread its own: one look up the tree per entity, then kept)
+            const uint64_t nowMs = GetTickCount64();
+            unsigned looks = 0;
+            const auto rootOf = [&](uint32_t e) {
+                bool looked = false;
+                const uint32_t r = roots.Root(e, nowMs, parentOf, &looked);
+                looks += looked ? 1u : 0u;
+                return r;
+            };
+            const uint32_t root = rootOf(drawn);
+            if (root) {
+                anchored = true;
+                pick = skinanchor::ByRoot(cands, std::min(k, 8), root, rootOf);
+                (pick >= 0 ? g_dollByAnchor : g_anchorOther).fetch_add(1, std::memory_order_relaxed);
+            } else {
+                g_anchorNoRoot.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (looks) g_anchorLooks.fetch_add(looks, std::memory_order_relaxed);
+        }
+        if (pick < 0 && !anchored) {
+            pick = dollpose::ByEntity(cands, std::min(k, 8), drawn);
+            if (pick >= 0) g_dollByEntity.fetch_add(1, std::memory_order_relaxed);
+        }
     }
-    if (!exact && pick < 0) {
+    if (!exact && pick < 0 && !anchored) {   // (anchored and none of ours: another monster of the model - never one of ours by its matrices)
         static thread_local float now[16][dollpose::kMatchBones][16];   // each candidate's this frame's and last frame's pose (their first bones)
         const float (*ptrs[16])[16] = {};
         const int m = std::min(n, dollpose::kMatchBones);
@@ -9681,10 +9712,12 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
         frozen(cands[pick].self, cands[pick].knock.m3, cands[pick].knock.root, mats, n)) {   // [weight] death_ragdoll: a resting corpse, its bones as they came to rest
         done = true;
         g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
+        if (cands[pick].knock.kept) g_keptSkinFrozen.fetch_add(1, std::memory_order_relaxed);
     } else if (cands[pick].knock.weight > 0.0f && cands[pick].bones == n) {   // [weight] knock_down: the copy laid on the knock-down's joints (vr/knock_pose.h)
         if (knockpose::Apply(mats, n, cands[pick].knock.parent, cands[pick].knock.joint, cands[pick].knock.at, cands[pick].knock.weight)) {
             done = true;
             g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
+            if (cands[pick].knock.kept) g_keptSkinJoints.fetch_add(1, std::memory_order_relaxed);
         } else {
             g_knockRefused.fetch_add(1, std::memory_order_relaxed);
         }
@@ -9693,9 +9726,18 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     const ULONGLONG t = GetTickCount64();
     ULONGLONG was = toldAt.load();
     if (t - was >= 5000 && toldAt.compare_exchange_strong(was, t)) {
-        NoteDoll("monster ragdoll pose - the last 5 s, skinnings of struck monsters' models: %u by their own pose, %u by the entity drawn, %u by matching its "
-                 "matrices, %u of another monster of the model (left as the game has it)", g_dollByPointer.exchange(0), g_dollByEntity.exchange(0),
-                 g_dollByMatch.exchange(0), g_dollUnmatched.exchange(0));
+        NoteDoll("monster ragdoll pose - the last 5 s, skinnings of struck monsters' models: %u by their own pose, %u by the anchor (the drawn entity's root), "
+                 "%u by the entity drawn, %u by matching its matrices, %u of another monster of the model (left as the game has it)", g_dollByPointer.exchange(0),
+                 g_dollByAnchor.exchange(0), g_dollByEntity.exchange(0), g_dollByMatch.exchange(0), g_dollUnmatched.exchange(0));
+        const unsigned other = g_anchorOther.exchange(0), noDraw = g_anchorNoDraw.exchange(0), noRoot = g_anchorNoRoot.exchange(0), looks = g_anchorLooks.exchange(0);
+        NoteDoll("monster ragdoll pose - the anchor, the last 5 s: %u skinnings whose drawn entity's root is none of our bodies' (another monster of the model: "
+                 "the game's), %u fell back to the old ways - %u outside a draw (no entity), %u roots not read (%s); %u looks up the tree (the rest kept)", other,
+                 noDraw + noRoot, noDraw, noRoot, g_entityParent.load() ? "the entity not in the transform storage, or the storage not found yet" : "no parent source",
+                 looks);
+        const unsigned keptFrozen = g_keptSkinFrozen.exchange(0), keptJoints = g_keptSkinJoints.exchange(0);
+        if (keptFrozen + keptJoints)
+            NoteDoll("death ragdoll - the last 5 s, skinnings of kept corpses (all from the kept table, their one source): %u drawn from their frozen bones, %u laid "
+                     "on their joints (no frozen bones for them)", keptFrozen, keptJoints);
         const unsigned knocked = g_knockSkinned.exchange(0), refused = g_knockRefused.exchange(0);
         if (knocked + refused)
             NoteDoll("knock down - the last 5 s: %u skinnings drew a knocked-down body from the copy laid on its joints%s", knocked,
@@ -9761,6 +9803,7 @@ void SetPoseView(bool allowed) {
 #endif
 }
 void SetFrozenPoseSource(FrozenPoseFn fn) { g_frozenPose.store(fn); }
+void SetEntityParentSource(EntityParentFn fn) { g_entityParent.store(fn); }
 void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn) {
     g_monsterPoseByWorld.store(fn);
     headshadow::SetDollSkin(fn ? &DollSkin : nullptr);

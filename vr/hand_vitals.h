@@ -83,6 +83,7 @@ struct Config {
     float coneDeg = 35.0f;        // [hud] hand_vitals_cone: how far off the face the palm may turn to appear (it goes at +15)
     bool pulse = false;           // [hud] hand_vitals_pulse: the life globe glows red and the panel breathes under the low-life threshold
     float lowFrac = 0.30f;        // [hud] low_hp_threshold (a fraction): under it the pulse starts
+    bool pulseEq = false;         // [hud] hand_vitals_pulse_eq: the wrist balls beat in step with the vignettes - life with the red's beat, mana with the blue's (handorbs::Step)
     bool flip = false;            // [debug] hand_vitals_flip: the back of the hand instead of the palm
     // The 3D orbs on the wrists (vr/hand_orbs.h, drawn by the effect), the default look; the palm panel above is the other.
     int style = 0;                // [hud] hand_vitals_style: 0 the glass orbs, 1 the palm panel, 2 the game's own globes cut from its interface (kStyle*)

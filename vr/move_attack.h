@@ -26,6 +26,15 @@
 //   Our own client sends the early walk only with our server here (Role Single / Host) - never as a joined client.
 // A joined TCP/IP client (someone else hosts): our client sends nothing extra, predicts nothing - the host's server decides. Online: nothing.
 // Off: no hook does anything.
+//
+// The flat game ([gameplay] flat_move_while_attacking, Serg 2026-11-03: «на 2д режиме изнутри или от 3 лица сделать чтобы при ударе можно было
+// стрейфится»): the same cut for OUR hero in the monitor's own-camera views (F2 third person, F3 first person), W A S D held - the keyboard move
+// fills the controller's grid vector the same way the stick does (docs/move_recon.md section 3), turned by our camera, so the hero steps
+// sideways, back or on where the camera looks - and in the headset's 2D views VR F1 / F2 / F3 (2026-11-03: Serg plays those), the left stick's
+// walk ([direct] walk_flat_views, BodyWalk's stick) filling the same vector. Its own key, apart from the F4 one: 1 = the F4 option's weapons, 2 = every weapon. There the
+// attacks are the mouse's: its clicks of our hero (left and right, pressed and held) are held back until the cut animation would have ended
+// (ClickHold) - the game's attack rate. The game itself cannot do this: its server drops a walk asked for before the animation's last frame.
+// Off / missing: as before.
 #pragma once
 
 #include <cmath>
@@ -55,6 +64,25 @@ inline bool AttackMode(uint32_t mode) { return mode == kModeAttack1 || mode == k
 // What the stick's command asks the server for (0x42CED0's mode: 2 + run).
 inline bool WalkMode(uint32_t mode) { return mode == kModeWalk || mode == kModeRun; }
 
+// Which weapons a setting lets walk on: none, the reach and ranged ones (WeaponQualifies, the F4 option's), or every weapon (bare hands too:
+// [gameplay] flat_move_while_attacking=2).
+enum : uint8_t { kScopeNone = 0, kScopeReach = 1, kScopeAll = 2 };
+inline uint8_t ScopeOfKey(int key) { return key <= 0 ? kScopeNone : key == 1 ? kScopeReach : kScopeAll; }
+inline bool WeaponIn(uint8_t scope, uint32_t type) { return scope == kScopeAll || (scope == kScopeReach && WeaponQualifies(type)); }
+// Our own hero's scope now. VR first person: the F4 option's (reach and ranged, ticked or not). The flat key's views - the monitor's F2 / F3
+// (our camera) and VR F1 / F2 / F3 (`flatCamera`): the flat key's. Anywhere else (the monitor's F1, the game's own camera): none - the game's stop.
+inline uint8_t OwnScope(bool on, bool f4, bool flatCamera, uint8_t flatScope) {
+    if (f4) return on ? kScopeReach : kScopeNone;
+    return flatCamera ? flatScope : kScopeNone;
+}
+// A JOINED hero on our server (a TCP/IP game we host): the host decides, with the widest of his two keys - the F4 box (spear and bow) and the
+// flat key (1 spear and bow, 2 every weapon), whatever view either player is in (2026-11-03: Serg hosted with the flat key at 2, manager joined
+// with a sword and the host still asked for spear / bow - his flat key was for his own hero only).
+inline uint8_t HostScope(bool on, uint8_t flatScope) {
+    const uint8_t f4 = on ? kScopeReach : kScopeNone;
+    return flatScope > f4 ? flatScope : f4;
+}
+
 // -- the attack, noted at its action frame (the server) -------------------------------------------------------------------------------
 struct Fired {
     bool valid = false;
@@ -77,7 +105,9 @@ struct GateAsk {
     bool on = false;          // [gameplay] move_while_attacking
     bool f4 = false;          // VR first person
     bool player = false;      // the unit is a hero of this game on our server (type 0, its game) - ours or a joined player's
-    bool own = false;         // ... and it is ours (then the view must be F4; a joined hero's view is his own: the host's setting decides)
+    bool own = false;         // ... and it is ours (then the view must be F4, or flat with our camera; a joined hero's view is his own: the host's setting decides)
+    bool flatCamera = false;  // one of the flat key's views: the monitor's F2 / F3, VR F1 / F2 / F3
+    uint8_t flatScope = 0;    // [gameplay] flat_move_while_attacking (ScopeOfKey)
     uint32_t mode = 0;        // his mode now
     uint32_t newMode = 0;     // the mode asked for
     bool target = false;      // a skill target came with it (not the stick's walk)
@@ -90,11 +120,11 @@ enum class GateWhy : uint8_t { Game, Off, NotHero, NotWalk, NotAttack, Weapon, N
 inline const char* GateWhyText(GateWhy w) {
     switch (w) {
     case GateWhy::Game: return "the game's own answer (not the animation's wait)";
-    case GateWhy::Off: return "off, or not VR first person";
+    case GateWhy::Off: return "off, or not VR first person / the flat game's F2 or F3";
     case GateWhy::NotHero: return "not a hero of this game";
     case GateWhy::NotWalk: return "not the stick's walk or run";
     case GateWhy::NotAttack: return "not out of an attack or a throw";
-    case GateWhy::Weapon: return "not a spear, polearm, javelin, bow or crossbow";
+    case GateWhy::Weapon: return "not a weapon the option is for (spear, polearm, javelin, bow, crossbow - or every weapon with the flat key at 2)";
     case GateWhy::NotFired: return "the attack's blow or shot is not out yet";
     case GateWhy::Let: return "let in: the blow is out, the hero walks on";
     }
@@ -103,14 +133,16 @@ inline const char* GateWhyText(GateWhy w) {
 // Let: the walk goes in now (the gate answers 0). Everything else: the gate's own answer stands.
 inline GateWhy JudgeGate(const GateAsk& a) {
     if (a.original != kGateNotYet) return GateWhy::Game;   // 0 already free, 1 refused for its own reasons (stunned, frozen ...)
-    if (!a.on || (a.own && !a.f4)) return GateWhy::Off;
+    // ours: the view's option; a joined hero's: the host's widest (HostScope - the host decides; his view is his own)
+    const uint8_t scope = a.own ? OwnScope(a.on, a.f4, a.flatCamera, a.flatScope) : HostScope(a.on, a.flatScope);
+    if (scope == kScopeNone) return GateWhy::Off;
     if (!a.player) return GateWhy::NotHero;
     if (!WalkMode(a.newMode) || a.target) return GateWhy::NotWalk;
     if (!AttackMode(a.mode)) return GateWhy::NotAttack;
     const Fired& f = a.fired;
     // the same attack: this hero, the same mode, the same end - an attack that began after the noted one has another end
     if (!f.valid || f.heroId != a.heroId || f.mode != a.mode || f.endFrame != a.endFrame || a.nowFrame < f.atFrame) return GateWhy::NotFired;
-    if (!WeaponQualifies(f.weapon)) return GateWhy::Weapon;
+    if (!WeaponIn(scope, f.weapon)) return GateWhy::Weapon;
     return GateWhy::Let;
 }
 
@@ -229,13 +261,18 @@ inline Walk MakeWalk(float gx, float gy, bool runToggle, bool stamina, bool forc
 }
 
 struct NudgeAsk {
-    bool on = false, f4 = false, weapon = false, menu = false;
+    bool on = false, f4 = false, weapon = false, menu = false;   // the F4 option: ticked, VR first person, a spear / bow kind
+    bool flatOn = false;         // [gameplay] flat_move_while_attacking on and we are in its views (the monitor's F2 / F3, VR F1 / F2 / F3)
+    bool flatWeapon = false;     // ... and the hero's weapon is in its scope
     Role role = Role::Unknown;   // ClientMaySend
     uint32_t heroId = 0;
     uint32_t clientMode = 0;     // the hero's mode on the client
-    bool skillHeld = false;      // the controller holds a skill press (+0x1974 != -1): the game repeats the attack, the hero stays
+    bool skillHeld = false;      // the controller holds a skill press (+0x1974 != -1): the game repeats the attack. F4: the hero stays. The flat
+                                 // key: the walk goes all the same (strafing with the attack held) - its pad hold takes the button off until the
+                                 // cut animation's end, so the game's repeat comes no sooner than it would have
     bool stick = false;          // the stick is pushed (a walk to send)
     uint64_t nowMs = 0;
+    uint64_t attackSinceMs = 0;  // when the client's hero began THIS attack (our clock): a note older than that is the last attack's
     Fired fired;
     uint32_t sentForThis = 0;    // walks already sent for this noted attack
     uint64_t lastSentMs = 0;
@@ -247,13 +284,109 @@ inline bool NoteFresh(const Fired& f, uint64_t nowMs) {
     const uint64_t life = (uint64_t)FramesLeft(f.endFrame, f.atFrame) * kFrameMs + kSlackMs;
     return nowMs - f.atMs <= life;
 }
-// Send the game's walk now (once a server frame at most).
-inline bool Nudge(const NudgeAsk& a) {
-    if (!a.on || !a.f4 || !a.weapon || a.menu || !a.stick || a.skillHeld || !ClientMaySend(a.role)) return false;
-    if (!AttackMode(a.clientMode)) return false;   // walking already (the game's controller has it), or not an attack
-    if (!NoteFresh(a.fired, a.nowMs) || a.fired.heroId != a.heroId) return false;
-    if (a.sentForThis >= kMaxSends) return false;
-    return a.lastSentMs == 0 || a.nowMs - a.lastSentMs >= kFrameMs;
+// Send the game's walk now (once a server frame at most) - or why not.
+enum class NudgeWhy : uint8_t { Send, Off, Weapon, Menu, Role, NoStick, SkillHeld, NotAttack, NoNote, Spent, TooSoon };
+inline const char* NudgeWhyText(NudgeWhy w) {
+    switch (w) {
+    case NudgeWhy::Send: return "the walk sent";
+    case NudgeWhy::Off: return "off in this view (VR F4: move_while_attacking; the monitor's F2 / F3 and VR F1 / F2 / F3: flat_move_while_attacking)";
+    case NudgeWhy::Weapon: return "not a weapon the option is for";
+    case NudgeWhy::Menu: return "a panel or menu is open";
+    case NudgeWhy::Role: return "no server of ours here (joined to another's TCP/IP game, or not known yet): the host's server decides, our client sends nothing extra";
+    case NudgeWhy::NoStick: return "no walk held after the blow (the stick / W A S D at rest)";
+    case NudgeWhy::SkillHeld: return "the attack button held (F4: the game repeats the attack, the hero stays)";
+    case NudgeWhy::NotAttack: return "not an attack or a throw on the client";
+    case NudgeWhy::NoNote: return "the blow not noted by our server (not out yet)";
+    case NudgeWhy::Spent: return "3 walks sent for this attack already";
+    case NudgeWhy::TooSoon: return "one walk a server frame";
+    }
+    return "";
+}
+inline NudgeWhy JudgeNudge(const NudgeAsk& a) {
+    const bool f4Path = a.on && a.f4;
+    if (!f4Path && !a.flatOn) return NudgeWhy::Off;
+    if (!((f4Path && a.weapon) || (a.flatOn && a.flatWeapon))) return NudgeWhy::Weapon;
+    const bool flatPath = !(f4Path && a.weapon);
+    if (a.menu) return NudgeWhy::Menu;
+    if (!ClientMaySend(a.role)) return NudgeWhy::Role;
+    if (!AttackMode(a.clientMode)) return NudgeWhy::NotAttack;   // walking already (the game's controller has it), or not an attack
+    if (!a.stick) return NudgeWhy::NoStick;
+    if (a.skillHeld && !flatPath) return NudgeWhy::SkillHeld;
+    // this attack's own blow: the last attack's note lives on for its animation + kSlackMs, and an attack clicked right after a cut began inside
+    // that time - a walk sent then ended the new attack before its blow (0.199.9, «стрейф останавливает удар»: the server refused the walk, the
+    // client's hero walked off, the swing lost)
+    if (!NoteFresh(a.fired, a.nowMs) || a.fired.heroId != a.heroId || a.fired.atMs < a.attackSinceMs) return NudgeWhy::NoNote;
+    if (a.sentForThis >= kMaxSends) return NudgeWhy::Spent;
+    if (a.lastSentMs != 0 && a.nowMs - a.lastSentMs < kFrameMs) return NudgeWhy::TooSoon;
+    return NudgeWhy::Send;
+}
+inline bool Nudge(const NudgeAsk& a) { return JudgeNudge(a) == NudgeWhy::Send; }
+// When the noted attack's animation would end by our clock (the client arms its rate hold with it as it sends the walk, before the server's
+// answer: the pad's attack button is off at the very next poll).
+inline uint64_t NoteEndMs(const Fired& f) { return f.atMs + (uint64_t)FramesLeft(f.endFrame, f.atFrame) * kFrameMs; }
+
+// -- the log: one line an attack of ours (the first ones of a session) - did it walk on, and if not, why ----------------------------------
+struct AttackStory {
+    uint32_t mode = 0;
+    NudgeWhy why = NudgeWhy::Off;   // the reason that counted (not "not out yet" when a later one was seen)
+    bool noted = false;             // our server noted this attack's blow (no: the attack ended before it - a lost blow, unless the game itself
+                                    // ended it: a hit taken, a stun)
+    uint32_t sent = 0;              // walks sent in it
+    uint32_t cuts = 0;              // walks our server let in for our hero in it
+    uint64_t ms = 0;                // how long the client showed the attack
+};
+class AttackLog {
+public:
+    // When the client's hero began the attack he is in now (our clock; 0: not in one). An attack that follows another without a stand
+    // between (attack 1 -> attack 2) is a new one.
+    uint64_t Since() const { return in_ ? from_ : 0; }
+    // Each controller update, BEFORE this update's walk is judged: the client's mode, the server's cuts of our hero in all, the time. True:
+    // an attack of ours just ended, *out is its story (the next attack, if one follows at once, is begun).
+    bool Begin(uint32_t clientMode, uint32_t cutsTotal, uint64_t nowMs, AttackStory* out) {
+        bool ended = false;
+        if (in_) cur_.cuts = cutsTotal - cuts0_;   // (the server's answer to the walk may come after the client's hero already walks)
+        cuts_ = cutsTotal;
+        if (in_ && clientMode != cur_.mode) {
+            in_ = false;
+            cur_.ms = nowMs - from_;
+            *out = cur_;
+            ended = true;
+        }
+        if (!in_ && AttackMode(clientMode)) {
+            in_ = true;
+            cur_ = AttackStory{};
+            cur_.mode = clientMode;
+            from_ = nowMs;
+            cuts0_ = cuts_;
+            other_ = false;
+        }
+        return ended;
+    }
+    // ... and AFTER: this update's verdict, whether a walk went out now, the server's cuts of our hero in all, the last noted blow's time.
+    void Note(NudgeWhy why, bool sentNow, uint32_t cutsTotal, uint64_t firedAtMs) {
+        cuts_ = cutsTotal;
+        if (!in_) return;
+        {
+            const bool weak = why == NudgeWhy::NoNote || why == NudgeWhy::TooSoon || why == NudgeWhy::Spent;
+            if (!weak || !other_) cur_.why = why;
+            if (!weak) other_ = true;
+            if (firedAtMs >= from_) cur_.noted = true;
+            if (sentNow) ++cur_.sent;
+            cur_.cuts = cutsTotal - cuts0_;
+        }
+    }
+
+private:
+    bool in_ = false, other_ = false;
+    AttackStory cur_;
+    uint64_t from_ = 0;
+    uint32_t cuts_ = 0, cuts0_ = 0;
+};
+// The story in a word: WALKED ON (our server let a walk in), or a walk sent and not let in, or why none went - and whether the blow came.
+inline const char* StoryText(const AttackStory& s) {
+    if (s.cuts) return "WALKED ON";
+    if (s.sent) return "a walk sent, NOT let in by our server";
+    return NudgeWhyText(s.why);
 }
 
 // -- the rate: the next attack waits out the cut animation -------------------------------------------------------------------------------
@@ -295,6 +428,67 @@ private:
     uint64_t until_ = 0, from_ = 0;
     uint16_t pending_ = 0;
     bool replaying_ = false;
+};
+
+// -- the rate in the flat game: the mouse's clicks wait out the cut animation -------------------------------------------------------------
+// The game's map click 0xFE3B0(unit, type, x, y, flags) - type 0 / 1 the left button pressed / held, 3 / 4 the right (docs/move_recon.md
+// section 5) - is how the mouse attacks and casts. Its press handlers keep what it answers (1 = taken) as "this button's press is on"
+// (0x2A23454 left, 0x2A23478 right), and the game's loop repeats the held click (type 1 / 4) every frame only while that is set.
+// While the hold runs, a click of our hero's of these types is not given to the game: the hook answers 1, as the game does for a click it
+// took - so a button kept down goes on being repeated by the game, and its first repeat after the hold IS the next attack, made by the game.
+// A press made in the hold whose button is let go before the hold ends would be lost: it is pressed again (the same click, through the
+// game's own click) a little after the hold's end, unless the button's own click went out by then. One per button, never older than
+// kClickReplayMaxMs past the hold's end.
+constexpr uint64_t kClickReplayAfterMs = 60;    // the game's own held repeat comes first (it runs every frame)
+constexpr uint64_t kClickReplayMaxMs = 400;     // later than this past the hold's end a held-back press is dropped (a menu came, the game paused)
+inline bool MouseAttackClick(int type) { return type == 0 || type == 1 || type == 3 || type == 4; }
+inline bool MousePress(int type) { return type == 0 || type == 3; }
+struct Click {
+    bool valid = false;
+    int type = 0, x = 0, y = 0;
+    uint64_t flags = 0;
+};
+class ClickHold {
+public:
+    // A click of our hero's. `holdUntil`: the hold's end by our clock (0 = none). True: held back - the hook answers 1, the game is not called.
+    bool Take(uint64_t nowMs, uint64_t holdUntil, int type, int x, int y, uint64_t flags) {
+        if (!MouseAttackClick(type)) return false;
+        Click& p = pending_[Button(type)];
+        if (nowMs < holdUntil) {
+            if (MousePress(type)) {
+                p.valid = true;
+                p.type = type;
+                p.x = x;
+                p.y = y;
+                p.flags = flags;
+            }
+            end_ = holdUntil;
+            return true;
+        }
+        p.valid = false;   // the button's own click goes out: nothing to press again for it
+        return false;
+    }
+    // Each controller update: a held-back press to make now (invalid: none).
+    Click Due(uint64_t nowMs, uint64_t holdUntil) {
+        if (nowMs < holdUntil) return Click{};
+        if (end_ < holdUntil) end_ = holdUntil;   // (a later hold armed meanwhile)
+        if (nowMs < end_ + kClickReplayAfterMs) return Click{};
+        const bool stale = nowMs > end_ + kClickReplayMaxMs;
+        for (Click& p : pending_) {
+            if (!p.valid) continue;
+            const Click c = p;
+            p.valid = false;
+            if (!stale) return c;
+        }
+        return Click{};
+    }
+    bool Pending() const { return pending_[0].valid || pending_[1].valid; }
+    void Reset() { pending_[0] = pending_[1] = Click{}; end_ = 0; }
+
+private:
+    static int Button(int type) { return type <= 1 ? 0 : 1; }
+    Click pending_[2];
+    uint64_t end_ = 0;
 };
 
 }  // namespace moveattack

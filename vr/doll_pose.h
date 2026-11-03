@@ -47,6 +47,7 @@ struct Knock {
     float m3[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};   // the model -> the world (rows) and where it stands (world units): what hangs on its bones is carried with them
     float root[3] = {};
     bool frozen = false;   // [weight] death_ragdoll: a corpse kept as it lies - drawn from its bones as they were when it came to rest (skel::SetFrozenPoseSource)
+    bool kept = false;     // ... handed from the kept corpses' own table (knockdown::KeptPosesForSkin), their one source - not the moving bodies' list
 };
 
 struct Pose {

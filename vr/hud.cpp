@@ -122,6 +122,7 @@ bool MapOffset() { return std::abs(g_mapOffX.load()) > 0.0005f || std::abs(g_map
 std::atomic<bool> g_mapTurnFlat{false};
 std::atomic<float> g_flatX{0.0f}, g_flatY{1.0f};
 std::atomic<ULONGLONG> g_flatAt{0};
+std::atomic<ULONGLONG> g_roundAt{0};   // the last interface pass that drew it turned (MapTurnState)
 bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset() || g_mapTurnFlat.load(); }
 // What is taken out of the picture now: for FlatVR in first person, to be drawn back at another size otherwise.
 int HideNow() { return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load(); }
@@ -785,6 +786,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         const float bearing = known ? mapturn::Bearing(g_flatX.load(), g_flatY.load()) : 0.0f;
         g_pic.round = mapturn::RoundOnScreen(mapturn::For(false, true, known, bearing), g_pic.box[kMap], (float)(mapBox.right - mapBox.left),
                                              (float)(mapBox.bottom - mapBox.top));
+        if (g_pic.round.ok) g_roundAt.store(GetTickCount64());
         static bool told = false;
         if (g_pic.round.ok && !told) {
             told = true;
@@ -1087,6 +1089,15 @@ bool PictureNow(int i, float box[4], uint64_t* srv) {
 // [hud] map_rotate_flat: vrcam's tick says whether the corner map in the picture is to turn (MapRotateFlatTick), each of our views its way on
 // the ground (mapdir::OnGround).
 void SetMapRotateFlat(bool on) { g_mapTurnFlat.store(on); }
+// Why the turned map is or is not on the screen now, for vrcam's log: 0 not wanted, 1 the effect that draws it back is not running
+// (D2R_DepthFog.fx off, old, or not found - with ReShade or the plugin's own runtime), 2 no corner map in the interface (shut, the
+// whole-screen overlay, or its box not found: hud's "no map box" line says which boxes there were), 3 drawn turned.
+int MapTurnState() {
+    if (!g_mapTurnFlat.load()) return 0;
+    if (!g_picReady.load()) return 1;
+    const ULONGLONG at = g_roundAt.load(), now = GetTickCount64();
+    return at && now >= at && now - at < 500 ? 3 : 2;
+}
 void SetMapFlatHeading(float x, float y) {
     if (!std::isfinite(x) || !std::isfinite(y)) return;
     g_flatX.store(x); g_flatY.store(y); g_flatAt.store(GetTickCount64());

@@ -442,10 +442,11 @@ void MeleeTouchTick() {
         meleetouch::ItemsTick(f.ok, heroRender, f.upm);   // [weight] grab_items: the items lying near
         meleetouch::BarrelsStep();   // [gameplay] melee_touch_barrels: the press on a barrel the swing went through, held until it breaks
         // [weight] death_ragdoll_flat: outside F4 (VR F1-F3, the flat game) the bodies for the deaths, the hero where the look-at has him; the world's scale
-        // from his own eyes (ViewHeight is the third-person camera's height there), as in F4
+        // from his own eyes (ViewHeight is the third-person camera's height there), as in F4. F4 ([weight] death_ragdoll, knock_down): the same while the
+        // touch keeps no bodies, at the touch's own scale. A menu open stops neither (the dead went back to the game's place while it was open, 0.199.0).
         float eye = 0.0f, lift = 0.0f;
-        const float deathUpm = skel::HeroEye(&eye, &lift) && eye > 1.0f ? eye / UserEyeHeightM() : f.upm;
-        meleetouch::DeathFlatTick(g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen(), heroRender, deathUpm);
+        const float deathUpm = viewgate::F4() ? f.upm : skel::HeroEye(&eye, &lift) && eye > 1.0f ? eye / UserEyeHeightM() : f.upm;
+        meleetouch::DeathTick(g_enabled.load() && g_inWorld.load(), heroRender, deathUpm);
     }
     {   // [weight] knock_props (vr/knock_props.h): the level's props near the hero, the blades hit by touch just drew, the physics thread's knocks
         knockprops::Frame kf;

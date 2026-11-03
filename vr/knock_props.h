@@ -90,6 +90,9 @@ bool EntityWorld(uint32_t entity, float m[16]);
 // ... and written ([weight] death_ragdoll: what hangs on a dead body's bones, which the game no longer moves once its death animation is over): m into its
 // transform +0x40, the matrix drawn until now into +0x80 (the last frame's). False: the storage not found, the entity not in it. Any thread; guarded writes.
 bool PutEntityWorld(uint32_t entity, const float m[16]);
+// ... and its parent as the renderer has it (its transform +0xC0; 0xFFFFF in the low 20 bits: none) - [weight] death_ragdoll: the skinning's anchor, the root
+// of the entity drawn (vr/skin_anchor.h). False: the storage not found, the entity not in it. Any thread; a guarded read.
+bool EntityParent(uint32_t entity, uint32_t* parent);
 
 // [multiplayer] pose_share_held: a prop as drawn now, for the other players - one our hand holds or threw: its catalogue name, where it stood when first found this
 // session (render units: the level's own place of it, the same on every PC), its world matrix as drawn (render units) and whether it is moving. False: not tracked.

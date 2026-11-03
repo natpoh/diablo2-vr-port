@@ -4,6 +4,7 @@
 // vr/low_hp.h (pure, tested); nothing of the game is written - the life is read, the picture gets a colour.
 
 #include "low_hp.h"
+#include "low_mp.h"
 
 namespace D2RL {
 struct PluginContext;
@@ -41,5 +42,15 @@ void PlayPreview();
 
 // What the effect gets for the eye being recorded: false = nothing to tint (it is left as it is, bit for bit).
 bool Current(Uniforms* out);
+
+// [hud] low_mp_vignette (vr/low_mp.h): the low-mana blue at the bottom. Its mana is read with the life (Tick), its beat stepped in Frame beside
+// the life's; Configure on every read of the ini, Enabled while ticked, Current what the effect gets (false = nothing). Any thread.
+void ConfigureMana(const lowmp::Config& config);
+bool ManaEnabled();
+bool CurrentMana(lowmp::Uniforms* out);
+
+// Each vignette's beat now, for the hand's medallion to beat in step ([hud] hand_vitals_pulse_eq, vr/hand_orbs.h): 0 - 1, the top of the first
+// beat 1, times the vignette's fade (an equalizer's 0 = a steady 1); false = that vignette is not up (off, or above its threshold). Any thread.
+bool BeatNow(bool mana, float* level);
 
 }  // namespace lowhp
