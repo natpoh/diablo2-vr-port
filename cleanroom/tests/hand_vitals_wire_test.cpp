@@ -426,6 +426,21 @@ int main() {
         Configure(c);
         const Config live = Settings();
         EXPECT(live.orbHands == 2 && std::fabs(live.orbSizeCm - 7.0f) < 1e-6f && std::fabs(live.orbOpacity - 0.5f) < 1e-6f);   // the orbs' settings are live
+        {   // [shapeshift] the werebear's depth offset and its auto lift reach the effect (0.201.0 RC: not carried, the slider moved nothing)
+            EXPECT(live.orbBearZCm == 0.0f && !live.orbFormAuto);
+            Config bear = c;
+            bear.orbBearZCm = 3.3f;
+            bear.orbFormAuto = true;
+            Configure(bear);
+            const Config b = Settings();
+            EXPECT(std::fabs(b.orbBearZCm - 3.3f) < 1e-6f && b.orbFormAuto);
+            EXPECT(std::fabs(FormZCm(b, 2) - 3.3f) < 1e-6f && FormZCm(b, 1) == 0.0f);
+            bear.orbBearZCm = 40.0f;   // held at 15
+            Configure(bear);
+            EXPECT(std::fabs(Settings().orbBearZCm - kOrbFormZMax) < 1e-6f);
+            Configure(c);
+            EXPECT(Settings().orbBearZCm == 0.0f && !Settings().orbFormAuto);
+        }
         EXPECT(std::fabs(live.orbLeft.upCm - 5.0f) < 1e-6f && std::fabs(live.orbLeft.alongCm - 1.0f) < 1e-6f && std::fabs(live.orbLeft.sideCm + 2.5f) < 1e-6f);   // each wrist's three numbers
         EXPECT(std::fabs(live.orbLeft.rotXDeg - 30.0f) < 1e-6f && std::fabs(live.orbLeft.rotYDeg + 45.0f) < 1e-6f && std::fabs(live.orbLeft.rotZDeg - 170.0f) < 1e-6f &&
                std::fabs(live.orbRight.rotXDeg + 10.0f) < 1e-6f && std::fabs(live.orbRight.rotYDeg - 20.0f) < 1e-6f && std::fabs(live.orbRight.rotZDeg - 180.0f) < 1e-6f);   // the medallion's turn, each wrist, live

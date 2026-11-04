@@ -1589,6 +1589,16 @@ std::vector<Item> g_items = {
     DirectNeeds(RemapRow(L"left_y_touch", L"Left Y (touch)", kTouchTip)),
     DirectNeeds(RemapRow(L"left_stick_touch", L"Left stick (touch)", kTouchTip)),
 
+    Tab(L"Mechanics"),
+    Group(L"Combat"),   // (a page lays out its groups only: LayoutPage)
+    Warning(L"mechanics_warn", L"These mechanics can change how you interact with the game and depart from the classic Diablo engine. Off = the game as it is."),
+    Toggle(L"gameplay", L"flat_attack_path", L"The swing does not stop the hero", 0,
+           L"The monitor's third and first person (F2, F3), plain attacks and throws. With W A S D held the hero keeps walking while he swings, in the "
+           L"attack's own full animation: its blow, hit chance, damage and rate stay the game's. Once he walked in the swing, a melee blow goes to the monster you "
+           L"attacked while it stays before the camera, else to whoever stands there when it lands; nobody there, it hits the air. A swing with no walk in it "
+           L"is the game's own. The game's own reach test still applies, so backing away "
+           L"from a monster with a short weapon mostly misses. A TCP/IP game: who hosts decides. The host's box holds for every player with the same "
+           L"version of the mod; a joined player's own box means nothing there. It replaces the 2D strafe option on the Controls tab. Unticked: the game's own rule."),
     Only(kVr, Tab(L"Stereo")),
     // Native OpenXR (Performance > 3D in the headset > Native OpenXR): applied at once while the game runs.
     Group(L"Native OpenXR (the game itself in the headset)", L"Everything for native OpenXR: brightness, the flat picture for menus, F1 and F3 in real 3D, room-scale walking, Controls without BodyWalk, the skill panel, the eyes' angles and distance, the square window and vibration. Most of it changes live."),

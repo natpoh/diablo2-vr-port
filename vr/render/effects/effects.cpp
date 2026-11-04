@@ -2414,6 +2414,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                     static float personOutM[2] = {};
                     static int toldForm = -1;
                     static float toldAuto[2] = {-1.0f, -1.0f};
+                    static float toldZ = 0.0f;
+                    static bool toldOn = false;
                     bool measured[2] = {};
                     for (int side = 0; side < 2; ++side) {
                         float out = 0.0f;
@@ -2421,10 +2423,13 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                         if (in.form == 0 && measured[side]) personOutM[side] = out;
                         else if (in.form == 2 && in.cfg.orbFormAuto && measured[side]) in.formAutoCm[side] = handorbs::FormLiftCm(out, personOutM[side]);   // (the werebear only)
                     }
-                    const bool autoMoved = in.form == 2 && (fabsf(in.formAutoCm[0] - toldAuto[0]) > 0.5f || fabsf(in.formAutoCm[1] - toldAuto[1]) > 0.5f);
+                    const bool autoMoved = in.form == 2 && (fabsf(in.formAutoCm[0] - toldAuto[0]) > 0.5f || fabsf(in.formAutoCm[1] - toldAuto[1]) > 0.5f ||
+                                                            fabsf(handvitals::FormZCm(in.cfg, 2) - toldZ) > 0.05f || in.cfg.orbFormAuto != toldOn);   // (the slider, the tick moved live)
                     if (in.form != toldForm || autoMoved) {   // once per change: the form, its offset, the auto lift and what it was measured from
                         toldForm = in.form;
                         toldAuto[0] = in.formAutoCm[0]; toldAuto[1] = in.formAutoCm[1];
+                        toldZ = handvitals::FormZCm(in.cfg, 2);
+                        toldOn = in.cfg.orbFormAuto;
                         if (in.form == 1) Log("vrcam: hand vitals - the werewolf is your body: the wrist medallions at the druid's place");
                         else if (in.form == 2)
                             LogF("vrcam: hand vitals - the %s is your body: the wrist medallions' depth offset for it %+.1f cm ([hud] hand_vitals_orb_z_cm_%s), auto lift %s right %.1f cm, "

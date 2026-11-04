@@ -780,6 +780,15 @@ group.buttons_of_the_controllers_the_finger_on_a_control_touch.help = Actions fi
 @remap.left_y_touch.label = Left Y (touch)
 @remap.left_stick_touch.label = Left stick (touch)
 
+# ===== Tab: Mechanics =====
+tab.mechanics = Mechanics
+
+# --- Combat ---
+group.combat = Combat
+@status.mechanics_warn.label = These mechanics can change how you interact with the game and depart from the classic Diablo engine. Off = the game as it is.
+gameplay.flat_attack_path.label = The swing does not stop the hero
+gameplay.flat_attack_path.tip = The monitor's third and first person (F2, F3), plain attacks and throws. With W A S D held the hero keeps walking while he swings, in the attack's own full animation: its blow, hit chance, damage and rate stay the game's. Once he walked in the swing, a melee blow goes to the monster you attacked while it stays before the camera, else to whoever stands there when it lands; nobody there, it hits the air. A swing with no walk in it is the game's own. The game's own reach test still applies, so backing away from a monster with a short weapon mostly misses. A TCP/IP game: who hosts decides. The host's box holds for every player with the same version of the mod; a joined player's own box means nothing there. It replaces the 2D strafe option on the Controls tab. Unticked: the game's own rule.
+
 # ===== Tab: Stereo =====
 tab.stereo = Stereo
 

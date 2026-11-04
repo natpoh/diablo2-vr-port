@@ -540,6 +540,7 @@ add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp 
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
+target_sources(d2rl-vrcam PRIVATE vr/attack_path_wire.cpp)   # [gameplay] flat_attack_path
 target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp)   # [hands] belt_inner_glow (the game's own highlight on a bottle in reach), belt_drop_ground (the game's own drop of a belt potion)
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/head_shadow.cpp)   # [arms] head_shadow: the hidden head still casts its shadow (the eyes' skinning only has it shrunk), visual only
@@ -861,6 +862,9 @@ target_compile_options(stand_still_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(move_attack_test cleanroom/tests/move_attack_test.cpp)
 target_include_directories(move_attack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(move_attack_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The swing does not stop the hero ([gameplay] flat_attack_path, vr/attack_path.h): when it acts, the speed, who a blow is for.
+add_executable(attack_path_test cleanroom/tests/attack_path_test.cpp)
+target_compile_options(attack_path_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # What the game does with a shot of ours, told in the log ([debug] shot_trace, vr/shot_trace.h): the window of a shot and the texts.
 add_executable(shot_trace_test cleanroom/tests/shot_trace_test.cpp)
 target_include_directories(shot_trace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

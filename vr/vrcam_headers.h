@@ -76,6 +76,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "laser_reach.h"   // [openxr] laser_fit_window: the game's window kept on its monitor, so the laser reaches all of the picture
 #include "stand_still_wire.h"   // [gameplay] attack_in_place: an attack of ours is pressed with the game's Stand Still (stand_still_wire.cpp)
 #include "stand_still.h"        // ... and a click on bare ground in F4 gets Stand Still too (HookMapClick)
+#include "attack_path_wire.h"   // [gameplay] flat_attack_path: the swing does not stop the hero (attack_path_wire.cpp)
 #include "move_attack_wire.h"   // [gameplay] move_while_attacking: the hero walks on once the blow or the shot is out (move_attack_wire.cpp)
 #include "reshade_env.h"        // another mod's RESHADE_* variables, cleared in this process before ReShade64.dll loads (LoadReShade)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)

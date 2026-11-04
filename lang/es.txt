@@ -775,6 +775,15 @@ group.buttons_of_the_controllers_the_finger_on_a_control_touch.help = Acciones q
 @remap.left_y_touch.label = Y izquierdo (tacto)
 @remap.left_stick_touch.label = Palanca izquierda (tacto)
 
+# ===== Tab: Mechanics =====
+tab.mechanics = Mecánicas
+
+# --- Combat ---
+group.combat = Combate
+@status.mechanics_warn.label = Estas mecánicas pueden cambiar cómo interactúas con el juego y se apartan del motor clásico de Diablo. Desactivado = el juego tal cual.
+gameplay.flat_attack_path.label = El golpe no detiene al héroe
+gameplay.flat_attack_path.tip = Tercera y primera persona en el monitor (F2, F3), ataques normales y lanzamientos. Con W A S D pulsado el héroe sigue andando mientras golpea, con la animación completa del ataque: el golpe, la probabilidad de acierto, el daño y la cadencia siguen siendo los del juego. Si anduvo durante el golpe, un golpe cuerpo a cuerpo va al monstruo que atacaste mientras siga delante de la cámara; si no, a quien esté ahí cuando impacte; si no hay nadie, golpea el aire. Un golpe sin andar es el del propio juego. La comprobación de alcance del juego sigue valiendo, así que retroceder ante un monstruo con un arma corta suele fallar. Una partida TCP/IP: decide quien hospeda. La casilla del anfitrión vale para todos los jugadores con la misma versión del mod; la casilla propia de un jugador unido no cuenta ahí. Sustituye la opción de desplazamiento 2D de la pestaña Controles. Desmarcado: la regla del juego.
+
 # ===== Tab: Stereo =====
 tab.stereo = Estéreo
 

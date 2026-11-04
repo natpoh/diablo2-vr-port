@@ -26,6 +26,8 @@ PadOut Pad(uint64_t nowMs, uint16_t attackBits);
 // The flat game ([gameplay] flat_move_while_attacking: 0 off, 1 the F4 option's weapons, 2 every weapon), live: our hero in the monitor's F2 / F3 or VR F1 / F2 / F3
 // walks on with W A S D once the blow is out. The same hooks as above (Install puts them in once either key asks).
 void SetFlatWanted(int key);
+// Our hero in the flat key's views now (vr/attack_path_wire.cpp).
+bool PathViewNow();
 // vrcam, once: true in the flat key's views (the monitor's F2 / F3 with our camera, VR F1 / F2 / F3).
 void SetFlatCameraFn(bool (*fn)());
 // vrcam, once: the monitor game's view number (1 F1, 2 F2, 3 F3; 0 in VR) - the per-attack log names the view.

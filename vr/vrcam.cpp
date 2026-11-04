@@ -1049,6 +1049,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     firststart::SetLogger(&Log);
     standstill::SetLogger(&Log);
     moveattack::SetLogger(&Log);
+    attackpath::SetLogger(&Log);
+    attackpath::SetForwardFn([](float* sx, float* sy) { *sx = 0.0f; *sy = 1.0f; return ViewStickToGame(sx, sy); });   // [gameplay] flat_attack_path: "ahead" in our view, on the game's screen
     // [gameplay] flat_move_while_attacking's views: the monitor's F2 / F3 (our camera), and VR F1 / F2 / F3 (the left stick's walk, walk_flat_views)
     moveattack::SetFlatCameraFn([] { return (g_set.platform.load() == 0 && g_enabled.load()) || FlatViews(); });
     moveattack::SetFlatViewFn([] { return g_set.platform.load() == 0 ? (int)g_set.flatView.load() : 0; });   // the per-attack log's view
@@ -1213,6 +1215,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     meleearm::Init(ctx);   // [gameplay] melee_skill_armed: the log
     meleetouch::Init(ctx);
     grabmove::Init(ctx);   // [weight] grab_moves_unit (vr/grab_move.cpp)
+    attackpath::InitNet(ctx);   // [gameplay] flat_attack_path: a joined player's channel to the host
     meleedirectclient::InitNet(ctx, IniB(L"gameplay", L"melee_direct_client_cleave", false) &&
                                         (IniF(L"gameplay", L"melee_direct_client", 0.0f) >= 0.5f || IniF(L"gameplay", L"melee_direct", 0.0f) >= 1.5f));   // the channel now or never this run
     skillwheel::Init(ctx);
@@ -1272,6 +1275,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     crash::Uninstall();
     savebackups::Stop();   // [support] save_backups: what the game wrote at its exit backed up, the thread joined
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back
+    attackpath::ShutdownNet();   // [gameplay] flat_attack_path: its channel given back
     meleedirectclient::ShutdownNet();   // [gameplay] melee_direct_client_cleave: the channel given back
     logasync::Shutdown();   // [debug] log_async: the lines that wait are written, its thread joined, before the context goes
     sessionlogs::Stop();   // [support] session_logs: the last copy, after the lines that waited

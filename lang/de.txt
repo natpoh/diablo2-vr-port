@@ -775,6 +775,15 @@ group.buttons_of_the_controllers_the_finger_on_a_control_touch.help = Aktionen, 
 @remap.left_y_touch.label = Links Y (Touch)
 @remap.left_stick_touch.label = Linker Stick (Touch)
 
+# ===== Tab: Mechanics =====
+tab.mechanics = Mechanik
+
+# --- Combat ---
+group.combat = Kampf
+@status.mechanics_warn.label = Diese Mechaniken können verändern, wie du mit dem Spiel umgehst, und weichen von der klassischen Diablo-Engine ab. Aus = das Spiel, wie es ist.
+gameplay.flat_attack_path.label = Der Schwung hält den Helden nicht an
+gameplay.flat_attack_path.tip = Dritte und erste Person am Monitor (F2, F3), normale Angriffe und Würfe. Mit gehaltenem W A S D geht der Held weiter, während er zuschlägt, in der vollen Animation des Angriffs: Schlag, Trefferchance, Schaden und Tempo bleiben die des Spiels. Ist er während des Schwungs gegangen, trifft ein Nahkampfschlag das angegriffene Monster, solange es vor der Kamera bleibt, sonst den, der beim Treffer dort steht; steht dort niemand, geht der Schlag ins Leere. Ein Schwung ohne Gehen ist der des Spiels. Die Reichweitenprüfung des Spiels gilt weiter, wer also mit einer kurzen Waffe vor einem Monster zurückweicht, verfehlt meist. Ein TCP/IP-Spiel: Wer hostet, entscheidet. Das Häkchen des Hosts gilt für jeden Spieler mit derselben Version der Mod; das eigene Häkchen eines beigetretenen Spielers zählt dort nicht. Ersetzt die 2D-Seitwärts-Option auf dem Reiter Steuerung. Aus: die Regel des Spiels.
+
 # ===== Tab: Stereo =====
 tab.stereo = Stereo
 

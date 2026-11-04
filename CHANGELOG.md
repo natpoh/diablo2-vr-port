@@ -17,6 +17,10 @@
   (`[body] attack_lean`, drawing only); in flat first person (F3) each weapon kind can be moved in three axes so a big axe no longer covers
   the middle of the screen (Settings > UI: F3 eyes > *Weapon in hand (F3)*, its own `[flat_weapon_<kind>]` keys, all 0 until you move
   them); a two-handed weapon keeps both hands on its grip.
+- **2D views, experimental: the swing does not stop the hero** - on a new Settings tab, Mechanics (off by default): with W A S D held
+  the hero keeps walking through his attack's full animation; a blow then goes to the monster you attacked while it stays before
+  the camera, else to whoever stands there, or into the air (`[gameplay] flat_attack_path`). It changes the game's rules; in a
+  TCP/IP game the host's box decides. From the manager's team.
 - **Werewolf and werebear paws** have their own least swing speed, 4 m/s - lighter than a weapon's - so a bare-paw swing counts
   (Settings > Strikes > Hit by touch, `[shapeshift] wolf_min_speed` / `bear_min_speed`).
 - **A monster you knock down gets up where it fell**: the game's own knockback moves it to the cell where it lies, so it no longer

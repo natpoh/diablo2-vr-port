@@ -1165,7 +1165,9 @@ void LoadSettings() {
                                  IniF(L"gameplay", L"melee_touch_barrels_min_speed", 2.0f));   // ... from this swing speed, its own gate
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)
-    moveattack::SetFlatWanted((int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
+    const int attackPath = (int)IniF(L"gameplay", L"flat_attack_path", 0.0f);   // the prototype: the swing does not stop the hero; it replaces the cut below
+    attackpath::SetWanted(attackPath, IniF(L"gameplay", L"flat_attack_path_cone", 45.0f));
+    moveattack::SetFlatWanted(attackPath > 0 ? 0 : (int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
     straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
     shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)

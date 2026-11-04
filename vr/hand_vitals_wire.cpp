@@ -50,6 +50,10 @@ std::atomic<bool> g_orbMirror{false};
 std::atomic<bool> g_orbUnderShield{true};                                         // the wrist under a shield rolls its ball to the other side (OrbUnderShield)
 std::atomic<float> g_orbShield[7] = {180.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // [turn deg; along, side, up cm; rotation x, y, z deg]
 std::atomic<float> g_orbClassZ[kHeroCount] = {};   // the depth offset of each hero class, cm
+// [shapeshift] the werebear's own depth offset (cm) and the auto lift by its forearm's model. Not carried here at first (0.201.0 RC): Settings() handed the effect 0 and off
+// whatever the ini said, and Serg's "Werebear: depth (Z) offset" slider moved nothing ("этот ползунок не работает").
+std::atomic<float> g_orbBearZ{0.0f};
+std::atomic<bool> g_orbFormAuto{false};
 std::atomic<float> g_orbShieldClassUp[kHeroCount] = {}, g_orbShieldClassAlong[kHeroCount] = {};   // each hero class's depth and along offset under a shield, cm
 std::atomic<float> g_orbShieldClassRot[3][kHeroCount] = {};                                          // ... and its turn about X / Y / Z there, degrees
 std::atomic<int> g_orbFill{kFillOutOfHand}, g_orbShape{kShapeMedallion}, g_orbMetal{0}, g_orbDisc{1};
@@ -89,6 +93,8 @@ Config Current() {
     c.orbShield.rotYDeg = g_orbShield[5].load(std::memory_order_relaxed);
     c.orbShield.rotZDeg = g_orbShield[6].load(std::memory_order_relaxed);
     for (int k = 0; k < kHeroCount; ++k) c.orbClassZCm[k] = g_orbClassZ[k].load(std::memory_order_relaxed);
+    c.orbBearZCm = g_orbBearZ.load(std::memory_order_relaxed);
+    c.orbFormAuto = g_orbFormAuto.load(std::memory_order_relaxed);
     for (int k = 0; k < kHeroCount; ++k) c.orbShieldClassUpCm[k] = g_orbShieldClassUp[k].load(std::memory_order_relaxed);
     for (int k = 0; k < kHeroCount; ++k) c.orbShieldClassAlongCm[k] = g_orbShieldClassAlong[k].load(std::memory_order_relaxed);
     for (int k = 0; k < kHeroCount; ++k) {
@@ -340,6 +346,8 @@ void Configure(const Config& config) {
     g_orbShield[5].store(c.orbShield.rotYDeg);
     g_orbShield[6].store(c.orbShield.rotZDeg);
     for (int k = 0; k < kHeroCount; ++k) g_orbClassZ[k].store(c.orbClassZCm[k]);
+    g_orbBearZ.store(c.orbBearZCm);
+    g_orbFormAuto.store(c.orbFormAuto);
     for (int k = 0; k < kHeroCount; ++k) g_orbShieldClassUp[k].store(c.orbShieldClassUpCm[k]);
     for (int k = 0; k < kHeroCount; ++k) g_orbShieldClassAlong[k].store(c.orbShieldClassAlongCm[k]);
     for (int k = 0; k < kHeroCount; ++k) {

@@ -775,6 +775,15 @@ group.buttons_of_the_controllers_the_finger_on_a_control_touch.help = Actions d�
 @remap.left_y_touch.label = Y gauche (toucher)
 @remap.left_stick_touch.label = Stick gauche (toucher)
 
+# ===== Tab: Mechanics =====
+tab.mechanics = Mécaniques
+
+# --- Combat ---
+group.combat = Combat
+@status.mechanics_warn.label = Ces mécaniques peuvent changer votre façon d'interagir avec le jeu et s'écartent du moteur classique de Diablo. Désactivé = le jeu tel qu'il est.
+gameplay.flat_attack_path.label = Le coup n'arrête pas le héros
+gameplay.flat_attack_path.tip = Troisième et première personne sur le moniteur (F2, F3), attaques normales et lancers. Avec Z Q S D (W A S D) maintenu, le héros continue de marcher pendant qu'il frappe, dans l'animation complète de l'attaque : le coup, la chance de toucher, les dégâts et la cadence restent ceux du jeu. S'il a marché pendant le coup, un coup de mêlée va au monstre que vous avez attaqué tant qu'il reste devant la caméra, sinon à celui qui s'y trouve quand il porte ; s'il n'y a personne, il frappe dans le vide. Un coup sans marche est celui du jeu. Le test de portée du jeu s'applique toujours : reculer devant un monstre avec une arme courte rate donc le plus souvent. Une partie TCP/IP : c'est l'hôte qui décide. La case de l'hôte vaut pour tous les joueurs ayant la même version du mod ; la case d'un joueur qui a rejoint ne compte pas. Remplace l'option de pas de côté 2D de l'onglet Commandes. Décoché : la règle du jeu.
+
 # ===== Tab: Stereo =====
 tab.stereo = Stéréo
 

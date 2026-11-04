@@ -439,6 +439,50 @@ inline constexpr Sig kSigs[] = {
     {"PartyInvite", 0x136CB0, Kind::Code, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 5C 24 10 48 89 7C 24 18 55", 0x136CB0, 0, 0, 0, 0, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 5C 24 10", nullptr, "Party in the headset", "Party in the headset"},
     // the Party panel's LeaveParty (), called
     {"PartyLeave", 0x1367E0, Kind::Code, "48 83 EC 28 E8 ?? ?? ?? ?? B9 07 00 00 00 8B 50 48 48 83 C4 28", 0x1367E0, 0, 0, 0, 0, "48 83 EC 28 E8 ?? ?? ?? ?? B9 07 00 00 00", nullptr, "Party in the headset", "Party in the headset"},
+    // the server's start of a mode by direction (game, unit, mode, dir, mag, x, y): command 0x42, hooked - a walk in an attack sets the path, the mode kept
+    {"ModeByDir", 0x42CED0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 48 63 42 0C 49 8B E9", 0x42CED0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the server's point of a direction (unit, packed x y, dir, out vector, out point): true = a straight path, called
+    {"PointOfDir", 0x3ACC60, Kind::Code, "48 89 5C 24 18 48 89 6C 24 20 89 54 24 10 56 57 41 54 41 56", 0x3ACC60, 0, 0, 0, 0, "48 89 5C 24 18 48 89 6C 24 20", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the server's step of a unit's path (game, unit), called
+    {"ServerPathStep", 0x491AC0, Kind::Ref, "48 8B CF E8 ?? ?? ?? ?? 83 F8 02 75 1B 48 8B D3 48 8B CF", 0x445D6B, 3, 1, 5, 0, "48 89 5C 24 10 48 89 74 24 18", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a unit's timed event (game, unit, 0, frame, code, 0, 0), called: our own code a frame steps the path
+    {"UnitSetEvent", 0x48B720, Kind::Code, "48 83 EC 48 8B 84 24 80 00 00 00 89 44 24 38 8B 44 24 78 89 44 24 30", 0x48B720, 0, 0, 0, 0, "48 83 EC 48 8B 84 24 80 00 00 00", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a unit's target unit (unit, target) on its path, called
+    {"UnitSetTarget", 0x34E0C0, Kind::Ref, "48 8B D3 48 8B CF E8 ?? ?? ?? ?? 48 8B C3 EB D0", 0xF320A, 6, 1, 5, 0, "48 89 5C 24 10 57 48 83 EC 20", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the server's client of a player unit (unit), called
+    {"ClientOfUnit", 0x48FDE0, Kind::Code, "40 53 48 83 EC 20 48 8B D9 48 85 C9 74 1E E8 ?? ?? ?? ?? 85 C0 75 15", 0x48FDE0, 0, 0, 0, 0, "40 53 48 83 EC 20 48 8B D9", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the server's reassign of a unit to a client (client, unit, x, y, 0, 0), called: the others see a hero walking in his attack
+    {"Reassign", 0x486B20, Kind::Code, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 41 0F B7 E9", 0x486B20, 0, 0, 0, 0, "48 85 C9 0F 84 ?? ?? ?? ??", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the client's prediction of a command (type, unit, data, flag), hooked: a walk (0x1E) in an attack sets the path alone
+    {"PredictCmd", 0xFF010, Kind::Code, "44 89 4C 24 20 89 4C 24 08 53 55 56 57 41 54 41 56 41 57", 0xFF010, 0, 0, 0, 0, "44 89 4C 24 20 89 4C 24 08 53 55 56 57 41 54", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a packed walk direction decoded (packed, out vector, out mag, out run), called
+    {"DecodeDir", 0x3B2F20, Kind::Code, "48 8B C4 48 89 58 10 48 89 68 18 66 89 48 08 56 57", 0x3B2F20, 0, 0, 0, 0, "48 8B C4 48 89 58 10 48 89 68 18", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the client's step of a unit's path (unit, 1), called
+    {"ClientPathStep", 0xF9A00, Kind::Code, "40 55 57 48 83 EC 28 48 89 74 24 20 0F B6 EA 48 8B F9 48 85 C9", 0xF9A00, 0, 0, 0, 0, "40 55 57 48 83 EC 28 48 89 74 24 20", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the client's unit after its path stepped (unit), called
+    {"ClientAfterStep", 0x100AE0, Kind::Ref, "E8 ?? ?? ?? ?? 48 8B CE E8 ?? ?? ?? ?? 8B 56 0C 8B C2 41 BE 01 00 00 00", 0xFFCAD, 0, 1, 5, 0, "48 89 5C 24 10 48 89 6C 24 18", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a unit's path flag (unit), the path's make argument, called
+    {"UnitPathFlag", 0x34F8D0, Kind::Ref, "E8 ?? ?? ?? ?? 85 C0 75 12 0F B6 85 87 00 00 00 FE C8", 0x1A402C, 0, 1, 5, 0, "48 83 EC 28 48 85 C9 75 1A", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's x in 16.16 (path), called
+    {"PathX", 0x2EF880, Kind::Ref, "E9 ?? ?? ?? ?? 48 8B 43 38 8B 40 10 C1 E0 10 48 83 C4 20 5B", 0x349DCB, 0, 1, 5, 0, "8B 01 C3 CC CC CC CC CC", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's y in 16.16 (path), called
+    {"PathY", 0x3419F0, Kind::Ref, "E8 ?? ?? ?? ?? 66 0F 6E D0 0F 5B D2 F3 41 0F 59 D0 EB 6F", 0x92725, 0, 1, 5, 0, "8B 41 04 C3 CC CC CC CC", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a unit's path (unit), called
+    {"UnitPath", 0x34AE80, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B C8 40 88 6C 24 20 44 8B C6 41 8B D6", 0xFC0F0, 0, 1, 5, 0, "40 53 48 83 EC 20 48 8B D9", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's target point (path, x, y) - clears its target unit, called
+    {"PathSetTarget", 0x342A50, Kind::Code, "48 85 C9 74 11 66 89 51 10 66 44 89 41 12 48 C7 41 70 00 00 00 00 C3", 0x342A50, 0, 0, 0, 0, "48 85 C9 74 11 66 89 51 10", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's type (path, type): 0x11 by vector, 7 by search, called
+    {"PathSetType", 0x342A70, Kind::Code, "48 63 C2 4C 8D 15 ?? ?? ?? ?? 4C 8D 0C 85 00 00 00 00 47 8B 84 11 C0 02 D0 01", 0x342A70, 0, 0, 0, 0, "48 63 C2 4C 8D 15 ?? ?? ?? ??", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's direction vector (path, vector, mag), called
+    {"PathSetVector", 0x342750, Kind::Code, "48 89 5C 24 10 57 48 83 EC 30 0F 29 74 24 20 0F 28 F2 48 8B FA 48 8B D9", 0x342750, 0, 0, 0, 0, "48 89 5C 24 10 57 48 83 EC 30", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's velocity (path, velocity, name, 0), called
+    {"PathSetVelocity", 0x342AE0, Kind::Code, "48 85 C9 74 55 48 89 5C 24 08 57 48 83 EC 20 48 8B D9 8B FA", 0x342AE0, 0, 0, 0, 0, "48 85 C9 74 55 48 89 5C 24 08", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a path's points made (path, unit, arg, 1), called
+    {"PathMake", 0x340E70, Kind::Code, "48 89 5C 24 08 48 89 74 24 10 48 89 7C 24 18 55 41 54 41 55 41 56 41 57 48 8B EC 48 83 EC 70 45 8B E1 45 8B F8", 0x340E70, 0, 0, 0, 0, "48 89 5C 24 08 48 89 74 24 10", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a unit's used skill (unit), called read-only
+    {"UsedSkill", 0x34BA40, Kind::Ref, "E8 ?? ?? ?? ?? 48 8B D8 48 85 F6 74 4A 48 85 C0 74 18", 0x98CBB, 0, 1, 5, 0, "40 53 48 83 EC 20 48 8B D9", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // a skill's flags (skill): 1 its own path, 0x1000 Charge, called read-only
+    {"SkillFlags", 0x33CC00, Kind::Ref, "E8 ?? ?? ?? ?? 41 BE 01 00 00 00 8B F0 41 84 C6 74 2F", 0x1A7B79, 0, 1, 5, 0, "48 85 C9 74 04 8B 41 14", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
 };
 
 }   // namespace d2rsig

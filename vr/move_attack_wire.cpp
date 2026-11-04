@@ -33,6 +33,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "attack_path_wire.h"
 #include "move_attack.h"
 #include "move_attack_wire.h"
 #include "sigscan.h"
@@ -219,8 +220,13 @@ void NoteTrigger(uintptr_t game, uintptr_t unit, int code) {
 }
 
 int HookTrigger(uintptr_t game, uintptr_t unit, int code, int arg) {
+    int own = 0;
+    if (attackpath::OnTick(game, unit, code, &own)) return own;   // [gameplay] flat_attack_path: its step of the path, never the game's handler
+    const bool blow = attackpath::BeforeAction(game, unit, code);
     if (ActionCode(code) && Live()) NoteTrigger(game, unit, code);
-    return g_origTrigger(game, unit, code, arg);
+    const int r = g_origTrigger(game, unit, code, arg);
+    if (blow) attackpath::AfterAction(game, unit);
+    return r;
 }
 
 int Judge(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int original) {
@@ -438,6 +444,7 @@ void AfterCtrl(uintptr_t mgr, uint32_t player) {
 
 void HookCtrlUpdate(uintptr_t mgr, uint32_t player, uint32_t dt) {
     g_origCtrl(mgr, player, dt);
+    attackpath::AfterCtrl(player, mgr);
     if (Live()) AfterCtrl(mgr, player);
 }
 
@@ -458,7 +465,10 @@ void SetFlatWanted(int key) {
                                    "as the blow or the shot is out; the next attack goes when the animation would have ended");
 }
 
+bool PathViewNow() { return !viewgate::F4() && FlatCamera(); }
+
 bool HoldClick(void* unit, int type, int x, int y, uint64_t flags) {
+    if (attackpath::SwallowStop(unit, type)) return true;   // [gameplay] flat_attack_path: the stick's stop would end the attack on the client
     if (!unit || !MouseAttackClick(type)) return false;
     const bool mine = Live() && g_state.load(std::memory_order_relaxed) == 1 && !viewgate::F4() && FlatCamera() &&
                       g_flatScope.load(std::memory_order_relaxed) != kScopeNone;
@@ -493,7 +503,7 @@ bool Wanted() { return g_on.load(); }
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if (!(g_on.load() || g_flatScope.load() != kScopeNone) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
+    if (!(g_on.load() || g_flatScope.load() != kScopeNone || attackpath::Wanted()) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_GATE) || !d2rsig::Addr(RVA_MODE_ALLOWED) || !d2rsig::Addr(RVA_TRIGGER) || !d2rsig::Addr(RVA_EVENT_FRAME) || !d2rsig::Addr(RVA_UNIT_WEAPON) ||
         !d2rsig::Addr(RVA_CTRL_UPDATE) || !d2rsig::Addr(RVA_WALK_DIR) || !d2rsig::Addr(RVA_CMD_FLAGS) || !d2rsig::Addr(RVA_CLIENT_PLAYER))

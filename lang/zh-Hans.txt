@@ -775,6 +775,15 @@ group.buttons_of_the_controllers_the_finger_on_a_control_touch.help = 手指刚�
 @remap.left_y_touch.label = 左 Y（触摸）
 @remap.left_stick_touch.label = 左摇杆（触摸）
 
+# ===== Tab: Mechanics =====
+tab.mechanics = 机制
+
+# --- Combat ---
+group.combat = 战斗
+@status.mechanics_warn.label = 这些机制可能改变你与游戏的交互方式，并偏离经典的 Diablo 引擎。关闭 = 游戏原样。
+gameplay.flat_attack_path.label = 挥击不会让英雄停下
+gameplay.flat_attack_path.tip = 显示器上的第三人称和第一人称（F2、F3），普通攻击和投掷。按住 W A S D 时，英雄在挥击中继续行走，播放完整的攻击动画：打击、命中率、伤害和攻击速度都保持游戏原样。如果他在挥击中走动过，近战打击会落到你攻击的怪物身上（只要它还在镜头前），否则落到打击时站在那里的目标；那里没人时，就打空。没有走动的挥击就是游戏自己的。游戏自身的距离判定仍然有效，所以拿短武器后退时大多会打空。TCP/IP 游戏：由主机决定。主机的勾选对所有使用同一版本模组的玩家生效；加入的玩家自己的勾选在那里不起作用。它会替代操控选项卡上的 2D 横移选项。未勾选：游戏自身的规则。
+
 # ===== Tab: Stereo =====
 tab.stereo = 立体
 

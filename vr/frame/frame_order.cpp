@@ -743,6 +743,7 @@ DWORD WINAPI UpdateThread(void*) {
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
             InstallRoomHeightHook();    // [render] floors_stay, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
+            attackpath::Install();   // [gameplay] flat_attack_path: once asked for
             moveattack::Install();   // [gameplay] move_while_attacking: the server's attack gate and frame trigger, the controller's update - once asked for
             shottrace::Install();   // [debug] shot_trace: the game's click-command sender, once asked for
             InstallSpellAimHooks();
