@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 
@@ -263,12 +264,27 @@ std::shared_ptr<const Image> Get(int32_t skillId) {
 uint32_t Revision() { return g_revision.load(); }
 
 void Shutdown() {
+    // The worker is taken out of Worker() under the lock and joined outside it: Get (any painting thread - the wheel, the tiles, the
+    // wrist's medallion) starts one under the lock, and two Shutdowns at once both saw it joinable and the second join threw
+    // std::system_error out of an ini reload (0.201.0, Serg's PC: skillwheel::Configure -> Release -> here, the game died).
+    std::thread worker;
     {
         std::lock_guard<std::mutex> lock(g_lock);
         g_stop = true;
         g_wake.notify_all();
+        worker = std::move(Worker());
     }
-    if (Worker().joinable()) Worker().join();
+    if (worker.joinable()) {
+        if (worker.get_id() == std::this_thread::get_id()) {
+            worker.detach();   // (never from the worker itself; a join there would throw)
+        } else {
+            try {
+                worker.join();
+            } catch (const std::system_error&) {
+                worker.detach();
+            }
+        }
+    }
     std::lock_guard<std::mutex> lock(g_lock);
     g_pending.clear();
     g_images.clear();

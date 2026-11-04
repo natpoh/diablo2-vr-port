@@ -51,6 +51,7 @@ void SkyTick() {
         const bool world = !biome.empty() && biome.find("frontend") == std::string::npos &&
                            biome.rfind("ui_", 0) != 0;
         g_inWorld.store(world);
+        engitem::WorldSeen(world);   // (a menu after a game left: our units may be placed again in the next one)
         g_frontendBiome.store(!biome.empty() && !world);   // (a load into a game sets no name first: not the menus' any more)
         if (!world) g_roomHeightsClear.store(true);   // [render] floors_stay: the next game's rooms are other rooms
         g_fogAct.store(world ? ActOfBiome(biome) : 0);

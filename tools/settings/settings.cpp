@@ -61,7 +61,9 @@
 #include "draw_distance.h"   // Home's Draw distance: one slider's stops over the room rings, model radius, fog and sky dome (tested)
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
+#include "crash_reply.h"         // our reply to a crash report the player sent: sent.jsonl / replies.jsonl, the answer, the notice (tested)
 #include "d2r_vr_crash_watch.h"   // [support] crash_reports / send_logs: D2R VR Crash Reporter's place, its quiet event, a report's state (docs/crash_watchdog.md)
+#include "rtss_detect.h"         // [support] rtss_warning: RivaTuner's programs by name (the Home Warning row, UpdateRtssWarning)
 #include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
 #include "reshade_as.h"      // Home: the ReShade the player has as dxgi.dll is used as it is; the buttons for it, tested (shared/reshade_as.h)
 #include "reshade_paths.h"   // D2R VR's two search paths in that ReShade's ReShade.ini: append-only text edits, tested (shared/reshade_paths.h)
@@ -693,6 +695,11 @@ std::vector<Item> g_items = {
     // D2RLoader and ReShade: both ways to play (flat had no Install ReShade - a player found it in
     // VR only, 2026-10-11 - the whole Status group was VR's).
     InColumn(2, Group(L"The game and ReShade", L"Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and ReShade (the fog, the sky, the ceiling and FlatVR's depth need it). Buttons to share your own ReShade with the mod or put it aside, and to make the Arcane Sanctuary sky.")),
+    // [support] rtss_warning (shared/rtss_detect.h, UpdateRtssWarning): shown while RivaTuner Statistics Server or MSI Afterburner runs -
+    // a player's game froze at its first picture inside RTSSHooks64.dll (2026-11-04). Only says so: nothing is closed or changed.
+    Hide(Warning(L"rtss_warn", L"RivaTuner Statistics Server or MSI Afterburner is running. Its on-screen display hooks the game's picture and can "
+                 L"freeze the game at its first picture in VR. Close RivaTuner / MSI Afterburner, or in RivaTuner set Application detection "
+                 L"level None (or turn its On-Screen Display off) for D2R.exe and D2RLoader.exe.")),
     Status(L"d2rloader", L"D2RLoader"),
     // Download and install D2RLoader: shown while there is no D2RLoader.exe beside D2R.exe (D2RLoaderStatus).
     Hide(Button(L"@run", L"d2rloader_get", L"Download and install D2RLoader 1.3.1",
@@ -790,6 +797,13 @@ std::vector<Item> g_items = {
     // below - each only on its own Send button, with every file shown first. Both ticks off (the default) and greyed while it is not there.
     Hide(Slider(L"@crashrep", L"found", L"", 0, 1, 1, 0)),
     Status(L"crashrep", L"Crash reports: off"),
+    // Our reply to a report the player sent (shared/crash_reply.h): asked of the BodyWalk server at most once an hour with the report's number
+    // and token only; shown here until dismissed. Only while one of the two ticks below is on and a sent report waits for an answer.
+    Hide(Status(L"crashreply", L"")),
+    Hide(Button(L"@run", L"crash_reply_update", L"Update D2R VR",
+           L"Opens the download page of the newest D2R VR, where the crash this reply is about is fixed. This program never downloads or runs anything itself.")),
+    Hide(Button(L"@run", L"crash_reply_dismiss", L"Dismiss this reply",
+           L"Closes this reply; it does not come back. A newer one, if there is one, shows next.")),
     Needs(L"@crashrep", L"found", 1, Toggle(L"support", L"crash_reports", L"Offer to send a report when the game closes badly", 0,
            L"After a game that crashed, froze or lost the graphics card, D2R VR Crash Reporter opens a window with what it would send to the "
            L"BodyWalk server: how the game ended, that game's logs, the versions and the graphics card - your Windows user and PC name, "
@@ -873,6 +887,11 @@ std::vector<Item> g_items = {
     Needs(L"support", L"session_logs", 1, Slider(L"support", L"collect_sessions", L"Collect logs: the last games packed too", 0, 10, 1, 3,
            L"Collect logs also packs the logs of this many of the newest games (their folders under sessions), so the game that crashed is in "
            L"the zip even after you started the game again. 0: only the logs folder, as before.")),
+    // [support] rtss_warning (vr/diag/rtss_watch.cpp, shared/rtss_detect.h): RivaTuner found - a log line in the game, a Warning on Home here.
+    Toggle(L"support", L"rtss_warning", L"Warn about RivaTuner / MSI Afterburner", 1,
+           L"RivaTuner Statistics Server (MSI Afterburner's on-screen display) hooks the game's picture and can freeze the game at its first "
+           L"picture in VR. Ticked: the game looks for it in the first minute and writes one line to its log and crash reports, and Home shows "
+           L"a warning while it runs. Nothing is closed or changed. Unticked: no look, no warning, as before."),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -1230,12 +1249,14 @@ std::vector<Item> g_items = {
     Only(kVr, Toggle(L"body", L"under_camera", L"Body stays under the camera in a leap (F4)", 1,
            L"A Leap or a Leap Attack lifts the hero's model several metres up on its arc, and played with a pad the game's camera trails him "
            L"when he moves fast (a leap, a knockback): his body flew up and out from under your eyes. On: the drawn body is kept where the "
-           L"camera stands: the camera stays on the ground and the body with it (or, with the box below, the camera goes up with the leap's "
-           L"arc). Only the drawn body and the camera: where he stands, his hit box, his path and the leap itself stay the game's. VR first "
-           L"person (F4) only. Off = as before. Live.")),
-    Needs(L"body", L"under_camera", 1, Only(kVr, Toggle(L"body", L"leap_camera_up", L"Camera rises with the leap's arc", 0,
-           L"A Leap or a Leap Attack lifts the hero about 3.5 m at the top of its arc. On: the camera flies up and down with it, the body "
-           L"under it. Off: the camera stays at your height over the ground and the body is kept down with it. Live."))),
+           L"camera stands: the camera stays on the ground and the body with it (or, with the slider below, the camera goes up with part of "
+           L"the leap's arc). Only the drawn body and the camera: where he stands, his hit box, his path and the leap itself stay the game's. "
+           L"VR first person (F4) only. Off = as before. Live.")),
+    Needs(L"body", L"under_camera", 1, Only(kVr, Slider(L"body", L"leap_camera_up_pct", L"Camera rises with the leap's arc, %", 0, 100, 5, 0,
+           L"A Leap or a Leap Attack lifts the hero about 3.5 m at the top of its arc. The camera follows this share of it, eased like the arc "
+           L"itself, the body always under it: 0 = the camera stays at your height over the ground and the body is kept down with it, 100 = "
+           L"the whole arc, 20 - 30 = a little lift for the feeling of the jump. Under a ceiling (the cave and room ceilings of the Ceiling "
+           L"settings) the camera never rises closer than about 30 cm to it. Live."))),
     Only(kVr, Toggle(L"body", L"crouch", L"Hero crouches when you crouch (F4)", 0,
            L"Crouch in your room and the hero's body goes down with your head, his knees bent and his feet on the ground, "
            L"so you see your legs under you and not your chest in your face. Only the drawn body: where he stands, his hit "
@@ -4761,6 +4782,16 @@ std::vector<Item> g_items = {
            L"lands and where it settles), never more: if the game walks it off while it lies, it gets up and goes. A stagger (a step back) moves nothing. "
            L"Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's "
            L"stays drawn only. F4. Unticked: only the drawing falls, the game keeps it on its cell, as before."))),
+    Sub(L"Monsters round your Leap's landing (Weapon Weight > Monsters' bodies)"),
+    // [weight] leap_landing_scatter: the humanoids round a Leap / Leap Attack's landing thrown apart as drawn, their units after them by the game's knockback (vr/leap_scatter.h)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"leap_landing_scatter", L"Monsters fly apart where you land from a Leap (a test)", 0,
+           L"Needs Weapon Weight > Monsters' bodies and the weight library with the knock-down. Live. Ticked: when your Barbarian lands from a Leap or a Leap "
+           L"Attack, the humanoid monsters within about 3 m of the spot (and any the game's own Leap knockback hits a little farther) are thrown ONE cell away "
+           L"from where you land - the game's own knockback puts each unit on that cell and its body falls onto it, so where you see it and where the game has it "
+           L"agree; the nearer it stood, the higher it flies, never farther. One you land right on is pushed its cell too (dead centre: the way you leapt), "
+           L"whatever it weighs, so you do not end up inside it; other heavy ones (bosses, big monsters) only stagger. What the game's knockback refuses stays put. "
+           L"The move only in single player or when you host the game (a joined player's are drawn only). Damage, the hit roll and the stun stay the game's. "
+           L"F4. Unticked: the landing throws nothing, as before."))),
     Group(L"Skills to BodyWalk", L"Your character's skills go to BodyWalk (Mapping > Game skills): give each one a gesture you record or a button there, and BodyWalk tells the game which skill to cast. The game casts it its own way, from its skill buttons."),
     Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 0,
            L"Your character's learned skills (their names in your game's language, their trees, which of the game's skill buttons each is on) go to "
@@ -8129,6 +8160,31 @@ std::wstring NewestPendingReport() {
     FindClose(f);
     return best.empty() ? best : root + best;
 }
+// Home > The game and ReShade: the RivaTuner warning ([support] rtss_warning, shared/rtss_detect.h) - shown while RTSS.exe or
+// MSIAfterburner.exe runs (one process snapshot every 3 s, Home only). Only looks.
+void UpdateRtssWarning() {
+    static ULONGLONG at = 0;
+    if (at && GetTickCount64() - at < 3000) return;
+    at = GetTickCount64();
+    Item* row = FindItem(L"@status", L"rtss_warn");
+    if (!row) return;
+    unsigned found = 0;
+    if (GetPrivateProfileIntW(L"support", L"rtss_warning", 1, g_ini) != 0) {
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (snap != INVALID_HANDLE_VALUE) {
+            PROCESSENTRY32W pe{sizeof pe};
+            for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) found |= rtss::ProgramBit(pe.szExeFile);
+            CloseHandle(snap);
+        }
+    }
+    const bool hide = !rtss::Running(found);
+    if (row->hidden != hide) {
+        row->hidden = hide;
+        if (!hide) LogLine(L"RivaTuner warning: RTSS.exe or MSIAfterburner.exe is running - shown on Home");
+        LayoutPage();
+    }
+}
+void UpdateReplyNotice();   // (below: our reply to a sent report, on Home)
 void UpdateCrashRepStatus() {
     static ULONGLONG at = 0;
     static int last = -1;
@@ -8158,6 +8214,7 @@ void UpdateCrashRepStatus() {
         line = TR(L"status.crashrep.off", L"Crash reports: off - nothing watches the game, nothing is sent.");
     }
     SetStatus(L"crashrep", state, line.c_str());
+    UpdateReplyNotice();   // (the replies file is looked at with it, every 3 s)
     if (Item* b = FindItem(L"@run", L"crash_offer"); b && b->hidden != g_crashPending.empty()) {
         b->hidden = g_crashPending.empty();
         LayoutPage();
@@ -8182,6 +8239,235 @@ void OfferCrashReport() {
         LogLine(L"crash reports: the reporter could not be started, error " + std::to_wstring(GetLastError()));
     }
 }
+// Our reply to a report the player sent (shared/crash_reply.h). The reporter keeps each sent report's number and token in
+// crash_reports\sent.jsonl; PollReplies asks GET /api/crash/reply for those not answered yet - at most once an hour ([support] reply_poll_at in
+// d2r_vr_settings.ini), only with [support] crash_reports or send_logs on - and keeps the answers in crash_reports\replies.jsonl. The newest one
+// not dismissed ([support] reply_dismissed) shows on Home. Nothing is sent but the number and the token.
+std::wstring Widen(const std::string& s);
+std::string Utf8Narrow(const std::wstring& w);
+constexpr UINT WM_APP_REPLIES = WM_APP + 78;
+std::atomic<bool> g_replyBusy{false};
+bool g_replyQuick = false;   // --start: short timeouts, few asks
+int g_replyShown = 0;        // the report number of the reply on Home (0: none)
+bool g_replyUnread = false;  // ... and the player has not had it on screen yet (its row blinks red)
+int g_replyOnScreen = 0;     // timer ticks (0.5 s) it has been on screen with Home showing: 6 make it read
+std::wstring g_replyLine;    // its text, for the blink
+
+std::string ReadSmallFile(const std::wstring& path) {
+    std::string out;
+    if (FILE* f = _wfopen(path.c_str(), L"rb")) {
+        char b[8192];
+        for (size_t n; (n = fread(b, 1, sizeof b, f)) > 0 && out.size() < (4u << 20);) out.append(b, n);
+        fclose(f);
+    }
+    return out;
+}
+
+// One small GET (the reply of one report), WinHTTP as the update check; D2R_VR_REPORT_HOST=http://127.0.0.1:<port> (tests only) asks a local
+// server instead of bodywalkvr.com. False: no HTTP answer.
+bool ReplyGet(const std::wstring& path, int* status, std::string* body) {
+    std::wstring host = L"bodywalkvr.com";
+    INTERNET_PORT port = INTERNET_DEFAULT_HTTPS_PORT;
+    DWORD flags = WINHTTP_FLAG_SECURE;
+    wchar_t test[128];
+    const DWORD tn = GetEnvironmentVariableW(L"D2R_VR_REPORT_HOST", test, 128);
+    if (tn > 0 && tn < 128 && wcsncmp(test, L"http://127.0.0.1:", 17) == 0) {
+        host = L"127.0.0.1";
+        port = (INTERNET_PORT)_wtoi(test + 17);
+        flags = 0;
+    }
+    *status = 0;
+    body->clear();
+    HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return false;
+    if (g_replyQuick) WinHttpSetTimeouts(session, 3000, 3000, 4000, 4000);   // --start: the game is starting, never hold it up long
+    else WinHttpSetTimeouts(session, 10000, 10000, 15000, 15000);
+    HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags) : nullptr;
+    bool ok = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+              WinHttpReceiveResponse(request, nullptr);
+    if (ok) {
+        DWORD code = 0, len = sizeof code;
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
+        *status = (int)code;
+        for (DWORD avail = 0; WinHttpQueryDataAvailable(request, &avail) && avail > 0 && body->size() < 16384;) {
+            std::string chunk(avail, '\0');
+            DWORD got = 0;
+            if (!WinHttpReadData(request, chunk.data(), avail, &got) || !got) break;
+            body->append(chunk.data(), got);
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connect) WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return ok;
+}
+
+// One poll: every sent report without an answer asked once; the answers appended to replies.jsonl. Returns how many new replies came.
+int PollReplies(const std::wstring& dir) {
+    const std::vector<crashreply::Sent> sent = crashreply::ParseSent(ReadSmallFile(dir + L"sent.jsonl"));
+    const std::vector<crashreply::Reply> got = crashreply::ParseReplies(ReadSmallFile(dir + L"replies.jsonl"));
+    int fresh = 0, asked = 0;
+    for (const crashreply::Sent& s : crashreply::ToAsk(sent, got)) {
+        if (++asked > (g_replyQuick ? 5 : 30)) break;   // (a player who sent very many: the rest next hour)
+        int status = 0;
+        std::string body;
+        const std::wstring path = L"/api/crash/reply?id=" + std::to_wstring(s.id) + L"&token=" + Widen(s.token);
+        if (!ReplyGet(path, &status, &body)) {
+            LogLine(L"crash replies: the server did not answer (report #" + std::to_wstring(s.id) + L") - next hour again");
+            break;
+        }
+        crashreply::Reply r;
+        if (status == 200 && crashreply::ParseAnswer(body, &r) == 1) {
+            r.id = s.id;
+            if (FILE* f = _wfopen((dir + L"replies.jsonl").c_str(), L"ab")) {
+                const std::string line = crashreply::ReplyLine(r);
+                fwrite(line.data(), 1, line.size(), f);
+                fclose(f);
+                ++fresh;
+            }
+        } else if (status == 429) {
+            break;
+        }
+    }
+    LogLine(L"crash replies: asked about " + std::to_wstring(asked) + L" sent report(s), " + std::to_wstring(fresh) + L" new reply(ies)");
+    return fresh;
+}
+
+void StartSay(const std::wstring& line);   // (--start's log line, below)
+std::string MyVersion() { return Utf8Narrow(D2RVR_VERSION_W); }
+
+// A comma list of report numbers in d2r_vr_settings.ini [support] (reply_read, reply_dismissed); `ui` that ini.
+std::set<int> ReplyIds(const wchar_t* key, const wchar_t* ui) {
+    wchar_t d[1024] = L"";
+    GetPrivateProfileStringW(L"support", key, L"", d, 1024, ui);
+    return crashreply::ParseDismissed(Utf8Narrow(d));
+}
+void AddReplyId(const wchar_t* key, int id, const wchar_t* ui) {
+    std::set<int> v = ReplyIds(key, ui);
+    v.insert(id);
+    WritePrivateProfileStringW(L"support", key, Widen(crashreply::JoinDismissed(v)).c_str(), ui);
+}
+
+// d2r_vr.ini [support] unread_replies: 1 while a reply would show that the player has not had on screen nor dismissed, else 0 - the D2R VR
+// Launcher blinks its Settings button while it is 1 (it only reads it). Written only when it changes; the shipped ini never has 1
+// (tools/check_debug_defaults.py).
+void SyncUnreadFlag(const std::wstring& dir, const wchar_t* ini, const wchar_t* ui) {
+    const bool unread = crashreply::AnyUnread(crashreply::ParseReplies(ReadSmallFile(dir + L"replies.jsonl")), ReplyIds(L"reply_read", ui),
+                                              ReplyIds(L"reply_dismissed", ui), MyVersion());
+    if ((GetPrivateProfileIntW(L"support", L"unread_replies", 0, ini) != 0) != unread)
+        WritePrivateProfileStringW(L"support", L"unread_replies", unread ? L"1" : L"0", ini);
+}
+
+// May this program ask now? [support] crash_reports or send_logs on, a sent report there, and an hour since the last ask (d2r_vr_settings.ini
+// [support] reply_poll_at, Unix seconds) - noted as asked when it says yes.
+bool ReplyPollDue(const std::wstring& dir, const wchar_t* ini, const wchar_t* ui) {
+    if (GetPrivateProfileIntW(L"support", L"crash_reports", 0, ini) != 1 && GetPrivateProfileIntW(L"support", L"send_logs", 0, ini) != 1) return false;
+    if (GetFileAttributesW((dir + L"sent.jsonl").c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+    const unsigned long long now = (unsigned long long)_time64(nullptr);
+    wchar_t last[32] = L"";
+    GetPrivateProfileStringW(L"support", L"reply_poll_at", L"0", last, 32, ui);
+    if (now < _wcstoui64(last, nullptr, 10) + 3600) return false;   // once an hour at most
+    WritePrivateProfileStringW(L"support", L"reply_poll_at", std::to_wstring(now).c_str(), ui);
+    return true;
+}
+
+// The window: asked on a thread of its own when it opens; a new reply shows at once.
+void StartReplyPoll() {
+    if (LogsFolder().empty()) return;
+    const std::wstring dir = LogsFolder() + L"\\crash_reports\\";
+    if (!ReplyPollDue(dir, g_ini, g_uiIni) || g_replyBusy.exchange(true)) return;
+    try {
+        std::thread([dir]() {
+            const int fresh = PollReplies(dir);
+            g_replyBusy.store(false);
+            if (fresh > 0 && g_main) PostMessageW(g_main, WM_APP_REPLIES, 0, 0);
+        }).detach();
+    } catch (const std::exception&) {
+        g_replyBusy.store(false);
+    }
+}
+
+// --start (the game started by the launcher, Steam or the START button without this window): one quick ask, so the reply waits on Home
+// and the launcher's Settings button blinks the next time.
+void ReplyPollOnStart() {
+    if (LogsFolder().empty()) return;
+    const std::wstring dir = LogsFolder() + L"\\crash_reports\\";
+    if (!ReplyPollDue(dir, g_ini, g_uiIni)) return;
+    g_replyQuick = true;
+    const int fresh = PollReplies(dir);
+    g_replyQuick = false;
+    SyncUnreadFlag(dir, g_ini, g_uiIni);
+    StartSay(L"start: crash replies asked - " + std::to_wstring(fresh) + L" new");
+}
+
+// The newest reply not dismissed that has something to say for this version, on Home - red and blinking until it has been on screen 3 s:
+// "Reply to your crash report #N (date): text", "... Fixed in X - please update (you have Y)." with Update, or only
+// "Your crash report #N: the crash is fixed in X - please update." A version-only reply whose version is already here shows nothing.
+void UpdateReplyNotice() {
+    Item* st = FindItem(L"@status", L"crashreply");
+    Item* btn = FindItem(L"@run", L"crash_reply_dismiss");
+    Item* upd = FindItem(L"@run", L"crash_reply_update");
+    if (!st || !btn || !upd) return;
+    const std::wstring logs = LogsFolder();
+    const std::wstring dir = logs + L"\\crash_reports\\";
+    const std::vector<crashreply::Reply> got = logs.empty() ? std::vector<crashreply::Reply>() : crashreply::ParseReplies(ReadSmallFile(dir + L"replies.jsonl"));
+    const std::string mine = MyVersion();
+    const crashreply::Reply* r = crashreply::ToShow(got, ReplyIds(L"reply_dismissed", g_uiIni), mine);
+    const crashreply::Show how = r ? crashreply::HowToShow(*r, mine) : crashreply::Show::Nothing;
+    if (!r || r->id != g_replyShown) g_replyOnScreen = 0;
+    g_replyShown = r ? r->id : 0;
+    g_replyUnread = r && !ReplyIds(L"reply_read", g_uiIni).count(r->id);
+    if (r) {
+        std::string kind;
+        for (const crashreply::Sent& s : crashreply::ParseSent(ReadSmallFile(dir + L"sent.jsonl")))
+            if (s.id == r->id) kind = s.kind;
+        const std::wstring id = std::to_wstring(r->id), fixed = Widen(r->fixed_in);
+        if (r->text.empty())
+            g_replyLine = TRF(L"status.crashreply.update_only", L"Your crash report #{id}: the crash is fixed in {fixed} - please update.", {{L"id", id}, {L"fixed", fixed}});
+        else {
+            g_replyLine = kind == "logs"
+                ? TRF(L"status.crashreply.logs", L"Reply to the logs you sent (#{id}, {date}): {text}", {{L"id", id}, {L"date", Widen(r->date)}, {L"text", Widen(r->text)}})
+                : TRF(L"status.crashreply.report", L"Reply to your crash report #{id} ({date}): {text}", {{L"id", id}, {L"date", Widen(r->date)}, {L"text", Widen(r->text)}});
+            if (how == crashreply::Show::Update)
+                g_replyLine += L" " + TRF(L"status.crashreply.update", L"Fixed in {fixed} - please update (you have {mine}).", {{L"fixed", fixed}, {L"mine", D2RVR_VERSION_W}});
+            else if (!r->fixed_in.empty())
+                g_replyLine += L" " + TRF(L"status.crashreply.have", L"Fixed in {fixed}, the version you have.", {{L"fixed", fixed}});
+        }
+        SetStatus(L"crashreply", g_replyUnread ? kBad : kOk, g_replyLine.c_str());
+    }
+    const bool hideUpd = how != crashreply::Show::Update;
+    if (st->hidden != !r || btn->hidden != !r || upd->hidden != hideUpd) {
+        st->hidden = btn->hidden = !r;
+        upd->hidden = hideUpd;
+        LayoutPage();
+    }
+    if (!logs.empty()) SyncUnreadFlag(dir, g_ini, g_uiIni);
+}
+
+// Every timer tick (0.5 s): an unread reply's row blinks red; on screen 3 s with Home showing and this window in front, it is read.
+void ReplyTick() {
+    if (!g_replyShown || !g_replyUnread) return;
+    static bool on = false;
+    on = !on;
+    SetStatus(L"crashreply", on ? kBad : kWarn, g_replyLine.c_str());
+    if (g_tab == 0 && g_main && IsWindowVisible(g_main) && !IsIconic(g_main) && GetForegroundWindow() == g_main) {
+        if (++g_replyOnScreen >= 6) {
+            AddReplyId(L"reply_read", g_replyShown, g_uiIni);
+            LogLine(L"crash replies: the reply to report #" + std::to_wstring(g_replyShown) + L" read (on screen 3 s)");
+            UpdateReplyNotice();
+        }
+    }
+}
+
+void DismissReply() {
+    if (!g_replyShown) return;
+    AddReplyId(L"reply_read", g_replyShown, g_uiIni);
+    AddReplyId(L"reply_dismissed", g_replyShown, g_uiIni);
+    LogLine(L"crash replies: the reply to report #" + std::to_wstring(g_replyShown) + L" dismissed");
+    UpdateReplyNotice();
+}
+
 // Once (d2r_vr_settings.ini [support] crash_asked - this program's own ini, never shipped): with the reporter there and crash reports not on,
 // asks whether to offer reports. Yes ticks [support] crash_reports; either answer is remembered and never asked again.
 void AskCrashReportsOnce() {
@@ -8794,6 +9080,7 @@ void RefreshStatus() {
     if (g_tab != 0) return;
     ShowDrawDistance();  // Draw distance: its stop and line (a key may have been changed in the ini meanwhile)
     D2RLoaderStatus();   // The game and ReShade: flat and VR alike
+    UpdateRtssWarning();   // ... and the RivaTuner warning while RTSS / Afterburner runs
     ReShadeStatus();
     if (g_platform != 1) return;
     UpdateResolutionTexts();   // the render size's status line and tips (the game may have written the headset's numbers meanwhile)
@@ -11515,6 +11802,8 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
                 else if (wcscmp(it.key, L"send_logs") == 0) StartCollectLogs(true);
                 else if (wcscmp(it.key, L"crash_offer") == 0) OfferCrashReport();
+                else if (wcscmp(it.key, L"crash_reply_dismiss") == 0) DismissReply();
+                else if (wcscmp(it.key, L"crash_reply_update") == 0) OpenDownload();
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
@@ -11593,7 +11882,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         PostMessageW(wnd, WM_APP_ASK_CRASH, 0, 0);   // [support] crash_reports: the one-time question, once the window is up
         return 0;
     }
-    case WM_APP_ASK_CRASH: AskCrashReportsOnce(); return 0;
+    case WM_APP_ASK_CRASH: AskCrashReportsOnce(); StartReplyPoll(); return 0;
+    case WM_APP_REPLIES: UpdateReplyNotice(); return 0;
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
@@ -11608,6 +11898,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_RELAUNCH: g_relaunch = true; DestroyWindow(wnd); return 0;
     case WM_APP_ROOMS: OnRoomsChecked((RoomsLive*)l); return 0;   // (wWinMain starts the program again once the loop ends)
     case WM_TIMER: {
+        ReplyTick();   // an unread crash reply on Home: the blink, and read after 3 s on screen
         FollowLaunch();
         RefreshSpan();
         FollowWeapon();
@@ -11853,6 +12144,7 @@ int StartHeadless() {
         Sleep(500);
     }
     while (g_autoClosing) Sleep(100);   // native: BodyWalk / FlatVR being closed (bw_autorun.h: at most ~40 s, as a rule a second)
+    ReplyPollOnStart();   // [support] crash_reports / send_logs: our reply to a sent report, asked at most once an hour
     StartSay(L"start: done");
     return 0;
 }
@@ -11863,6 +12155,23 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     {   // the installer's mode: no window
         int argc = 0;
         wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (argv && argc >= 4 && wcscmp(argv[1], L"--poll-replies") == 0) {
+            // --poll-replies <crash_reports folder> <d2r_vr.ini>: one poll now, no window (tests; the window polls by itself). Only with
+            // [support] crash_reports or send_logs on in that ini, as the window. Exit code: the new replies, or 99 when not allowed.
+            std::wstring dir = argv[2];
+            if (!dir.empty() && dir.back() != L'\\') dir += L'\\';
+            const bool allowed = GetPrivateProfileIntW(L"support", L"crash_reports", 0, argv[3]) == 1 ||
+                                 GetPrivateProfileIntW(L"support", L"send_logs", 0, argv[3]) == 1;
+            std::wstring ui = argv[3];
+            ui.resize(ui.find_last_of(L'\\') + 1);
+            ui += L"d2r_vr_settings.ini";
+            const std::wstring ini = argv[3];
+            LocalFree(argv);
+            if (!allowed) return 99;
+            const int fresh = PollReplies(dir);
+            SyncUnreadFlag(dir, ini.c_str(), ui.c_str());
+            return fresh;
+        }
         if (argv && argc >= 2 && wcscmp(argv[1], L"--setup-bodywalk") == 0) {
             const int r = SetupBodyWalk(argc, argv);
             LocalFree(argv);
@@ -11940,6 +12249,16 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // [render] keep_room_heights (on) became [render] floors_stay (off) in 0.188.6: the old line goes, its value is not carried over -
     // the point is that every upgrade comes out with it off (the player can tick it again)
     WritePrivateProfileStringW(L"render", L"keep_room_heights", nullptr, g_ini);
+    {   // [body] leap_camera_up (a tick) became leap_camera_up_pct (a share of the arc) in 0.202: an ini with the tick and no share gets 100 for on,
+        // 0 for off (the plugin reads it so too), the old line goes
+        wchar_t now[16], old[16];
+        GetPrivateProfileStringW(L"body", L"leap_camera_up_pct", L"", now, 16, g_ini);
+        GetPrivateProfileStringW(L"body", L"leap_camera_up", L"", old, 16, g_ini);
+        if (old[0]) {
+            if (!now[0]) WritePrivateProfileStringW(L"body", L"leap_camera_up_pct", wcstol(old, nullptr, 10) != 0 ? L"100" : L"0", g_ini);
+            WritePrivateProfileStringW(L"body", L"leap_camera_up", nullptr, g_ini);
+        }
+    }
     {   // [weight] npc_bodies was [debug] npc_bodies until 0.183 (a debug key only draws or logs): an ini from before gets the value at its new place, the old key goes
         wchar_t now[16], old[16];
         GetPrivateProfileStringW(L"weight", L"npc_bodies", L"", now, 16, g_ini);

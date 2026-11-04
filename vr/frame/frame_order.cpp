@@ -443,7 +443,19 @@ struct Key {
     }
 };
 
+static DWORD UpdateThreadBody();
+
+// The update thread inside a guard: an exception nothing in it catches is reported by crash::OwnThreadFilter (d2r_vr_crash.txt, a
+// minidump, the crash watcher told) wherever the top-level filter is, then goes on to the game's / D2RLoader's handler as before.
 DWORD WINAPI UpdateThread(void*) {
+    __try {
+        return UpdateThreadBody();
+    } __except (crash::OwnThreadFilter(GetExceptionInformation(), "update thread")) {
+        return 1;   // (never: the filter lets the search go on)
+    }
+}
+
+static DWORD UpdateThreadBody() {
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     const bool highRes = timer != nullptr;
     if (!timer) timer = CreateWaitableTimerW(nullptr, FALSE, nullptr);

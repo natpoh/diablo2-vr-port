@@ -1,5 +1,6 @@
 // vr/body/hero_facing.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M12); what it gives: vr/body/body.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../leap_scatter.h"   // [weight] leap_landing_scatter: the landing seen on the leap's arc
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -620,8 +621,8 @@ bool FreshRoomShift(float shift[3]) {
 // the look-at, up by the lift this pose asks the view for - the skeleton poses before its pass rebuilds the view), in his model units,
 // through the room shift above (PoseBody moves every drawn bone by it), and the eyes are taken against the look-at up by the last view's
 // lift and across the floor against his own place (undercam::EyesOrigin: the skeleton adds the move up only at the end of the pose). With
-// [body] leap_camera_up the camera rises with the game's arc (UnderLiftForView, read by JumpLift at the view), else (the default) it stays
-// and the body is pulled down to it. Taken only from his own TransformComponent (the structural facing): it is this frame's at the pose,
+// [body] leap_camera_up_pct the camera rises by that share of the game's arc, held under a ceiling drawn here (undercam::Rise, Headroom;
+// UnderLiftForView, read by JumpLift at the view), at 0 (the default) it stays and the body is pulled down to it. Taken only from his own TransformComponent (the structural facing): it is this frame's at the pose,
 // where a copy from the memory search can be a frame old - a frame's step in the move would shake the body. One log line per leap or
 // trail, moved or not and why (UnderNote).
 SRWLOCK g_underLock = SRWLOCK_INIT;
@@ -629,31 +630,52 @@ undercam::Trail g_underTrail;
 std::atomic<float> g_underLift{0.0f};          // the pose's: the lift the camera is to rise by at the next view (world units) - the body is drawn under it
 std::atomic<ULONGLONG> g_underLiftAt{0};
 std::atomic<float> g_viewLift{0.0f};           // the view's: the lift the last view built rose by - in the eye the pose puts together
+std::atomic<float> g_underCapped{INFINITY};    // [body] leap_camera_up_pct: the lowest headroom under a ceiling in the leap so far (the log; INFINITY none)
 void UnderNote(float gap, float lift, bool moved, const char* why) {
     undercam::TrailEnd e;
     AcquireSRWLockExclusive(&g_underLock);
     const bool ended = undercam::Step(g_underTrail, gap, lift, moved, why, GetTickCount64(), &e);
     ReleaseSRWLockExclusive(&g_underLock);
+    if (!ended) return;
+    const float room = g_underCapped.exchange(INFINITY);   // (the leap's own: begun afresh whether told or not)
     static std::atomic<ULONGLONG> told{0};
-    if (!ended || GetTickCount64() - told.load() < 1000) return;   // one line a leap (a line can cost a millisecond, more on a slow disk)
+    if (GetTickCount64() - told.load() < 1000) return;   // one line a leap (a line can cost a millisecond, more on a slow disk)
     told.store(GetTickCount64());
     const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
-    char did[200];
-    if (e.moved && !e.left) snprintf(did, sizeof did, "the drawn body kept under the camera all through%s",
-                                     g_set.leapCameraUp.load() ? ", the camera up with the arc ([body] leap_camera_up)" : ", the body kept down with the camera ([body] leap_camera_up=0)");
+    char did[260];
+    const float pct = g_set.leapCameraPct.load();
+    char cam[140];
+    if (!(pct > 0.0f)) snprintf(cam, sizeof cam, ", the body kept down with the camera ([body] leap_camera_up_pct 0)");
+    else if (room < INFINITY) snprintf(cam, sizeof cam, ", the camera up with %.0f %% of the arc, held %.1f units over the eyes' height under the ceiling", pct, room);
+    else snprintf(cam, sizeof cam, ", the camera up with %.0f %% of the arc ([body] leap_camera_up_pct)", pct);
+    if (e.moved && !e.left) snprintf(did, sizeof did, "the drawn body kept under the camera all through%s", cam);
     else if (e.moved) snprintf(did, sizeof did, "the drawn body kept under the camera in %d poses, left in %d: %s", e.moved, e.left, e.why ? e.why : "nothing to move");
     else snprintf(did, sizeof did, "NOT moved: %s", e.why ? e.why : "nothing to move");
     LogF("under camera: a leap or a trail of %llu ms - the hero's model up to %.1f units (%.2f m) over the camera's ground, %.1f units (%.2f m) from it across "
          "the floor; %s", (unsigned long long)e.ms, e.lift, e.lift / upm, e.gap, e.gap / upm, did);
 }
 bool UnderCameraView() { return viewgate::F4() && !ThirdPerson(); }
-// JumpLift, at a view: the game's own lift of the model the camera rises by - [body] under_camera with leap_camera_up, F4, from a pose of
+// JumpLift, at a view: the game's own lift of the model the camera rises by - [body] under_camera with leap_camera_up_pct, F4, from a pose of
 // the last quarter second; 0 otherwise. Kept as the view's (g_viewLift): the eye the next pose puts together carries it.
 float UnderLiftForView() {
     float up = 0.0f;
-    if (g_set.underCamera.load() && g_set.leapCameraUp.load() && UnderCameraView() && GetTickCount64() - g_underLiftAt.load() < 250) up = g_underLift.load();
+    if (g_set.underCamera.load() && g_set.leapCameraPct.load() > 0.0f && UnderCameraView() && GetTickCount64() - g_underLiftAt.load() < 250) up = g_underLift.load();
     if (!std::isfinite(up)) up = 0.0f;
     g_viewLift.store(up);
+    return up;
+}
+// [body] leap_camera_up_pct: the camera's rise for the matrix's `lift` over the look-at - that share of the game's arc, held under a ceiling
+// drawn here (engitem::CeilingLowestHere): the eyes over the hero's ground without the arc are the eye height and the hips' jump, as
+// JumpLift has them.
+float UnderRise(const float look[3], float lift) {
+    const float pct = g_set.leapCameraPct.load();
+    if (!(pct > 0.0f)) return 0.0f;
+    float lowest = 0.0f, eye = 0.0f, hips = 0.0f;
+    const bool ceiling = engitem::CeilingLowestHere(look[1], &lowest);
+    if (g_set.followJump.load() && skel::HeroEye(&eye, &hips)) hips *= g_heroScale.load(); else hips = 0.0f;
+    const float room = undercam::Headroom(ceiling, lowest - look[1], ViewHeight() + hips);
+    const float up = undercam::Rise(lift, pct, room);
+    if (room < INFINITY && up > 0.0f && room < g_underCapped.load()) g_underCapped.store(room);
     return up;
 }
 // At the pose, with his matrix `r` read: the move in model units (x, y, z) to `out` and `m` (what the eyes are taken against) put at the new
@@ -662,10 +684,18 @@ bool UnderCamera(bool structural, const float* r, float* m, float out[3]) {
     out[0] = out[1] = out[2] = 0.0f;
     float look[3], gap = 0.0f, lift = 0.0f;
     if (!LookAtNow(look) || !undercam::Measure(r, look, &gap, &lift)) { g_underLift.store(0.0f); return false; }
+    {   // [weight] leap_landing_scatter: the model back on the ground after a Leap's arc - the bodies round the spot are thrown (vr/knock_down.cpp)
+        static leapscatter::Landing landing;   // (under g_underLock: the pose's thread and the far read)
+        AcquireSRWLockExclusive(&g_underLock);
+        const bool landed = landing.Feed(lift, GetTickCount64(), r + 12);
+        const float peak = landing.LastPeak(), way[2] = {landing.Way()[0], landing.Way()[1]};
+        ReleaseSRWLockExclusive(&g_underLock);
+        if (landed && UnderCameraView()) knockdown::OnLeapLanded(r + 12, peak, way);
+    }
     const char* why = !g_set.underCamera.load() ? "off ([body] under_camera=0)"
                     : !UnderCameraView() ? "not VR first person (F4)"
                     : !structural ? "the facing is the memory search's copy (it can be a frame old at the pose: [hands] facing_source)" : nullptr;
-    const float ask = why || !g_set.leapCameraUp.load() ? 0.0f : undercam::Lift(lift);
+    const float ask = why ? 0.0f : UnderRise(look, lift);
     g_underLift.store(ask);   // the view this pose is drawn with rises by this
     g_underLiftAt.store(GetTickCount64());
     bool moved = false;

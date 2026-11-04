@@ -371,6 +371,8 @@ add_executable(full_reach_test cleanroom/tests/full_reach_test.cpp)
 target_compile_options(full_reach_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(grab_move_test cleanroom/tests/grab_move_test.cpp)   # [weight] grab_moves_unit: the cells apart, when a knockback is asked, the cell it goes to (vr/grab_move.h)
 target_compile_options(grab_move_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(leap_scatter_test cleanroom/tests/leap_scatter_test.cpp)   # [weight] leap_landing_scatter: the landing, who is thrown, which way, how hard (vr/leap_scatter.h)
+target_compile_options(leap_scatter_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(walk_home_test cleanroom/tests/walk_home_test.cpp)   # [weight] knock_down: a body home again goes back to the game's own animation (vr/walk_home.h)
 target_compile_options(walk_home_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(scan_reach_test cleanroom/tests/scan_reach_test.cpp)   # [weight] knock_down: the bodies drawn away keep their units in the scans (vr/scan_reach.h)
@@ -561,7 +563,7 @@ target_sources(d2rl-vrcam PRIVATE vr/frame_gen_lib.cpp)   # [openxr] frame_gener
 target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1: the grip library d2r_vr_grip.dll, when it is beside the plugin (shared/d2r_vr_grip.h)
 target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
 # vr/vrcam.cpp in modules (docs/plan_modules.md): M1 the observers
-target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp vr/diag/rtss_watch.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
 target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
 target_sources(d2rl-vrcam PRIVATE vr/diag/save_backups.cpp)   # [support] save_backups: the game's saves copied into Saved Games\...\D2R VR Backups
@@ -630,6 +632,9 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/pose_share_test.cpp")   #
     # VR F1 / F3 the game's own: every pose writer walked through the views (vr/body/pose_views.h)
     add_executable(pose_views_test cleanroom/tests/pose_views_test.cpp)
     target_compile_options(pose_views_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    # [body] walk_back / legs_rear: one memory per rig behind one lock - two rigs by turns on two threads tore the one of before (vr/per_unit_store.h)
+    add_executable(per_unit_store_test cleanroom/tests/per_unit_store_test.cpp)
+    target_compile_options(per_unit_store_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
     # [body] doll_feet: the hero's feet the doll's, not the game's (vr/doll_feet.h: planted feet, steps taken in turns, sides kept)
     add_executable(doll_feet_test cleanroom/tests/doll_feet_test.cpp)
     target_include_directories(doll_feet_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1027,6 +1032,10 @@ target_compile_options(settings_lang_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # past both, rooms enough), near to far, the author's set a stop, one value by hand Custom
 add_executable(draw_distance_test cleanroom/tests/draw_distance_test.cpp)
 target_compile_options(draw_distance_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# The game's units we placed let go when a game is left (vr/engine/held_units.h): a shared_ptr let go as the game does, an instance's entities
+# trimmed to the registry's live ones, no placing from the world's teardown until a menu.
+add_executable(held_units_test tools/held_units_test.cpp)
+target_compile_options(held_units_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Room-scale walking in VR first person ([openxr] roomscale_walk, vr/room_walk.h): a synthetic room and game - the hero walks under the head,
 # the view stays with the head, turning or nodding walks nothing, the cap at a wall, the controller's stick wins, a teleport, a recentre.
 add_executable(room_walk_test cleanroom/tests/room_walk_test.cpp)
@@ -1085,6 +1094,10 @@ target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SE
 add_executable(session_logs_test tools/session_logs_test.cpp)
 target_include_directories(session_logs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(session_logs_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# [support] rtss_warning (shared/rtss_detect.h): RivaTuner's hook DLLs and programs by name, the one line and when it is written.
+add_executable(rtss_detect_test tools/rtss_detect_test.cpp)
+target_include_directories(rtss_detect_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(rtss_detect_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # [support] crash_reports / send_logs: the contract with D2R VR Crash Reporter (shared/d2r_vr_crash_watch.h; the reporter itself is private).
 add_executable(crash_watch_test tools/crash_watch_test.cpp)
 target_include_directories(crash_watch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)

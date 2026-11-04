@@ -66,6 +66,7 @@
 #include "leg_chain.h"  // the legs by the rig's hierarchy where its bones' names say nothing (the barbarian's)
 #include "leg_ik.h"     // the gait's knee and leg bones' turns from the rest pose and the bend plane (never a knee bent the wrong way)
 #include "walk_back.h"  // [body] walk_back_reverse: the game's own walk played backwards while he walks back
+#include "per_unit_store.h"   // [body] walk_back / legs_rear: one memory per rig, behind one lock
 #include "doll_feet.h"  // [body] doll_feet: the feet the doll's - planted, stepping after the body
 #include "weapon_mirror.h"  // [weapon_<kind>] on the left hand's weapon: the right one's mirror image
 #include "shield_arm.h"
@@ -7541,7 +7542,9 @@ struct WalkBackMem {
     float gameReach = 0.0f;                                // ... the farthest the game's own walk / run put a foot from under its hip of late (m)
     std::vector<Mat> stand;                                // ... that pose (m.lower's bones, the body's turn taken out); empty: none kept yet
 };
-WalkBackMem g_walkBack;   // (the skeleton hook's thread: our own hero only)
+// each rig its own, the pass under one lock (vr/per_unit_store.h): the game poses rigs on several job threads at once, and the one memory of before - reset
+// whenever another rig came in - had its vectors freed under a pass running on another thread (0xC0000374 in WalkBackMem::operator=, 0.193.2 and 0.201.0)
+PerUnitStore<WalkBackMem> g_walkBacks;
 
 // [body] doll_feet (vr/doll_feet.h): the feet the doll's. The game gives his place (the model's origin in the world), the drawn body's facing and the
 // travel; the doll keeps each foot planted in the world and steps it after the body; here they are put back into the model and the legs solved onto
@@ -8033,7 +8036,7 @@ void BodyDumpPose(const Hero& h, const Input& in, const std::vector<Mat>& W) {
     g_bodyReady += text;
     ReleaseSRWLockExclusive(&g_bodyLock);
 }
-void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW) {
+void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW, WalkBackMem& m) {
     const float userHeadM = in.userHeadM;
     const int n = h.count;
     float x = 0.0f, z = 0.0f;
@@ -8042,9 +8045,7 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
     LARGE_INTEGER now, f;
     QueryPerformanceCounter(&now);
     QueryPerformanceFrequency(&f);
-    WalkBackMem& m = g_walkBack;
-    if (m.self != self) m = WalkBackMem{};
-    m.self = self;
+    m.self = self;   // (this rig's own memory: g_walkBacks)
     const double dt = m.have && f.QuadPart ? (double)(now.QuadPart - m.at.QuadPart) / (double)f.QuadPart : 0.0;
     const float upm = std::clamp((h.head >= 0 ? Pos(newW[h.head]).y : h.eyeY) / std::max(0.8f, userHeadM), 2.0f, 8.0f);   // model units a metre
     const V3 stepIn = m.have ? RotOnly({x - m.x, 0.0f, z - m.z}, InvAffine(M)) : V3{0.0f, 0.0f, 0.0f};   // (into his model)
@@ -8234,6 +8235,7 @@ void WalkBackLegsIn(uintptr_t self, const Hero& h, const Input& in, float c, flo
                 const int nk = (int)m.spineChain.size();
                 for (int i = 0; i < nk; ++i) {
                     const int b = m.spineChain[i];
+                    if (b < 0 || b >= n) continue;   // (a chain of another rig kept with the same pelvis: never past this one's bones)
                     newW[b] = Mul(newW[b], about(Pos(newW[b]), psi * walkback::SpineTwistShare(i, nk)));
                 }
                 g_legsTurnPoses.fetch_add(1, std::memory_order_relaxed);
@@ -8520,12 +8522,17 @@ void WalkBackJoints(const Hero& h, const std::vector<Mat>& W, std::string& out) 
         if (f >= 0 && f < (int)W.size()) put(W[f].m[8], W[f].m[9], W[f].m[10]); else put(0.0f, 0.0f, 0.0f);
     }
 }
+void WalkBackLegsLocked(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW, WalkBackMem& m);
 void WalkBackLegs(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW) {
-    if (!g_walkBackDumpOn.load(std::memory_order_relaxed)) { WalkBackLegsIn(self, h, in, c, s, newW); return; }
+    g_walkBacks.With(self, GetTickCount64(), [&](WalkBackMem& m, bool) { WalkBackLegsLocked(self, h, in, c, s, newW, m); });
+}
+// (under g_walkBacks' lock: the dump's row too - g_wbRow is one for all)
+void WalkBackLegsLocked(uintptr_t self, const Hero& h, const Input& in, float c, float s, std::vector<Mat>& newW, WalkBackMem& m) {
+    if (!g_walkBackDumpOn.load(std::memory_order_relaxed)) { WalkBackLegsIn(self, h, in, c, s, newW, m); return; }
     g_wbRow = WalkBackRow{};
     std::string line;
     WalkBackJoints(h, newW, line);   // the game's, turned with the body
-    WalkBackLegsIn(self, h, in, c, s, newW);
+    WalkBackLegsIn(self, h, in, c, s, newW, m);
     const WalkBackRow& r = g_wbRow;
     char b[320];
     snprintf(b, sizeof b, "%.4f %.4f %d %.3f %.1f %.3f %.1f %.2f %.3f %.3f %.4f %.4f %.3f |", r.t, r.dt, in.heroAnimMode, r.speedM, r.angle, r.w, r.turnDeg,

@@ -111,6 +111,7 @@ group.draw_distance.help = Wie weit um dich herum die Welt gezeichnet wird, mit 
 # --- The game and ReShade ---
 group.the_game_and_reshade = Das Spiel und ReShade
 group.the_game_and_reshade.help = Prüft und installiert, was die Mod braucht: D2RLoader (die Mod läuft nur darunter) und ReShade (der Nebel, der Himmel, die Decke und die Tiefe für FlatVR brauchen es). Knöpfe, um dein eigenes ReShade mit der Mod zu teilen oder beiseitezulegen und um den Himmel des Arkanen Heiligtums zu erzeugen.
+@status.rtss_warn.label = RivaTuner Statistics Server oder MSI Afterburner läuft. Seine Bildschirmanzeige hängt sich in das Bild des Spiels ein und kann das Spiel in VR beim ersten Bild einfrieren. Schließe RivaTuner / MSI Afterburner, oder stelle in RivaTuner für D2R.exe und D2RLoader.exe Application detection level auf None (oder schalte sein On-Screen Display aus).
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = D2RLoader 1.3.1 herunterladen und installieren
 @run.d2rloader_get.tip = Lädt D2RLoader 1.3.1 von d2rloader.net herunter, prüft es gegen die SHA-256, die die Seite veröffentlicht, und entpackt es in den Ordner des Spiels, neben D2R.exe. Die Mod läuft nur unter D2RLoader.
@@ -169,6 +170,10 @@ hud.headset_language.tip = Die Texte, die die Mod im Headset zeichnet - das Fert
 @run.collect_logs.tip = Erstellt auf deinem Desktop eine Zip-Datei mit dem, was wir brauchen, um ein Problem zu finden: die Logs der Mod, von D2RLoader, ReShade und FlatVR, die Einstellungen, die Versionen, die Grafikkarte und Windows. Läuft das Spiel, zeichnet es zuerst 10 s lang auf, wie die Frames gezeichnet werden - spiele weiter und drehe den Kopf. Es wird nichts irgendwohin gesendet: Poste die Zip-Datei in unserem Discord (#diablo-2-vr).
 @status.collect.label = Logs sammeln: eine Zip-Datei auf dem Desktop zum Posten in unserem Discord
 @status.crashrep.label = Absturzberichte: aus
+@run.crash_reply_update.label = D2R VR aktualisieren
+@run.crash_reply_update.tip = Öffnet die Downloadseite der neuesten D2R VR, in der der Absturz aus dieser Antwort behoben ist. Dieses Programm lädt selbst nie etwas herunter und startet nichts.
+@run.crash_reply_dismiss.label = Diese Antwort ausblenden
+@run.crash_reply_dismiss.tip = Schließt diese Antwort; sie kommt nicht wieder. Eine neuere, falls es eine gibt, wird als Nächstes gezeigt.
 support.crash_reports.label = Anbieten, einen Bericht zu senden, wenn das Spiel fehlerhaft endet
 support.crash_reports.tip = Nach einem Spiel, das abgestürzt ist, eingefroren ist oder die Grafikkarte verloren hat, öffnet D2R VR Crash Reporter ein Fenster mit dem, was er an den BodyWalk-Server senden würde: wie das Spiel endete, die Logs dieses Spiels, die Versionen und die Grafikkarte - Ihr Windows-Benutzer- und PC-Name, Charakternamen, Adressen und Passwörter sind entfernt. Es wird nichts gesendet, solange Sie dort nicht auf Senden drücken; der Speicherabzug nur mit eigenem Häkchen. Ohne Häkchen: nichts überwacht das Spiel, wie bisher. Gilt ab dem nächsten Spielstart.
 @run.crash_offer.label = Bericht ansehen und senden
@@ -215,6 +220,8 @@ support.session_logs_max_mb.label = Höchstens (MB) für alle Logs
 support.session_logs_max_mb.tip = Solange alle Ordner darüber liegen, werden die ältesten zuerst gelöscht. Die Logs eines Spiels umfassen etwa 1 - 10 MB.
 support.collect_sessions.label = Logs sammeln: auch die letzten Spiele einpacken
 support.collect_sessions.tip = Logs sammeln packt auch die Logs so vieler der neuesten Spiele ein (ihre Ordner unter sessions), damit das abgestürzte Spiel im Zip ist, selbst wenn du das Spiel schon neu gestartet hast. 0: nur der Ordner logs, wie bisher.
+support.rtss_warning.label = Vor RivaTuner / MSI Afterburner warnen
+support.rtss_warning.tip = RivaTuner Statistics Server (die Bildschirmanzeige von MSI Afterburner) hängt sich in das Bild des Spiels ein und kann das Spiel in VR beim ersten Bild einfrieren. Angehakt: Das Spiel sucht in der ersten Minute danach und schreibt eine Zeile in sein Log und in Absturzberichte, und Start zeigt eine Warnung, solange es läuft. Nichts wird geschlossen oder geändert. Nicht angehakt: keine Suche, keine Warnung, wie bisher.
 update.check.label = Beim Start dieses Programms nach Updates suchen
 update.check.tip = Fragt bei bodywalkvr.com nach der neuesten Version der Mod. Es wird nichts heruntergeladen.
 update.develop.label = Auch Beta-Versionen (Develop-Kanal)
@@ -481,9 +488,9 @@ body.lock.tip = Nichts oberhalb des Beckens folgt der Animation des Spiels: Arme
 body.legs_under_body.label = Beine bleiben unter dem Körper
 body.legs_under_body.tip = Hüften und Beine behalten ihren Platz und ihre Richtung unter dem Körper: Ein Schlag wirft sie nicht mehr nach vorn und verdreht sie nicht. Sie gehen, ducken sich und springen weiterhin. Aus = die Hüften und Beine des Spiels, wie animiert.
 body.under_camera.label = Körper bleibt im Sprung unter der Kamera (F4)
-body.under_camera.tip = Ein Sprung oder Sprungangriff hebt das Modell des Helden mehrere Meter auf seinem Bogen nach oben, und mit einem Gamepad folgt die Kamera des Spiels ihm nach, wenn er sich schnell bewegt (ein Sprung, ein Rückstoß): Sein Körper flog nach oben und aus deinen Augen. An: Der gezeichnete Körper wird dort gehalten, wo die Kamera steht: Die Kamera bleibt am Boden und der Körper mit ihr (oder, mit dem Kästchen darunter, steigt die Kamera mit dem Bogen des Sprungs). Nur der gezeichnete Körper und die Kamera: Wo er steht, seine Trefferbox, sein Weg und der Sprung selbst bleiben die des Spiels. Nur VR erste Person (F4). Aus = wie bisher. Sofort.
-body.leap_camera_up.label = Kamera steigt mit dem Bogen des Sprungs
-body.leap_camera_up.tip = Ein Sprung oder Sprungangriff hebt den Helden am höchsten Punkt seines Bogens um etwa 3,5 m. An: Die Kamera fliegt mit hinauf und hinunter, der Körper unter ihr. Aus: Die Kamera bleibt in deiner Höhe über dem Boden, und der Körper wird mit ihr unten gehalten. Sofort.
+body.under_camera.tip = Ein Sprung oder Sprungangriff hebt das Modell des Helden mehrere Meter auf seinem Bogen nach oben, und mit einem Gamepad folgt die Kamera des Spiels ihm nach, wenn er sich schnell bewegt (ein Sprung, ein Rückstoß): Sein Körper flog nach oben und aus deinen Augen. An: Der gezeichnete Körper wird dort gehalten, wo die Kamera steht: Die Kamera bleibt am Boden und der Körper mit ihr (oder, mit dem Regler darunter, steigt die Kamera mit einem Teil des Sprungbogens). Nur der gezeichnete Körper und die Kamera: Wo er steht, seine Trefferbox, sein Weg und der Sprung selbst bleiben die des Spiels. Nur VR erste Person (F4). Aus = wie bisher. Sofort.
+body.leap_camera_up_pct.label = Kamera steigt mit dem Sprungbogen, %
+body.leap_camera_up_pct.tip = Ein Sprung oder Sprungangriff hebt den Helden am höchsten Punkt seines Bogens etwa 3,5 m an. Die Kamera folgt diesem Anteil davon, so weich wie der Bogen selbst, der Körper immer darunter: 0 = die Kamera bleibt in deiner Höhe über dem Boden und der Körper wird mit ihr unten gehalten, 100 = der ganze Bogen, 20 - 30 = ein kleiner Hub für das Gefühl des Sprungs. Unter einer Decke (den Höhlen- und Raumdecken der Einstellungen unter Decke) kommt die Kamera ihr nie näher als etwa 30 cm. Sofort.
 body.crouch.label = Held geht in die Hocke, wenn du dich duckst (F4)
 body.crouch.tip = Gehst du in deinem Raum in die Hocke, geht der Körper des Helden mit deinem Kopf nach unten, die Knie gebeugt und die Füße am Boden, sodass du deine Beine unter dir siehst und nicht deine Brust vor dem Gesicht. Nur der gezeichnete Körper: Wo er steht, seine Trefferbox und sein Gehen bleiben die des Spiels. Braucht eine Kamera, die der Höhe deines Kopfes folgt (natives OpenXR oder FlatVR mit der Position des Kopfes). Nur VR erste Person (F4). Nicht angehakt: genau wie bisher. Idee von bearstonem/d2r-pcvr.
 body.crouch_cm.label = Hocke: Kopf tiefer als, cm
@@ -2937,6 +2944,9 @@ weight.grab_moves_unit.tip = Braucht Waffengewicht > Körper greifen > „Einen 
 group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monster, die du umwirfst (Weapon Weight > Monsters' bodies)
 weight.knock_down_moves_unit.label = Das Spiel bewegt, was du umwirfst (ein Test)
 weight.knock_down_moves_unit.tip = Braucht Weapon Weight > Monsters' bodies > „Ein harter Schlag wirft einen Humanoiden um“. Sofort. Angehakt: Einen Humanoiden, den dein Schlag von den Füßen holt, bewegt das Spiel selbst - sein eigener Rückstoß setzt ihn an die Stelle, wo sein Körper fällt und liegt -, sodass er von dort aus kämpft, deine Treffer auf den dort liegenden Körper landen und er dort aufsteht, statt an seinen alten Platz zurückzugehen; jeder im Spiel sieht es. Ein paar Rückstöße pro Sturz (wo er landet und wo er zur Ruhe kommt), nie mehr: Bewegt das Spiel ihn weg, während er liegt, steht er auf und geht. Ein Taumeln (ein Schritt zurück) bewegt nichts. Was der Rückstoß des Spiels verweigert (Bosse, große Monster), bleibt, wo es ist. Nur im Einzelspieler oder wenn du das Spiel hostest; bei einem beigetretenen Spieler bleibt es nur gezeichnet. F4. Nicht angehakt: Nur die Zeichnung fällt, das Spiel behält ihn auf seinem Feld, wie bisher.
+group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = Monster um deine Landung aus einem Sprung (Waffengewicht > Körper der Monster)
+weight.leap_landing_scatter.label = Monster fliegen auseinander, wo du von einem Sprung landest (ein Test)
+weight.leap_landing_scatter.tip = Braucht Waffengewicht > Körper der Monster und die Weight-Bibliothek mit dem Knock-down. Sofort. Angehakt: Landet dein Barbar aus einem Sprung oder Sprungangriff, werden die humanoiden Monster im Umkreis von etwa 3 m um die Stelle (und alle, die der eigene Rückstoß des Sprungs im Spiel etwas weiter trifft) EIN Feld von deinem Landepunkt weggeschleudert - der eigene Rückstoß des Spiels setzt jede Einheit auf dieses Feld und ihr Körper fällt darauf, sodass dort, wo du sie siehst, und dort, wo das Spiel sie hat, übereinstimmen; je näher sie stand, desto höher fliegt sie, nie weiter. Eine, auf der du direkt landest, wird ebenfalls ihr Feld weit geschoben (genau in der Mitte: in deine Sprungrichtung), egal wie schwer, damit du nicht in ihr steckst; andere schwere (Bosse, große Monster) taumeln nur. Was der Rückstoß des Spiels verweigert, bleibt, wo es ist. Die Bewegung nur im Einzelspieler oder wenn du das Spiel hostest (bei einem beigetretenen Spieler nur gezeichnet). Schaden, Trefferwurf und Betäubung bleiben die des Spiels. F4. Nicht angehakt: Die Landung schleudert nichts, wie bisher.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Fertigkeiten an BodyWalk
@@ -4135,6 +4145,11 @@ status.crashrep.pending_logs = Logs, gesammelt {when}, sind zum Senden bereit - 
 status.crashrep.pending = Ein Spiel endete fehlerhaft ({when}): ein Bericht ist bereit - noch nichts gesendet.
 status.crashrep.on = Absturzberichte: an - nach einem Spiel, das fehlerhaft endet, werden Sie gefragt, ob ein Bericht gesendet werden soll.
 status.crashrep.off = Absturzberichte: aus - nichts überwacht das Spiel, nichts wird gesendet.
+status.crashreply.update_only = Dein Absturzbericht #{id}: Der Absturz ist in {fixed} behoben - bitte aktualisieren.
+status.crashreply.logs = Antwort auf die Logs, die du gesendet hast (#{id}, {date}): {text}
+status.crashreply.report = Antwort auf deinen Absturzbericht #{id} ({date}): {text}
+status.crashreply.update = Behoben in {fixed} - bitte aktualisieren (du hast {mine}).
+status.crashreply.have = Behoben in {fixed}, der Version, die du hast.
 crashrep.ask = Helfen Sie uns, Abstürze zu beheben?\n\nWenn das Spiel fehlerhaft endet (Absturz, Einfrieren, verlorene Grafikkarte), kann D2R VR anbieten, einen Bericht an den BodyWalk-Server zu senden: die Logs dieses Spiels, die Versionen, die Grafikkarte. Ihr Windows-Benutzer- und PC-Name, Charakternamen, Adressen und Passwörter werden entfernt, und Sie sehen zuerst jede Datei.\n\nEs wird nichts gesendet, solange Sie in diesem Fenster nicht auf Senden drücken. Sie können das jederzeit ändern: Home > D2R VR > "Anbieten, einen Bericht zu senden, wenn das Spiel fehlerhaft endet".
 status.grip_lib.found = Griff-Bibliothek: d2r_vr_grip.dll liegt in d2rloader\d2r_vr_libs - der Haken unten hält die Waffe auf ihre Art.
 status.grip_lib.missing = Griff-Bibliothek: nicht gefunden in d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - die Mod behält ihre eigene Art zu halten, der Haken unten ist nicht verfügbar.
@@ -4719,6 +4734,8 @@ vr.map.on = An
 vr.map.off = Aus
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+body.leap_camera_up.label = Kamera steigt mit dem Bogen des Sprungs
+body.leap_camera_up.tip = Ein Sprung oder Sprungangriff hebt den Helden am höchsten Punkt seines Bogens um etwa 3,5 m. An: Die Kamera fliegt mit hinauf und hinunter, der Körper unter ihr. Aus: Die Kamera bleibt in deiner Höhe über dem Boden, und der Körper wird mit ihr unten gehalten. Sofort.
 @ui.weapon_follow.label = Der Waffe in der Hand folgen
 @ui.weapon.label = Waffe
 @ui.weapon.choice0 = Unbewaffnet

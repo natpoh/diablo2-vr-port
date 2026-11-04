@@ -19,6 +19,7 @@
 #include "walk_home.h"        // a body home again goes back to the game's own animation
 #include "grab_move.h"        // [weight] grab_moves_unit: a carried or thrown body moved by the game's own knockback
 #include "grab_move_wire.h"
+#include "leap_scatter.h"      // [weight] leap_landing_scatter: who a leap's landing throws, which way, how hard
 #include "head_shadow.h"
 #include "held_bounds.h"
 #include "knock_pose.h"
@@ -48,9 +49,13 @@ template <class... A> void LogF(const char* fmt, A... a) {
 constexpr uint64_t kInfoFreshMs = 300;    // a body's last read older than this: no knock-down from a push on it, no hold
 constexpr uint64_t kGoneMs = 1000;        // a body down whose rig has not been read this long: let go of
 constexpr float kWalkedOffM = 0.6f;       // the game walked the body this far from where it fell while it falls or lies: it gets up now
+constexpr uint64_t kLeapMovesMs = 1500;    // [weight] leap_landing_scatter: a leap-thrown unit moved this long after the throw - the knockbacks, not a walk off
 constexpr int kMaxInfo = 24;
 
-std::atomic<bool> g_on{false}, g_throwOn{false}, g_impaleOn{false}, g_deathOn{false};
+std::atomic<bool> g_on{false}, g_throwOn{false}, g_impaleOn{false}, g_deathOn{false}, g_leapOn{false};
+// [weight] leap_landing_scatter: the last landing (under g_mutex: OnLeapLanded's, the pose's thread) and the timer's own copy while its window is open
+struct Landed { float at[3] = {}; float peak = 0.0f; float way[2] = {}; uint64_t atMs = 0; };
+Landed g_landed;
 std::atomic<bool> g_deathFlatOn{false};   // [weight] death_ragdoll_flat: the same falls in the views with no hands of ours (VR F1-F3, the flat game), by the game's swing
 std::mutex g_mutex;   // (the settings, the bodies read, the pending knocks - between the weight model's thread and the timer's)
 Settings g_set;
@@ -73,7 +78,13 @@ struct Info {          // a body as the timer last read it (render metres)
 Info g_info[kMaxInfo];
 int g_nInfo = 0;
 float g_heroVel[3] = {};
-struct Pending { uint32_t id; knocktrigger::Verdict v; };
+struct Pending {   // (leap: thrown by a leap's landing - distM its pelvis from the spot, cell the neighbour it goes to, asked: its unit's knockback asked)
+    uint32_t id;
+    knocktrigger::Verdict v;
+    bool leap = false, asked = false;
+    float distM = 0.0f;
+    int cell[2] = {};
+};
 Pending g_pending[8];
 int g_nPending = 0;
 struct StabIn { uint32_t id = 0; int side = 0; float speed = 0.0f; uint64_t atMs = 0; };   // [weight] impale_drag: a stab that went in (OnStabEntered), for Tick
@@ -92,6 +103,8 @@ struct DownBody {
     bool swap = false;     // (Info::swap when the library took it: every joint to and from the library goes through SwapSides)
     bool grabbed = false;  // a hand took it ([weight] grab_moves_unit moves only what the hands carry or throw)
     int moves = 0;         // [weight] knock_down_moves_unit: the knockbacks asked for it since a blow knocked it down (grabmove::kKnockMoves at most)
+    bool leap = false;     // [weight] leap_landing_scatter: a leap's landing threw it (its unit's move under that key)
+    uint64_t leapMs = 0;   // ... when: its unit's knockbacks (ours, one cell; the game's own Leap's) are its place for kLeapMovesMs, not a walk off
     float place[3] = {};   // where its unit stood when last seen (its rig's root, world units) - the scans keep it in reach (FarPlaces, vr/scan_reach.h)
     bool placeOk = false;
     // [weight] death_ragdoll: the game killed it - its skeleton found by the instance it died in (its rig is the scan's no more), kept once it lies
@@ -301,6 +314,12 @@ void ResetLocked() {
 }
 
 bool Busy(int phase) { return phase == D2RF_FALLING || phase == D2RF_LYING || phase == D2RF_GETTING_UP || phase == D2RF_HELD; }
+// Is body id falling, lying, getting up or held now (it takes no blow, no throw)?
+bool IsBusy(uint32_t id) {
+    for (int s = 0; s < D2RF_MAX_DOWN; ++s)
+        if (g_downIds[s].load(std::memory_order_relaxed) == id && Busy(g_downPhase[s].load(std::memory_order_relaxed))) return true;
+    return false;
+}
 
 }  // namespace
 void GrowBoundsNow(const Grow* grow, int n);   // (below: the bounds of the bodies drawn away grown on the timer too)
@@ -329,6 +348,12 @@ void SetFormStrength(float factor) {
 void Configure(const Settings& s) {
     const bool was = g_on.exchange(s.on), wasThrow = g_throwOn.exchange(s.throwOn), wasImpale = g_impaleOn.exchange(s.impaleOn), wasDeath = g_deathOn.exchange(s.deathOn);
     const bool wasDeathFlat = g_deathFlatOn.exchange(s.deathFlatOn);
+    if (g_leapOn.exchange(s.leapOn) != s.leapOn) {
+        if (s.leapOn) falllib::Probe();
+        LogF(s.leapOn ? "leap scatter: on ([weight] leap_landing_scatter) - landing from a Leap or a Leap Attack throws the humanoids within %.1f m apart as "
+                        "drawn (and any the game's own knockback hits within %.1f m); heavier than %.0f kg only stagger (F4)" : "leap scatter: off",
+             leapscatter::kRadiusM, leapscatter::kGameRadiusM, leapscatter::kBigKg);
+    }
     skel::SetWeaponTrail(s.deathFlatOn);   // (the game's swing kept for it, in every view)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -390,7 +415,16 @@ void Configure(const Settings& s) {
 
 bool Wanted() {
     return g_on.load(std::memory_order_relaxed) || g_throwOn.load(std::memory_order_relaxed) || g_impaleOn.load(std::memory_order_relaxed) ||
-           g_deathOn.load(std::memory_order_relaxed) || g_deathFlatOn.load(std::memory_order_relaxed);
+           g_deathOn.load(std::memory_order_relaxed) || g_deathFlatOn.load(std::memory_order_relaxed) || g_leapOn.load(std::memory_order_relaxed);
+}
+void OnLeapLanded(const float at[3], float peakUnits, const float way[2]) {
+    if (!g_leapOn.load(std::memory_order_relaxed) || !at || !std::isfinite(at[0] + at[1] + at[2])) return;
+    std::lock_guard<std::mutex> lock(g_mutex);
+    std::memcpy(g_landed.at, at, sizeof g_landed.at);
+    g_landed.peak = peakUnits;
+    g_landed.way[0] = way ? way[0] : 0.0f;
+    g_landed.way[1] = way ? way[1] : 0.0f;
+    g_landed.atMs = GetTickCount64();
 }
 bool ThrowWanted() { return g_throwOn.load(std::memory_order_relaxed); }
 bool DeathWanted() { return viewgate::F4() ? g_deathOn.load(std::memory_order_relaxed) : g_deathFlatOn.load(std::memory_order_relaxed); }
@@ -798,8 +832,9 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         }
         ++nf;
     }
-    Pending pending[8];
+    Pending pending[8 + 16];   // (the pushes' and, after a leap's landing, the bodies it threw)
     int np = 0;
+    Landed landing;            // [weight] leap_landing_scatter: a landing since the last tick
     StabIn stabs[2];
     Strongest strongest;
     float lieS = 1.5f;
@@ -877,6 +912,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         np = g_nPending;
         std::memcpy(pending, g_pending, sizeof(Pending) * static_cast<size_t>(np));
         g_nPending = 0;
+        if (g_landed.atMs) { landing = g_landed; g_landed = Landed{}; }
         for (int s = 0; s < 2; ++s) { stabs[s] = g_stabIn[s]; g_stabIn[s] = StabIn{}; }
         if (g_strongest.atMs && nowMs - g_strongest.atMs >= 1000) { strongest = g_strongest; g_strongest = Strongest{}; }
         lieS = g_set.lieMs * 0.001f;
@@ -902,6 +938,55 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             }
         }
         if (fc->verdict) f.swap = fc->verdict < 0;   // (the game's own word, once a model; before it: its transform's sign)
+    }
+    {   // [weight] leap_landing_scatter: the humanoids round a leap's landing thrown apart - every one within its radius at once, and for kWindowMs each the game's
+        // own knockback hits (mode 13) within its own (vr/leap_scatter.h)
+        static Landed open;            // (the timer's thread only) the landing whose window is open
+        static uint32_t thrown[16];
+        static int nThrown = 0;
+        if (landing.atMs) {
+            open = landing;
+            nThrown = 0;
+        }
+        if (open.atMs && (!g_leapOn.load(std::memory_order_relaxed) || nowMs < open.atMs || nowMs - open.atMs > leapscatter::kWindowMs)) open = Landed{};
+        if (open.atMs) {
+            const float at[3] = {open.at[0] / upm, open.at[1] / upm, open.at[2] / upm};
+            int added = 0;
+            for (int i = 0; i < nf && np < (int)std::size(pending) && nThrown < (int)std::size(thrown); ++i) {
+                const Info& f = fresh[i];
+                if (!f.hostile || IsBusy(f.id)) continue;
+                bool seen = false;
+                for (int t = 0; t < nThrown && !seen; ++t) seen = thrown[t] == f.id;
+                int mode = -1;
+                for (int m = 0; m < nUnits; ++m)
+                    if (units[m].id == f.id) mode = units[m].mode;
+                if (seen || mode == 0 || mode == 12) continue;   // (thrown already; dead or dying: the game's own death)
+                const leapscatter::Throw t =
+                    leapscatter::Scatter(at, f.joint[D2RF_PELVIS], f.body.massKg, f.id, mode == grabmove::kKnockbackMode, upm, open.way);
+                if (!t.ok) continue;
+                // its unit one cell outward by the game's own knockback (a body the game's Leap knocked back already: its own move stands - not asked in mode 13)
+                const bool asked = t.move && grabmove::Note(f.id, static_cast<float>(t.cell[0]), static_cast<float>(t.cell[1]), f.hostile, grabmove::kLeap,
+                                                            grabmove::kSettleCells, nowMs);
+                Pending& q = pending[np++];
+                q = Pending{};
+                q.id = f.id;
+                q.leap = true;
+                q.distM = t.distM;
+                q.cell[0] = t.cell[0];
+                q.cell[1] = t.cell[1];
+                q.asked = asked;
+                q.v.knock = true;
+                q.v.kind = t.fall ? D2RF_BLOW : D2RF_STAGGER;
+                q.v.gaveMs = t.speedMs;   // (across; the log takes the up from the impulse)
+                std::memcpy(q.v.impulse, t.impulse, sizeof q.v.impulse);
+                std::memcpy(q.v.point, f.joint[D2RF_PELVIS], sizeof q.v.point);
+                thrown[nThrown++] = f.id;
+                ++added;
+            }
+            if (landing.atMs)
+                LogF("leap scatter: landed (the hero's model up to %.1f units over the ground) at %.2f, %.2f - %d humanoid(s) thrown at once of %d read", landing.peak,
+                     at[0], at[2], added, nf);
+        }
     }
     if (strongest.id)   // (once a second at most, while blows land and do nothing: what the strongest gave against what it needed)
         LogF("knock down: the strongest push of the last second on %u - %s swung at %.1f m/s (%.1f needed), %.2f m/s to the body (%.2f needed%s): nothing",
@@ -939,11 +1024,20 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 d->kind = k.kind;
                 d->hurried = false;
                 d->moves = 0;
+                d->leap = pending[p].leap;
+                d->leapMs = pending[p].leap ? nowMs : 0;
                 for (int m = 0; m < nUnits; ++m)
                     if (units[m].id == k.id && rigOf[m] >= 0 && static_cast<size_t>(rigOf[m]) < nr) std::memcpy(d->root, rigs[rigOf[m]].root, sizeof d->root);
             }
             g_any = true;
             const knocktrigger::Verdict& v = pending[p].v;
+            if (pending[p].leap) {
+                LogF("leap scatter: %u ('%s', %.0f kg) %s - %.2f m from the landing, one cell %+d,%+d (thrown %.2f m/s across, %.2f up); its unit %s", k.id,
+                     f->model, k.massKg, k.kind == D2RF_STAGGER ? "staggered (too heavy to fall)" : "thrown off its feet", pending[p].distM, pending[p].cell[0],
+                     pending[p].cell[1], v.gaveMs, k.massKg > 0.5f ? std::fabs(k.impulse[1]) / k.massKg : 0.0f,
+                     pending[p].asked ? "asked the game's knockback onto that cell" : "not asked (in the game's own knockback already, refused lately, a joined game, or too heavy)");
+                continue;
+            }
             LogF("knock down: %u ('%s', %.0f kg, %.2f m) %s by %s - swung at %.1f m/s (%.1f needed), %.2f m/s to the body (%.2f needed%s, %.1f N s); its toes point "
                  "%s, its knees bend %s%s", k.id, f->model, k.massKg, f->body.height, k.kind == D2RF_STAGGER ? "staggered" : "knocked down",
                  v.shove ? "a shove (a stagger)" : KindName(k.kind), v.swingMs, v.needSwingMs, v.gaveMs, v.needMs, v.runMs > 0.2f ? ", running" : "",
@@ -1302,17 +1396,19 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         // [weight] grab_moves_unit / knock_down_moves_unit: the unit put by the game's knockback on the cell under the drawn body (its pelvis) - a body a hand took,
         // or one a weapon's blow knocked down (never a stagger's step back)
         // (a blow's: kKnockMoves knockbacks at most - where it lands and where it settles; past them the game's own walk is its walk, not ours to undo)
-        if (grabmove::KindMoves(d->grabbed, d->kind) && grabmove::WantedFor(d->grabbed) && (d->grabbed || d->moves < grabmove::kKnockMoves)) {
+        const int source = d->grabbed ? grabmove::kGrab : d->leap ? grabmove::kLeap : grabmove::kKnock;
+        if (source != grabmove::kLeap && grabmove::KindMoves(d->grabbed, d->kind) && grabmove::WantedFor(source) && (d->grabbed || d->moves < grabmove::kKnockMoves)) {
             for (int i = 0; i < nf && (grabmove::PhaseMoves(p.phase) || p.phase == walkhome::kWalking); ++i)   // (up again too: the unit brought under it before it is let go)
                 if (fresh[i].id == p.id) {
                     float dx = 0.0f, dy = 0.0f;
                     if (grabmove::CellsApart(p.joint[D2RF_PELVIS], fresh[i].joint[D2RF_PELVIS], upm, &dx, &dy) &&
-                        grabmove::Note(p.id, dx, dy, hostile, d->grabbed, grabmove::StepFor(p.phase), nowMs) && !d->grabbed)
+                        grabmove::Note(p.id, dx, dy, hostile, source, grabmove::StepFor(p.phase), nowMs) && !d->grabbed)
                         ++d->moves;
                     break;
                 }
             std::memcpy(d->root, g->root, sizeof d->root);   // (the game moved it there for us: not a walk off that gets a lying body up)
         }
+        if (d->leap && d->leapMs && nowMs - d->leapMs < kLeapMovesMs) std::memcpy(d->root, g->root, sizeof d->root);   // (moved by the knockbacks: its place now)
         const float off = std::sqrt((g->root[0] - d->root[0]) * (g->root[0] - d->root[0]) + (g->root[2] - d->root[2]) * (g->root[2] - d->root[2])) / upm;
         const bool attacks = parry::MonsterAttacking(mode) || mode == 7;
         const bool down = p.phase == D2RF_FALLING || p.phase == D2RF_LYING || p.phase == D2RF_GETTING_UP;

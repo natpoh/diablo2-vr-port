@@ -111,6 +111,7 @@ group.draw_distance.help = 用一个滑块控制你周围的世界绘制多远�
 # --- The game and ReShade ---
 group.the_game_and_reshade = 游戏与 ReShade
 group.the_game_and_reshade.help = 检查并安装模组所需的组件：D2RLoader（模组只能在它之下运行）和 ReShade（雾、天空、顶部和 FlatVR 的深度都需要它）。这里有按钮可以让你的 ReShade 与模组共用或把它放到一旁，还可以生成秘法庇护所的天空。
+@status.rtss_warn.label = RivaTuner Statistics Server 或 MSI Afterburner 正在运行。它的屏幕显示会挂接游戏画面，可能让游戏在 VR 中卡在第一帧画面。请关闭 RivaTuner / MSI Afterburner，或在 RivaTuner 中为 D2R.exe 和 D2RLoader.exe 把 Application detection level 设为 None（或关闭它的 On-Screen Display）。
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = 下载并安装 D2RLoader 1.3.1
 @run.d2rloader_get.tip = 从 d2rloader.net 下载 D2RLoader 1.3.1，按该网站公布的 SHA-256 校验，并解压到游戏文件夹中 D2R.exe 旁边。模组只能在 D2RLoader 之下运行。
@@ -169,6 +170,10 @@ hud.headset_language.tip = 模组在头显中绘制的文字 - 技能面板、�
 @run.collect_logs.tip = 在你的桌面生成一个压缩包，包含我们查找问题所需的内容：模组、D2RLoader、ReShade 和 FlatVR 的日志、设置、版本、显卡和 Windows。游戏运行时，它会先记录 10 秒钟的帧绘制情况 - 请继续游玩并转动头部。不会向任何地方发送任何内容：请把压缩包发布到我们的 Discord（#diablo-2-vr）。
 @status.collect.label = 收集日志：在桌面生成一个压缩包，可发布到我们的 Discord
 @status.crashrep.label = 崩溃报告：关
+@run.crash_reply_update.label = 更新 D2R VR
+@run.crash_reply_update.tip = 打开最新版 D2R VR 的下载页面，其中已修复这条回复所说的崩溃。本程序自己从不下载或运行任何东西。
+@run.crash_reply_dismiss.label = 关闭这条回复
+@run.crash_reply_dismiss.tip = 关闭这条回复；它不会再出现。如果有更新的回复，接着显示。
 support.crash_reports.label = 游戏异常关闭时，提示发送报告
 support.crash_reports.tip = 游戏崩溃、卡死或显卡丢失后，D2R VR Crash Reporter 会打开一个窗口，显示将发送到 BodyWalk 服务器的内容：游戏如何结束、该局游戏的日志、版本和显卡；您的 Windows 用户名和电脑名、角色名、地址和密码都会被去除。除非您在那里按“发送”，否则不会发送任何内容；内存转储只有勾选其专用选项才会发送。不勾选：没有任何程序监视游戏，和以前一样。下次启动游戏时生效。
 @run.crash_offer.label = 查看报告并发送
@@ -215,6 +220,8 @@ support.session_logs_max_mb.label = 所有日志的上限 (MB)
 support.session_logs_max_mb.tip = 只要所有文件夹的总大小超过此值，就先删除最旧的。一局游戏的日志约 1 - 10 MB。
 support.collect_sessions.label = 收集日志：同时打包最近几局游戏
 support.collect_sessions.tip = “收集日志”还会打包这么多局最新游戏的日志（它们在 sessions 下的文件夹），这样即使你已重新启动游戏，崩溃的那局也会在 zip 里。0：只打包 logs 文件夹，和以前一样。
+support.rtss_warning.label = 提醒 RivaTuner / MSI Afterburner
+support.rtss_warning.tip = RivaTuner Statistics Server（MSI Afterburner 的屏幕显示）会挂接游戏画面，可能让游戏在 VR 中卡在第一帧画面。勾选：游戏在第一分钟内查找它，并在日志和崩溃报告中写一行，它运行期间主页会显示警告。不会关闭或更改任何东西。不勾选：不查找，不警告，与以前一样。
 update.check.label = 打开本程序时检查更新
 update.check.tip = 向 bodywalkvr.com 询问模组的最新版本。不会下载任何内容。
 update.develop.label = 同时包含测试版（develop 频道）
@@ -481,9 +488,9 @@ body.lock.tip = 骨盆以上的任何部分都不跟随游戏的动画：手臂�
 body.legs_under_body.label = 双腿保持在身体下方
 body.legs_under_body.tip = 髋部和双腿保持在身体下方的位置和朝向：一次挥击不再把它们甩到前面或扭转它们。它们仍会迈步、蹲下和跳跃。关闭 = 髋部和双腿按游戏的动画。
 body.under_camera.label = 跳跃攻击时身体保持在摄像机下方（F4）
-body.under_camera.tip = 跳跃或跳跃攻击会把英雄的模型沿弧线抬高数米，而使用手柄游玩时，游戏的摄像机在他快速移动时（跳跃、击退）会落在他后面：他的身体会飞到你的眼前之外。开启：绘制的身体保持在摄像机所站之处：摄像机留在地面上，身体随之（或者在勾选下方的选项时，摄像机随跳跃的弧线升高）。只影响绘制的身体和摄像机：他站的位置、命中盒、路径以及跳跃本身仍由游戏决定。仅限 VR 第一人称（F4）。关闭 = 与以前一样。即时生效。
-body.leap_camera_up.label = 摄像机随跳跃弧线升高
-body.leap_camera_up.tip = 跳跃或跳跃攻击会在弧线顶点把英雄抬高约 3.5 m。开启：摄像机随之上下飞，身体在它之下。关闭：摄像机保持在你高出地面的高度，身体也随之留在下面。即时生效。
+body.under_camera.tip = 跳跃或跳跃攻击会把英雄的模型沿弧线抬高数米，而使用手柄游玩时，游戏的摄像机在他快速移动时（跳跃、击退）会落在他后面：他的身体会飞到你的眼前之外。开启：绘制的身体保持在摄像机所站之处：摄像机留在地面上，身体随之（或者用下方的滑块，让摄像机随跳跃弧线升高一部分）。只影响绘制的身体和摄像机：他站的位置、命中盒、路径以及跳跃本身仍由游戏决定。仅限 VR 第一人称（F4）。关闭 = 与以前一样。即时生效。
+body.leap_camera_up_pct.label = 摄像机随跳跃弧线升高，%
+body.leap_camera_up_pct.tip = 跳跃或跳跃攻击在弧线最高点会把英雄抬高约 3.5 m。摄像机跟随其中这一比例，像弧线本身一样平滑，身体始终在它下方：0 = 摄像机保持在你离地的高度，身体随它留在下面，100 = 整条弧线，20 - 30 = 稍微升高一点，带来跳跃感。在顶部之下（顶部设置中的洞穴和房间顶部），摄像机离它永远不会近于约 30 cm。即时生效。
 body.crouch.label = 你蹲下时英雄蹲下（F4）
 body.crouch.tip = 你在房间里蹲下，英雄的身体就随你的头一起下蹲，膝盖弯曲、双脚踩地，这样你看到的是自己脚下的双腿，而不是胸口顶在脸上。只影响绘制的身体：他站的位置、命中盒和行走仍由游戏决定。需要一个跟随你头部高度的摄像机（原生 OpenXR，或带头部位置的 FlatVR）。仅限 VR 第一人称（F4）。取消勾选：与以前完全一样。想法来自 bearstonem/d2r-pcvr。
 body.crouch_cm.label = 蹲下：头部低于此值，cm
@@ -2937,6 +2944,9 @@ weight.grab_moves_unit.tip = 需要 武器重量 > 抓取躯体 > “举起并�
 group.monsters_you_knock_down_weapon_weight_monsters_bodies = 你打倒的怪物（Weapon Weight > Monsters' bodies）
 weight.knock_down_moves_unit.label = 由游戏移动你打倒的东西（测试）
 weight.knock_down_moves_unit.tip = 需要 Weapon Weight > Monsters' bodies > “重击会把人形怪物打倒”。即时生效。勾选：被你的攻击打倒的人形怪物由游戏本身移动 - 它自己的击退把它放到它身体倒下并躺着的位置 - 所以它从那里继续战斗，你对躺在那里的身体的攻击会命中，它也会在那里站起来，而不是走回原来的位置；游戏中的每个人都能看到。每次倒地只有几次击退（落地处和停稳处），绝不更多：如果它躺着时被游戏移走，它会站起来离开。踉跄（后退一步）不会移动任何东西。游戏的击退拒绝的（首领、大型怪物）留在原地。仅在单人游戏中或由你托管游戏时；加入的玩家那里仍只是绘制。F4。不勾选：只有绘制倒下，游戏把它保持在原来的格子上，与以前一样。
+group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = 跳跃落地点周围的怪物（武器重量 > 怪物的躯体）
+weight.leap_landing_scatter.label = 跳跃落地处的怪物四散飞开（测试）
+weight.leap_landing_scatter.tip = 需要 武器重量 > 怪物的躯体 和带有击倒功能的重量库。即时生效。勾选：你的野蛮人从跳跃或跳跃攻击落地时，落点约 3 m 内的人形怪物（以及游戏自身跳跃击退打到的稍远一些的怪物）会被抛离你的落点一格 - 游戏自身的击退把每个单位放到那一格上，它的身体也落在那里，所以你看到它的位置和游戏中它的位置一致；站得越近飞得越高，但不会更远。你正好落在其身上的那个也会被推开一格（正中心时：沿你跳跃的方向），无论它多重，免得你落进它体内；其他重的（首领、大型怪物）只会踉跄。游戏的击退拒绝的留在原地。移动仅在单人游戏中或由你托管游戏时发生（加入的玩家那里只是绘制）。伤害、命中判定和眩晕仍由游戏决定。F4。不勾选：落地不抛开任何怪物，与以前一样。
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = 技能发送到 BodyWalk
@@ -4135,6 +4145,11 @@ status.crashrep.pending_logs = {when} 收集的日志已准备好发送——尚
 status.crashrep.pending = 一局游戏异常关闭（{when}）：报告已准备好——尚未发送任何内容。
 status.crashrep.on = 崩溃报告：开——游戏异常关闭后会询问您是否发送报告。
 status.crashrep.off = 崩溃报告：关——没有程序监视游戏，不会发送任何内容。
+status.crashreply.update_only = 你的崩溃报告 #{id}：该崩溃已在 {fixed} 中修复 - 请更新。
+status.crashreply.logs = 对你发送的日志的回复（#{id}，{date}）：{text}
+status.crashreply.report = 对你的崩溃报告的回复 #{id}（{date}）：{text}
+status.crashreply.update = 已在 {fixed} 中修复 - 请更新（你的版本是 {mine}）。
+status.crashreply.have = 已在 {fixed} 中修复，即你当前的版本。
 crashrep.ask = 愿意帮我们修复崩溃吗？\n\n当游戏异常关闭（崩溃、卡死、显卡丢失）时，D2R VR 可以提示向 BodyWalk 服务器发送报告：该局游戏的日志、版本和显卡。您的 Windows 用户名和电脑名、角色名、地址和密码都会被去除，并且您会先看到每个文件。\n\n除非您在那个窗口里按“发送”，否则不会发送任何内容。您随时可以更改：Home > D2R VR >“游戏异常关闭时，提示发送报告”。
 status.grip_lib.found = 握持库：d2r_vr_grip.dll 位于 d2rloader\d2r_vr_libs - 下方的勾选项让武器按它的方式握持。
 status.grip_lib.missing = 握持库：在 d2rloader\d2r_vr_libs 中找不到（d2r_vr_grip.dll）——模组保留自己的握持方式，下方的勾选项不可用。
@@ -4719,6 +4734,8 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+body.leap_camera_up.label = 摄像机随跳跃弧线升高
+body.leap_camera_up.tip = 跳跃或跳跃攻击会在弧线顶点把英雄抬高约 3.5 m。开启：摄像机随之上下飞，身体在它之下。关闭：摄像机保持在你高出地面的高度，身体也随之留在下面。即时生效。
 @ui.weapon_follow.label = 跟随手中的武器
 @ui.weapon.label = 武器
 @ui.weapon.choice0 = 空手

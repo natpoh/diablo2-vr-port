@@ -713,7 +713,7 @@ void PublishPoses(const skel::MonsterRig* rigs, size_t nr, const int* rigOf, ULO
         if (s >= 0 && now - toldAt >= 1000) {
             toldAt = now;
             const dollpose::Pose& p = made[s];
-            char turns[320];
+            char turns[320] = "";   // (a knocked-down body's pose has no turns: the line printed the stack's bytes)
             int w = 0;
             for (int t = 0; t < p.n && w < (int)sizeof turns - 40; ++t)
                 w += snprintf(turns + w, sizeof turns - w, "%s%s %.1f deg", t ? ", " : "", p.t[t].pivot < 0 ? "lean" : ("bone " + std::to_string(p.t[t].pivot)).c_str(),

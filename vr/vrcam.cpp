@@ -919,7 +919,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.201.0";
+static const char g_info_version[] = "0.202.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1026,6 +1026,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
     sessionlogs::Start();   // [support] session_logs: this game's logs into logs\sessions\<its start>, kept 30 days
     crashwatch::Start(g_info_version);   // [support] crash_reports: D2R VR Crash Reporter watches this game from outside (off: nothing, as before)
+    rtsswatch::Start();   // [support] rtss_warning: RivaTuner Statistics Server's hook found with the game - one log line with the advice (only reads)
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
     gpufault::EnableDred(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0);   // [debug] dred, on unless the ini says 0
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
@@ -1272,6 +1273,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     if (fx::g_joined) { reshade::unregister_addon(g_self); fx::g_joined = false; fx::g_registered = false; }
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
+    rtsswatch::Stop();     // [support] rtss_warning: its thread (it ends by itself after the first minute), before the log goes)
     crash::Uninstall();
     savebackups::Stop();   // [support] save_backups: what the game wrote at its exit backed up, the thread joined
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back

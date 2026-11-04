@@ -1,13 +1,13 @@
 // Offline checks of vr/under_camera.h ([body] under_camera, VR F4): the drawn body kept under the camera through a leap and while the game's
 // camera trails the hero. Played here as vrcam and the skeleton run it frame by frame - the pose (the drawn body moved to where the camera
 // stands on, across the floor at once and up at the end of the pose; the hands' targets from the eye in model space), then the view built on
-// the look-at (rising by the lift the pose asked for, [body] leap_camera_up) - with:
+// the look-at (rising by the share of the arc the pose asked for, [body] leap_camera_up_pct, held under a ceiling) - with:
 //  - the author's leap (2026-10-26, PS VR2, native OpenXR, direct input, room-scale walking: the 0.182 fix did nothing): the game lifts the
 //    hero's model matrix 12 - 13.7 units over the look-at on the arc, the look-at stays on the ground and on him across the floor (no
 //    camera spring on that path); the hips 0.75 over standing at most;
 //  - a pad's camera spring, as the game's follow has it (CameraTranslation::RenderTick 0x7BD350), under a leap and a knockback;
-// with model matrices turned, scaled and mirrored - checking that the drawn head stays exactly at the camera with it on (leap_camera_up on:
-// the camera up with the arc; off: the body down at the camera), the hands exactly on the controllers through the whole leap with the eye's
+// with model matrices turned, scaled and mirrored - checking that the drawn head stays exactly at the camera with it on (leap_camera_up_pct 100:
+// the camera up with the whole arc; 50: half of it; 0: the body down at the camera; under a ceiling: the eyes held under it), the hands exactly on the controllers through the whole leap with the eye's
 // height over the feet kept for their scale (the author's headset test of the first leap fix: the leap took the arms - their targets were
 // 7 - 17 units up where the game's model was), that without it the body flew metres up out from under the camera (the report), that
 // walking moves nothing, the bounds, and the log's one line per leap with what was done.
@@ -139,7 +139,7 @@ static void TestMaths() {
 
 // One leap, frame by frame, as vrcam runs it. The hero point from `from` to `to` (ground, x z) in `secs`, eased as the leap's own path; the
 // game lifts his model matrix on a sine arc peaking at `peak` units; the look-at follows by `sp` (smoothing off: on him). Each frame: the view
-// (the camera on the look-at, up by the lift the pose asked for with leap_camera_up), then the pose (the drawn body moved to where that
+// (the camera on the look-at, up by the share of the arc the pose asked for, leap_camera_up_pct), then the pose (the drawn body moved to where that
 // camera stands on, the next view's lift asked for). `on`: [body] under_camera.
 struct Leap {
     float worst = 0.0f;        // the drawn head's furthest from where it is with the hero standing under the camera (world units)
@@ -149,15 +149,17 @@ struct Leap {
     int lines = 0;             // log lines (trail ends)
     float worstHand = 0.0f;    // the drawn hands' furthest from the controllers (world units)
     float worstEyeHeight = 0.0f;   // the eye's height over the feet in model space against the eyes' (world units; with it on)
+    float worstRiseStep = 0.0f;    // the camera's rise from one frame to the next, at most (world units: no step at take-off, the cap, the landing)
     undercam::TrailEnd end;
 };
-static Leap RunLeap(Spring sp, const float from[2], const float to[2], float secs, float peak, float yaw, bool mirror, bool on, bool cameraUp,
-                    float spin = 0.0f) {   // spin: the game turning him, radians a second (Whirlwind)
+static Leap RunLeap(Spring sp, const float from[2], const float to[2], float secs, float peak, float yaw, bool mirror, bool on, float pct,
+                    float spin = 0.0f, float ceilingOverGround = INFINITY) {   // pct: [body] leap_camera_up_pct; ceiling: its lowest over the ground   // spin: the game turning him, radians a second (Whirlwind)
     Leap r;
     const float dt = 1.0f / 45.0f;   // the author's pairs: 44.7 a second
     const float ground = 3.0f, eyeH = 6.5f;
     const float head[3] = {0.0f, eyeH / 0.93f, 0.2f};   // the bind head over the model's origin (model units: eyeH at scale 0.93)
     float lastViewLift = 0.0f, lastEyeOverLook[3] = {0.0f, eyeH, 0.0f};   // g_viewLift and g_eyeFromLook: the last view's
+    float lastAsk = 0.0f;
     undercam::Trail trail;
     const int frames = (int)((secs + 1.0f) / dt);
     for (int f = 0; f <= frames; ++f) {
@@ -171,7 +173,11 @@ static Leap RunLeap(Spring sp, const float from[2], const float to[2], float sec
         const Model M = MakeModel(turn, 0.93f, mirror, hero[0], hero[1] + arc, hero[2]);
         float gap = 0.0f, lift = 0.0f, move[3] = {0.0f, 0.0f, 0.0f};
         CHECK(undercam::Measure(M.m, sp.p, &gap, &lift));
-        const float ask = on && cameraUp ? undercam::Lift(lift) : 0.0f;   // g_underLift
+        // g_underLift (vrcam UnderRise): the share of the arc, held under the ceiling - the eyes over the ground without the arc are eyeH here
+        const float room = undercam::Headroom(ceilingOverGround < INFINITY, ceilingOverGround, eyeH);
+        const float ask = on ? undercam::Rise(lift, pct, room) : 0.0f;
+        r.worstRiseStep = std::fmax(r.worstRiseStep, std::fabs(ask - lastAsk));
+        lastAsk = ask;
         bool moved = false;
         float eyesAt[3] = {M.m[12], M.m[13], M.m[14]};   // what the eyes are taken against (off: his matrix)
         if (on) {
@@ -231,34 +237,34 @@ static void TestHisLeap() {
     direct.smoothing = false;
     const float a[2] = {9053.4f, 11287.4f}, b[2] = {9075.4f, 11288.4f};   // Leap: 11 cells along x (his log, 09:39:11)
     {   // as 0.182 shipped it, or off: the body flies 13 units (3.5 m) up out from under the camera
-        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, false, true);
+        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, false, 100.0f);
         CHECK(r.worstUp > 12.0f);
         CHECK(r.cameraTop < 6.6f);
         CHECK(r.lines == 1 && Near(r.end.lift, 13.7f, 0.1f) && r.end.gap < 0.01f && r.end.moved == 0 && r.end.why != nullptr);
     }
-    {   // on, leap_camera_up on: the camera rises with the arc, the head stays exactly at it all through
-        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, true);
+    {   // on, leap_camera_up_pct 100 (the old tick on): the camera rises with the arc, the head stays exactly at it all through
+        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, 100.0f);
         CHECK(r.worst < 0.01f);
         CHECK(r.worstHand < 0.01f && r.worstEyeHeight < 0.01f);   // the arms on the controllers, the hands at their scale
         CHECK(r.cameraTop > 6.5f + 12.0f);
         CHECK(r.bodyTop > 12.0f);
         CHECK(r.lines == 1 && r.end.moved > 0 && r.end.left == 0 && Near(r.end.lift, 13.7f, 0.1f));
     }
-    {   // on, leap_camera_up off (the default): the camera stays on the ground, the body down with it
-        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, false);
+    {   // on, leap_camera_up_pct 0 (the default): the camera stays on the ground, the body down with it
+        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, 0.0f);
         CHECK(r.worst < 0.01f);
         CHECK(r.worstHand < 0.01f && r.worstEyeHeight < 0.01f);   // the arms on the controllers, the hands at their scale
         CHECK(r.cameraTop < 6.6f && r.bodyTop < 0.01f);
     }
     {   // Leap Attack: 16.6 cells, a mirrored model turned the other way, a lower arc
         const float c[2] = {500.0f, 700.0f}, d[2] = {477.0f, 676.0f};
-        const Leap r = RunLeap(direct, c, d, 0.7f, 12.0f, -2.2f, true, true, true);
+        const Leap r = RunLeap(direct, c, d, 0.7f, 12.0f, -2.2f, true, true, 100.0f);
         CHECK(r.worst < 0.01f);
         CHECK(r.worstHand < 0.01f && r.worstEyeHeight < 0.01f);   // the arms on the controllers, the hands at their scale
     }
     {   // walking (no arc, no spring): nothing to move, no line
         const float c[2] = {0.0f, 0.0f}, d[2] = {8.0f, 3.0f};
-        const Leap r = RunLeap(direct, c, d, 1.0f, 0.0f, 0.3f, false, true, true);
+        const Leap r = RunLeap(direct, c, d, 1.0f, 0.0f, 0.3f, false, true, 100.0f);
         CHECK(r.worst < 0.01f && r.cameraTop < 6.51f && r.bodyTop < 0.01f && r.lines == 0);
     }
 }
@@ -280,29 +286,87 @@ static void TestEveryMode() {
         {"running", &pad, {130.0f, 100.0f}, 2.5f, 0.0f, 0.0f},
     };
     for (const Case& c : cases)
-        for (int up = 0; up < 2; ++up) {
-            const Leap r = RunLeap(*c.sp, a, c.to, c.secs, c.peak, 0.6f, false, true, up == 1, c.spin);
+        for (int up = 0; up < 3; ++up) {   // leap_camera_up_pct 0, 50, 100
+            const Leap r = RunLeap(*c.sp, a, c.to, c.secs, c.peak, 0.6f, false, true, up * 50.0f, c.spin);
             const bool ok = r.worst < 0.01f && r.worstHand < 0.01f && r.worstEyeHeight < 0.01f;
             CHECK(ok);
-            if (!ok) std::printf("  %s (leap_camera_up %d): head %.3f, hands %.3f, eye height %.3f off\n", c.name, up, r.worst, r.worstHand, r.worstEyeHeight);
+            if (!ok) std::printf("  %s (leap_camera_up_pct %d): head %.3f, hands %.3f, eye height %.3f off\n", c.name, up * 50, r.worst, r.worstHand, r.worstEyeHeight);
         }
+}
+
+// [body] leap_camera_up_pct (a player on 0.201: "raising the perspective just a tiny bit"): the share of the arc, the old tick read as 0 / 100,
+// and the ceiling's cap - in the maths and in the author's leap.
+static void TestShareAndCeiling() {
+    // the share: no key = the old tick, a key wins, clamped
+    CHECK(undercam::RisePct(false, 0.0f, true) == 100.0f && undercam::RisePct(false, 0.0f, false) == 0.0f);
+    CHECK(undercam::RisePct(true, 30.0f, true) == 30.0f && undercam::RisePct(true, 0.0f, true) == 0.0f);
+    CHECK(undercam::RisePct(true, 150.0f, false) == 100.0f && undercam::RisePct(true, -5.0f, true) == 0.0f && undercam::RisePct(true, NAN, true) == 100.0f);
+    // Rise: the share of the eased arc, no ceiling
+    CHECK(undercam::Rise(13.0f, 0.0f, INFINITY) == 0.0f);
+    CHECK(Near(undercam::Rise(13.0f, 100.0f, INFINITY), 13.0f, 1e-5f) && Near(undercam::Rise(13.0f, 50.0f, INFINITY), 6.5f, 1e-5f));
+    CHECK(Near(undercam::Rise(0.45f, 50.0f, INFINITY), 0.5f * undercam::Lift(0.45f), 1e-6f));   // the ease-in scaled, not cut
+    CHECK(undercam::Rise(0.2f, 100.0f, INFINITY) == 0.0f);   // walking's agreement: nothing
+    // Headroom: none without a ceiling; the lowest less the margin less the eyes; never under 0
+    CHECK(undercam::Headroom(false, 5.0f, 6.5f) == INFINITY);
+    CHECK(Near(undercam::Headroom(true, 18.0f, 6.5f), 18.0f - undercam::kCeilMargin - 6.5f));
+    CHECK(undercam::Headroom(true, 6.0f, 6.5f) == 0.0f);
+    // the cap: never over it, the arc itself under the knee, smooth across it (no step, no kink: the slope eases from 1 to 0)
+    {
+        const float cap = 4.0f;
+        float last = 0.0f, lastSlope = 1.0f;
+        bool under = true, steady = true, follows = true;
+        for (float l = 0.0f; l <= 20.0f; l += 0.01f) {
+            const float v = undercam::Rise(l, 100.0f, cap);
+            if (v > cap + 1e-5f) under = false;
+            if (undercam::Lift(l) <= cap - undercam::kCapKnee && !Near(v, undercam::Lift(l), 1e-5f)) follows = false;
+            const float slope = (v - last) / 0.01f;
+            if (l > 2.0f * undercam::kLiftFrom + 0.02f && (slope > lastSlope + 0.02f || slope < -1e-3f)) steady = false;   // past the ease-in: never steeper again, never down
+            if (l > 2.0f * undercam::kLiftFrom + 0.02f) lastSlope = slope;
+            last = v;
+        }
+        CHECK(under && steady && follows);
+        CHECK(Near(undercam::Rise(30.0f, 100.0f, cap), cap, 1e-5f));
+        CHECK(undercam::Rise(13.0f, 100.0f, 0.0f) == 0.0f);   // a ceiling already at the eyes: no rise, not down
+        CHECK(undercam::Rise(13.0f, 100.0f, 0.4f) <= 0.4f + 1e-6f && undercam::Rise(13.0f, 100.0f, 0.4f) > 0.3f);   // a low cap: the knee narrowed
+    }
+    // the author's leap (13.7 up, no spring) at 0 / 50 / 100 %: the camera up by that share, the head and the hands with it, no step
+    Spring direct;
+    direct.smoothing = false;
+    const float a[2] = {9053.4f, 11287.4f}, b[2] = {9075.4f, 11288.4f};
+    for (float pct : {0.0f, 50.0f, 100.0f}) {
+        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, pct);
+        CHECK(r.worst < 0.01f && r.worstHand < 0.01f && r.worstEyeHeight < 0.01f);
+        CHECK(Near(r.cameraTop - 6.5f, 13.7f * pct * 0.01f, 0.15f));   // (the arc's top between two frames)
+        CHECK(r.worstRiseStep < 13.7f * pct * 0.01f * 0.12f + 1e-3f);   // a frame's step of the arc at 45 a second, never a jump
+    }
+    // ... in a cave whose ceiling hangs 14 units over the ground: the eyes held a margin under it, still smooth, the body still under them
+    {
+        const float ceiling = 14.0f;
+        const Leap r = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, 100.0f, 0.0f, ceiling);
+        CHECK(r.cameraTop <= ceiling - undercam::kCeilMargin + 1e-3f);
+        CHECK(r.cameraTop > ceiling - undercam::kCeilMargin - 0.6f);   // it does rise to the cap's knee
+        CHECK(r.worst < 0.01f && r.worstHand < 0.01f && r.worstEyeHeight < 0.01f);
+        CHECK(r.worstRiseStep < 13.7f * 0.12f);
+        const Leap low = RunLeap(direct, a, b, 0.6f, 13.7f, 1.48f, false, true, 100.0f, 0.0f, 7.0f);   // a ceiling at the eyes: no rise at all
+        CHECK(low.cameraTop < 6.51f && low.worst < 0.01f && low.worstHand < 0.01f);
+    }
 }
 
 static void TestPadSpring() {
     const Spring pad;
     {   // a leap on a pad: the spring trails him across the floor as well as the arc lifting him
         const float a[2] = {1000.0f, 2000.0f}, b[2] = {1025.0f, 2026.0f};
-        const Leap off = RunLeap(pad, a, b, 0.6f, 13.0f, 0.75f, false, false, true);
+        const Leap off = RunLeap(pad, a, b, 0.6f, 13.0f, 0.75f, false, false, 100.0f);
         CHECK(off.worst > 12.0f);
         CHECK(off.lines == 1 && off.end.gap > 4.0f && off.end.gap <= pad.maxDist + 0.01f);
-        const Leap on = RunLeap(pad, a, b, 0.6f, 13.0f, 0.75f, false, true, true);
+        const Leap on = RunLeap(pad, a, b, 0.6f, 13.0f, 0.75f, false, true, 100.0f);
         CHECK(on.worst < 0.01f && on.worstHand < 0.01f && on.worstEyeHeight < 0.01f);
     }
     {   // a knockback: 3 units back in 0.15 s, no arc, the model mirrored
         const float a[2] = {50.0f, 60.0f}, b[2] = {47.6f, 58.2f};
-        const Leap off = RunLeap(pad, a, b, 0.15f, 0.0f, -2.2f, true, false, true);
+        const Leap off = RunLeap(pad, a, b, 0.15f, 0.0f, -2.2f, true, false, 100.0f);
         CHECK(off.worst > 0.5f);
-        const Leap on = RunLeap(pad, a, b, 0.15f, 0.0f, -2.2f, true, true, true);
+        const Leap on = RunLeap(pad, a, b, 0.15f, 0.0f, -2.2f, true, true, 100.0f);
         CHECK(on.worst < 0.01f && on.cameraTop < 6.51f && on.worstHand < 0.01f && on.worstEyeHeight < 0.01f);
     }
     {   // a waypoint (past cameraJumpDistance): taken at once, nothing apart
@@ -342,6 +406,7 @@ int main() {
     TestMaths();
     TestHisLeap();
     TestEveryMode();
+    TestShareAndCeiling();
     TestPadSpring();
     TestTrail();
     std::printf("under_camera_test: %d checks, %d failed\n", g_checks, g_failures);

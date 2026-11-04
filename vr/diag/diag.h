@@ -5,6 +5,7 @@
 //               (vr/diag/pair_probes.cpp)
 //   crash       the start's steps and the log's first minutes to a file, an exception the game dies of to d2r_vr_crash.txt (vr/diag/crash.cpp)
 //   sessionlogs [support] session_logs: each game's logs in logs\sessions\<its start>, kept session_logs_days (vr/diag/session_logs.cpp)
+//   rtsswatch   [support] rtss_warning: RivaTuner Statistics Server found with the game - one log line, the reports too (vr/diag/rtss_watch.cpp)
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -79,6 +80,9 @@ void Mirror(const char* text);
 void Step(const char* name);
 void Mark(const char* what);
 uint32_t AvTotal();
+// The guard around our own threads' bodies (__except(crash::OwnThreadFilter(GetExceptionInformation(), "update thread"))): an exception
+// none of their code catches is reported here, whoever holds the top-level filter, and the search goes on (the game's handler as before).
+long OwnThreadFilter(struct _EXCEPTION_POINTERS* ep, const char* thread);
 }  // namespace crash
 
 namespace crashwatch {
@@ -86,6 +90,13 @@ void Start(const char* version);   // [support] crash_reports (vr/diag/crash_wat
 void Quiet();                      // a clean way out: the unload (and the process ending through ExitProcess - its DllMain)
 void Crashed();                    // crash.cpp saw the game die: Quiet no longer sets the event
 }  // namespace crashwatch
+
+namespace rtsswatch {
+void Start();       // [support] rtss_warning (vr/diag/rtss_watch.cpp): RivaTuner looked for at the start and every 10 s of the first minute
+void Stop();
+bool On();          // the key was on at the start
+unsigned Found();   // what it found so far (shared/rtss_detect.h rtss::k* bits); the hang / crash files add their own module list's
+}  // namespace rtsswatch
 
 namespace sessionlogs {
 void Start();   // after crash::Install (g_iniPath set): the folder's thread, the old folders tidied

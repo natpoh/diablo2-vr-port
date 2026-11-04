@@ -1,5 +1,32 @@
 # What's new in D2R VR
 
+## 0.202.0
+
+- **Crash fixes** found through the first crash reports of 0.201.0:
+  - changing a setting while the game ran could end it ("Fatal error - D2RLoader": two threads stopping the skill icons' loader at once);
+  - walking backwards could corrupt memory when the game posed two bodies at once (0xC0000374 heap corruption) - each body now keeps its own;
+  - leaving a game, the sky dome, the ceilings and the belt potions we place through the game are let go before the game cleans up, so it
+    no longer finds leaked assets on its way out.
+- **RivaTuner warning**: RivaTuner Statistics Server / MSI Afterburner's overlay can hang the game at its first picture in VR. Settings > Home
+  warns while it runs, and the log says so (`[support] rtss_warning`).
+- **Monsters scatter when you land a Leap** (a new box, off as it comes, `[weight] leap_landing_scatter`): the monsters round the spot are
+  thrown one cell outward by the game's own knockback, and one you land on is pushed aside, so you never stand inside a monster.
+- **2D strafe after each blow is off as the mod comes** (it changes the game's rules; your own setting stays if you kept your settings).
+- A stall the game recovers from is written to d2r_vr_stall.txt, not reported as a hang.
+- **A crash in the mod's own update thread is written down** (d2r_vr_crash.txt and a minidump) even when another crash handler -
+  D2RLoader's "Fatal error" box - holds the top place, and the crash reporter now offers a report for it (0.201.0 said "no report").
+- **Our answer to your crash report reaches you** in D2R VR Settings: after you sent a report (or your logs), Settings asks the BodyWalk
+  server about it at most once an hour - when it opens and when it starts the game - and shows our reply on the Home tab in red until you
+  have seen it: what we found, or "fixed in 0.202.0 - please update" with an Update button. The D2R VR Launcher's Settings button blinks
+  while a reply is unread. Only the report's number and a token the server gave for it are sent; nothing when both crash report ticks
+  are off.
+- **The camera can rise with part of a leap** (a player on 0.201: "raising the perspective just a tiny bit would be great for capturing
+  that wild, high-flying sensation in VR"). "Camera rises with the leap's arc, %" (`[body] leap_camera_up_pct`, Settings > Body, 0 - 100,
+  0 in the settings that come with the mod) replaces the on/off box: the camera follows that share of the leap's own arc (about 3.5 m at
+  its top), eased like the arc, the body always under it and the arms on the controllers. Under a cave's or a room's ceiling (the Ceiling
+  settings) the eyes never come closer than about 30 cm to it - the rise bends smoothly onto that. An old `leap_camera_up=1` reads as 100.
+  F4 only. Test: under_camera_test.
+
 ## 0.201.0
 
 - **Crash reports, if you want them**: after a crash, a freeze or a lost graphics card, D2R VR Crash Reporter offers to send that

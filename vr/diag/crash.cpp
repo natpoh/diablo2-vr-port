@@ -4,6 +4,7 @@
 #include "hang_watch.h"
 #include "../vrcam_internal.h"
 #include "../log_async.h"
+#include "../../shared/rtss_detect.h"
 
 #include <dbghelp.h>
 #include <psapi.h>
@@ -146,6 +147,16 @@ void Write(const wchar_t* name) {
     CloseHandle(f);
 }
 
+// [support] rtss_warning (shared/rtss_detect.h): RivaTuner found - what rtss_watch.cpp saw and the module list just read (ListMods:
+// no loader lock) - one line in the report, so the crash reporter's text says it too. Nothing found or the key off: nothing.
+static void AddRtss(void (*add)(const char*, ...)) {
+    if (!rtsswatch::On()) return;
+    unsigned found = rtsswatch::Found();
+    for (int i = 0; i < g_modCount; ++i) found |= rtss::HookBitA(g_modInfo[i].name);
+    char line[640];
+    if (rtss::Format(found, "", line, sizeof line)) add("%s\r\n", line);
+}
+
 // To d2r_vr_crash.txt: what, where, the registers, the stack, the last access violation before it;
 // `fatal` (the one the game dies of) the whole module list too.
 void Report(EXCEPTION_POINTERS* ep, const char* kind, bool walk, bool fatal) {
@@ -174,6 +185,7 @@ void Report(EXCEPTION_POINTERS* ep, const char* kind, bool walk, bool fatal) {
     Add("rip %016llX rsp %016llX rbp %016llX\r\nrax %016llX rbx %016llX rcx %016llX rdx %016llX\r\nrsi %016llX rdi %016llX r8  %016llX r9  %016llX\r\n"
         "r10 %016llX r11 %016llX r12 %016llX r13 %016llX\r\nr14 %016llX r15 %016llX\r\n",
         c.Rip, c.Rsp, c.Rbp, c.Rax, c.Rbx, c.Rcx, c.Rdx, c.Rsi, c.Rdi, c.R8, c.R9, c.R10, c.R11, c.R12, c.R13, c.R14, c.R15);
+    AddRtss(&Add);
     if (walk && c.Rsp) {
         MEMORY_BASIC_INFORMATION mbi{};
         if (VirtualQuery((void*)c.Rsp, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT) {
@@ -278,6 +290,7 @@ static void HangFile(double stoodMs, uint32_t presents) {
          t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, g_version, stoodMs / 1000.0, presents,
          (GetTickCount64() - g_installedAt) / 1000.0);
     HAdd("the game's draw thread (presents): %lu; the start's last step: %s\r\n", draw, g_step);
+    AddRtss(&HAdd);
     if (draw) {   // its registers, for the PDB (releases\pdb\<version>) and the game's image
         CONTEXT c;
         size_t copied = 0;
@@ -338,6 +351,28 @@ static bool HangDump() {
     CloseHandle(f);
     return ok != FALSE;
 }
+// The presents came back: what d2r_vr_hang.txt holds was a long frame, not a hang. Said at its end, and the files renamed d2r_vr_stall.*,
+// so d2r_vr_hang.txt only ever stands for a stall that did not end (2026-11-04: the crash reporter gave a 5 s load at the start, 27 minutes
+// before, as the place of a fast fail it had no place for).
+static void HangRecovered(double stoodMs) {
+    wchar_t a[MAX_PATH], b[MAX_PATH];
+    wcscpy_s(a, g_dir); wcscat_s(a, L"d2r_vr_hang.txt");
+    wcscpy_s(b, g_dir); wcscat_s(b, L"d2r_vr_stall.txt");
+    HANDLE f = CreateFileW(a, FILE_APPEND_DATA | SYNCHRONIZE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char line[200];
+    const int n = snprintf(line, sizeof line, "==== %02d:%02d:%02d.%03d - presents again after %.1f s: the game went on - a long frame, not a hang ====\r\n",
+                           t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, stoodMs / 1000.0);
+    DWORD w = 0;
+    if (n > 0) WriteFile(f, line, (DWORD)std::min<int>(n, (int)sizeof line - 1), &w, nullptr);
+    CloseHandle(f);
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    wcscpy_s(a, g_dir); wcscat_s(a, L"d2r_vr_hang.dmp");
+    wcscpy_s(b, g_dir); wcscat_s(b, L"d2r_vr_stall.dmp");
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);   // (none when it stood under 15 s)
+}
 static std::atomic<bool> g_hangStop{false};
 static HANDLE g_hangThread = nullptr;
 static DWORD WINAPI HangWatch(void*) {
@@ -364,12 +399,33 @@ static DWORD WINAPI HangWatch(void*) {
             break;
         }
         case hangwatch::Act::Back:
-            LogF("vrcam: hang watchdog - presents again after %.1f s: a long frame (a load?), not a hang - d2r_vr_hang.txt holds where it stood", w.stoodMs / 1000.0);
+            HangRecovered(w.stoodMs);
+            LogF("vrcam: hang watchdog - presents again after %.1f s: a long frame (a load?), not a hang - where it stood is in d2rloader\\logs\\d2r_vr_stall.txt", w.stoodMs / 1000.0);
             break;
         default: break;
         }
     }
     return 0;
+}
+
+// The report of the exception the game dies of is written once: by our thread's guard (OwnThreadFilter) or the top-level filter.
+static std::atomic<bool> g_fatalDone{false};
+
+// Our own threads (the update thread, vr/frame/frame_order.cpp): their bodies run inside __try with this as the filter, which Windows
+// asks only for an exception nothing inside them catches. The top-level filter is fought over (2026-11-04, Serg's PC: "another crash
+// handler was set" again and again - D2RLoader's own; a C++ exception escaping our update thread went to its "Fatal error" box and
+// left no report of ours, and the watcher saw no crash). Here it is reported wherever the top-level filter is, and the search goes on:
+// the game's or D2RLoader's handler runs after it as before.
+long OwnThreadFilter(struct _EXCEPTION_POINTERS* ep, const char* thread) {
+    if (!g_fatalDone.exchange(true)) {
+        logasync::Drain(150);
+        crashwatch::Crashed();   // [support] crash_reports: no "clean end" from a detach after it
+        char kind[160];
+        snprintf(kind, sizeof kind, "UNHANDLED in our %s - the game closes on this", thread);
+        Report(ep, kind, true, true);
+        Dump(ep);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
 }
 
 LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
@@ -378,7 +434,7 @@ LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
     logasync::Drain(150);   // [debug] log_async: the lines before the crash are in the log (a writer stuck on the host's file is not waited for long)
     DWORD none = 0;
     const bool first = g_filterThread.compare_exchange_strong(none, me);
-    if (first) {
+    if (first && !g_fatalDone.exchange(true)) {   // (our thread's guard may have written it already)
         crashwatch::Crashed();   // [support] crash_reports: no "clean end" from the detach that may follow (the game's handler may ExitProcess)
         Report(ep, "UNHANDLED - the game closes on this", true, true);
         Dump(ep);
@@ -429,6 +485,10 @@ void Install(const char* version) {
     at(a, L"d2r_vr_crash.txt"); at(b, L"d2r_vr_crash_old.txt");
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (GetFileAttributesExW(a, GetFileExInfoStandard, &fa) && (fa.nFileSizeHigh || fa.nFileSizeLow > 1024 * 1024)) MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    at(a, L"d2r_vr_hang.txt"); at(b, L"d2r_vr_hang_prev.txt");   // a run before's hang is not this run's: d2r_vr_hang.txt is only ever this run's
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    at(a, L"d2r_vr_hang.dmp"); at(b, L"d2r_vr_hang_prev.dmp");
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
     wchar_t sys[MAX_PATH];
     if (UINT n = GetSystemDirectoryW(sys, MAX_PATH); n && n < MAX_PATH - 16) {
         wcscat_s(sys, L"\\dbghelp.dll");

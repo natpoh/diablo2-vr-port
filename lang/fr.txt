@@ -111,6 +111,7 @@ group.draw_distance.help = Jusqu'où le monde est dessiné autour de vous, en un
 # --- The game and ReShade ---
 group.the_game_and_reshade = Le jeu et ReShade
 group.the_game_and_reshade.help = Vérifie et installe ce dont le mod a besoin : D2RLoader (le mod ne fonctionne que sous lui) et ReShade (le brouillard, le ciel, le plafond et la profondeur de FlatVR en ont besoin). Des boutons pour partager votre propre ReShade avec le mod ou le mettre de côté, et pour créer le ciel du Sanctuaire des Arcanes.
+@status.rtss_warn.label = RivaTuner Statistics Server ou MSI Afterburner est en cours d'exécution. Son affichage à l'écran s'accroche à l'image du jeu et peut figer le jeu sur sa première image en RV. Fermez RivaTuner / MSI Afterburner, ou dans RivaTuner réglez Application detection level sur None (ou désactivez son On-Screen Display) pour D2R.exe et D2RLoader.exe.
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = Télécharger et installer D2RLoader 1.3.1
 @run.d2rloader_get.tip = Télécharge D2RLoader 1.3.1 depuis d2rloader.net, le vérifie avec le SHA-256 que le site publie et le décompresse dans le dossier du jeu, à côté de D2R.exe. Le mod ne fonctionne que sous D2RLoader.
@@ -169,6 +170,10 @@ hud.headset_language.tip = Les mots que le mod dessine dans le casque - le panne
 @run.collect_logs.tip = Crée un zip sur votre bureau avec ce dont nous avons besoin pour trouver un problème : les journaux du mod, de D2RLoader, de ReShade et de FlatVR, les réglages, les versions, la carte graphique et Windows. Si le jeu tourne, il enregistre d'abord 10 s de la façon dont les images sont dessinées - continuez à jouer et tournez la tête. Rien n'est envoyé nulle part : postez le zip sur notre Discord (#diablo-2-vr).
 @status.collect.label = Rassembler les journaux : un zip sur votre bureau, à poster sur notre Discord
 @status.crashrep.label = Rapports de plantage : désactivés
+@run.crash_reply_update.label = Mettre à jour D2R VR
+@run.crash_reply_update.tip = Ouvre la page de téléchargement de la dernière version de D2R VR, où le plantage dont parle cette réponse est corrigé. Ce programme ne télécharge et ne lance jamais rien lui-même.
+@run.crash_reply_dismiss.label = Ignorer cette réponse
+@run.crash_reply_dismiss.tip = Ferme cette réponse ; elle ne revient pas. Une plus récente, s'il y en a une, s'affiche ensuite.
 support.crash_reports.label = Proposer d'envoyer un rapport quand le jeu se ferme anormalement
 support.crash_reports.tip = Après une partie qui a planté, gelé ou perdu la carte graphique, D2R VR Crash Reporter ouvre une fenêtre avec ce qu'il enverrait au serveur BodyWalk : comment le jeu s'est terminé, les journaux de cette partie, les versions et la carte graphique - votre nom d'utilisateur Windows et de PC, noms de personnages, adresses et mots de passe retirés. Rien n'est envoyé tant que vous n'appuyez pas sur Envoyer là-bas ; le vidage mémoire seulement avec sa propre case. Décoché : rien ne surveille le jeu, comme avant. Prend effet au prochain lancement du jeu.
 @run.crash_offer.label = Voir le rapport et l'envoyer
@@ -215,6 +220,8 @@ support.session_logs_max_mb.label = Au plus (MB) pour tous les journaux
 support.session_logs_max_mb.tip = Tant que tous les dossiers dépassent cette valeur, les plus anciens partent en premier. Les journaux d'une partie font environ 1 - 10 MB.
 support.collect_sessions.label = Rassembler les journaux : les dernières parties aussi
 support.collect_sessions.tip = Rassembler les journaux emballe aussi les journaux de ce nombre de parties les plus récentes (leurs dossiers sous sessions), pour que la partie qui a planté soit dans le zip même après avoir relancé le jeu. 0 : seulement le dossier logs, comme avant.
+support.rtss_warning.label = Avertir de RivaTuner / MSI Afterburner
+support.rtss_warning.tip = RivaTuner Statistics Server (l'affichage à l'écran de MSI Afterburner) s'accroche à l'image du jeu et peut figer le jeu sur sa première image en RV. Coché : le jeu le cherche pendant la première minute et écrit une ligne dans son journal et dans les rapports de plantage, et Accueil affiche un avertissement tant qu'il tourne. Rien n'est fermé ni modifié. Décoché : pas de recherche, pas d'avertissement, comme avant.
 update.check.label = Chercher des mises à jour à l'ouverture du programme
 update.check.tip = Interroge bodywalkvr.com pour la version la plus récente du mod. Rien n'est téléchargé.
 update.develop.label = Versions bêta aussi (canal develop)
@@ -481,9 +488,9 @@ body.lock.tip = Rien au-dessus du bassin ne suit l'animation du jeu : les bras e
 body.legs_under_body.label = Les jambes restent sous le corps
 body.legs_under_body.tip = Les hanches et les jambes gardent leur place et leur direction sous le corps : un coup ne les projette plus en avant et ne les tord plus. Elles marchent, s'accroupissent et sautent toujours. Désactivé = les hanches et les jambes du jeu telles qu'animées.
 body.under_camera.label = Le corps reste sous la caméra pendant un bond (F4)
-body.under_camera.tip = Un Bond ou une Attaque bondissante soulève le modèle du héros de plusieurs mètres sur son arc, et avec une manette la caméra du jeu le suit à la traîne quand il se déplace vite (un bond, un recul) : son corps s'envolait hors de sous vos yeux. Activé : le corps dessiné est gardé là où se tient la caméra : la caméra reste au sol et le corps avec elle (ou, avec la case ci-dessous, la caméra monte avec l'arc du bond). Seuls le corps dessiné et la caméra sont concernés : l'endroit où il se tient, sa zone de collision, son trajet et le bond lui-même restent ceux du jeu. RV première personne (F4) seulement. Désactivé = comme avant. Effet immédiat.
-body.leap_camera_up.label = La caméra monte avec l'arc du bond
-body.leap_camera_up.tip = Un Bond ou une Attaque bondissante soulève le héros d'environ 3,5 m au sommet de son arc. Activé : la caméra monte et descend avec lui, le corps en dessous. Désactivé : la caméra reste à votre hauteur au-dessus du sol et le corps est gardé en bas avec elle. Effet immédiat.
+body.under_camera.tip = Un Bond ou une Attaque bondissante soulève le modèle du héros de plusieurs mètres sur son arc, et avec une manette la caméra du jeu le suit à la traîne quand il se déplace vite (un bond, un recul) : son corps s'envolait hors de sous vos yeux. Activé : le corps dessiné est gardé là où se tient la caméra : la caméra reste au sol et le corps avec elle (ou, avec le curseur ci-dessous, la caméra monte avec une partie de l'arc du bond). Seuls le corps dessiné et la caméra sont concernés : l'endroit où il se tient, sa zone de collision, son trajet et le bond lui-même restent ceux du jeu. RV première personne (F4) seulement. Désactivé = comme avant. Immédiat.
+body.leap_camera_up_pct.label = La caméra monte avec l'arc du bond, %
+body.leap_camera_up_pct.tip = Un Bond ou une Attaque bondissante soulève le héros d'environ 3,5 m au sommet de son arc. La caméra en suit cette part, adoucie comme l'arc lui-même, le corps toujours dessous : 0 = la caméra reste à votre hauteur au-dessus du sol et le corps est gardé en bas avec elle, 100 = tout l'arc, 20 - 30 = une petite élévation pour la sensation du saut. Sous un plafond (les plafonds des grottes et des salles des réglages Plafond), la caméra ne monte jamais à moins d'environ 30 cm de lui. Immédiat.
 body.crouch.label = Le héros s'accroupit quand vous vous accroupissez (F4)
 body.crouch.tip = Accroupissez-vous dans votre pièce et le corps du héros descend avec votre tête, genoux fléchis et pieds au sol, si bien que vous voyez vos jambes sous vous et non votre poitrine devant le visage. Seul le corps dessiné est concerné : l'endroit où il se tient, sa zone de collision et sa marche restent ceux du jeu. Demande une caméra qui suit la hauteur de votre tête (OpenXR natif, ou FlatVR avec la position de la tête). RV première personne (F4) seulement. Décoché : exactement comme avant. Idée de bearstonem/d2r-pcvr.
 body.crouch_cm.label = Accroupissement : tête plus basse que, cm
@@ -2937,6 +2944,9 @@ weight.grab_moves_unit.tip = Demande Poids des armes > Saisir les corps > « Sou
 group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monstres que vous renversez (Weapon Weight > Monsters' bodies)
 weight.knock_down_moves_unit.label = Le jeu déplace ce que vous renversez (un test)
 weight.knock_down_moves_unit.tip = Demande Weapon Weight > Monsters' bodies > « Un coup violent renverse un humanoïde ». Immédiat. Coché : un humanoïde que votre coup renverse est déplacé par le jeu lui-même - son propre recul le met à l'endroit où son corps tombe et reste couché - donc il combat depuis là, vos coups sur le corps couché là portent, et il se relève là au lieu de revenir à pied à son ancienne place ; tout le monde dans la partie le voit. Quelques reculs par chute (là où il atterrit et là où il s'immobilise), jamais plus : si le jeu l'éloigne pendant qu'il est couché, il se relève et s'en va. Un vacillement (un pas en arrière) ne déplace rien. Ce que le recul du jeu refuse (boss, grands monstres) reste où il est. Seulement en solo ou quand vous hébergez la partie ; celui d'un joueur qui a rejoint reste seulement dessiné. F4. Décoché : seul le dessin tombe, le jeu le garde sur sa case, comme avant.
+group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = Monstres autour de votre atterrissage après un Bond (Poids des armes > Corps des monstres)
+weight.leap_landing_scatter.label = Les monstres sont projetés là où vous atterrissez après un Bond (un test)
+weight.leap_landing_scatter.tip = Demande Poids des armes > Corps des monstres et la bibliothèque weight avec le knock-down. Immédiat. Coché : quand votre Barbare atterrit après un Bond ou une Attaque bondissante, les monstres humanoïdes à environ 3 m du point (et ceux que le propre recul du Bond du jeu touche un peu plus loin) sont projetés d'UNE case loin de votre point d'atterrissage - le propre recul du jeu met chaque unité sur cette case et son corps y tombe, donc l'endroit où vous la voyez et celui où le jeu l'a concordent ; plus elle était près, plus elle vole haut, jamais plus loin. Celle sur laquelle vous atterrissez pile est aussi poussée de sa case (au centre exact : dans le sens de votre bond), quel que soit son poids, pour que vous ne finissiez pas dedans ; les autres lourds (boss, grands monstres) vacillent seulement. Ce que le recul du jeu refuse reste en place. Le déplacement seulement en solo ou quand vous hébergez la partie (chez un joueur qui a rejoint, seulement dessiné). Les dégâts, le jet de toucher et l'étourdissement restent ceux du jeu. F4. Décoché : l'atterrissage ne projette rien, comme avant.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Compétences vers BodyWalk
@@ -4135,6 +4145,11 @@ status.crashrep.pending_logs = Les journaux collectés {when} sont prêts à êt
 status.crashrep.pending = Un jeu s'est fermé anormalement ({when}) : un rapport est prêt - rien n'a encore été envoyé.
 status.crashrep.on = Rapports de plantage : activés - après un jeu qui se ferme anormalement, on vous demande si vous voulez envoyer un rapport.
 status.crashrep.off = Rapports de plantage : désactivés - rien ne surveille le jeu, rien n'est envoyé.
+status.crashreply.update_only = Votre rapport de plantage #{id} : le plantage est corrigé dans {fixed} - veuillez mettre à jour.
+status.crashreply.logs = Réponse aux journaux que vous avez envoyés (#{id}, {date}) : {text}
+status.crashreply.report = Réponse à votre rapport de plantage #{id} ({date}) : {text}
+status.crashreply.update = Corrigé dans {fixed} - veuillez mettre à jour (vous avez {mine}).
+status.crashreply.have = Corrigé dans {fixed}, la version que vous avez.
 crashrep.ask = Aidez-nous à corriger les plantages ?\n\nQuand le jeu se ferme anormalement (plantage, gel, carte graphique perdue), D2R VR peut proposer d'envoyer un rapport au serveur BodyWalk : les journaux de cette partie, les versions, la carte graphique. Votre nom d'utilisateur Windows et de PC, noms de personnages, adresses et mots de passe sont retirés, et vous voyez d'abord chaque fichier.\n\nRien n'est envoyé tant que vous n'appuyez pas sur Envoyer dans cette fenêtre. Vous pouvez changer cela à tout moment : Home > D2R VR > "Proposer d'envoyer un rapport quand le jeu se ferme anormalement".
 status.grip_lib.found = Bibliothèque de prise : d2r_vr_grip.dll est dans d2rloader\d2r_vr_libs - la case ci-dessous tient l'arme à sa façon.
 status.grip_lib.missing = Bibliothèque de prise : introuvable dans d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - le mod garde sa propre façon de tenir, la case ci-dessous est indisponible.
@@ -4719,6 +4734,8 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+body.leap_camera_up.label = La caméra monte avec l'arc du bond
+body.leap_camera_up.tip = Un Bond ou une Attaque bondissante soulève le héros d'environ 3,5 m au sommet de son arc. Activé : la caméra monte et descend avec lui, le corps en dessous. Désactivé : la caméra reste à votre hauteur au-dessus du sol et le corps est gardé en bas avec elle. Effet immédiat.
 @ui.weapon_follow.label = Suivre l'arme en main
 @ui.weapon.label = Arme
 @ui.weapon.choice0 = Sans arme

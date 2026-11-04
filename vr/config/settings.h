@@ -532,6 +532,7 @@ struct Settings {
     std::atomic<bool>  flatWeaponAdjust{true};   // [body] flat_weapon_adjust: flat F3, each arm with its weapon moved by [weapon_<kind>] flat_* (drawn only, vr/flat_weapon.h)
     std::atomic<bool>  underCamera{true};   // [body] under_camera: the drawn body under the camera through a leap's arc and the game camera's trail (F4; vr/under_camera.h)
     std::atomic<bool>  leapCameraUp{false}; // [body] leap_camera_up: with it, the camera rises with the leap's arc (off: it stays, the body is kept down with it)
+    std::atomic<float> leapCameraPct{0.0f}; // [body] leap_camera_up_pct: the share of the leap's arc the camera rises by, 0-100 (no key: leap_camera_up's 0 / 100; vr/under_camera.h RisePct)
     std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
     std::atomic<float> crouchCm{20.0f};     // [body] crouch_cm: the head this far below its height at the recentre is a crouch
     std::atomic<bool>  formsFirstPerson{false};   // [shapeshift] forms_first_person: a druid's werewolf / werebear grafted under the camera (F4 only; vr/unleashed_shapeshift_form.h)

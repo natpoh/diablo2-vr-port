@@ -892,6 +892,10 @@ void LoadSettings() {
     headshadow::WantForPose(g_set.legsRear.load() || g_set.attackLean.load() || (g_set.flatWeaponAdjust.load() && g_set.platform.load() == 0));
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
+    {   // [body] leap_camera_up_pct: an ini with no _pct key keeps what leap_camera_up said (on = the whole arc)
+        const float pct = IniF(L"body", L"leap_camera_up_pct", -1.0f);
+        g_set.leapCameraPct.store(undercam::RisePct(pct >= 0.0f, pct, g_set.leapCameraUp.load()));
+    }
     g_set.crouch.store(IniB(L"body", L"crouch", false));
     g_set.crouchCm.store(std::clamp(IniF(L"body", L"crouch_cm", 20.0f), 5.0f, 60.0f));
     if (const bool forms = IniB(L"shapeshift", L"forms_first_person", false); forms != g_set.formsFirstPerson.exchange(forms))
@@ -1517,10 +1521,12 @@ void LoadSettings() {
         ks.strength = g_set.weightStrength.load() * 0.01f;
         ks.deathOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"death_ragdoll", false);
         ks.deathFlatOn = IniB(L"weight", L"death_ragdoll_flat", false);   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, by the game's own swing (no bodies key needed)   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
+        ks.leapOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"leap_landing_scatter", false);   // [weight] leap_landing_scatter: a Leap's landing throws them apart (vr/leap_scatter.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
         grabmove::SetKnockWanted(ks.on && IniB(L"weight", L"knock_down_moves_unit", false));   // [weight] knock_down_moves_unit: what a blow knocks down, moved by the game too
+        grabmove::SetLeapWanted(ks.leapOn);   // [weight] leap_landing_scatter: what a leap's landing throws, its unit after it by the game's knockback (host / single player)
         if (ks.throwOn) skel::SetHeldWanted(true);   // (what the monsters hold made capsules: a hand takes a monster by its spear - Serg: «я не могу схватить монстра за оружие»)
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||

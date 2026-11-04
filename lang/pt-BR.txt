@@ -111,6 +111,7 @@ group.draw_distance.help = Até onde o mundo é desenhado ao seu redor, num só 
 # --- The game and ReShade ---
 group.the_game_and_reshade = O jogo e o ReShade
 group.the_game_and_reshade.help = Verifica e instala o que o mod precisa: o D2RLoader (o mod só roda com ele) e o ReShade (a neblina, o céu, o teto e a profundidade do FlatVR dependem dele). Botões para compartilhar o seu próprio ReShade com o mod ou pô-lo de lado, e para criar o céu do Santuário Arcano.
+@status.rtss_warn.label = O RivaTuner Statistics Server ou o MSI Afterburner está rodando. A exibição na tela dele se engancha na imagem do jogo e pode congelar o jogo na primeira imagem em VR. Feche o RivaTuner / MSI Afterburner, ou no RivaTuner defina Application detection level como None (ou desligue o On-Screen Display dele) para D2R.exe e D2RLoader.exe.
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = Baixar e instalar o D2RLoader 1.3.1
 @run.d2rloader_get.tip = Baixa o D2RLoader 1.3.1 de d2rloader.net, confere-o com o SHA-256 que o site publica e o descompacta na pasta do jogo, ao lado de D2R.exe. O mod só roda com o D2RLoader.
@@ -169,6 +170,10 @@ hud.headset_language.tip = As palavras que o mod desenha no headset - o painel d
 @run.collect_logs.tip = Cria um zip na sua área de trabalho com o que precisamos para achar um problema: os logs do mod, do D2RLoader, do ReShade e do FlatVR, as configurações, as versões, a placa de vídeo e o Windows. Com o jogo em execução, ele primeiro grava 10 s de como os quadros são desenhados - continue jogando e gire a cabeça. Nada é enviado a lugar nenhum: poste o zip no nosso Discord (#diablo-2-vr).
 @status.collect.label = Coletar logs: um zip na sua área de trabalho para postar no nosso Discord
 @status.crashrep.label = Relatórios de falha: desativado
+@run.crash_reply_update.label = Atualizar o D2R VR
+@run.crash_reply_update.tip = Abre a página de download da versão mais nova do D2R VR, em que o crash desta resposta está corrigido. Este programa nunca baixa nem executa nada sozinho.
+@run.crash_reply_dismiss.label = Dispensar esta resposta
+@run.crash_reply_dismiss.tip = Fecha esta resposta; ela não volta. Uma mais nova, se houver, aparece em seguida.
 support.crash_reports.label = Oferecer o envio de um relatório quando o jogo fecha com erro
 support.crash_reports.tip = Depois de um jogo que travou, congelou ou perdeu a placa de vídeo, o D2R VR Crash Reporter abre uma janela com o que enviaria ao servidor do BodyWalk: como o jogo terminou, os logs dessa partida, as versões e a placa de vídeo; seu usuário do Windows e o nome do PC, nomes de personagens, endereços e senhas são removidos. Nada é enviado se você não apertar Enviar lá; o dump de memória só com a própria caixa marcada. Desmarcado: nada vigia o jogo, como antes. Vale a partir da próxima vez que o jogo iniciar.
 @run.crash_offer.label = Ver o relatório e enviá-lo
@@ -215,6 +220,8 @@ support.session_logs_max_mb.label = No máximo (MB) para todos eles
 support.session_logs_max_mb.tip = Enquanto todas as pastas passarem deste valor, as mais antigas são removidas primeiro. Os logs de um jogo têm cerca de 1 a 10 MB.
 support.collect_sessions.label = Coletar logs: as últimas partidas também
 support.collect_sessions.tip = Coletar logs também empacota os logs desta quantidade das partidas mais recentes (as pastas delas em sessions), para que a partida que crashou esteja no zip mesmo depois de você iniciar o jogo de novo. 0: só a pasta logs, como antes.
+support.rtss_warning.label = Avisar sobre RivaTuner / MSI Afterburner
+support.rtss_warning.tip = O RivaTuner Statistics Server (a exibição na tela do MSI Afterburner) se engancha na imagem do jogo e pode congelar o jogo na primeira imagem em VR. Marcado: o jogo procura por ele no primeiro minuto e escreve uma linha no log e nos relatórios de crash, e Início mostra um aviso enquanto ele roda. Nada é fechado nem alterado. Desmarcado: sem procura, sem aviso, como antes.
 update.check.label = Verificar atualizações ao abrir este programa
 update.check.tip = Pergunta ao bodywalkvr.com qual é a versão mais nova do mod. Nada é baixado.
 update.develop.label = Versões beta também (canal develop)
@@ -481,9 +488,9 @@ body.lock.tip = Nada acima da pelve segue a animação do jogo: braços e mãos 
 body.legs_under_body.label = As pernas ficam sob o corpo
 body.legs_under_body.tip = Os quadris e as pernas mantêm o lugar e a direção sob o corpo: um golpe não os lança mais para a frente nem os torce. Eles ainda dão passos, agacham e pulam. Desligado = os quadris e as pernas do jogo como animados.
 body.under_camera.label = O corpo fica sob a câmera num salto (F4)
-body.under_camera.tip = Um Salto ou um Ataque Saltado ergue o modelo do herói vários metros no arco, e jogando com um gamepad a câmera do jogo o segue de longe quando ele se move rápido (um salto, um empurrão): o corpo dele voava para cima e para fora de baixo dos seus olhos. Ligado: o corpo desenhado é mantido onde a câmera está: a câmera fica no chão e o corpo com ela (ou, com a caixa abaixo, a câmera sobe com o arco do salto). Só o corpo desenhado e a câmera: onde ele fica, a sua caixa de acerto, o seu caminho e o próprio salto continuam os do jogo. Só em primeira pessoa VR (F4). Desligado = como antes. Ao vivo.
-body.leap_camera_up.label = A câmera sobe com o arco do salto
-body.leap_camera_up.tip = Um Salto ou um Ataque Saltado ergue o herói cerca de 3.5 m no topo do arco. Ligado: a câmera sobe e desce com ele, com o corpo sob ela. Desligado: a câmera fica na sua altura sobre o chão e o corpo é mantido embaixo com ela. Ao vivo.
+body.under_camera.tip = Um Salto ou um Ataque Saltado ergue o modelo do herói vários metros no arco, e jogando com um gamepad a câmera do jogo o segue de longe quando ele se move rápido (um salto, um empurrão): o corpo dele voava para cima e para fora de baixo dos seus olhos. Ligado: o corpo desenhado é mantido onde a câmera está: a câmera fica no chão e o corpo com ela (ou, com o controle deslizante abaixo, a câmera sobe com parte do arco do salto). Só o corpo desenhado e a câmera: onde ele fica, a sua caixa de acerto, o seu caminho e o próprio salto continuam os do jogo. Só em primeira pessoa VR (F4). Desligado = como antes. Ao vivo.
+body.leap_camera_up_pct.label = A câmera sobe com o arco do salto, %
+body.leap_camera_up_pct.tip = Um Salto ou um Ataque Saltado ergue o herói cerca de 3,5 m no topo do arco. A câmera acompanha essa parte dele, suavizada como o próprio arco, com o corpo sempre embaixo: 0 = a câmera fica na sua altura acima do chão e o corpo é mantido embaixo com ela, 100 = o arco inteiro, 20 - 30 = uma pequena subida para sentir o pulo. Sob um teto (os tetos de cavernas e salas das configurações de Teto) a câmera nunca sobe a menos de cerca de 30 cm dele. Ao vivo.
 body.crouch.label = O herói agacha quando você agacha (F4)
 body.crouch.tip = Agache na sua sala e o corpo do herói desce com a sua cabeça, com os joelhos dobrados e os pés no chão, de modo que você vê as suas pernas embaixo de você e não o peito na sua cara. Só o corpo desenhado: onde ele fica, a sua caixa de acerto e o seu andar continuam os do jogo. Precisa de uma câmera que acompanhe a altura da sua cabeça (OpenXR nativo, ou FlatVR com a posição da cabeça). Só em primeira pessoa VR (F4). Desmarcado: exatamente como antes. Ideia de bearstonem/d2r-pcvr.
 body.crouch_cm.label = Agachar: cabeça abaixo de, cm
@@ -2937,6 +2944,9 @@ weight.grab_moves_unit.tip = Precisa de Peso da arma > Agarrar corpos > "Erguer 
 group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monstros que você derruba (Weapon Weight > Monsters' bodies)
 weight.knock_down_moves_unit.label = O jogo move o que você derruba (um teste)
 weight.knock_down_moves_unit.tip = Precisa de Weapon Weight > Monsters' bodies > "Um golpe forte derruba um humanoide". Ao vivo. Marcado: um humanoide que seu golpe derruba é movido pelo próprio jogo - o próprio recuo dele o põe no ponto onde o corpo cai e fica caído - então ele luta dali, seus golpes no corpo caído ali acertam, e ele se levanta ali em vez de andar de volta para o lugar antigo; todos na partida veem isso. Alguns recuos por queda (onde ele cai e onde se acomoda), nunca mais: se o jogo o tira dali enquanto está caído, ele se levanta e vai embora. Um cambaleio (um passo para trás) não move nada. O que o recuo do jogo recusa (chefes, monstros grandes) fica onde está. Só no modo solo ou quando você hospeda a partida; o de um jogador que entrou continua só desenhado. F4. Desmarcado: só o desenho cai, o jogo o mantém na célula dele, como antes.
+group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = Monstros ao redor de onde você aterrissa de um Salto (Peso da arma > Corpos dos monstros)
+weight.leap_landing_scatter.label = Os monstros voam para longe onde você aterrissa de um Salto (um teste)
+weight.leap_landing_scatter.tip = Precisa de Peso da arma > Corpos dos monstros e da biblioteca de peso com o derrubar. Ao vivo. Marcado: quando o seu Bárbaro aterrissa de um Salto ou um Ataque Saltado, os monstros humanoides a cerca de 3 m do ponto (e os que o próprio recuo do Salto do jogo atinge um pouco mais longe) são lançados UMA célula para longe de onde você aterrissa - o próprio recuo do jogo põe cada unidade nessa célula e o corpo dela cai nela, então onde você a vê e onde o jogo a tem coincidem; quanto mais perto estava, mais alto voa, nunca mais longe. Um em que você aterrissa em cima também é empurrado a sua célula (bem no centro: na direção do seu salto), seja qual for o peso, para você não acabar dentro dele; os outros pesados (chefes, monstros grandes) só cambaleiam. O que o recuo do jogo recusa fica onde está. O movimento só no modo solo ou quando você hospeda a partida (o de um jogador que entrou fica só desenhado). O dano, a rolagem de acerto e o atordoamento continuam os do jogo. F4. Desmarcado: a aterrissagem não lança nada, como antes.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Habilidades para o BodyWalk
@@ -4135,6 +4145,11 @@ status.crashrep.pending_logs = Os logs coletados {when} estão prontos para envi
 status.crashrep.pending = Um jogo fechou com erro ({when}): há um relatório pronto; nada foi enviado ainda.
 status.crashrep.on = Relatórios de falha: ativado; depois de um jogo que fecha com erro você é perguntado se quer enviar um relatório.
 status.crashrep.off = Relatórios de falha: desativado; nada vigia o jogo, nada é enviado.
+status.crashreply.update_only = Seu relatório de crash #{id}: o crash foi corrigido na {fixed} - atualize, por favor.
+status.crashreply.logs = Resposta aos logs que você enviou (#{id}, {date}): {text}
+status.crashreply.report = Resposta ao seu relatório de crash #{id} ({date}): {text}
+status.crashreply.update = Corrigido na {fixed} - atualize, por favor (você tem a {mine}).
+status.crashreply.have = Corrigido na {fixed}, a versão que você tem.
 crashrep.ask = Quer nos ajudar a corrigir as falhas?\n\nQuando o jogo fecha com erro (uma falha, um congelamento, uma placa de vídeo perdida), o D2R VR pode oferecer o envio de um relatório ao servidor do BodyWalk: os logs dessa partida, as versões, a placa de vídeo. Seu usuário do Windows e o nome do PC, nomes de personagens, endereços e senhas são removidos, e você vê cada arquivo antes.\n\nNada é enviado se você não apertar Enviar nessa janela. Você pode mudar isso quando quiser: Home > D2R VR > "Oferecer o envio de um relatório quando o jogo fecha com erro".
 status.grip_lib.found = Biblioteca de grip: d2r_vr_grip.dll está em d2rloader\d2r_vr_libs - a opção abaixo segura a arma do jeito dela.
 status.grip_lib.missing = Biblioteca de grip: não encontrada em d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - o mod mantém o seu jeito próprio de segurar, a marca abaixo fica indisponível.
@@ -4719,6 +4734,8 @@ vr.map.on = Ligado
 vr.map.off = Desligado
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+body.leap_camera_up.label = A câmera sobe com o arco do salto
+body.leap_camera_up.tip = Um Salto ou um Ataque Saltado ergue o herói cerca de 3.5 m no topo do arco. Ligado: a câmera sobe e desce com ele, com o corpo sob ela. Desligado: a câmera fica na sua altura sobre o chão e o corpo é mantido embaixo com ela. Ao vivo.
 @ui.weapon_follow.label = Seguir a arma na mão
 @ui.weapon.label = Arma
 @ui.weapon.choice0 = Desarmado

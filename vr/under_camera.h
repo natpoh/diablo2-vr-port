@@ -11,8 +11,8 @@
 //    0x7BD350) pulls the look-at to the hero on a damped spring (cameraSpringConstant, cameraSpringDamping, cameraMass, the lag held to
 //    cameraSpringMaxDistance, a jump past cameraJumpDistance taken at once) - a fast throw leaves the camera behind him.
 // So the drawn body's origin is put where the camera stands on: across the floor the look-at, up the camera's own lift - by default the
-// camera stays on the ground and the body is pulled down to it; with [body] leap_camera_up the camera rises with the game's arc (Lift: the
-// matrix's height over the look-at, eased in like the hips' jump_from). The move is in the hero's model units (vrcam moves the drawn bones by it, as [openxr]
+// camera stays on the ground and the body is pulled down to it; with [body] leap_camera_up_pct the camera rises by that share of the game's
+// arc (Rise: the matrix's height over the look-at eased in like the hips' jump_from, held under a ceiling drawn there - Headroom). The move is in the hero's model units (vrcam moves the drawn bones by it, as [openxr]
 // roomscale_body; the eyes are taken against the new origin). Drawn bones only: where he stands, his hit box, his path and every game state
 // stay the game's. Off: as before. Pure: no game reads (under_camera_test).
 
@@ -38,12 +38,45 @@ inline bool Measure(const float m[16], const float look[3], float* gap, float* l
     return std::isfinite(*gap) && std::isfinite(*lift) && *gap <= kMaxGap && std::fabs(*lift) <= kMaxGap;
 }
 
-// The part of the matrix's lift the camera rises by (world units; [body] leap_camera_up): none under kLiftFrom, the whole from twice it.
+// The part of the matrix's lift the camera follows (world units; the whole arc - Rise takes the share): none under kLiftFrom, the whole from twice it.
 // A lift down (the matrix under the look-at) is not a jump: none.
 inline float Lift(float lift) {
     if (!(lift > kLiftFrom)) return 0.0f;
     const float t = std::clamp((lift - kLiftFrom) / kLiftFrom, 0.0f, 1.0f);
     return lift * t * t * (3.0f - 2.0f * t);
+}
+
+// [body] leap_camera_up_pct (a player on 0.201: "raising the perspective just a tiny bit would be great for capturing that wild,
+// high-flying sensation"): the share of the arc the camera follows, 0 - 100 %. 0 stays down (the body pulled down to it), 100 is the old
+// [body] leap_camera_up=1 (the whole arc). An ini with no _pct key reads the old tick: on = 100, off = 0.
+inline float RisePct(bool pctSet, float pct, bool oldTick) {
+    if (!pctSet || !std::isfinite(pct)) return oldTick ? 100.0f : 0.0f;
+    return std::clamp(pct, 0.0f, 100.0f);
+}
+// Under a ceiling the eyes stay this far under its lowest (world units, ~28 cm at a man's height): the near plane and the head's own room.
+constexpr float kCeilMargin = 1.0f;
+// How much higher the eyes may go under a ceiling drawn here (world units): its lowest over the hero's ground (the game's rock slab or our
+// vault, less the rock's hang), less the margin, less where the eyes are over that ground now without the arc (the eye height and the hips'
+// jump). No ceiling: INFINITY. Never under 0 (a ceiling already that low gives no rise, it does not push the camera down).
+inline float Headroom(bool ceiling, float lowestOverGround, float eyesOverGround) {
+    if (!ceiling) return INFINITY;
+    const float room = lowestOverGround - kCeilMargin - eyesOverGround;
+    return std::isfinite(room) ? std::max(0.0f, room) : INFINITY;
+}
+// The camera's rise for a matrix `lift` over the look-at: the game's own arc (Lift: eased in from kLiftFrom) times `pct` %, held under the
+// ceiling's `headroom` with a soft knee (`knee` world units either side of it, the arc bent smoothly over onto the cap - no step, no kink at
+// take-off, at the cap or at the landing).
+constexpr float kCapKnee = 1.0f;
+inline float Rise(float lift, float pct, float headroom, float knee = kCapKnee) {
+    const float x = Lift(lift) * std::clamp(pct, 0.0f, 100.0f) * 0.01f;
+    if (!(headroom < INFINITY)) return x;
+    const float cap = std::max(0.0f, headroom);
+    const float k = std::min(knee, 0.5f * cap);   // (a low cap: the knee no wider than half of it, so a rise of 0 stays 0)
+    if (!(k > 0.0f)) return std::min(x, cap);
+    if (x <= cap - k) return x;
+    if (x >= cap + k) return cap;
+    const float d = x - (cap - k);
+    return x - d * d / (4.0f * k);   // the quadratic knee: slope 1 at cap - k, slope 0 at cap + k, cap there
 }
 
 // The move, in the hero's model units (x, y, z), that draws his model's origin at `to` (world) instead of at m's translation: the world move
@@ -63,8 +96,8 @@ inline bool MoveInModel(const float m[16], const float to[3], float out[3]) {
 }
 
 // Where the drawn body's origin goes: the look-at across the floor, and up by the lift the camera rises by in the view this pose is drawn
-// with (`cameraUp`, world: the skeleton poses before its pass rebuilds the view, so it is this pose's own Lift - 0 without leap_camera_up, so
-// the body stays down with the camera).
+// with (`cameraUp`, world: the skeleton poses before its pass rebuilds the view, so it is this pose's own Rise - 0 at leap_camera_up_pct 0,
+// so the body stays down with the camera).
 inline void Target(const float look[3], float cameraUp, float to[3]) {
     to[0] = look[0];
     to[1] = look[1] + cameraUp;

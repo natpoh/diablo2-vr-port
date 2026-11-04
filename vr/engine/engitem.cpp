@@ -4,6 +4,7 @@
 // and the hands' follows). It reaches into many features: it sees vrcam.cpp's headers (vr/vrcam_headers.h).
 #include "../vrcam_headers.h"
 #include "engitem.h"
+#include "held_units.h"   // the units we placed let go, as the game does, when a game is left
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp: ::SafeRead and the rest are vrc's
@@ -45,7 +46,7 @@ SRWLOCK g_lock = SRWLOCK_INIT;
 std::string g_want;                       // [debug] engine_unit, under g_lock
 std::atomic<uint32_t> g_wantGen{0};
 uint32_t g_doneGen = 0;                   // the render thread's
-std::vector<Shared> g_placed;             // the render thread's; held for good in step 1 (never let go)
+std::vector<Shared> g_placed;             // the render thread's; held until the game is left (LetGoAll)
 
 void SetWant(const std::wstring& path) {
     const std::string p = Utf8(path.c_str());
@@ -154,7 +155,56 @@ bool Lay(void* inst, uint32_t root, const float m[16]) {
     return true;
 }
 
+// ---- Letting go, as the game does (vr/engine/held_units.h) ----
+// One reference of ours let go (an instance's: its entities trimmed to the live ones first - TrimToLive). The holder is emptied either way:
+// it is never let go twice.
+heldunits::Life g_life;   // from the world's teardown until a menu: nothing placed (Work)
+heldunits::Tally g_areaTally;   // the instances let go during a game as an area change took their entities (told when the game is left)
+bool ReleaseRef(Shared* s) {
+    void* const c = s->ctrl;
+    *s = {};
+    if (!c) return false;
+    __try { return heldunits::ReleaseCtrl(c); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// An instance's entity list (+0x10, how many at +0x18) down to the entities that are still its registry's (+8): the game's removal
+// (0x955CD0) frees each one's slot, and one an area change took may hold another entity by now. False: not readable (left as it is).
+bool TrimToLive(void* inst, bool* stale) {
+    *stale = false;
+    __try {
+        const uintptr_t reg = *(const uintptr_t*)((const uint8_t*)inst + 8);
+        uint32_t* const list = *(uint32_t**)((uint8_t*)inst + 0x10);
+        uint64_t* const n = (uint64_t*)((uint8_t*)inst + 0x18);
+        if (!reg || (!list && *n) || *n > 64) return false;
+        const uint32_t* const ents = *(const uint32_t* const*)(reg + 0x30);
+        const uint32_t* const end = *(const uint32_t* const*)(reg + 0x38);
+        const size_t count = ents && end > ents ? (size_t)(end - ents) : 0;
+        const size_t k = heldunits::KeepLive(list, (size_t)*n, [ents, count](uint32_t e) { return heldunits::Live(ents, count, e); });
+        *stale = k != *n;
+        *n = k;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+// An instance let go: only on the registry's owner thread (the game's removal asserts elsewhere) - false, and held as before, when not.
+bool OnOwnerThread() {
+    DWORD owner = 0;
+    uint8_t open = 0;
+    return ReadRegistry(d2rsig::Addr(RVA_REGISTRY), &owner, &open) && owner == GetCurrentThreadId();
+}
+void ReleaseInstance(Shared* inst, heldunits::Tally* t) {
+    if (!inst->ctrl) { *inst = {}; return; }
+    if (!OnOwnerThread()) { ++t->kept; return; }
+    bool stale = false;
+    if (inst->p && !TrimToLive(inst->p, &stale)) { ++t->kept; return; }   // (not readable: not handed to the game's removal)
+    if (ReleaseRef(inst)) { ++t->instances; if (stale) ++t->stale; }
+}
+void ReleaseDefinition(Shared* def, heldunits::Tally* t) {
+    if (ReleaseRef(def)) ++t->definitions;
+}
+
 // Step 1: [debug] engine_unit, four round the hero.
+std::vector<Shared> g_placedDefs;         // their definitions (one asked per test)
 void RunTest(const std::string& want) {
     if (g_placed.size() >= 32) { Log("vrcam: engine unit - 32 placed already this run: no more"); return; }
     const float* h = g_heroPosNow;
@@ -169,6 +219,7 @@ void RunTest(const std::string& want) {
             if (PlaceAt(def.p, p, &inst)) { g_placed.push_back(inst); ++n; }
         }
     if (def.p && !n) why = "PlaceInstance gave nothing";
+    if (def.ctrl) g_placedDefs.push_back(def);   // (let go with the instances when the game is left)
     const uint32_t root = n ? RootOf(g_placed.back().p) : 0xFFFFFFFFu;
     LogF("vrcam: engine unit '%s' - %s: definition %p, %d instance(s) round the hero at %.1f %.1f %.1f (thread %lu), root entity %X",
          want.c_str(), why, def.p, n, h[0], h[1], h[2], GetCurrentThreadId(), root);
@@ -181,8 +232,8 @@ void RunTest(const std::string& want) {
 // z ahead (MatYawDeg's axis), x across - in parts of his standing eye height, so every class's
 // belt sits on his own hips. The four go round him on an arc, as a belt does (a straight row
 // across the belly looked wrong, the user's picture, 2026-10-13), each bottle turned to face
-// out. Never let go (how the game's shared_ptr is released safely is not known yet): one not
-// wanted now is laid far under the ground, kept for later.
+// out. One not wanted now is laid far under the ground, kept for later; one whose entity an area
+// change took is let go, and all of them when the game is left (vr/engine/held_units.h).
 struct PotionKind { char code[4]; const char* asset; };
 constexpr PotionKind kPotions[] = {
     {"hp1", "potion/lesser_healing_potion"}, {"hp2", "potion/light_healing_potion"}, {"hp3", "potion/healing_potion2"},
@@ -405,7 +456,7 @@ struct Loose { int kind = -1; Shared inst{}; uint32_t root = 0xFFFFFFFFu; bool p
                bottlefall::Sim sim; double floorY = 0, releasedAt = 0, restedAt = -1;
                float m[16] = {};                     // where it is laid this frame
                int partsTries = 0; bool partsHidden = false; };
-std::vector<Loose> g_loose;               // the render thread's; never let go (as the belt's), reused by kind
+std::vector<Loose> g_loose;               // the render thread's; reused by kind, let go as the belt's
 constexpr size_t kMaxLoose = 12;
 struct FullDrop { bool on = false; beltbottle::Drop st = beltbottle::Drop::Falling; bottlefall::Sim sim; double floorY = 0, askedAt = 0; uint32_t id = 0; int kind = -1;
                   bool forMerc = false;                  // [hands] belt_throw_merc: a potion the mercenary is given, thrown with the option on
@@ -982,7 +1033,7 @@ void BeltFrame(bool fullBody) {
             l.parked = false;
             NoteShown(l.hand >= 0 ? l.hand : l.fromHand, Code3(kPotions[l.kind].code), l.m,
                       l.hand >= 0 ? poseshare::kInHand : l.restedAt >= 0 ? poseshare::kAtRest : poseshare::kFlying);   // [multiplayer] pose_share_held
-        } else { l.dead = true; l.active = false; }   // its entity is gone (an area change): a hand that held it holds nothing
+        } else { l.dead = true; l.active = false; ReleaseInstance(&l.inst, &g_areaTally); }   // its entity is gone (an area change): a hand that held it holds nothing; let go
         if (!l.dead) addLook(l.inst.p, set.emptyDark, set.emptyAlpha, false);
     }
     for (HandGrab& g : g_grab)
@@ -1020,13 +1071,13 @@ void BeltFrame(bool fullBody) {
                 for (int hh = 0; hh < 2 && !g_drop[c].on; ++hh) if (g_grab[hh].column == c) hand = hh;
                 NoteShown(hand, codes[c], m, g_drop[c].on ? poseshare::kFlying : poseshare::kInHand);
             }
-        } else b.dead = true;   // its entity is gone (an area change can take the registry's units): another is placed next frame
+        } else { b.dead = true; ReleaseInstance(&b.inst, &g_areaTally); }   // its entity is gone (an area change can take the registry's units): let go, another placed next frame
         if (lit[c] && !held[c] && !g_drop[c].on && set.glow && !b.dead) addLook(b.inst.p, set.glowH, -1.0f, true);   // [hands] belt_inner_glow
     }
     beltglow::SetEntries(look, nLook);
     for (size_t i = 0; i < g_bottles.size(); ++i)
         if (!used[i] && !g_bottles[i].dead) Park(g_bottles[i]);
-    // the dead ones dropped (their instance is never let go - see above)
+    // the dead ones dropped (each let go as its entity went)
     const size_t before = g_bottles.size();
     g_bottles.erase(std::remove_if(g_bottles.begin(), g_bottles.end(), [](const Bottle& b) { return b.dead; }), g_bottles.end());
     if (g_bottles.size() != before) LogF("vrcam: belt potions - %zu gone with their entities, %zu kept", before - g_bottles.size(), g_bottles.size());
@@ -1048,7 +1099,7 @@ std::atomic<bool> g_fullBody{false};      // VrFrame's: first person with the bo
 
 // ---- [weight] grab_items: our copy of an item a hand took off the ground, in that hand while its grip is held ----
 // The item itself is the game's, in the inventory where the game put it; this is only its model drawn (its own UnitDefinition, as the belt's bottles are: placed
-// once a kind, never let go, laid far under the ground while no hand shows it). Its model by its code: d2r_vr_props\item_models.txt, made by D2R VR Settings from the
+// once a kind, laid far under the ground while no hand shows it, let go as the belt's). Its model by its code: d2r_vr_props\item_models.txt, made by D2R VR Settings from the
 // game's data/hd/items/items.json. Held by the drawn hand (skel::HeroArmWorld): its middle in the palm, its up along the knuckles' line, its front out of the palm.
 struct HeldCopy { uint32_t code; Shared inst; uint32_t root; bool parked; bool dead; };
 std::vector<HeldCopy> g_copies;
@@ -1146,7 +1197,7 @@ void HeldItemFrame(bool fullBody) {
         if (&c == use) {
             if (c.root == 0xFFFFFFFFu) c.root = RootOf(c.inst.p);
             if (Lay(c.inst.p, c.root, m)) { c.parked = false; NoteShown(side, code, m, poseshare::kInHand); }   // ([multiplayer] pose_share_held)
-            else c.dead = true;   // its entity is gone (an area change): another is placed next frame
+            else { c.dead = true; ReleaseInstance(&c.inst, &g_areaTally); }   // its entity is gone (an area change): let go, another placed next frame
         } else {
             ParkCopy(c);
         }
@@ -1155,7 +1206,7 @@ void HeldItemFrame(bool fullBody) {
 }
 
 // ---- [multiplayer] pose_share_held: the other players' potions and items, in their hands and in flight - copies of the game's own models, as ours are ----
-// The update thread says what to draw where (SetRemoteCopies, world matrices); here each is laid, a copy kept for each code and never let go (as the belt's), laid
+// The update thread says what to draw where (SetRemoteCopies, world matrices); here each is laid, a copy kept for each code (let go as the belt's: LetGoAll), laid
 // far under the ground while not wanted. Their game's items are theirs: nothing here is an item, nothing of the game's changes.
 SRWLOCK g_remoteCopyLock = SRWLOCK_INIT;
 std::vector<RemoteCopy> g_remoteCopyWant;
@@ -1213,7 +1264,7 @@ void RemoteCopiesFrame() {
         RemoteDrawn& r = g_remoteDrawn[at];
         if (r.root == 0xFFFFFFFFu) r.root = RootOf(r.inst.p);
         if (Lay(r.inst.p, r.root, w.m)) { r.parked = false; g_remoteCopiesDrawn.fetch_add(1, std::memory_order_relaxed); }
-        else r.dead = true;   // its entity is gone (an area change): another is placed next frame
+        else { r.dead = true; ReleaseInstance(&r.inst, &g_areaTally); }   // its entity is gone (an area change): let go, another placed next frame
     }
     for (size_t i = 0; i < g_remoteDrawn.size(); ++i) {
         RemoteDrawn& r = g_remoteDrawn[i];
@@ -1269,7 +1320,7 @@ constexpr const char* kDomeUnitSummit = "data/hd/env/model/d2r_vr/sky/sky_dome_s
 struct Dome { Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int test = 0, tries = 0;
               ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; float toldR = -1.0f; bool toldPlace = false;
               bool fileMissing = false; ULONGLONG fileCheckedAt = 0; };   // (its unit's file not there yet: looked for again - DomeRun)
-std::vector<Shared> g_domeOld;   // placings given up on (no model made): laid away, kept - the game's (never let go, as engine_unit's)
+std::vector<Shared> g_domeOld;   // placings given up on (no model made): laid away, kept until the game is left (LetGoAll)
 Dome g_dome;
 // [sky] game_dome_caves: the same dome, black, round the eye underground at its radius ([sky] game_dome_caves_radius_m,
 // before it a share of [render] model_radius) - Serg (2026-10-27): "мы можем всё заворачивать в чёрную сферу". Past a cave's ceiling rim lay the void; the
@@ -1599,8 +1650,9 @@ bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const cha
     }
     float m[16];
     skydome::Matrix(eye, r, want, m);
-    if (!Lay(d.inst.p, d.root, m)) {   // its entity is gone (an area change): placed again next frame
-        LogF("vrcam: %s - the dome's entity is gone (an area change): placed again", tag);
+    if (!Lay(d.inst.p, d.root, m)) {   // its entity is gone (an area change): let go, placed again next frame
+        LogF("vrcam: %s - the dome's entity is gone (an area change): let go, placed again", tag);
+        ReleaseInstance(&d.inst, &g_areaTally);
         d.inst = {};
         d.root = 0xFFFFFFFFu;
         return false;
@@ -1781,6 +1833,24 @@ std::vector<Shared> g_slabOld;   // placings given up on (no model made): laid a
 std::atomic<bool> g_slabShown{false};
 std::atomic<int> g_gameCeilKind{-1};   // the area's kind (-1: none - not on [ceiling] game_ceiling_biomes, or no fitting model)
 bool CeilingShown() { return g_slabShown.load(std::memory_order_relaxed); }
+std::atomic<float> g_slabLowestY{0.0f};   // CeilingFrame: the game's slab's lowest, world y (set while it is wanted)
+bool CeilingByGame();
+// [body] leap_camera_up_pct (vr/under_camera.h Headroom): the lowest of the ceiling drawn over the hero now, world y. The game's rock slab
+// ([ceiling] game_ceiling): its top less its rock's hang, the barracks' frame under it, over the area's floor (CeilingFrame); else our vault
+// (the post pass's, [ceiling] enabled in a ceiling area): its height less [ceiling] relief (the rock hanging down), over the hero's ground
+// (`groundY`). False: no ceiling drawn here (outdoors, [ceiling] off, not first person) - the leap's camera is not held.
+bool CeilingLowestHere(float groundY, float* lowestY) {
+    if (CeilingByGame()) {
+        if (!fx::GameCeilWanted()) return false;
+        *lowestY = g_slabLowestY.load(std::memory_order_relaxed);
+        return std::isfinite(*lowestY);
+    }
+    if (!fx::CeilWanted()) return false;
+    float height = 0.0f, bright = 0.0f, light = 0.0f, relief = 0.0f;
+    CeilingNow(&height, &bright, &light, &relief);
+    *lowestY = groundY + height - relief;
+    return std::isfinite(*lowestY);
+}
 // The ceiling is the game's: [ceiling] game_ceiling, VR F4, an area on [ceiling] game_ceiling_biomes with a kind of its own, and that kind's
 // slab not given up on (its unit refused or missing, 5 placings with no model, PlaceInstance giving nothing, the game's functions or our hook
 // not as known) - whether or not it is laid yet. The post pass's ceiling stays off on these terms from the area's first frame: while the
@@ -1844,8 +1914,9 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
     }
     if (!p.inst.p) return false;
     if (p.root == 0xFFFFFFFFu) p.root = RootOf(p.inst.p);
-    if (!Lay(p.inst.p, p.root, want ? m : away)) {   // its entity is gone (an area change): placed again next frame
-        LogF("vrcam: game ceiling - the %s's entity is gone (an area change): placed again", p.what.c_str());
+    if (!Lay(p.inst.p, p.root, want ? m : away)) {   // its entity is gone (an area change): let go, placed again next frame
+        LogF("vrcam: game ceiling - the %s's entity is gone (an area change): let go, placed again", p.what.c_str());
+        ReleaseInstance(&p.inst, &g_areaTally);
         p.inst = {};
         p.root = 0xFFFFFFFFu;
         return false;
@@ -2000,6 +2071,11 @@ void CeilingFrame() {
              "%.1f over the preset's floor %.1f; the mesh made rising %.1f: scaled %.2f up), %.0f units round its middle", dome.slot, slabTop, dome.radius * size,
              size, dome.radius, sizeWhy, rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise, gameceiling::VaultHalf(dome.half) * size);
     }
+    // [body] leap_camera_up_pct: the slab's lowest in the world (its top less its rock's hang, the barracks' frame under it), for the leap's camera
+    if (want) {
+        const float hang = gameceiling::kKinds[kind].relief * tile / gameceiling::kTile;
+        g_slabLowestY.store(floorAt + std::min(beams ? height : slabTop, slabTop - hang));
+    }
     float m[16], w[16], away[16], v[16];
     gameceiling::Matrix(hero, floorAt, slabTop, tile, want, m);
     gameceiling::WallMatrix(hero, floorAt, height, tile, reach, wall, w);
@@ -2028,7 +2104,94 @@ void CeilingFrame() {
     g_slabShown.store(shown);
 }
 
+// ---- The game left: every unit of ours let go before the game's own teardown (vr/engine/held_units.h) ----
+// From the world's teardown (HookTeardown, the game's thread that owns the registry): every instance first - its entities still the
+// registry's, the game's own removal takes them out - then every definition; everything placed is forgotten, and the next game's first
+// world loads and places it all afresh (g_life: nothing placed in between).
+void ResetDome(Dome& d) {
+    d.def = {}; d.inst = {}; d.root = 0xFFFFFFFFu; d.loadTried = false; d.parked = true; d.tries = 0;
+    d.loadedAt = d.placedAt = d.modelAt = 0; d.told = "?"; d.toldR = -1.0f; d.toldPlace = false;
+}
+void ResetSlab(Slab& s) {
+    s.def = {}; s.inst = {}; s.root = 0xFFFFFFFFu; s.loadTried = false; s.parked = true; s.tries = 0;
+    s.loadedAt = s.placedAt = s.modelAt = 0; s.told = "?";
+}
+heldunits::Tally LetGoAll() {
+    heldunits::Tally t;
+    // the instances
+    for (Bottle& b : g_bottles) ReleaseInstance(&b.inst, &t);
+    for (Loose& l : g_loose) ReleaseInstance(&l.inst, &t);
+    for (HeldCopy& c : g_copies) ReleaseInstance(&c.inst, &t);
+    for (RemoteDrawn& r : g_remoteDrawn) ReleaseInstance(&r.inst, &t);
+    for (Shared& s : g_placed) ReleaseInstance(&s, &t);
+    for (Shared& s : g_domeOld) ReleaseInstance(&s, &t);
+    for (Shared& s : g_slabOld) ReleaseInstance(&s, &t);
+    Dome* const domes[] = {&g_dome, &g_caveDome, &g_actDomes[0], &g_actDomes[1], &g_actDomes[2], &g_actDomes[3], &g_actDomes[4], &g_actDomes[5]};
+    for (Dome* d : domes) ReleaseInstance(&d->inst, &t);
+    for (Slab& s : g_slabs) ReleaseInstance(&s.inst, &t);
+    for (Slab& s : g_walls) ReleaseInstance(&s.inst, &t);
+    for (Slab& s : g_beams) ReleaseInstance(&s.inst, &t);
+    for (Slab& s : g_vaults) ReleaseInstance(&s.inst, &t);
+    if (t.kept) return t;   // (not the owner thread: nothing forgotten - the definitions stay with the instances that need them)
+    // then the definitions
+    for (Shared& d : g_defs) ReleaseDefinition(&d, &t);
+    for (auto& kv : g_copyDefs) ReleaseDefinition(&kv.second, &t);
+    for (Shared& d : g_placedDefs) ReleaseDefinition(&d, &t);
+    for (Dome* d : domes) ReleaseDefinition(&d->def, &t);
+    for (Slab& s : g_slabs) ReleaseDefinition(&s.def, &t);
+    for (Slab& s : g_walls) ReleaseDefinition(&s.def, &t);
+    for (Slab& s : g_beams) ReleaseDefinition(&s.def, &t);
+    for (Slab& s : g_vaults) ReleaseDefinition(&s.def, &t);
+    // and all of it forgotten: the next game places its own
+    g_bottles.clear(); g_loose.clear(); g_copies.clear(); g_remoteDrawn.clear(); g_placed.clear(); g_domeOld.clear(); g_slabOld.clear();
+    g_copyDefs.clear(); g_placedDefs.clear();
+    for (HandGrab& g : g_grab) { g.empty = -1; g.drinking = false; g.column = -1; }
+    for (FullDrop& d : g_drop) d.on = false;
+    beltglow::SetEntries(nullptr, 0);
+    for (Dome* d : domes) ResetDome(*d);
+    for (Slab& s : g_slabs) ResetSlab(s);
+    for (Slab& s : g_walls) ResetSlab(s);
+    for (Slab& s : g_beams) ResetSlab(s);
+    for (Slab& s : g_vaults) ResetSlab(s);
+    g_slabShown.store(false);
+    return t;
+}
+// The world's teardown (0xD72610: the game's systems shut down, then the registry cleared, then its assets unloaded - where a reference
+// still held is "Assets have been leaked"): ours let go at its entry, while our entities are still the registry's. Every leave of a game
+// runs it (and the quit from inside one).
+constexpr uint64_t RVA_TEARDOWN = 0xD72610;
+constexpr uint8_t kTeardownBytes[] = {0x40, 0x53, 0x48, 0x81, 0xEC, 0x80, 0x00, 0x00, 0x00};
+using TeardownFn = void(__fastcall*)(void*, void*, void*, void*);   // (it reads no argument; whatever is in the registers is passed on)
+TeardownFn g_origTeardown = nullptr;
+void __fastcall HookTeardown(void* a, void* b, void* c, void* d) {
+    if (!OnOwnerThread()) {   // (not the thread our units are placed on: nothing touched here - Work may be running; held as before)
+        Log("vrcam: game left (the world's teardown) on another thread than the registry's owner: our units held as before 0.202");
+        g_origTeardown(a, b, c, d);
+        return;
+    }
+    g_life.Teardown();
+    const heldunits::Tally area = g_areaTally;
+    g_areaTally = {};
+    const heldunits::Tally t = LetGoAll();
+    char also[160] = "";
+    if (area.instances || area.kept)
+        snprintf(also, sizeof also, "; during the game %d more let go as area changes took their entities", area.instances);
+    Log((heldunits::Line("game left (the world's teardown)", t) + also).c_str());
+    g_origTeardown(a, b, c, d);
+}
+void InstallTeardownHook() {
+    static bool tried = false;
+    if (tried) return;
+    tried = true;
+    const bool in = d2rsig::Hook(RVA_TEARDOWN, kTeardownBytes, sizeof kTeardownBytes, (void*)&HookTeardown, (void**)&g_origTeardown);
+    Log(in ? "vrcam: engine items - the game's units of ours let go when a game is left (the world's teardown, 0xD72610)"
+           : "vrcam: engine items - the world's teardown (0xD72610) not as in 3.3.93787: our units are held to the end, as before 0.202 (the game may report leaked assets when a game is left)");
+}
+// SkyTick, each area: a menu (no world) after the teardown lets the next game place again
+void WorldSeen(bool inWorld) { g_life.World(inWorld); }
+
 void Work() {
+    if (!g_life.MayPlace(true)) return;   // (between the world's teardown and the menu: nothing placed into a registry the game is clearing)
     static int checked = 0;   // 1 the game's functions are where 3.3.93787 has them, -1 not
     static bool told = false;
     if (!checked) {
@@ -2184,6 +2347,7 @@ void InstallHook() {
     if (g_hook.load() != 0 || !Wanted()) return;
     const bool in = d2rsig::Hook(RVA_SET_MUTABLE, kSetMutableBytes, sizeof kSetMutableBytes, (void*)&HookSetMutable, (void**)&g_origSetMutable);
     g_hook.store(in ? 1 : -1);
+    if (in) InstallTeardownHook();   // (what we place is let go when a game is left)
     Log(in ? "vrcam: engine items in - the game's own models placed while its registry may be changed (0x912C90)"
            : "vrcam: engine items hook FAILED (0x912C90 not as in 3.3.93787) - no items drawn by the game");
 }

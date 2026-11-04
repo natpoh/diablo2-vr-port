@@ -116,6 +116,7 @@ group.draw_distance.help = How far round you the world is drawn, in one slider: 
 # --- The game and ReShade ---
 group.the_game_and_reshade = The game and ReShade
 group.the_game_and_reshade.help = Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and ReShade (the fog, the sky, the ceiling and FlatVR's depth need it). Buttons to share your own ReShade with the mod or put it aside, and to make the Arcane Sanctuary sky.
+@status.rtss_warn.label = RivaTuner Statistics Server or MSI Afterburner is running. Its on-screen display hooks the game's picture and can freeze the game at its first picture in VR. Close RivaTuner / MSI Afterburner, or in RivaTuner set Application detection level None (or turn its On-Screen Display off) for D2R.exe and D2RLoader.exe.
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = Download and install D2RLoader 1.3.1
 @run.d2rloader_get.tip = Downloads D2RLoader 1.3.1 from d2rloader.net, checks it against the SHA-256 the site publishes and unpacks it into the game's folder, beside D2R.exe. The mod runs only under D2RLoader.
@@ -174,6 +175,10 @@ hud.headset_language.tip = The words the mod draws in the headset - the skill pa
 @run.collect_logs.tip = Makes one zip on your desktop with what we need to find a problem: the mod's, D2RLoader's, ReShade's and FlatVR's logs, the settings, the versions, the graphics card and Windows. While the game runs it first records 10 s of how the frames are drawn - keep playing and turn your head. Nothing is sent anywhere: post the zip in our Discord (#diablo-2-vr).
 @status.collect.label = Collect logs: a zip on your desktop to post in our Discord
 @status.crashrep.label = Crash reports: off
+@run.crash_reply_update.label = Update D2R VR
+@run.crash_reply_update.tip = Opens the download page of the newest D2R VR, where the crash this reply is about is fixed. This program never downloads or runs anything itself.
+@run.crash_reply_dismiss.label = Dismiss this reply
+@run.crash_reply_dismiss.tip = Closes this reply; it does not come back. A newer one, if there is one, shows next.
 support.crash_reports.label = Offer to send a report when the game closes badly
 support.crash_reports.tip = After a game that crashed, froze or lost the graphics card, D2R VR Crash Reporter opens a window with what it would send to the BodyWalk server: how the game ended, that game's logs, the versions and the graphics card - your Windows user and PC name, character names, addresses and passwords taken out. Nothing is sent unless you press Send there; the memory dump only with its own tick. Unticked: nothing watches the game, as before. Takes effect at the next start of the game.
 @run.crash_offer.label = Look at the report and send it
@@ -220,6 +225,8 @@ support.session_logs_max_mb.label = At most (MB) for all of them
 support.session_logs_max_mb.tip = While all the folders are over this, the oldest go first. A game's logs are about 1 - 10 MB.
 support.collect_sessions.label = Collect logs: the last games packed too
 support.collect_sessions.tip = Collect logs also packs the logs of this many of the newest games (their folders under sessions), so the game that crashed is in the zip even after you started the game again. 0: only the logs folder, as before.
+support.rtss_warning.label = Warn about RivaTuner / MSI Afterburner
+support.rtss_warning.tip = RivaTuner Statistics Server (MSI Afterburner's on-screen display) hooks the game's picture and can freeze the game at its first picture in VR. Ticked: the game looks for it in the first minute and writes one line to its log and crash reports, and Home shows a warning while it runs. Nothing is closed or changed. Unticked: no look, no warning, as before.
 update.check.label = Check for updates when this program opens
 update.check.tip = Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded.
 update.develop.label = Beta versions too (develop channel)
@@ -486,9 +493,9 @@ body.lock.tip = Nothing above the pelvis follows the game's animation: arms and 
 body.legs_under_body.label = Legs stay under the body
 body.legs_under_body.tip = The hips and legs keep their place and direction under the body: a blow no longer lunges them out ahead or twists them. They still step, crouch and jump. Off = the game's hips and legs as animated.
 body.under_camera.label = Body stays under the camera in a leap (F4)
-body.under_camera.tip = A Leap or a Leap Attack lifts the hero's model several metres up on its arc, and played with a pad the game's camera trails him when he moves fast (a leap, a knockback): his body flew up and out from under your eyes. On: the drawn body is kept where the camera stands: the camera stays on the ground and the body with it (or, with the box below, the camera goes up with the leap's arc). Only the drawn body and the camera: where he stands, his hit box, his path and the leap itself stay the game's. VR first person (F4) only. Off = as before. Live.
-body.leap_camera_up.label = Camera rises with the leap's arc
-body.leap_camera_up.tip = A Leap or a Leap Attack lifts the hero about 3.5 m at the top of its arc. On: the camera flies up and down with it, the body under it. Off: the camera stays at your height over the ground and the body is kept down with it. Live.
+body.under_camera.tip = A Leap or a Leap Attack lifts the hero's model several metres up on its arc, and played with a pad the game's camera trails him when he moves fast (a leap, a knockback): his body flew up and out from under your eyes. On: the drawn body is kept where the camera stands: the camera stays on the ground and the body with it (or, with the slider below, the camera goes up with part of the leap's arc). Only the drawn body and the camera: where he stands, his hit box, his path and the leap itself stay the game's. VR first person (F4) only. Off = as before. Live.
+body.leap_camera_up_pct.label = Camera rises with the leap's arc, %
+body.leap_camera_up_pct.tip = A Leap or a Leap Attack lifts the hero about 3.5 m at the top of its arc. The camera follows this share of it, eased like the arc itself, the body always under it: 0 = the camera stays at your height over the ground and the body is kept down with it, 100 = the whole arc, 20 - 30 = a little lift for the feeling of the jump. Under a ceiling (the cave and room ceilings of the Ceiling settings) the camera never rises closer than about 30 cm to it. Live.
 body.crouch.label = Hero crouches when you crouch (F4)
 body.crouch.tip = Crouch in your room and the hero's body goes down with your head, his knees bent and his feet on the ground, so you see your legs under you and not your chest in your face. Only the drawn body: where he stands, his hit box and his walking stay the game's. Needs a camera that follows your head's height (native OpenXR, or FlatVR with the head's position). VR first person (F4) only. Unticked: exactly as before. Idea from bearstonem/d2r-pcvr.
 body.crouch_cm.label = Crouch: head lower than this, cm
@@ -2942,6 +2949,9 @@ weight.grab_moves_unit.tip = Needs Weapon Weight > Grab bodies > "Lift and throw
 group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monsters you knock down (Weapon Weight > Monsters' bodies)
 weight.knock_down_moves_unit.label = The game moves what you knock down (a test)
 weight.knock_down_moves_unit.tip = Needs Weapon Weight > Monsters' bodies > "A hard blow knocks a humanoid off its feet". Live. Ticked: a humanoid your blow knocks off its feet is moved by the game itself - its own knockback puts it on the spot where its body falls and lies - so it fights from there, your hits on the body lying there land, and it gets up there instead of walking back to its old place; everyone in the game sees it. A few knockbacks per fall (where it lands and where it settles), never more: if the game walks it off while it lies, it gets up and goes. A stagger (a step back) moves nothing. Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. Unticked: only the drawing falls, the game keeps it on its cell, as before.
+group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = Monsters round your Leap's landing (Weapon Weight > Monsters' bodies)
+weight.leap_landing_scatter.label = Monsters fly apart where you land from a Leap (a test)
+weight.leap_landing_scatter.tip = Needs Weapon Weight > Monsters' bodies and the weight library with the knock-down. Live. Ticked: when your Barbarian lands from a Leap or a Leap Attack, the humanoid monsters within about 3 m of the spot (and any the game's own Leap knockback hits a little farther) are thrown ONE cell away from where you land - the game's own knockback puts each unit on that cell and its body falls onto it, so where you see it and where the game has it agree; the nearer it stood, the higher it flies, never farther. One you land right on is pushed its cell too (dead centre: the way you leapt), whatever it weighs, so you do not end up inside it; other heavy ones (bosses, big monsters) only stagger. What the game's knockback refuses stays put. The move only in single player or when you host the game (a joined player's are drawn only). Damage, the hit roll and the stun stay the game's. F4. Unticked: the landing throws nothing, as before.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Skills to BodyWalk
@@ -4140,6 +4150,11 @@ status.crashrep.pending_logs = Logs collected {when} are ready to send - nothing
 status.crashrep.pending = A game closed badly ({when}): a report is ready - nothing was sent yet.
 status.crashrep.on = Crash reports: on - after a game that closes badly you are asked whether to send a report.
 status.crashrep.off = Crash reports: off - nothing watches the game, nothing is sent.
+status.crashreply.update_only = Your crash report #{id}: the crash is fixed in {fixed} - please update.
+status.crashreply.logs = Reply to the logs you sent (#{id}, {date}): {text}
+status.crashreply.report = Reply to your crash report #{id} ({date}): {text}
+status.crashreply.update = Fixed in {fixed} - please update (you have {mine}).
+status.crashreply.have = Fixed in {fixed}, the version you have.
 crashrep.ask = Help us fix crashes?\n\nWhen the game closes badly (a crash, a freeze, a lost graphics card), D2R VR can offer to send a report to the BodyWalk server: the logs of that game, the versions, the graphics card. Your Windows user and PC name, character names, addresses and passwords are taken out, and you see every file first.\n\nNothing is sent unless you press Send in that window. You can change this any time: Home > D2R VR > "Offer to send a report when the game closes badly".
 status.grip_lib.found = Grip library: d2r_vr_grip.dll is in d2rloader\d2r_vr_libs - the tick below holds the weapon its way.
 status.grip_lib.missing = Grip library: not found in d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - the mod keeps its own way of holding, the tick below is unavailable.

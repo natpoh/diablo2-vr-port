@@ -40,8 +40,13 @@ struct Settings {
     float strength = 1.0f;      // [weight] strength / 100: the hands that hold a body (each at most D2RF_HAND_MAX_FORCE x it - a body's weight shows in them)
     bool deathFlatOn = false;   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, along the arc of the game's own swing (skel::WeaponTrail)
     bool deathOn = false;       // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell (vr/death_ragdoll.h; and the bodies)
+    bool leapOn = false;        // [weight] leap_landing_scatter: the humanoids round a Leap's landing thrown apart (vr/leap_scatter.h; and the bodies)
 };
 void Configure(const Settings& s);
+// [weight] leap_landing_scatter: the hero's model just landed from a Leap or a Leap Attack at `at` (world units; leapscatter::Landing on his matrix's lift over
+// the camera's ground - vr/body/hero_facing.cpp, the pose's thread); way: the leap's way across the ground (world x, z; 0, 0 not known). The timer throws the
+// humanoids round it one cell outward (F4).
+void OnLeapLanded(const float at[3], float peakUnits, const float way[2]);
 // [shapeshift] wolf_strength_pct / bear_strength_pct (vr/form_strength.h): the hands' strength times this while the hero is a grafted werewolf / werebear (1 a person) -
 // the hold and the throw of a lifted body (the library's strength is Settings::strength x it). Any thread; cheap when it does not change.
 void SetFormStrength(float factor);
