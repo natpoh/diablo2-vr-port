@@ -81,6 +81,12 @@ void Mark(const char* what);
 uint32_t AvTotal();
 }  // namespace crash
 
+namespace crashwatch {
+void Start(const char* version);   // [support] crash_reports (vr/diag/crash_watch.cpp): D2R VR Crash Reporter watches this game, if it is there
+void Quiet();                      // a clean way out: the unload (and the process ending through ExitProcess - its DllMain)
+void Crashed();                    // crash.cpp saw the game die: Quiet no longer sets the event
+}  // namespace crashwatch
+
 namespace sessionlogs {
 void Start();   // after crash::Install (g_iniPath set): the folder's thread, the old folders tidied
 void Stop();    // the last copy, the thread joined

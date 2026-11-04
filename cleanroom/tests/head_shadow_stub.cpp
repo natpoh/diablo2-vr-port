@@ -10,6 +10,7 @@ void NoteHeroRig(uintptr_t, uintptr_t, uintptr_t) {}   // [debug] walk_back_dump
 void NoteHeroLegs(const int*, const float (*)[3], int) {}   // ... and the legs it should skin: nothing compares them here
 void PublishOurPose(uint64_t, uint64_t, uint64_t, const float*, int) {}   // [body] legs_rear's finished pose for the skinning: nothing skins here
 void WantForPose(bool) {}   // ... and its composite hook: not in here
+void DropOurPose() {}   // [body] attack_lean's copy dropped at its end: nothing skins here
 void PublishRemotePose(uint64_t, uint64_t, const float*, int) {}   // [multiplayer] pose_share_hero's posed rigs for the skinning: nothing skins here
 void WantForOthers(bool) {}
 void SetPoseView(bool) {}   // ... nor its views

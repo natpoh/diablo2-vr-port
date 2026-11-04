@@ -63,7 +63,6 @@ extern std::atomic<bool> g_inWorld;
 // ---- what vr/config/load_settings.cpp (M2) sets and calls in vrcam.cpp ----
 // (moved here from vrcam.cpp: the declarations it had above LoadSettings and at the namespace's top)
 namespace depthsrc { void Configure(bool on); void Tick(); float LastFar(); }   // [render] depth_fix_mode 2 (further down, beside SkyTick)
-namespace kurastprobe { void Tick(); }   // [world] kurast_boat: where the Kurast Docks' canoe is drawn, once a visit (vr/world/kurast_probe.cpp; SkyTick calls it)
 namespace gamefog { void SetPoke(const std::wstring& want); }   // [debug] fog_poke, below
 namespace cavelight { void Load(); }   // [cave_light], below
 namespace engitem {   // [multiplayer] pose_share_held (below): what our hands show (the render thread's draws), and the other players' copies to draw

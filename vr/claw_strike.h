@@ -69,6 +69,23 @@ inline void Turn(const float q[4], const float v[3], bool undo, float out[3]) {
     out[2] = v[2] + q[3] * t[2] + (u[0] * t[1] - u[1] * t[0]);
 }
 
+// ---- [shapeshift] wolf_min_speed / bear_min_speed: the paws' own least speed -----------------------------------------------------
+// A bare hand is hard to swing as fast as a sword (Serg 2026-11-03: «рукой сложно быстро махать голой» - his melee_min_speed is 6 m/s): each form its own least
+// speed where a paw touches, m/s. 0 (or under kFormMinSpeedFloor, or a key not there) = none of its own: the unarmed kind's, else melee_min_speed, as before.
+// The players' ini ships kFormMinSpeedShipped. Only whether a contact counts - the game's attack, its speed and rolls stay the game's.
+constexpr float kFormMinSpeedFloor = 0.3f, kFormMinSpeedCeil = 20.0f, kFormMinSpeedShipped = 1.0f;
+// form: 1 the werewolf, 2 the werebear (unleashed::shapeshift::Form), anything else none. The form's own least speed, 0 = none.
+inline float FormMinSpeed(int form, float wolfMs, float bearMs) {
+    const float v = form == 1 ? wolfMs : form == 2 ? bearMs : 0.0f;
+    return std::isfinite(v) && v >= kFormMinSpeedFloor ? std::min(v, kFormMinSpeedCeil) : 0.0f;
+}
+// The least speed a paw's engine is given in place of the unarmed kind's own (unarmedOwn: [gameplay] melee_min_speed_unarmed, 0 = none): the form's where it has
+// one, else the unarmed kind's - which strikedir::Effective then takes over the general melee_min_speed when it is set.
+inline float PawOwnSpeed(int form, float wolfMs, float bearMs, float unarmedOwn) {
+    const float f = FormMinSpeed(form, wolfMs, bearMs);
+    return f > 0.0f ? f : unarmedOwn;
+}
+
 // ---- the two paws, one weapon -------------------------------------------------------------------------------------------------
 enum class Why {
     Counts,       // the game's attack is asked for

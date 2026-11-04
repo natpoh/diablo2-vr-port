@@ -61,6 +61,27 @@ begin
     SetIniString('weight', 'death_ragdoll', '1', Ini);
 end;
 
+// Kept settings with an unfinished test still on from an older version: the raw tests that ship off are turned off once, at the first
+// update that has this. Its mark, [support] raw_tests_off_0201, is one of the shipped defaults: a first install has it from the start, an
+// update adds it with the other new keys right after this (missing = not done yet). A test the player ticks again after that stays on.
+// Serg 2026-11-04: denails75r's crashes came with world_contact, world_contact_hands and own_body on from an old install.
+procedure TurnOffRawTest(Ini, Sec, Key: String);
+begin
+  if IniValue(GetIniString(Sec, Key, '<none>', Ini)) = '1' then
+  begin
+    SetIniString(Sec, Key, '0', Ini);
+    Log('d2r_vr.ini: [' + Sec + '] ' + Key + ' was on from an older version - a test that ships off: off now');
+  end;
+end;
+
+procedure TurnOffRawTests(Ini: String);
+begin
+  if GetIniString('support', 'raw_tests_off_0201', '<none>', Ini) <> '<none>' then Exit;
+  TurnOffRawTest(Ini, 'weight', 'world_contact');
+  TurnOffRawTest(Ini, 'weight', 'world_contact_hands');
+  TurnOffRawTest(Ini, 'weight', 'own_body');
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -130,6 +151,7 @@ begin
   end
   else
   begin
+    TurnOffRawTests(Ini);   // (before the new keys go in: its own mark is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

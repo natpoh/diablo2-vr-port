@@ -483,6 +483,7 @@ void WantForPose(bool on) {
     if (g_oursWanted.exchange(on) != on && on) Log("hero pose: the game's skinning composite is asked for - the hero is drawn from a copy of his pose holding the bones as we "
                                                  "finished them ([body] legs_rear)");
 }
+void DropOurPose() { g_oursAt.store(0, std::memory_order_relaxed); }
 void SetDollAnyView(bool on) { g_dollAnyView.store(on); }
 uint32_t DrawEntity() { return t_entity; }
 void SetPoseView(bool allowed) {

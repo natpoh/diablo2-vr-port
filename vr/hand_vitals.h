@@ -100,6 +100,12 @@ struct Config {
     // The wrist's bone and the arm's model differ with the class, so one depth (Z) fits one hero: an offset per hero class, cm, added to the Z of BOTH wrists (whatever their own
     // Z, the mirror or not) while that hero plays - [hud] hand_vitals_orb_z_cm_<class> (amazon, sorceress, ...). 0 = the class has no value of its own: the wrists' Z as it is.
     float orbClassZCm[kHeroCount] = {};
+    // [shapeshift] a druid's werewolf / werebear as your body (forms_first_person, F4): its forearm is a beast's, far thicker than the druid's, and the medallion sank into the fur
+    // (Serg, 0.201.2: "для медведя надо свой z сдвиг"; the werewolf's is fine - "у волка нормально" - and keeps the druid's). [hud] hand_vitals_orb_z_cm_werebear (cm): added to
+    // both wrists' Z on top of the druid's own while the werebear is your body. orbFormAuto ([hud] hand_vitals_orb_form_auto): the werebear's medallion also raised by how much
+    // farther its forearm skin stands out of the back of the wrist than the druid's, both from the forearm bone's own mesh box (handorbs::FormLiftCm). 0 / unticked: as before.
+    float orbBearZCm = 0.0f;
+    bool orbFormAuto = false;
     // The wrist under a shield, per hero class ([hud] hand_vitals_orb_shield_up_cm_<class> / _along_cm_<class>, cm): added to the shield's own depth and along offsets (orbShield.upCm / alongCm)
     // of the ball rolled to the inner side while that hero plays - the forearm's model, and so the depth of the inner side of the wrist under a shield, differs with the class. 0 = no value of its own.
     float orbShieldClassUpCm[kHeroCount] = {};
@@ -126,6 +132,8 @@ constexpr int kFillElbow = 0,      // along the arm: the elbow side full
 constexpr int kShapeMedallion = 0, kShapeBall = 1;
 
 constexpr float kOrbClassZMax = 5.0f;   // a class's depth offset, -5 .. 5 cm
+constexpr float kOrbFormZMax = 15.0f;   // the werebear's depth offset, -5 .. 15 cm (its forearm is a paw's)
+constexpr float kOrbFormZMin = -5.0f;
 constexpr float kOrbRotMin = -180.0f, kOrbRotMax = 180.0f;   // the medallion's turn about each axis, degrees
 constexpr float kOrbSizeMin = 3.0f, kOrbSizeMax = 9.0f, kOrbSpotMin = -10.0f, kOrbSpotMax = 10.0f,   // the ball's place: each of the three, either wrist
                 kOrbOpacityMin = 0.3f, kOrbOpacityMax = 1.0f;
@@ -164,6 +172,7 @@ inline Config Sanitized(Config c) {
     c.orbShield.rotYDeg = Clamp(c.orbShield.rotYDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     c.orbShield.rotZDeg = Clamp(c.orbShield.rotZDeg, kOrbRotMin, kOrbRotMax, 0.0f);
     for (float& z : c.orbClassZCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
+    c.orbBearZCm = Clamp(c.orbBearZCm, kOrbFormZMin, kOrbFormZMax, 0.0f);
     for (float& z : c.orbShieldClassUpCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
     for (float& z : c.orbShieldClassAlongCm) z = Clamp(z, -kOrbClassZMax, kOrbClassZMax, 0.0f);
     for (float& a : c.orbShieldClassRotXDeg) a = Clamp(a, kOrbRotMin, kOrbRotMax, 0.0f);
@@ -183,6 +192,13 @@ inline Config Sanitized(Config c) {
 inline float ClassZCm(const Config& c, int heroClass) {
     return heroClass >= 0 && heroClass < kHeroCount ? Clamp(c.orbClassZCm[heroClass], -kOrbClassZMax, kOrbClassZMax, 0.0f) : 0.0f;
 }
+
+// [shapeshift] The depth offset (cm) a druid's form adds to both wrists' Z while it is your body (form: 1 werewolf, 2 werebear; 0 the druid herself): the werebear's own;
+// none for the werewolf (its medallion sits right at the druid's place) or the druid.
+inline float FormZCm(const Config& c, int form) {
+    return form == 2 ? Clamp(c.orbBearZCm, kOrbFormZMin, kOrbFormZMax, 0.0f) : 0.0f;
+}
+inline const char* FormKey(int form) { return form == 1 ? "werewolf" : form == 2 ? "werebear" : ""; }
 
 // The depth and the along offsets (cm) the hero now playing adds under a shield: its own, 0 for a class not known or with none.
 inline float ClassShieldUpCm(const Config& c, int heroClass) {

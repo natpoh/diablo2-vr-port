@@ -82,7 +82,7 @@ inline constexpr PageText kPages[kPageCount] = {
       {"F2", "behind the hero, a camera turned with your head"},
       {"F3", "the game on your floor: look down at it, walk round it"},
       {"F4", "first person - this view. The hands, the panels and this guide are F4's."},
-      {"Keyboard", "the F key of a view (the game window in focus), F12 the next view, F11 recentre. The settings' View page has F1 - F4 too."},
+      {"Keyboard", "F1 - F4 or Shift + F1 - F4 (Settings > Home > View keys; the game window in focus), F12 the next view, F11 recentre. The View page has them too."},
       {"This guide again", "the settings in the headset, page Body: First-start guide"}},
      "Done closes the guide; it is on the Body page again, any time."},
 };

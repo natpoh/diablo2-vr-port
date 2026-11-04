@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -55,6 +56,7 @@
 #include "head_shadow.h"   // [arms] head_shadow: the head shrunk in the eyes' skinning only, its shadow cast
 #include "grip_fit.h"
 #include "grip_pose.h"
+#include "table_rows.h"   // a value read from the game checked against the table it indexes (a hero rig's parents)
 #include "weapon_extents.h"   // melee by touch: the weapon model's unit in metres as drawn (PosedBlade::unitM)
 #include "grip_rig.h"
 #include "grab_bodies.h"   // [weight] grab_wrap: the palm laid on a held body without the grip library (LayPalm)
@@ -77,6 +79,7 @@
 #include "body_calibration.h"
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
+#include "attack_lean.h"    // [body] attack_lean (flat F2 / F3, VR F2): the swing leans toward where the crosshair looks
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's paws as the touch's blades
 #include "unleashed_shapeshift_form.h"   // [shapeshift] forms_first_person: the druid's werewolf / werebear grafted under the camera (MPL, from Unleashed)
 #include "sigscan.h"
@@ -88,6 +91,7 @@
 #include "knock_pose.h"         // [weight] knock_down: a knocked-down body laid on the library's joints
 #include "bone_segments.h"   // [weight] monster_ragdoll_all: bodies from bone segments
 #include "skin_anchor.h"     // [weight] death_ragdoll: the skinning finds a body by the root of the entity drawn
+#include "flat_weapon.h"     // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle of the view
 #include "corpse_watch.h"    // [weight] monster_ragdoll: a corpse is no doll
 #include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
 
@@ -780,6 +784,17 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
     for (int i = 0; i < count; ++i) {
         uintptr_t nm = 0; int32_t p = -1;
         Get(bones + i * 0xA4, &nm); Get(bones + i * 0xA4 + 8, &p);
+        // A Granny rig lists a parent before its children (the bow layouts, bone_segments.h rely on it too): a parent that is not an earlier bone
+        // would index past the rig's arrays, or make the parent walks below go round for ever - it is taken as a root (vr/table_rows.h).
+        if (const int32_t q = tablerows::EarlierOrRoot(p, i); q != p) {
+            static tablerows::Once told;
+            if (p != -1 && told.First()) {
+                char b[220];
+                snprintf(b, sizeof b, "skeleton: bone %d of a hero rig names parent %d (not an earlier bone of its %d) - taken as a root; a data mod's model?", i, (int)p, count);
+                weight::Say(b);
+            }
+            p = q;
+        }
         h->parent[i] = p;
         const std::string n = Str(nm);
         names[i] = n;
@@ -2159,7 +2174,8 @@ bowaim::BowWrist BowWristNow(const Hero& h, const Input& in, const std::vector<M
     sizes[0] = sizes[1] = -1.0f;
     BowSideOf(h, oldW, sizes);
     // [hands] shoulder_draw_ranged_swap: a bow drawn into the other hand is held in THAT hand, whatever attach bone the game shows (BowCarry moves it there)
-    if (in.rangedHolster && in.rangedBow && in.rangedSwap && (in.rangedSide == 0 || in.rangedSide == 1)) return {in.rangedSide, bowaim::SideBy::AimHand};
+    // [bow] swap_by_grab: the same for a bow passed from hand to hand
+    if (in.rangedHolster && in.rangedBow && (in.rangedSwap || in.rangedGrab) && (in.rangedSide == 0 || in.rangedSide == 1)) return {in.rangedSide, bowaim::SideBy::AimHand};
     bool drawing = false;
     const int fed = BowFeedSide(&drawing);
     return bowaim::ChooseBowWrist(sizes[0], sizes[1], fed, in.bowStringSide == 0 || in.bowStringSide == 1 ? in.bowStringSide ^ 1 : -1);
@@ -2167,7 +2183,7 @@ bowaim::BowWrist BowWristNow(const Hero& h, const Input& in, const std::vector<M
 // The side of the attach bone the bow's MESH hangs on: the game's own - the bone it shows, else (both shown: an Amazon's quiver in the other slot) the slot's (Input::rangedBone). With the
 // swap the bow is held in the other wrist but the mesh stays on this bone (BowCarry moves the bone there); without it, the wrist the bow is in.
 int BowBoneSide(const Hero& h, const Input& in, const std::vector<Mat>& oldW, int wristSide) {
-    if (!(in.rangedHolster && in.rangedBow && in.rangedSwap)) return wristSide;
+    if (!(in.rangedHolster && in.rangedBow && (in.rangedSwap || in.rangedGrab))) return wristSide;
     const int shown = BowSideOf(h, oldW);
     return shown >= 0 ? shown : (in.rangedBone & 1);
 }
@@ -3261,6 +3277,92 @@ FormEyeOut FormEye(uintptr_t self, const Hero& h, const Input& in, bool graft) {
 }
 std::atomic<int> g_formTold{0};   // the form the log last said ours is in
 
+#if D2RVR_FIRST_PERSON
+// [body] attack_lean (vr/attack_lean.h): the pose thread's ease and what it did, for vrcam's log (AttackLeanTakeNote) - one line per attack, at its end.
+attacklean::Ease g_leanEase;
+std::chrono::steady_clock::time_point g_leanStepAt{};
+std::atomic<bool> g_leanPublishing{false};   // our pose handed to the skinning for the lean alone (its end drops it: headshadow::DropOurPose)
+struct LeanSeen { bool swinging = false; int mode = -1; unsigned poses = 0; float pitch = 0, elevation = 0, ahead = 0, leanDeg = 0, maxLeanDeg = 0;
+                  attacklean::Met by = attacklean::Met::None; std::chrono::steady_clock::time_point from{}; };
+LeanSeen g_leanSeen;
+unsigned g_leanAttacks = 0;
+uintptr_t g_leanRigTold = 0;
+SRWLOCK g_leanNoteLock = SRWLOCK_INIT;
+std::string g_leanNote;
+void NoteLean(const std::string& line) {
+    AcquireSRWLockExclusive(&g_leanNoteLock);
+    if (g_leanNote.size() < 3000) g_leanNote += (g_leanNote.empty() ? "" : "\n") + line;
+    ReleaseSRWLockExclusive(&g_leanNoteLock);
+}
+const char* LeanViewName(int v) { return v == 2 ? "monitor F2" : v == 3 ? "monitor F3" : v == 12 ? "VR F2" : "?"; }
+
+// Our hero's pose (model space, after the body's turn and before the head is shrunk): the spine bent toward the crosshair's aimed point while his attack plays.
+// True when it bent this pose (the skinning is then handed it).
+bool AttackLean(uintptr_t self, const Hero& h, const Input& in, bool turned, float c, float s, std::vector<Mat>& newW) {
+    const auto now = std::chrono::steady_clock::now();
+    float dtMs = g_leanStepAt.time_since_epoch().count() ? std::chrono::duration<float, std::milli>(now - g_leanStepAt).count() : 0.0f;
+    g_leanStepAt = now;
+    if (dtMs > 300.0f) { g_leanEase = {}; g_leanSeen = {}; dtMs = 0.0f; }   // (posed again after a pause - the key off, another view, a load: from nothing)
+    const int n = (int)newW.size();
+    const int chest = attacklean::Chest(n, h.parent.data(), h.spine, h.upr[0], h.upr[1]);
+    const std::vector<int> chain = attacklean::Chain(n, h.parent.data(), h.spine, chest);
+    if (self != g_leanRigTold) {   // the rig as it bends, once a rig
+        g_leanRigTold = self;
+        char b[300];
+        if (chain.empty())
+            snprintf(b, sizeof b, "attack lean: this hero's rig (%d bones) has no chest above spine_01 that both upper arms hang from - it never leans", n);
+        else
+            snprintf(b, sizeof b, "attack lean: the hero's rig (%d bones) bends from spine_01 (bone %d) up to the chest (bone %d, %zu joints); the reach about the chest is his eye "
+                     "height, %.2f model units", n, h.spine, chest, chain.size(), h.eyeY);
+        NoteLean(b);
+    }
+    const bool swinging = attacklean::IsSwingMode(in.heroAnimMode);
+    const float weight = g_leanEase.Step(swinging, dtMs);
+    LeanSeen& seen = g_leanSeen;
+    const auto tell = [&]() {   // the attack just ended: its line
+        if (seen.poses == 0) return;
+        ++g_leanAttacks;
+        char b[400];
+        snprintf(b, sizeof b, "attack lean - %s, attack %u (mode %d, %.0f ms): the crosshair %.0f deg, the aimed point %.0f deg from the chest (met %s, %.2f units ahead) -> "
+                 "lean %.0f deg %s (most %.0f)", LeanViewName(in.leanView), g_leanAttacks, seen.mode,
+                 std::chrono::duration<float, std::milli>(now - seen.from).count(), seen.pitch, seen.elevation, attacklean::MetName(seen.by), seen.ahead,
+                 std::fabs(seen.maxLeanDeg), seen.maxLeanDeg > 0.0f ? "down" : seen.maxLeanDeg < 0.0f ? "up" : "", in.attackLeanMaxDeg);
+        NoteLean(b);
+        seen = LeanSeen{};
+    };
+    if (!swinging && seen.swinging) tell();
+    if (chain.empty() || weight <= 0.0f) return false;
+    if (!in.leanRayOk) return false;
+    // (the eye of this very frame when the body's turn read it - Arms' fresh facing; else vrcam's, 10 ms at most)
+    const float eye[3] = {in.haveEye ? in.eyeModel[0] : in.leanEye[0], in.haveEye ? in.eyeModel[1] : in.leanEye[1], in.haveEye ? in.eyeModel[2] : in.leanEye[2]};
+    float floorY = 0.0f;   // the feet's level in this pose (the model's origin when the rig has no feet found)
+    if (h.leg[0][2] >= 0 && h.leg[1][2] >= 0) floorY = std::min(newW[h.leg[0][2]].m[13], newW[h.leg[1][2]].m[13]);
+    const float reach = h.eyeY > 0.0f ? h.eyeY : (h.head >= 0 ? newW[h.head].m[13] : 0.0f);
+    const V3 at = Pos(newW[chest]);
+    attacklean::Aim aim;
+    if (!attacklean::AimAt({eye[0], eye[1], eye[2]}, {in.leanFwd[0], in.leanFwd[1], in.leanFwd[2]}, {at.x, at.y, at.z}, floorY, reach, &aim)) return false;
+    const float rad = attacklean::LeanRad(aim.elevation, in.attackLeanMaxDeg, weight);
+    // the way he faces: the game's model faces +z; turned with the look, (s, 0, c)
+    const attacklean::V3 axis = attacklean::Axis(turned ? attacklean::V3{s, 0.0f, c} : attacklean::V3{0.0f, 0.0f, 1.0f});
+    static_assert(sizeof(Mat) == sizeof(float) * 16, "a bone matrix is 16 floats");
+    attacklean::Bend(reinterpret_cast<float(*)[16]>(newW.data()), n, h.parent.data(), chain, axis, rad);
+    if (swinging) {
+        if (!seen.swinging) { seen.swinging = true; seen.from = now; }
+        seen.mode = in.heroAnimMode;
+        ++seen.poses;
+        const float leanDeg = rad * 57.2957795f;
+        if (std::fabs(leanDeg) >= std::fabs(seen.maxLeanDeg)) {   // the numbers at the attack's fullest lean
+            seen.maxLeanDeg = leanDeg;
+            seen.pitch = aim.pitch * 57.2957795f;
+            seen.elevation = aim.elevation * 57.2957795f;
+            seen.ahead = aim.ahead;
+            seen.by = aim.by;
+        }
+    }
+    return true;
+}
+#endif
+
 void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::Out& wo) {
     uintptr_t world = 0, mats = 0; int32_t n = 0;
     if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
@@ -3922,8 +4024,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     // [bow] string_anchor: where the string is held (the string hand's wrist is final here: the arms are placed above), for the aim and for the
     // bow's own rig below (NoteBowHands).
     g_fingersCarried = false;
-    if (in.mode == 2 && in.rangedHolster && in.rangedBow && in.rangedSwap && !in.rangedStowed && (in.rangedSide == 0 || in.rangedSide == 1)) {
-        // [hands] shoulder_draw_ranged_swap: the bow was drawn into the other hand: its attach bone is carried there before anything is posed round it
+    if (in.mode == 2 && in.rangedHolster && in.rangedBow && (in.rangedSwap || in.rangedGrab) && !in.rangedStowed && (in.rangedSide == 0 || in.rangedSide == 1)) {
+        // [hands] shoulder_draw_ranged_swap: the bow was drawn into the other hand (or [bow] swap_by_grab: passed into it): its attach bone is carried there before anything is posed round it
         const int boneSide = BowBoneSide(h, in, oldW, in.rangedSide);
         float sideAxis[3], f[3], u[3];
         const bool axes = BowAxesNow(f, u, sideAxis);
@@ -5803,6 +5905,11 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     }
 #endif
 
+    // [body] attack_lean (flat F2 / F3, VR F2): while his attack plays, the spine bent toward where the crosshair looks - the swing comes down onto a small
+    // monster or up at a tall one. Last of the body's own moves, before the head is shrunk; the skinning is handed it below (the game's skinning meets
+    // its own pose in the pose buffer, not ours: headshadow::PublishOurPose).
+    const bool leaned = in.attackLean && !in.along && AttackLean(self, h, in, turn, c, s, newW);
+
     // First person: the head and the neck shrink into a point at the neck's
     // base, so a camera at the eyes sees out instead of the inside of the skull,
     // and looking down sees the chest, not a neck. [arms] head_shadow (vr/head_shadow.h): while the renderer's hooks hand the eyes'
@@ -5925,11 +6032,30 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         if (modelOk) PoseModel(model);   // [body] under_camera: as the arm will be drawn
         // [hud] hand_vitals_orb_on_bone: the forearm bones' boxes off the hero's own meshes - his parts looked at once a second, the boxes read again only when they change
         uintptr_t inst = 0, skelp = 0;
+        static uintptr_t boxWhyTold = 0;   // (the rig a "no box read" note was last given for: once per rig)
+        if (in.armBox && !modelOk && boxWhyTold != h.skel) {   // the boxes need the hero's model-to-world: why it was not read (Serg's 0.201.2 log had no box line at all)
+            boxWhyTold = h.skel;
+            char note[300];
+            snprintf(note, sizeof note, "wrist medallions on the bone: the %s rig's forearm boxes not read - the hero's model-to-world was not (%s)",
+                     h.form ? unleashed::shapeshift::Name(h.form) : h.cls >= 0 ? kHeroClasses[h.cls] : "hero's", why && *why ? why : hx.self != self ? "another rig is the hero's" : "not a root transform");
+            AcquireSRWLockExclusive(&g_armNoteLock);
+            if (g_armNote.size() < 3000) g_armNote += (g_armNote.empty() ? "" : "\n") + std::string(note);
+            ReleaseSRWLockExclusive(&g_armNoteLock);
+        }
         if (in.armBox && modelOk && GetTickCount64() - g_armBoxes.lookAt >= 1000 && Get(self + 0x08, &inst) && Get(inst + 0x08, &skelp)) {
             g_armBoxes.lookAt = GetTickCount64();
             uintptr_t models[monsterrig::kMaxModels] = {};
             uint64_t key = 0;
             const int nModels = HeroPartModels(hx.entity, models, monsterrig::kMaxModels, &key);
+            if (nModels <= 0 && boxWhyTold != h.skel) {
+                boxWhyTold = h.skel;
+                char note[220];
+                snprintf(note, sizeof note, "wrist medallions on the bone: the %s rig's forearm boxes not read - no model of the hero's entity %u found (its parts not in the renderer's tables)",
+                         h.form ? unleashed::shapeshift::Name(h.form) : h.cls >= 0 ? kHeroClasses[h.cls] : "hero's", hx.entity);
+                AcquireSRWLockExclusive(&g_armNoteLock);
+                if (g_armNote.size() < 3000) g_armNote += (g_armNote.empty() ? "" : "\n") + std::string(note);
+                ReleaseSRWLockExclusive(&g_armNoteLock);
+            }
             if (nModels > 0 && (key != g_armBoxes.key || skelp != g_armBoxes.skel)) {
                 const auto read = [](uintptr_t a, void* d, size_t bytes) { return a > 0x10000 && SafeCopy(d, (const void*)a, bytes); };
                 static monsterrig::Boxes boxes;   // (large: the pose thread's alone)
@@ -6049,12 +6175,80 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         AcquireSRWLockExclusive(&g_drawnAttachLock); g_drawnAttach = da; ReleaseSRWLockExclusive(&g_drawnAttachLock);
     }
 #endif
+#if D2RVR_FIRST_PERSON
+    // [body] flat_weapon_adjust (vr/flat_weapon.h): flat F3, the game's own arms - each upper arm and all under it (forearm, hand, fingers, the weapon's
+    // attach bone) moved whole along the camera's axes, so a big weapon no longer stands in the middle of the view. Last, after the bones the others in a
+    // game are sent (above): only our own screen sees it. A rig posed along with the hero's is moved alike (its parts stay together).
+    bool flatMoved = false;
+    if (in.flatWeapon && in.haveCamFwd && in.haveCamRight) {
+        const flatweapon::Frame fr = flatweapon::GroundFrame(in.camRight, in.camFwd);
+        const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
+        const float upm = flatweapon::UnitsPerMetre(headY, in.userHeadM);
+        std::vector<char> mark(n, 0);
+        flatweapon::V shift[2] = {flatweapon::Shift(fr, 0, in.flatWeaponCm[0], upm), flatweapon::Shift(fr, 1, in.flatWeaponCm[1], upm)};
+        // A two-handed hold: the game's pose (as it stands now, before these shifts) has one hand's fist on the other's weapon - that arm takes the
+        // holding arm's shift, so the fist stays on the grip (vr/flat_weapon.h FistOnShaft; eased, a swing's hand off the hilt does not jump).
+        {
+            bool onShaft[2] = {false, false};
+            for (int s = 0; s < 2; ++s) {
+                const int wb = h.weapon[s], o = s ^ 1, fistBone = h.mid[o] >= 0 ? h.mid[o] : h.hand[o], ownFist = h.mid[s] >= 0 ? h.mid[s] : h.hand[s];
+                if (wb < 0 || wb >= n || fistBone < 0 || fistBone >= n) continue;
+                const V3 at = Pos(newW[wb]), ax{newW[wb].m[4], newW[wb].m[5], newW[wb].m[6]}, fist = Pos(newW[fistBone]);
+                if (!flatweapon::ShowsWeapon({ax.x, ax.y, ax.z})) continue;
+                onShaft[s] = flatweapon::FistOnShaft({fist.x, fist.y, fist.z}, {at.x, at.y, at.z}, {ax.x, ax.y, ax.z}, upm);
+                if (!onShaft[s] && ownFist >= 0 && ownFist < n) {   // (the two fists side by side on one grip, whatever the weapon's axis)
+                    const V3 f2 = Pos(newW[ownFist]);
+                    onShaft[s] = flatweapon::FistsTogether({fist.x, fist.y, fist.z}, {f2.x, f2.y, f2.z}, upm);
+                }
+            }
+            const int holder = flatweapon::Holder(onShaft);
+            static float hold = 0.0f;   // the main rig's ease; a rig posed along with it takes the same
+            static int lastHolder = 0;
+            static ULONGLONG lastAt = 0;
+            static int told = -2;
+            if (!in.along) {
+                const ULONGLONG now = GetTickCount64();
+                hold = flatweapon::EaseHold(hold, holder >= 0, lastAt ? (float)(now - lastAt) * 0.001f : 1.0f);
+                lastAt = now;
+                if (holder >= 0) lastHolder = holder;
+                if (holder != told) {
+                    told = holder;
+                    XbowNote(holder < 0 ? "flat weapon adjust: no two-handed hold in the game's pose - each arm by its own numbers"
+                                        : holder == 0 ? "flat weapon adjust: a two-handed hold (the left fist on the right hand's weapon) - the left arm moves with the right one"
+                                                      : "flat weapon adjust: a two-handed hold (the right fist on the left hand's weapon) - the right arm moves with the left one");
+                }
+            }
+            const int from = holder >= 0 ? holder : lastHolder;   // (easing out: toward its own numbers from the holder it followed)
+            shift[from ^ 1] = flatweapon::Blend(shift[from ^ 1], shift[from], hold);
+        }
+        for (int side = 0; side < 2 && fr.ok; ++side) {
+            const flatweapon::V d = shift[side];
+            if ((d.x == 0.0f && d.y == 0.0f && d.z == 0.0f) || !std::isfinite(d.x + d.y + d.z)) continue;
+            if (flatweapon::Subtree(h.parent.data(), n, h.upr[side], mark.data()) == 0) continue;
+            for (int i = 0; i < n; ++i)
+                if (mark[i]) { newW[i].m[12] += d.x; newW[i].m[13] += d.y; newW[i].m[14] += d.z; }
+            flatMoved = true;
+        }
+        static int toldFrame = -1;   // once a change: whether the camera's axes read
+        if ((fr.ok ? 1 : 0) != toldFrame) {
+            toldFrame = fr.ok ? 1 : 0;
+            XbowNote(fr.ok ? "flat weapon adjust: the arms moved along the camera's right, up and ahead in the hero's model ([body] flat_weapon_adjust)"
+                           : "flat weapon adjust: the camera's right and forward in the hero's model did not read as a frame - the arms left where the game has them");
+        }
+    }
+#endif
     BodyDumpPose(h, in, newW);   // [debug] body_dump: the bones as they go to the game
 #if D2RVR_FIRST_PERSON
     // [body] legs_rear: the pose as finished, for the skinning to draw (headshadow::PublishOurPose - it met the game's own legs in the pose, not ours)
-    if (in.legsRear && !in.along) {
+    // [body] attack_lean: the same while it bends him; when it stops, its last copy is dropped at once (else the skinning draws it for 250 ms) - unless
+    // legs_rear hands every pose anyway; [body] flat_weapon_adjust: the arms moved, the same way
+    if ((in.legsRear || leaned || flatMoved) && !in.along) {
         uintptr_t cur = 0, prev = 0;
         if (Get(self + 0x20, &cur) && Get(self + 0x28, &prev)) headshadow::PublishOurPose(h.skel, cur, prev, newW[0].m, n);
+    }
+    if (!in.along) {
+        if (leaned && !in.legsRear) g_leanPublishing.store(true);
+        else if (g_leanPublishing.exchange(false) && !in.legsRear) headshadow::DropOurPose();
     }
     // ... and the hips and legs as they go, for the skinning's look at what it draws (headshadow::NoteHeroLegs / SkinNote: ours, or not)
     if ((g_walkBackDumpOn.load(std::memory_order_relaxed) || g_bodyDumpOn.load(std::memory_order_relaxed)) && !in.along && h.pelvis >= 0) {
@@ -8855,9 +9049,13 @@ void NoteTrail(uintptr_t self, const Hero& hero) {
 void Arms(uintptr_t self) {
     Input in;
     AcquireSRWLockShared(&g_inLock); in = g_in; ReleaseSRWLockShared(&g_inLock);
+#if D2RVR_FIRST_PERSON
+    if (!in.attackLean && g_leanPublishing.exchange(false)) headshadow::DropOurPose();   // [body] attack_lean off or not this view mid-lean: its copy not drawn on
+#endif
     // The hero is looked for even while nothing is done to him: his SkeletonInstance is what
     // vrcam's facing is found from (HeroTransform), and that is needed before the body can turn.
-    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet);   // ([body] doll_feet: in every view)
+    // ([body] doll_feet: in every view; [body] attack_lean: its views)
+    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet && !in.attackLean);
     if (!active && !g_trackHero.load() && !g_trailWanted.load(std::memory_order_relaxed)) return;   // ([weight] death_ragdoll_flat: the weapon's trail in every view)
     uintptr_t modelInst = 0, skel = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
@@ -9385,6 +9583,15 @@ const char* HeadStatus() {
     const ULONGLONG seen = g_headSeenAt.load();
     if (!seen || GetTickCount64() - seen > 2000) return "no Necromancer head skeleton posed in the last 2 s - the pose hook meets none";
     return g_headWhy.load();
+}
+std::string AttackLeanTakeNote() {
+    std::string s;
+#if D2RVR_FIRST_PERSON
+    AcquireSRWLockExclusive(&g_leanNoteLock);
+    s.swap(g_leanNote);
+    ReleaseSRWLockExclusive(&g_leanNoteLock);
+#endif
+    return s;
 }
 std::string ArmTakeNote() {
     std::string s;

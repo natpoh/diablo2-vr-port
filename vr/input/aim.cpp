@@ -55,6 +55,8 @@ bool BowStick(XINPUT_STATE* s) {
 // of view), that one - an untracked hand left every arrow flying straight ahead.
 // The hand a bow or crossbow is held in without [hands] shoulder_draw_ranged_swap: the settings' (ranged_left, else the weapon set's aim hand).
 int RangedHomeHand() { return g_set.rangedLeft.load() ? 1 : gamestate::WeaponSet() == 2 ? g_set.bowHand2.load() : g_set.bowHand.load(); }
+// The hand a bow or crossbow starts in: with [bow] swap_by_grab a BOW starts where it was last passed to ([bow] bow_hand); otherwise RangedHomeHand.
+int BowStartHand() { return g_set.bowSwapByGrab.load() && gamestate::WeaponClass() == 3 ? (g_set.bowHandSide.load() & 1) : RangedHomeHand(); }
 
 int AimHand() {
     const uint32_t wc = gamestate::WeaponClass();
@@ -62,8 +64,9 @@ int AimHand() {
     const uint32_t type = gamestate::WeaponType();
     const bool thrown = type == D2RVR_TYPE_JAVELIN || type == D2RVR_TYPE_THROWING;   // thrown from the right hand
     int hand = thrown ? 0 : ranged && g_set.rangedLeft.load() ? 1 : gamestate::WeaponSet() == 2 ? g_set.bowHand2.load() : g_set.bowHand.load();
-    // [hands] shoulder_draw_ranged_swap: a bow drawn into the other hand is held, drawn on, aimed and fed from THAT hand (read every frame by the draw, the quiver, the skeleton)
-    if (wc == 3 && g_set.shoulderDraw.load() && g_set.rangedHolster.load() && g_set.rangedSwap.load()) {
+    // [hands] shoulder_draw_ranged_swap: a bow drawn into the other hand is held, drawn on, aimed and fed from THAT hand (read every frame by the draw, the quiver, the skeleton);
+    // [bow] swap_by_grab: the same for a bow passed from hand to hand
+    if (wc == 3 && ((g_set.shoulderDraw.load() && g_set.rangedHolster.load() && g_set.rangedSwap.load()) || g_set.bowSwapByGrab.load())) {
         const int live = rangedwire::Side();
         if (live == 0 || live == 1) hand = live;
     }
@@ -700,6 +703,9 @@ bool GestureHeroId(uint32_t* id) {
     }
 }
 // A player unit (type 0) whose place on its path, times 2, is the look-at: the hero.
+// A path not seen before is first read through a copy (ReadProcessMemory): a freed one fails quietly instead of the access violation
+// D2RLoader's last-resort handler writes up as a crash (.metaldevil's 0.197 zip, 2026-11-04); the last good one is read directly.
+std::atomic<const uint8_t*> g_heroPathOk{nullptr};
 bool IsHeroUnit(const void* unit) {
     float L[3];
     AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
@@ -708,6 +714,12 @@ bool IsHeroUnit(const void* unit) {
         if (*(const uint32_t*)u != 0) return false;
         const uint8_t* path = *(const uint8_t* const*)(u + 0x38);
         if ((uintptr_t)path < 0x10000) return false;
+        if (path != g_heroPathOk.load(std::memory_order_relaxed)) {
+            uint16_t probe[4];
+            SIZE_T got = 0;
+            if (!ReadProcessMemory(GetCurrentProcess(), path, probe, sizeof probe, &got) || got != sizeof probe) return false;
+            g_heroPathOk.store(path, std::memory_order_relaxed);
+        }
         const float x = 2.0f * *(const uint16_t*)(path + 2), z = 2.0f * *(const uint16_t*)(path + 6);
         return fabsf(x - L[0]) < 3.0f && fabsf(z - L[2]) < 3.0f;
     } __except (EXCEPTION_EXECUTE_HANDLER) {

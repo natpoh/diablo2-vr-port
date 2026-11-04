@@ -527,12 +527,16 @@ target_compile_options(ranged_hand_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(ranged_hand_wire_test cleanroom/tests/ranged_hand_wire_test.cpp vr/ranged_hand_wire.cpp)
 target_include_directories(ranged_hand_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(ranged_hand_wire_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# vr/bow_swap.h: [bow] swap_by_grab - the bow passed from hand to hand at its grip (pure, with ranged_hand.h's grab)
+add_executable(bow_swap_test cleanroom/tests/bow_swap_test.cpp)
+target_include_directories(bow_swap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(bow_swap_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(world_anchor_test cleanroom/tests/world_anchor_test.cpp)
 target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/reshade_shield.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -541,7 +545,7 @@ target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effec
 target_sources(d2rl-vrcam PRIVATE vr/head_shadow.cpp)   # [arms] head_shadow: the hidden head still casts its shadow (the eyes' skinning only has it shrunk), visual only
 target_sources(d2rl-vrcam PRIVATE vr/headset_shot.cpp vr/headset_clip.cpp vr/headset_grid.cpp)   # [headset_shot]: a screenshot of what reaches the headset (the layers / pictures handed over, read back to PNGs)
 target_sources(d2rl-vrcam PRIVATE vr/flatvr_feed.cpp)   # [render] flatvr_feed: without ReShade, FlatVR's picture and depth from the plugin (FlatVR_DepthProvider's blocks)
-target_sources(d2rl-vrcam PRIVATE vr/monitor_eye.cpp)   # [render] monitor_eye: the game's window shows one eye, steady - to capture the screen (bearstonem/d2r-pcvr's desktop_one_eye, MIT)
+target_sources(d2rl-vrcam PRIVATE vr/monitor_eye.cpp vr/monitor_layers.cpp)   # [render] monitor_eye: the game's window shows one eye, steady - to capture the screen (bearstonem/d2r-pcvr's desktop_one_eye, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on the weapon is not a chord's modifier (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/point_pickup_wire.cpp)   # [input] point_pickup: the pointed item's highlight and its grip + trigger pick-up (F4)
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
@@ -556,12 +560,11 @@ target_sources(d2rl-vrcam PRIVATE vr/frame_gen_lib.cpp)   # [openxr] frame_gener
 target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1: the grip library d2r_vr_grip.dll, when it is beside the plugin (shared/d2r_vr_grip.h)
 target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
 # vr/vrcam.cpp in modules (docs/plan_modules.md): M1 the observers
-target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
 target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
 target_sources(d2rl-vrcam PRIVATE vr/diag/save_backups.cpp)   # [support] save_backups: the game's saves copied into Saved Games\...\D2R VR Backups
 target_sources(d2rl-vrcam PRIVATE vr/world/area.cpp)   # M4 the area
-target_sources(d2rl-vrcam PRIVATE vr/world/kurast_probe.cpp)   # [world] kurast_boat: where the Kurast Docks' canoe is drawn (the log, once a visit)
 target_sources(d2rl-vrcam PRIVATE vr/view/view_state.cpp)   # M5 which view
 target_sources(d2rl-vrcam PRIVATE vr/sky/dome_atlas.cpp)   # [sky] dome_in_game_colour: the game samples our baked picture for the dome
 target_sources(d2rl-vrcam PRIVATE vr/sky/sky_choice.cpp)   # M6 who draws the sky, the fog, the ceiling
@@ -754,6 +757,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/grip_lib_test.cpp")   # (
 endif()
 target_link_libraries(d2rl-vrcam PRIVATE d2rcam heft minhook user32 gdi32 ole32 uuid OpenXR::openxr_loader reshadefx windowscodecs)
 target_compile_options(d2rl-vrcam PRIVATE /utf-8 /W3 /EHsc /permissive-)
+# The Release build keeps its symbols: d2rl-vrcam.pdb beside the DLL (Serg 2026-11-04: no 0.200.0 PDB to name a crash's offset). /Zi and
+# /DEBUG add only the debug directory; /OPT:REF /OPT:ICF /INCREMENTAL:NO keep the code as without /DEBUG (as the 0.197.0 symbol build,
+# releases\pdb\0.197.0\README.txt). installer\build_installer.ps1 keeps a copy per version in releases\pdb\<version>.
+target_compile_options(d2rl-vrcam PRIVATE "$<$<CONFIG:Release>:/Zi>")
+target_link_options(d2rl-vrcam PRIVATE "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF;/INCREMENTAL:NO>")
 # [gameplay] shield_smite: a shield bash casts the game's own Smite (vr/shield_smite.h decides, shield_smite.cpp talks to the game).
 target_sources(d2rl-vrcam PRIVATE vr/shield_smite.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/parry_wire.cpp)   # [weight] parry_*: the monster's blow met by the weapon or the shield (vr/parry.h decides)
@@ -1025,6 +1033,10 @@ target_compile_options(room_walk_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(walk_flat_test cleanroom/tests/walk_flat_test.cpp)
 target_include_directories(walk_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(walk_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Which keys pick the view ([view] keys, vr/view_keys.h): F1 - F4 / Shift + F1 - F4 / none, and which key messages the game does not get.
+add_executable(view_keys_test cleanroom/tests/view_keys_test.cpp)
+target_include_directories(view_keys_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(view_keys_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Why W A S D do not walk in flat F2 / F3 (vr/flat_keys_why.h): the verdict's order (the plugin's reasons before the game's) and its log line.
 add_executable(flat_keys_why_test cleanroom/tests/flat_keys_why_test.cpp)
 target_include_directories(flat_keys_why_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1069,6 +1081,10 @@ target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SE
 add_executable(session_logs_test tools/session_logs_test.cpp)
 target_include_directories(session_logs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(session_logs_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# [support] crash_reports / send_logs: the contract with D2R VR Crash Reporter (shared/d2r_vr_crash_watch.h; the reporter itself is private).
+add_executable(crash_watch_test tools/crash_watch_test.cpp)
+target_include_directories(crash_watch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(crash_watch_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 add_executable(players_cmd_test tools/players_cmd_test.cpp)
 target_include_directories(players_cmd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_definitions(players_cmd_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
@@ -1169,7 +1185,7 @@ target_include_directories(unleashed_shapeshift_form_test PRIVATE ${CMAKE_CURREN
 target_compile_options(unleashed_shapeshift_form_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [shapeshift] claw_hits (vr/claw_strike.h): a form's paw from its bones, the two paws one weapon (one shared recovery). Run: claw_strike_test.exe
 add_executable(claw_strike_test cleanroom/tests/claw_strike_test.cpp)
-target_include_directories(claw_strike_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_include_directories(claw_strike_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(claw_strike_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [shapeshift] wolf_strength_pct / bear_strength_pct (vr/form_strength.h): a grafted form's paws stronger in the grab. Run: form_strength_test.exe
 add_executable(form_strength_test cleanroom/tests/form_strength_test.cpp)
@@ -1274,6 +1290,10 @@ target_compile_options(point_trigger_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_loot_aim_test cleanroom/tests/unleashed_loot_aim_test.cpp)
 target_include_directories(unleashed_loot_aim_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_loot_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# vr/table_rows.h: a row id read from the game (an item class, a rig's parent) checked against the table it indexes - a data mod's rows (Reimagined) left alone, told once. Run: table_rows_test.exe
+add_executable(table_rows_test cleanroom/tests/table_rows_test.cpp)
+target_include_directories(table_rows_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(table_rows_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(portal_oval_test cleanroom/tests/portal_oval_test.cpp)
 target_include_directories(portal_oval_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(portal_oval_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1281,6 +1301,10 @@ target_compile_options(portal_oval_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(trunk_hold_test cleanroom/tests/trunk_hold_test.cpp)
 target_include_directories(trunk_hold_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(trunk_hold_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [body] attack_lean (flat F2 / F3, VR F2), vr/attack_lean.h: the chest and spine chain from a rig, the crosshair's aimed point, the bend, the ease.
+add_executable(attack_lean_test cleanroom/tests/attack_lean_test.cpp)
+target_include_directories(attack_lean_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(attack_lean_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # From sajmonsoft's flat fork: [input] portal_look_horizon and portal_auto (vr/portal_auto.h) - an arrival told apart, the walk into a portal.
 add_executable(portal_auto_test cleanroom/tests/portal_auto_test.cpp)
 target_include_directories(portal_auto_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1842,6 +1866,21 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dxbc_fog_height_test.cpp"
     target_link_libraries(dxbc_fog_height_test PRIVATE d3d11 d3dcompiler)
     target_compile_options(dxbc_fog_height_test PRIVATE /utf-8 /EHsc)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dxbc_ppr_eye_test.cpp")
+    # [render] reflections_per_eye: the game's reflection passes' bytecode patched to take each eye's own position (shared/dxbc_ppr_eye.h);
+    # the projection run on WARP for the left eye and the replay's folded right eye. Run: dxbc_ppr_eye_test.exe [<folder of the game's *.dxbc>]
+    add_executable(dxbc_ppr_eye_test cleanroom/tests/dxbc_ppr_eye_test.cpp)
+    target_include_directories(dxbc_ppr_eye_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(dxbc_ppr_eye_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(dxbc_ppr_eye_test PRIVATE /utf-8 /EHsc)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/reflections_eye_native_test.cpp")
+    # [render] reflections_per_eye without ReShade: vr/reflections_eye.cpp's copies made and bound on a WARP D3D12 device
+    add_executable(reflections_eye_native_test cleanroom/tests/reflections_eye_native_test.cpp vr/reflections_eye.cpp)
+    target_include_directories(reflections_eye_native_test PRIVATE ${RESHADE_SDK_INCLUDE} ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(reflections_eye_native_test PRIVATE d3d12 dxgi d3dcompiler)
+    target_compile_options(reflections_eye_native_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/effects_layer_native_test.cpp")
     # [stereo] turns_keep_own 3 / 4 without ReShade: vr/effects_layer.cpp fed from the plugin's own hooks on a WARP device - the layer found,
     # its states from the barriers, held while it is the layer
@@ -1926,10 +1965,18 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/monitor_eye_test.cpp")
     # [render] monitor_eye (vr/monitor_eye.h): the window one eye - the maths played through the stereo modes, and vr/monitor_eye.cpp on a WARP
     # device: each present read back is the wanted eye, the crop stretched over a wide window (MONITOR_EYE_DEBUG=1: the debug layer, 0 errors)
-    add_executable(monitor_eye_test tools/monitor_eye_test.cpp vr/monitor_eye.cpp)
+    add_executable(monitor_eye_test tools/monitor_eye_test.cpp vr/monitor_eye.cpp vr/monitor_layers.cpp)
     target_include_directories(monitor_eye_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_link_libraries(monitor_eye_test PRIVATE d3d12 dxgi)
     target_compile_options(monitor_eye_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/monitor_layers_test.cpp")
+    # [render] monitor_panels (vr/monitor_layers.h): the headset's panels over the monitor's picture - the placement maths, and
+    # vr/monitor_layers.cpp on a WARP device, straight and through monitor_eye's present (MONITOR_EYE_DEBUG=1: the debug layer)
+    add_executable(monitor_layers_test tools/monitor_layers_test.cpp vr/monitor_layers.cpp vr/monitor_eye.cpp)
+    target_include_directories(monitor_layers_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(monitor_layers_test PRIVATE d3d12 dxgi)
+    target_compile_options(monitor_layers_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/hud_native_test.cpp")
     # [render] no_reshade: vr/hud.cpp on the plugin's own D3D12 hooks through the stand-in for ReShade's API (vr/native_rsapi.h), on WARP
@@ -2183,6 +2230,10 @@ target_compile_options(map_direction_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(map_turn_test cleanroom/tests/map_turn_test.cpp)
 target_include_directories(map_turn_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(map_turn_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [body] flat_weapon_adjust: flat F3, each arm with its weapon moved along the camera's axes (vr/flat_weapon.h, skeletons.cpp PoseBody): flat_weapon_test
+add_executable(flat_weapon_test cleanroom/tests/flat_weapon_test.cpp)
+target_include_directories(flat_weapon_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(flat_weapon_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hud] map_click_big: the laser on the map in the hand, the click that makes it big and the button that turns it (vr/map_laser.h, xr.cpp): map_laser_test
 add_executable(map_laser_test cleanroom/tests/map_laser_test.cpp)
 target_include_directories(map_laser_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

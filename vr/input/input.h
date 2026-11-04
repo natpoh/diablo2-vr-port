@@ -74,6 +74,7 @@ uint64_t HookAttackTarget(void* self, void* unit, float* dir, int* outX, int* ou
 void HookUnitFacing(void* unit, float* out);
 int AimHand();
 int RangedHomeHand();
+int BowStartHand();
 bool BowInHand();
 int HeldLikeStaff();
 bool XbowLikeStaff();

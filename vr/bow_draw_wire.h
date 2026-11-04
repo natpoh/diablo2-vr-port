@@ -50,6 +50,9 @@ void SetRestAims(bool on);
 // through a new draw too - the game reads a press when it takes it, late when the hero is still in his last attack; then the bow hand's own ray (HandRay)
 // aimed the arrow, not the line it was drawn along. Off (the default): 0.4 s, and not while a new draw is held, as before.
 void SetShotLineHold(bool on);
+// [bow] swap_by_grab (any thread; live): when the bow changes hands (vrcam's bow hand turns) with no draw under way, the detector starts afresh - a trigger or grip the
+// new string hand already holds (it held the bow) is nobody's fresh press, so it does not take the string the moment the bow is in the other hand. Off: as before.
+void SetFreshOnHandChange(bool on);
 
 // The bow's own string is wanted off the posed bow (skel::BowString): the draw is on and the touch point is the model's, or the
 // debug view shows it. For the skeleton hook.

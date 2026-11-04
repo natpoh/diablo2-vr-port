@@ -91,6 +91,7 @@ struct DownBody {
     int kind = 0;
     bool swap = false;     // (Info::swap when the library took it: every joint to and from the library goes through SwapSides)
     bool grabbed = false;  // a hand took it ([weight] grab_moves_unit moves only what the hands carry or throw)
+    int moves = 0;         // [weight] knock_down_moves_unit: the knockbacks asked for it since a blow knocked it down (grabmove::kKnockMoves at most)
     float place[3] = {};   // where its unit stood when last seen (its rig's root, world units) - the scans keep it in reach (FarPlaces, vr/scan_reach.h)
     bool placeOk = false;
     // [weight] death_ragdoll: the game killed it - its skeleton found by the instance it died in (its rig is the scan's no more), kept once it lies
@@ -937,6 +938,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 d->swap = f->swap;
                 d->kind = k.kind;
                 d->hurried = false;
+                d->moves = 0;
                 for (int m = 0; m < nUnits; ++m)
                     if (units[m].id == k.id && rigOf[m] >= 0 && static_cast<size_t>(rigOf[m]) < nr) std::memcpy(d->root, rigs[rigOf[m]].root, sizeof d->root);
             }
@@ -1297,11 +1299,16 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             LogF("knock down: %u died %s - the game's own death from here", p.id, PhaseName(p.phase));
             continue;
         }
-        if (d->grabbed && grabmove::Wanted()) {   // [weight] grab_moves_unit: the unit put by the game's knockback on the cell under the drawn body (its pelvis)
+        // [weight] grab_moves_unit / knock_down_moves_unit: the unit put by the game's knockback on the cell under the drawn body (its pelvis) - a body a hand took,
+        // or one a weapon's blow knocked down (never a stagger's step back)
+        // (a blow's: kKnockMoves knockbacks at most - where it lands and where it settles; past them the game's own walk is its walk, not ours to undo)
+        if (grabmove::KindMoves(d->grabbed, d->kind) && grabmove::WantedFor(d->grabbed) && (d->grabbed || d->moves < grabmove::kKnockMoves)) {
             for (int i = 0; i < nf && (grabmove::PhaseMoves(p.phase) || p.phase == walkhome::kWalking); ++i)   // (up again too: the unit brought under it before it is let go)
                 if (fresh[i].id == p.id) {
                     float dx = 0.0f, dy = 0.0f;
-                    if (grabmove::CellsApart(p.joint[D2RF_PELVIS], fresh[i].joint[D2RF_PELVIS], upm, &dx, &dy)) grabmove::Note(p.id, dx, dy, hostile, nowMs);
+                    if (grabmove::CellsApart(p.joint[D2RF_PELVIS], fresh[i].joint[D2RF_PELVIS], upm, &dx, &dy) &&
+                        grabmove::Note(p.id, dx, dy, hostile, d->grabbed, grabmove::StepFor(p.phase), nowMs) && !d->grabbed)
+                        ++d->moves;
                     break;
                 }
             std::memcpy(d->root, g->root, sizeof d->root);   // (the game moved it there for us: not a walk off that gets a lying body up)

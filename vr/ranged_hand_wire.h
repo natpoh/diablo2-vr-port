@@ -20,4 +20,11 @@ void SetHaptic(HapticFn fn);
 using LogFn = void (*)(const char*);
 void SetLog(LogFn fn);
 
+// [bow] swap_by_grab (vr/bow_swap.h): the side the bow went into, each time it changes hands while the grab is on - vrcam remembers it ([bow] bow_hand).
+using RememberFn = void (*)(int side);
+void SetRemember(RememberFn fn);
+// Any thread (the draw's start block): the hand without the bow is at the bow's grip with the grab on - its squeeze there takes the bow, not the string. Stale after a
+// quarter of a second (the hook not posing).
+bool BlocksDraw();
+
 }  // namespace rangedwire

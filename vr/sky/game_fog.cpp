@@ -66,8 +66,55 @@ bool Looks(const float* f) {
 // a cave: the act 1 caves have no height fog, yet a veil's hard edge crosses their floor
 // at a distance from the hero (2026-10-07) - which field it is, is read from these.
 constexpr int kDumpFrom = -20, kDumpN = 34;
+// [render] game_fog_scan_safe (on): the heap is read through copies (ReadProcessMemory: a region freed under the scan gives a failed
+// read, not an access violation D2RLoader's last-resort handler writes up as a crash - every player zip had one at gamefog::ScanRegion,
+// 2026-11-04), a definition needs its depth plane where the game's areas have it (kSafePlane, not just 500..5000), and its density is
+// set to 0 / put back only while that float is still the value just read, in a committed read-write private page. Off: as before.
+bool ScanSafe() { return g_set.gameFogScanSafe.load(); }
+constexpr float kSafePlane[2] = {700.0f, 1200.0f};   // the game's areas: 870..900 (the menu scenes 1..30 never match)
+
+bool CopyFrom(const void* p, void* to, size_t bytes) {
+    SIZE_T got = 0;
+    return ReadProcessMemory(GetCurrentProcess(), p, to, bytes, &got) && got == bytes;
+}
+// *d set to v only while it still holds `expect`, in a committed read-write private page (WriteProcessMemory would make any page writable).
+bool SetIfStill(float* d, float expect, float v) {
+    MEMORY_BASIC_INFORMATION mi{};
+    if (!VirtualQuery(d, &mi, sizeof mi) || mi.State != MEM_COMMIT || mi.Type != MEM_PRIVATE || mi.Protect != PAGE_READWRITE) return false;
+    float now = 0.0f;
+    if (!CopyFrom(d, &now, sizeof now) || now != expect) return false;
+    SIZE_T put = 0;
+    return WriteProcessMemory(GetCurrentProcess(), d, &v, sizeof v, &put) && put == sizeof v;
+}
+
+// ScanRegion through copies, a chunk at a time (each with the 20 floats before it and 14 after, so no definition is cut).
+int ScanRegionSafe(float* p, size_t n, const bool take[2], Patch (*out)[32], int got[2], int* defs, float (*dump)[kDumpN],
+                   float** where, int dumpCap) {
+    got[0] = got[1] = 0;
+    constexpr size_t kChunk = 1u << 18;   // floats: 1 MB
+    static std::vector<float> buf;        // (the scan thread's own: one scan at a time, g_busy)
+    for (size_t s = 0; s < n && got[0] < 32 && got[1] < 32; s += kChunk) {
+        const size_t lo = s >= 20 ? s - 20 : 0, hi = std::min(n, s + kChunk + 14);
+        buf.resize(hi - lo);
+        if (!CopyFrom(p + lo, buf.data(), (hi - lo) * sizeof(float))) return -1;   // the region went away under the scan
+        for (size_t i = std::max<size_t>(s, 20); i < s + kChunk && i + 14 < n && got[0] < 32 && got[1] < 32; ++i) {
+            const float* f = buf.data() + (i - lo);
+            if (!(f[4] >= kSafePlane[0] && f[4] <= kSafePlane[1]) || !Looks(f)) continue;
+            if (*defs < dumpCap) { memcpy(dump[*defs], f + kDumpFrom, sizeof dump[0]); where[*defs] = p + i; }
+            ++*defs;
+            for (int k : {kHeight, kDepth}) {
+                const float was = f[kField[k]];
+                float* d = p + i + kField[k];
+                if (take[k] && was > 0.0f && SetIfStill(d, was, 0.0f)) out[k][got[k]++] = {d, was};
+            }
+        }
+    }
+    return got[0] + got[1];
+}
+
 int ScanRegion(float* p, size_t n, const bool take[2], Patch (*out)[32], int got[2], int* defs, float (*dump)[kDumpN],
                float** where, int dumpCap) {
+    if (ScanSafe()) return ScanRegionSafe(p, n, take, out, got, defs, dump, where, dumpCap);
     got[0] = got[1] = 0;
     __try {
         for (size_t i = 20; i + 14 < n && got[0] < 32 && got[1] < 32; ++i) {
@@ -138,6 +185,11 @@ DWORD WINAPI ScanThread(void*) {
 }
 
 bool PutBack(const Patch& p, int kind) {
+    if (ScanSafe()) {   // the definition read through a copy; put back only while it still is one, with its density at our 0
+        float f[30];
+        if (!CopyFrom(p.density - kField[kind] - 17, f, sizeof f)) return false;
+        return !(f[17 + kField[kind]] == 0.0f && Looks(f + 17)) || SetIfStill(p.density, 0.0f, p.was);
+    }
     __try {
         if (*p.density == 0.0f && Looks(p.density - kField[kind])) *p.density = p.was;
         return true;

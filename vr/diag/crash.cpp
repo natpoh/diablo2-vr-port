@@ -379,6 +379,7 @@ LONG WINAPI Unhandled(EXCEPTION_POINTERS* ep) {
     DWORD none = 0;
     const bool first = g_filterThread.compare_exchange_strong(none, me);
     if (first) {
+        crashwatch::Crashed();   // [support] crash_reports: no "clean end" from the detach that may follow (the game's handler may ExitProcess)
         Report(ep, "UNHANDLED - the game closes on this", true, true);
         Dump(ep);
     }

@@ -21,8 +21,10 @@ bool Logged(const char* what) {
 		if (l.find(what) != std::string::npos) return true;
 	return false;
 }
-int g_pulses = 0;
-void Pulse(int, float, int) { ++g_pulses; }
+int g_pulses = 0, g_pulseSide = -1;
+void Pulse(int side, float, int) { ++g_pulses; g_pulseSide = side; }
+int g_remembered = -1, g_rememberCount = 0;
+void Remember(int side) { g_remembered = side; ++g_rememberCount; }
 
 #define EXPECT(c)                                              \
 	do {                                                       \
@@ -174,6 +176,62 @@ int main() {
 		EXPECT(g_pulses >= 1);
 		r.Release(0);
 	}
+	// [bow] swap_by_grab, no shoulder: the right hand squeezes at the bow's grip (15 cm above the left hand, the bow pointing ahead) and the bow is in the right hand - a log line,
+	// a pulse in the right hand, the side remembered; a squeeze at the string passes nothing; the free hand at the grip blocks the draw's start; a grip held through the pass
+	// is no press; the left takes it back with a fresh squeeze
+	{
+		rangedwire::SetRemember(&Remember);
+		Rig r;
+		r.in.rangedShoulder = false;
+		r.in.rangedGrab = true;
+		r.in.shieldTick = 0.4f;
+		for (int side = 0; side < 2; ++side) { r.in.rot[side][0] = r.in.rot[side][1] = r.in.rot[side][2] = 0.0f; r.in.rot[side][3] = 1.0f; }
+		r.Step();
+		auto Put = [&](int side, float x, float y, float z) { r.in.hand[side][0] = x; r.in.hand[side][1] = y; r.in.hand[side][2] = z; };
+		Put(0, -0.2f, -0.4f, -0.14f);   // at the string
+		r.Step();
+		EXPECT(!rangedwire::BlocksDraw());
+		g_log.clear();
+		r.in.grip[0] = 1.0f;
+		skel::Input c = r.Step();
+		EXPECT(c.rangedSide == 1 && Logged("nearer the string"));
+		r.in.grip[0] = 0.0f;
+		Put(0, -0.2f, -0.25f, -0.3f);   // at the grip, on the upper limb
+		r.Step();
+		EXPECT(rangedwire::BlocksDraw());
+		r.in.rangedBusy[0] = true;      // the hand has the string: nothing
+		r.in.grip[0] = 1.0f;
+		c = r.Step();
+		EXPECT(c.rangedSide == 1 && !rangedwire::BlocksDraw());
+		r.in.rangedBusy[0] = false;
+		r.in.grip[0] = 0.0f;
+		r.Step();
+		r.in.grip[1] = 1.0f;            // the left hand squeezes the controller that holds the bow - and keeps squeezing through the pass
+		r.Step();
+		g_pulses = 0; g_pulseSide = -1; g_remembered = -1; g_rememberCount = 0; g_log.clear();
+		r.in.grip[0] = 1.0f;
+		c = r.Step();
+		EXPECT(c.rangedSide == 0 && !c.rangedStowed && rangedwire::Side() == 0);
+		EXPECT(g_pulses == 1 && g_pulseSide == 0 && g_remembered == 0 && g_rememberCount == 1);
+		EXPECT(Logged("the right hand takes the bow at its grip: the bow is in the right hand now, the string the left hand's (remembered: [bow] bow_hand=0)"));
+		c = r.Step();
+		EXPECT(c.rangedSide == 0 && rangedwire::BlocksDraw());   // the left hand is at the bow's grip now: still held, no press, no pass back
+		r.in.grip[1] = 0.0f;
+		r.Step();
+		r.in.grip[1] = 1.0f;
+		c = r.Step();
+		EXPECT(c.rangedSide == 1 && g_remembered == 1 && g_rememberCount == 2 && g_pulseSide == 1);
+		// the grab off again: back into its home, nothing passed
+		r.in.grip[0] = r.in.grip[1] = 0.0f;
+		r.in.rangedGrab = false;
+		r.in.rangedShoulder = true;
+		r.in.rangedHome = 1;
+		r.Step();
+		r.in.grip[0] = 1.0f;
+		c = r.Step();
+		EXPECT(c.rangedSide == 1 && !rangedwire::BlocksDraw());
+		rangedwire::SetRemember(nullptr);
+	}
 	// the holster off again: the weapon is in its own hand, everything forgotten
 	{
 		Rig r;
@@ -189,6 +247,6 @@ int main() {
 		std::printf("ranged_hand_wire_test: %d FAILED\n", g_fails);
 		return 1;
 	}
-	std::printf("ranged_hand_wire_test: put away and drawn through skel::Input (the swap, a crossbow, busy and untracked hands, one step a sample, the pulse, off): all passed\n");
+	std::printf("ranged_hand_wire_test: put away and drawn through skel::Input (the swap, a crossbow, busy and untracked hands, one step a sample, the pulse, the pass by grab, off): all passed\n");
 	return 0;
 }

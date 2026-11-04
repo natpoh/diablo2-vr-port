@@ -919,7 +919,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.200.0";
+static const char g_info_version[] = "0.201.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -957,6 +957,22 @@ static std::string JsonText(const std::string& s) {
         else o += static_cast<char>(c);
     }
     return o + "\"";
+}
+// [bow] swap_by_grab: the hand the bow was passed to, remembered in [bow] bow_hand - for this run at once, and in d2r_vr.ini off the frame (WritePrivateProfileString,
+// the way a live ini is written safely; its write time moving re-reads the settings, which then say the same). Several passes before the write: the newest side.
+static std::atomic<int> g_bowHandToWrite{-1};
+static void RememberBowHand(int side) {
+    g_set.bowHandSide.store(side & 1);
+    if (g_bowHandToWrite.exchange(side & 1) >= 0 || !g_iniPath[0]) return;   // (a write already waiting takes this side)
+    QueueUserWorkItem([](void*) -> DWORD {
+        static SRWLOCK lock = SRWLOCK_INIT;
+        AcquireSRWLockExclusive(&lock);
+        const int s = g_bowHandToWrite.exchange(-1);
+        if (s >= 0 && !WritePrivateProfileStringW(L"bow", L"bow_hand", bowswap::SideValue(s), g_iniPath))
+            LogF("vrcam: bow swap - could not remember the %s hand in d2r_vr.ini (error %lu)", bowswap::SideName(s), GetLastError());
+        ReleaseSRWLockExclusive(&lock);
+        return 0;
+    }, nullptr, WT_EXECUTEDEFAULT);
 }
 // One log line saying which mod this is and who started it, and d2r_vr_about.json beside d2r_vr.ini: the same, for the launcher's
 // report and for support. (A D2RLoader mod's own folder is the plugin's: the launcher never swaps this file.)
@@ -1009,6 +1025,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     wcscat_s(g_iniPath, L"d2r_vr.ini");
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
     sessionlogs::Start();   // [support] session_logs: this game's logs into logs\sessions\<its start>, kept 30 days
+    crashwatch::Start(g_info_version);   // [support] crash_reports: D2R VR Crash Reporter watches this game from outside (off: nothing, as before)
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
     gpufault::EnableDred(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0);   // [debug] dred, on unless the ini says 0
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
@@ -1022,6 +1039,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     monitoreye::SetLogger(&Log);
+    monitorlayers::SetLogger(&Log);
     headshot::SetLogger(&Log);   // [headset_shot]: one line a shot
     headshot::SetVersion(g_info_version);
     headclip::SetLogger(&Log);   // [headset_shot] video: one line a clip
@@ -1061,6 +1079,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     // add-on joined: the light culling's replacement (the game's light-bin shader, light_bounds.h) joins now,
     // not with the rest on the update thread's first tick.
     if (!g_noReShade && lightbounds::Wanted() && fx::JoinReShade()) lightbounds::Register(&Log);
+    if (!g_noReShade && refleye::Wanted() && fx::JoinReShade()) refleye::Register(&Log);   // ([render] reflections_per_eye: its passes are made then too)
     if (!g_noReShade && fogspare::Wanted() && fx::JoinReShade()) fogspare::Register(&Log);   // (the same: the game's resolve pipeline is made at its start)
     if (!g_noReShade && fogframe::Wanted() && fx::JoinReShade()) fogframe::Register(&Log);   // ([render] fog_in_frame: the same pipeline)
     crash::Step("camera callbacks, MinHook, the hero's skeleton");
@@ -1176,6 +1195,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     spatialaudio::Install(false);   // now: the game sets FMOD's listener up once, early, and that call hands over its sound system
     rangedwire::SetLog(&Log);
     rangedwire::SetHaptic([](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });
+    rangedwire::SetRemember(&RememberBowHand);   // [bow] swap_by_grab: the hand the bow was passed to, kept in [bow] bow_hand
     shieldarmwire::SetWielderSource(&weight::WieldingHands);   // [hands] shoulder_draw, the shield: weapon and shield are always on opposite arms
     // the hand a landed blow buzzes: the controller that ASKED for it (vr/hit_claim.h: hit by touch says which hand's blade, the shield bash which arm wears the shield - the left one unless
     // [hands] shoulder_draw moved it, with it on or off), else the hand that holds the weapon (a weapon drawn into the left hand buzzes the left). The press says it, not a cast on its way:
@@ -1210,7 +1230,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     arrowflightwire::SetHeroIdSource(&GestureHeroId);   // ... whose arrows are the hero's
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
     bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver: the quiver decides, before the release's button goes down, whether it is the armed skill or the plain arrow
-    bowdrawwire::SetStartBlock([]() -> bool { return bowquiverwire::BlocksDraw() || rangedwire::Stowed(); });   // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none
+    // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none; [bow] swap_by_grab: the free hand at the bow's grip takes the bow, not the string
+    bowdrawwire::SetStartBlock([]() -> bool { return bowquiverwire::BlocksDraw() || rangedwire::Stowed() || rangedwire::BlocksDraw(); });
     animcut::Init(ctx);   // [bow] quick_release, [hands] quick_throw: the log
     throwwire::Init(ctx, &GestureCanAim);
     quiverwire::Init(ctx);   // [hands] javelin_quiver: the log
@@ -1236,6 +1257,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 }
 
 D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
+    crashwatch::Quiet();   // [support] crash_reports: this is a clean end (the watcher reads it after the game)
     animcut::Shutdown();   // [bow] quick_release, [hands] quick_throw: a moved action-frame flag goes back before the plugin does
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined

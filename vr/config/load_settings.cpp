@@ -4,6 +4,8 @@
 #include "../vrcam_headers.h"
 #include "../../shared/draw_distance.h"
 #include "../bone_cap.h"
+#include "../flat_weapon.h"   // [body] flat_weapon_adjust: the defaults and the range of [weapon_<kind>] flat_*
+#include "../view_keys.h"
 
 using namespace D2RL;
 
@@ -57,6 +59,9 @@ void LoadSettings() {
 #endif
         g_set.vrView.store(v);
     }
+    // [view] keys (Settings > Home > View keys; vr/view_keys.h): which F keys pick the view
+    if (const int keys = viewkeys::ModeFromIni(IniF(L"view", L"keys", 0.0f)); keys != g_set.viewKeys.exchange(keys))
+        LogF("vrcam: view keys %d - %s ([view] keys; F12 next view, the controller and Settings in every mode)", keys, viewkeys::ModeName(keys));
     g_set.fov.store(std::clamp(IniF(L"camera", L"fov", 60.0f), 20.0f, 140.0f));
     g_set.fovFromFlatVR.store(IniB(L"camera", L"fov_from_flatvr", true) && g_set.platform.load() == 1);   // no FlatVR on a monitor
     g_set.distance.store(std::clamp(IniF(L"camera", L"distance", -1.0f), -20.0f, 1500.0f));
@@ -180,6 +185,10 @@ void LoadSettings() {
             swprintf_s(key, L"hand_vitals_orb_z_cm_%hs", handvitals::HeroKey(k));
             hv.orbClassZCm[k] = IniF(L"hud", key, 0.0f);
         }
+        // [shapeshift] the druid's werebear as your body: its own depth offset on top of the druid's (hand_vitals_orb_z_cm_werebear, cm), and the auto lift by its forearm's mesh
+        // (the werewolf keeps the druid's place)
+        hv.orbBearZCm = IniF(L"hud", L"hand_vitals_orb_z_cm_werebear", 0.0f);
+        hv.orbFormAuto = IniB(L"hud", L"hand_vitals_orb_form_auto", false);
         for (int k = 0; k < handvitals::kHeroCount; ++k) {   // the depth and the along offset of each hero class under a shield (hand_vitals_orb_shield_up_cm_<class> / _along_cm_<class>, cm), on top of the shield's own
             wchar_t key[80];
             swprintf_s(key, L"hand_vitals_orb_shield_up_cm_%hs", handvitals::HeroKey(k));
@@ -398,11 +407,15 @@ void LoadSettings() {
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
     g_set.gameDepthFog.store(IniB(L"render", L"game_depth_fog", false));
+    g_set.gameFogScanSafe.store(IniB(L"render", L"game_fog_scan_safe", true));
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_squareWin.store(IniB(L"openxr", L"square_window", false));
     {   // the game's light culling at non-16:10 sizes: made whenever the key is on (read at the game's start), bound in VR, and in flat mode with light_bounds_flat
         const bool fix = IniB(L"render", L"light_bounds_fix", true), flat = g_set.platform.load() == 0;
         lightbounds::Configure(fix, !flat || IniB(L"render", L"light_bounds_flat", true), IniB(L"debug", L"log_compute_shaders", false), flat);
+        // the game's reflections in puddles, blood and water by each eye's own position (vr/reflections_eye.h): the copies made when the key
+        // is on at the game's start, bound live in VR
+        refleye::Configure(IniB(L"render", L"reflections_per_eye", false), !flat);
     }
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.keepRoofs.store(IniB(L"render", L"keep_roofs", false));
@@ -438,6 +451,8 @@ void LoadSettings() {
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     // [render] monitor_eye: the window one eye (0 as before, 1 left, 2 right), cropped to the window's shape; by turns the eye made or only drawn ones
     monitoreye::Configure((int)IniF(L"render", L"monitor_eye", 1.0f), IniB(L"render", L"monitor_eye_fit", true), IniB(L"render", L"monitor_eye_drawn_only", false));
+    // [render] monitor_panels: the panels the headset shows (the menu's panel, the toolbar, the map, the laser...) over the window's picture too
+    monitorlayers::Configure(IniB(L"render", L"monitor_panels", false));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
     calib::LoadSettings(g_iniPath);   // [calibration]: the measured height and arm span (vr/calibration.cpp)
     headshot::LoadSettings(g_iniPath);   // [headset_shot]: on, its key, Settings' button (a change of take = one shot)
@@ -857,6 +872,9 @@ void LoadSettings() {
     g_set.lockUpper.store(IniB(L"body", L"lock", true));
     g_set.legsUnder.store(IniB(L"body", L"legs_under_body", true));
     g_set.flatHoldTrunk.store(IniB(L"body", L"flat_hold_trunk", false));
+    g_set.attackLean.store(IniB(L"body", L"attack_lean", false));
+    g_set.attackLeanMaxDeg.store(std::clamp(IniF(L"body", L"attack_lean_max_deg", 40.0f), 0.0f, 90.0f));
+    g_set.flatWeaponAdjust.store(IniB(L"body", L"flat_weapon_adjust", true));
     g_set.walkBack.store(IniB(L"body", L"walk_back", true));
     g_set.walkBackReverse.store(IniB(L"body", L"walk_back_reverse", true));
     g_set.dollFeet.store(IniB(L"body", L"doll_feet", false));
@@ -869,7 +887,9 @@ void LoadSettings() {
     g_set.legsSideRagdoll.store(IniB(L"body", L"legs_side_ragdoll", false));
     g_set.legsSideGait.store(IniB(L"body", L"legs_side_gait", false));
     g_set.legsSideCross.store(IniB(L"body", L"legs_side_cross", true));
-    headshadow::WantForPose(g_set.legsRear.load());   // ... the hero drawn from a copy of the pose as we finished it (the skinning met the game's own legs)
+    // ... the hero drawn from a copy of the pose as we finished it (the skinning met the game's own legs); [body] attack_lean's bend and
+    // flat_weapon_adjust's arms go the same way
+    headshadow::WantForPose(g_set.legsRear.load() || g_set.attackLean.load() || (g_set.flatWeaponAdjust.load() && g_set.platform.load() == 0));
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     g_set.crouch.store(IniB(L"body", L"crouch", false));
@@ -908,6 +928,13 @@ void LoadSettings() {
                             IniF(L"audio", L"forward_sign", -1.0f), IniF(L"audio", L"depth_scale", 2.0f));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
+    g_set.bowSwapByGrab.store(IniB(L"bow", L"swap_by_grab", false));
+    {   // [bow] bow_hand: "1" / "0" as written (Settings' choice), "left" / "right" by hand
+        wchar_t side[16] = {};
+        GetPrivateProfileStringW(L"bow", L"bow_hand", L"1", side, (DWORD)std::size(side), g_iniPath);
+        g_set.bowHandSide.store(bowswap::ParseSide(side, 1));
+    }
+    bowdrawwire::SetFreshOnHandChange(g_set.bowSwapByGrab.load());   // [bow] swap_by_grab: a control held through the bow's change of hands is not a fresh press at the string
     g_set.shoulderDrawStowMs.store(std::clamp(IniF(L"hands", L"shoulder_draw_stow_ms", 1000.0f), 0.0f, 5000.0f));
     // 0 the attack, 1..4 B X Y RB, 5..8 with LT; what takes the string: 0 the trigger, 1 the grip, 2 either; the touch point from the bow's own string; the debug view
     bowdrawwire::Configure(IniB(L"hands", L"bow_draw", false), (int)IniF(L"hands", L"bow_draw_button", 0.0f), (int)IniF(L"hands", L"bow_draw_start", 0.0f),
@@ -1133,6 +1160,7 @@ void LoadSettings() {
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
     meleetouch::SetClawHits(g_set.clawHits.load());   // [shapeshift] claw_hits: the form's paws strike by touch
+    meleetouch::SetClawMinSpeed(IniF(L"shapeshift", L"wolf_min_speed", 0.0f), IniF(L"shapeshift", L"bear_min_speed", 0.0f));   // ... their least speed per form (0 / no key: as before)
     meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false),   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
                                  IniF(L"gameplay", L"melee_touch_barrels_min_speed", 2.0f));   // ... from this swing speed, its own gate
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
@@ -1289,6 +1317,13 @@ void LoadSettings() {
         for (int k = 0; k < 6; ++k) g_set.weaponAdj[t][k] = std::clamp(IniF(sec, kKeys[k], def[k]), k < 3 ? -40.0f : -180.0f, k < 3 ? 40.0f : 180.0f);
         static const wchar_t* const kLeft[3] = {L"left_x", L"left_y", L"left_z"};
         for (int k = 0; k < 3; ++k) g_set.weaponLeft[t][k] = std::clamp(IniF(sec, kLeft[k], 0.0f), -20.0f, 20.0f);
+        // [body] flat_weapon_adjust: flat F3, cm out to the hand's side, up, ahead - each hand, this kind, in its own [flat_weapon_<kind>] (never VR's
+        // [weapon_<kind>]; vr/flat_weapon.h), 0 by default
+        {
+            wchar_t flatSec[48];
+            swprintf_s(flatSec, L"%s%s", flatweapon::kSectionPrefix, sec + 7);   // (sec: "weapon_<kind>")
+            for (int k = 0; k < 6; ++k) g_set.weaponFlat[t][k] = flatweapon::ClampCm(IniF(flatSec, flatweapon::kKeys[k], flatweapon::kDefaultCm[k % 3]));
+        }
         if (t == 1) {
             static const wchar_t* const kHold[3] = {L"left_hold_x", L"left_hold_y", L"left_hold_z"};
             for (int k = 0; k < 3; ++k) g_set.leftHold[k].store(std::clamp(IniF(L"hands", kHold[k], 0.0f), -20.0f, 20.0f));
@@ -1483,6 +1518,7 @@ void LoadSettings() {
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
+        grabmove::SetKnockWanted(ks.on && IniB(L"weight", L"knock_down_moves_unit", false));   // [weight] knock_down_moves_unit: what a blow knocks down, moved by the game too
         if (ks.throwOn) skel::SetHeldWanted(true);   // (what the monsters hold made capsules: a hand takes a monster by its spear - Serg: «я не могу схватить монстра за оружие»)
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||

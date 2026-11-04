@@ -845,7 +845,7 @@ void MonitorHeld(ID3D12Resource* bb) {
 // Every present, after its copies to the headset (XrPresent): the eye this present carries in a stereo pair (g_pairNow: the passes of a pair,
 // the replay's right eye, the eyes by turns) - the window gets the eye wanted instead of the other. ReShade's work of this present on the queue first.
 void MonitorPresent(reshade::api::effect_runtime* rt, HWND wnd, ID3D12CommandQueue* q, ID3D12Resource* bb) {
-    if (!monitoreye::On() || !q || !bb) return;
+    if ((!monitoreye::On() && !monitorlayers::On()) || !q || !bb) return;   // ([render] monitor_panels: the panels over the window's picture, any eye setting)
     if (SkipWhileStuck("the monitor's eye")) return;
     const int eye = g_pairNow.load() ? (g_eye.load() & 1) : -1;
     const bool was = t_ours;

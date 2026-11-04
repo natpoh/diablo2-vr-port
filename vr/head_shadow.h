@@ -182,6 +182,9 @@ void SetDollAnyView(bool on);
 // The entity the ModelDrawCollect this thread is in draws (0: not in one) - the skinning's composite runs inside it ([weight] death_ragdoll: dollpose::ByEntity).
 uint32_t DrawEntity();
 void PublishOurPose(uintptr_t skeleton, uintptr_t pose, uintptr_t prevPose, const float* m, int n);
+// [body] attack_lean: the pose published last is not fresh any more - the skinning draws the game's own pose from the next skinning on (not the last
+// copy for kOursMs). For a writer that publishes only while it acts.
+void DropOurPose();
 // [multiplayer] pose_share_hero (0.193.0, Serg: the other player saw his hero "with the game's standard animations" - "on 185 it was fine"): another player's
 // rig as PoseRemoteHero (or PoseLegsOnly) finished it - the skinning met the game's own pose there, not ours written into it, as it did our own hero's
 // (PublishOurPose above). The composite hands that rig's skinning a copy of the pose holding these matrices while they are fresh (kRemoteFreshMs).

@@ -13,6 +13,7 @@
 
 #include "gpu_fault.h"
 #include "monitor_eye_math.h"
+#include "monitor_layers.h"
 
 namespace monitoreye {
 namespace {
@@ -109,6 +110,7 @@ void DropAll() {
     Release(g_kept);
     g_keptEye = -1;
     g_made = nullptr;
+    monitorlayers::Drop();   // ([render] monitor_panels: its pipeline and heaps, the same device's)
     for (Pso& p : g_pso) { ReleaseAny(p.pso); p.fmt = DXGI_FORMAT_UNKNOWN; }
     ReleaseAny(g_rs);
     ReleaseAny(g_srvHeap);
@@ -155,6 +157,7 @@ ID3D12GraphicsCommandList* Open(ID3D12CommandQueue* q) {
     if (gpufault::Removed() || !EnsureList(q)) return nullptr;
     const int a = g_allocAt;
     if (g_fence->GetCompletedValue() < g_allocDone[a]) { ++g_n.behind; return nullptr; }
+    monitorlayers::SlotDone(a);   // ([render] monitor_panels: that list's GPU time, if it drew any)
     if (FAILED(g_alloc[a]->Reset()) || FAILED(g_list->Reset(g_alloc[a], nullptr))) return nullptr;
     g_openAlloc = a;
     g_allocAt = (a + 1) % kAllocs;
@@ -394,8 +397,9 @@ void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye) {
     const int madeEye = g_madeEye;
     g_made = nullptr;   // (this frame's only)
     const int want = EyeOf(g_setting.load());
-    if (want < 0 || !q || !bb) return;
-    Tell();
+    const bool panels = monitorlayers::On();   // [render] monitor_panels: the headset's panels over the picture too (with monitor_eye 0 as well)
+    if ((want < 0 && !panels) || !q || !bb) return;
+    if (want >= 0) Tell();
     if (eye < 0) return;
     const D3D12_RESOURCE_DESC bd = bb->GetDesc();
     RECT rc{};
@@ -405,31 +409,37 @@ void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye) {
     in.shown = eye;
     in.fit = g_fit.load() && client && FitWanted((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom);
     in.drawnOnly = g_drawnOnly.load();
-    if (g_kept) {
+    if (g_kept && want >= 0) {
         const D3D12_RESOURCE_DESC k = g_kept->GetDesc();
         in.keptOk = g_keptEye == want && k.Width == bd.Width && k.Height == bd.Height && k.Format == bd.Format &&
                     GetTickCount64() - g_keptAt <= kKeptMaxMs;
     }
-    if (made && madeEye == want) {
+    if (made && madeEye == want && want >= 0) {
         const D3D12_RESOURCE_DESC m = made->GetDesc();
         in.madeOk = m.Width == bd.Width && m.Height == bd.Height;
     }
     const Step st = Decide(in);
-    if (!st.keep && st.from == Source::Nothing) {
-        if (eye != want) ++g_n.none;
+    ID3D12Resource* src = st.from == Source::Made ? made : st.from == Source::Kept && (st.keep || g_keptEye == want) ? g_kept : nullptr;
+    // the eye whose picture the window gets: the wanted one when it is there (its own present, or put over the other's), else this one's
+    const int pic = want >= 0 && (eye == want || src) ? want : eye;
+    const bool panelsNow = panels && monitorlayers::Wanted(q, pic);
+    if (!st.keep && !src && !panelsNow) {
+        if (want >= 0 && eye != want) ++g_n.none;
         return;
     }
     ID3D12GraphicsCommandList* list = Open(q);
     if (!list) return;
     if (st.keep && KeepInto(list, bb, want)) ++g_n.kept;
-    ID3D12Resource* src = st.from == Source::Made ? made : st.from == Source::Kept && g_keptEye == want ? g_kept : nullptr;
+    if (st.keep && st.from == Source::Kept) src = g_keptEye == want ? g_kept : nullptr;   // (made by the keep just now; its keep failed: nothing to crop from)
     const D3D12_RESOURCE_STATES srcState = st.from == Source::Made ? D3D12_RESOURCE_STATE_RENDER_TARGET : kRest;
+    monitorlayers::Part part = monitorlayers::Whole();   // what of the eye's picture the back buffer holds now
     if (src) {
         const Rect r = Crop((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom);
-        if (st.crop && DrawCrop(list, src, srcState, bb, r)) ++g_n.cropped;
+        if (st.crop && DrawCrop(list, src, srcState, bb, r)) { ++g_n.cropped; part = {r.u, r.v, r.w, r.h}; }
         else if (src != g_kept || !st.keep) CopyPicture(list, src, srcState, bb, D3D12_RESOURCE_STATE_PRESENT);   // (the eye wanted, its crop failed: as it is)
         if (eye != want) ++(st.from == Source::Made ? g_n.byMade : g_n.byKept);
     }
+    if (panelsNow) monitorlayers::Draw(g_dev, q, list, g_openAlloc, kAllocs, bb, pic, part);   // over the picture as the window gets it
     Submit(q);
 }
 

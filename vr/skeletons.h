@@ -31,6 +31,15 @@ struct Input {
     // (as legsUnder), the arms, hands and what they hold keeping the game's animation on that still chest: a swing no longer takes the torso out
     // from under the camera. Drawn bones only.
     bool holdTrunk = false;
+    // [body] attack_lean (flat F2 / F3, VR F2; vr/attack_lean.h): while the hero's attack mode plays, the spine from spine_01 up to the chest bends
+    // toward where the crosshair looks - the point its ray meets (the floor, or the hero's reach about his chest) seen from the chest - so the swing
+    // comes down onto a small monster or up at a tall one; at most attackLeanMaxDeg, eased in and out. Drawn bones only (handed to the skinning).
+    bool attackLean = false;
+    float attackLeanMaxDeg = 40.0f;
+    int leanView = 0;             // for its log: 2 / 3 the monitor's F2 / F3, 12 VR F2
+    bool leanRayOk = false;       // the crosshair's ray in the hero's model space (the camera's eye and forward), whether or not the body turns with the look
+    float leanEye[3] = {};
+    float leanFwd[3] = {};
     // [body] walk_back: turned whole with the look (bodyTurn 2, no gaitLegs) and walking the other way, the game's own walk mirrored front to back - the legs step
     // backward (legik::MirrorAlong, the knees solved again), not forward while he goes back (the 2026-10-27 crossed legs). Visual only.
     bool walkBack = false;
@@ -285,7 +294,10 @@ struct Input {
     // rangedHolster asks for it (vrcam: shoulder_draw and the tick, F4, a bow or crossbow is the weapon); rangedSwap/rangedBow/rangedHome tell the rules, rangedBusy[side] that the hand
     // has the string. The answer (put in by rangedwire::Apply in the hook): rangedStowed - put away: not drawn, nothing posed round it; rangedSide - the hand that holds it now (0 right,
     // 1 left), -1 when not handled. rangedBone: the side of the attach bone the game hangs the item on (0 right, 1 left), for when the bones' sizes do not tell.
+    // [bow] swap_by_grab (vr/bow_swap.h): rangedGrab - the free hand's grip at the bow's grip takes the bow (rangedHolster is asked for it too, with or without the shoulder);
+    // rangedShoulder - the shoulder's put-away and draw (shoulder_draw + shoulder_draw_ranged). With the grab, rangedHome is the side [bow] bow_hand remembers.
     bool rangedHolster = false, rangedSwap = false, rangedBow = true;
+    bool rangedShoulder = true, rangedGrab = false;
     int rangedHome = 1, rangedBone = 1;
     bool rangedBusy[2] = {};
     bool rangedStowed = false;
@@ -376,6 +388,11 @@ struct Input {
     bool attacking = false;     // a skill button is down: no grip is taken from the animation then
     float weaponAdj[6] = {};
     float weaponAdjLeft[6] = {};   // ... the left hand's weapon: its own kind's [weapon_<kind>] (a weapon in each hand), else the same as weaponAdj; mirrored there (vr/weapon_mirror.h)
+    // [body] flat_weapon_adjust (vr/flat_weapon.h): flat F3, the game's own arms - each upper arm and all under it moved along the camera's axes
+    bool flatWeapon = false;
+    float flatWeaponCm[2][3] = {};   // [0] right, [1] left: cm out to that hand's side, up, ahead
+    bool haveCamRight = false;
+    float camRight[3] = {};          // the camera's right in the hero's model space (unit, y up), as camFwd
     char shrinkBone[48] = {};   // [debug] shrink_bone: the hero's bone of this name drawn shrunk to a point - what hangs on it vanishes    // mode 2: the weapon in the hand moved x y z (cm) and turned pitch yaw roll (deg), its own axes
     // [bow] rig_pose: a bow in hand has its own string, limbs and arrow bones posed by the pull
     // (SetBowDraw, vr/bow_rig.h) instead of the game's animation; off = the game's animation, always.
@@ -711,6 +728,9 @@ std::string HeadTakeNote();
 // [arms] full_reach, for vrcam's log: each arm's fit (once per hero rig) and, a few seconds apart while it acts, how far a hand was out of reach and what
 // brought it there (the shoulder's turn, the stretch). Empty when none.
 std::string ArmTakeNote();
+// [body] attack_lean, for vrcam's log: one line per attack it leaned (view, the crosshair's pitch, the aimed point, the lean), and the rig's chest once per rig.
+// Empty when none.
+std::string AttackLeanTakeNote();
 // [debug] doll_trace: the lines the pose hook noted since the last call ('\n' between them) - the hero's rig let go (which test it failed, its numbers, what was
 // taken instead) and taken again. The hook only notes; vrcam's tick writes them to the log (a log line costs a millisecond on the game's thread).
 std::string DollTakeNote();

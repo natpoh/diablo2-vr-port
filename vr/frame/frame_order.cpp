@@ -3,6 +3,7 @@
 // thread (UpdateThread: keys, the arms, the interface, the sky, the hit by touch, pose share, the settings' reload and the installs) -
 // cut whole from vr/vrcam.cpp. The present's order is vr/render/effects/effects.cpp's PresentCommon. What it gives: vr/frame/frame_order.h.
 #include "../vrcam_headers.h"
+#include "../view_keys.h"   // [view] keys: which F keys pick the view
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -480,8 +481,11 @@ DWORD WINAPI UpdateThread(void*) {
             if (pressed & D2RVR_ACT_VIEW_NEXT) Toggle();
             if (pressed & D2RVR_ACT_RECENTER) Recenter();
         }
-        for (int k = 0; k < 5; ++k)
-            if (fView[k].Pressed(focus) && k < ViewCount()) SetView(k + 1);
+        {   // [view] keys (vr/view_keys.h): F1 - F4 / Shift + F1 - F4 / none; every key's edge kept either way
+            const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+            for (int k = 0; k < 5; ++k)
+                if (fView[k].Pressed(focus) && viewkeys::Switches(g_set.viewKeys.load(), k, ViewCount(), shift)) SetView(k + 1);
+        }
         if (f11.Pressed(focus)) Recenter();
         headshot::KeyTick(focus);   // [headset_shot] key: a screenshot of what reaches the headset
         headclip::KeyTick(focus);   // [headset_shot] video_key: 10 s of it

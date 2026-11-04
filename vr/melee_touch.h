@@ -204,6 +204,9 @@ void SetThrownHeld(bool on);
 // (vr/claw_strike.h) - each paw a blade from the form's own bones, the unarmed kind's numbers and rules, the game's own attack (the key, Direct hit by its rules, the armed
 // skill); the two paws one weapon: one recovery for both, as long as the hero's own attack. Needs hit by touch on (SetWanted). F4 only.
 void SetClawHits(bool on);
+// [shapeshift] wolf_min_speed / bear_min_speed (m/s, 0 = none; vr/claw_strike.h FormMinSpeed): a paw's least speed in that form, in place of the unarmed kind's /
+// melee_min_speed. From the ini, every read; live.
+void SetClawMinSpeed(float wolfMs, float bearMs);
 // What the touch needs of the throw by gesture (vr/throw_gesture_wire.h, [hands] throw_by_grip / throw_gesture), given once by vrcam: GripIsThrows (the grip
 // gesture owns the right grip: the weapon is "in the hand" while it is squeezed), LastThrowTickMs (the touch stands down 0.7 s after a released throw) and
 // HoldOffRelease(until): after a touch pressed the attack with a thrown weapon the gesture's release of that swing throws nothing until then (vr/thrown_touch.h).

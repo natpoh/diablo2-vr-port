@@ -110,6 +110,27 @@ flat mode, the game draws WxH: a light tile is A x B px, square|not square ...; 
   hand-over, the match, the swap and the teardown without the game. It copies ReShade beside itself; run it from a
   scratch folder.
 
+## The game's reflections in stereo (`[render] reflections_per_eye`)
+
+`vr/reflections_eye.cpp`, `shared/dxbc_ppr_eye.h`. The game's reflections in water, puddles and blood are pixel projected
+reflections: `cs_ppr_init_buffer_c` clears a buffer, `cs_ppr_projection_c` takes every pixel's world point from the
+linear depth, mirrors it over the water planes (`cb13`, up to `cb13[90].x` of them) and writes the pixel's place into the
+pixel its mirror image is seen at (along the ray from the eye `cb10[1]`, put in the picture by the camera record's
+view * projection `cb3[21..24]`); `ps_ppr_reflection_p` reads it back and adds the scene's colour from there. Only this
+frame's colour: every stereo mode computes it per eye.
+
+Both take the world point as `view = (ndc * depth * diag(inverse projection), -depth)`, `world = view * inverse view`
+(`cb3[9..12]`, row 12 the eye) - the inverse projection's diagonal only. The replay folds the right eye's camera
+(`[stereo] replay_proj 3`: the view and its inverse stay the left eye's, the eyes' distance goes into the projection's
+translation), which this never reads: the right eye's point came out one eye distance to the side, and each reflection
+was drawn as seen from twice the eyes' distance (twice the parallax, half the depth - above the puddle; a player,
+2026-11-03). The patch makes the one `mad world, cb3[12], valid, ...` read `cb10[1]`, the eye position both shaders use
+for their ray anyway, which the replay moves for the right eye. Wherever the camera is not folded it equals the
+inverse view's eye. The shaders are found by their shape (a structured UAV; cb3, cb10, cb13; cb3[12] read exactly once,
+as that mad's first source): of the game's 10,847 shader containers exactly those two match. Not fixed: in the eyes by
+turns the eye made (`turn_warp`) moves the drawn eye's picture with the water's depth, so there the reflection lies on
+the surface every other frame.
+
 ## The game's image
 
 - **All addresses are for the image D2RLoader rebuilds** (base 0x140000000),

@@ -35,6 +35,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_state.h"
+#include "table_rows.h"   // an item class read from the game checked against the Items table it indexes
 #include "thrust_stroke.h"   // hit by touch's thrust: the weapon's class (1ht, 2ht) found in the item rows
 #include "link.h"
 #include "ui_ticket.h"
@@ -618,7 +619,8 @@ void BuildClassKinds() {
     if (g_tables->getTable(g_ctx, g_bank, DataTables::TableId::Items, &v) != DataTables::Result::Success || !v.rows || !v.rowSize ||
         (uint32_t)g_typeOffset + 2 > v.rowSize)
         return;
-    const uint32_t n = std::min<uint32_t>(v.rowCount, kClassKinds);
+    const uint32_t n = tablerows::Usable(v.rowCount, kClassKinds);
+    if (v.rowCount > kClassKinds) { char c[220]; tablerows::CapLine(c, sizeof c, "Items (weapon kinds by class)", v.rowCount, kClassKinds); Log(c); }
     uint32_t weapons = 0;
     for (uint32_t i = 0; i < n; ++i) {
         uint16_t t;
@@ -656,7 +658,8 @@ void BuildClassCodes() {
         if (all) offset = (int)o;
     }
     if (offset < 0) { Log("gamestate: item codes by class - the code's place in the Items table not found: no copies of items taken off the ground"); return; }
-    const uint32_t n = std::min<uint32_t>(v.rowCount, kClassKinds);
+    const uint32_t n = tablerows::Usable(v.rowCount, kClassKinds);
+    if (v.rowCount > kClassKinds) { char c[220]; tablerows::CapLine(c, sizeof c, "Items (item codes by class)", v.rowCount, kClassKinds); Log(c); }
     for (uint32_t i = 0; i < n; ++i) {
         uint32_t c;
         memcpy(&c, (const uint8_t*)v.rows + (size_t)i * v.rowSize + offset, 4);
@@ -1193,8 +1196,21 @@ void Tick() {
 uint32_t WeaponClass() { return g_weapon.load(); }
 uint32_t WeaponSet() { return g_set.load(); }
 uint32_t WeaponType() { return g_type.load(); }
-uint32_t CodeOfItemClass(uint32_t classId) { return classId < g_classCodeCount.load(std::memory_order_acquire) ? g_classCode[classId].load(std::memory_order_relaxed) : 0; }
-uint32_t KindOfItemClass(uint32_t classId) { return classId < g_classKindCount.load(std::memory_order_acquire) ? g_classKind[classId].load(std::memory_order_relaxed) : 0; }
+// An item class past the table built (a data mod's row past what we hold, or a class the game's table does not have): 0, not known - the
+// game's own behaviour for that item (no copy in the hand, the weapon's kind from its code as before); told once per table (vr/table_rows.h).
+namespace { tablerows::Once g_codePastTold, g_kindPastTold; }
+uint32_t CodeOfItemClass(uint32_t classId) {
+    const uint32_t n = g_classCodeCount.load(std::memory_order_acquire);
+    if (tablerows::In(classId, n)) return g_classCode[classId].load(std::memory_order_relaxed);
+    if (n && g_codePastTold.First()) { char b[220]; tablerows::Line(b, sizeof b, "Items (item codes by class)", classId, n); Log(b); }
+    return 0;
+}
+uint32_t KindOfItemClass(uint32_t classId) {
+    const uint32_t n = g_classKindCount.load(std::memory_order_acquire);
+    if (tablerows::In(classId, n)) return g_classKind[classId].load(std::memory_order_relaxed);
+    if (n && g_kindPastTold.First()) { char b[220]; tablerows::Line(b, sizeof b, "Items (weapon kinds by class)", classId, n); Log(b); }
+    return 0;
+}
 void BeltCodes(uint32_t out[4]) { for (int c = 0; c < 4; ++c) out[c] = g_belt[c].load(); }
 void BeltIds(uint32_t out[4]) { for (int c = 0; c < 4; ++c) out[c] = g_beltId[c].load(); }   // the same items' unit ids (0 = none)
 uint32_t HandsHeld() { return g_held.load(); }

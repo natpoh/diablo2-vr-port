@@ -99,17 +99,6 @@ static void MadeUp() {
            "high, but elsewhere than (0, 50, 0): refused");
     Expect(Lower(Replace(Preset({boat}), "\"type\":\"Preset\"", "\"type\":\"Prefab\""), &out, &why) == kRefused, "not a preset: refused");
     Expect(Lower("", &out, &why) == kRefused, "nothing: refused");
-
-    // vrcam's probe: the placement's height read back from a preset text, and the verdict on where the hull is drawn
-    double y = -1.0;
-    Expect(PlacedY(in, &y) && y == 50.0, "PlacedY: the game's own preset places it at 50");
-    Lower(in, &out, &why);
-    Expect(PlacedY(out, &y) && y == 0.0, "PlacedY: ours at 0");
-    Expect(!PlacedY(Preset({before, decoy}), &y), "PlacedY: no canoe entity: false");
-    Expect(Judge(true, -2.77f, false) == kDrawnOnWater && Judge(true, 47.23f, true) == kDrawnInSky && Judge(true, 47.23f, false) == kDrawnInSky,
-           "Judge: the hull drawn at -2.8 on the water, at 47 in the sky");
-    Expect(Judge(false, 0.0f, true) == kDrawnInSky && Judge(false, 0.0f, false) == kDrawnUnknown, "Judge: no hull - the game's placement says the sky, else unknown");
-    Expect(kHull[1] + 50.0f == kHullFlatSky[1], "the flattened place is the hull's raised by the game's 50");
 }
 
 // ---------------------------------------------------------------- the game's own

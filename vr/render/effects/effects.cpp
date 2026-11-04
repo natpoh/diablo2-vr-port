@@ -1012,6 +1012,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     if (dev) gpufault::Watch(dev);   // the game's device: its loss is told the moment it happens
     g_swapWnd.store(wnd);
     lightbounds::NoteScreen(sw, sh);   // what the game draws at, and the light grid that makes (a line when it changes)
+    refleye::Tell();                   // [render] reflections_per_eye: a line when its state changes, every 10 s while bound
     // No game area (the title and character screens, loading): the interface stays in the picture. A menu out as
     // a panel when the game was left (Esc, Save and Exit) is not kept there - the draw hook that sets it may not
     // run in the menus, and the main menu came up with no interface at all (2026-10-13).
@@ -1457,14 +1458,21 @@ void FxBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_B
 void GraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnGraphicsPso(dev, d, pso);
     fogfx::OnGraphicsPso(dev, d, pso);
+    refleye::OnGraphicsPso(dev, d, pso);   // [render] reflections_per_eye: the reflections' resolve
+}
+void ComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
+    lightbounds::OnComputePso(dev, d, pso);
+    refleye::OnComputePso(dev, d, pso);   // [render] reflections_per_eye: the reflections' projection pass
 }
 void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnStreamPso(dev, d, pso);
     fogfx::OnStreamPso(dev, d, pso);
     lightbounds::OnStreamPso(dev, d, pso);   // [render] light_bounds_fix without ReShade: the light bins' compute pipeline, if made from a stream
+    refleye::OnStreamPso(dev, d, pso);       // [render] reflections_per_eye: either reflection pass, if made from a stream
 }
 // a pipeline the game binds: [render] light_bounds_fix's light bins (compute), then [fog] game_fog_height's fog pass (graphics)
-ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return fogheight::Swap(lightbounds::Swap(pso)); }
+// and [render] reflections_per_eye's two reflection passes
+ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return refleye::Swap(fogheight::Swap(lightbounds::Swap(pso))); }
 // At the plugin's load, MinHook initialised, before the game makes its device and swap chain.
 void Install() {
     natived3d::Sinks k;
@@ -1482,7 +1490,8 @@ void Install() {
     k.psoSwap = &PsoSwap;
     // [render] light_bounds_fix without ReShade: the game's light-bin depth bounds (vr/light_bounds.h) - a copy with our shader bound in its place
     lightbounds::SetLog(&Log);
-    k.computePso = &lightbounds::OnComputePso;
+    refleye::SetLog(&Log);   // [render] reflections_per_eye: the reflections' two passes, copies bound in their place (vr/reflections_eye.h)
+    k.computePso = &ComputePso;
     // [fog] game_fog_before_fx: the lists' bindings followed and the step recorded before the transparent resolve - its hooks only when the key
     // is on at the start (a list's state is followed from its first Reset); switched on later, from the next start
     fogfx::SetLog(&Log);
@@ -2399,6 +2408,33 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 }
                 for (int k = 0; k < 2; ++k)   // [hud] hand_vitals_pulse_eq: the vignettes' beats, for the balls to beat in step
                     if (!lowhp::BeatNow(k == 1, &in.follow[k])) in.follow[k] = -1.0f;
+                {   // [shapeshift] a druid's werewolf / werebear as your body (VR F4): its own depth offset on the wrists, and with hand_vitals_orb_form_auto how much farther its
+                    // forearm's skin stands out than the druid's - each from the forearm bone's mesh box as drawn (the druid's kept from her last measure, per wrist)
+                    in.form = viewgate::F4() ? skel::GraftedForm() : 0;
+                    static float personOutM[2] = {};
+                    static int toldForm = -1;
+                    static float toldAuto[2] = {-1.0f, -1.0f};
+                    bool measured[2] = {};
+                    for (int side = 0; side < 2; ++side) {
+                        float out = 0.0f;
+                        measured[side] = handorbs::SkinOutM(in.arm[side], &out);
+                        if (in.form == 0 && measured[side]) personOutM[side] = out;
+                        else if (in.form == 2 && in.cfg.orbFormAuto && measured[side]) in.formAutoCm[side] = handorbs::FormLiftCm(out, personOutM[side]);   // (the werebear only)
+                    }
+                    const bool autoMoved = in.form == 2 && (fabsf(in.formAutoCm[0] - toldAuto[0]) > 0.5f || fabsf(in.formAutoCm[1] - toldAuto[1]) > 0.5f);
+                    if (in.form != toldForm || autoMoved) {   // once per change: the form, its offset, the auto lift and what it was measured from
+                        toldForm = in.form;
+                        toldAuto[0] = in.formAutoCm[0]; toldAuto[1] = in.formAutoCm[1];
+                        if (in.form == 1) Log("vrcam: hand vitals - the werewolf is your body: the wrist medallions at the druid's place");
+                        else if (in.form == 2)
+                            LogF("vrcam: hand vitals - the %s is your body: the wrist medallions' depth offset for it %+.1f cm ([hud] hand_vitals_orb_z_cm_%s), auto lift %s right %.1f cm, "
+                                 "left %.1f cm (the forearm's skin out of the back of the wrist: druid %.1f / %.1f cm, %s; %s)",
+                                 handvitals::FormKey(in.form), handvitals::FormZCm(in.cfg, in.form), handvitals::FormKey(in.form), in.cfg.orbFormAuto ? "on" : "off ([hud] hand_vitals_orb_form_auto=0):",
+                                 in.formAutoCm[0], in.formAutoCm[1], personOutM[0] * 100.0f, personOutM[1] * 100.0f,
+                                 measured[0] || measured[1] ? "the form's measured" : "the form's forearm box not read",
+                                 in.cfg.orbOnBone ? "on the bone the ball lies on the form's own skin, the offset on top" : "on the spot's numbers");
+                    }
+                }
                 const handorbs::Set set = handorbs::Step(orbState, in);
                 float fit = 0.0f;
                 uint64_t srv = 0;
@@ -3007,6 +3043,7 @@ void TryRegister() {
     if (g_registered || !g_self || g_noReShade) return;   // ([render] no_reshade: there is none to join)
     if (!JoinReShade()) return;
     if (lightbounds::Wanted()) lightbounds::Register(&Log);   // (already, from the plugin's load, when ReShade was there then)
+    if (refleye::Wanted()) refleye::Register(&Log);           // (the same)
     if (fogspare::Wanted()) fogspare::Register(&Log);
     effectslayer::Register(&Log);   // (it looks at the game's bindings only while eyes by turns keep the effects: effectslayer::SetWanted)
     if (fogframe::Wanted()) fogframe::Register(&Log);

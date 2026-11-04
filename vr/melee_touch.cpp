@@ -119,6 +119,7 @@ std::atomic<bool> g_pickWanted{false};    // [input] vr_body_pick_hand: ... and 
 // [gameplay] melee_touch_thrown: a javelin, throwing knife or throwing axe is swung too (a point-blank throw by the game's own attack), and what
 // the touch needs of the throw by gesture (vr/throw_gesture_wire.h), by function pointers so this module does not depend on it (vrcam wires them).
 std::atomic<bool> g_thrownTouch{true};
+std::atomic<float> g_clawMinSpeed[2] = {0.0f, 0.0f};   // [shapeshift] wolf_min_speed / bear_min_speed (0 = none of the form's own)
 std::atomic<bool> g_clawHits{false};     // [shapeshift] claw_hits: a grafted werewolf / werebear's paws are the blades (skel::PosedWeaponPose::paws)
 std::atomic<bool> g_thrownHeld{false};   // [gameplay] melee_touch_thrown_held: a thrown weapon is in the hand from the equip, like a sword (vr/thrown_touch.h)
 std::atomic<GripIsThrowsFn> g_gripIsThrows{nullptr};
@@ -2114,6 +2115,10 @@ void SetThrownTouch(bool on) {
 }
 bool ThrownTouch() { return g_thrownTouch.load(); }
 void SetClawHits(bool on) { g_clawHits.store(on); }
+void SetClawMinSpeed(float wolfMs, float bearMs) {
+    g_clawMinSpeed[0].store(std::isfinite(wolfMs) ? wolfMs : 0.0f);
+    g_clawMinSpeed[1].store(std::isfinite(bearMs) ? bearMs : 0.0f);
+}
 void SetThrownHeld(bool on) {
     if (g_thrownHeld.exchange(on) != on && g_wanted.load())
         Log(on ? "melee touch: a thrown weapon is in the hand from the equip, like a sword (melee_touch_thrown_held) - an open grip does not stop its touch"
@@ -2571,12 +2576,28 @@ void Tick(const Frame& f) {
         // live: each hand's engine has the numbers of the weapon in that hand, applied when they change
         static float appliedSpeed[2] = {-1.0f, -1.0f}, appliedStart[2] = {-1.0f, -1.0f};
         const stroke::StrokeTuning general{g_minSpeed.load(), g_startCm.load()};
+        const int form = paws ? skel::GraftedForm() : 0;   // ([shapeshift] wolf_min_speed / bear_min_speed: a paw's least speed is its form's)
         for (const SideBlade& sb : blades) {
             if (!sb.ok) continue;
             const int ki = strikedir::KindIndex(sb.kind);
             strikedir::KindTuning own;
             if (ki >= 0) own = {g_kindSpeed[ki].load(), g_kindStart[ki].load()};
+            if (sb.paw) own.minSpeed = clawstrike::PawOwnSpeed(form, g_clawMinSpeed[0].load(), g_clawMinSpeed[1].load(), own.minSpeed);
             const stroke::StrokeTuning t = strikedir::Effective(general, own);
+            if (sb.paw) {   // which least speed the paws count from, said once per form and number
+                static int toldForm = -1;
+                static float toldSpeed = -1.0f;
+                if (form != toldForm || t.minSpeed != toldSpeed) {
+                    toldForm = form;
+                    toldSpeed = t.minSpeed;
+                    const bool formOwn = clawstrike::FormMinSpeed(form, g_clawMinSpeed[0].load(), g_clawMinSpeed[1].load()) > 0.0f;
+                    LogF("claw: the %s's paws count a contact from %.2f m/s - %s; a stroke after %.0f cm", form == 1 ? "werewolf" : form == 2 ? "werebear" : "form",
+                         t.minSpeed, formOwn ? (form == 1 ? "[shapeshift] wolf_min_speed" : "[shapeshift] bear_min_speed")
+                                             : g_kindSpeed[strikedir::kUnarmed].load() >= 0.3f ? "the unarmed one ([gameplay] melee_min_speed_unarmed; the form's own is 0)"
+                                                                                                 : "the general [gameplay] melee_min_speed (the form's own is 0)",
+                         t.startCm);
+                }
+            }
             const int hand = sb.side & 1;
             if (t.minSpeed == appliedSpeed[hand] && t.startCm == appliedStart[hand]) continue;
             appliedSpeed[hand] = t.minSpeed;

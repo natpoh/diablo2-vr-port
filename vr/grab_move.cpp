@@ -48,7 +48,7 @@ constexpr size_t kUnitPath = 0x38, kPathX = 0x2, kPathY = 0x6;   // a monster's 
 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
-std::atomic<bool> g_wanted{false}, g_faulted{false};
+std::atomic<bool> g_wanted{false}, g_knockWanted{false}, g_faulted{false};   // [weight] grab_moves_unit, knock_down_moves_unit
 std::atomic<int> g_where{0};   // what was said of where the server is: 0 nothing, 1 here, 2 not here (a joined game)
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
@@ -86,10 +86,10 @@ bool CellOf(uintptr_t unit, int* x, int* y) {
 }
 
 // ---- the asks: the knock-down timer notes, the game's thread acts --------------------------------------------------------------------------
-struct Ask { uint32_t id = 0; float dx = 0.0f, dy = 0.0f; bool hostile = false; uint64_t atMs = 0; };
+struct Ask { uint32_t id = 0; float dx = 0.0f, dy = 0.0f; bool hostile = false, grabbed = true; uint64_t atMs = 0; };
 struct Last { uint32_t id = 0; uint64_t atMs = 0; };
 // A knockback asked and how it went: checked once it has run (the unit's mode no longer 13, or kCheckMs on)
-struct Watch { uint32_t id = 0; int fromX = 0, fromY = 0, toX = 0, toY = 0; uint64_t atMs = 0; bool hostile = false; };
+struct Watch { uint32_t id = 0; int fromX = 0, fromY = 0, toX = 0, toY = 0; uint64_t atMs = 0; bool hostile = false, grabbed = true; };
 constexpr size_t kAsks = 8, kWatches = 8;
 constexpr uint64_t kStaleMs = 300, kCheckMs = 1200;
 std::mutex g_mutex;
@@ -116,8 +116,8 @@ void CheckWatches(uintptr_t game, uintptr_t lookup, uint64_t now) {
         const int miss = std::max(std::abs(w.toX - x), std::abs(w.toY - y));
         if (miss <= 1) ++g_n.landed; else ++g_n.short_;
         if (++g_toldLand <= 24)
-            LogF("grab moves unit: %s %u's knockback ran - it stands on cell %d,%d: moved %+d,%+d of the %+d,%+d asked (%s, after %.2f s, mode %u now)",
-                 w.hostile ? "monster" : "NPC", w.id, x, y, gotX, gotY, wantX, wantY, miss <= 1 ? "on the cell asked" : "short of it - a wall or a unit in its way (the game's collision), or the knockback's length",
+            LogF("grab moves unit: %s %u's knockback%s ran - it stands on cell %d,%d: moved %+d,%+d of the %+d,%+d asked (%s, after %.2f s, mode %u now)",
+                 w.hostile ? "monster" : "NPC", w.id, w.grabbed ? "" : " (knocked down by a blow)", x, y, gotX, gotY, wantX, wantY, miss <= 1 ? "on the cell asked" : "short of it - a wall or a unit in its way (the game's collision), or the knockback's length",
                  (now - w.atMs) / 1000.0f, head[3]);
         w = Watch{};
     }
@@ -150,7 +150,7 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
     int result = 0;
     if (!CallKnockback(eventFn, setFn, game, unit, tx, ty, &result)) {
         g_faulted.store(true);
-        Log("grab moves unit: the game's knockback faulted - OFF for this session (carried and thrown bodies are drawn only, as before)");
+        Log("grab moves unit: the game's knockback faulted - OFF for this session (carried, thrown and knocked-down bodies are drawn only, as before)");
         return;
     }
     uint32_t after[4] = {};
@@ -163,7 +163,7 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
             if (w.id == a.id) { slot = &w; break; }
             if (!w.id || w.atMs < slot->atMs) slot = &w;
         }
-        *slot = Watch{a.id, ux, uy, tx, ty, now, a.hostile};
+        *slot = Watch{a.id, ux, uy, tx, ty, now, a.hostile, a.grabbed};
     } else if (o == Outcome::Dead) {
         ++g_n.dead;
     } else {
@@ -177,8 +177,8 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
         *slot = Last{a.id, now};
     }
     if (++g_told <= 24 || (o == Outcome::Refused && g_told <= 40))
-        LogF("grab moves unit: %s %u on cell %d,%d - the game's knockback asked to cell %d,%d (%+.1f,%+.1f cells drawn off%s; the hero on %d,%d): %s (returned %d, mode %u -> %u)",
-             a.hostile ? "monster" : "NPC", a.id, ux, uy, tx, ty, a.dx, a.dy, rounded ? ", kept clear of the hero" : "", hx, hy,
+        LogF("grab moves unit: %s %u%s on cell %d,%d - the game's knockback asked to cell %d,%d (%+.1f,%+.1f cells drawn off%s; the hero on %d,%d): %s (returned %d, mode %u -> %u)",
+             a.hostile ? "monster" : "NPC", a.id, a.grabbed ? "" : " (knocked down by a blow)", ux, uy, tx, ty, a.dx, a.dy, rounded ? ", kept clear of the hero" : "", hx, hy,
              o == Outcome::Runs ? "it runs" : o == Outcome::Dead ? "dead or dying - nothing" : "REFUSED by the game (its MonStats row: not knocked back - a boss, a big one)",
              result, head[3], after[3]);
 }
@@ -209,7 +209,7 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
             for (Ask& q : g_asks)
                 if (q.id == a.id) q = Ask{};
         }
-        if (g_faulted.load() || !g_wanted.load() || !viewgate::F4()) continue;
+        if (!WantedFor(a.grabbed) || !viewgate::F4()) continue;
         if (now - a.atMs > kStaleMs) { ++g_n.stale; continue; }
         Act(a, game, lookup, now);
     }
@@ -243,39 +243,49 @@ void Init(const PluginContext* ctx) {
 
 void SetWanted(bool on) {
     if (g_wanted.exchange(on) == on) return;
-    meleetouch::SetMoveWanted(on);   // (the server's unit lookup is observed for it too: the server's game is learned from it)
+    meleetouch::SetMoveWanted(on || g_knockWanted.load());   // (the server's unit lookup is observed for it too: the server's game is learned from it)
     Log(on ? "grab moves unit: on ([weight] grab_moves_unit) - a body the hands carry or throw is put on the cell under it by the game's own knockback (single player "
              "or host; F4)"
            : "grab moves unit: off");
-    if (!on) g_where.store(0);
+    if (!on && !g_knockWanted.load()) g_where.store(0);
 }
 bool Wanted() { return g_wanted.load() && !g_faulted.load(); }
+void SetKnockWanted(bool on) {
+    if (g_knockWanted.exchange(on) == on) return;
+    meleetouch::SetMoveWanted(on || g_wanted.load());
+    Log(on ? "grab moves unit: knocked-down bodies on ([weight] knock_down_moves_unit) - a body a weapon's blow knocks down is put on the cell where it lies by the "
+             "game's own knockback, so it fights and takes hits from there and gets up there (single player or host; F4)"
+           : "grab moves unit: knocked-down bodies off - drawn only, the game keeps the unit on its cell");
+    if (!on && !g_wanted.load()) g_where.store(0);
+}
+bool WantedFor(bool grabbed) { return (grabbed ? g_wanted.load() : g_knockWanted.load()) && !g_faulted.load(); }
 
-void Note(uint32_t id, float dx, float dy, bool hostile, uint64_t nowMs) {
-    if (!Wanted() || !viewgate::F4() || !d2rsig::Addr(RVA_MODE_EVENT) || !d2rsig::Addr(RVA_MODE_SET) || !ServerHere()) return;
+bool Note(uint32_t id, float dx, float dy, bool hostile, bool grabbed, float minCells, uint64_t nowMs) {
+    if (!WantedFor(grabbed) || !viewgate::F4() || !d2rsig::Addr(RVA_MODE_EVENT) || !d2rsig::Addr(RVA_MODE_SET) || !ServerHere()) return false;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         for (const Last& r : g_refused)
-            if (r.id == id && nowMs >= r.atMs && nowMs - r.atMs < kRefusedMs) return;   // (refused lately: not asked again yet)
+            if (r.id == id && nowMs >= r.atMs && nowMs - r.atMs < kRefusedMs) return false;   // (refused lately: not asked again yet)
         Last* last = &g_last[0];
         for (Last& l : g_last) {
             if (l.id == id) { last = &l; break; }
             if (l.atMs < last->atMs) last = &l;
         }
-        if (!Wants(dx, dy, nowMs, last->id == id ? last->atMs : 0)) return;
+        if (!Wants(dx, dy, nowMs, last->id == id ? last->atMs : 0, minCells)) return false;
         *last = Last{id, nowMs};
         Ask* slot = &g_asks[0];
         for (Ask& q : g_asks) {
             if (q.id == id) { slot = &q; break; }
             if (!q.id || q.atMs < slot->atMs) slot = &q;
         }
-        *slot = Ask{id, dx, dy, hostile, nowMs};
+        *slot = Ask{id, dx, dy, hostile, grabbed, nowMs};
     }
     Queue(nowMs);
+    return true;
 }
 
 void Tick(uint64_t nowMs) {
-    if (!Wanted()) return;
+    if (!WantedFor(true) && !WantedFor(false)) return;
     bool watching = false;
     for (const Watch& w : g_watch) watching = watching || w.id != 0;   // (read on the timer's thread, racy and harmless: only whether to queue a run)
     if (watching) Queue(nowMs);

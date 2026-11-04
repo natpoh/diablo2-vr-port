@@ -1,10 +1,44 @@
 # What's new in D2R VR
 
-## Next
+## 0.201.0
 
+- **Crash reports, if you want them**: after a crash, a freeze or a lost graphics card, D2R VR Crash Reporter offers to send that
+  game's logs to us - it shows what goes, takes out your PC and Windows names, character names, IP addresses and e-mails, and sends
+  nothing until you press Send (Settings > Home > D2R VR, *Offer to send a report when the game closes badly*; off until you tick it;
+  *Send logs to the BodyWalk server* sends the Collect logs zip the same way).
+- **Your skills on F1 - F8 again**: the views now switch with **Shift + F1 - F4**, so a plain F1 - F8 reaches the game's skill hotkeys
+  (Settings > Home > *View keys*, `[view] keys`; *F1 - F4* the old way, *No F keys* leaves them all to the game - F12, Settings and the
+  controller still switch the view).
+- **Record what you see**: the panels you see in the headset - inventory, trader, stash, map - are drawn on the monitor's picture too, so
+  a screen recording shows them (Settings > Home > Monitor (screen recording), `[render] monitor_panels`).
+- **Reflections in the right place**: puddle and blood reflections are worked out for each eye, so they lie in the puddle instead of
+  floating above it (`[render] reflections_per_eye`).
+- **2D views**: the swing leans toward where the camera looks - look down at a small monster and the blade comes down onto it
+  (`[body] attack_lean`, drawing only); in flat first person (F3) each weapon kind can be moved in three axes so a big axe no longer covers
+  the middle of the screen (Settings > UI: F3 eyes > *Weapon in hand (F3)*, its own `[flat_weapon_<kind>]` keys, all 0 until you move
+  them); a two-handed weapon keeps both hands on its grip.
+- **Werewolf and werebear paws** have their own least swing speed, 4 m/s - lighter than a weapon's - so a bare-paw swing counts
+  (Settings > Strikes > Hit by touch, `[shapeshift] wolf_min_speed` / `bear_min_speed`).
+- **A monster you knock down gets up where it fell**: the game's own knockback moves it to the cell where it lies, so it no longer
+  jumps back to fight from where it stood (Settings > Strikes > Attention, `[weight] knock_down_moves_unit`; single player or the
+  host; it changes the game's logic, on as shipped).
+- **Werebear's wrist medallion** no longer sinks into the fur: it is lifted by how much thicker the bear's forearm is, measured on the
+  model (Settings > UI: F4 body > Toolbar in the headset, `[hud] hand_vitals_orb_form_auto`, plus its own Z offset).
+- **Act 1 buildings** (barracks, jail, catacombs, cathedral) get a smooth stone ceiling at their walls' top instead of cave rock.
 - **Death as a ragdoll comes on for players who kept their settings** when their `[weight] death_ragdoll` is still the 0 it shipped
-  as in 0.196 / 0.197 (an update that keeps your settings now turns on a feature whose old default you never changed; one you switched
-  off yourself stays off).
+  as in 0.196 / 0.197 (one you switched off yourself stays off).
+- A data mod's extra rows in the game's tables (Reimagined and others) can no longer be read past the end of one of ours.
+- **Collect logs packs the last games too**: the logs of the newest three games (their folders under sessions) go into the zip, so the
+  game that crashed is there even after you started again (Settings > Home, *Collect logs: the last games packed too*,
+  `[support] collect_sessions`; 0 = only the logs folder).
+- **Unfinished tests left on by an old install are switched off once**: Setup turns off *Walls stop your weapon / your bare hands* and
+  *The weapon does not pass through your own body* when an older version left them on in kept settings; ticked again later, they stay on.
+- **Fewer fake crash reports**: the search for the game's height and depth fog reads copies of the game's memory, so a block freed
+  meanwhile no longer shows up as a crash in D2RLoader's crash reports, and it changes only definitions where the game's areas have them
+  (`[render] game_fog_scan_safe`, Settings > World > *Find the game's fog safely*); the hero check reads a new path safely too.
+- Each release keeps the plugin's symbols (`releases\pdb\<version>`), so a crash's place in the plugin can be named.
+- The map's orb and the other headset panels no longer show high in the sky in the monitor's picture (only the recording had it).
+
 
 ## 0.200.0
 

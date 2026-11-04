@@ -178,7 +178,8 @@ inline handvitals::OrbSpot SpotFor(const Config& cfg, int side) { return side ==
 // does not float it off the arm).
 constexpr float kBoneBackMin = 0.06f;   // (of the forearm's length: ~1.6 cm on a 27 cm forearm)
 constexpr float kBoneBackMax = 0.30f;   // (~8 cm)
-inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM = 0.0f, float under = 0.0f) {
+// `extraOutM`: farther out of the back of the wrist on top of the box's surface ([shapeshift] a form's own depth offset, handvitals::FormZCm).
+inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM = 0.0f, float under = 0.0f, float extraOutM = 0.0f) {
     Place p;
     if (!arm.ok || !arm.hasBox || !Finite(arm.elbow) || !Finite(arm.wrist) || !Finite(arm.across) || !Finite(arm.boxC) || !Finite(arm.boxH[0]) || !Finite(arm.boxH[1]) ||
         !Finite(arm.boxH[2]))
@@ -205,7 +206,8 @@ inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM 
     const V3 off = hset::Sub(arm.boxC, arm.wrist);   // (the box's middle against the wrist joint)
     const float endAlong = std::min(hset::Dot(off, a) + reach(a), 0.0f);   // its end at the wrist, from the wrist joint - never past it
     const float out = std::clamp(hset::Dot(off, back) + reach(back), kBoneBackMin * fl, kBoneBackMax * fl);   // its surface out of the back, from the bone line
-    p.c = hset::Add(hset::Add(arm.wrist, hset::Mul(a, endAlong - r)), hset::Add(hset::Mul(back, out + lift), hset::Mul(lateral, lateralM)));
+    const float extra = std::isfinite(extraOutM) ? extraOutM : 0.0f;
+    p.c = hset::Add(hset::Add(arm.wrist, hset::Mul(a, endAlong - r)), hset::Add(hset::Mul(back, out + lift + extra), hset::Mul(lateral, lateralM)));
     p.ok = Finite(p.c);
     p.hasArm = true;
     p.armAxis = a;
@@ -217,17 +219,48 @@ inline Place OnBone(const Arm& arm, const Config& cfg, int side, float lateralM 
     return p;
 }
 
+// [shapeshift] How far the forearm's skin stands out of the back of the wrist (metres, from the bone line elbow -> wrist): the forearm bone's own mesh box (Arm::boxC / boxH)
+// reached along the back of the wrist, as OnBone measures it - unbounded here but by half the forearm's length. False without a box or a forearm.
+inline bool SkinOutM(const Arm& arm, float* outM) {
+    if (!outM || !arm.ok || !arm.hasBox || !Finite(arm.elbow) || !Finite(arm.wrist) || !Finite(arm.across) || !Finite(arm.boxC) || !Finite(arm.boxH[0]) ||
+        !Finite(arm.boxH[1]) || !Finite(arm.boxH[2]))
+        return false;
+    V3 a = hset::Sub(arm.wrist, arm.elbow);
+    const float fl = Len(a);
+    if (!(fl > 1e-4f)) return false;
+    a = hset::Mul(a, 1.0f / fl);
+    const V3 x = hset::Sub(arm.across, hset::Mul(a, hset::Dot(arm.across, a)));
+    const float l = Len(x);
+    if (!(l > 1e-3f)) return false;
+    const V3 back = hset::Mul(x, -1.0f / l);
+    const float reach = std::fabs(hset::Dot(arm.boxH[0], back)) + std::fabs(hset::Dot(arm.boxH[1], back)) + std::fabs(hset::Dot(arm.boxH[2], back));
+    const float out = hset::Dot(hset::Sub(arm.boxC, arm.wrist), back) + reach;
+    if (!std::isfinite(out)) return false;
+    *outM = std::clamp(out, 0.0f, 0.5f * fl);
+    return true;
+}
+// [shapeshift] hand_vitals_orb_form_auto: how much higher (cm) the medallion goes on a form's forearm than on the druid's - its skin that much farther out of the back of the
+// wrist (both SkinOutM, as drawn, metres). 0 with either not measured, never below 0 (a thinner arm keeps the druid's place), at most kFormLiftMaxCm.
+constexpr float kFormLiftMaxCm = 15.0f;
+inline float FormLiftCm(float formOutM, float personOutM) {
+    if (!std::isfinite(formOutM) || !std::isfinite(personOutM) || !(formOutM > 0.0f) || !(personOutM > 0.0f)) return 0.0f;
+    return std::clamp((formOutM - personOutM) * 100.0f, 0.0f, kFormLiftMaxCm);
+}
+
 // The ball's middle on the back of the hand of `side` (0 right, 1 left). `lateralM` shifts it across the hand on top of the spot's own Y (both balls on one wrist side by side).
 // `under` (0 - 1, handorbs::Eased of State::under): how far the wrist is under a shield - the frame is rolled about the hand's axis by cfg.orbShield.turnDeg * under (+ sends the back of
 // the hand toward the thumb on either hand, like the medallion's own turn) and the shield's offsets are added in that rolled frame, so at 1 the ball sits on the other side of the wrist
 // and at 0 it is exactly where it always was. A wrist whose frame is not known (the controller's point alone) cannot roll.
 // `shieldUpCm` / `shieldAlongCm`: the hero class's own offsets under a shield (cfg.orbShieldClass*): they go on top of cfg.orbShield's upCm / alongCm, in the rolled frame and scaled by `under` like those.
-inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int side, float lateralM = 0.0f, float zClassCm = 0.0f, float under = 0.0f, float shieldUpCm = 0.0f, float shieldAlongCm = 0.0f) {
+// `formUpCm`: [shapeshift] a form's depth offset and auto lift (cm), on top of the wrist's Z after its bounds - a paw's skin can lie past the spot's 10 cm.
+inline Place Centre(const Arm& arm, const Grip& grip, const Config& cfg, int side, float lateralM = 0.0f, float zClassCm = 0.0f, float under = 0.0f, float shieldUpCm = 0.0f, float shieldAlongCm = 0.0f,
+                    float formUpCm = 0.0f) {
     Place p;
     const handvitals::OrbSpot spot = SpotFor(cfg, side);
     const auto cm = [](float v) { return std::clamp(std::isfinite(v) ? v : 0.0f, handvitals::kOrbSpotMin, handvitals::kOrbSpotMax) * 0.01f; };
     // (the hero class's depth offset goes on the wrist's own Z, either wrist: the arm's model is the class's)
-    const float up = cm(spot.upCm + (std::isfinite(zClassCm) ? zClassCm : 0.0f)), along = cm(spot.alongCm), across = cm(spot.sideCm);
+    const float formUp = std::clamp(std::isfinite(formUpCm) ? formUpCm : 0.0f, handvitals::kOrbFormZMin, handvitals::kOrbFormZMax + kFormLiftMaxCm) * 0.01f;
+    const float up = cm(spot.upCm + (std::isfinite(zClassCm) ? zClassCm : 0.0f)) + formUp, along = cm(spot.alongCm), across = cm(spot.sideCm);
     const float u = std::isfinite(under) ? std::clamp(under, 0.0f, 1.0f) : 0.0f;
     const handvitals::OrbUnderShield& us = cfg.orbShield;
     if (arm.ok && Finite(arm.elbow) && Finite(arm.wrist) && Finite(arm.across)) {
@@ -500,6 +533,11 @@ struct In {
     double time = 0.0;       // seconds, any origin, monotonic
     int shieldWrist = -1;    // the wrist that wears the shield (ShieldWrist; the caller gives -1 outside VR F4): its ball rolls to the other side of the wrist when cfg.orbUnderShield is ticked
     int heroClass = -1;      // the hero playing now (skel::HeroClass(): 0 amazon ... 7 warlock), -1 not known: its depth offset (Config::orbClassZCm) goes on both wrists' Z
+    // [shapeshift] the druid's form that is your body now (skel::GraftedForm(): 1 werewolf, 2 werebear; 0 none, or not VR F4): the werebear's depth offset (Config::orbBearZCm) goes
+    // on both wrists' Z on top of the class's, and formAutoCm (per wrist, [0] right, [1] left: handorbs::FormLiftCm, the caller's measure; 0 with hand_vitals_orb_form_auto off) with it.
+    // The werewolf: neither (its medallion sits right at the druid's place).
+    int form = 0;
+    float formAutoCm[2] = {};
     float follow[2] = {-1.0f, -1.0f};   // [life, mana] the vignette's beat now (lowhp::BeatNow, 0 - 1 with its fade), -1 = that vignette is not up: with cfg.pulseEq the ball beats with it
 };
 
@@ -565,10 +603,14 @@ inline Set Step(State& st, const In& in) {
         o.radius = baseR * (1.0f + kThrob * glows[kind]);
         const float lateral = both ? (kind == kLife ? -1.0f : 1.0f) * (baseR + 0.5f * kGapM) : 0.0f;
         const float under = Eased(st.under[o.side & 1]);
-        Place p = cfg.orbOnBone ? OnBone(in.arm[o.side], cfg, o.side, lateral, under) : Place{};   // [hud] hand_vitals_orb_on_bone; no box: the spot's numbers, as before
+        // [shapeshift] the werebear as your body: its own depth offset; with the auto lift, on the spot's numbers only (on the bone the ball already lies on the form's own skin)
+        const float formCm = handvitals::FormZCm(cfg, in.form);
+        // (the werebear only: the werewolf keeps the druid's place)
+        const float formAuto = in.form == 2 ? std::clamp(std::isfinite(in.formAutoCm[o.side & 1]) ? in.formAutoCm[o.side & 1] : 0.0f, 0.0f, kFormLiftMaxCm) : 0.0f;
+        Place p = cfg.orbOnBone ? OnBone(in.arm[o.side], cfg, o.side, lateral, under, formCm * 0.01f) : Place{};   // [hud] hand_vitals_orb_on_bone; no box: the spot's numbers, as before
         if (!p.ok)
-            p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass), under, handvitals::ClassShieldUpCm(cfg, in.heroClass),
-                       handvitals::ClassShieldAlongCm(cfg, in.heroClass));
+            p = Centre(in.arm[o.side], in.grip[o.side], cfg, o.side, lateral, handvitals::ClassZCm(cfg, in.heroClass), under,
+                       handvitals::ClassShieldUpCm(cfg, in.heroClass), handvitals::ClassShieldAlongCm(cfg, in.heroClass), formCm + formAuto);
         if (!p.ok) continue;
         if (!p.fromBone) TurnFrame(p, SpotUnder(SpotFor(cfg, o.side), cfg.orbShield, under, handvitals::ClassShieldRotDeg(cfg, in.heroClass)), o.side);   // the medallion's own turn: its back, its along and the fill direction go with it
         o.c = p.c;

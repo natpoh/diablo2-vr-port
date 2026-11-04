@@ -99,6 +99,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
 #include "wheel_paint.h"
+#include "monitor_layers.h"   // [render] monitor_panels: this frame's quads noted for the monitor's picture (drawn at the window's present)
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
 #include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
 #include "menu_zoom.h"   // [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (MenuZoomPre / Post)
@@ -671,6 +672,7 @@ bool g_deferDestroy = false;
 std::vector<XrSwapchain> g_goneChains;
 void DestroyChain(XrSwapchain sc) {
     if (!sc) return;
+    monitorlayers::Forget();   // ([render] monitor_panels: the frame noted may show its image)
     g_chains.Gone(sc);
     if (g_deferDestroy) { g_goneChains.push_back(sc); return; }
     xrDestroySwapchain(sc);
@@ -1858,6 +1860,7 @@ DWORD WINAPI GoneThread(void* p) {
 }
 void Teardown() {   // under g_lock or before the session exists
     g_running.store(false);
+    monitorlayers::Forget();   // ([render] monitor_panels: the frame noted shows images about to go)
     gpufault::Note("xr: teardown");
     // a live end (not the game's closing): the runtime's handles go on a thread of their own, never in the game's present (vr/session_end.h)
     const bool stuckCall = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running());
@@ -5323,6 +5326,91 @@ void ClipFrame(const XrCompositionLayerBaseHeader* const* layers, uint32_t nl, b
     headclip::FrameDone(kind);
 }
 
+// [render] monitor_panels (vr/monitor_layers.h): this frame's quads, for the monitor's picture - each one's image (its swapchain's last, as
+// ShotFrame reads it), where it hangs, its size, its eyes and its own fade; and each eye's view as its picture was drawn: the projection
+// view's pose, the fov of the whole back buffer (from the submitted image rect's: runtime_fov's box or part). F1's window (a quad per eye)
+// and the flat picture have no eye view: nothing noted, the monitor as before. As ShotFrame: right before xrEndFrame, on the draw thread.
+void NoteMonitorLayers(const XrCompositionLayerBaseHeader* const* layers, uint32_t nl, float bright, const void* brightScale,
+                       const char* (*nameOf)(const XrCompositionLayerBaseHeader*, char*, size_t, void*), void* ctx) {
+    static monitorlayers::Frame f;   // (big: kept off the stack)
+    f = monitorlayers::Frame{};
+    f.queue = g_queue;
+    uint32_t first = nl;   // the quads over the eyes' pictures: after the projection layer
+    XrSpace eyeSpace = XR_NULL_HANDLE;   // the space the eyes' views are in
+    for (uint32_t i = 0; i < nl; ++i) {
+        if (layers[i]->type != XR_TYPE_COMPOSITION_LAYER_PROJECTION) continue;
+        const XrCompositionLayerProjection& pr = *(const XrCompositionLayerProjection*)layers[i];
+        eyeSpace = pr.space;
+        for (uint32_t e = 0; e < pr.viewCount && e < 2 && pr.views; ++e) {
+            const XrCompositionLayerProjectionView& v = pr.views[e];
+            const Chain& c = g_eyeChain[e];
+            if (v.subImage.swapchain != c.sc || !c.pw || !c.ph) continue;
+            const XrRect2Di& r = v.subImage.imageRect;
+            const monitorlayers::Tan sub{tanf(v.fov.angleLeft), tanf(v.fov.angleRight), tanf(v.fov.angleUp), tanf(v.fov.angleDown)};
+            f.tan[e] = monitorlayers::WholePicture(sub, r.offset.x + (int)c.sx, r.offset.y + (int)c.sy, r.extent.width, r.extent.height, (int)c.pw, (int)c.ph);
+            f.eye[e] = {{v.pose.position.x, v.pose.position.y, v.pose.position.z}, {v.pose.orientation.x, v.pose.orientation.y, v.pose.orientation.z, v.pose.orientation.w}};
+            f.eyeOk[e] = true;
+        }
+        first = i + 1;
+        break;
+    }
+    // A quad hung in another space (the room's - the stage: the toolbar, the map's orb, the monster's bar, the notice card) is put into the
+    // eyes' space as the runtime does for the headset (monitorlayers::InSpace): taken as it was, the map's orb in the hand was drawn on
+    // the monitor ~1.1 m over the eyes and turned by the local space's recentre (0.201.2). Each space located once a frame; one that
+    // cannot be located now leaves its quads off the monitor this frame rather than in the wrong place.
+    struct Located { XrSpace space; bool ok; monitorlayers::Pose pose; };
+    Located located[4] = {};
+    int nLocated = 0;
+    auto spaceInEyes = [&](XrSpace s, monitorlayers::Pose* out) {
+        for (int k = 0; k < nLocated; ++k)
+            if (located[k].space == s) { *out = located[k].pose; return located[k].ok; }
+        XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+        const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        const bool ok = XR_SUCCEEDED(xrLocateSpace(s, eyeSpace, g_fs.predictedDisplayTime, &l)) && (l.locationFlags & need) == need;
+        const monitorlayers::Pose p{{l.pose.position.x, l.pose.position.y, l.pose.position.z},
+                                    {l.pose.orientation.x, l.pose.orientation.y, l.pose.orientation.z, l.pose.orientation.w}};
+        if (nLocated < 4) located[nLocated++] = {s, ok, p};
+        static uint32_t toldMissing = 0;
+        if (!ok && toldMissing++ < 3) Log("vrcam: monitor panels - a panel's space could not be located in the eyes' this frame: its panels left off the monitor");
+        *out = p;
+        return ok;
+    };
+    for (uint32_t i = first; i < nl && f.n < monitorlayers::kMaxQuads; ++i) {
+        if (layers[i]->type != XR_TYPE_COMPOSITION_LAYER_QUAD) continue;
+        const XrCompositionLayerQuad& q = *(const XrCompositionLayerQuad*)layers[i];
+        monitorlayers::Pose inEyes{};
+        const bool other = eyeSpace && q.space && q.space != eyeSpace;
+        if (other && !spaceInEyes(q.space, &inEyes)) continue;
+        monitorlayers::Quad& m = f.quad[f.n];
+        int64_t fmt = 0;
+        m.tex = ShotTexture(q.subImage.swapchain, &fmt);
+        m.format = (int)fmt;
+        const D3D12_RESOURCE_DESC d = m.tex ? m.tex->GetDesc() : D3D12_RESOURCE_DESC{};
+        const XrRect2Di& r = q.subImage.imageRect;
+        if (d.Width && d.Height) {
+            m.u0 = (float)r.offset.x / (float)d.Width;
+            m.v0 = (float)r.offset.y / (float)d.Height;
+            m.u1 = (float)(r.offset.x + r.extent.width) / (float)d.Width;
+            m.v1 = (float)(r.offset.y + r.extent.height) / (float)d.Height;
+        }
+        m.pose = {{q.pose.position.x, q.pose.position.y, q.pose.position.z}, {q.pose.orientation.x, q.pose.orientation.y, q.pose.orientation.z, q.pose.orientation.w}};
+        if (other) m.pose = monitorlayers::InSpace(inEyes, m.pose);
+        m.width = q.size.width;
+        m.height = q.size.height;
+        m.eyes = q.eyeVisibility == XR_EYE_VISIBILITY_LEFT ? 1 : q.eyeVisibility == XR_EYE_VISIBILITY_RIGHT ? 2 : 0;
+        m.blend = (q.layerFlags & XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT) != 0;
+        m.unpremultiplied = (q.layerFlags & XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT) != 0;
+        const XrCompositionLayerColorScaleBiasKHR* sb = (const XrCompositionLayerColorScaleBiasKHR*)q.next;
+        if (sb && sb->type == XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR && sb != brightScale) {   // a fade of its own (the brightness alone: none on the monitor)
+            const float k[4] = {sb->colorScale.r, sb->colorScale.g, sb->colorScale.b, sb->colorScale.a};
+            monitorlayers::ScaleWithoutBrightness(k, bright, m.scale);
+        }
+        nameOf(layers[i], m.name, sizeof m.name, ctx);
+        ++f.n;
+    }
+    monitorlayers::Note(f);
+}
+
 // -- the T-pose measurement's prompt (vr/calibration.cpp, calibration_panel.cpp) -----------------------------------------
 // A panel hung before the face, level, turning with the head's yaw only: the steps and what to do now, painted when the message
 // changes into ONE swapchain (g_calibAtlas: the panel, and under it a strip of the fill's green), with that green laid on its bar's
@@ -5615,6 +5703,38 @@ void CloseFrame() {
         ShotFrame(layers, nl, names, turns, scaled ? bright : 1.0f);
     }
     if (headclip::Wanted()) ClipFrame(layers, nl, turns);   // [headset_shot] video: this frame's eyes into the clip
+    if (monitorlayers::On()) {   // [render] monitor_panels: this frame's quads for the monitor's picture (drawn at the window's present)
+        struct Names {
+            decltype(slotOf)* slot;
+            const void* hs[3];
+            const void* wheel[3];
+            const void *vitals, *thrust, *ws0, *ws1, *ptr3d;
+        } names{&slotOf, {&hsPanel, &hsBeam, &hsDot}, {&wheelPanel, &wheelBeam, &wheelDot}, &vitalsPanel, &thrustPanel, &wsPanel[0], &wsPanel[1], &ptr3d};
+        NoteMonitorLayers(layers, nl, bright, scaled ? &scale : nullptr, [](const XrCompositionLayerBaseHeader* l, char* b, size_t cap, void* ctx) -> const char* {
+            const Names& n = *(const Names*)ctx;
+            const void* p = l;
+            const char* nm = nullptr;
+            if (p == n.hs[0]) nm = "settings panel";
+            else if (p == n.hs[1] || p == n.hs[2]) nm = "settings laser";
+            else if (p == n.wheel[0]) nm = "skill wheel";
+            else if (p == n.wheel[1] || p == n.wheel[2]) nm = "skill wheel laser";
+            else if (p == n.vitals) nm = "hand vitals";
+            else if (p == n.thrust) nm = "thrust debug";
+            else if (p == n.ws0 || p == n.ws1) nm = "wrist status";
+            else if (p == n.ptr3d) nm = "ground pointer";
+            else if (p == &g_plateOut.layer) nm = "monster bar";
+            else if (p == &g_noticeOut.layer) nm = "notice card";
+            else if (p == &g_bigLayer[0] || p == &g_bigLayer[1]) nm = "big map";
+            else if (p == &g_compassLayer[0] || p == &g_compassLayer[1]) nm = "compass";
+            else if (p == &g_mapBeamLayer[0] || p == &g_mapBeamLayer[1]) nm = "map laser";
+            else if (p == &g_calibLayer[0] || p == &g_calibLayer[1]) nm = "T-pose prompt";
+            else if (p == &g_btnLayer) nm = "hand button";
+            if (nm) { snprintf(b, cap, "%s", nm); return b; }
+            char tmp[32];
+            snprintf(b, cap, "%s", LayerSlotName((*n.slot)(l), true, tmp, sizeof tmp));
+            return b;
+        }, &names);
+    }
     static int ends = 0;
     if (ends < 3) LogF("vrcam: openxr - frame %d: xrEndFrame with %u layer(s)", ++ends, nl);
     XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};

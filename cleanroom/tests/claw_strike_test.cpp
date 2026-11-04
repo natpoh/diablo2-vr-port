@@ -1,6 +1,7 @@
 // claw_strike_test.cpp - [shapeshift] claw_hits (vr/claw_strike.h): a form's paw made from its bones, and the two paws as one weapon -
 // each paw its own strokes, one shared recovery. Run: claw_strike_test.exe
 #include "claw_strike.h"
+#include "strike_direction.h"   // strikedir::Effective: how the paws' least speed meets melee_min_speed
 #include <cmath>
 #include <cstdio>
 #include <string_view>
@@ -52,6 +53,26 @@ int main() {
         float same[3];
         Turn(id, d, false, same);
         CHECK(Near(same[0], d[0]) && Near(same[1], d[1]) && Near(same[2], d[2]));
+    }
+    {   // [shapeshift] wolf_min_speed / bear_min_speed: each form its own least speed; 0, under the floor, not a number or a person = none of its own.
+        CHECK(Near(FormMinSpeed(1, 1.0f, 1.5f), 1.0f) && Near(FormMinSpeed(2, 1.0f, 1.5f), 1.5f));
+        CHECK(FormMinSpeed(0, 1.0f, 1.5f) == 0.0f && FormMinSpeed(3, 1.0f, 1.5f) == 0.0f);
+        CHECK(FormMinSpeed(1, 0.0f, 1.5f) == 0.0f && FormMinSpeed(2, 1.0f, 0.29f) == 0.0f && FormMinSpeed(1, NAN, 1.0f) == 0.0f && FormMinSpeed(2, 1.0f, -3.0f) == 0.0f);
+        CHECK(Near(FormMinSpeed(2, 1.0f, 99.0f), kFormMinSpeedCeil) && Near(FormMinSpeed(1, kFormMinSpeedFloor, 0.0f), kFormMinSpeedFloor));
+        // Against the general melee_min_speed (Serg's 6 m/s) through the engine's own rule (strikedir::Effective): the form's 1 m/s wins; none of its own -
+        // the unarmed kind's where set, else the general, exactly as before the keys.
+        const stroke::StrokeTuning general{6.0f, 15.0f};
+        auto paw = [&](int form, float wolf, float bear, float unarmed) {
+            strikedir::KindTuning own{unarmed, 0.0f};
+            own.minSpeed = PawOwnSpeed(form, wolf, bear, own.minSpeed);
+            return strikedir::Effective(general, own);
+        };
+        CHECK(Near(paw(1, 1.0f, 1.0f, 0.0f).minSpeed, 1.0f) && Near(paw(2, 1.0f, 1.2f, 0.0f).minSpeed, 1.2f));
+        CHECK(Near(paw(2, 1.0f, 1.2f, 3.0f).minSpeed, 1.2f));          // (the form's own over the unarmed kind's)
+        CHECK(Near(paw(1, 0.0f, 0.0f, 3.0f).minSpeed, 3.0f));          // (no form's own: the unarmed kind's)
+        CHECK(Near(paw(2, 0.0f, 0.0f, 0.0f).minSpeed, 6.0f));          // (nothing of its own: the general, as before)
+        CHECK(Near(paw(0, 1.0f, 1.0f, 0.0f).minSpeed, 6.0f));          // (a person's hands: never the forms' numbers)
+        CHECK(Near(paw(1, 1.0f, 1.0f, 0.0f).startCm, 15.0f));          // (the stroke's start stays melee_stroke_start_cm)
     }
     {   // The recovery is the hero's own attack time, never under the floor.
         CHECK(RecoveryMs(600) == 600 && RecoveryMs(420) == 420 && RecoveryMs(40) == kMinRecoveryMs && RecoveryMs(0) == kMinRecoveryMs);

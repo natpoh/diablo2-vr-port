@@ -70,16 +70,20 @@ render.menu_wide.tip = 原生 OpenXR，不使用 ReShade（“无 ReShade”；�
 
 # --- View (F1 - F3 in the game) ---
 group.view_f1_f3_in_the_game = 视角（游戏中的 F1 - F3）
-group.view_f1_f3_in_the_game.help = 平面模式的视角：F1 游戏自带摄像机，F2 第三人称，F3 第一人称，鼠标视角和 W A S D。在游戏中用 F1、F2、F3 切换（F12 循环切换）；游戏不再收到这些按键。
-mode.flat_view.tip = 在游戏中用 F1、F2、F3 切换（F12 循环切换）。游戏收不到这些按键：请把它的技能放到其他键上。
+group.view_f1_f3_in_the_game.help = 平面模式的视角：F1 为游戏自带镜头，F2 为第三人称，F3 为第一人称，可用鼠标环视并用 W A S D 移动。在游戏中用 F1、F2、F3 切换（F12 循环切换），或用 Shift + F1 - F3，或只用 F12，这样 F1 - F8 仍是游戏的技能键：见下方“视角按键”。
+mode.flat_view.tip = 在游戏中用 F1、F2、F3 切换（F12 循环切换）。视角按键设为 F1 - F4 时，游戏收不到这些键；Shift + F1 - F4 会把它们还给游戏的技能。
 mode.flat_view.choice0 = F1  游戏自带摄像机
 mode.flat_view.choice1 = F2  第三人称
 mode.flat_view.choice2 = F3  第一人称：鼠标视角，W A S D
+view.keys.label = 视角按键
+view.keys.tip = 用哪些键在游戏中选择视角。F1 - F4：和以前一样，游戏收不到 F1 - F4，请把它的技能放到其他键上。Shift + F1 - F4：按住 Shift 再按视角对应的 F 键；单独按 F1 - F8 又是游戏的技能热键（按住 Shift 是游戏的“原地不动”，短按 Shift + F1 不会对英雄产生任何影响）。无 F 键：F1 - F8 全部归游戏；用 F12（下一个视角）、此处或手柄的视角按钮切换视角。F12 和手柄在任何选择下都有效。即时生效。
+view.keys.choice1 = Shift + F1 - F4（F1 - F8 仍是游戏技能键）
+view.keys.choice2 = 无 F 键（F12、Settings、手柄）
 
 # --- View (F1 - F4 in the game) ---
 group.view_f1_f4_in_the_game = 视角（游戏中的 F1 - F4）
-group.view_f1_f4_in_the_game.help = VR 中的视角：F1 俯视，F3 游戏在你的地板上，F4 第一人称，身体跟随你的手柄。在游戏中用 F1 - F4 切换（F12 循环切换）；游戏不再收到这些按键。
-mode.vr_mode.tip = 在游戏中用 F1 - F4 切换（F12 循环切换）。F3：游戏躺在你房间的地板上。F4：手臂跟随手柄，躯干保持不动。游戏收不到 F1 - F4。
+group.view_f1_f4_in_the_game.help = VR 中的视角：F1 俯视，F3 游戏铺在你的地面上，F4 第一人称，身体跟随你的手柄。在游戏中用 F1 - F4 切换（F12 循环切换），或用 Shift + F1 - F4，或只用 F12，这样 F1 - F8 仍是游戏的技能键：见下方“视角按键”。
+mode.vr_mode.tip = 在游戏中用 F1 - F4 切换（F12 循环切换）。F3：游戏铺在你房间的地面上。F4：手臂跟随手柄，躯干被托住。视角按键设为 F1 - F4 时，游戏收不到 F1 - F4；Shift + F1 - F4 会把它们还给游戏的技能。
 mode.vr_mode.choice0 = F1  俯视
 mode.vr_mode.choice2 = F3  游戏在你的地板上：低头俯看并绕着它走动（混合现实）
 mode.vr_mode.choice3 = F4  第一人称：身体跟随你的动作（手柄）
@@ -164,6 +168,15 @@ hud.headset_language.tip = 模组在头显中绘制的文字 - 技能面板、�
 @run.collect_logs.label = 收集日志以获取支持
 @run.collect_logs.tip = 在你的桌面生成一个压缩包，包含我们查找问题所需的内容：模组、D2RLoader、ReShade 和 FlatVR 的日志、设置、版本、显卡和 Windows。游戏运行时，它会先记录 10 秒钟的帧绘制情况 - 请继续游玩并转动头部。不会向任何地方发送任何内容：请把压缩包发布到我们的 Discord（#diablo-2-vr）。
 @status.collect.label = 收集日志：在桌面生成一个压缩包，可发布到我们的 Discord
+@status.crashrep.label = 崩溃报告：关
+support.crash_reports.label = 游戏异常关闭时，提示发送报告
+support.crash_reports.tip = 游戏崩溃、卡死或显卡丢失后，D2R VR Crash Reporter 会打开一个窗口，显示将发送到 BodyWalk 服务器的内容：游戏如何结束、该局游戏的日志、版本和显卡；您的 Windows 用户名和电脑名、角色名、地址和密码都会被去除。除非您在那里按“发送”，否则不会发送任何内容；内存转储只有勾选其专用选项才会发送。不勾选：没有任何程序监视游戏，和以前一样。下次启动游戏时生效。
+@run.crash_offer.label = 查看报告并发送
+@run.crash_offer.tip = 打开异常关闭的那局游戏的报告：会发送的每个文件，以及“发送”/“不发送”。
+support.send_logs.label = 将日志发送到 BodyWalk 服务器
+support.send_logs.tip = 勾选：下方的按钮会把“收集日志”的 zip 发送到 BodyWalk 服务器，而不用您自己发帖——这是一份去除了您的 Windows 用户名和电脑名、角色名、地址和密码的副本，且不含头显的截图和视频。您可以查看每个文件并自己按“发送”；之后请在 Discord 告诉我们报告编号。不勾选：只有桌面上的 zip，和以前一样。
+@run.send_logs.label = 将日志发送到 BodyWalk 服务器
+@run.send_logs.tip = 像上面的按钮一样收集日志，然后打开显示将发送到 BodyWalk 服务器内容的窗口。在那里按“发送”之前不会发送任何内容。
 headset_shot.on.label = 头显截图
 headset_shot.on.tip = 用于头显画面出现重影、显示在错误的眼睛中、黑屏或变平时：把游戏交给头显的内容原样保存——双眼的画面和各面板，连同它们的尺寸、角度和眼距——保存到日志文件夹。勾选：游戏运行时，下面的按钮和按键各截取一次；“收集日志”会打包最新的一次。不勾选：无，与以前相同。
 headset_shot.take.label = 截取头显画面
@@ -200,6 +213,8 @@ support.session_logs_days.label = 游戏日志保留天数
 support.session_logs_days.tip = 一局游戏的文件夹在创建这么多天后被删除（在启动时执行）。
 support.session_logs_max_mb.label = 所有日志的上限 (MB)
 support.session_logs_max_mb.tip = 只要所有文件夹的总大小超过此值，就先删除最旧的。一局游戏的日志约 1 - 10 MB。
+support.collect_sessions.label = 收集日志：同时打包最近几局游戏
+support.collect_sessions.tip = “收集日志”还会打包这么多局最新游戏的日志（它们在 sessions 下的文件夹），这样即使你已重新启动游戏，崩溃的那局也会在 zip 里。0：只打包 logs 文件夹，和以前一样。
 update.check.label = 打开本程序时检查更新
 update.check.tip = 向 bodywalkvr.com 询问模组的最新版本。不会下载任何内容。
 update.develop.label = 同时包含测试版（develop 频道）
@@ -217,6 +232,8 @@ render.monitor_eye_fit.label = 显示器：眼睛画面保持自身比例（裁�
 render.monitor_eye_fit.tip = 当 VR 渲染尺寸与窗口不同时（分辨率，头显中：宽窗口里的方形画面），Windows 会把画面拉伸铺满窗口 - 显示器上显示的画面被压扁了。开启：先把眼睛画面中与窗口形状相同的中间部分铺满整个画面，因此窗口以真实比例显示它（上下或两侧被裁掉）。窗口与画面形状相同时没有任何变化。即时生效。关闭：与以前一样被拉伸。
 render.monitor_eye_drawn_only.label = 显示器：双眼交替 - 只显示游戏绘制的画面
 render.monitor_eye_drawn_only.tip = 仅限“原生 OpenXR - 双眼交替”：绘制另一只眼的那些帧显示游戏绘制的这只眼的最后一幅画面 - 每幅画面显示两次，速率减半，但绝不会是在显卡上生成的（生成的画面在运动物体的边缘可能出现拖影）。关闭（默认）：显示那一帧为这只眼生成的画面 - 每一帧都是新的，如同头显所见。即时生效。
+render.monitor_panels.label = 显示器：显示头显的面板（物品栏、商人、储物箱、地图...）
+render.monitor_panels.tip = 原生 OpenXR 只在头显里把菜单和面板（您手上或面前的物品栏、商人、储物箱、工具栏和地图、腰带球、激光、怪物血条、设置面板和技能轮盘）叠在眼睛的画面上，所以显示器上的窗口（及其录像）只有没有这些面板的世界。勾选：每个面板也会画在显示器的画面上，位置就是那只眼睛看到的位置。头显的画面不变。有面板显示时，显卡每帧多几次绘制。即时生效。不勾选：只有世界，和以前一样。
 
 # ===== Tab: Performance =====
 tab.performance = 性能
@@ -474,7 +491,7 @@ body.crouch_cm.tip = 你的头要比站立时的眼睛高度低多少，英雄�
 shapeshift.forms_first_person.label = 德鲁伊：第一人称下的狼人和熊人（F4）
 shapeshift.forms_first_person.tip = 处于狼人或熊人形态的德鲁伊被游戏画成野兽，在第一人称中，它的头和背挡在你眼前。开启：野兽像德鲁伊的身体一样成为你的身体 - 躯干竖直保持在摄像机下方，它自己的头和脖子被隐藏，双臂在手柄上，眼睛位于该形态自己的高度（变身时在半秒内缓入）；站立不动时它的腿和尾巴保持不动，行走时采用游戏的步伐。它的爪子随你的握把合拢和张开，开启“用手的握把抓取怪物和盟友”时，爪子就是空闲的手：它们像你的手一样用掌心拿取、携带和扔出。只影响绘制的身体、摄像机和抓取：形态、它的攻击和速度仍是游戏的。仅限 VR 第一人称（F4），并且只对你自己的德鲁伊。关闭：游戏自己的野兽，与以前一样。想法和数值来自 D2R VR Unleashed（bearstonem/d2r-pcvr）。即时生效。
 shapeshift.claw_hits.label = 德鲁伊：狼人和熊人用爪子打击（F4）
-shapeshift.claw_hits.tip = 这些形态不持武器，所以接触命中没有可用来打击的东西。开启：每只爪子都像武器一样通过接触打击 - 从手腕到爪尖，按该形态自己的骨骼 - 足够快地挥向怪物就是游戏自己的攻击（配合直接命中则按其规则，或预备的技能：狂暴、野性狂怒、重创、饥饿……）。命中、伤害和速度由游戏决定。两只爪子算一件武器：任一只攻击后，两只都要等待英雄一次攻击所需的时间，所以两只爪子绝不会让攻击频率翻倍。最低速度采用徒手的那个（打击）。需要开启接触命中。仅限 VR 第一人称（F4）。即时生效。
+shapeshift.claw_hits.tip = 变身形态不持武器，所以接触命中没有可击打的东西。开启：每只爪子像武器一样通过触碰攻击——从手腕到爪尖，按该形态自己的骨骼——对怪物足够快的挥击就是游戏自己的攻击（按其规则使用直接命中，或已装备的技能：Fury、Feral Rage、Maul、Hunger ...）。命中、伤害和速度由游戏决定。两只爪子视为一件武器：其中一只攻击后，两只都要等英雄一次攻击所需的时间，所以两只爪子不会攻击得快一倍。最低速度取各形态自己的值（Strikes > Hit by touch；0：徒手的值）。需要开启 Hit by touch。仅限 VR 第一人称（F4）。即时生效。
 shapeshift.wolf_height.label = 狼人：眼睛高度，%
 shapeshift.wolf_height.tip = 狼人的眼睛位于它自身高度的这一比例处（100：德鲁伊的 98 %）。更低：你在世界中站得更低，它看起来更大。即时生效。
 shapeshift.bear_height.label = 熊人：眼睛高度，%
@@ -1016,6 +1033,14 @@ hud.map_rotate_flat.label = 地图随摄像机转动
 hud.map_rotate_flat.tip = 在你自己的摄像机视角（平面 F2 和 F3，画面中带地图的 VR F2 和 F3）下，屏幕上游戏的角落地图：绘制在英雄周围，从正上方俯视，并旋转到摄像机所看的方向朝上——转动鼠标，地图随你转动。VR F3（游戏铺在你的地面上）：你的头部沿地面所看的方向朝上——绕着游戏走动，地图随之旋转。此时金色箭头（Arrow on the map）指向上方。只有角落地图可以旋转：当游戏地图在屏幕中央（全屏地图）时，旋转期间它会移到右上角（Corner map is: left 会放到左上角），不旋转时再回到全屏——仅限本次游戏，游戏选项会保留你的选择。F1 不适用（那里游戏的摄像机和窗口从不旋转），VR F4 也不适用（手中的地图有自己的 Turns with you）。需要开启 D2R_DepthFog.fx（它负责把地图画回去）。不勾选：地图保持游戏自己的绘制方式。即时生效。
 hud_third.bar_near.tip = 仅限真立体：+ 把工具栏拉向眼睛，- 把它推到屏幕后面；0 = 游戏放置的位置。
 
+# --- Swing ---
+group.swing = 挥击
+group.swing.help = 英雄的挥击会倾向您瞄准的方向。
+body.attack_lean.label = F2：挥击倾向瞄准方向
+body.attack_lean.tip = 在您自己的镜头视角（平面 F2 和 F3，VR F2）下，游戏按自己的高度挥击：走近一个小怪时，刀刃会从它上方掠过。勾选：英雄攻击时，脊柱会弯向准星所看的方向——向下瞄，挥击就落向那里；向上瞄，就抬起——并随攻击渐入渐出。只影响绘制出的身体：游戏的攻击、命中、范围和方向仍由游戏决定。不适用于 F1、VR F3 或 F4。不勾选：和以前一样。即时生效。
+body.attack_lean_max_deg.label = 挥击倾斜：最大，°
+body.attack_lean_max_deg.tip = 挥击向上或向下倾斜的最大幅度：准星下的点比胸口低或高多少，脊柱就弯多少，最多到此值。即时生效。
+
 # --- Crosshair (mouse look) ---
 group.crosshair_mouse_look = 准星（鼠标视角）
 group.crosshair_mouse_look.help = 在 F2 中用鼠标视角游玩时屏幕中央的准星。可以开启或关闭它，设置它的大小，以及向前看和向下看时的深度，使它在立体中不会错开。
@@ -1062,6 +1087,44 @@ hud_floor.labels_size.tip = 地上物品的名称及其框，更小或更大，�
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = 界面：F3 眼前
 
+# --- Weapon in hand (F3) ---
+group.weapon_in_hand_f3 = 手持武器（F3）
+group.weapon_in_hand_f3.help = 第一人称：您的手臂连同手中的武器沿视角移动——向旁边、向上或向下、向前或向后——这样大型武器就不会挡在画面中央。按武器种类分别保存，和 VR 的 Weapon Adjust 一样：选择种类（或跟随手中的武器）。只移动绘制出的手臂；攻击由游戏决定。
+body.flat_weapon_adjust.label = 把手臂和武器移出画面中央
+body.flat_weapon_adjust.tip = 第一人称（F3）：每条手臂连同手和所持物，按下方滑块沿视角移动——初始全为 0，在你调整之前什么都不会动。请在游戏中自己调整：拖动时武器随之移动，每种武器各自保存位置（例如斧头比匕首更低更靠外）。整条手臂从肩部移动，所以手仍握着武器；双手持握的武器（双手剑、长杖）随双手一起移动，另一只手保持在握柄上。这些不是 VR 的 Weapon Adjust 数值。只有绘制出的手臂会变——攻击、攻击范围、命中以及其他玩家看到的内容仍由游戏决定。关闭 = 手臂在游戏动画所在的位置，和以前一样。即时生效。
+@ui.flat_weapon_follow.label = 跟随手中的武器
+@ui.flat_weapon_follow.tip = 下方滑块编辑英雄当前所持的武器种类（从运行中的游戏读取；下方的框显示是哪种）。关闭：自己选择种类。这是独立的选择，与 VR 的 Weapon Adjust 无关。
+@ui.flat_weapon.label = 武器
+@ui.flat_weapon.choice0 = 空手
+@ui.flat_weapon.choice1 = 弓
+@ui.flat_weapon.choice2 = 十字弩
+@ui.flat_weapon.choice3 = 剑
+@ui.flat_weapon.choice4 = 斧
+@ui.flat_weapon.choice5 = 锤
+@ui.flat_weapon.choice6 = 权杖
+@ui.flat_weapon.choice7 = 魔杖
+@ui.flat_weapon.choice8 = 长杖
+@ui.flat_weapon.choice9 = 长柄武器
+@ui.flat_weapon.choice10 = 矛
+@ui.flat_weapon.choice11 = 匕首
+@ui.flat_weapon.choice12 = 投掷武器
+@ui.flat_weapon.choice13 = 标枪
+@ui.flat_weapon.choice14 = 爪
+@ui.flat_weapon.choice15 = 法球
+@ui.flat_weapon.choice16 = 其他
+@flatweapon.right_x.label = 右臂：向右，cm
+@flatweapon.right_x.tip = 第一人称（F3）：右臂连同武器向视野右侧移动（- 朝中间）。按武器种类分别保存。即时生效。
+@flatweapon.right_y.label = 右臂：向上，cm
+@flatweapon.right_y.tip = 右臂向上移动（- 向下）。按武器种类分别保存。即时生效。
+@flatweapon.right_z.label = 右臂：向前，cm
+@flatweapon.right_z.tip = 右臂向前移动，沿视角远离你（- 向后，朝你）。按武器种类分别保存。即时生效。
+@flatweapon.left_x.label = 左臂：向左，cm
+@flatweapon.left_x.tip = 左臂（持盾或第二把武器）向视野左侧移动（- 朝中间）。左手中的武器使用它自己种类的数值；其他任何东西（盾牌、空手）使用右手武器种类的数值。即时生效。
+@flatweapon.left_y.label = 左臂：向上，cm
+@flatweapon.left_y.tip = 左臂向上移动（- 向下）。即时生效。
+@flatweapon.left_z.label = 左臂：向前，cm
+@flatweapon.left_z.tip = 左臂向前移动，沿视角远离你（- 向后，朝你）。即时生效。
+
 # --- Toolbar and map (F2, F3) ---
 group.toolbar_and_map_f2_f3 = 工具栏与地图（F2、F3）
 group.toolbar_and_map_f2_f3.help = 你自己的摄像机视角（F2 和 F3）中的工具栏和地图：勾选箭头，可以在地图上看到你朝哪个方向看。
@@ -1081,6 +1144,7 @@ hud_inside.map_zoom.label = 角落地图大小
 hud_inside.map_zoom.tip = 画面中的角落地图放大这么多（1 = 与游戏绘制的相同），从它自己的角落向外放大。要让它位于左上角，请在游戏选项中把小地图设在左边。需要在 ReShade 中开启 D2R_DepthFog.fx。
 body.flat_hold_trunk.label = 攻击时让身体保持在摄像机下方
 body.flat_hold_trunk.tip = 第一人称：挥击过程中英雄的胸部、臀部和头部都保持在摄像机下方，和 VR 第一人称一样；他的手臂和武器仍按游戏的动画挥动。只改变绘制的身体 - 攻击仍是游戏的。关闭 = 和以前一样（躯干会从摄像机下方甩出去）。
+body.attack_lean.label#2 = F2 和 F3：挥击倾向瞄准方向
 input.portal_look_horizon.label = 穿过传送门或传送点后看向地平线
 input.portal_look_horizon.tip = 第一人称：你要低头看着传送门才能走进去，出来时也还在低头。开启：穿过传送门或传送点后，视线回到地平线（只调上下；你面朝的方向不变）。来自 sajmonsoft 的平面分支。关闭 = 和以前一样。
 input.portal_auto.label = 走进传送门即可进入
@@ -1643,6 +1707,10 @@ hud.hand_vitals_orb_z_cm_assassin.label = 刺客：深度（Z）偏移，cm
 hud.hand_vitals_orb_z_cm_assassin.tip = 刺客游玩时，加到两只手腕的 Z（上方的离开手向上）上，无论是否镜像：手腕骨骼和手臂的模型因职业而异，所以一个深度只适合一个英雄。+ 使徽章离开手臂抬起，- 使其下沉。0 = 没有自己的值：沿用手腕自身的 Z，和以前一样。请编辑你所玩英雄对应的那一行——上一行会告诉你游戏当前是哪一个。即时生效。
 hud.hand_vitals_orb_z_cm_warlock.label = 术士：深度（Z）偏移，cm
 hud.hand_vitals_orb_z_cm_warlock.tip = 术士游玩时，加到两只手腕的 Z（上方的离开手向上）上，无论是否镜像：手腕骨骼和手臂的模型因职业而异，所以一个深度只适合一个英雄。+ 使徽章离开手臂抬起，- 使其下沉。0 = 没有自己的值：沿用手腕自身的 Z，和以前一样。请编辑你所玩英雄对应的那一行——上一行会告诉你游戏当前是哪一个。即时生效。
+hud.hand_vitals_orb_z_cm_werebear.label = 熊人：深度（Z）偏移，cm
+hud.hand_vitals_orb_z_cm_werebear.tip = 当德鲁伊的熊人作为你的身体时（Body > "德鲁伊：第一人称下的狼人和熊人"，F4）：在德鲁伊那一行之上加到两只手腕的 Z 上——熊掌比德鲁伊的前臂粗得多，徽章会陷进毛里。+ 把它抬出来。0 = 德鲁伊的位置，与之前相同。狼人保持德鲁伊的位置。即时生效。
+hud.hand_vitals_orb_form_auto.label = 熊人：按前臂自身模型抬高
+hud.hand_vitals_orb_form_auto.tip = 当熊人作为你的身体时（F4），徽章还会再抬高熊的前臂比德鲁伊的前臂多突出手腕背面的那一段——两者都按前臂骨骼自身绘制出的网格测量（德鲁伊的取自她上一次人形时）。上面那一行叠加在上面。勾选"直接在前臂骨骼上"时，徽章已经贴在熊的皮肤上，只叠加上面那一行。未勾选：只用上面那一行。即时生效。
 hud.bar_width_arm.label = 长度，m
 hud.bar_split_arm.label = 分成两段
 hud.bar_split_arm.tip = 条带从中间切开，两半并排摆放：蓝球的那一半留在原处，红球的那一半首尾调转后放在旁边，这样两个球就一起落在手腕处。长度减半，宽度加倍。如果它们落到了肘部，请将 Z 旋转 180。
@@ -1778,6 +1846,8 @@ render.game_height_fog.label = 游戏自带的高度雾
 render.game_height_fog.tip = 只有第二幕的城镇有它。从我们的摄像机看，它的边缘是横贯画面的一条硬线，上方还有一层淡淡的薄雾（游戏自己的摄像机永远看不到这条边缘）。关闭：vrcam 将其设为 0。
 render.game_depth_fog.label = 游戏自带的深度雾
 render.game_depth_fog.tip = 每个室外区域都有，从其摄像机的距离开始向外：画面四个角落里的灰色雾霭（俯视时也有），从我们的摄像机看还会盖在近处的地面上。关闭：vrcam 将其设为 0。
+render.game_fog_scan_safe.label = 安全地查找游戏的雾
+render.game_fog_scan_safe.tip = D2R VR 如何找到游戏的高度雾和深度雾以关闭它们：读取游戏内存的副本，因此游戏在此期间释放的内存块会被无错误地跳过（D2RLoader 曾把这些记为崩溃报告），只在游戏区域拥有定义的地方读取定义，并且只有当一个值仍是刚读到的值时才更改它。关闭：直接读取，和以前一样。即时生效。
 render.depth_fix.label = 游戏特效从我们的摄像机测量深度
 render.depth_fix.tip = 游戏为它的雾、高度雾、环境光遮蔽、反射和水面保留了一份深度副本，是按它那个高高在上的俯视摄像机（距离 550 到 1060 个单位）制作的。从我们的摄像机看，一切都更近，被读成一堵 550 远的平坦墙面：于是出现第二幕城镇里那条笔直的线和上方的薄雾，以及角落里的雾霭。开启：这份深度从我们的摄像机算起。关闭：用游戏自己的。
 render.own_depth.label = 特效使用的深度
@@ -1806,6 +1876,8 @@ render.light_bounds_fix.label = 修正方形或宽窗口下的游戏光照
 render.light_bounds_fix.tip = 游戏把画面切成 32 x 20 的图块，并用一个着色器为每个图块求出其灯光的深度范围，而这个着色器只在 16:10 的窗口下才正确。在方形或宽窗口（VR 窗口、16:9）下它会漏掉若干行：灯光在硬边的矩形中消失，移动头部时屋顶的明暗会闪烁。开启：在 VR 渲染时由我们自己的着色器正确完成这项工作，有无 ReShade 均可（在 16:10 下数值与游戏的相同）。关闭立即生效；重新勾选后下次启动游戏时生效。关闭：游戏自己的。
 render.light_bounds_flat.label = ……平面模式下也修正
 render.light_bounds_flat.tip = 在平面模式下也做同样的修正（显示器或窗口，原生 OpenXR 的平面画面也算）：游戏的着色器在 16:9 和方形窗口下同样是错的，不只是在 VR 中。立即跟随当前模式。关闭：平面模式保持游戏自己的着色器，和以前一样。
+render.reflections_per_eye.label = 水洼和血泊中的倒影采用真实深度（3D）
+render.reflections_per_eye.tip = 使用“Stereo - one pass, two pictures”时，游戏在水面、水洼和血泊中的倒影在右眼里被画得好像是从两倍眼距处看到的：视差翻倍、深度减半——倒影看起来漂浮在水洼上方，还会让眼睛吃力。开启：游戏的两次倒影渲染会读取每只眼睛自己的位置（只改了它自己着色器里的一个值；不给显卡增加额外负担），因此每个倒影都落在水面上。其他 3D 模式和平面模式在两种情况下看起来都一样。在游戏启动时处理：开启后，下次启动才生效；之后此选项即时生效。关闭：游戏原样。
 
 # --- Render distance ---
 group.render_distance = 渲染距离
@@ -2085,26 +2157,7 @@ tab.weapon_adjust = 武器调整
 # --- Weapon in hand ---
 group.weapon_in_hand = 手中的武器
 group.weapon_in_hand.help = 你手中的武器：它放在哪里、怎样转向。选择一种武器（或跟随手中那一种），然后移动滑块，直到它如你所愿地躺在手中。左手的滑块用来把拳头放到双手武器的杆身上。
-@ui.weapon_follow.label = 跟随手中的武器
 @ui.weapon_follow.tip = 下面的滑块编辑英雄当前持有的那种武器（从运行中的游戏读取）。关闭：自己选择武器种类。
-@ui.weapon.label = 武器
-@ui.weapon.choice0 = 空手
-@ui.weapon.choice1 = 弓
-@ui.weapon.choice2 = 十字弩
-@ui.weapon.choice3 = 剑
-@ui.weapon.choice4 = 斧
-@ui.weapon.choice5 = 锤
-@ui.weapon.choice6 = 权杖
-@ui.weapon.choice7 = 魔杖
-@ui.weapon.choice8 = 长杖
-@ui.weapon.choice9 = 长柄武器
-@ui.weapon.choice10 = 矛
-@ui.weapon.choice11 = 匕首
-@ui.weapon.choice12 = 投掷武器
-@ui.weapon.choice13 = 标枪
-@ui.weapon.choice14 = 爪
-@ui.weapon.choice15 = 法球
-@ui.weapon.choice16 = 其他
 @weapon.x.label = 沿 X 移动，cm
 @weapon.x.tip = 手臂跟随手柄时：武器在手中移动，沿其握持者自身的轴线。按武器种类分别保存。
 @weapon.y.label = 沿 Y 移动，cm
@@ -2294,6 +2347,12 @@ bow.arrow_fire_cut.label = 箭的特效：离弦时熄灭
 bow.arrow_fire_cut.tip = 开启：射击发出——弦松开——时，火焰、冰霜或奥术光芒就熄灭，而不是稍后游戏隐藏你手中的箭时才熄灭。它在下一支箭上会再次亮起：新的拉弦、射击后游戏再次显示箭、选择了另一个技能。下面的延迟让它在射出的箭上保留那么久。只是我们自己加在箭上的光：游戏的投射物、其特效和伤害仍是游戏的。关闭：特效保留到游戏隐藏箭为止，和以前一样。仅限 F4。即时生效。
 bow.arrow_fire_cut_ms.label = 箭的特效：离弦时熄灭 - 延迟，ms
 bow.arrow_fire_cut_ms.tip = 松开后特效多久熄灭：0 = 松开时。在此之前的新拉弦或显示出的下一支箭，会在那支箭上重新点亮它。即时生效。
+bow.swap_by_grab.label = 弓：抓住它换到另一只手
+bow.swap_by_grab.tip = VR 第一人称（F4），弓：在弓的握把处（距持弓手 25 cm 以内，离握把比离弓弦更近）按下空闲手的握持键，弓就换到那只手上，那只手会有一次短促震动；此后弓弦归另一只手——左撇子弓箭手右手持弓、左手拉弦。换回来同理。绘制出的弓、弓弦及其拉开、瞄准、箭袋及其球体都随之移动。只是画面和哪个手柄做什么：游戏的弓仍在自己的栏位。空闲手在弓的握把处按扳机和握持键不会拿弦；在弓弦处则会，和以前一样。弩不能这样换手。它所在的手会被记住（下一个设置），下次弓从那只手开始。关闭：弓留在设置所指定的手里，和以前一样。即时生效。
+bow.bow_hand.label = 弓：所在的手
+bow.bow_hand.tip = 上面的选项所决定的弓所在的手。每次您换弓时游戏都会写入它，所以重启后仍会保留；在此设置可让弓从那只手开始。
+bow.bow_hand.choice0 = 右手
+bow.bow_hand.choice1 = 左手
 
 # --- Bow without the string draw (the A button, mode above) ---
 group.bow_without_the_string_draw_the_a_button_mode_above = 不拉弦的弓（A 键，上方的模式）
@@ -2693,6 +2752,10 @@ gameplay.melee_touch_barrels.label = 击打即可打破木桶和罐子
 gameplay.melee_touch_barrels.tip = 手持武器挥过木桶、罐子、瓮或篮子时，会按游戏自己的方式打破它：这一挥（能命中怪物的那种）会对该物体按下游戏的互动键，就像按 A 一样，于是英雄用他自己的动画踢开或打破它 - 掉落物、陷阱和爆炸都是游戏的。箱子、门、神殿和任务物品保持它们的常规操控，A 仍然有效。物体的大小是根据其占地面积估算的。取消勾选：与以前一样，只有 A 能打破它们。即时生效。仅限 F4。
 gameplay.melee_touch_barrels_min_speed.label = ……能打碎它们的挥击，从 (m/s)
 gameplay.melee_touch_barrels_min_speed.tip = 穿过木桶或罐子并将其打碎的挥击所需的最低速度：它们自己的，不是怪物的（上面的“the least blade speed that hits”），同样适用于 strike by force。2：轻松的一挥。即时生效。
+shapeshift.wolf_min_speed.label = 狼人：爪子最低挥击速度，m/s
+shapeshift.wolf_min_speed.tip = 狼人的爪子在接触怪物处要多快，这一击才算数。空手很难像武器那样快速挥动，所以爪子有自己的数值。0：徒手的值，否则用通用最低速度（上方），和以前一样。只决定触碰是否算数；攻击、速度和伤害仍由游戏决定。需要 Body > 德鲁伊：狼人和熊人用爪子打击。即时生效。
+shapeshift.bear_min_speed.label = 熊人：爪子最低挥击速度，m/s
+shapeshift.bear_min_speed.tip = 熊人的爪子在接触怪物处要多快，这一击才算数。空手很难像武器那样快速挥动，所以爪子有自己的数值。0：徒手的值，否则用通用最低速度（上方），和以前一样。只决定触碰是否算数；攻击、速度和伤害仍由游戏决定。需要 Body > 德鲁伊：狼人和熊人用爪子打击。即时生效。
 gameplay.melee_touch_thrown_held.label = 投掷武器从一开始就是你手中的武器（命中无需握把）
 gameplay.melee_touch_thrown_held.tip = 标枪、飞刀或飞斧从装备上的那一刻起就是你手中的武器，如同一把剑：它立即按接触命中，你无需先握紧握把。放下后（握把握紧后在手静止时松开），在有手再次握住它之前它什么也打不中，与剑相同。投掷也一样：握紧握把、挥动、松开——用的是游戏自己的投掷；投掷后接触仍会停用 0.7 s，且一次挥动只投出一次。取消勾选：与以前相同——开启握把投掷时，投出的武器只在其握把握紧期间才按接触命中。即时生效。仅限 F4。
 gameplay.melee_touch_only.label = 扳机不攻击（仅刃的接触；弓或十字弩用扳机射击）
@@ -2843,8 +2906,8 @@ gameplay.shield_smite_stroke_cm.tip = 只有盾牌在大约十分之一秒内移
 
 # --- Attention: these change the game's own logic ---
 group.attention_these_change_the_game_s_own_logic = 注意：这些选项会改变游戏自身的逻辑
-group.attention_these_change_the_game_s_own_logic.help = 此区块中的选项有意超出 Diablo II 自身的规则：它们让游戏的服务器去做它自己的攻击和移动规则不会做的事。模组默认两者都开启（按规则直接命中）；关闭（不勾选）就是游戏自身的逻辑，与不装模组时的玩法相同。直接命中：你的武器一次触碰立即成为服务器的攻击 - 没有动画、没有攻击速度、不用走过去。由游戏移动你携带和扔出的东西：你携带或扔出的怪物，由游戏自己的击退放到另一个格子上。在单人游戏中和作为主机时，游戏会为其中的所有人改变。模组中的其他一切 - 接触命中、武器重量、布娃娃、不带这种移动的抓取怪物 - 都只是向游戏提供输入的另一种方式：仍由游戏决定。
-@status.game_logic.label = 默认开启。这两项让游戏去做它自己的规则不会做的事：攻击和位置直接发送到游戏服务器。它们会改变游戏的玩法，在合作中会影响所有人。关闭它们即可按游戏自身的规则来玩。（模组中的其他一切都是另一种输入方式：由游戏决定。）
+group.attention_these_change_the_game_s_own_logic.help = 此区块中的选项有意超出 Diablo II 自身的规则：它们让游戏的服务器去做它自己的攻击和移动规则不会做的事。模组默认开启直接命中（按规则）和移动你携带与扔出的东西；关闭（不勾选）就是游戏自身的逻辑，与不装模组时的玩法相同。直接命中：你的武器一次触碰立即成为服务器的攻击 - 没有动画、没有攻击速度、不用走过去。由游戏移动你携带和扔出的东西，以及你打倒的东西：你携带、扔出或打倒的怪物，由游戏自己的击退放到另一个格子上。在单人游戏中和作为主机时，游戏会为其中的所有人改变。模组中的其他一切 - 接触命中、武器重量、布娃娃、不带这种移动的抓取怪物 - 都只是向游戏提供输入的另一种方式：仍由游戏决定。
+@status.game_logic.label = 这些选项让游戏去做它自己的规则不会做的事：攻击和位置直接发送到游戏服务器。它们会改变游戏的玩法，在合作中会影响所有人。关闭它们即可按游戏自身的规则来玩。（模组中的其他一切都是另一种输入方式：由游戏决定。）
 @directhit.mode.label = 直接命中
 @directhit.mode.tip = 关闭：接触按下游戏自己的攻击（它的动画、攻击速度、攻击距离）。按规则：对一个怪物的第一次接触是直接命中。之后，在你的英雄完成一次攻击所需的时间之内再次接触同一个怪物（按他自己的攻击动画计时，因此会跟随他的攻击速度），则是游戏自己的攻击 - 快速戳刺没有好处。在此之后，只有真正的挥击才能再次对它直接命中：需达到下方的最低速度、力道和挥动长度（你手柄自身的轨迹）。换一个怪物永远不算太早。双手武器需要双手都握在上面（双手握持）：只用一只手时，它的接触是游戏自己的攻击。不满足规则的接触照样会攻击：是游戏自己的攻击，绝不会什么都不发生。双手横扫只有勾选下方它自己的选框才生效。完全开启（不推荐）：每次被接受的接触都是直接命中，和旧的实验选框一样。直接命中是什么：在单人游戏和作为主机时，插件自己调用游戏的服务器攻击（命中判定、伤害和耐久损耗都由游戏计算；没有动画，不等待攻击速度，也不走到怪物跟前）。作为加入他人 TCP/IP 游戏的玩家，它发送游戏自己的“攻击这个怪物”命令 - 就是点击怪物时发送的那条 - 由主机的服务器完成整个攻击（主机无需为此做任何设置）。仅当你攻击栏位上的技能就是英雄手中的那个，且没有预备近战技能时生效。写入 [gameplay] melee_direct 和 melee_direct_client。实时。仅限 F4，和接触命中一样。
 @directhit.mode.choice1 = 按规则
@@ -2862,6 +2925,9 @@ gameplay.melee_direct_client_cleave.tip = 超出游戏“一次只进行一个�
 group.monsters_you_carry_and_throw_weapon_weight_grab_bodies = 你携带和扔出的怪物（武器重量 > 抓取躯体）
 weight.grab_moves_unit.label = 由游戏移动你携带和扔出的东西（测试）
 weight.grab_moves_unit.tip = 需要 武器重量 > 抓取躯体 > “举起并扔出你抓住的人形怪物”。即时生效。勾选：你携带或扔出的人形怪物由游戏本身移动 - 它自己的击退把它放到你所握身体下方的位置，以及它落地的地方 - 所以它从那里继续战斗，不会走回原来的位置，而且游戏中的每个人都能看到。游戏的击退拒绝的（首领、大型怪物）留在原地。仅在单人游戏中或由你托管游戏时；加入的玩家那里仍只是绘制。F4。不勾选：只有绘制移动，游戏把它保持在原来的位置，与以前一样。
+group.monsters_you_knock_down_weapon_weight_monsters_bodies = 你打倒的怪物（Weapon Weight > Monsters' bodies）
+weight.knock_down_moves_unit.label = 由游戏移动你打倒的东西（测试）
+weight.knock_down_moves_unit.tip = 需要 Weapon Weight > Monsters' bodies > “重击会把人形怪物打倒”。即时生效。勾选：被你的攻击打倒的人形怪物由游戏本身移动 - 它自己的击退把它放到它身体倒下并躺着的位置 - 所以它从那里继续战斗，你对躺在那里的身体的攻击会命中，它也会在那里站起来，而不是走回原来的位置；游戏中的每个人都能看到。每次倒地只有几次击退（落地处和停稳处），绝不更多：如果它躺着时被游戏移走，它会站起来离开。踉跄（后退一步）不会移动任何东西。游戏的击退拒绝的（首领、大型怪物）留在原地。仅在单人游戏中或由你托管游戏时；加入的玩家那里仍只是绘制。F4。不勾选：只有绘制倒下，游戏把它保持在原来的格子上，与以前一样。
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = 技能发送到 BodyWalk
@@ -3978,7 +4044,7 @@ vr.guide.5.row2.does = 游戏在你的地板上：低头看它，绕着它走
 vr.guide.5.row3.control = F4
 vr.guide.5.row3.does = 第一人称 - 就是这个视角。双手、面板和本指南都属于 F4。
 vr.guide.5.row4.control = 键盘
-vr.guide.5.row4.does = 视角对应的 F 键（游戏窗口处于焦点时），F12 下一个视角，F11 重新居中。设置的视角页上也有 F1 - F4。
+vr.guide.5.row4.does = F1 - F4 或 Shift + F1 - F4（Settings > Home > 视角按键；游戏窗口处于焦点时），F12 下一个视角，F11 重新居中。“视角”页面里也有。
 vr.guide.5.row5.control = 再次查看本指南
 vr.guide.5.row5.does = 头显中的设置，身体页：首次启动指南
 vr.guide.5.nav = “完成”关闭指南；它随时都在身体页上。
@@ -4055,6 +4121,12 @@ status.depth.none = 深度：我们自己的 - 尚未选取（游戏在 VR 中�
 status.depth.ours = 深度：我们自己的，缓冲 {buffer}，{w} x {h}；上次选取于 {at}（{why}）；选取 {picks} 次，另一个缓冲 {others} 次。
 status.weight_lib.found = 重量物理库：d2r_vr_weight.dll 位于 d2rloader\d2r_vr_libs——下方的勾选项让武器用它移动。
 status.weight_lib.missing = 重量物理库：在 d2rloader\d2r_vr_libs 中找不到（d2r_vr_weight.dll）——模组保留自己的重量物理，下方的勾选项不可用。
+status.crashrep.missing = 崩溃报告：未安装 D2R VR Crash Reporter（d2rloader\d2r_vr_libs）——下面两个选项不可用。
+status.crashrep.pending_logs = {when} 收集的日志已准备好发送——尚未发送任何内容。
+status.crashrep.pending = 一局游戏异常关闭（{when}）：报告已准备好——尚未发送任何内容。
+status.crashrep.on = 崩溃报告：开——游戏异常关闭后会询问您是否发送报告。
+status.crashrep.off = 崩溃报告：关——没有程序监视游戏，不会发送任何内容。
+crashrep.ask = 愿意帮我们修复崩溃吗？\n\n当游戏异常关闭（崩溃、卡死、显卡丢失）时，D2R VR 可以提示向 BodyWalk 服务器发送报告：该局游戏的日志、版本和显卡。您的 Windows 用户名和电脑名、角色名、地址和密码都会被去除，并且您会先看到每个文件。\n\n除非您在那个窗口里按“发送”，否则不会发送任何内容。您随时可以更改：Home > D2R VR >“游戏异常关闭时，提示发送报告”。
 status.grip_lib.found = 握持库：d2r_vr_grip.dll 位于 d2rloader\d2r_vr_libs - 下方的勾选项让武器按它的方式握持。
 status.grip_lib.missing = 握持库：在 d2rloader\d2r_vr_libs 中找不到（d2r_vr_grip.dll）——模组保留自己的握持方式，下方的勾选项不可用。
 weapon_list.adjusted = {kind} - 已调整：{numbers}
@@ -4205,6 +4277,9 @@ status.collect.packing = 正在打包日志...
 status.collect.no_script = 无法将打包脚本写入 TEMP 文件夹
 status.collect.no_powershell = 无法启动 PowerShell 来打包日志
 status.collect.no_zip = 无法生成压缩包（代码 {code}）
+status.collect.send_window = 正在打开显示将发送内容的窗口——在那里按“发送”之前不会发送任何内容
+status.collect.no_reporter = 无法启动 D2R VR Crash Reporter（错误 {code}）——zip 在您的桌面上：{name}.zip
+status.collect.send_done = 发送窗口已关闭。zip 也在您的桌面上：{name}.zip
 status.collect.saved = 已保存在你的桌面：{name}.zip - 请发布到我们的 Discord（#diablo-2-vr）
 mp.ago.now = 刚刚
 mp.ago.min = {n} 分钟前
@@ -4311,7 +4386,7 @@ status.update.up_to_date = 已是最新
 status.update.available = 有可用更新：v{version}
 button.download_version = 下载 v{version}
 status.update.whats_new = 新内容：{text}
-footer = 游戏运行时，更改会立即生效。   F1 - F4：视角（主页标签页）。   F12：下一个视角。   F11：“前方”就是我注视的方向。   Ctrl + 滚轮：缩放。   Ctrl + Tab：下一个标签页。
+footer = 游戏运行时，更改立即生效。   F1 - F4 或 Shift + F1 - F4：视角（Home 选项卡）。   F12：下一个视角。   F11：“向前”就是我看的方向。   Ctrl + 滚轮：缩放。   Ctrl + Tab：下一个选项卡。
 msg.no_ini = 本程序旁边的 mods\D2R-VR\d2rloader\plugins（也不在 d2rloader\plugins）中没有 d2r_vr.ini。\n请把本程序放在游戏的 D2R.exe 旁边，并已安装模组。
 arcane.no_textures = ReShade 的 reshade-shaders\Textures 不在 {folder} 中：请安装 ReShade（见上方）：有了它才能生成这些图片
 arcane.game_folder = 游戏的文件夹
@@ -4635,6 +4710,37 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+@ui.weapon_follow.label = 跟随手中的武器
+@ui.weapon.label = 武器
+@ui.weapon.choice0 = 空手
+@ui.weapon.choice1 = 弓
+@ui.weapon.choice2 = 十字弩
+@ui.weapon.choice3 = 剑
+@ui.weapon.choice4 = 斧
+@ui.weapon.choice5 = 锤
+@ui.weapon.choice6 = 权杖
+@ui.weapon.choice7 = 魔杖
+@ui.weapon.choice8 = 长杖
+@ui.weapon.choice9 = 长柄武器
+@ui.weapon.choice10 = 矛
+@ui.weapon.choice11 = 匕首
+@ui.weapon.choice12 = 投掷武器
+@ui.weapon.choice13 = 标枪
+@ui.weapon.choice14 = 爪
+@ui.weapon.choice15 = 法球
+@ui.weapon.choice16 = 其他
+@weapon.flat_right_x.label = 右臂：向右，cm
+@weapon.flat_right_x.tip = 第一人称（F3）：右臂连同武器向视角右侧移动（负值 = 向中间）。按武器种类分别保存。即时生效。
+@weapon.flat_right_y.label = 右臂：向上，cm
+@weapon.flat_right_y.tip = 右臂向上移动（负值 = 向下）。按武器种类分别保存。即时生效。
+@weapon.flat_right_z.label = 右臂：向前，cm
+@weapon.flat_right_z.tip = 右臂向前移动，沿视角远离您（负值 = 向后，靠近您）。按武器种类分别保存。即时生效。
+@weapon.flat_left_x.label = 左臂：向左，cm
+@weapon.flat_left_x.tip = 持盾或副武器的左臂向视角左侧移动（负值 = 向中间）。左手的武器使用其自身种类的数值；其他任何东西（盾牌、空手）使用右手所持种类的数值。即时生效。
+@weapon.flat_left_y.label = 左臂：向上，cm
+@weapon.flat_left_y.tip = 左臂向上移动（负值 = 向下）。即时生效。
+@weapon.flat_left_z.label = 左臂：向前，cm
+@weapon.flat_left_z.tip = 左臂向前移动，沿视角远离您（负值 = 向后，靠近您）。即时生效。
 weight.death_ragdoll.label = 被杀死的人形怪物作为布娃娃倒下（测试）
 group.direct_hit = 直接命中
 group.direct_hit.help = 有效的接触如何变成一次命中。关闭：接触按下游戏自己的攻击。按规则：对怪物的第一次接触，以及英雄攻击时间过后的真实挥击，算直接命中，其余为游戏自己的攻击。完全开启：每次接触都是直接命中（旧的实验方式）。单人游戏、主机和加入他人游戏的玩家都在这一处设置。

@@ -5,7 +5,8 @@ Every change applies at once while the game runs; nothing needs a restart unless
 the label says so. D2R VR is a D2RLoader mod: everything of it, the settings too, is in `mods\D2R-VR` in the game's folder
 (`mods\D2R-VR\d2rloader\plugins\d2r_vr.ini`; before 0.170 the file was in `d2rloader\plugins`, Setup moves it with your settings).
 
-Keys in the game: **F1 - F4** pick the view, **F12** goes to the next one,
+Keys in the game: **F1 - F4** pick the view (or **Shift + F1 - F4**, or none:
+Home > *View keys*), **F12** goes to the next one,
 **F11** makes "straight ahead" wherever you are looking. In this program
 **Ctrl + wheel** zooms the window and **Ctrl + Tab** goes to the next tab.
 
@@ -76,6 +77,13 @@ the headset-only ones.
   - **F3 On your floor** - the game as a living diorama on your floor or table.
   - **F4 First person** - your body is the hero's: arms on the controllers,
     the weapon in your hands.
+- **View keys** - `[view] keys`: which keys pick the view. *F1 - F4* (the
+  default, as before): the game does not get F1 - F4, put its skills on other
+  keys. *Shift + F1 - F4*: hold Shift and press the view's F key; a plain
+  F1 - F8 is the game's skill hotkey again (Shift held is the game's "stand
+  still" - a short Shift + F1 does nothing to the hero). *No F keys*: F1 - F8
+  are all the game's; the view changes with F12, here, or the controller's
+  view buttons. F12 and the controller work with every choice. Live.
 - **Draw distance** - *Draw distance (near - far)*, stops 1 - 8, sets together
   what is set apart on Performance, World and Sky: the room rings and the model
   visibility radius (`[render] rings`, `model_radius`) - the edge of the drawn

@@ -61,6 +61,7 @@
 #include "draw_distance.h"   // Home's Draw distance: one slider's stops over the room rings, model radius, fog and sky dome (tested)
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
+#include "d2r_vr_crash_watch.h"   // [support] crash_reports / send_logs: D2R VR Crash Reporter's place, its quiet event, a report's state (docs/crash_watchdog.md)
 #include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
 #include "reshade_as.h"      // Home: the ReShade the player has as dxgi.dll is used as it is; the buttons for it, tested (shared/reshade_as.h)
 #include "reshade_paths.h"   // D2R VR's two search paths in that ReShade's ReShade.ini: append-only text edits, tested (shared/reshade_paths.h)
@@ -75,6 +76,7 @@
 #include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
 #include "../../vr/low_hp_eq.h"      // [hud] low_hp_cover_eq / low_mp_cover_eq: the vignettes' equalizer - its points and range (tested: low_hp_eq_test)
 #include "../../vr/low_mp.h"         // [hud] low_mp_vignette: the low-mana blue's band keys and defaults (low_mp_cover_eq_<percent>; tested: low_mp_test)
+#include "../../vr/flat_weapon.h"    // [body] flat_weapon_adjust: the flat F3 arms' defaults (tested: flat_weapon_test)
 #include "../../vr/ui_text_tables.h" // the headset's words that live in the plugin's tables, with their keys (--lang-template lists them for lang\en.txt)
 #include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
 #include "rooms_bridge.h"    // the Multiplayer tab's D2R Rooms bridge: its d2r-rooms.ini and d2r-rooms-status.json, the plugin's formats (tested: rooms_bridge_test)
@@ -346,6 +348,17 @@ constexpr const wchar_t* kDrawDistanceTip = L"Sets five things at once, near (1)
                                             L"radius), in caves at the radius - so nothing pops out of the void. 3: 2 rings, models out to 200. Farther "
                                             L"costs processor time (more rooms and models each frame); nearer is lighter. The line under it says what "
                                             L"is set now. Custom: one of the single values was changed by hand - moving the slider sets them all again. Live.";
+// [view] keys (vr/view_keys.h): which F keys pick the view - Home, under the views, flat and VR. A player (barti4033, 2026-11-04) has his
+// main skills on F1 / F2 / F4 and a panic teleport on F3; Serg's idea: Shift + F1 instead of F1. 0 = as before.
+constexpr const wchar_t* kViewKeysTip =
+    L"Which keys pick the view in the game. F1 - F4: as before - the game does not get F1 - F4, put its skills on other keys. "
+    L"Shift + F1 - F4: hold Shift and press the view's F key; a plain F1 - F8 is the game's skill hotkey again (Shift held is the game's "
+    L"\"stand still\" - a short Shift + F1 does nothing to the hero). No F keys: F1 - F8 are all the game's; the view changes with F12 "
+    L"(next view), here, or the controller's view buttons. F12 and the controller work with every choice. Live.";
+Item ViewKeys() {
+    return Choice(L"view", L"keys", L"View keys", 0,
+                  {L"F1 - F4", L"Shift + F1 - F4 (F1 - F8 stay the game's skills)", L"No F keys (F12, Settings, the controller)"}, kViewKeysTip);
+}
 // [openxr] fov_override and its sliders: on the Stereo tab and on Home (under the views) both
 constexpr const wchar_t* kFovOverrideTip =
     L"For headsets or streamers whose picture stays distorted (e.g. an Apple Vision Pro via ALVR: the world cross-eyed or stretched "
@@ -383,6 +396,14 @@ constexpr const wchar_t* kMapDirectionTip =
     L"show which way you look. Ticked: a small gold arrow beside your hero's marker in the middle of the game's mini map (and of the "
     L"whole-screen map) points where the camera looks - in the picture, and on the map in the hand. Drawn over the game's map only; the map "
     L"and what is on it are the game's. F1 and the floor (VR F3) as before. Unticked: the map as before. Live.";
+// [body] attack_lean (vr/attack_lean.h): one key, on the tabs of the views it acts in (flat UI: F3 eyes, VR UI: F2 behind)
+constexpr const wchar_t* kAttackLeanTip =
+    L"In your own camera's views (flat F2 and F3, VR F2) the game swings at its own height: walk up to a small monster and the blade passes "
+    L"over it. Ticked: while your hero attacks, his spine bends toward where the crosshair looks - aim down and the swing comes down onto it, "
+    L"aim up and it rises - eased in and out with the attack. Only the drawn body: the game's attack, its hit, range and direction are its "
+    L"own. Not F1, VR F3 or F4. Unticked: as before. Live.";
+constexpr const wchar_t* kAttackLeanMaxTip =
+    L"The most the swing leans, up or down: the spine bends as far as the point under the crosshair is below or above the chest, up to this. Live.";
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2 / F3
 constexpr const wchar_t* kMapRotateFlatTip =
     L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round "
@@ -621,27 +642,31 @@ std::vector<Item> g_items = {
            L"Measure it with the T-pose on the Body tab if you want it exact.")),
     Only(kVr, Status(L"native_xr", L"Native OpenXR (the first 3D choice above) needs a BodyWalk that takes the game's headset (1.78 or later) or \"Controls without BodyWalk\"")),
 #if D2RVR_FIRST_PERSON
-    Only(kFlat, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person, F3 first person with mouse look and W A S D. Switch in the game with F1, F2, F3 (F12 goes round); the game no longer gets these keys."))),
+    Only(kFlat, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person, F3 first person with mouse look and W A S D. Switch in the game with F1, F2, F3 (F12 goes round) - or with Shift + F1 - F3, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Radio(L"mode", L"flat_view", 1, 3,
           {L"F1  The game's own camera", L"F2  Third person", L"F3  First person: mouse look, W A S D"},
-          L"Switch in the game with F1, F2, F3 (F12 goes round). The game does not get these keys: put its skills on others."),
-    Only(kVr, InColumn(1, Group(L"View (F1 - F4 in the game)", L"The view in VR: F1 from above, F3 the game on your floor, F4 first person with the body following your controllers. Switch in the game with F1 - F4 (F12 goes round); the game no longer gets these keys."))),
+          L"Switch in the game with F1, F2, F3 (F12 goes round). With View keys at F1 - F4 the game does not get these keys; Shift + F1 - F4 gives them back to its skills."),
+    Only(kFlat, ViewKeys()),
+    Only(kVr, InColumn(1, Group(L"View (F1 - F4 in the game)", L"The view in VR: F1 from above, F3 the game on your floor, F4 first person with the body following your controllers. Switch in the game with F1 - F4 (F12 goes round) - or with Shift + F1 - F4, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Radio(L"mode", L"vr_mode", 1, 1,
           {L"F1  From above", L"F2  Third person", L"F3  The game on your floor: look down at it and walk round it (mixed reality)",
            L"F4  First person: the body follows yours (controllers)"},
           L"Switch in the game with F1 - F4 (F12 goes round). F3: the game lies on the floor of your room. "
-          L"F4: arms on the controllers, the trunk held. The game does not get F1 - F4."),
+          L"F4: arms on the controllers, the trunk held. With View keys at F1 - F4 the game does not get F1 - F4; Shift + F1 - F4 gives them back to its skills."),
+    Only(kVr, ViewKeys()),
 #else
-    Only(kFlat, InColumn(1, Group(L"View (F1, F2 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person (first person is coming soon). Switch in the game with F1, F2 (F12 goes round); the game no longer gets these keys."))),
+    Only(kFlat, InColumn(1, Group(L"View (F1, F2 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person (first person is coming soon). Switch in the game with F1, F2 (F12 goes round) - or with Shift + F1, F2, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Soon(2, Radio(L"mode", L"flat_view", 1, 1,
           {L"F1  The game's own camera", L"F2  Third person", L"F3  First person - coming soon"},
-          L"Switch in the game with F1, F2 (F12 goes round). The game does not get these keys: put its skills on others.")),
-    Only(kVr, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view in VR: F1 from above, F2 third person, F3 the game on your floor (first person is coming soon). Switch in the game with F1 - F3 (F12 goes round); the game no longer gets F1 - F4."))),
+          L"Switch in the game with F1, F2 (F12 goes round). With View keys at F1 - F4 the game does not get these keys; Shift + F1 - F4 gives them back to its skills.")),
+    Only(kFlat, ViewKeys()),
+    Only(kVr, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view in VR: F1 from above, F2 third person, F3 the game on your floor (first person is coming soon). Switch in the game with F1 - F3 (F12 goes round) - or with Shift + F1 - F3, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Soon(3, Radio(L"mode", L"vr_mode", 1, 1,
           {L"F1  From above", L"F2  Third person", L"F3  The game on your floor: look down at it and walk round it (mixed reality)",
            L"F4  First person: the body follows yours - coming soon"},
           L"Switch in the game with F1 - F3 (F12 goes round). F3: the game lies on the floor of your room. "
-          L"The game does not get F1 - F4.")),
+          L"With View keys at F1 - F4 the game does not get F1 - F4; Shift + F1 - F4 gives them back to its skills.")),
+    Only(kVr, ViewKeys()),
 #endif
     // A stereo picture that looks wrong (2026-11-02, Serg's wish: a player's F2/F3/F4 looked as if the eyes were swapped, and swapping them
     // did nothing; Stereo > "Set each eye's angles by hand" with its sliders fixed it): the advice under the views, where everyone sees it
@@ -760,6 +785,25 @@ std::vector<Item> g_items = {
            L"records 10 s of how the frames are drawn - keep playing and turn your head. Nothing is sent anywhere: "
            L"post the zip in our Discord (#diablo-2-vr)."),
     Status(L"collect", L"Collect logs: a zip on your desktop to post in our Discord"),
+    // [support] crash_reports / send_logs (shared/d2r_vr_crash_watch.h, docs/crash_watchdog.md): D2R VR Crash Reporter, an optional program in
+    // d2rloader\d2r_vr_libs, offers a report to the BodyWalk server after a game that closed badly, and sends the Collect logs zip on the button
+    // below - each only on its own Send button, with every file shown first. Both ticks off (the default) and greyed while it is not there.
+    Hide(Slider(L"@crashrep", L"found", L"", 0, 1, 1, 0)),
+    Status(L"crashrep", L"Crash reports: off"),
+    Needs(L"@crashrep", L"found", 1, Toggle(L"support", L"crash_reports", L"Offer to send a report when the game closes badly", 0,
+           L"After a game that crashed, froze or lost the graphics card, D2R VR Crash Reporter opens a window with what it would send to the "
+           L"BodyWalk server: how the game ended, that game's logs, the versions and the graphics card - your Windows user and PC name, "
+           L"character names, addresses and passwords taken out. Nothing is sent unless you press Send there; the memory dump only with its own "
+           L"tick. Unticked: nothing watches the game, as before. Takes effect at the next start of the game.")),
+    Hide(Button(L"@run", L"crash_offer", L"Look at the report and send it",
+           L"Opens the report of the game that closed badly: every file it would send, and Send / Don't send.")),
+    Needs(L"@crashrep", L"found", 1, Toggle(L"support", L"send_logs", L"Send logs to the BodyWalk server", 0,
+           L"Ticked: a button below sends the Collect logs zip to the BodyWalk server instead of you posting it - a copy with your Windows user "
+           L"and PC name, character names, addresses and passwords taken out, without the headset pictures and videos. You see every file and "
+           L"press Send yourself; then tell us the report number in Discord. Unticked: only the zip on your desktop, as before.")),
+    Needs(L"@crashrep", L"found", 1, ShowFor(L"support", L"send_logs", 2u, Button(L"@run", L"send_logs", L"Send the logs to the BodyWalk server",
+           L"Collects the logs as the button above does, then opens the window that shows what goes to the BodyWalk server. Nothing is sent "
+           L"until you press Send there."))),
     // [headset_shot] (vr/headset_shot.h): a screenshot of what reaches the headset, for a picture that is doubled, in the wrong eye, black or flat.
     // The button asks the running game for one through the ini (take, a counter: vrcam takes one at each change, AskHeadsetShot); the key takes
     // one in the game. Collect logs packs the newest. Unticked: neither, as before.
@@ -825,6 +869,10 @@ std::vector<Item> g_items = {
            L"A game's folder is removed this many days after it (at a start).")),
     Needs(L"support", L"session_logs", 1, Slider(L"support", L"session_logs_max_mb", L"At most (MB) for all of them", 200, 10000, 100, 2000,
            L"While all the folders are over this, the oldest go first. A game's logs are about 1 - 10 MB.")),
+    // [support] collect_sessions (CollectThread): the newest games' folders of sessions\ into the zip too (Serg 2026-11-04: the crashing game's log was gone).
+    Needs(L"support", L"session_logs", 1, Slider(L"support", L"collect_sessions", L"Collect logs: the last games packed too", 0, 10, 1, 3,
+           L"Collect logs also packs the logs of this many of the newest games (their folders under sessions), so the game that crashed is in "
+           L"the zip even after you started the game again. 0: only the logs folder, as before.")),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -850,6 +898,13 @@ std::vector<Item> g_items = {
            L"\"Native OpenXR - eyes by turns\" only: the frames that draw the other eye show this eye's last picture the game drew - each "
            L"picture twice, at half the rate, but never one made on the graphics card (made pictures can smear at the edges of moving things). "
            L"Off (the default): the picture made for this eye that frame - every frame new, as the headset shows it. Live."))),
+    // [render] monitor_panels (vr/monitor_layers.h): the headset's panels (native OpenXR quads) drawn over the window's picture too. Live.
+    Only(kVr, Toggle(L"render", L"monitor_panels", L"Monitor: show the headset's panels (inventory, trader, stash, map...)", 0,
+           L"Native OpenXR puts the menus and panels - the inventory on your hand or in front, the trader, the stash, the toolbar and the "
+           L"map, the belt's balls, the laser, the monster's bar, the settings panel and the skill wheel - over the eye's picture in the "
+           L"headset only, so the window on the monitor (and a recording of it) had the world without them. Ticked: each panel is drawn over "
+           L"the monitor's picture too, where that eye sees it. The headset's picture does not change. A few draws on the graphics card a "
+           L"frame while panels are up. Live. Unticked: the world only, as before.")),
 
     Tab(L"Performance"),
     Group(L"Compare with the bare game", L"One switch that stops everything of D2R VR's that costs a frame and the game can do without, at once and "
@@ -1204,7 +1259,7 @@ std::vector<Item> g_items = {
            L"wrist to its claws, as the form's own bones have them - and a fast enough swing into a monster is the game's own attack (with "
            L"Direct hit by its rules, or the armed skill: Fury, Feral Rage, Maul, Hunger ...). The game decides the hit, the damage and the "
            L"speed. The two paws are one weapon: after either one attacks, both wait as long as the hero's attack takes, so two paws never "
-           L"attack twice as often. The least speed is the unarmed one (Strikes). Needs Hit by touch on. VR first person (F4) only. Live."))),
+           L"attack twice as often. The least speed is each form's own (Strikes > Hit by touch; 0: the unarmed one). Needs Hit by touch on. VR first person (F4) only. Live."))),
     Needs(L"shapeshift", L"forms_first_person", 1, Only(kVr, Slider(L"shapeshift", L"wolf_height", L"Werewolf: eye height, %", 50, 150, 1, 100,
            L"The werewolf's eyes at this share of its own height (100: 98 % of the druid's). Lower: you stand lower in the world, and it "
            L"looks bigger. Live."))),
@@ -2021,6 +2076,11 @@ std::vector<Item> g_items = {
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_y", L"Toolbar up / down, %", -30, 100, 1, 0,
            L"The toolbar moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, "
            L"where the game puts it.")),
+#if D2RVR_FIRST_PERSON
+    Group(L"Swing", L"Your hero's swing leans toward where you aim."),
+    Toggle(L"body", L"attack_lean", L"F2: the swing leans where you aim", 0, kAttackLeanTip),
+    Needs(L"body", L"attack_lean", 1, Slider(L"body", L"attack_lean_max_deg", L"Swing lean: at most, °", 5, 80, 1, 40, kAttackLeanMaxTip)),
+#endif
     Group(L"Crosshair (mouse look)", L"The crosshair in the middle of the screen when you play F2 with mouse look. Switch it on or off, set its size, and set its depth looking ahead and looking down, so it does not come apart in stereo."),
     Toggle(L"hud_third", L"crosshair", L"Enable crosshair", 1,
            L"With mouse look in F2 the pointer is a crosshair in the middle of the screen. Off: no pointer in the headset "
@@ -2093,6 +2153,37 @@ std::vector<Item> g_items = {
 
 #if D2RVR_FIRST_PERSON
     Only(kFlat, Tab(L"UI: F3 eyes")),
+    // [body] flat_weapon_adjust (vr/flat_weapon.h): VR's Weapon Adjust is on a VR-only tab; first person on the monitor gets its own, along the view
+    // (a Warlock's axe stood upright in the middle of the picture, a player on 0.200.0). Per kind of weapon, in its own [flat_weapon_<kind>] ("@flatweapon") and its own
+    // picked kind (@ui flat_weapon_follow / flat_weapon) - nothing of VR's Weapon Adjust (Serg 2026-11-04: "the 2D view has other coefficients"); all 0 by default.
+    // First on the tab, so the players find it to set it themselves (Serg 2026-11-03: "чтобы люди могли сами откалибровать").
+    Group(L"Weapon in hand (F3)", L"First person: your arms, with the weapon in them, moved along the view - out to the side, up or down, ahead or back - so a big weapon does not stand in the middle of the picture. Kept per kind of weapon, as in VR's Weapon Adjust: pick the kind (or follow the one in hand). Only the drawn arms move; the attack is the game's."),
+    Toggle(L"body", L"flat_weapon_adjust", L"Move the arms and the weapon out of the middle", 1,
+           L"First person (F3): each arm with its hand and what it holds is moved along the view by the sliders below - all 0 to begin with, "
+           L"so nothing moves until you set them. Set them yourself while you play: the weapon moves as you drag, and each kind of weapon keeps "
+           L"its own place (an axe lower and further out than a dagger, say). The whole arm moves from the shoulder, so the hand keeps its weapon; "
+           L"a weapon held in both hands (a two-handed sword, a staff) moves with both, the second hand staying on the grip. These are not VR's "
+           L"Weapon Adjust numbers. Only the drawn arms change - the attack, its reach, the hit and what other players see are the game's. "
+           L"Off = the arms where the game's animation has them, as before. Live."),
+    Needs(L"body", L"flat_weapon_adjust", 1, Toggle(L"@ui", L"flat_weapon_follow", L"Follow the weapon in hand", 1,
+           L"The sliders below edit the kind of weapon the hero holds now (read from the running game; the box below shows which). "
+           L"Off: pick the kind yourself. Its own choice, apart from VR's Weapon Adjust.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Needs(L"@ui", L"flat_weapon_follow", 0, Choice(L"@ui", L"flat_weapon", L"Weapon", 1,
+           {L"Unarmed", L"Bow", L"Crossbow", L"Sword", L"Axe", L"Mace", L"Scepter", L"Wand", L"Staff",
+            L"Polearm", L"Spear", L"Dagger", L"Throwing", L"Javelin", L"Claw", L"Orb", L"Other"}))),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"right_x", L"Right arm: out to the right, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[0],
+           L"First person (F3): the right arm with its weapon moved to the right of the view (- toward the middle). Kept per kind of weapon. Live.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"right_y", L"Right arm: up, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[1],
+           L"The right arm moved up (- down). Kept per kind of weapon. Live.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"right_z", L"Right arm: ahead, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[2],
+           L"The right arm moved ahead, away from you along the view (- back, toward you). Kept per kind of weapon. Live.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"left_x", L"Left arm: out to the left, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[0],
+           L"The left arm, with a shield or a second weapon, moved to the left of the view (- toward the middle). A weapon in the left hand "
+           L"takes its own kind's numbers; anything else (a shield, an empty hand) the right hand's kind's. Live.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"left_y", L"Left arm: up, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[1],
+           L"The left arm moved up (- down). Live.")),
+    Needs(L"body", L"flat_weapon_adjust", 1, Slider(L"@flatweapon", L"left_z", L"Left arm: ahead, cm", -40, 40, 0.5f, flatweapon::kDefaultCm[2],
+           L"The left arm moved ahead, away from you along the view (- back, toward you). Live.")),
     Group(L"Toolbar and map (F2, F3)", L"The toolbar and the map in your own camera's views (F2 and F3): tick the arrow to see on the map which way you look."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip),
@@ -2113,6 +2204,8 @@ std::vector<Item> g_items = {
            L"First person: the hero's chest, hips and head stay under the camera through a swing, as in VR first person; his arms and "
            L"weapon still swing as the game animates them. Only the drawn body changes - the attack is the game's. Off = as before "
            L"(the torso swings out from under the camera)."),
+    Toggle(L"body", L"attack_lean", L"F2 and F3: the swing leans where you aim", 0, kAttackLeanTip),
+    Needs(L"body", L"attack_lean", 1, Slider(L"body", L"attack_lean_max_deg", L"Swing lean: at most, °", 5, 80, 1, 40, kAttackLeanMaxTip)),
     Toggle(L"input", L"portal_look_horizon", L"Look at the horizon after a portal or waypoint", 0,
            L"First person: you look down at a portal to walk into it, and came out still looking down. On: after a portal or a "
            L"waypoint the look goes back to the horizon (up and down only; the way you face stays). From sajmonsoft's flat fork. "
@@ -2907,6 +3000,14 @@ std::vector<Item> g_items = {
            L"Added to the wrists' Z (up off the hand, above) of BOTH wrists - mirrored or not - while a Warlock plays: the wrist bone and the arm's model differ with the class, so one depth "
            L"fits one hero only. + lifts the medallion off the arm, - sinks it in. 0 = no value of its own: the wrists' own Z, as before. Edit the row of the hero "
            L"you play - the line above says which one the game has now. Live.")),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Slider(L"hud", L"hand_vitals_orb_z_cm_werebear", L"Werebear: depth (Z) offset, cm", -5, 15, 0.1f, 0,
+           L"With the druid's werebear as your body (Body > \"Druid: werewolf and werebear in first person\", F4): added to both wrists' Z on top of the Druid's row - the "
+           L"bear's paw is far thicker than the druid's forearm, and the medallion sank into the fur. + lifts it out. 0 = the druid's place, as before. The werewolf keeps "
+           L"the druid's place. Live.")),
+    ShowFor(L"hud", L"bar_place", kBarWrist, Toggle(L"hud", L"hand_vitals_orb_form_auto", L"Werebear: lift by the forearm's own model", 0,
+           L"With the werebear as your body (F4), the medallion is also raised by how much farther the bear's forearm stands out of the back of the wrist than the druid's - "
+           L"both measured on the forearm bone's own mesh as drawn (the druid's from her last time in human form). The row above goes on top. With \"On the forearm bone itself\" "
+           L"ticked the medallion already lies on the bear's own skin and only the row above adds. Unticked: the row above alone. Live.")),
     // On a forearm (bar_*_arm)
     ShowFor(L"hud", L"bar_place", kBarArm, Slider(L"hud", L"bar_width_arm", L"Length, m", 0.1f, 1.0f, 0.01f, 0.22f)),
     ShowFor(L"hud", L"bar_place", kBarArm, Choice(L"hud", L"bar_split_arm", L"Cut in two", 0,
@@ -3087,6 +3188,11 @@ std::vector<Item> g_items = {
     Toggle(L"render", L"game_depth_fog", L"The game's own depth fog", 0,
            L"Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture "
            L"(from above too), over the near ground from our camera. Off: vrcam sets it to 0."),
+    // [render] game_fog_scan_safe (vr/sky/game_fog.cpp ScanSafe): the two above found through copies of the heap (Serg 2026-11-04: fake crash reports).
+    Toggle(L"render", L"game_fog_scan_safe", L"Find the game's fog safely", 1,
+           L"How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game "
+           L"frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas "
+           L"have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live."),
     Toggle(L"render", L"depth_fix", L"The game's effects measure depth from our camera", 1,
            L"The game keeps a copy of the depth for its fog, height fog, ambient occlusion, reflections and water, made for "
            L"its camera from above (550 to 1060 units away). From ours everything is nearer and read as one flat wall "
@@ -3140,6 +3246,13 @@ std::vector<Item> g_items = {
            L"The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at "
            L"16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own "
            L"shader, as before.")),
+    Only(kVr, Toggle(L"render", L"reflections_per_eye", L"Reflections in puddles and blood at their true depth (3D)", 0,
+           L"With \"Stereo - one pass, two pictures\" the game's reflections in water, puddles and blood pools were drawn in the right "
+           L"eye as if seen from twice the distance between the eyes: twice the parallax, half the depth - the reflection seemed to "
+           L"float above the puddle and strained the eyes. On: the game's two reflection passes read each eye's own position (one "
+           L"value in its own shader changed; no extra work for the graphics card), so each reflection lies in the water. The other "
+           L"3D modes and flat mode look the same either way. Made at the start of the game: switched on, it works from the next start; "
+           L"after that it follows this tick at once. Off: the game's own.")),
     Group(L"Render distance", L"How far around the hero the world is drawn: more room rings and a bigger model radius show more of the world and cost more processor time. With fog, 4-6 rings are enough."),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
@@ -3814,6 +3927,15 @@ std::vector<Item> g_items = {
            L"Only our own light on the arrow: the game's missile, its effects and its damage are the game's. Off: the effect stays until the game hides the arrow, as before. F4 only. Live."))),
     Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Needs(L"bow", L"arrow_fire_cut", 1, Slider(L"bow", L"arrow_fire_cut_ms", L"Arrow effects: out at the release - after, ms", 0.0f, 2000.0f, 10.0f, 0.0f,
            L"How long after the release the effect goes out: 0 = at the release. A new draw, or the next arrow shown, before then lights it on that arrow. Live.")))),
+    Only(kVr, Toggle(L"bow", L"swap_by_grab", L"Bow: pass it to the other hand by grabbing it", 0,
+           L"VR first person (F4), a bow: squeeze the free hand's grip AT THE BOW'S GRIP (within 25 cm of the bow hand, nearer the grip than the string) and the bow is in "
+           L"that hand, with a short pulse in it; the string is the other hand's from then on - a left-handed archer holds the bow in the right hand and draws with the left. "
+           L"The same back. The drawn bow, the string and its draw, the aim, the quiver and its orbs all go with it. Only the picture and which controller does what: the "
+           L"game's bow stays in its own slot. The free hand's trigger and grip at the bow's grip do not take the string; at the string they do, as ever. A crossbow is not "
+           L"passed this way. The hand it is in is remembered (the next setting) and the bow starts there next time. Off: the bow stays in the hand the settings hold it in, "
+           L"as before. Live.")),
+    Only(kVr, Needs(L"bow", L"swap_by_grab", 1, Choice(L"bow", L"bow_hand", L"Bow: the hand it is in", 1, {L"The right hand", L"The left hand"},
+           L"The hand the bow is in with the box above. The game writes it each time you pass the bow, so it survives a restart; set it here to start in that hand."))),
     Needs(L"hands", L"bow_draw", 0, Group(L"Bow without the string draw (the A button, mode above)", L"Aiming a bow with the A button instead of the string draw. Tick to send arrows exactly along the hand with no auto-target, set how far out the aim point is, and correct the aim if arrows land beside where the hand points.")),
     Needs(L"hands", L"bow_draw", 0, Needs(L"bow", L"mode", 4, Toggle(L"hands", L"bow_aim", L"Arrows along the hand, no auto-target", 0,
            L"On: with a bow or a crossbow in hand, the attack and the bow's arrow skills go exactly along the hand: the game's "
@@ -4343,6 +4465,16 @@ std::vector<Item> g_items = {
            L"... a swing that breaks them, from (m/s)", 0.3f, 20.0f, 0.1f, 2.0f,
            L"The least speed of a swing through a barrel or pot that breaks it - its own, not the monsters' (\"the least blade speed that hits\" above), and also with "
            L"strike by force. 2: an easy swing. Live."))),
+    // [shapeshift] wolf_min_speed / bear_min_speed: the druid's paws (Body > Druid: ... strike with their claws) - here beside the other speeds
+    // (Serg 2026-11-04: «перенеси ползунки в страйки»)
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"shapeshift", L"claw_hits", 1, Only(kVr, Slider(L"shapeshift", L"wolf_min_speed", L"Werewolf: least claw swing speed, m/s", 0, 20, 0.1f, 0,
+           L"How fast the werewolf's paw must move where it touches a monster for the strike to count. A bare hand is hard to swing as fast as a "
+           L"weapon, so the paws have their own number. 0: the unarmed one, else the general least speed (above), as before. Only whether a "
+           L"touch counts - the attack, its speed and damage stay the game's. Needs Body > Druid: werewolf and werebear strike with their claws. Live.")))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"shapeshift", L"claw_hits", 1, Only(kVr, Slider(L"shapeshift", L"bear_min_speed", L"Werebear: least claw swing speed, m/s", 0, 20, 0.1f, 0,
+           L"How fast the werebear's paw must move where it touches a monster for the strike to count. A bare hand is hard to swing as fast as a "
+           L"weapon, so the paws have their own number. 0: the unarmed one, else the general least speed (above), as before. Only whether a "
+           L"touch counts - the attack, its speed and damage stay the game's. Needs Body > Druid: werewolf and werebear strike with their claws. Live.")))),
     Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_touch_thrown", 1, Toggle(L"gameplay", L"melee_touch_thrown_held",
            L"A thrown weapon is the weapon in your hand from the start (no grip needed to hit)", 0,
            L"A javelin, a throwing knife or a throwing axe is the weapon in your hand from the moment it is equipped, like a sword: it hits "
@@ -4553,14 +4685,16 @@ std::vector<Item> g_items = {
     // Attention (Serg, 2026-11-02: «директ хит и переброска монстров через клетку - это ломание оригинальной логики ... чтобы люди нажимали их с осознанностью»): the two options
     // that make the game's server do what its own rules would not - Direct hit (from the top of this tab) and the grab's move by the game's knockback (from Weapon Weight >
     // Grab bodies) - in one block of their own under a warning. Both on as shipped (Serg: «оставляем включенными по умолчанию»); off is the game's own logic. The ini keys are the same as ever.
+    // 2026-11-04: the knock-down's move too ([weight] knock_down_moves_unit, a test - off until Serg says).
     Group(L"Attention: these change the game's own logic", L"The options in this block go past Diablo II's own rules on purpose: they have the game's server do what its own "
-          L"attack and movement rules would not. Both are on as the mod comes (Direct hit by the rules); off (unticked) is the game's own logic, as it plays without the mod. Direct hit: a touch of your weapon becomes the "
-          L"server's attack at once - no animation, no attack rate, no walking up. The game moves what you carry and throw: a monster you carry or throw is put on "
-          L"another cell by the game's own knockback. Single player and the host change the game for everyone in it. Everything else in the mod - hit by "
-          L"touch, weapon weight, ragdolls, grabbing a monster without this move - is only another way to give the game its input: the game still decides."),
-    Warning(L"game_logic", L"On by default. These two make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They "
-            L"change how the game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of "
-            L"input: the game decides.)"),
+          L"attack and movement rules would not. Direct hit (by the rules) and the move of what you carry and throw are on as the mod comes; off (unticked) is the game's own logic, as it plays without the mod. Direct hit: a touch of your weapon becomes the "
+          L"server's attack at once - no animation, no attack rate, no walking up. The game moves what you carry and throw, and what you knock down: a monster "
+          L"you carry, throw or knock off its feet is put on another cell by the game's own knockback. Single player and the host change the game for everyone in "
+          L"it. Everything else in the mod - hit by touch, weapon weight, ragdolls, grabbing a monster without this move - is only another way to give the game "
+          L"its input: the game still decides."),
+    Warning(L"game_logic", L"These make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They change how the "
+            L"game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of input: "
+            L"the game decides.)"),
     Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
            L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
            L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
@@ -4608,6 +4742,15 @@ std::vector<Item> g_items = {
            L"lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses "
            L"(bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. "
            L"Unticked: only the drawing moves, the game keeps it where it was, as before."))),
+    Sub(L"Monsters you knock down (Weapon Weight > Monsters' bodies)"),
+    // [weight] knock_down_moves_unit: what a weapon's blow knocks down ([weight] knock_down) is moved by the game's own knockback too (vr/grab_move.h; single player / host)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_down", 1, Toggle(L"weight", L"knock_down_moves_unit", L"The game moves what you knock down (a test)", 0,
+           L"Needs Weapon Weight > Monsters' bodies > \"A hard blow knocks a humanoid off its feet\". Live. Ticked: a humanoid your blow knocks off its feet is "
+           L"moved by the game itself - its own knockback puts it on the spot where its body falls and lies - so it fights from there, your hits on the body "
+           L"lying there land, and it gets up there instead of walking back to its old place; everyone in the game sees it. A few knockbacks per fall (where it "
+           L"lands and where it settles), never more: if the game walks it off while it lies, it gets up and goes. A stagger (a step back) moves nothing. "
+           L"Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's "
+           L"stays drawn only. F4. Unticked: only the drawing falls, the game keeps it on its cell, as before."))),
     Group(L"Skills to BodyWalk", L"Your character's skills go to BodyWalk (Mapping > Game skills): give each one a gesture you record or a button there, and BodyWalk tells the game which skill to cast. The game casts it its own way, from its skill buttons."),
     Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 0,
            L"Your character's learned skills (their names in your game's language, their trees, which of the game's skill buttons each is on) go to "
@@ -5870,6 +6013,17 @@ wchar_t g_ini[MAX_PATH], g_uiIni[MAX_PATH];
 int g_weaponType = D2RVR_TYPE_BOW;
 std::wstring g_weaponSec = L"weapon_bow";
 
+// The flat F3 arms (UI: F3 eyes > Weapon in hand (F3)) edit [flat_weapon_<kind>] of their own picked kind ("@flatweapon" items; @ui flat_weapon_follow /
+// flat_weapon) - never VR's [weapon_<kind>] nor its pick.
+int g_flatWeaponType = D2RVR_TYPE_SWORD;
+std::wstring g_flatWeaponSec = L"flat_weapon_sword";
+void SetFlatWeaponSection(int type) {
+    if (type <= D2RVR_TYPE_UNKNOWN || type >= D2RVR_TYPE_COUNT) return;
+    g_flatWeaponType = type;
+    g_flatWeaponSec = flatweapon::kSectionPrefix;
+    for (const char* c = kD2RVRWeaponTypeNames[type]; *c; ++c) g_flatWeaponSec += (wchar_t)tolower((unsigned char)*c);
+}
+
 void SetWeaponSection(int type) {
     if (type <= D2RVR_TYPE_UNKNOWN || type >= D2RVR_TYPE_COUNT) return;
     g_weaponType = type;
@@ -6113,6 +6267,7 @@ void ChooseFogColor(HWND wnd, Item& it) {
 
 const wchar_t* SectionOf(const Item& it) {
     if (wcscmp(it.section, L"@weapon") == 0) return g_weaponSec.c_str();
+    if (wcscmp(it.section, L"@flatweapon") == 0) return g_flatWeaponSec.c_str();
     if (wcscmp(it.section, L"@ui") == 0) return L"weapon";
     return it.section;
 }
@@ -6568,6 +6723,7 @@ bool LibFileFound(const wchar_t* name) {
     return GetFileAttributesW(libs.c_str()) != INVALID_FILE_ATTRIBUTES || GetFileAttributesW((std::wstring(dir) + name).c_str()) != INVALID_FILE_ATTRIBUTES;
 }
 bool WeightLibFound() { return LibFileFound(L"d2r_vr_weight.dll"); }
+bool CrashReporterFound() { return LibFileFound(crashwatch::kReporterFile); }
 bool GripLibFound() { return LibFileFound(L"d2r_vr_grip.dll"); }
 bool DollLibFound() { return LibFileFound(L"d2r_vr_weight.dll"); }   // (the monsters' weight is its D2rd* exports, 1.2 on)
 
@@ -6577,6 +6733,7 @@ float ReadRoomsValue(const Item& it);
 void WriteRoomsValue(const Item& it, float v);
 float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@weightlib") == 0) return WeightLibFound() ? 1.0f : 0.0f;
+    if (wcscmp(it.section, L"@crashrep") == 0) return CrashReporterFound() ? 1.0f : 0.0f;
     if (wcscmp(it.section, L"@rooms") == 0) return ReadRoomsValue(it);   // d2r-rooms.ini, D2R Rooms' own (never d2r_vr.ini)
     if (wcscmp(it.section, L"@lang") == 0) return ReadLanguage();
 
@@ -7199,7 +7356,13 @@ void RefreshControls() {
             SendMessageW(it.ctl, BM_SETCHECK, Ticked(it, ReadValue(it)) ? BST_CHECKED : BST_UNCHECKED, 0);
             break;
         }
-        case Kind::Choice: SendMessageW(it.ctl, CB_SETCURSEL, ToPos(it, ReadValue(it)), 0); break;
+        case Kind::Choice:
+            // the weapon boxes: the kind the sliders edit now (followed from the hand, or picked) - the file holds the last kind picked by hand, and
+            // with following on that one came back after every change elsewhere (a two-handed sword's sliders under "Mace", Serg 2026-11-04)
+            if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"weapon") == 0) SendMessageW(it.ctl, CB_SETCURSEL, g_weaponType - 1, 0);
+            else if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"flat_weapon") == 0) SendMessageW(it.ctl, CB_SETCURSEL, g_flatWeaponType - 1, 0);
+            else SendMessageW(it.ctl, CB_SETCURSEL, ToPos(it, ReadValue(it)), 0);
+            break;
         default: break;
         }
     }
@@ -7601,13 +7764,30 @@ void ShowWeapon(int type) {
     }
 }
 
+// The flat F3 arms' kind changed: the "@flatweapon" sliders show that kind's values (its own, apart from ShowWeapon's).
+void ShowFlatWeapon(int type) {
+    if (type == g_flatWeaponType) return;
+    SetFlatWeaponSection(type);
+    for (Item& it : g_items) {
+        if (!it.key) continue;
+        if (wcscmp(it.section, L"@flatweapon") == 0 && it.kind == Kind::Slider) {
+            const float v = ReadValue(it);
+            SendMessageW(it.ctl, TBM_SETPOS, TRUE, ToPos(it, v));
+            ShowValue(it, v);
+        }
+        if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"flat_weapon") == 0) SendMessageW(it.ctl, CB_SETCURSEL, g_flatWeaponType - 1, 0);
+    }
+}
+
 // What the hero holds, from the running game (vrcam's gamestate block), while
-// "Follow the weapon in hand" is ticked.
+// "Follow the weapon in hand" is ticked - VR's Weapon Adjust and the flat F3 arms each by their own tick.
 void FollowWeapon() {
-    bool follow = true;
-    for (const Item& it : g_items)
+    bool follow = true, followFlat = true;
+    for (const Item& it : g_items) {
         if (it.key && wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"weapon_follow") == 0) follow = ReadValue(it) != 0.0f;
-    if (!follow) return;
+        if (it.key && wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"flat_weapon_follow") == 0) followFlat = ReadValue(it) != 0.0f;
+    }
+    if (!follow && !followFlat) return;
     // A frozen counter = that game is gone. Our view outlives it, but the name
     // dies with the game's handle: a restarted game makes a new block, and this
     // window kept showing the old one's last weapon. Opened afresh then.
@@ -7628,7 +7808,9 @@ void FollowWeapon() {
         movedAt = GetTickCount64();
     }
     if (state->counter != lastCounter) { lastCounter = state->counter; movedAt = GetTickCount64(); }
-    if (state->version == D2RVR_STATE_VERSION) ShowWeapon((int)state->weaponType);
+    if (state->version != D2RVR_STATE_VERSION) return;
+    if (follow) ShowWeapon((int)state->weaponType);
+    if (followFlat) ShowFlatWeapon((int)state->weaponType);
 }
 
 // ---------------------------------------------------------------------------
@@ -7903,6 +8085,113 @@ void UpdateWeightLibStatus() {
     if (last != (int)there) {
         last = (int)there;
         UpdateEnabled();
+    }
+}
+
+// Home > D2R VR, crash reports ([support] crash_reports, shared/d2r_vr_crash_watch.h): whether D2R VR Crash Reporter is there, and the newest
+// report a game left unsent (logs\crash_reports\<time>\state.txt "pending") - its button opens it in the reporter's window. Looked at every 3 s.
+std::wstring LogsFolder();
+void LogLine(const std::wstring& line);
+std::wstring g_crashPending;   // the newest pending report's folder ("" none)
+std::wstring CrashReporterExe() {
+    wchar_t dir[MAX_PATH];
+    wcscpy_s(dir, g_ini);
+    if (wchar_t* slash = wcsrchr(dir, L'\\')) slash[1] = 0;
+    const std::wstring libs = crashwatch::ReporterPath(dir);
+    return GetFileAttributesW(libs.c_str()) != INVALID_FILE_ATTRIBUTES ? libs : std::wstring(dir) + crashwatch::kReporterFile;
+}
+std::wstring NewestPendingReport() {
+    const std::wstring root = LogsFolder() + L"\\crash_reports\\";
+    std::wstring best;
+    WIN32_FIND_DATAW fd;
+    HANDLE f = FindFirstFileW((root + L"*").c_str(), &fd);
+    if (f == INVALID_HANDLE_VALUE) return best;
+    do {
+        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || fd.cFileName[0] == L'.') continue;
+        std::string state;
+        if (FILE* s = _wfopen((root + fd.cFileName + L"\\state.txt").c_str(), L"rb")) {
+            char b[64] = {};
+            state.assign(b, fread(b, 1, sizeof b - 1, s));
+            fclose(s);
+        }
+        if (crashwatch::Pending(state) && fd.cFileName > best) best = fd.cFileName;
+    } while (FindNextFileW(f, &fd));
+    FindClose(f);
+    return best.empty() ? best : root + best;
+}
+void UpdateCrashRepStatus() {
+    static ULONGLONG at = 0;
+    static int last = -1;
+    if (at && GetTickCount64() - at < 3000) return;
+    at = GetTickCount64();
+    const bool there = CrashReporterFound();
+    g_crashPending = there ? NewestPendingReport() : std::wstring();
+    std::wstring line;
+    int state = kUnknown;
+    if (!there) {
+        line = TR(L"status.crashrep.missing", L"Crash reports: D2R VR Crash Reporter is not installed (d2rloader\\d2r_vr_libs) - the two ticks below are unavailable.");
+        state = kWarn;
+    } else if (!g_crashPending.empty()) {
+        const std::wstring name = g_crashPending.substr(g_crashPending.find_last_of(L'\\') + 1);
+        std::wstring when = name;
+        if (name.size() >= 15)
+            when = name.substr(0, 4) + L"-" + name.substr(4, 2) + L"-" + name.substr(6, 2) + L" " + name.substr(9, 2) + L":" + name.substr(11, 2);
+        if (name.find(L"-logs") != std::wstring::npos)
+            line = TRF(L"status.crashrep.pending_logs", L"Logs collected {when} are ready to send - nothing was sent yet.", {{L"when", when}});
+        else
+            line = TRF(L"status.crashrep.pending", L"A game closed badly ({when}): a report is ready - nothing was sent yet.", {{L"when", when}});
+        state = kWarn;
+    } else if (GetPrivateProfileIntW(L"support", L"crash_reports", 0, g_ini) == 1) {
+        line = TR(L"status.crashrep.on", L"Crash reports: on - after a game that closes badly you are asked whether to send a report.");
+        state = kOk;
+    } else {
+        line = TR(L"status.crashrep.off", L"Crash reports: off - nothing watches the game, nothing is sent.");
+    }
+    SetStatus(L"crashrep", state, line.c_str());
+    if (Item* b = FindItem(L"@run", L"crash_offer"); b && b->hidden != g_crashPending.empty()) {
+        b->hidden = g_crashPending.empty();
+        LayoutPage();
+    }
+    if (last != (int)there) {
+        last = (int)there;
+        UpdateEnabled();
+    }
+}
+// The reporter's window over the pending report (it sends only on its own Send button); not waited for.
+void OfferCrashReport() {
+    if (g_crashPending.empty()) return;
+    const std::wstring exe = CrashReporterExe();
+    std::wstring cmd = L"\"" + exe + L"\" --offer \"" + g_crashPending + L"\" --ini \"" + std::wstring(g_ini) + L"\"";
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        LogLine(L"crash reports: the reporter opened " + g_crashPending);
+    } else {
+        LogLine(L"crash reports: the reporter could not be started, error " + std::to_wstring(GetLastError()));
+    }
+}
+// Once (d2r_vr_settings.ini [support] crash_asked - this program's own ini, never shipped): with the reporter there and crash reports not on,
+// asks whether to offer reports. Yes ticks [support] crash_reports; either answer is remembered and never asked again.
+void AskCrashReportsOnce() {
+    if (!CrashReporterFound() || GetPrivateProfileIntW(L"support", L"crash_asked", 0, g_uiIni) == 1 ||
+        GetPrivateProfileIntW(L"support", L"crash_reports", 0, g_ini) == 1)
+        return;
+    WritePrivateProfileStringW(L"support", L"crash_asked", L"1", g_uiIni);
+    const int r = MessageBoxW(g_main,
+                              TR(L"crashrep.ask", L"Help us fix crashes?\n\nWhen the game closes badly (a crash, a freeze, a lost graphics card), "
+                                                  L"D2R VR can offer to send a report to the BodyWalk server: the logs of that game, the versions, the "
+                                                  L"graphics card. Your Windows user and PC name, character names, addresses and passwords are taken out, "
+                                                  L"and you see every file first.\n\nNothing is sent unless you press Send in that window. You can change "
+                                                  L"this any time: Home > D2R VR > \"Offer to send a report when the game closes badly\"."),
+                              kAppName, MB_YESNO | MB_ICONQUESTION);
+    if (r == IDYES) {
+        WritePrivateProfileStringW(L"support", L"crash_reports", L"1", g_ini);
+        RefreshControls();
+        LogLine(L"crash reports: the player said yes - [support] crash_reports=1");
+    } else {
+        LogLine(L"crash reports: the player said no - nothing changed");
     }
 }
 
@@ -8490,6 +8779,7 @@ void RefreshStatus() {
     UpdateFovStatus();          // ... and the headset's own angles beside fov_override's sliders
     UpdateWeightLibStatus();   // Weapon weight: the weight-physics library beside the plugin
     UpdateGripLibStatus();     // ... and the grip library
+    UpdateCrashRepStatus();    // Home > D2R VR: the crash reporter, a report left unsent
     RefreshRooms();            // Multiplayer: D2R Rooms' bridge (only while its tab is shown)
     if (g_tab != 0) return;
     ShowDrawDistance();  // Draw distance: its stop and line (a key may have been changed in the ini meanwhile)
@@ -9736,9 +10026,14 @@ void OnReShadeProgress(D2RLProgress* raw) {
 // up to 0.185 only the game's, so vrcam's own dump never came; and Windows' own dump of D2RLoader in %LOCALAPPDATA%\CrashDumps when
 // Windows keeps one: 2026-10-28, a game that died at the logo of a C++ exception neither vrcam's filter nor D2RLoader's saw), and Windows' last three Application Error /
 // Application Hang events of the game or D2RLoader (the module it died in, when vrcam had
-// not loaded yet).
+// not loaded yet). And (2026-11-04) the newest [support] collect_sessions games' folders of
+// the logs folder's sessions\ (vr/diag/session_logs.cpp): the game that crashed, even after
+// the next start wrote over the logs folder.
 constexpr UINT WM_APP_COLLECT = WM_APP + 42;
+constexpr UINT WM_APP_ASK_CRASH = WM_APP + 77;
 std::atomic<bool> g_collectBusy{false};
+std::atomic<bool> g_collectSend{false};   // [support] send_logs: the zip then goes to D2R VR Crash Reporter's --send-logs (its window sends it)
+std::wstring CrashReporterExe();
 
 void PostCollect(HWND wnd, int state, std::wstring text, bool done) {
     auto* p = new D2RLProgress{state, std::move(text), done};
@@ -9809,6 +10104,8 @@ $pl=Join-Path $g 'd2rloader\plugins'; $lg=Join-Path $g 'd2rloader\logs'; $rs=$g;
 if($md){ $pl=Join-Path $md 'd2rloader\plugins'; $mlg=Join-Path $md 'd2rloader\logs'; $rs=Join-Path $md 'reshade' }
 Get-ChildItem -LiteralPath $lg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'd2rloader_logs' }
 if($mlg){ Get-ChildItem -LiteralPath $mlg -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'mod_logs' } }
+$cs=[int]__SESSIONS__; $sr=Join-Path $(if($mlg){$mlg}else{$lg}) 'sessions'
+if($cs -gt 0){ Get-ChildItem -LiteralPath $sr -Directory | Where-Object { $_.Name -match '^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d$' } | Sort-Object Name -Descending | Select-Object -First $cs | ForEach-Object { $sd=$_; Get-ChildItem -LiteralPath $sd.FullName -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName ('sessions\' + $sd.Name) } } }
 foreach($d in @($lg,$mlg)){ if($d){ $s=Get-ChildItem -LiteralPath $d -File -Filter 'headset_shot_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if($s){ Get-ChildItem -LiteralPath $d -File -Filter ($s.BaseName + '_*.png') | Where-Object { $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'headset_shot' } } } }
 foreach($d in @($lg,$mlg)){ if($d){ Get-ChildItem -LiteralPath $d -File -Filter 'headset_clip_*.mp4' | Where-Object { $_.Length -lt 50MB } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { C $_.FullName 'headset_clip' } } }
 foreach($f in 'd2r_vr_about.json','d2r_vr_start.txt','d2r_vr_crash.txt'){ C (Join-Path $pl $f) 'plugins' }
@@ -9853,6 +10150,7 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     put(L"__MOD__", ModInstall() ? modlayout::ModRoot(game) : std::wstring());   // D2R VR as the D2RLoader mod: its plugin folder, logs and ReShade are the mod's
     put(L"__ZIP__", zip);
     put(L"__NAME__", name);
+    put(L"__SESSIONS__", std::to_wstring(std::clamp((int)GetPrivateProfileIntW(L"support", L"collect_sessions", 3, g_ini), 0, 10)));   // [support] collect_sessions
     // The script goes to a file of its own in TEMP and runs with -File (2026-10-19: a player's antivirus took the Settings program and
     // D2RLoader away after this button - a hidden PowerShell with -EncodedCommand looks like malware to it). The script itself removes
     // only its own folder in TEMP, named D2R_VR_logs_*, never anything else.
@@ -9882,6 +10180,27 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     DeleteFileW(ps1.c_str());
     if (code != 0 || !Exists(zip)) { PostCollect(wnd, kBad, TRF(L"status.collect.no_zip", L"Could not make the zip (code {code})", {{L"code", std::to_wstring(code)}}), true); return; }
     LogLine(L"collect logs: " + zip);
+    if (g_collectSend.load()) {   // the reporter scrubs a copy and shows its window; the zip on the desktop stays as it is
+        PostCollect(wnd, kUnknown, TR(L"status.collect.send_window", L"Opening the window that shows what would be sent - nothing is sent until you press Send there"), false);
+        const std::wstring exe = CrashReporterExe();
+        std::wstring cmd = L"\"" + exe + L"\" --send-logs \"" + zip + L"\" --logs \"" + LogsFolder() + L"\" --ini \"" + std::wstring(g_ini) +
+                           L"\" --version " D2RVR_VERSION_W;
+        STARTUPINFOW si{sizeof si};
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(exe.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+            PostCollect(wnd, kBad, TRF(L"status.collect.no_reporter", L"Could not start D2R VR Crash Reporter (error {code}) - the zip is on your desktop: {name}.zip",
+                                       {{L"code", std::to_wstring(GetLastError())}, {L"name", name}}), true);
+            return;
+        }
+        CloseHandle(pi.hThread);
+        WaitForSingleObject(pi.hProcess, INFINITE);   // until its window is closed
+        DWORD rc = 1;
+        GetExitCodeProcess(pi.hProcess, &rc);
+        CloseHandle(pi.hProcess);
+        LogLine(L"collect logs: the reporter's --send-logs ended, exit code " + std::to_wstring(rc));
+        PostCollect(wnd, kOk, TRF(L"status.collect.send_done", L"The send window is closed. The zip is on your desktop too: {name}.zip", {{L"name", name}}), true);
+        return;
+    }
     const std::wstring sel = L"/select,\"" + zip + L"\"";
     ShellExecuteW(nullptr, L"open", L"explorer.exe", sel.c_str(), nullptr, SW_SHOWNORMAL);
     PostCollect(wnd, kOk, TRF(L"status.collect.saved", L"Saved on your desktop: {name}.zip - post it in our Discord (#diablo-2-vr)", {{L"name", name}}), true);
@@ -10803,9 +11122,11 @@ void FollowHeadsetShot() {   // (the 500 ms timer)
     }
 }
 
-void StartCollectLogs() {
+void StartCollectLogs(bool send = false) {
     if (g_collectBusy.exchange(true)) return;
+    g_collectSend.store(send);
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, FALSE);
+    if (Item* b = FindItem(L"@run", L"send_logs")) EnableWindow(b->ctl, FALSE);
     SetStatus(L"collect", kUnknown, TR(L"status.collect.collecting", L"Collecting the logs..."));
     try {
         std::thread(CollectThread, g_main, GameFolder(), ProcessRunning(L"D2R.exe")).detach();
@@ -10821,6 +11142,7 @@ void OnCollectProgress(D2RLProgress* raw) {
     if (!p->done) return;
     g_collectBusy.store(false);
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, TRUE);
+    if (Item* b = FindItem(L"@run", L"send_logs")) EnableWindow(b->ctl, TRUE);
 }
 
 // Make a headset report (Home, [support] headset_report ticked): RunHeadsetReport on a thread of its own, then the report in Notepad.
@@ -11164,6 +11486,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 const int sel = (int)SendMessageW(it.ctl, CB_GETCURSEL, 0, 0);
                 WriteValue(it, FromPos(it, sel));
                 if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"weapon") == 0) ShowWeapon(sel + 1);
+                if (wcscmp(it.section, L"@ui") == 0 && wcscmp(it.key, L"flat_weapon") == 0) ShowFlatWeapon(sel + 1);
                 UpdateEnabled();
                 if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"game_sky") == 0) StartSkyDome();   // (a choice since the dome: its files made or taken out now)
                 if (wcscmp(it.section, L"ceiling") == 0 && wcscmp(it.key, L"game_ceiling") == 0) StartGameCeiling();
@@ -11180,6 +11503,8 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"reshade_aside") == 0) ReShadeAside(false);
                 else if (wcscmp(it.key, L"reshade_back") == 0) ReShadeAside(true);
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
+                else if (wcscmp(it.key, L"send_logs") == 0) StartCollectLogs(true);
+                else if (wcscmp(it.key, L"crash_offer") == 0) OfferCrashReport();
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
@@ -11232,7 +11557,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                                  0, 0, 0, 0, wnd, nullptr, inst, nullptr);
         SetWindowPos(g_page, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);   // above the tab control
         g_footer = CreateWindowExW(0, L"STATIC",
-                                   TR(L"footer", L"Changes apply at once while the game runs.   F1 - F4: the view (Home tab).   F12: next view.   "
+                                   TR(L"footer", L"Changes apply at once while the game runs.   F1 - F4 or Shift + F1 - F4: the view (Home tab).   F12: next view.   "
                                                  L"F11: \"ahead\" is where I look.   Ctrl + wheel: zoom.   Ctrl + Tab: next tab."),
                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX, 0, 0, 0, 0, wnd, nullptr, inst, nullptr);
         CarryBarKeys();
@@ -11255,8 +11580,10 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartGameCeiling();
         StartMenuArt();
         StartDataMods();
+        PostMessageW(wnd, WM_APP_ASK_CRASH, 0, 0);   // [support] crash_reports: the one-time question, once the window is up
         return 0;
     }
+    case WM_APP_ASK_CRASH: AskCrashReportsOnce(); return 0;
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
@@ -11625,6 +11952,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     FillRelayChoices();   // the relays of d2r-rooms.ini after the drop-down's first entry, which is translated by now
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored
     SetWeaponSection(GetPrivateProfileIntW(L"weapon", L"weapon", 1, g_uiIni) + 1);   // the kind last picked by hand
+    SetFlatWeaponSection(GetPrivateProfileIntW(L"weapon", L"flat_weapon", D2RVR_TYPE_SWORD - 1, g_uiIni) + 1);   // ... the flat F3 arms' own
     const int savedW = GetPrivateProfileIntW(L"window", L"width", 0, g_uiIni);
     const int savedH = GetPrivateProfileIntW(L"window", L"height", 0, g_uiIni);
 

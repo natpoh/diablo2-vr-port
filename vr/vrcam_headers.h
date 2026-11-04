@@ -44,6 +44,7 @@
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "game_device_only.h"
 #include "light_bounds.h"
+#include "reflections_eye.h"   // [render] reflections_per_eye: the game's reflections by each eye's own position
 #include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
 #include "effects_layer.h"  // [stereo] turns_keep_own 3, 4: eyes by turns - where the game's effects are in the eye drawn (xr.cpp reads it)
 #include "fog_in_frame.h"   // [render] fog_in_frame: our fog drawn in the game's frame, before its transparent resolve
@@ -199,6 +200,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "fx_picture_keep.h" // ... and only the act's sky and the ceiling's stone on the graphics card
 #include "fx_native.h"    // [render] no_reshade: D2R_DepthFog.fx run by the plugin itself (the effect code below is templates over the runtime)
 #include "monitor_eye.h"  // [render] monitor_eye: the window shows one eye (bearstonem/d2r-pcvr's desktop_one_eye)
+#include "monitor_layers.h"  // [render] monitor_panels: the headset's panels over the window's picture too
 #include "native_d3d12.h" // [render] no_reshade: the plugin's own D3D12 / DXGI hooks in place of ReShade's events (docs/plan_no_reshade.md)
 #include "fog_before_fx.h" // [fog] game_fog_before_fx: the game's fog laid on the scene before its transparent resolve (no_reshade)
 #include "native_rsapi.h"  // [render] no_reshade: vr/hud.cpp on those hooks, through a stand-in for ReShade's command list and device
@@ -252,6 +254,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "stowed_block.h"         // [hands] shield_stow_no_block: a shield put away does not block (the game's block check told the hero has none)
 #include "sewer_interaction.h"     // the Kurast sewer stairs taken with A while standing (the game's Interact query, when it finds none)
 #include "ranged_hand_wire.h"     // [hands] shoulder_draw_ranged: a bow or crossbow put away behind a shoulder, drawn into the hand that reached
+#include "bow_swap.h"             // [bow] swap_by_grab: the bow passed from hand to hand at its grip
 #include "shoulder_swap.h"
 #include "weight_floor.h"         // [weight]: the floor a let-go weapon falls to is the game's ground under the hero
 #include "weight_wire.h"          // [weight]: the grips that hold the weapon are taken from the layout, read as they really are

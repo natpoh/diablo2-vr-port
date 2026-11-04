@@ -70,16 +70,20 @@ render.menu_wide.tip = OpenXR nativo sem ReShade ("Sem ReShade"; com ReShade nã
 
 # --- View (F1 - F3 in the game) ---
 group.view_f1_f3_in_the_game = Visão (F1 - F3 no jogo)
-group.view_f1_f3_in_the_game.help = A visão do modo plano: F1 a câmera original do jogo, F2 terceira pessoa, F3 primeira pessoa com o olhar pelo mouse e W A S D. Troque no jogo com F1, F2, F3 (F12 passa de uma para a próxima); o jogo não recebe mais essas teclas.
-mode.flat_view.tip = Troque no jogo com F1, F2, F3 (F12 passa de uma para a próxima). O jogo não recebe essas teclas: ponha as habilidades dele em outras.
+group.view_f1_f3_in_the_game.help = A visão do modo plano: F1 a câmera própria do jogo, F2 terceira pessoa, F3 primeira pessoa com olhar pelo mouse e W A S D. Troque no jogo com F1, F2, F3 (F12 percorre as visões), com Shift + F1 - F3 ou só com F12, para que F1 - F8 continuem sendo as habilidades do jogo: Teclas de visão, abaixo.
+mode.flat_view.tip = Troque no jogo com F1, F2, F3 (F12 percorre as visões). Com Teclas de visão em F1 - F4 o jogo não recebe essas teclas; Shift + F1 - F4 as devolve às habilidades dele.
 mode.flat_view.choice0 = F1  A câmera original do jogo
 mode.flat_view.choice1 = F2  Terceira pessoa
 mode.flat_view.choice2 = F3  Primeira pessoa: olhar com o mouse, W A S D
+view.keys.label = Teclas de visão
+view.keys.tip = Quais teclas escolhem a visão no jogo. F1 - F4: como antes; o jogo não recebe F1 - F4, coloque as habilidades dele em outras teclas. Shift + F1 - F4: segure Shift e aperte a tecla F da visão; um F1 - F8 simples volta a ser o atalho de habilidade do jogo (Shift segurado é o "ficar parado" do jogo: um Shift + F1 rápido não faz nada com o herói). Sem teclas F: F1 - F8 são todas do jogo; a visão muda com F12 (próxima visão), aqui ou com os botões de visão do controle. F12 e o controle funcionam com qualquer escolha. Na hora.
+view.keys.choice1 = Shift + F1 - F4 (F1 - F8 continuam sendo habilidades do jogo)
+view.keys.choice2 = Sem teclas F (F12, Settings, o controle)
 
 # --- View (F1 - F4 in the game) ---
 group.view_f1_f4_in_the_game = Visão (F1 - F4 no jogo)
-group.view_f1_f4_in_the_game.help = A visão em VR: F1 de cima, F3 o jogo no seu chão, F4 primeira pessoa com o corpo acompanhando os seus controles. Troque no jogo com F1 - F4 (F12 passa de uma para a próxima); o jogo não recebe mais essas teclas.
-mode.vr_mode.tip = Troque no jogo com F1 - F4 (F12 passa de uma para a próxima). F3: o jogo fica no chão da sua sala. F4: braços nos controles, o tronco firme. O jogo não recebe F1 - F4.
+group.view_f1_f4_in_the_game.help = A visão em VR: F1 de cima, F3 o jogo no seu chão, F4 primeira pessoa com o corpo seguindo seus controles. Troque no jogo com F1 - F4 (F12 percorre as visões), com Shift + F1 - F4 ou só com F12, para que F1 - F8 continuem sendo as habilidades do jogo: Teclas de visão, abaixo.
+mode.vr_mode.tip = Troque no jogo com F1 - F4 (F12 percorre as visões). F3: o jogo fica no chão do seu quarto. F4: braços nos controles, o tronco sustentado. Com Teclas de visão em F1 - F4 o jogo não recebe F1 - F4; Shift + F1 - F4 as devolve às habilidades dele.
 mode.vr_mode.choice0 = F1  De cima
 mode.vr_mode.choice2 = F3  O jogo no seu chão: olhe para baixo e ande ao redor dele (realidade mista)
 mode.vr_mode.choice3 = F4  Primeira pessoa: o corpo acompanha o seu (controles)
@@ -164,6 +168,15 @@ hud.headset_language.tip = As palavras que o mod desenha no headset - o painel d
 @run.collect_logs.label = Coletar logs para o suporte
 @run.collect_logs.tip = Cria um zip na sua área de trabalho com o que precisamos para achar um problema: os logs do mod, do D2RLoader, do ReShade e do FlatVR, as configurações, as versões, a placa de vídeo e o Windows. Com o jogo em execução, ele primeiro grava 10 s de como os quadros são desenhados - continue jogando e gire a cabeça. Nada é enviado a lugar nenhum: poste o zip no nosso Discord (#diablo-2-vr).
 @status.collect.label = Coletar logs: um zip na sua área de trabalho para postar no nosso Discord
+@status.crashrep.label = Relatórios de falha: desativado
+support.crash_reports.label = Oferecer o envio de um relatório quando o jogo fecha com erro
+support.crash_reports.tip = Depois de um jogo que travou, congelou ou perdeu a placa de vídeo, o D2R VR Crash Reporter abre uma janela com o que enviaria ao servidor do BodyWalk: como o jogo terminou, os logs dessa partida, as versões e a placa de vídeo; seu usuário do Windows e o nome do PC, nomes de personagens, endereços e senhas são removidos. Nada é enviado se você não apertar Enviar lá; o dump de memória só com a própria caixa marcada. Desmarcado: nada vigia o jogo, como antes. Vale a partir da próxima vez que o jogo iniciar.
+@run.crash_offer.label = Ver o relatório e enviá-lo
+@run.crash_offer.tip = Abre o relatório do jogo que fechou com erro: cada arquivo que seria enviado, e Enviar / Não enviar.
+support.send_logs.label = Enviar os logs ao servidor do BodyWalk
+support.send_logs.tip = Marcado: um botão abaixo envia o zip de Coletar logs ao servidor do BodyWalk, em vez de você postá-lo: uma cópia sem seu usuário do Windows e nome do PC, nomes de personagens, endereços e senhas, e sem as imagens e vídeos do headset. Você vê cada arquivo e aperta Enviar você mesmo; depois nos diga o número do relatório no Discord. Desmarcado: só o zip na sua área de trabalho, como antes.
+@run.send_logs.label = Enviar os logs ao servidor do BodyWalk
+@run.send_logs.tip = Coleta os logs como o botão acima e depois abre a janela que mostra o que vai para o servidor do BodyWalk. Nada é enviado até você apertar Enviar lá.
 headset_shot.on.label = Captura de tela do headset
 headset_shot.on.tip = Para uma imagem no headset duplicada, no olho errado, preta ou plana: salva exatamente o que o jogo entrega ao headset - as imagens dos dois olhos e os painéis, com seus tamanhos, ângulos e a distância entre os olhos - na pasta de logs. Marcado: o botão abaixo e a tecla tiram uma enquanto o jogo roda; Coletar logs compacta a mais recente. Desmarcado: nada, como antes.
 headset_shot.take.label = Captura de tela da imagem do headset
@@ -200,6 +213,8 @@ support.session_logs_days.label = Manter os logs dos jogos por (dias)
 support.session_logs_days.tip = A pasta de um jogo é removida este número de dias depois de criada (ao iniciar o jogo).
 support.session_logs_max_mb.label = No máximo (MB) para todos eles
 support.session_logs_max_mb.tip = Enquanto todas as pastas passarem deste valor, as mais antigas são removidas primeiro. Os logs de um jogo têm cerca de 1 a 10 MB.
+support.collect_sessions.label = Coletar logs: as últimas partidas também
+support.collect_sessions.tip = Coletar logs também empacota os logs desta quantidade das partidas mais recentes (as pastas delas em sessions), para que a partida que crashou esteja no zip mesmo depois de você iniciar o jogo de novo. 0: só a pasta logs, como antes.
 update.check.label = Verificar atualizações ao abrir este programa
 update.check.tip = Pergunta ao bodywalkvr.com qual é a versão mais nova do mod. Nada é baixado.
 update.develop.label = Versões beta também (canal develop)
@@ -217,6 +232,8 @@ render.monitor_eye_fit.label = Monitor: o olho nas proporções dele (cortado pa
 render.monitor_eye_fit.tip = Com um tamanho de renderização VR diferente da janela (Resolução, No headset: uma imagem quadrada numa janela larga), o Windows estica a imagem sobre a janela - o monitor a mostrava achatada. Ligado: o meio da imagem do olho, no formato da janela, é desenhado primeiro sobre a imagem inteira, então a janela a mostra nas proporções reais (o alto e o baixo, ou as laterais, cortados). Nada muda quando a janela tem o formato da imagem. Ao vivo. Desligado: esticada como antes.
 render.monitor_eye_drawn_only.label = Monitor: olhos alternados - só imagens que o jogo desenhou
 render.monitor_eye_drawn_only.tip = Só com "OpenXR nativo - olhos alternados": os quadros que desenham o outro olho mostram a última imagem que o jogo desenhou deste olho - cada imagem duas vezes, à metade da taxa, mas nunca uma criada na placa de vídeo (imagens criadas podem borrar nas bordas de coisas em movimento). Desligado (o padrão): a imagem criada para este olho naquele quadro - nova a cada quadro, como o headset a mostra. Ao vivo.
+render.monitor_panels.label = Monitor: mostrar os painéis do headset (inventário, vendedor, baú, mapa...)
+render.monitor_panels.tip = O OpenXR nativo coloca os menus e painéis (o inventário na sua mão ou à frente, o vendedor, o baú, a barra de ferramentas e o mapa, as bolas do cinto, o laser, a barra do monstro, o painel de configurações e a roda de habilidades) sobre a imagem do olho só no headset, então a janela no monitor (e a gravação dela) mostrava o mundo sem eles. Marcado: cada painel também é desenhado sobre a imagem do monitor, onde aquele olho o vê. A imagem do headset não muda. Alguns desenhos a mais por quadro na placa de vídeo enquanto há painéis. Na hora. Desmarcado: só o mundo, como antes.
 
 # ===== Tab: Performance =====
 tab.performance = Desempenho
@@ -474,7 +491,7 @@ body.crouch_cm.tip = Quanto a sua cabeça precisa descer abaixo da altura dos se
 shapeshift.forms_first_person.label = Druida: lobisomem e homem-urso em primeira pessoa (F4)
 shapeshift.forms_first_person.tip = Um druida na forma de Lobisomem ou Homem-urso é desenhado pelo jogo como a fera, e em primeira pessoa a cabeça e as costas dela ficavam na frente dos seus olhos. Ligado: a fera vira o seu corpo como o do druida - o tronco dela mantido em pé sob a câmera, a própria cabeça e o pescoço escondidos, os braços nos controles, os olhos na altura própria da forma (ajustados suavemente em meio segundo quando você se transforma); parada, as pernas e a cauda ficam mantidas, andando elas seguem a passada do jogo. As garras fecham e abrem com os seus grips, e com Agarrar corpos ligado as patas são mãos livres: elas pegam, carregam e arremessam nas palmas como as suas mãos. Só o corpo desenhado, a câmera e a pegada: a forma, os ataques e a velocidade dela continuam sendo do jogo. Só em primeira pessoa VR (F4), e só para o seu próprio druida. Desligado: a fera do próprio jogo, como antes. Ideia e números do D2R VR Unleashed (bearstonem/d2r-pcvr). Ao vivo.
 shapeshift.claw_hits.label = Druida: lobisomem e homem-urso golpeiam com as garras (F4)
-shapeshift.claw_hits.tip = As formas não seguram arma, então o acerto por toque não tinha com o que golpear. Ligado: cada pata golpeia por toque como uma arma - do pulso até as garras, como os próprios ossos da forma as têm - e um golpe rápido o bastante num monstro é o próprio ataque do jogo (com Acerto direto pelas regras dele, ou a habilidade armada: Fúria, Fúria Selvagem, Mutilar, Fome ...). O jogo decide o acerto, o dano e a velocidade. As duas patas são uma só arma: depois que qualquer uma ataca, as duas esperam o tempo que o ataque do herói leva, então duas patas nunca atacam com o dobro da frequência. A velocidade mínima é a de mãos vazias (Golpes). Precisa do Acerto por toque ligado. Só em primeira pessoa VR (F4). Ao vivo.
+shapeshift.claw_hits.tip = As formas não seguram arma, então o acerto por toque não tinha com o que bater. Ligado: cada pata golpeia por toque como uma arma, do pulso até as garras, conforme os ossos da própria forma, e um golpe rápido o bastante num monstro é o ataque do próprio jogo (com Direct hit pelas regras dele, ou a habilidade equipada: Fury, Feral Rage, Maul, Hunger ...). O jogo decide o acerto, o dano e a velocidade. As duas patas são uma arma só: depois que uma ataca, ambas esperam o tempo que o ataque do herói leva, então duas patas nunca atacam o dobro de vezes. A velocidade mínima é a de cada forma (Strikes > Hit by touch; 0: a de sem armas). Requer Hit by touch ligado. Só em primeira pessoa de VR (F4). Ao vivo.
 shapeshift.wolf_height.label = Lobisomem: altura dos olhos, %
 shapeshift.wolf_height.tip = Os olhos do lobisomem nesta parte da própria altura dele (100: 98 % da do druida). Mais baixo: você fica mais baixo no mundo, e ele parece maior. Ao vivo.
 shapeshift.bear_height.label = Homem-urso: altura dos olhos, %
@@ -1016,6 +1033,14 @@ hud.map_rotate_flat.label = O mapa gira com a câmera
 hud.map_rotate_flat.tip = O minimapa do jogo na tela nas visões da sua própria câmera (F2 e F3 planas, VR F2 e F3 com o mapa na imagem): desenhado ao redor do seu herói, visto de cima, e girado para que o lado para onde a câmera olha fique em cima: gire o mouse e o mapa gira com você. VR F3 (o jogo no seu chão): o lado para onde sua cabeça olha pelo chão fica em cima; ande ao redor do jogo e o mapa gira. A seta dourada (Arrow on the map) então aponta para cima. Só um minimapa pode girar: com o mapa do jogo no meio da tela (o mapa em tela cheia) ele vai para o canto superior direito enquanto gira (Corner map is: left o coloca à esquerda) e volta à tela cheia quando não gira; só nesta sessão, as opções do jogo mantêm a sua escolha. Não no F1 (a câmera do jogo e a janela dele nunca giram ali) nem no VR F4 (o mapa na mão tem o seu próprio Turns with you). Precisa do D2R_DepthFog.fx ligado (é ele que desenha o mapa de volta). Desmarcado: o mapa como o jogo o desenha. Ao vivo.
 hud_third.bar_near.tip = Só estéreo real: + traz a barra de ferramentas para perto dos olhos, - a empurra para trás da tela; 0 = onde o jogo a põe.
 
+# --- Swing ---
+group.swing = Golpe
+group.swing.help = O golpe do seu herói se inclina para onde você mira.
+body.attack_lean.label = F2: o golpe se inclina para onde você mira
+body.attack_lean.tip = Nas visões da sua própria câmera (plano F2 e F3, VR F2) o jogo golpeia na altura dele: você chega perto de um monstro pequeno e a lâmina passa por cima. Marcado: enquanto seu herói ataca, a coluna dele se curva para onde a mira olha; mire para baixo e o golpe desce até lá, mire para cima e ele sobe, suavizado na entrada e na saída do ataque. Só o corpo desenhado: o ataque do jogo, o acerto, o alcance e a direção são dele. Não em F1, VR F3 ou F4. Desmarcado: como antes. Na hora.
+body.attack_lean_max_deg.label = Inclinação do golpe: no máximo, °
+body.attack_lean_max_deg.tip = O máximo que o golpe se inclina, para cima ou para baixo: a coluna se curva tanto quanto o ponto sob a mira está abaixo ou acima do peito, até este limite. Na hora.
+
 # --- Crosshair (mouse look) ---
 group.crosshair_mouse_look = Mira (olhar com o mouse)
 group.crosshair_mouse_look.help = A mira no meio da tela quando você joga F2 com o olhar pelo mouse. Ligue ou desligue, defina o tamanho e defina a profundidade olhando para a frente e olhando para baixo, para ela não se separar em estéreo.
@@ -1062,6 +1087,44 @@ hud_floor.labels_size.tip = Os nomes de itens no chão e suas caixas, menores ou
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = IU: F3 olhos
 
+# --- Weapon in hand (F3) ---
+group.weapon_in_hand_f3 = Arma na mão (F3)
+group.weapon_in_hand_f3.help = Primeira pessoa: seus braços, com a arma neles, deslocados ao longo da visão (para o lado, para cima ou para baixo, para frente ou para trás) para que uma arma grande não fique no meio da imagem. Guardado por tipo de arma, como no Weapon Adjust do VR: escolha o tipo (ou siga o que está na mão). Só os braços desenhados se movem; o ataque é do jogo.
+body.flat_weapon_adjust.label = Tirar os braços e a arma do meio
+body.flat_weapon_adjust.tip = Primeira pessoa (F3): cada braço, com a mão e o que ela segura, é deslocado ao longo da visão pelos controles abaixo - todos em 0 no começo, então nada se move até você ajustá-los. Ajuste você mesmo enquanto joga: a arma se move ao arrastar, e cada tipo de arma guarda seu próprio lugar (um machado mais baixo e mais para fora que uma adaga, por exemplo). O braço inteiro se move a partir do ombro, então a mão mantém a arma; uma arma segurada com as duas mãos (uma espada de duas mãos, um cajado) se move com as duas, e a segunda mão fica no cabo. Estes não são os valores do Weapon Adjust do VR. Só os braços desenhados mudam: o ataque, o alcance, o acerto e o que outros jogadores veem são do jogo. Desligado = os braços onde a animação do jogo os põe, como antes. Ao vivo.
+@ui.flat_weapon_follow.label = Seguir a arma na mão
+@ui.flat_weapon_follow.tip = Os controles abaixo editam o tipo de arma que o herói segura agora (lido do jogo em execução; a caixa abaixo mostra qual). Desligado: escolha o tipo você mesmo. Uma escolha própria, separada do Weapon Adjust do VR.
+@ui.flat_weapon.label = Arma
+@ui.flat_weapon.choice0 = Desarmado
+@ui.flat_weapon.choice1 = Arco
+@ui.flat_weapon.choice2 = Besta
+@ui.flat_weapon.choice3 = Espada
+@ui.flat_weapon.choice4 = Machado
+@ui.flat_weapon.choice5 = Maça
+@ui.flat_weapon.choice6 = Cetro
+@ui.flat_weapon.choice7 = Varinha
+@ui.flat_weapon.choice8 = Cajado
+@ui.flat_weapon.choice9 = Arma de haste
+@ui.flat_weapon.choice10 = Lança
+@ui.flat_weapon.choice11 = Adaga
+@ui.flat_weapon.choice12 = Arremesso
+@ui.flat_weapon.choice13 = Dardo
+@ui.flat_weapon.choice14 = Garra
+@ui.flat_weapon.choice15 = Orbe
+@ui.flat_weapon.choice16 = Outra
+@flatweapon.right_x.label = Braço direito: para a direita, cm
+@flatweapon.right_x.tip = Primeira pessoa (F3): o braço direito com a arma é deslocado para a direita da visão (- para o centro). Guardado por tipo de arma. Ao vivo.
+@flatweapon.right_y.label = Braço direito: para cima, cm
+@flatweapon.right_y.tip = O braço direito é deslocado para cima (- para baixo). Guardado por tipo de arma. Ao vivo.
+@flatweapon.right_z.label = Braço direito: para a frente, cm
+@flatweapon.right_z.tip = O braço direito é deslocado para a frente, para longe de você ao longo da visão (- para trás, na sua direção). Guardado por tipo de arma. Ao vivo.
+@flatweapon.left_x.label = Braço esquerdo: para a esquerda, cm
+@flatweapon.left_x.tip = O braço esquerdo, com um escudo ou uma segunda arma, é deslocado para a esquerda da visão (- para o centro). Uma arma na mão esquerda usa os valores do próprio tipo; qualquer outra coisa (um escudo, uma mão vazia), os do tipo da mão direita. Ao vivo.
+@flatweapon.left_y.label = Braço esquerdo: para cima, cm
+@flatweapon.left_y.tip = O braço esquerdo é deslocado para cima (- para baixo). Ao vivo.
+@flatweapon.left_z.label = Braço esquerdo: para a frente, cm
+@flatweapon.left_z.tip = O braço esquerdo é deslocado para a frente, para longe de você ao longo da visão (- para trás, na sua direção). Ao vivo.
+
 # --- Toolbar and map (F2, F3) ---
 group.toolbar_and_map_f2_f3 = Barra de ferramentas e mapa (F2, F3)
 group.toolbar_and_map_f2_f3.help = A barra de ferramentas e o mapa nas visões da sua própria câmera (F2 e F3): marque a seta para ver no mapa para onde você olha.
@@ -1081,6 +1144,7 @@ hud_inside.map_zoom.label = Tamanho do mapa de canto
 hud_inside.map_zoom.tip = O mapa de canto na imagem tanto maior (1 = como o jogo o desenha), crescendo a partir do próprio canto. Para tê-lo em cima à esquerda, ponha o minimapa do jogo à esquerda nas opções dele. Precisa do D2R_DepthFog.fx ligado no ReShade.
 body.flat_hold_trunk.label = Manter o corpo sob a câmera ao atacar
 body.flat_hold_trunk.tip = Primeira pessoa: o peito, os quadris e a cabeça do herói ficam sob a câmera durante um golpe, como na primeira pessoa em VR; os braços e a arma dele continuam golpeando como o jogo os anima. Só o corpo desenhado muda - o ataque é do jogo. Desligado = como antes (o tronco balança para fora de baixo da câmera).
+body.attack_lean.label#2 = F2 e F3: o golpe se inclina para onde você mira
 input.portal_look_horizon.label = Olhar para o horizonte depois de um portal ou Ponto de Passagem
 input.portal_look_horizon.tip = Primeira pessoa: você olha para baixo para um portal para entrar nele, e saía ainda olhando para baixo. Ligado: depois de um portal ou um Ponto de Passagem o olhar volta ao horizonte (só para cima e para baixo; a direção para onde você está virado continua). Do fork plano de sajmonsoft. Desligado = como antes.
 input.portal_auto.label = Andar para dentro de um portal para entrar nele
@@ -1643,6 +1707,10 @@ hud.hand_vitals_orb_z_cm_assassin.label = Assassina: deslocamento de profundidad
 hud.hand_vitals_orb_z_cm_assassin.tip = Somado ao Z dos pulsos (para cima a partir da mão, acima) de AMBOS os pulsos - espelhados ou não - enquanto uma Assassina joga: o osso do pulso e o modelo do braço mudam com a classe, então uma profundidade serve para um herói só. + ergue o medalhão do braço, - o afunda. 0 = sem valor próprio: o Z próprio dos pulsos, como antes. Edite a linha do herói que você joga - a linha acima diz qual é o que o jogo tem agora. Ao vivo.
 hud.hand_vitals_orb_z_cm_warlock.label = Bruxo: deslocamento de profundidade (Z), cm
 hud.hand_vitals_orb_z_cm_warlock.tip = Somado ao Z dos pulsos (para cima a partir da mão, acima) de AMBOS os pulsos - espelhados ou não - enquanto um Bruxo joga: o osso do pulso e o modelo do braço mudam com a classe, então uma profundidade serve para um herói só. + ergue o medalhão do braço, - o afunda. 0 = sem valor próprio: o Z próprio dos pulsos, como antes. Edite a linha do herói que você joga - a linha acima diz qual é o que o jogo tem agora. Ao vivo.
+hud.hand_vitals_orb_z_cm_werebear.label = Homem-urso: deslocamento de profundidade (Z), cm
+hud.hand_vitals_orb_z_cm_werebear.tip = Com o homem-urso do druida como seu corpo (Body > "Druida: lobisomem e homem-urso em primeira pessoa", F4): somado ao Z dos dois pulsos por cima da linha do druida - a pata do urso é muito mais grossa que o antebraço do druida, e o medalhão afundava no pelo. + o tira para fora. 0 = o lugar do druida, como antes. O lobisomem mantém o lugar do druida. Ao vivo.
+hud.hand_vitals_orb_form_auto.label = Homem-urso: elevar pelo próprio modelo do antebraço
+hud.hand_vitals_orb_form_auto.tip = Com o homem-urso como seu corpo (F4), o medalhão também sobe o quanto o antebraço do urso se projeta do dorso do pulso mais que o do druida - ambos medidos na própria malha do osso do antebraço, como desenhado (o do druida, da última vez em forma humana). A linha acima soma por cima. Com "No próprio osso do antebraço" marcado, o medalhão já fica na pele do urso e só a linha acima soma. Desmarcado: só a linha acima. Ao vivo.
 hud.bar_width_arm.label = Comprimento, m
 hud.bar_split_arm.label = Cortada em duas
 hud.bar_split_arm.tip = A faixa cortada ao meio e as metades postas lado a lado: a metade da esfera azul fica onde estava, a metade da esfera vermelha, virada de ponta a ponta, fica ao lado dela, de modo que as duas esferas ficam juntas no pulso. Metade do comprimento, o dobro da largura. Se elas forem parar no cotovelo, Girar Z 180.
@@ -1778,6 +1846,8 @@ render.game_height_fog.label = A neblina de altura do próprio jogo
 render.game_height_fog.tip = Só a cidade do ato 2 a tem. Da nossa câmera, a borda dela é uma linha dura atravessando a imagem, com um véu pálido acima (a câmera do jogo nunca vê essa borda). Desligado: o vrcam a define como 0.
 render.game_depth_fog.label = A neblina de profundidade do próprio jogo
 render.game_depth_fog.tip = Toda área ao ar livre a tem, a partir da distância da câmera dele: uma névoa cinza nos quatro cantos da imagem (também vista de cima), sobre o chão próximo da nossa câmera. Desligado: o vrcam a define como 0.
+render.game_fog_scan_safe.label = Encontrar a névoa do jogo com segurança
+render.game_fog_scan_safe.tip = Como o D2R VR encontra a névoa de altura e de profundidade do jogo para desligá-las: lendo cópias da memória do jogo, então um bloco que o jogo libera nesse meio-tempo é pulado sem erro (o D2RLoader registrava isso como relatórios de crash), só definições onde as áreas do jogo as têm, e um valor só é alterado enquanto ainda é o que acabou de ser lido. Desligado: leituras diretas, como antes. Ao vivo.
 render.depth_fix.label = Os efeitos do jogo medem a profundidade a partir da nossa câmera
 render.depth_fix.tip = O jogo guarda uma cópia da profundidade para a neblina, a neblina de altura, a oclusão de ambiente, os reflexos e a água, feita para a câmera dele vista de cima (a 550 a 1060 unidades de distância). Da nossa, tudo está mais perto e é lido como uma parede plana a 550: a linha reta da cidade do ato 2 com um véu pálido acima, a névoa nos cantos. Ligado: essa profundidade parte da nossa câmera. Desligado: a do próprio jogo.
 render.own_depth.label = Profundidade para os efeitos
@@ -1806,6 +1876,8 @@ render.light_bounds_fix.label = Corrigir a iluminação do jogo numa janela quad
 render.light_bounds_fix.tip = O jogo corta a imagem em 32 x 20 ladrilhos e acha a faixa de profundidade de cada ladrilho para as luzes com um shader que só está certo numa janela 16:10. Numa janela quadrada ou larga (a janela VR, 16:9) ele perde fileiras: luzes somem em retângulos duros e o sombreamento de um telhado pisca quando a cabeça se move. Ligado: o nosso próprio shader faz esse trabalho certo enquanto o VR renderiza, com ReShade ou sem ele (em 16:10 os números são os mesmos do jogo). Desligado, vale na hora; marcado de novo, vale na próxima inicialização do jogo. Desligado: o do próprio jogo.
 render.light_bounds_flat.label = ... no modo plano também
 render.light_bounds_flat.tip = A mesma correção no modo plano (um monitor ou uma janela, também a imagem plana do OpenXR nativo): o shader do jogo também está errado em 16:9 e numa janela quadrada, não só em VR. Acompanha o modo na hora. Desligado: o modo plano mantém o shader do próprio jogo, como antes.
+render.reflections_per_eye.label = Reflexos em poças e sangue na profundidade real (3D)
+render.reflections_per_eye.tip = Com "Stereo - one pass, two pictures" os reflexos do jogo em água, poças e poças de sangue eram desenhados no olho direito como se vistos do dobro da distância entre os olhos: o dobro de paralaxe, metade da profundidade; o reflexo parecia flutuar sobre a poça e cansava a vista. Ligado: as duas passagens de reflexo do jogo leem a posição própria de cada olho (um valor no shader dele muda; sem trabalho extra para a placa de vídeo), então cada reflexo fica na água. Os outros modos 3D e o modo plano ficam iguais nos dois casos. Feito ao iniciar o jogo: se ligado, vale a partir da próxima inicialização; depois disso segue esta caixa na hora. Desligado: o do jogo.
 
 # --- Render distance ---
 group.render_distance = Distância de renderização
@@ -2085,26 +2157,7 @@ tab.weapon_adjust = Ajuste da arma
 # --- Weapon in hand ---
 group.weapon_in_hand = Arma na mão
 group.weapon_in_hand.help = Sua arma na sua mão: onde ela fica e como está virada. Escolha um tipo de arma (ou siga a que está na mão) e mova os controles deslizantes até ela ficar na sua mão do jeito que você gosta. Os controles deslizantes da mão esquerda põem o punho na haste de uma arma de duas mãos.
-@ui.weapon_follow.label = Seguir a arma na mão
 @ui.weapon_follow.tip = Os controles deslizantes abaixo editam o tipo de arma que o herói segura agora (lido do jogo em execução). Desligado: escolha você mesmo o tipo.
-@ui.weapon.label = Arma
-@ui.weapon.choice0 = Desarmado
-@ui.weapon.choice1 = Arco
-@ui.weapon.choice2 = Besta
-@ui.weapon.choice3 = Espada
-@ui.weapon.choice4 = Machado
-@ui.weapon.choice5 = Maça
-@ui.weapon.choice6 = Cetro
-@ui.weapon.choice7 = Varinha
-@ui.weapon.choice8 = Cajado
-@ui.weapon.choice9 = Arma de haste
-@ui.weapon.choice10 = Lança
-@ui.weapon.choice11 = Adaga
-@ui.weapon.choice12 = Arremesso
-@ui.weapon.choice13 = Dardo
-@ui.weapon.choice14 = Garra
-@ui.weapon.choice15 = Orbe
-@ui.weapon.choice16 = Outra
 @weapon.x.label = Mover em X, cm
 @weapon.x.tip = Com os braços nos controles: a arma movida na mão, ao longo dos eixos do próprio suporte dela. Guardado por tipo de arma.
 @weapon.y.label = Mover em Y, cm
@@ -2294,6 +2347,12 @@ bow.arrow_fire_cut.label = Efeitos da flecha: apagados na soltura
 bow.arrow_fire_cut.tip = Ligado: o fogo, o gelo ou a luz arcana se apaga quando o tiro sai - a soltura da corda - e não um momento depois, quando o jogo esconde a flecha na sua mão. Ele acende de novo na próxima flecha: uma nova puxada, o jogo mostrando uma flecha de novo depois do tiro, outra habilidade escolhida. O atraso abaixo o mantém na flecha atirada por esse tempo. Só a nossa própria luz na flecha: o projétil do jogo, os efeitos dele e o dano são do jogo. Desligado: o efeito fica até o jogo esconder a flecha, como antes. Só F4. Ao vivo.
 bow.arrow_fire_cut_ms.label = Efeitos da flecha: apagados na soltura - depois de, ms
 bow.arrow_fire_cut_ms.tip = Quanto tempo depois da soltura o efeito se apaga: 0 = na soltura. Uma nova puxada, ou a próxima flecha mostrada, antes disso o acende nessa flecha. Ao vivo.
+bow.swap_by_grab.label = Arco: passar para a outra mão agarrando-o
+bow.swap_by_grab.tip = Primeira pessoa de VR (F4), um arco: aperte o grip da mão livre NA EMPUNHADURA DO ARCO (a até 25 cm da mão do arco, mais perto da empunhadura que da corda) e o arco passa para essa mão, com um pulso curto nela; a corda é da outra mão a partir daí: um arqueiro canhoto segura o arco com a mão direita e puxa com a esquerda. O mesmo na volta. O arco desenhado, a corda e o puxar dela, a mira, a aljava e seus orbes vão junto. Só a imagem e qual controle faz o quê: o arco do jogo continua no próprio slot. O gatilho e o grip da mão livre na empunhadura não pegam a corda; na corda pegam, como sempre. Uma besta não é passada assim. A mão em que ele está é lembrada (a próxima configuração) e o arco começa ali da próxima vez. Desligado: o arco fica na mão que as configurações definem, como antes. Na hora.
+bow.bow_hand.label = Arco: a mão em que está
+bow.bow_hand.tip = A mão em que o arco está com a caixa acima. O jogo a grava a cada vez que você passa o arco, então ela sobrevive a uma reinicialização; defina aqui para começar nessa mão.
+bow.bow_hand.choice0 = A mão direita
+bow.bow_hand.choice1 = A mão esquerda
 
 # --- Bow without the string draw (the A button, mode above) ---
 group.bow_without_the_string_draw_the_a_button_mode_above = Arco sem a puxada da corda (o botão A, modo acima)
@@ -2693,6 +2752,10 @@ gameplay.melee_touch_barrels.label = Quebrar barris e potes acertando-os
 gameplay.melee_touch_barrels.tip = Um golpe da arma segurada através de um barril, um pote, uma urna ou um cesto o quebra do jeito do próprio jogo: o golpe (um que acertaria um monstro) pressiona a interação do jogo nesse objeto, como o A faz, então o herói o chuta ou quebra com a própria animação - o saque, as armadilhas e as explosões são os do jogo. Baús, portas, santuários e objetos de missão mantêm os controles normais, e o A continua funcionando. O tamanho do objeto é uma estimativa pela área que ele ocupa no chão. Desmarcado: como antes, só o A os quebra. Ao vivo. Só F4.
 gameplay.melee_touch_barrels_min_speed.label = ... um golpe que os quebra, a partir de (m/s)
 gameplay.melee_touch_barrels_min_speed.tip = A velocidade mínima de um golpe que atravessa um barril ou pote e o quebra: a deles, não a dos monstros ("the least blade speed that hits" acima), e também com strike by force. 2: um golpe fácil. Ao vivo.
+shapeshift.wolf_min_speed.label = Lobisomem: velocidade mínima da garra, m/s
+shapeshift.wolf_min_speed.tip = Com que velocidade a pata do lobisomem precisa se mover onde toca um monstro para o golpe contar. Uma mão nua é difícil de balançar tão rápido quanto uma arma, por isso as patas têm seu próprio número. 0: a de sem armas; senão a velocidade mínima geral (acima), como antes. Só decide se um toque conta; o ataque, a velocidade e o dano continuam sendo do jogo. Requer Body > Druida: lobisomem e homem-urso golpeiam com as garras. Ao vivo.
+shapeshift.bear_min_speed.label = Urso-homem: velocidade mínima da garra, m/s
+shapeshift.bear_min_speed.tip = Com que velocidade a pata do homem-urso precisa se mover onde toca um monstro para o golpe contar. Uma mão nua é difícil de balançar tão rápido quanto uma arma, por isso as patas têm seu próprio número. 0: a de sem armas; senão a velocidade mínima geral (acima), como antes. Só decide se um toque conta; o ataque, a velocidade e o dano continuam sendo do jogo. Requer Body > Druida: lobisomem e homem-urso golpeiam com as garras. Ao vivo.
 gameplay.melee_touch_thrown_held.label = Uma arma de arremesso é a arma na sua mão desde o início (sem precisar do grip para acertar)
 gameplay.melee_touch_thrown_held.tip = Um dardo, uma faca de arremesso ou um machado de arremesso é a arma na sua mão desde o momento em que é equipado, como uma espada: acerta por toque na hora - você não precisa apertar o grip antes. Largada (o grip apertado e solto com a mão em repouso), ela não acerta nada até uma mão segurá-la de novo, como uma espada. O arremesso é o mesmo: aperte o grip, balance, solte - o arremesso do próprio jogo; o toque continua desativado por 0,7 s depois de um arremesso e um balanço arremessa uma vez. Desmarcado: como antes - com o arremesso pelo grip ligado, uma arma de arremesso só acerta por toque enquanto o grip dela está apertado. Ao vivo. Só no F4.
 gameplay.melee_touch_only.label = O gatilho não ataca (só o toque da lâmina; um arco ou uma besta atira com ele)
@@ -2843,8 +2906,8 @@ gameplay.shield_smite_stroke_cm.tip = Um movimento é uma pancada - e pode lanç
 
 # --- Attention: these change the game's own logic ---
 group.attention_these_change_the_game_s_own_logic = Atenção: estas opções mudam a própria lógica do jogo
-group.attention_these_change_the_game_s_own_logic.help = As opções deste bloco vão de propósito além das próprias regras de Diablo II: elas fazem o servidor do jogo fazer o que as próprias regras de ataque e de movimento dele não fariam. As duas vêm ligadas com o mod (Direct hit pelas regras); desligadas (desmarcadas) é a própria lógica do jogo, como ele é jogado sem o mod. Direct hit: um toque da sua arma vira na hora o ataque do servidor - sem animação, sem velocidade de ataque, sem andar até o alvo. O jogo move o que você carrega e arremessa: um monstro que você carrega ou arremessa é posto em outra célula pelo próprio recuo do jogo. No modo solo e como anfitrião, o jogo muda para todos que estão nele. Todo o resto do mod - acerto por toque, peso da arma, ragdolls, agarrar um monstro sem esse movimento - é só outro jeito de dar ao jogo a entrada dele: o jogo continua decidindo.
-@status.game_logic.label = Ligadas por padrão. Estas duas fazem o jogo fazer o que as próprias regras dele não fariam: ataques e posições são enviados direto ao servidor do jogo. Elas mudam como o jogo é jogado, e no cooperativo todos são afetados. Desligue-as para jogar pelas próprias regras do jogo. (Todo o resto do mod é outro jeito de entrada: o jogo decide.)
+group.attention_these_change_the_game_s_own_logic.help = As opções deste bloco vão de propósito além das próprias regras de Diablo II: elas fazem o servidor do jogo fazer o que as próprias regras de ataque e de movimento dele não fariam. Direct hit (pelas regras) e o movimento do que você carrega e arremessa vêm ligados com o mod; desligadas (desmarcadas) é a própria lógica do jogo, como ele é jogado sem o mod. Direct hit: um toque da sua arma vira na hora o ataque do servidor - sem animação, sem velocidade de ataque, sem andar até o alvo. O jogo move o que você carrega e arremessa, e o que você derruba: um monstro que você carrega, arremessa ou derruba é posto em outra célula pelo próprio recuo do jogo. No modo solo e como anfitrião, o jogo muda para todos que estão nele. Todo o resto do mod - acerto por toque, peso da arma, ragdolls, agarrar um monstro sem esse movimento - é só outro jeito de dar ao jogo a entrada dele: o jogo continua decidindo.
+@status.game_logic.label = Estas opções fazem o jogo fazer o que as próprias regras dele não fariam: ataques e posições são enviados direto ao servidor do jogo. Elas mudam como o jogo é jogado, e no cooperativo todos são afetados. Desligue-as para jogar pelas próprias regras do jogo. (Todo o resto do mod é outro jeito de entrada: o jogo decide.)
 @directhit.mode.label = Direct hit
 @directhit.mode.tip = Desligado: o toque aperta o próprio ataque do jogo (a animação dele, a velocidade de ataque dele, o alcance dele). PELAS REGRAS: o PRIMEIRO toque num monstro é um acerto direto. Depois, um toque no MESMO monstro antes do que leva o ataque do seu herói (medido pela própria animação de ataque dele, então segue a velocidade de ataque dele) é o próprio ataque do jogo - cutucar rápido não ganha nada. Depois disso, um toque nele volta a ser acerto direto só para um golpe de verdade: a velocidade, a força e o comprimento do golpe mínimos (o trajeto do próprio controle) abaixo. Outro monstro nunca é cedo demais. Uma arma de DUAS MÃOS precisa das duas mãos nela (a pegada com as duas mãos): numa mão só o toque dela é o próprio ataque do jogo. Um toque que falha numa regra ataca mesmo assim: o próprio ataque do jogo, nunca nada. O golpe em área com duas mãos só com a própria caixa dele abaixo. TOTALMENTE LIGADO (não recomendado): todo toque aceito é um acerto direto, como fazia a antiga caixa experimental. O que é um acerto direto: no modo de um jogador e como anfitrião, o plugin chama ele mesmo o ataque de servidor do jogo (a rolagem de acerto, o dano e o desgaste são do jogo; sem animação, sem esperar a velocidade de ataque, sem andar até o monstro). Como jogador que ENTROU no jogo TCP/IP de alguém, ele manda o próprio comando do jogo "atacar este monstro" - o mesmo que um clique nele manda - e o servidor do anfitrião faz o ataque inteiro (o anfitrião não precisa de nada para isso). Só enquanto a habilidade no seu espaço de ataque for a que está na mão do herói e nenhuma habilidade corpo a corpo estiver armada. Grava [gameplay] melee_direct e melee_direct_client. Ao vivo. Só F4, como o acerto por toque.
 @directhit.mode.choice1 = Pelas regras
@@ -2862,6 +2925,9 @@ gameplay.melee_direct_client_cleave.tip = VAI ALÉM DA REGRA DO JOGO DE UM ATAQU
 group.monsters_you_carry_and_throw_weapon_weight_grab_bodies = Monstros que você carrega e arremessa (Peso da arma > Agarrar corpos)
 weight.grab_moves_unit.label = O jogo move o que você carrega e arremessa (um teste)
 weight.grab_moves_unit.tip = Precisa de Peso da arma > Agarrar corpos > "Erguer e arremessar um humanoide que você agarra". Ao vivo. Marcado: um humanoide que você carrega ou arremessa é movido pelo próprio jogo - o próprio recuo dele o põe no ponto sob o corpo que você segura, e onde ele cai - então ele luta dali e não anda de volta para o lugar antigo, e todos na partida veem isso. O que o recuo do jogo recusa (chefes, monstros grandes) fica onde está. Só no modo solo ou quando você hospeda a partida; o de um jogador que entrou continua só desenhado. F4. Desmarcado: só o desenho se move, o jogo o mantém onde estava, como antes.
+group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monstros que você derruba (Weapon Weight > Monsters' bodies)
+weight.knock_down_moves_unit.label = O jogo move o que você derruba (um teste)
+weight.knock_down_moves_unit.tip = Precisa de Weapon Weight > Monsters' bodies > "Um golpe forte derruba um humanoide". Ao vivo. Marcado: um humanoide que seu golpe derruba é movido pelo próprio jogo - o próprio recuo dele o põe no ponto onde o corpo cai e fica caído - então ele luta dali, seus golpes no corpo caído ali acertam, e ele se levanta ali em vez de andar de volta para o lugar antigo; todos na partida veem isso. Alguns recuos por queda (onde ele cai e onde se acomoda), nunca mais: se o jogo o tira dali enquanto está caído, ele se levanta e vai embora. Um cambaleio (um passo para trás) não move nada. O que o recuo do jogo recusa (chefes, monstros grandes) fica onde está. Só no modo solo ou quando você hospeda a partida; o de um jogador que entrou continua só desenhado. F4. Desmarcado: só o desenho cai, o jogo o mantém na célula dele, como antes.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Habilidades para o BodyWalk
@@ -3978,7 +4044,7 @@ vr.guide.5.row2.does = o jogo no seu chão: olhe para baixo para ele, ande ao re
 vr.guide.5.row3.control = F4
 vr.guide.5.row3.does = primeira pessoa - esta visão. As mãos, os painéis e este guia são do F4.
 vr.guide.5.row4.control = Teclado
-vr.guide.5.row4.does = a tecla F de uma visão (com a janela do jogo em foco), F12 a próxima visão, F11 recentraliza. A página Visão das configurações também tem F1 - F4.
+vr.guide.5.row4.does = F1 - F4 ou Shift + F1 - F4 (Settings > Home > Teclas de visão; com a janela do jogo em foco), F12 a próxima visão, F11 recentralizar. A página Visão também as tem.
 vr.guide.5.row5.control = Este guia de novo
 vr.guide.5.row5.does = as configurações no headset, página Corpo: Guia de primeiro uso
 vr.guide.5.nav = Concluir fecha o guia; ele está de novo na página Corpo, a qualquer hora.
@@ -4055,6 +4121,12 @@ status.depth.none = Profundidade: a nossa - nada escolhido ainda (o jogo em VR c
 status.depth.ours = Profundidade: a nossa, buffer {buffer}, {w} x {h}; última escolhida em {at} ({why}); escolhas {picks}, outro buffer {others} vezes.
 status.weight_lib.found = Biblioteca de física de peso: d2r_vr_weight.dll está em d2rloader\d2r_vr_libs - a marca abaixo move a arma com ela.
 status.weight_lib.missing = Biblioteca de física de peso: não encontrada em d2rloader\d2r_vr_libs (d2r_vr_weight.dll) - o mod mantém a física de peso própria, a marca abaixo fica indisponível.
+status.crashrep.missing = Relatórios de falha: o D2R VR Crash Reporter não está instalado (d2rloader\d2r_vr_libs); as duas caixas abaixo estão indisponíveis.
+status.crashrep.pending_logs = Os logs coletados {when} estão prontos para enviar; nada foi enviado ainda.
+status.crashrep.pending = Um jogo fechou com erro ({when}): há um relatório pronto; nada foi enviado ainda.
+status.crashrep.on = Relatórios de falha: ativado; depois de um jogo que fecha com erro você é perguntado se quer enviar um relatório.
+status.crashrep.off = Relatórios de falha: desativado; nada vigia o jogo, nada é enviado.
+crashrep.ask = Quer nos ajudar a corrigir as falhas?\n\nQuando o jogo fecha com erro (uma falha, um congelamento, uma placa de vídeo perdida), o D2R VR pode oferecer o envio de um relatório ao servidor do BodyWalk: os logs dessa partida, as versões, a placa de vídeo. Seu usuário do Windows e o nome do PC, nomes de personagens, endereços e senhas são removidos, e você vê cada arquivo antes.\n\nNada é enviado se você não apertar Enviar nessa janela. Você pode mudar isso quando quiser: Home > D2R VR > "Oferecer o envio de um relatório quando o jogo fecha com erro".
 status.grip_lib.found = Biblioteca de grip: d2r_vr_grip.dll está em d2rloader\d2r_vr_libs - a opção abaixo segura a arma do jeito dela.
 status.grip_lib.missing = Biblioteca de grip: não encontrada em d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - o mod mantém o seu jeito próprio de segurar, a marca abaixo fica indisponível.
 weapon_list.adjusted = {kind} - ajustado: {numbers}
@@ -4205,6 +4277,9 @@ status.collect.packing = Compactando os logs...
 status.collect.no_script = Não foi possível gravar o script de compactação na pasta TEMP
 status.collect.no_powershell = Não foi possível iniciar o PowerShell para compactar os logs
 status.collect.no_zip = Não foi possível criar o zip (código {code})
+status.collect.send_window = Abrindo a janela que mostra o que seria enviado; nada é enviado até você apertar Enviar lá
+status.collect.no_reporter = Não foi possível iniciar o D2R VR Crash Reporter (erro {code}); o zip está na sua área de trabalho: {name}.zip
+status.collect.send_done = A janela de envio foi fechada. O zip também está na sua área de trabalho: {name}.zip
 status.collect.saved = Salvo na sua área de trabalho: {name}.zip - poste-o no nosso Discord (#diablo-2-vr)
 mp.ago.now = agora mesmo
 mp.ago.min = há {n} min
@@ -4311,7 +4386,7 @@ status.update.up_to_date = Atualizado
 status.update.available = Atualização disponível: v{version}
 button.download_version = Baixar v{version}
 status.update.whats_new = Novidades: {text}
-footer = As mudanças valem na hora enquanto o jogo roda.   F1 - F4: a vista (aba Início).   F12: próxima vista.   F11: "à frente" é para onde eu olho.   Ctrl + roda do mouse: zoom.   Ctrl + Tab: próxima aba.
+footer = As alterações valem na hora enquanto o jogo roda.   F1 - F4 ou Shift + F1 - F4: a visão (aba Home).   F12: próxima visão.   F11: "para frente" é para onde eu olho.   Ctrl + roda: zoom.   Ctrl + Tab: próxima aba.
 msg.no_ini = Não há d2r_vr.ini em mods\D2R-VR\d2rloader\plugins (nem em d2rloader\plugins) ao lado deste programa.\nPonha este programa ao lado de D2R.exe do jogo, com o mod instalado.
 arcane.no_textures = O reshade-shaders\Textures do ReShade não está em {folder}: instale o ReShade (acima): as imagens são criadas quando ele está lá
 arcane.game_folder = a pasta do jogo
@@ -4635,6 +4710,37 @@ vr.map.on = Ligado
 vr.map.off = Desligado
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+@ui.weapon_follow.label = Seguir a arma na mão
+@ui.weapon.label = Arma
+@ui.weapon.choice0 = Desarmado
+@ui.weapon.choice1 = Arco
+@ui.weapon.choice2 = Besta
+@ui.weapon.choice3 = Espada
+@ui.weapon.choice4 = Machado
+@ui.weapon.choice5 = Maça
+@ui.weapon.choice6 = Cetro
+@ui.weapon.choice7 = Varinha
+@ui.weapon.choice8 = Cajado
+@ui.weapon.choice9 = Arma de haste
+@ui.weapon.choice10 = Lança
+@ui.weapon.choice11 = Adaga
+@ui.weapon.choice12 = Arremesso
+@ui.weapon.choice13 = Dardo
+@ui.weapon.choice14 = Garra
+@ui.weapon.choice15 = Orbe
+@ui.weapon.choice16 = Outra
+@weapon.flat_right_x.label = Braço direito: para a direita, cm
+@weapon.flat_right_x.tip = Primeira pessoa (F3): o braço direito com a arma deslocado para a direita da visão (- para o meio). Guardado por tipo de arma. Na hora.
+@weapon.flat_right_y.label = Braço direito: para cima, cm
+@weapon.flat_right_y.tip = O braço direito deslocado para cima (- para baixo). Guardado por tipo de arma. Na hora.
+@weapon.flat_right_z.label = Braço direito: para frente, cm
+@weapon.flat_right_z.tip = O braço direito deslocado para frente, longe de você ao longo da visão (- para trás, em sua direção). Guardado por tipo de arma. Na hora.
+@weapon.flat_left_x.label = Braço esquerdo: para a esquerda, cm
+@weapon.flat_left_x.tip = O braço esquerdo, com escudo ou uma segunda arma, deslocado para a esquerda da visão (- para o meio). Uma arma na mão esquerda usa os números do próprio tipo; qualquer outra coisa (um escudo, uma mão vazia) usa os do tipo da mão direita. Na hora.
+@weapon.flat_left_y.label = Braço esquerdo: para cima, cm
+@weapon.flat_left_y.tip = O braço esquerdo deslocado para cima (- para baixo). Na hora.
+@weapon.flat_left_z.label = Braço esquerdo: para frente, cm
+@weapon.flat_left_z.tip = O braço esquerdo deslocado para frente, longe de você ao longo da visão (- para trás, em sua direção). Na hora.
 weight.death_ragdoll.label = Um humanoide morto cai como um ragdoll (um teste)
 group.direct_hit = Acerto direto
 group.direct_hit.help = Como um toque que conta vira um acerto. Desligado: o toque aperta o próprio ataque do jogo. Pelas regras: um acerto direto para o primeiro toque num monstro e para um golpe de verdade depois do tempo de ataque do herói, senão o próprio ataque do jogo. Totalmente ligado: todo toque é um acerto direto (o jeito experimental antigo). Um só lugar para o modo de um jogador, o anfitrião e um jogador que entrou no jogo de alguém.

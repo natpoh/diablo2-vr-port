@@ -93,6 +93,28 @@ int main() {
     Check(PhaseMoves(5) && PhaseMoves(1) && PhaseMoves(2) && PhaseMoves(3), "held, falling (thrown), lying, getting up: moved");
     Check(!PhaseMoves(0) && !PhaseMoves(4) && !PhaseMoves(6) && !PhaseMoves(7), "none, back, staggering, walking home: not");
 
+    // -- the settle (Serg 2026-11-04: «иногда пытается вернуться на старое место»): at rest the unit is brought onto the body's own cell - a body 1.5 cells off a
+    // unit the knockback left short was walked back to; held or flying, two cells as before
+    Check(StepFor(5) == kStepCells && StepFor(1) == kStepCells, "held, falling: two cells");
+    Check(StepFor(2) == kSettleCells && StepFor(3) == kSettleCells && StepFor(7) == kSettleCells, "lying, getting up, walking home: one cell");
+    Check(!Wants(1.5f, 0.0f, 1000, 0) && !Wants(1.5f, 0.0f, 1000, 0, StepFor(1)), "1.5 cells off while it flies: not asked");
+    Check(Wants(1.5f, 0.0f, 1000, 0, StepFor(2)) && Wants(0.0f, -1.0f, 1000, 0, StepFor(7)), "1.5 / 1 cells off lying or walking home: asked");
+    Check(!Wants(0.9f, 0.9f, 1000, 0, StepFor(2)), "under a cell: not asked (its own cell)");
+    Check(!Wants(1.5f, 0.0f, 1000, 900, StepFor(2)), "the settle keeps the gap");
+    Check(!Wants(0.6f, 0.0f, 1000, 0, 0.2f) && Wants(1.0f, 0.0f, 1000, 0, 0.2f), "never under a cell whatever less is asked");
+    Target(10, 10, 1.2f, 0.0f, nullptr, nullptr);   // (null outs: refused, no crash)
+    {
+        int tx = 0, ty = 0;
+        Check(Target(10, 10, 1.2f, -0.4f, &tx, &ty) && tx == 11 && ty == 10, "the settle's target: the next cell");
+    }
+
+    // -- [weight] knock_down_moves_unit: what a blow knocks down moves (a fall, a sweep, a shove, a spear's carry), a stagger's step back never; a hand's take always;
+    // a blow's few knockbacks only
+    Check(KindMoves(false, 0) && KindMoves(false, 1) && KindMoves(false, 2), "a blow's knock-down, a sweep, a shove: moved");
+    Check(!KindMoves(false, 3), "a stagger: not moved");
+    Check(KindMoves(true, 3) && KindMoves(true, 0), "taken by a hand: moved whatever it was");
+    Check(kKnockMoves >= 2 && kKnockMoves <= 4, "a blow: where it lands and where it settles, a few knockbacks only");
+
     // -- the unit's mode
     Check(ModeAllows(1) && ModeAllows(2) && ModeAllows(3), "standing, walking, attacking: a knockback may be asked");
     Check(!ModeAllows(0) && !ModeAllows(12) && !ModeAllows(13), "dead, dying, in a knockback already: not");

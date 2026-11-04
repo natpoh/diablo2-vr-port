@@ -1,5 +1,6 @@
 // vr/hud/window.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../view_keys.h"   // [view] keys: which F keys pick the view
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -85,8 +86,13 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // (Windows keeps a window to its monitor; vrcam let it be bigger in 0.159-0.160 - a window past the
     // screen's edge flickered the fog in the left eye, and one taller than ~2400 crashes the game itself at
     // its title screen: a square now fits the monitor - BigWindowTick; a bigger one: a virtual monitor.)
-    // F1..F3 (F4 in VR) pick the view: the game, which has skills on them, never sees them.
-    if ((msg == WM_KEYDOWN || msg == WM_KEYUP) && w >= VK_F1 && (int)w < VK_F1 + ViewCount()) return 0;
+    // F1..F3 (F4 in VR) pick the view: the game, which has skills on them, does not see the press that does ([view] keys,
+    // vr/view_keys.h: 0 every F1 - F4 as before, 1 only Shift + F1 - F4 - a plain one is the game's skill hotkey -, 2 none).
+    if (msg == WM_KEYDOWN || msg == WM_KEYUP) {
+        static viewkeys::Gate gate;   // this window's thread only
+        if (gate.Take(g_set.viewKeys.load(), ViewCount(), (unsigned)w, msg == WM_KEYDOWN, (l & (1 << 30)) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0))
+            return 0;
+    }
     // Enter opening the chat line: its letters may come before the game has
     // set its flag, so they are let through for a moment (not on the Enter
     // that sends the line - W pressed right after it walks).

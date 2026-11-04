@@ -86,6 +86,7 @@ std::atomic<float> g_reach{0.28f};   // [hands] bow_draw_reach_cm: how near the 
 std::atomic<float> g_shift{0.0f};    // [hands] bow_draw_nock_shift_cm: the zone's centre along the bow's axis (m), + away from the grip
 std::atomic<float> g_minPull{0.12f}; // [hands] bow_draw_min_pull_cm: how far the string hand is pulled back from the nock for a release to shoot (m)
 std::atomic<bool> g_shotHold{false};  // [bow] shot_line_hold: a shot's line stays its aim until the game takes it (bowdraw::kShotHoldSeconds), a new draw or not
+std::atomic<bool> g_freshOnHand{false};   // [bow] swap_by_grab: a new detector when the bow changes hands (SetFreshOnHandChange)
 std::atomic<bool> g_restAims{true};  // [bow] arrow_rest_aims: the shot's line goes through the arrow's rest point too (skel::BowRestPoint), as the arrow lies
 constexpr float kNockBehind = 0.16f; // the constant touch point: this far behind the grip along the bow
 std::atomic<int> g_button{0}, g_start{0};
@@ -127,6 +128,8 @@ struct Run {
     uint32_t session = 0, epoch = 0;
     bool seen = false, pressHeld = false;
     bool lastDrawing = false;   // the detector had the string taken at the last step
+    bool lastOwned = false;     // ... and a control of the string hand was the draw's
+    int lastBowVr = -1;         // the bow hand at the last step (vrcam's: 0 right, 1 left)
     int told = 0;
     double dbgAt = 0.0;
     double lostAt = 0.0;     // a hand is lost and the draw held since then (frame time), 0 = not
@@ -195,6 +198,13 @@ void OnFrame(const directinput::Frame& f, void*) {
     if (f.epoch != r.epoch) { r.epoch = f.epoch; cancel = true; r.event = "the input focus, a menu or the session changed"; }   // a draw under way ends
 
     const int bowVr = g_bowHand ? g_bowHand() : 1;   // vrcam's: 0 right, 1 left
+    // [bow] swap_by_grab: the bow went into the other hand with nothing of the draw's held - the detector starts afresh, so a control the new string hand already holds is not a press
+    if (g_freshOnHand.load() && r.lastBowVr >= 0 && bowVr != r.lastBowVr && !r.lastDrawing && !r.lastOwned) {
+        r.det = bowdraw::Detector{};
+        Say(r, bowVr ? "vrcam: bow draw - the bow is in the left hand now: the string is the right hand's (a control it already holds takes nothing until let go)"
+                     : "vrcam: bow draw - the bow is in the right hand now: the string is the left hand's (a control it already holds takes nothing until let go)");
+    }
+    r.lastBowVr = bowVr;
     const int bowX = bowVr ? 0 : 1;                  // direct_input's: 0 left, 1 right
     const int strX = 1 - bowX;
     const directinput::Hand& bow = f.hand[bowX];
@@ -281,6 +291,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
     const bowdraw::Output o = r.det.Step(in, params);
     r.lastDrawing = o.drawing;
+    r.lastOwned = o.owned;
     in.bowHand = bowGrip;
     char b[1024];
 
@@ -534,6 +545,7 @@ void Init(const D2RL::PluginContext* ctx, HandFn bowHand, ViewFn f4) {
 
 void SetRestAims(bool on) { g_restAims.store(on); }
 void SetShotLineHold(bool on) { g_shotHold.store(on); }
+void SetFreshOnHandChange(bool on) { g_freshOnHand.store(on); }
 
 void SetDrawHook(DrawHook fn) { g_hook = fn; }
 

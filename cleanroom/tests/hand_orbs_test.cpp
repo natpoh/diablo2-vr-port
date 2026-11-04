@@ -1495,6 +1495,80 @@ void TestHeroDepth() {
 
 // ---- the depth and the along offset per hero class, under a shield ------------------------------------------------------------------------------------
 
+// ---- [shapeshift] a druid's werewolf / werebear as your body: its own depth, and the lift by its forearm's skin --------------------------------------------------------------
+void TestFormDepth() {
+    {   // the werebear's offset; none for the werewolf (Serg: "у волка нормально"), the druid herself or a form that is none; held in -5 .. 15
+        Config c;
+        c.orbBearZCm = 6.0f;
+        Expect(handvitals::FormZCm(c, 2) == 6.0f, "the werebear's number");
+        Expect(handvitals::FormZCm(c, 1) == 0.0f, "the werewolf: the druid's place");
+        Expect(handvitals::FormZCm(c, 0) == 0.0f && handvitals::FormZCm(c, 3) == 0.0f && handvitals::FormZCm(c, -1) == 0.0f, "the druid herself, or no form: no offset");
+        Config w;
+        w.orbBearZCm = 40.0f;
+        Expect(handvitals::FormZCm(w, 2) == 15.0f && handvitals::Sanitized(w).orbBearZCm == 15.0f, "held at 15");
+        w.orbBearZCm = -40.0f;
+        Expect(handvitals::FormZCm(w, 2) == -5.0f && handvitals::Sanitized(w).orbBearZCm == -5.0f, "held at -5");
+        w.orbBearZCm = std::nanf("");
+        Expect(handvitals::FormZCm(w, 2) == 0.0f && handvitals::Sanitized(w).orbBearZCm == 0.0f, "not a number: 0; Sanitized the same");
+        Expect(!strcmp(handvitals::FormKey(1), "werewolf") && !strcmp(handvitals::FormKey(2), "werebear") && !strcmp(handvitals::FormKey(0), ""), "the ini suffixes");
+    }
+    {   // the skin out of the back of the wrist, from the forearm's box: BoxedRight's is 3 cm deep each way about the bone line (the back is +y)
+        float out = 0.0f;
+        Expect(SkinOutM(BoxedRight(), &out) && Near(out, 0.03f, 1e-6f), "the druid's: 3 cm (%.4f)", out);
+        Arm paw = BoxedRight();
+        paw.boxC.y += 0.02f;          // the box's middle 2 cm above the bone
+        paw.boxH[1] = {0.0f, 0.07f, 0.0f};   // and 7 cm each way: the skin 9 cm out
+        Expect(SkinOutM(paw, &out) && Near(out, 0.09f, 1e-6f), "a paw's: 9 cm (%.4f)", out);
+        Expect(!SkinOutM(RightArm(), &out) && !SkinOutM(Arm{}, &out), "no box, no arm: nothing measured");
+        Arm huge = BoxedRight();
+        huge.boxH[1] = {0.0f, 5.0f, 0.0f};
+        Expect(SkinOutM(huge, &out) && Near(out, 0.15f, 1e-6f), "never past half the forearm (30 cm long: 15 cm)");
+        // the lift: the form's skin less the druid's, in cm, never below 0, at most 15; nothing measured, nothing
+        Expect(Near(FormLiftCm(0.09f, 0.03f), 6.0f, 1e-4f), "9 - 3 cm: 6 cm higher");
+        Expect(FormLiftCm(0.02f, 0.03f) == 0.0f && FormLiftCm(0.5f, 0.03f) == kFormLiftMaxCm, "a thinner arm keeps the druid's place; at most 15 cm");
+        Expect(FormLiftCm(0.09f, 0.0f) == 0.0f && FormLiftCm(0.0f, 0.03f) == 0.0f && FormLiftCm(std::nanf(""), 0.03f) == 0.0f, "the druid not measured yet, or the form not: no lift");
+    }
+    {   // in the step: on the spot's numbers the form's offset and the auto lift go on both wrists' Z, on top of the druid's, past the spot's 10 cm
+        auto place = [&](const Config& cfg, int form, float autoCm, int side) {
+            In in = Base();
+            in.cfg = cfg;
+            in.heroClass = 5;
+            in.form = form;
+            in.formAutoCm[0] = in.formAutoCm[1] = autoCm;
+            State st;
+            return Step(st, in).orb[side == 1 ? kLife : kMana].c;
+        };
+        Config cfg = OrbsOn();   // Z 4 on both wrists
+        cfg.orbClassZCm[5] = 0.4f;
+        cfg.orbBearZCm = 7.0f;   // the werebear
+        const V3 druid = place(cfg, 0, 6.0f, 1), bear = place(cfg, 2, 0.0f, 1), bearR = place(cfg, 2, 0.0f, 0);
+        Expect(Near(druid.y, place(OrbsOn(), 0, 0.0f, 1).y + 0.004f, 1e-6f), "the druid: her class's 0.4 cm, no form's (the auto lift ignored)");
+        Expect(Near(bear.y - druid.y, 0.07f, 1e-6f) && Near(bearR.y - place(cfg, 0, 0.0f, 0).y, 0.07f, 1e-6f), "the werebear: 7 cm more, both wrists");
+        Expect(Near(bear.x, druid.x, 1e-7f) && Near(bear.z, druid.z, 1e-7f), "and only the depth moves");
+        Expect(Near(place(cfg, 2, 6.0f, 1).y - druid.y, 0.13f, 1e-6f), "with the auto lift: 7 + 6 cm, past the spot's 10 cm bound (4 + 0.4 + 13 cm out)");
+        Expect(Near(place(cfg, 1, 0.0f, 1).y, druid.y, 1e-7f) && Near(place(cfg, 1, 6.0f, 1).y, druid.y, 1e-7f),
+               "the werewolf: the druid's place - no bear's number, no auto lift");
+        bool same = true;
+        for (int form = 0; form < 3; ++form) same = same && Near(place(OrbsOn(), form, 0.0f, 1).y, place(OrbsOn(), 0, 0.0f, 1).y, 1e-9f);
+        Expect(same, "all zeros: every form is where the druid's medallion was");
+    }
+    {   // on the bone: the ball on the form's own skin (the box), the form's offset on top, the auto lift not again
+        auto place = [&](int form, float autoCm) {
+            In in = Base();
+            in.cfg.orbOnBone = true;
+            in.cfg.orbBearZCm = 2.0f;
+            in.arm[0] = BoxedRight();
+            in.form = form;
+            in.formAutoCm[0] = in.formAutoCm[1] = autoCm;
+            State st;
+            return Step(st, in).orb[kMana].c;
+        };
+        const V3 druid = place(0, 0.0f), bear = place(2, 0.0f), bearAuto = place(2, 6.0f);
+        Expect(Near(bear.y - druid.y, 0.02f, 1e-6f), "the werebear on the bone: 2 cm off its own skin");
+        Expect(Near(bearAuto.y, bear.y, 1e-7f), "the auto lift is not added on the bone (the box is the form's own skin)");
+    }
+}
+
 void TestShieldClassDepth() {
     printf("the depth and the along offset per hero class, under a shield\n");
     // the numbers: each class its own, 0 for a class not known or with none, held in -5 .. 5
@@ -3860,6 +3934,7 @@ int main(int argc, char** argv) {
     TestRotation();
     TestUnderShield();
     TestHeroDepth();
+    TestFormDepth();
     TestShieldClassDepth();
     TestShieldClassRot();
     TestFade();

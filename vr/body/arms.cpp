@@ -1,6 +1,7 @@
 // vr/body/arms.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M12); what it gives: vr/body/body.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "pose_views.h"
+#include "../flat_weapon.h"   // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -167,12 +168,17 @@ void PushArms() {
     {   // [hands] shoulder_draw_ranged: a bow or crossbow is the weapon - it can be put away and drawn; its own hand (the legacy aim hand, the slot's wrist), the swap, who has the string
         const uint32_t wc = gamestate::WeaponClass();
         const bool ranged = wc == 3 || wc == 4;   // D2RVR_WEAPON_BOW, D2RVR_WEAPON_CROSSBOW
-        in.rangedHolster = own && viewgate::F4() && g_set.shoulderDraw.load() && g_set.rangedHolster.load() && ranged;
+        // [bow] swap_by_grab: a bow passed from hand to hand at its grip - the same holster, with or without the shoulder's put-away
+        in.rangedShoulder = g_set.shoulderDraw.load() && g_set.rangedHolster.load();
+        in.rangedGrab = g_set.bowSwapByGrab.load() && wc == 3;
+        in.rangedHolster = own && viewgate::F4() && ranged && (in.rangedShoulder || in.rangedGrab);
         in.rangedSwap = g_set.rangedSwap.load();
         in.rangedBow = wc == 3;
-        in.rangedHome = RangedHomeHand();
-        in.rangedBone = wc == 4 ? g_set.xbowHand.load() : in.rangedHome;   // (the game hangs a crossbow on the left wrist; a bow on its aim hand's)
-        for (int side = 0; side < 2; ++side) in.rangedBusy[side] = bowdrawwire::HoldsGrip(side);
+        in.rangedHome = BowStartHand();
+        in.rangedBone = wc == 4 ? g_set.xbowHand.load() : RangedHomeHand();   // (the game hangs a crossbow on the left wrist; a bow on its aim hand's)
+        // the hand that has the string: its grip is the draw's; with the grab, any draw under way (the string taken by the trigger too) - the hand without the bow does not take it then
+        const int stringHand = in.rangedGrab && bowdrawwire::Drawing() ? AimHand() ^ 1 : -1;
+        for (int side = 0; side < 2; ++side) in.rangedBusy[side] = bowdrawwire::HoldsGrip(side) || side == stringHand;
     }
     in.shieldFollow = g_set.shieldDraw.load();
     in.shieldStow = g_set.shieldStow.load();
@@ -799,6 +805,65 @@ void PushArms() {
     in.haveYaw = on && (in.mode == 2 || in.bodyTurn > 0) && CameraYawInModel(&yaw, in.eyeModel, &eyeOk);
     in.haveEye = in.haveYaw && eyeOk;
     in.haveCamFwd = in.haveYaw && CameraForwardInModel(in.camFwd);   // ([debug] body_dump)
+#if D2RVR_FIRST_PERSON
+    {   // [body] attack_lean (vr/attack_lean.h): the 2D views - the monitor's F2 and F3 (our camera), VR F2. Not VR F1 / F3 (the game's own hero there,
+        // vr/body/pose_views.h) nor F4 (the arms are the controllers'). The crosshair's ray in the hero's model space, read here when the body's turn did not.
+        const bool leanView = on && ((platform == 0 && (view == 2 || view == 3)) || (platform == 1 && view == 2)) && !Overhead();
+        in.attackLean = leanView && g_set.attackLean.load();
+        in.attackLeanMaxDeg = g_set.attackLeanMaxDeg.load();
+        in.leanView = platform * 10 + view;
+        if (in.attackLean) {
+            float leanYaw = 0.0f;
+            bool leanEyeOk = in.haveEye;
+            if (in.haveEye) memcpy(in.leanEye, in.eyeModel, sizeof in.leanEye);
+            else if (!CameraYawInModel(&leanYaw, in.leanEye, &leanEyeOk)) leanEyeOk = false;
+            in.leanRayOk = leanEyeOk && CameraForwardInModel(in.leanFwd);
+        }
+        static int toldLean = -1;   // on / off and why, when it changes
+        const int leanState = !g_set.attackLean.load() ? 0 : !leanView ? 1 : !in.leanRayOk ? 2 : 3;
+        if (leanState != toldLean) {
+            toldLean = leanState;
+            static const char* const kLeanWhy[4] = {"off ([body] attack_lean)", "not in this view (the monitor's F2 / F3 and VR F2 only)",
+                                                    "the camera's ray in the hero's model is not known yet", "on"};
+            LogF("vrcam: attack lean - %s%s", kLeanWhy[leanState],
+                 leanState == 3 ? (std::string(": the swing leans toward where the crosshair looks, at most ") + std::to_string((int)std::lround(in.attackLeanMaxDeg)) +
+                                   " deg (drawn only)").c_str() : "");
+        }
+        if (const std::string note = skel::AttackLeanTakeNote(); !note.empty())
+            for (size_t at = 0; at < note.size();) {
+                const size_t end = std::min(note.find('\n', at), note.size());
+                Log(("vrcam: " + note.substr(at, end - at)).c_str());
+                at = end + 1;
+            }
+    }
+#endif
+    {   // [body] flat_weapon_adjust (vr/flat_weapon.h): flat F3, each arm with its weapon moved along the camera's axes by its kind's [flat_weapon_<kind>]
+        const int kinds[2] = {flatweapon::KindFor(0, (int)gamestate::WeaponType(), (int)gamestate::HandKind(1), D2RVR_TYPE_UNARMED, D2RVR_TYPE_COUNT),
+                              flatweapon::KindFor(1, (int)gamestate::WeaponType(), (int)gamestate::HandKind(1), D2RVR_TYPE_UNARMED, D2RVR_TYPE_COUNT)};
+        for (int side = 0; side < 2; ++side)
+            for (int k = 0; k < 3; ++k)
+                in.flatWeaponCm[side][k] = kinds[side] > D2RVR_TYPE_UNKNOWN && kinds[side] < D2RVR_TYPE_COUNT ? g_set.weaponFlat[kinds[side]][side * 3 + k] : 0.0f;
+        const flatweapon::Why why = flatweapon::Gate(g_set.flatWeaponAdjust.load(), platform, own, in.mode,
+                                                     flatweapon::Any(in.flatWeaponCm[0]) || flatweapon::Any(in.flatWeaponCm[1]));
+        in.flatWeapon = why == flatweapon::Why::On && in.haveYaw;
+        in.haveCamRight = in.flatWeapon && CameraRightInModel(in.camRight);
+        in.flatWeapon = in.flatWeapon && in.haveCamRight && in.haveCamFwd;
+        // the log: the numbers in use and why, whenever they or the reason change (not every tick: a line costs ~1 ms)
+        static float told[2][3] = {{NAN, NAN, NAN}, {NAN, NAN, NAN}};
+        static int toldWhy = -1, toldKind[2] = {-1, -1}, toldOn = -1;
+        const int whyN = (int)why, on = in.flatWeapon ? 1 : 0;
+        if (platform == 0 && (whyN != toldWhy || on != toldOn || kinds[0] != toldKind[0] || kinds[1] != toldKind[1] || memcmp(told, in.flatWeaponCm, sizeof told) != 0)) {
+            toldWhy = whyN; toldOn = on; toldKind[0] = kinds[0]; toldKind[1] = kinds[1];
+            memcpy(told, in.flatWeaponCm, sizeof told);
+            const auto name = [](int k) { return k > D2RVR_TYPE_UNKNOWN && k < D2RVR_TYPE_COUNT ? kD2RVRWeaponTypeNames[k] : "none"; };
+            const float* r = in.flatWeaponCm[0];
+            const float* l = in.flatWeaponCm[1];
+            LogF("vrcam: flat weapon adjust (F3) %s%s - right arm (%s) %.1f out, %.1f up, %.1f ahead cm; left arm (%s) %.1f out, %.1f up, %.1f ahead cm "
+                 "([flat_weapon_<kind>] right_* / left_*; visual only, the attack is the game's)",
+                 flatweapon::WhyText(why), why == flatweapon::Why::On && !on ? " but waiting for the camera's axes in the hero's model" : "",
+                 name(kinds[0]), r[0], r[1], r[2], name(kinds[1]), l[0], l[1], l[2]);
+        }
+    }
     // the offset turns arms and body together: both read "ahead" from this yaw
     in.yawInModel = in.haveYaw ? g_set.facingSign.load() * yaw + g_set.bodyYawDeg.load() * 0.0174532925f : 0.0f;
 #if D2RVR_FIRST_PERSON
@@ -860,7 +925,8 @@ void PushArms() {
     in.grabBreakM = g_set.weightGrabBreakCm.load() * 0.01f;
     in.grabArmReach = g_set.weightGrabArmReach.load();   // [weight] grab_arm_reach
     in.armWorldLate = g_set.orbDrawnHand.load();   // [hud] hand_vitals_orb_drawn_hand
-    in.armBox = handvitals::OrbsOn() && handvitals::Settings().orbOnBone;   // [hud] hand_vitals_orb_on_bone: the forearms' boxes only while the balls want them
+    // [hud] hand_vitals_orb_on_bone: the forearms' boxes only while the balls want them ([shapeshift] hand_vitals_orb_form_auto: the druid's and her form's skin measured by them)
+    in.armBox = handvitals::OrbsOn() && (handvitals::Settings().orbOnBone || (handvitals::Settings().orbFormAuto && g_set.formsFirstPerson.load()));
     // ([weight] strength: the hands' strength, as on the weapon; [shapeshift] wolf_strength_pct / bear_strength_pct: a grafted form's paws stronger - the grab's hand and
     // the knock-down's hold and throw, the weight model only: vr/form_strength.h)
     {

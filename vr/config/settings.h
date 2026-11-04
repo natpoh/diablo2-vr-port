@@ -30,6 +30,9 @@ struct Settings {
     std::atomic<int>   platform{1};
     std::atomic<int>   flatView{3};
     std::atomic<int>   vrView{3};
+    // [view] keys (vr/view_keys.h): 0 F1 - F4 pick the view (the game does not get them), 1 Shift + F1 - F4 (a plain F1 - F8 is the
+    // game's), 2 no F key (F12, Settings, the controller). -1 until read, so the first read logs.
+    std::atomic<int>   viewKeys{-1};
     std::atomic<float> fov{60.0f};          // vertical FOV of the game camera; match the FlatVR screen's angular height
     std::atomic<bool>  fovFromFlatVR{true}; // fov follows the FlatVR screen's size and distance (BodyWalk's settings)
     std::atomic<float> distance{-1.0f};     // camera behind the eye point along the view; below 0 = in front of it (out of the head)
@@ -469,6 +472,8 @@ struct Settings {
     std::atomic<bool>  shieldDraw{true};            // [hands] shoulder_draw_shield: with shoulder_draw, the shield too (it follows the sword to the forearm opposite the hand that holds it)
     std::atomic<bool>  rangedHolster{false};        // [hands] shoulder_draw_ranged: with shoulder_draw, a bow or crossbow can be put away behind a shoulder and drawn from it
     std::atomic<bool>  rangedSwap{false};           // [hands] shoulder_draw_ranged_swap: a bow is drawn into the hand that reached (a crossbow always back into its own)
+    std::atomic<bool>  bowSwapByGrab{false};        // [bow] swap_by_grab: the free hand's grip squeezed at the bow's grip takes the bow (F4, bows only; vr/bow_swap.h)
+    std::atomic<int>   bowHandSide{1};              // [bow] bow_hand: the hand the bow is in with swap_by_grab, remembered across runs (0 right, 1 left)
     std::atomic<bool>  shieldStow{false};           // [hands] shoulder_draw_shield_stow: with shoulder_draw, a grip behind the LEFT shoulder puts the shield away and draws it (the weapon is drawn from the right shoulder only then)
     std::atomic<float> shoulderDrawStowMs{1000.0f}; // [hands] shoulder_draw_stow_ms: how long a weapon let go lies on the floor (it is recalled by a grip meanwhile) before it goes to the back
     std::atomic<bool>  shoulderDraw{false};         // [hands] shoulder_draw: the zone behind each shoulder is a holster (vr/shoulder_draw.h); the weight model draws the weapon from it, the swap is off
@@ -515,12 +520,16 @@ struct Settings {
     std::atomic<float> weightBackShort[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     std::atomic<bool>  bothAttach{true};     // [hands] both_attach: 0 = the other attach bone left alone (for comparing)   // [hands] carry_axis: moving, the game lays a 2H weapon from the right attach bone to the left - the left one put along this axis   // [hands] sword_hilt_axis: the hilt as the sword bone's axis, +-1..3 (x y z); 0 = from the game's grip
     float weaponAdj[D2RVR_TYPE_COUNT][6] = {};
+    float weaponFlat[D2RVR_TYPE_COUNT][6] = {};   // [flat_weapon_<kind>] right_x/_y/_z, left_x/_y/_z: cm (0 by default), flat F3, out to the hand's side, up, ahead (vr/flat_weapon.h); the update thread
     float weaponLeft[D2RVR_TYPE_COUNT][3] = {};   // (no longer used: one for every two-handed weapon, leftHold)
     std::atomic<float> leftHold[3] = {0.0f, 0.0f, 0.0f};
     std::atomic<float> leftHoldTurn[3] = {0.0f, 0.0f, 0.0f};   // [hands] left_hold_pitch/yaw/roll: deg, the same hand turned about its own axes   // [hands] left_hold_x/y/z: cm, the left hand once it holds any two-handed weapon (not the crossbow), its own axes   // [weapon_<kind>] left_x/y/z: cm, the left hand once it holds the weapon, its own axes (on top of left_staff_* etc.)   // [weapon_<kind>] x y z (cm) pitch yaw roll (deg); written and read on the update thread
     std::atomic<bool>  lockUpper{true};     // nothing above the pelvis from the game's animation
     std::atomic<bool>  legsUnder{true};     // with it: pelvis and legs kept under that body (no lunge, no hip turn)
     std::atomic<bool>  flatHoldTrunk{false};   // [body] flat_hold_trunk: flat F3, the trunk and hips held under the camera through a swing (drawn only)
+    std::atomic<bool>  attackLean{false};      // [body] attack_lean: flat F2 / F3 and VR F2, the swing leans toward where the crosshair looks (drawn only; vr/attack_lean.h)
+    std::atomic<float> attackLeanMaxDeg{40.0f};   // [body] attack_lean_max_deg: the most it leans, up or down
+    std::atomic<bool>  flatWeaponAdjust{true};   // [body] flat_weapon_adjust: flat F3, each arm with its weapon moved by [weapon_<kind>] flat_* (drawn only, vr/flat_weapon.h)
     std::atomic<bool>  underCamera{true};   // [body] under_camera: the drawn body under the camera through a leap's arc and the game camera's trail (F4; vr/under_camera.h)
     std::atomic<bool>  leapCameraUp{false}; // [body] leap_camera_up: with it, the camera rises with the leap's arc (off: it stays, the body is kept down with it)
     std::atomic<bool>  crouch{false};       // [body] crouch: the hero crouches when you crouch (F4 only; vr/crouch.h)
@@ -583,6 +592,7 @@ struct Settings {
     std::atomic<bool>  bgFullSpeed{true};   // no Sleep(10) per frame while the game window is not in front
     std::atomic<bool>  gameHeightFog{false};   // [render] game_height_fog: keep the game's own height fog (gamefog::)
     std::atomic<bool>  gameDepthFog{false};    // [render] game_depth_fog: keep the game's own depth fog (gamefog::)
+    std::atomic<bool>  gameFogScanSafe{true};  // [render] game_fog_scan_safe: those two found through copies of the heap, stricter (gamefog::ScanSafe)
     std::atomic<bool>  gameFog{false};         // [fog] game_fog: the game's own distance fog drawn with our numbers (gamefogvr::)
     std::atomic<bool>  fogHeight{false};       // [fog] game_fog_height: the game's fog thinned with height in its own pass (vr/fog_height.h)
     std::atomic<float> fogTop{60.0f};          // [fog] game_fog_top: no fog above this, world units above the eye

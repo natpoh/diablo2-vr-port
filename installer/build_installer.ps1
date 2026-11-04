@@ -11,6 +11,7 @@
 #   -Addon <file>     another FlatVR addon than Release_main's (one the bundled BodyWalk knows)
 #   -GameLink <file>  another game_link.dll than the standalone build's
 #   -WeightLibs <dir> where d2r_vr_weight.dll and d2r_vr_grip.dll are (the private weight_physics build)
+#   -CrashReporter <file> D2R_VR_Crash_Reporter.exe ([support] crash_reports / send_logs; the private vjoy build: cpp_src\crash_reporter\build.ps1 -Product d2r_vr)
 #   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
 #                     making one from Release_main (which may hold a BodyWalk not released yet)
 #   -SkipProfileCheck do not run tools\profile_sanitize.py on the staged BodyWalk profile (it needs Python)
@@ -49,6 +50,7 @@ param(
     [string]$GameLink = "C:\wsl\vjoy\cpp_src\build_standalone\bin\Release\game_link.dll",
     [string]$Portable = "",
     [string]$WeightLibs = "C:\wsl\weight_physics\build\Release",
+    [string]$CrashReporter = "C:\wsl\vjoy\cpp_src\crash_reporter\D2R_VR_Crash_Reporter.exe",
     [switch]$SkipProfileCheck,
     [string]$BuildDir = "",
     [string]$VersionLabel = "",
@@ -161,6 +163,8 @@ foreach ($f in "d2r_vr_weight.dll", "d2r_vr_grip.dll", "d2r_vr_gait.dll") {   # 
     $src = Join-Path $WeightLibs $f
     if (Test-Path $src) { Copy-Item $src "$payload\plugins\" } else { Write-Warning "$f not found in $WeightLibs - the installer goes without it" }
 }
+# the optional crash reporter (docs/crash_watchdog.md; a binary only, its source is private): without it the two crash report ticks are greyed out
+if ($CrashReporter -and (Test-Path $CrashReporter)) { Copy-Item $CrashReporter "$payload\plugins\D2R_VR_Crash_Reporter.exe" } else { Write-Warning "D2R_VR_Crash_Reporter.exe not found ($CrashReporter) - the installer goes without it" }
 # BodyWalk's side: its Game Link plugin, the mod's BodyWalk profile beside it, and the game's
 # Game Link manifest (the actions and Mapping tabs vrcam sends, from the same tables), so they
 # are in BodyWalk's Mapping from its first start.
@@ -284,4 +288,22 @@ Copy-Item $setup $releases -Force
 $hash = (Get-FileHash $setup -Algorithm SHA256).Hash
 Set-Content -Path (Join-Path $releases "$outName.exe.sha256") -Value "$hash  $outName.exe" -Encoding ascii
 Write-Host "releases: $releases\$outName.exe  SHA-256 $hash"
+# The plugin's symbols, kept per version (Serg 2026-11-04: a player's crash at d2rl-vrcam.dll+0x321C7C and no 0.200.0 PDB to name it):
+# releases\pdb\<version>\ gets the shipped d2rl-vrcam.dll and its .pdb (CMakeLists: the Release build writes it) and how to map an offset.
+$pdb = Join-Path $build "d2rl-vrcam.pdb"
+if (Test-Path -LiteralPath $pdb) {
+    $pdbDir = Join-Path $releases "pdb\$shownVersion"
+    New-Item -ItemType Directory -Force $pdbDir | Out-Null
+    Copy-Item -LiteralPath (Join-Path $build "d2rl-vrcam.dll"), $pdb -Destination $pdbDir -Force
+    $dllHash = (Get-FileHash (Join-Path $build "d2rl-vrcam.dll") -Algorithm SHA256).Hash
+    @("d2rl-vrcam $shownVersion symbols ($(Get-Date -Format yyyy-MM-dd)), from the build that went into $outName.exe",
+      "Source: $((& git -C $root rev-parse HEAD).Trim())   Shipped DLL SHA-256 $dllHash (the d2rl-vrcam.dll here is that same file)",
+      "",
+      "Map an offset from a log (d2rl-vrcam.dll+0xNNNN = image base 0x180000000 + NNNN):",
+      "  llvm-symbolizer.exe --obj=d2rl-vrcam.dll 0x180NNNNNN   (Visual Studio's VC\Tools\MSVC\<ver>\bin\Hostx64\x64\llvm-symbolizer.exe)") |
+        Set-Content -LiteralPath (Join-Path $pdbDir "README.txt") -Encoding ascii
+    Write-Host "symbols: $pdbDir (d2rl-vrcam.dll + .pdb)"
+} else {
+    Write-Warning "NO SYMBOLS: $pdb is not there - this version's crashes cannot be mapped to functions (CMakeLists' Release /Zi /DEBUG)"
+}
 Write-Host $(if ($carriedLauncher) { "the installer carries the D2R VR Launcher: $carriedLauncher" } else { "the installer carries NO launcher (built with -NoLauncher)" })

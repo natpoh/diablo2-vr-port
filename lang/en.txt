@@ -75,16 +75,20 @@ render.menu_wide.tip = Native OpenXR without ReShade ("No ReShade"; with ReShade
 
 # --- View (F1 - F3 in the game) ---
 group.view_f1_f3_in_the_game = View (F1 - F3 in the game)
-group.view_f1_f3_in_the_game.help = The view of flat mode: F1 the game's own camera, F2 third person, F3 first person with mouse look and W A S D. Switch in the game with F1, F2, F3 (F12 goes round); the game no longer gets these keys.
-mode.flat_view.tip = Switch in the game with F1, F2, F3 (F12 goes round). The game does not get these keys: put its skills on others.
+group.view_f1_f3_in_the_game.help = The view of flat mode: F1 the game's own camera, F2 third person, F3 first person with mouse look and W A S D. Switch in the game with F1, F2, F3 (F12 goes round) - or with Shift + F1 - F3, or F12 alone, so that F1 - F8 stay the game's skills: View keys below.
+mode.flat_view.tip = Switch in the game with F1, F2, F3 (F12 goes round). With View keys at F1 - F4 the game does not get these keys; Shift + F1 - F4 gives them back to its skills.
 mode.flat_view.choice0 = F1  The game's own camera
 mode.flat_view.choice1 = F2  Third person
 mode.flat_view.choice2 = F3  First person: mouse look, W A S D
+view.keys.label = View keys
+view.keys.tip = Which keys pick the view in the game. F1 - F4: as before - the game does not get F1 - F4, put its skills on other keys. Shift + F1 - F4: hold Shift and press the view's F key; a plain F1 - F8 is the game's skill hotkey again (Shift held is the game's "stand still" - a short Shift + F1 does nothing to the hero). No F keys: F1 - F8 are all the game's; the view changes with F12 (next view), here, or the controller's view buttons. F12 and the controller work with every choice. Live.
+view.keys.choice1 = Shift + F1 - F4 (F1 - F8 stay the game's skills)
+view.keys.choice2 = No F keys (F12, Settings, the controller)
 
 # --- View (F1 - F4 in the game) ---
 group.view_f1_f4_in_the_game = View (F1 - F4 in the game)
-group.view_f1_f4_in_the_game.help = The view in VR: F1 from above, F3 the game on your floor, F4 first person with the body following your controllers. Switch in the game with F1 - F4 (F12 goes round); the game no longer gets these keys.
-mode.vr_mode.tip = Switch in the game with F1 - F4 (F12 goes round). F3: the game lies on the floor of your room. F4: arms on the controllers, the trunk held. The game does not get F1 - F4.
+group.view_f1_f4_in_the_game.help = The view in VR: F1 from above, F3 the game on your floor, F4 first person with the body following your controllers. Switch in the game with F1 - F4 (F12 goes round) - or with Shift + F1 - F4, or F12 alone, so that F1 - F8 stay the game's skills: View keys below.
+mode.vr_mode.tip = Switch in the game with F1 - F4 (F12 goes round). F3: the game lies on the floor of your room. F4: arms on the controllers, the trunk held. With View keys at F1 - F4 the game does not get F1 - F4; Shift + F1 - F4 gives them back to its skills.
 mode.vr_mode.choice0 = F1  From above
 mode.vr_mode.choice2 = F3  The game on your floor: look down at it and walk round it (mixed reality)
 mode.vr_mode.choice3 = F4  First person: the body follows yours (controllers)
@@ -169,6 +173,15 @@ hud.headset_language.tip = The words the mod draws in the headset - the skill pa
 @run.collect_logs.label = Collect logs for support
 @run.collect_logs.tip = Makes one zip on your desktop with what we need to find a problem: the mod's, D2RLoader's, ReShade's and FlatVR's logs, the settings, the versions, the graphics card and Windows. While the game runs it first records 10 s of how the frames are drawn - keep playing and turn your head. Nothing is sent anywhere: post the zip in our Discord (#diablo-2-vr).
 @status.collect.label = Collect logs: a zip on your desktop to post in our Discord
+@status.crashrep.label = Crash reports: off
+support.crash_reports.label = Offer to send a report when the game closes badly
+support.crash_reports.tip = After a game that crashed, froze or lost the graphics card, D2R VR Crash Reporter opens a window with what it would send to the BodyWalk server: how the game ended, that game's logs, the versions and the graphics card - your Windows user and PC name, character names, addresses and passwords taken out. Nothing is sent unless you press Send there; the memory dump only with its own tick. Unticked: nothing watches the game, as before. Takes effect at the next start of the game.
+@run.crash_offer.label = Look at the report and send it
+@run.crash_offer.tip = Opens the report of the game that closed badly: every file it would send, and Send / Don't send.
+support.send_logs.label = Send logs to the BodyWalk server
+support.send_logs.tip = Ticked: a button below sends the Collect logs zip to the BodyWalk server instead of you posting it - a copy with your Windows user and PC name, character names, addresses and passwords taken out, without the headset pictures and videos. You see every file and press Send yourself; then tell us the report number in Discord. Unticked: only the zip on your desktop, as before.
+@run.send_logs.label = Send the logs to the BodyWalk server
+@run.send_logs.tip = Collects the logs as the button above does, then opens the window that shows what goes to the BodyWalk server. Nothing is sent until you press Send there.
 headset_shot.on.label = Headset screenshot
 headset_shot.on.tip = For a headset picture that is doubled, in the wrong eye, black or flat: saves exactly what the game hands to the headset - both eyes' pictures and the panels, with their sizes, angles and the eye distance - into the logs folder. Ticked: the button below and the key take one while the game runs; Collect logs packs the newest. Unticked: nothing, as before.
 headset_shot.take.label = Screenshot of the headset picture
@@ -205,6 +218,8 @@ support.session_logs_days.label = Keep the games' logs for (days)
 support.session_logs_days.tip = A game's folder is removed this many days after it (at a start).
 support.session_logs_max_mb.label = At most (MB) for all of them
 support.session_logs_max_mb.tip = While all the folders are over this, the oldest go first. A game's logs are about 1 - 10 MB.
+support.collect_sessions.label = Collect logs: the last games packed too
+support.collect_sessions.tip = Collect logs also packs the logs of this many of the newest games (their folders under sessions), so the game that crashed is in the zip even after you started the game again. 0: only the logs folder, as before.
 update.check.label = Check for updates when this program opens
 update.check.tip = Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded.
 update.develop.label = Beta versions too (develop channel)
@@ -222,6 +237,8 @@ render.monitor_eye_fit.label = Monitor: the eye at its own proportions (cropped 
 render.monitor_eye_fit.tip = With a VR render size apart from the window (Resolution, In the headset: a square picture in a wide window) Windows stretches the picture over the window - the monitor showed it squashed. On: the middle of the eye's picture in the window's shape is drawn over the whole picture first, so the window shows it at its real proportions (the top and bottom, or the sides, cut off). Nothing changes when the window has the picture's shape. Live. Off: stretched as before.
 render.monitor_eye_drawn_only.label = Monitor: eyes by turns - only pictures the game drew
 render.monitor_eye_drawn_only.tip = "Native OpenXR - eyes by turns" only: the frames that draw the other eye show this eye's last picture the game drew - each picture twice, at half the rate, but never one made on the graphics card (made pictures can smear at the edges of moving things). Off (the default): the picture made for this eye that frame - every frame new, as the headset shows it. Live.
+render.monitor_panels.label = Monitor: show the headset's panels (inventory, trader, stash, map...)
+render.monitor_panels.tip = Native OpenXR puts the menus and panels - the inventory on your hand or in front, the trader, the stash, the toolbar and the map, the belt's balls, the laser, the monster's bar, the settings panel and the skill wheel - over the eye's picture in the headset only, so the window on the monitor (and a recording of it) had the world without them. Ticked: each panel is drawn over the monitor's picture too, where that eye sees it. The headset's picture does not change. A few draws on the graphics card a frame while panels are up. Live. Unticked: the world only, as before.
 
 # ===== Tab: Performance =====
 tab.performance = Performance
@@ -479,7 +496,7 @@ body.crouch_cm.tip = How far your head must go below your standing eye height be
 shapeshift.forms_first_person.label = Druid: werewolf and werebear in first person (F4)
 shapeshift.forms_first_person.tip = A druid in Werewolf or Werebear form is drawn by the game as the beast, and in first person its head and back stood in front of your eyes. On: the beast becomes your body as the druid's is - its torso held upright under the camera, its own head and neck hidden, its arms on the controllers, its eyes at the form's own height (eased in over half a second when you shift); standing still its legs and tail are held, walking they take the game's stride. Its claws close and open with your grips, and with Grab bodies on the paws are free hands: they take, carry and throw at their palms as your hands do. Only the drawn body, the camera and the grab: the form, its attacks and its speed stay the game's. VR first person (F4) only, and only for your own druid. Off: the game's own beast, as before. Idea and numbers from D2R VR Unleashed (bearstonem/d2r-pcvr). Live.
 shapeshift.claw_hits.label = Druid: werewolf and werebear strike with their claws (F4)
-shapeshift.claw_hits.tip = The forms hold no weapon, so hit by touch had nothing to strike with. On: each paw strikes by touch as a weapon does - from its wrist to its claws, as the form's own bones have them - and a fast enough swing into a monster is the game's own attack (with Direct hit by its rules, or the armed skill: Fury, Feral Rage, Maul, Hunger ...). The game decides the hit, the damage and the speed. The two paws are one weapon: after either one attacks, both wait as long as the hero's attack takes, so two paws never attack twice as often. The least speed is the unarmed one (Strikes). Needs Hit by touch on. VR first person (F4) only. Live.
+shapeshift.claw_hits.tip = The forms hold no weapon, so hit by touch had nothing to strike with. On: each paw strikes by touch as a weapon does - from its wrist to its claws, as the form's own bones have them - and a fast enough swing into a monster is the game's own attack (with Direct hit by its rules, or the armed skill: Fury, Feral Rage, Maul, Hunger ...). The game decides the hit, the damage and the speed. The two paws are one weapon: after either one attacks, both wait as long as the hero's attack takes, so two paws never attack twice as often. The least speed is each form's own (Strikes > Hit by touch; 0: the unarmed one). Needs Hit by touch on. VR first person (F4) only. Live.
 shapeshift.wolf_height.label = Werewolf: eye height, %
 shapeshift.wolf_height.tip = The werewolf's eyes at this share of its own height (100: 98 % of the druid's). Lower: you stand lower in the world, and it looks bigger. Live.
 shapeshift.bear_height.label = Werebear: eye height, %
@@ -1021,6 +1038,14 @@ hud.map_rotate_flat.label = Map turns with the camera
 hud.map_rotate_flat.tip = The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round about your hero, seen from straight above, and turned so the way the camera looks is up - turn the mouse and the map turns with you. VR F3 (the game on your floor): the way your head looks across the floor is up - walk round the game and the map turns. The gold arrow (Arrow on the map) then points up. Only a corner map can turn: with the game's map in the middle of the screen (its whole-screen map) it is put in the top right corner while it turns (Corner map is: left puts it left) and back to the whole screen when it does not - for this session only, the game's options keep your choice. Not F1 (the game's camera and its window never turn there) and not VR F4 (its map in the hand has its own Turns with you). Needs D2R_DepthFog.fx on (it draws the map back). Unticked: the map as the game draws it. Live.
 hud_third.bar_near.tip = Real stereo only: + brings the toolbar towards the eyes, - pushes it behind the screen; 0 = where the game puts it.
 
+# --- Swing ---
+group.swing = Swing
+group.swing.help = Your hero's swing leans toward where you aim.
+body.attack_lean.label = F2: the swing leans where you aim
+body.attack_lean.tip = In your own camera's views (flat F2 and F3, VR F2) the game swings at its own height: walk up to a small monster and the blade passes over it. Ticked: while your hero attacks, his spine bends toward where the crosshair looks - aim down and the swing comes down onto it, aim up and it rises - eased in and out with the attack. Only the drawn body: the game's attack, its hit, range and direction are its own. Not F1, VR F3 or F4. Unticked: as before. Live.
+body.attack_lean_max_deg.label = Swing lean: at most, °
+body.attack_lean_max_deg.tip = The most the swing leans, up or down: the spine bends as far as the point under the crosshair is below or above the chest, up to this. Live.
+
 # --- Crosshair (mouse look) ---
 group.crosshair_mouse_look = Crosshair (mouse look)
 group.crosshair_mouse_look.help = The crosshair in the middle of the screen when you play F2 with mouse look. Switch it on or off, set its size, and set its depth looking ahead and looking down, so it does not come apart in stereo.
@@ -1067,6 +1092,44 @@ hud_floor.labels_size.tip = The names of items on the ground and their boxes, sm
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = UI: F3 eyes
 
+# --- Weapon in hand (F3) ---
+group.weapon_in_hand_f3 = Weapon in hand (F3)
+group.weapon_in_hand_f3.help = First person: your arms, with the weapon in them, moved along the view - out to the side, up or down, ahead or back - so a big weapon does not stand in the middle of the picture. Kept per kind of weapon, as in VR's Weapon Adjust: pick the kind (or follow the one in hand). Only the drawn arms move; the attack is the game's.
+body.flat_weapon_adjust.label = Move the arms and the weapon out of the middle
+body.flat_weapon_adjust.tip = First person (F3): each arm with its hand and what it holds is moved along the view by the sliders below - all 0 to begin with, so nothing moves until you set them. Set them yourself while you play: the weapon moves as you drag, and each kind of weapon keeps its own place (an axe lower and further out than a dagger, say). The whole arm moves from the shoulder, so the hand keeps its weapon; a weapon held in both hands (a two-handed sword, a staff) moves with both, the second hand staying on the grip. These are not VR's Weapon Adjust numbers. Only the drawn arms change - the attack, its reach, the hit and what other players see are the game's. Off = the arms where the game's animation has them, as before. Live.
+@ui.flat_weapon_follow.label = Follow the weapon in hand
+@ui.flat_weapon_follow.tip = The sliders below edit the kind of weapon the hero holds now (read from the running game; the box below shows which). Off: pick the kind yourself. Its own choice, apart from VR's Weapon Adjust.
+@ui.flat_weapon.label = Weapon
+@ui.flat_weapon.choice0 = Unarmed
+@ui.flat_weapon.choice1 = Bow
+@ui.flat_weapon.choice2 = Crossbow
+@ui.flat_weapon.choice3 = Sword
+@ui.flat_weapon.choice4 = Axe
+@ui.flat_weapon.choice5 = Mace
+@ui.flat_weapon.choice6 = Scepter
+@ui.flat_weapon.choice7 = Wand
+@ui.flat_weapon.choice8 = Staff
+@ui.flat_weapon.choice9 = Polearm
+@ui.flat_weapon.choice10 = Spear
+@ui.flat_weapon.choice11 = Dagger
+@ui.flat_weapon.choice12 = Throwing
+@ui.flat_weapon.choice13 = Javelin
+@ui.flat_weapon.choice14 = Claw
+@ui.flat_weapon.choice15 = Orb
+@ui.flat_weapon.choice16 = Other
+@flatweapon.right_x.label = Right arm: out to the right, cm
+@flatweapon.right_x.tip = First person (F3): the right arm with its weapon moved to the right of the view (- toward the middle). Kept per kind of weapon. Live.
+@flatweapon.right_y.label = Right arm: up, cm
+@flatweapon.right_y.tip = The right arm moved up (- down). Kept per kind of weapon. Live.
+@flatweapon.right_z.label = Right arm: ahead, cm
+@flatweapon.right_z.tip = The right arm moved ahead, away from you along the view (- back, toward you). Kept per kind of weapon. Live.
+@flatweapon.left_x.label = Left arm: out to the left, cm
+@flatweapon.left_x.tip = The left arm, with a shield or a second weapon, moved to the left of the view (- toward the middle). A weapon in the left hand takes its own kind's numbers; anything else (a shield, an empty hand) the right hand's kind's. Live.
+@flatweapon.left_y.label = Left arm: up, cm
+@flatweapon.left_y.tip = The left arm moved up (- down). Live.
+@flatweapon.left_z.label = Left arm: ahead, cm
+@flatweapon.left_z.tip = The left arm moved ahead, away from you along the view (- back, toward you). Live.
+
 # --- Toolbar and map (F2, F3) ---
 group.toolbar_and_map_f2_f3 = Toolbar and map (F2, F3)
 group.toolbar_and_map_f2_f3.help = The toolbar and the map in your own camera's views (F2 and F3): tick the arrow to see on the map which way you look.
@@ -1086,6 +1149,7 @@ hud_inside.map_zoom.label = Corner map size
 hud_inside.map_zoom.tip = The corner map in the picture this much bigger (1 = as the game draws it), grown from its own corner. For it top left, set the game's mini map to the left in its options. Needs D2R_DepthFog.fx on in ReShade.
 body.flat_hold_trunk.label = Keep the body under the camera when attacking
 body.flat_hold_trunk.tip = First person: the hero's chest, hips and head stay under the camera through a swing, as in VR first person; his arms and weapon still swing as the game animates them. Only the drawn body changes - the attack is the game's. Off = as before (the torso swings out from under the camera).
+body.attack_lean.label#2 = F2 and F3: the swing leans where you aim
 input.portal_look_horizon.label = Look at the horizon after a portal or waypoint
 input.portal_look_horizon.tip = First person: you look down at a portal to walk into it, and came out still looking down. On: after a portal or a waypoint the look goes back to the horizon (up and down only; the way you face stays). From sajmonsoft's flat fork. Off = as before.
 input.portal_auto.label = Walk into a portal to enter it
@@ -1648,6 +1712,10 @@ hud.hand_vitals_orb_z_cm_assassin.label = Assassin: depth (Z) offset, cm
 hud.hand_vitals_orb_z_cm_assassin.tip = Added to the wrists' Z (up off the hand, above) of BOTH wrists - mirrored or not - while a Assassin plays: the wrist bone and the arm's model differ with the class, so one depth fits one hero only. + lifts the medallion off the arm, - sinks it in. 0 = no value of its own: the wrists' own Z, as before. Edit the row of the hero you play - the line above says which one the game has now. Live.
 hud.hand_vitals_orb_z_cm_warlock.label = Warlock: depth (Z) offset, cm
 hud.hand_vitals_orb_z_cm_warlock.tip = Added to the wrists' Z (up off the hand, above) of BOTH wrists - mirrored or not - while a Warlock plays: the wrist bone and the arm's model differ with the class, so one depth fits one hero only. + lifts the medallion off the arm, - sinks it in. 0 = no value of its own: the wrists' own Z, as before. Edit the row of the hero you play - the line above says which one the game has now. Live.
+hud.hand_vitals_orb_z_cm_werebear.label = Werebear: depth (Z) offset, cm
+hud.hand_vitals_orb_z_cm_werebear.tip = With the druid's werebear as your body (Body > "Druid: werewolf and werebear in first person", F4): added to both wrists' Z on top of the Druid's row - the bear's paw is far thicker than the druid's forearm, and the medallion sank into the fur. + lifts it out. 0 = the druid's place, as before. The werewolf keeps the druid's place. Live.
+hud.hand_vitals_orb_form_auto.label = Werebear: lift by the forearm's own model
+hud.hand_vitals_orb_form_auto.tip = With the werebear as your body (F4), the medallion is also raised by how much farther the bear's forearm stands out of the back of the wrist than the druid's - both measured on the forearm bone's own mesh as drawn (the druid's from her last time in human form). The row above goes on top. With "On the forearm bone itself" ticked the medallion already lies on the bear's own skin and only the row above adds. Unticked: the row above alone. Live.
 hud.bar_width_arm.label = Length, m
 hud.bar_split_arm.label = Cut in two
 hud.bar_split_arm.tip = The strip cut at the middle and the halves laid side by side: the blue orb's half stays where it was, the red orb's half turned end for end beside it, so both orbs sit together at the wrist. Half as long, twice as wide. If they end up at the elbow, Rotate Z 180.
@@ -1783,6 +1851,8 @@ render.game_height_fog.label = The game's own height fog
 render.game_height_fog.tip = Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0.
 render.game_depth_fog.label = The game's own depth fog
 render.game_depth_fog.tip = Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture (from above too), over the near ground from our camera. Off: vrcam sets it to 0.
+render.game_fog_scan_safe.label = Find the game's fog safely
+render.game_fog_scan_safe.tip = How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live.
 render.depth_fix.label = The game's effects measure depth from our camera
 render.depth_fix.tip = The game keeps a copy of the depth for its fog, height fog, ambient occlusion, reflections and water, made for its camera from above (550 to 1060 units away). From ours everything is nearer and read as one flat wall 550 away: the act 2 town's straight line with a pale veil above it, the haze in the corners. On: that depth runs from our camera. Off: the game's own.
 render.own_depth.label = Depth for the effects
@@ -1811,6 +1881,8 @@ render.light_bounds_fix.label = Fix the game's lighting at a square or wide wind
 render.light_bounds_fix.tip = The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard rectangles and a roof's shading flickers as the head moves. On: our own shader does that one job right while VR renders, with ReShade or without it (at 16:10 the numbers are the same as the game's). Off at once; ticked on again it takes effect at the next start of the game. Off: the game's own.
 render.light_bounds_flat.label = ... in flat mode too
 render.light_bounds_flat.tip = The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at 16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own shader, as before.
+render.reflections_per_eye.label = Reflections in puddles and blood at their true depth (3D)
+render.reflections_per_eye.tip = With "Stereo - one pass, two pictures" the game's reflections in water, puddles and blood pools were drawn in the right eye as if seen from twice the distance between the eyes: twice the parallax, half the depth - the reflection seemed to float above the puddle and strained the eyes. On: the game's two reflection passes read each eye's own position (one value in its own shader changed; no extra work for the graphics card), so each reflection lies in the water. The other 3D modes and flat mode look the same either way. Made at the start of the game: switched on, it works from the next start; after that it follows this tick at once. Off: the game's own.
 
 # --- Render distance ---
 group.render_distance = Render distance
@@ -2090,26 +2162,7 @@ tab.weapon_adjust = Weapon Adjust
 # --- Weapon in hand ---
 group.weapon_in_hand = Weapon in hand
 group.weapon_in_hand.help = Your weapon in your hand: where it sits and how it is turned. Pick a kind of weapon (or follow the one in hand) and move the sliders until it lies in your hand as you like. The left-hand sliders put the fist on the shaft of a two-handed weapon.
-@ui.weapon_follow.label = Follow the weapon in hand
 @ui.weapon_follow.tip = The sliders below edit the kind of weapon the hero holds now (read from the running game). Off: pick the kind yourself.
-@ui.weapon.label = Weapon
-@ui.weapon.choice0 = Unarmed
-@ui.weapon.choice1 = Bow
-@ui.weapon.choice2 = Crossbow
-@ui.weapon.choice3 = Sword
-@ui.weapon.choice4 = Axe
-@ui.weapon.choice5 = Mace
-@ui.weapon.choice6 = Scepter
-@ui.weapon.choice7 = Wand
-@ui.weapon.choice8 = Staff
-@ui.weapon.choice9 = Polearm
-@ui.weapon.choice10 = Spear
-@ui.weapon.choice11 = Dagger
-@ui.weapon.choice12 = Throwing
-@ui.weapon.choice13 = Javelin
-@ui.weapon.choice14 = Claw
-@ui.weapon.choice15 = Orb
-@ui.weapon.choice16 = Other
 @weapon.x.label = Move along X, cm
 @weapon.x.tip = With the arms on the controllers: the weapon moved in the hand, along its holder's own axes. Kept per kind of weapon.
 @weapon.y.label = Move along Y, cm
@@ -2299,6 +2352,12 @@ bow.arrow_fire_cut.label = Arrow effects: out at the release
 bow.arrow_fire_cut.tip = On: the fire, the frost or the arcane light goes out when the shot goes - the release of the string - and not a moment later when the game hides the arrow in your hand. It lights again on the next arrow: a new draw, the game showing an arrow again after the shot, another skill chosen. The delay below keeps it on the shot arrow that long. Only our own light on the arrow: the game's missile, its effects and its damage are the game's. Off: the effect stays until the game hides the arrow, as before. F4 only. Live.
 bow.arrow_fire_cut_ms.label = Arrow effects: out at the release - after, ms
 bow.arrow_fire_cut_ms.tip = How long after the release the effect goes out: 0 = at the release. A new draw, or the next arrow shown, before then lights it on that arrow. Live.
+bow.swap_by_grab.label = Bow: pass it to the other hand by grabbing it
+bow.swap_by_grab.tip = VR first person (F4), a bow: squeeze the free hand's grip AT THE BOW'S GRIP (within 25 cm of the bow hand, nearer the grip than the string) and the bow is in that hand, with a short pulse in it; the string is the other hand's from then on - a left-handed archer holds the bow in the right hand and draws with the left. The same back. The drawn bow, the string and its draw, the aim, the quiver and its orbs all go with it. Only the picture and which controller does what: the game's bow stays in its own slot. The free hand's trigger and grip at the bow's grip do not take the string; at the string they do, as ever. A crossbow is not passed this way. The hand it is in is remembered (the next setting) and the bow starts there next time. Off: the bow stays in the hand the settings hold it in, as before. Live.
+bow.bow_hand.label = Bow: the hand it is in
+bow.bow_hand.tip = The hand the bow is in with the box above. The game writes it each time you pass the bow, so it survives a restart; set it here to start in that hand.
+bow.bow_hand.choice0 = The right hand
+bow.bow_hand.choice1 = The left hand
 
 # --- Bow without the string draw (the A button, mode above) ---
 group.bow_without_the_string_draw_the_a_button_mode_above = Bow without the string draw (the A button, mode above)
@@ -2698,6 +2757,10 @@ gameplay.melee_touch_barrels.label = Break barrels and pots by hitting them
 gameplay.melee_touch_barrels.tip = A swing of the held weapon through a barrel, a pot, an urn or a basket breaks it the game's own way: the swing (one that would hit a monster) presses the game's interact on that object, as A does, so the hero kicks or breaks it with his own animation - its loot, traps and explosions are the game's. Chests, doors, shrines and quest objects keep their normal controls, and A still works. The object's size is an estimate from its footprint. Unticked: as before, only A breaks them. Live. F4 only.
 gameplay.melee_touch_barrels_min_speed.label = ... a swing that breaks them, from (m/s)
 gameplay.melee_touch_barrels_min_speed.tip = The least speed of a swing through a barrel or pot that breaks it - its own, not the monsters' ("the least blade speed that hits" above), and also with strike by force. 2: an easy swing. Live.
+shapeshift.wolf_min_speed.label = Werewolf: least claw swing speed, m/s
+shapeshift.wolf_min_speed.tip = How fast the werewolf's paw must move where it touches a monster for the strike to count. A bare hand is hard to swing as fast as a weapon, so the paws have their own number. 0: the unarmed one, else the general least speed (above), as before. Only whether a touch counts - the attack, its speed and damage stay the game's. Needs Body > Druid: werewolf and werebear strike with their claws. Live.
+shapeshift.bear_min_speed.label = Werebear: least claw swing speed, m/s
+shapeshift.bear_min_speed.tip = How fast the werebear's paw must move where it touches a monster for the strike to count. A bare hand is hard to swing as fast as a weapon, so the paws have their own number. 0: the unarmed one, else the general least speed (above), as before. Only whether a touch counts - the attack, its speed and damage stay the game's. Needs Body > Druid: werewolf and werebear strike with their claws. Live.
 gameplay.melee_touch_thrown_held.label = A thrown weapon is the weapon in your hand from the start (no grip needed to hit)
 gameplay.melee_touch_thrown_held.tip = A javelin, a throwing knife or a throwing axe is the weapon in your hand from the moment it is equipped, like a sword: it hits by touch at once - you do not have to squeeze the grip first. Put down (the grip squeezed and let go with the hand at rest) it hits nothing until a hand holds it again, as a sword. The throw is the same: squeeze the grip, swing, let go - the game's own throw; the touch still stands down for 0.7 s after a throw and one swing throws once. Unticked: as before - with the grip throw on, a thrown weapon hits by touch only while its grip is squeezed. Live. F4 only.
 gameplay.melee_touch_only.label = The trigger does not attack (only the blade's touch; a bow or a crossbow shoots with it)
@@ -2848,8 +2911,8 @@ gameplay.shield_smite_stroke_cm.tip = A movement is a bash - and can cast - only
 
 # --- Attention: these change the game's own logic ---
 group.attention_these_change_the_game_s_own_logic = Attention: these change the game's own logic
-group.attention_these_change_the_game_s_own_logic.help = The options in this block go past Diablo II's own rules on purpose: they have the game's server do what its own attack and movement rules would not. Both are on as the mod comes (Direct hit by the rules); off (unticked) is the game's own logic, as it plays without the mod. Direct hit: a touch of your weapon becomes the server's attack at once - no animation, no attack rate, no walking up. The game moves what you carry and throw: a monster you carry or throw is put on another cell by the game's own knockback. Single player and the host change the game for everyone in it. Everything else in the mod - hit by touch, weapon weight, ragdolls, grabbing a monster without this move - is only another way to give the game its input: the game still decides.
-@status.game_logic.label = On by default. These two make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They change how the game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of input: the game decides.)
+group.attention_these_change_the_game_s_own_logic.help = The options in this block go past Diablo II's own rules on purpose: they have the game's server do what its own attack and movement rules would not. Direct hit (by the rules) and the move of what you carry and throw are on as the mod comes; off (unticked) is the game's own logic, as it plays without the mod. Direct hit: a touch of your weapon becomes the server's attack at once - no animation, no attack rate, no walking up. The game moves what you carry and throw, and what you knock down: a monster you carry, throw or knock off its feet is put on another cell by the game's own knockback. Single player and the host change the game for everyone in it. Everything else in the mod - hit by touch, weapon weight, ragdolls, grabbing a monster without this move - is only another way to give the game its input: the game still decides.
+@status.game_logic.label = These make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They change how the game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of input: the game decides.)
 @directhit.mode.label = Direct hit
 @directhit.mode.tip = Off: the touch presses the game's own attack (its animation, its attack rate, its reach). BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes (measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed cleave only with its own box below. FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, it sends the game's own command "attack this monster" - the one a click on it sends - and the host's server does the whole attack (the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.
 @directhit.mode.choice1 = By the rules
@@ -2867,6 +2930,9 @@ gameplay.melee_direct_client_cleave.tip = GOES PAST THE GAME'S RULE OF ONE ATTAC
 group.monsters_you_carry_and_throw_weapon_weight_grab_bodies = Monsters you carry and throw (Weapon Weight > Grab bodies)
 weight.grab_moves_unit.label = The game moves what you carry and throw (a test)
 weight.grab_moves_unit.tip = Needs Weapon Weight > Grab bodies > "Lift and throw a humanoid you grab". Live. Ticked: a humanoid you carry or throw is moved by the game itself - its own knockback puts it on the spot under the body you hold, and where it lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. Unticked: only the drawing moves, the game keeps it where it was, as before.
+group.monsters_you_knock_down_weapon_weight_monsters_bodies = Monsters you knock down (Weapon Weight > Monsters' bodies)
+weight.knock_down_moves_unit.label = The game moves what you knock down (a test)
+weight.knock_down_moves_unit.tip = Needs Weapon Weight > Monsters' bodies > "A hard blow knocks a humanoid off its feet". Live. Ticked: a humanoid your blow knocks off its feet is moved by the game itself - its own knockback puts it on the spot where its body falls and lies - so it fights from there, your hits on the body lying there land, and it gets up there instead of walking back to its old place; everyone in the game sees it. A few knockbacks per fall (where it lands and where it settles), never more: if the game walks it off while it lies, it gets up and goes. A stagger (a step back) moves nothing. Whatever the game's knockback refuses (bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. Unticked: only the drawing falls, the game keeps it on its cell, as before.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Skills to BodyWalk
@@ -3983,7 +4049,7 @@ vr.guide.5.row2.does = the game on your floor: look down at it, walk round it
 vr.guide.5.row3.control = F4
 vr.guide.5.row3.does = first person - this view. The hands, the panels and this guide are F4's.
 vr.guide.5.row4.control = Keyboard
-vr.guide.5.row4.does = the F key of a view (the game window in focus), F12 the next view, F11 recentre. The settings' View page has F1 - F4 too.
+vr.guide.5.row4.does = F1 - F4 or Shift + F1 - F4 (Settings > Home > View keys; the game window in focus), F12 the next view, F11 recentre. The View page has them too.
 vr.guide.5.row5.control = This guide again
 vr.guide.5.row5.does = the settings in the headset, page Body: First-start guide
 vr.guide.5.nav = Done closes the guide; it is on the Body page again, any time.
@@ -4060,6 +4126,12 @@ status.depth.none = Depth: our own - nothing picked yet (the game in VR with a s
 status.depth.ours = Depth: our own, buffer {buffer}, {w} x {h}; last picked at {at} ({why}); picks {picks}, another buffer {others} times.
 status.weight_lib.found = Weight-physics library: d2r_vr_weight.dll is in d2rloader\d2r_vr_libs - the tick below moves the weapon with it.
 status.weight_lib.missing = Weight-physics library: not found in d2rloader\d2r_vr_libs (d2r_vr_weight.dll) - the mod keeps its own weight physics, the tick below is unavailable.
+status.crashrep.missing = Crash reports: D2R VR Crash Reporter is not installed (d2rloader\d2r_vr_libs) - the two ticks below are unavailable.
+status.crashrep.pending_logs = Logs collected {when} are ready to send - nothing was sent yet.
+status.crashrep.pending = A game closed badly ({when}): a report is ready - nothing was sent yet.
+status.crashrep.on = Crash reports: on - after a game that closes badly you are asked whether to send a report.
+status.crashrep.off = Crash reports: off - nothing watches the game, nothing is sent.
+crashrep.ask = Help us fix crashes?\n\nWhen the game closes badly (a crash, a freeze, a lost graphics card), D2R VR can offer to send a report to the BodyWalk server: the logs of that game, the versions, the graphics card. Your Windows user and PC name, character names, addresses and passwords are taken out, and you see every file first.\n\nNothing is sent unless you press Send in that window. You can change this any time: Home > D2R VR > "Offer to send a report when the game closes badly".
 status.grip_lib.found = Grip library: d2r_vr_grip.dll is in d2rloader\d2r_vr_libs - the tick below holds the weapon its way.
 status.grip_lib.missing = Grip library: not found in d2rloader\d2r_vr_libs (d2r_vr_grip.dll) - the mod keeps its own way of holding, the tick below is unavailable.
 weapon_list.adjusted = {kind} - adjusted: {numbers}
@@ -4210,6 +4282,9 @@ status.collect.packing = Packing the logs...
 status.collect.no_script = Could not write the packing script to the TEMP folder
 status.collect.no_powershell = Could not start PowerShell to pack the logs
 status.collect.no_zip = Could not make the zip (code {code})
+status.collect.send_window = Opening the window that shows what would be sent - nothing is sent until you press Send there
+status.collect.no_reporter = Could not start D2R VR Crash Reporter (error {code}) - the zip is on your desktop: {name}.zip
+status.collect.send_done = The send window is closed. The zip is on your desktop too: {name}.zip
 status.collect.saved = Saved on your desktop: {name}.zip - post it in our Discord (#diablo-2-vr)
 mp.ago.now = just now
 mp.ago.min = {n} min ago
@@ -4316,7 +4391,7 @@ status.update.up_to_date = Up to date
 status.update.available = Update available: v{version}
 button.download_version = Download v{version}
 status.update.whats_new = What's new: {text}
-footer = Changes apply at once while the game runs.   F1 - F4: the view (Home tab).   F12: next view.   F11: "ahead" is where I look.   Ctrl + wheel: zoom.   Ctrl + Tab: next tab.
+footer = Changes apply at once while the game runs.   F1 - F4 or Shift + F1 - F4: the view (Home tab).   F12: next view.   F11: "ahead" is where I look.   Ctrl + wheel: zoom.   Ctrl + Tab: next tab.
 msg.no_ini = There is no d2r_vr.ini in mods\D2R-VR\d2rloader\plugins (nor in d2rloader\plugins) next to this program.\nPut this program next to the game's D2R.exe, with the mod installed.
 arcane.no_textures = ReShade's reshade-shaders\Textures is not in {folder}: install ReShade (above): the pictures are made when it is in
 arcane.game_folder = the game's folder

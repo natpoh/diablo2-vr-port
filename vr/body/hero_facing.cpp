@@ -450,6 +450,13 @@ bool CameraForwardInModel(float out[3]) {
     for (int i = 0; i < 3; ++i) out[i] = g_camFwdModel[i].load();
     return true;
 }
+std::atomic<float> g_camRightModel[3];   // [body] flat_weapon_adjust: the camera's right in the hero's model space, read with the forward
+std::atomic<bool> g_camRightOk{false};
+bool CameraRightInModel(float out[3]) {
+    if (!g_camRightOk.load()) return false;
+    for (int i = 0; i < 3; ++i) out[i] = g_camRightModel[i].load();
+    return true;
+}
 bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, float rows[3][3]) {
     *eyeOk = false;
     AcquireSRWLockShared(&g_stickLock); StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
@@ -464,6 +471,8 @@ bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, flo
         if (d != 0.0f && std::isfinite(d)) {
             const float c = cosf(d), sn = sinf(d), x = f.camF[0], z = f.camF[2];
             f.camF[0] = x * c - z * sn; f.camF[2] = z * c + x * sn;
+            const float rx = f.camR[0], rz = f.camR[2];   // (its right turned alike)
+            f.camR[0] = rx * c - rz * sn; f.camR[2] = rz * c + rx * sn;
         }
     }
     // world -> model for a row-vector rotation: dot with each (normalised) row
@@ -478,6 +487,12 @@ bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, flo
         const float cy = f.camF[0]*rows[1][0] + f.camF[1]*rows[1][1] + f.camF[2]*rows[1][2];
         const float l = sqrtf(cx * cx + cy * cy + cz * cz);
         if (l > 1e-6f && std::isfinite(l)) { g_camFwdModel[0].store(cx / l); g_camFwdModel[1].store(cy / l); g_camFwdModel[2].store(cz / l); g_camFwdOk.store(true); }
+    }
+    {   // [body] flat_weapon_adjust: its right the same way - read through the rows, never a cross worked out here (a mirrored model keeps it right)
+        float rm[3];
+        for (int r = 0; r < 3; ++r) rm[r] = f.camR[0]*rows[r][0] + f.camR[1]*rows[r][1] + f.camR[2]*rows[r][2];
+        const float l = sqrtf(rm[0] * rm[0] + rm[1] * rm[1] + rm[2] * rm[2]);
+        if (l > 1e-6f && std::isfinite(l)) { for (int i = 0; i < 3; ++i) g_camRightModel[i].store(rm[i] / l); g_camRightOk.store(true); }
     }
     // The eye point in model space: (world - translation), dotted with each row
     // over its squared length (the rows carry the model's scale). The eye from
