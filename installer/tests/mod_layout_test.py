@@ -117,8 +117,8 @@ OLD_GRIP = b"MZ grip library of an earlier install (global)\0" + NOISE[7000:1200
 NEW_WEIGHT = b"MZ weight library of 0.169 (d2r_vr_libs)\0" + NOISE[12000:19000]
 NEW_GRIP = b"MZ grip library of 0.169 (d2r_vr_libs)\0" + NOISE[19000:24000]
 BEAR_DLL = b"MZ" + b"\0" * 62 + NOISE[:500000] + "d2r_vr_icons".encode("utf-16-le") + b"\0d2r-vr-vrcam\0" + NOISE[500000:]
-DEFAULTS_V1 = ("[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n[hands]\nbow_draw=1\nweight=1\n[render]\nfog=30\n").replace("\n", "\r\n")
-DEFAULTS_V2 = DEFAULTS_V1 + "[new]\nthing=7\n".replace("\n", "\r\n")
+DEFAULTS_V1 = ("[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n[hands]\nbow_draw=1\nweight=1\n[render]\nfog=30\n[weight]\ndeath_ragdoll=0\n").replace("\n", "\r\n")
+DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on)
 PLAYERS_RESHADE_INI = ("[ADDON]\nDisabledAddons=\nOverlayCollapsed=Effect Runtime Sync,FlatVR Depth Provider v2.19@FlatVR_DepthProvider.addon64\n\n[DEPTH]\nDepthCopyBeforeClears=2\n\n"
                        "[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nIntermediateCachePath=C:\\Temp\\ReShade\nNoDebugInfo=1\nPresetPath=.\\ReShadePreset.ini\n"
                        "TextureSearchPaths=.\\reshade-shaders\\Textures\\**\n\n[OVERLAY]\nDocking=[Docking][Data],DockSpace   ID=0xB0DF600F Pos=8,,8 Size=1008,,1008 Split=X\nShowFPS=2\n"
@@ -1120,6 +1120,7 @@ def main():
     cur = ini_keys(rd(mp / "d2r_vr.ini"))
     check(cur.get(("render", "fog")) == "77" and cur.get(("calibration", "height")) == "1.82", "the player's settings are kept (fog 77, [calibration] height 1.82)")
     check(cur.get(("new", "thing")) == "7", "...and the key v2 added is in with its default")
+    check(cur.get(("weight", "death_ragdoll")) == "1", "...and death_ragdoll, still at v1's default 0 (off), is on now as v2's default (TurnOnOldDefaults)")
     check((mp / "d2r_vr.default.ini").read_bytes() == DEFAULTS_V2.encode(), "d2r_vr.default.ini is v2's")
     check("take_new=0 changed=1" in rd(work / "ready.txt"), "the question was asked (a changed ini); a silent run answers Yes = keep")
     check(rd(mp / "d2r_vr_headset.ini") == "[headset]\nipd=0.07\n" and rd(game / MOD / "reshade/ReShade.ini") == "[GENERAL]\nmine=1\n", "the headset ini and the mod's ReShade.ini are the player's")

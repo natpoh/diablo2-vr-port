@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## Next
+
+- **Death as a ragdoll comes on for players who kept their settings** when their `[weight] death_ragdoll` is still the 0 it shipped
+  as in 0.196 / 0.197 (an update that keeps your settings now turns on a feature whose old default you never changed; one you switched
+  off yourself stays off).
+
 ## 0.200.0
 
 - **Corpses lie still**: a killed monster's ragdoll no longer jumps back to the game's corpse when a menu opens (inventory, map, Esc), no

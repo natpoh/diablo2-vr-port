@@ -14,6 +14,7 @@
 var
   IniTakeNew: Boolean;   // decided on the Ready page, done after the files are in
   IniChanged: Boolean;   // the player's file differs from the defaults the last Setup put in (or they cannot be compared)
+  IniOldDeathRagdoll: String;   // [weight] death_ragdoll in the defaults the last Setup put in ('<none>': not there / no defaults)
 
 // A value as vrcam reads it: up to an inline ';' comment, trimmed.
 function IniValue(S: String): String;
@@ -52,6 +53,14 @@ begin
   end;
 end;
 
+// Kept settings still at a default that has changed since: a feature that came off in an earlier version and is on now goes on when the
+// player's value is that old default (he never chose it). Serg 2026-11-03: death_ragdoll shipped 0 in 0.196 / 0.197, 1 since 0.198.
+procedure TurnOnOldDefaults(Ini: String);
+begin
+  if (IniOldDeathRagdoll = '0') and (IniValue(GetIniString('weight', 'death_ragdoll', '<none>', Ini)) = '0') then
+    SetIniString('weight', 'death_ragdoll', '1', Ini);
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -61,9 +70,11 @@ var
 begin
   IniTakeNew := False;
   IniChanged := False;
+  IniOldDeathRagdoll := '<none>';
   Ini := ModPlugins(Dir) + 'd2r_vr.ini';
   Def := ModPlugins(Dir) + 'd2r_vr.default.ini';
   if not FileExists(Ini) then Exit;   // first install: the defaults go in as they are
+  if FileExists(Def) then IniOldDeathRagdoll := IniValue(GetIniString('weight', 'death_ragdoll', '<none>', Def));   // (before the new defaults overwrite it)
   Changed := True;                     // no defaults from an earlier Setup: cannot tell
   if FileExists(Def) then
   begin
@@ -132,6 +143,7 @@ begin
       Keys.Free;
       Vals.Free;
     end;
+    TurnOnOldDefaults(Ini);
   end;
   SetIniString('mode', 'platform', PlatformValue(''), Ini);
 end;

@@ -58,7 +58,7 @@ first person (F4). All versions:
 
 **Want to help?** The roadmap, the known problems with what we know about
 each, and notes for developers are in [docs/](docs/README.md) - fork it, fix
-one and send a pull request.
+one and send a pull request: [CONTRIBUTING.md](CONTRIBUTING.md) says how.
 
 **Discussion, bugs and ideas:** the mod's own Discord, D2R VR Authentic -
 [join it here](https://discord.gg/7PHp8n6v9z) (support with your log in #support, ideas in #feedback-and-ideas).

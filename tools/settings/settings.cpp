@@ -7028,7 +7028,7 @@ void AddTip(HWND ctl, const wchar_t* text) {
 
 void Build(HWND page) {
     if (g_items.size() > (size_t)kMaxItems)   // (a developer's build only: every id range must hold every item - see kMaxItems)
-        MessageBoxW(nullptr, L"More Settings items than kMaxItems: raise it (tools/settings/settings.cpp) - clicks would go to the wrong item.", L"D2R VR Settings", MB_ICONERROR);
+        MessageBoxW(nullptr, L"More Settings items than kMaxItems: raise it (tools/settings/settings.cpp) - clicks would go to the wrong item.", L"D2R VR Authentic Settings", MB_ICONERROR);
     int tab = -1, tabModes = kBoth, groupModes = kBoth;
     for (size_t i = 0; i < g_items.size(); ++i) {
         Item& it = g_items[i];
