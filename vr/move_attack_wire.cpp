@@ -21,6 +21,12 @@
 // kept on the mouse: vrcam's map click hook (vr/input/flat_click.cpp) asks HoldClick for every click, and a press held back in the hold is
 // made again here, after the controller's update, through the game's own map click 0xFE3B0 (its hooked entry, so the plugin's own click
 // rules apply to it as to any click).
+//
+// [gameplay] quick_blow (vr/quick_blow.h, its own tick, EXPERIMENTAL, off by default) shares these hooks and adds one: the server's scheduler
+// of a mode's frame events 0x491240, which for a quick attack is handed - for that call only - a copy of the AnimData record with the blow
+// moved to the first frame. Around a quick attack's blow the frame trigger opens melee_direct's reach window (the attack's target is in
+// reach, the game's wall test stays), and with [gameplay] quick_blow_faster the attack-mode gate lets the next attack in once the blow is
+// out and quick_blow_min_ms passed. The walk through the swing is vr/attack_path_wire.cpp's.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -34,8 +40,10 @@
 #include <cstring>
 
 #include "attack_path_wire.h"
+#include "melee_direct.h"
 #include "move_attack.h"
 #include "move_attack_wire.h"
+#include "quick_blow.h"
 #include "sigscan.h"
 #include "view_gate.h"
 
@@ -65,10 +73,16 @@ const uint8_t kSigWalkDir[13] = {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B,
 const uint8_t kSigCmdFlags[13] = {0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x33, 0xC0, 0xBB, 0x01, 0x00, 0x00, 0x00};
 // mov [rsp+8],rbx; push rdi; sub rsp,20h; cmp ecx,8; jae ... (vr/belt_drop.cpp's proof of the same function)
 const uint8_t kSigClientPlayer[15] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x83, 0xF9, 0x08, 0x0F, 0x83};
+// [gameplay] quick_blow: the scheduler of a unit's frame events at a mode's start (game, unit) - push rbx; push rsi; push r13; push r14;
+// sub rsp,78h; mov r14d,[rcx+170h]
+constexpr uint64_t RVA_FRAME_EVENTS = 0x491240;
+const uint8_t kSigFrameEvents[18] = {0x40, 0x53, 0x56, 0x41, 0x55, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x78, 0x44, 0x8B, 0xB1, 0x70, 0x01, 0x00, 0x00};
 
 // The unit (client and server alike): +0 type (0 a player, 4 an item), +4 class (an item's Items row), +8 id, +0xC mode; a server unit's
 // game at +0xD8. The server's game: +0x170 its frame.
 constexpr uintptr_t kUnitType = 0x0, kUnitClass = 0x4, kUnitId = 0x8, kUnitMode = 0xC, kUnitGame = 0xD8, kGameFrame = 0x170;
+// A server unit's sequence (+0x40: Zeal, Fury - its events are the sequence's) and its AnimData record (+0x70, the getter 0x349480).
+constexpr uintptr_t kUnitSequence = 0x40, kUnitAnimData = 0x70;
 // The controller manager's record of a player: manager + player * 0xB8 (docs/move_recon.md section 3).
 constexpr uintptr_t kRecStride = 0xB8, kRecStamina = 0x1951, kRecForcedWalk = 0x1952, kRecGrid = 0x195C, kRecSkill = 0x1974, kMgrRunThreshold = 0x1F94;
 
@@ -81,9 +95,16 @@ using WalkDirFn = void (*)(uintptr_t unit, const float* dir, float mag, bool run
 using CmdFlagsFn = uint16_t (*)();
 using ClientPlayerFn = uintptr_t (*)(uint32_t index);
 using MapClickFn = uint64_t (*)(void* unit, int type, int x, int y, uint64_t flags);
+using FrameEventsFn = uint64_t (*)(uintptr_t game, uintptr_t unit);
 
 void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{false}, g_faulted{false};
+std::atomic<bool> g_quick{false}, g_faster{false};   // [gameplay] quick_blow, quick_blow_faster (vr/quick_blow.h)
+std::atomic<uint64_t> g_tallyOwn{0}, g_tallyJoined{0}, g_tallyReach{0};   // [gameplay] quick_blow: the session's counts (QuickTally)
+std::atomic<uint32_t> g_quickMinMs{quickblow::kMinMsDefault};   // [gameplay] quick_blow_min_ms
+std::atomic<int> g_quickState{0};          // the scheduler's hook: 0 not tried, 1 in, 2 not possible
+FrameEventsFn g_origFrameEvents = nullptr;
+quickblow::QuickNotes g_quickNotes;        // the server's thread only (the scheduler notes, the trigger and the gate ask)
 std::atomic<uint8_t> g_flatScope{kScopeNone};   // [gameplay] flat_move_while_attacking (ScopeOfKey)
 std::atomic<int (*)()> g_flatViewFn{nullptr};      // vrcam: the monitor game's view (1 F1, 2 F2, 3 F3; 0 in VR) - for the log
 std::atomic<bool (*)()> g_flatCameraFn{nullptr};   // vrcam: one of the flat key's views (the monitor's F2 / F3, VR F1 / F2 / F3)
@@ -149,8 +170,10 @@ void Fault(const char* where) {
     if (!g_faulted.exchange(true)) Say("vrcam: move while attacking - %s faulted: the option is OFF for this session (the game's own stop again)", where);
 }
 bool Live() {
-    return (g_on.load(std::memory_order_relaxed) || g_flatScope.load(std::memory_order_relaxed) != kScopeNone) && !g_faulted.load(std::memory_order_relaxed);
+    return (g_on.load(std::memory_order_relaxed) || g_flatScope.load(std::memory_order_relaxed) != kScopeNone || g_quick.load(std::memory_order_relaxed)) &&
+           !g_faulted.load(std::memory_order_relaxed);
 }
+bool QuickLive() { return g_quick.load(std::memory_order_relaxed) && !g_faulted.load(std::memory_order_relaxed); }
 bool FlatCamera() {
     const auto fn = g_flatCameraFn.load(std::memory_order_acquire);
     return fn && fn();
@@ -219,13 +242,80 @@ void NoteTrigger(uintptr_t game, uintptr_t unit, int code) {
             own ? "our hero's" : "a joined hero's", id, mode, f.weapon, code, now, (int)FramesLeft(end, now));
 }
 
+// [gameplay] quick_blow: is the attack this hero is in a quick one (its frames moved by the scheduler's hook)?
+bool QuickAttackOf(uintptr_t game, uintptr_t unit, uint32_t* hero) {
+    uint32_t id = 0, mode = 0;
+    bool own = false;
+    int32_t end = 0;
+    if (!ServerPlayer(game, unit, &id, &mode, &own) || !quickblow::QuickMode(mode)) return false;
+    if (!CallEventFrame(game, unit, &end)) { Fault("the unit's event frame (0x48B230)"); return false; }
+    *hero = id;
+    return g_quickNotes.Is(id, end);
+}
+
 int HookTrigger(uintptr_t game, uintptr_t unit, int code, int arg) {
     int own = 0;
     if (attackpath::OnTick(game, unit, code, &own)) return own;   // [gameplay] flat_attack_path: its step of the path, never the game's handler
     const bool blow = attackpath::BeforeAction(game, unit, code);
     if (ActionCode(code) && Live()) NoteTrigger(game, unit, code);
+    // [gameplay] quick_blow: a quick attack's blow - melee_direct's reach window for the hero and the attack's own target, around the game's action
+    uint32_t quickHero = 0;
+    const bool reach = ActionCode(code) && QuickLive() && QuickAttackOf(game, unit, &quickHero) && meleedirect::QuickReachBegin(game, unit);
     const int r = g_origTrigger(game, unit, code, arg);
+    if (reach) {
+        meleedirect::QuickReachEnd();
+        g_tallyReach.fetch_add(1, std::memory_order_relaxed);
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) Say("vrcam: quick blow - hero %u's blow: the attack's target counted in reach (the game's wall test, roll and damage)", quickHero);
+    }
     if (blow) attackpath::AfterAction(game, unit);
+    return r;
+}
+
+// [gameplay] quick_blow: the scheduler of the frame events at an attack's start - a quick attack's record with its blow on the first frame.
+bool WritePtr(uintptr_t at, uintptr_t v) noexcept {
+    if (at < 0x10000) return false;
+    __try { *reinterpret_cast<uintptr_t*>(at) = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+uint64_t HookFrameEvents(uintptr_t game, uintptr_t unit) {
+    if (!QuickLive()) return g_origFrameEvents(game, unit);
+    quickblow::Ask a;
+    a.on = true;
+    uint32_t id = 0;
+    a.player = ServerPlayer(game, unit, &id, &a.mode, &a.own);
+    if (!a.player || !quickblow::QuickMode(a.mode)) return g_origFrameEvents(game, unit);   // (monsters, walks, casts: at once)
+    a.f4 = viewgate::F4();
+    uintptr_t seq = 0, rec = 0;
+    a.sequence = Read(&seq, unit + kUnitSequence, sizeof seq) && seq != 0;
+    a.weapon = ServerWeaponKind(unit);
+    alignas(16) uint8_t record[quickblow::kRecordBytes], moved[quickblow::kRecordBytes];
+    a.record = Read(&rec, unit + kUnitAnimData, sizeof rec) && rec && Read(record, rec, sizeof record);
+    const quickblow::Why why = quickblow::Judge(a);
+    if (why != quickblow::Why::Shift) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) Say("vrcam: quick blow - hero %u, mode %u: the game's own frames (%s)", id, a.mode, quickblow::WhyText(why));
+        return g_origFrameEvents(game, unit);
+    }
+    const int shift = quickblow::ShiftEvents(record, moved);
+    uint64_t r = 0;
+    // the record is the game's shared row: the hero's pointer goes to our copy for this one call, and back
+    if (shift > 0 && WritePtr(unit + kUnitAnimData, reinterpret_cast<uintptr_t>(moved))) {
+        r = g_origFrameEvents(game, unit);
+        if (!WritePtr(unit + kUnitAnimData, rec)) Fault("putting the hero's AnimData record back");
+    } else {
+        r = g_origFrameEvents(game, unit);
+    }
+    int32_t end = 0;
+    if (shift >= 0 && CallEventFrame(game, unit, &end)) g_quickNotes.Note(id, end);
+    if (shift > 0) (a.own ? g_tallyOwn : g_tallyJoined).fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 16) {
+        if (shift > 0)
+            Say("vrcam: quick blow - %s hero %u, mode %u, weapon kind %u: the blow moved from frame %d to the first (the animation's end, server frame %d, is the game's)",
+                a.own ? "our" : "a joined", id, a.mode, a.weapon, shift, end);
+        else
+            Say("vrcam: quick blow - hero %u, mode %u: %s", id, a.mode, shift == 0 ? "the blow is on the first frame already" : "no blow in this animation's frames - the game's own");
+    }
     return r;
 }
 
@@ -268,8 +358,44 @@ int Judge(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int ori
     return original;
 }
 
+// [gameplay] quick_blow_faster: a quick attack whose blow is out lets the next attack in once quick_blow_min_ms passed (the animation cut).
+bool Faster(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int original) {
+    quickblow::FasterAsk a;
+    a.on = true;
+    a.original = original;
+    a.newMode = (uint32_t)newMode;
+    a.target = target != 0;
+    a.minMs = g_quickMinMs.load(std::memory_order_relaxed);
+    a.f4 = viewgate::F4();
+    uint32_t id = 0;
+    a.player = ServerPlayer(game, unit, &id, &a.mode, &a.own);
+    if (!a.player || !quickblow::QuickMode(a.mode)) return false;
+    if (!CallEventFrame(game, unit, &a.endFrame)) { Fault("the unit's event frame (0x48B230)"); return false; }
+    Read(&a.nowFrame, game + kGameFrame, sizeof a.nowFrame);
+    a.quickAttack = g_quickNotes.Is(id, a.endFrame);
+    const Fired f = FiredOf(id);
+    a.blowOut = f.valid && f.heroId == id && f.mode == a.mode && f.endFrame == a.endFrame;
+    a.blowFrame = f.atFrame;
+    const quickblow::FastWhy why = quickblow::JudgeFaster(a);
+    if (why == quickblow::FastWhy::Let) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 12)
+            Say("vrcam: quick blow - faster: %s hero %u's next attack let in %d frame(s) after the blow, %d frame(s) of the animation cut (the least wait %u ms)",
+                a.own ? "our" : "a joined", id, (int)(a.nowFrame - a.blowFrame), (int)(a.endFrame - a.nowFrame), a.minMs);
+        return true;
+    }
+    if (why != quickblow::FastWhy::Game) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) Say("vrcam: quick blow - faster: hero %u's next attack waits as in the game (%s)", id, quickblow::FastWhyText(why));
+    }
+    return false;
+}
+
 int HookGate(uintptr_t game, uintptr_t unit, int mode, uintptr_t target, int flag) {
     const int r = g_origGate(game, unit, mode, target, flag);
+    if (target && (r == quickblow::kGateNotYet || r == quickblow::kGateRefused) && QuickLive() && g_faster.load(std::memory_order_relaxed) &&
+        Faster(game, unit, mode, target, r))
+        return quickblow::kGateIn;
     if (r != kGateNotYet || !Live()) return r;
     return Judge(game, unit, mode, target, r);
 }
@@ -500,10 +626,55 @@ void SetWanted(bool on) {
 }
 bool Wanted() { return g_on.load(); }
 
+void SetQuick(bool on, bool faster, int minMs) {
+    const uint32_t ms = quickblow::ClampMinMs(minMs);
+    const bool was = g_quick.exchange(on), wasFaster = g_faster.exchange(faster);
+    const uint32_t wasMs = g_quickMinMs.exchange(ms);
+    meleedirect::SetQuickWanted(on);
+    if ((was != on || wasFaster != faster || wasMs != ms) && g_log) {
+        char b[420];
+        if (!on) snprintf(b, sizeof b, "vrcam: quick blow - [gameplay] quick_blow=0: the blow on the game's frame, the swing stops the hero, the touch as before");
+        else
+            snprintf(b, sizeof b, "vrcam: quick blow - [gameplay] quick_blow=1 (EXPERIMENTAL, changes the game): VR F4 - the blow on the first frame, the hero walks through "
+                     "the swing, the touch is the game's attack (By the rules' cleave extras stay direct), the attack's target counted in reach; faster than the "
+                     "animation: %s (the least wait %u ms). A TCP/IP game we host: every hero in it", faster ? "on" : "off", ms);
+        g_log(b);
+    }
+}
+void QuickTally(uint64_t* movedOwn, uint64_t* movedJoined, uint64_t* reach) {
+    *movedOwn = g_tallyOwn.load(std::memory_order_relaxed);
+    *movedJoined = g_tallyJoined.load(std::memory_order_relaxed);
+    *reach = g_tallyReach.load(std::memory_order_relaxed);
+}
+
+bool QuickWanted() { return g_quick.load() && !g_faulted.load(); }
+bool QuickReady() { return g_quickState.load() == 1; }
+bool QuickAttack(uint32_t hero, int32_t endFrame) { return QuickLive() && g_quickNotes.Is(hero, endFrame); }
+
+// [gameplay] quick_blow: the scheduler's hook, on its own (the other hooks may be in already from move_while_attacking, on by default);
+// only with them in - a moved blow without the trigger's reach and the gate would still be the game's, but noted nowhere.
+void InstallQuick() {
+    static ULONGLONG retryAt = 0;
+    static unsigned tries = 0;
+    if (!g_quick.load() || g_quickState.load() != 0 || g_state.load() != 1 || GetTickCount64() < retryAt) return;
+    retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);
+    if (!d2rsig::Addr(RVA_FRAME_EVENTS)) return;
+    if (!d2rsig::Check(RVA_FRAME_EVENTS, kSigFrameEvents, sizeof kSigFrameEvents)) {
+        if (++tries == 30 && g_log) g_log("vrcam: quick blow - the server's frame scheduler is not as expected (another build?): the blow lands on the game's frame");
+        return;
+    }
+    const bool in = d2rsig::Hook(RVA_FRAME_EVENTS, kSigFrameEvents, sizeof kSigFrameEvents, reinterpret_cast<void*>(&HookFrameEvents), reinterpret_cast<void**>(&g_origFrameEvents));
+    g_quickState.store(in ? 1 : 2);
+    if (g_log)
+        g_log(in ? "vrcam: quick blow - ready: the server's frame scheduler is hooked (a quick attack's blow on its first frame)"
+                 : "vrcam: quick blow - the frame scheduler's hook could not go in: the blow lands on the game's frame");
+}
+
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if (!(g_on.load() || g_flatScope.load() != kScopeNone || attackpath::Wanted()) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
+    InstallQuick();
+    if (!(g_on.load() || g_flatScope.load() != kScopeNone || attackpath::Wanted() || g_quick.load()) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_GATE) || !d2rsig::Addr(RVA_MODE_ALLOWED) || !d2rsig::Addr(RVA_TRIGGER) || !d2rsig::Addr(RVA_EVENT_FRAME) || !d2rsig::Addr(RVA_UNIT_WEAPON) ||
         !d2rsig::Addr(RVA_CTRL_UPDATE) || !d2rsig::Addr(RVA_WALK_DIR) || !d2rsig::Addr(RVA_CMD_FLAGS) || !d2rsig::Addr(RVA_CLIENT_PLAYER))

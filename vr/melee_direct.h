@@ -36,11 +36,16 @@ struct Gate {
     uint64_t lastMs = 0;        // when the last direct hit was asked for (0 = none)
     uint32_t minIntervalMs = 0; // [gameplay] melee_direct_min_ms, 0 = none beyond the detector's one hit per monster per stroke
     bool f4 = true;             // the view is VR first person (viewgate::F4()): the option is F4 only like the rest of hit by touch
+    // The direct call is always the game's PLAIN attack (Attack 0x42FEB0, skill 0). A touch whose press the game would read as another skill
+    // goes the key path, so the game casts that skill (its mana, damage, effects) - never the plain attack in its place:
+    bool armed = false;         // a melee skill is armed for the press ([gameplay] melee_skill_armed, meleearm::Armed >= 0)
+    bool slotPlain = true;      // the attack slot (A) holds the plain attack, read fresh from the game (SlotPlain); false: another skill there, or not read
 };
 
 inline Route Decide(const Gate& g) {
     if (!g.f4) return Route::Skip;                  // another view: nothing is done for a touch (a touch there is not accepted at all)
     if (!g.wanted || !g.ready) return Route::Key;   // off, or not possible: today's behaviour
+    if (g.armed || !g.slotPlain) return Route::Key; // the press is a skill: the game's own cast (both Full and By the rules)
     if (g.minIntervalMs && g.lastMs && g.nowMs >= g.lastMs && g.nowMs - g.lastMs < g.minIntervalMs) return Route::Skip;
     return Route::Direct;
 }
@@ -167,12 +172,30 @@ void SetRemoteWanted(bool on);
 // right weapon, as before.
 void SetByHand(bool on);
 bool ByHand();
+// [gameplay] quick_blow (vr/quick_blow.h): the hooks go in for it too. The server's thread, around the frame trigger of a quick attack's blow
+// (vr/move_attack_wire.cpp): Begin opens the window for the hero and the attack's own target (the game's target lookup, a monster only) -
+// the reach test answers "in reach" for that pair (the game's wall test stays), so a touched monster a little past the game's reach is no
+// miss; End closes it. False: not opened (off, the hooks not in, no monster target, a call of ours already in flight).
+void SetQuickWanted(bool on);
+bool QuickReachBegin(uintptr_t game, uintptr_t attacker);
+void QuickReachEnd();
 // The two hooks (the server's target and reach tests) and the proofs of the code, tried again from the timer until they
 // are in; only while wanted. No local server found, a signature missing or a fault: Ready() stays false, the key path runs.
+// Also, while wanted: every kSlotLookMs the game's UI thread reads the attack slot's (A) skill (SlotSkill 0x117D20, slot 0 - the read the
+// joined client makes too), for Gate::slotPlain.
 void Install();
 bool Ready();
-// The timer's thread, when a touch is accepted: which route it takes. Direct reserves the interval (stamps it).
-Route Plan(uint64_t nowMs, bool serverKnown);
+// The attack slot's skill as last read: plain (the basic attack, skill 0) only when the read is fresh. Not read yet, too old, or another
+// skill on A (Zeal, Bash, a spell, Kick...): not plain - the key path, where the game casts what A holds.
+constexpr int32_t kSkillAttack = 0;
+constexpr uint64_t kSlotLookMs = 200, kSlotFreshMs = 1000;
+inline bool SlotIsPlain(bool read, int32_t skill, uint64_t nowMs, uint64_t atMs) {
+    return read && skill == kSkillAttack && atMs && nowMs >= atMs && nowMs - atMs <= kSlotFreshMs;
+}
+bool SlotPlain(uint64_t nowMs);
+// The timer's thread, when a touch is accepted: which route it takes. Direct reserves the interval (stamps it). `armed`: a melee skill is
+// armed for the press (meleearm::Armed >= 0) - the key path, so the game casts it.
+Route Plan(uint64_t nowMs, bool serverKnown, bool armed);
 // The timer's thread, when the view is not F4: the requests queued for the game's thread are dropped (none is struck late).
 void Flush();
 // After Plan said Direct (and the press -> hit clock was started): queue the call for the game's thread.

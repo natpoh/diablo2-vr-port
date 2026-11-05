@@ -1033,23 +1033,25 @@ static void TestLivePagesOnWindow() {
         for (int i = 0; i < 60; ++i) if (w.Next().settings.what == hset::Do::Save) more = true;
         CHECK(!more && !w.c.SettingsModel().Dirty());
     }
-    {   // the Melee page's seventh row, Direct hit by the rules (Serg, 2026-10-30): its tick where the closer rows draw it, written by itself, live
+    {   // the Melee page's seventh row, quick blow (Serg, 2026-11-05, 0.204; Direct hit by the rules until then): its tick where the closer rows draw it,
+        // on as shipped, unticked and written by itself, live
         World w;
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageMelee)));
-        CHECK(w.c.SettingsModel().page == hset::kPageMelee && hset::KeyAt(hset::kPageMelee, 6) == hset::kKeyMeleeDirect);
-        CHECK(w.c.SettingsModel().Get()[hset::kKeyMeleeDirect] < 0.5f);
+        const int qb = hset::KeyAt(hset::kPageMelee, 6);
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee && qb >= 0 && !wcscmp(hset::kDefs[qb].key, L"quick_blow") && hset::kDefs[hset::kKeyMeleeDirect].page == hset::kNoPage);
+        CHECK(w.c.SettingsModel().Get()[qb] > 0.5f);
         w.ClickSheet(hset::kToggle(6, hset::kPageMelee));
-        CHECK(w.c.SettingsModel().Get()[hset::kKeyMeleeDirect] > 0.5f && w.c.SettingsModel().LiveOnly());
+        CHECK(w.c.SettingsModel().Get()[qb] < 0.5f && w.c.SettingsModel().LiveOnly());
         Step saved;
         bool got = false;
         for (int i = 0; i < 60 && !got; ++i) {
             const Step t = w.Next();
             if (t.settings.what == hset::Do::Save) { saved = t; got = true; }
         }
-        CHECK(got && saved.settings.request.changed == hset::Bit(hset::kKeyMeleeDirect) && saved.settings.request.values[hset::kKeyMeleeDirect] == 1.0f);
+        CHECK(got && saved.settings.request.changed == hset::Bit(qb) && saved.settings.request.values[qb] == 0.0f);
     }
     {   // the key bindings: a pick waits for Apply (they are not live), then only that key goes, with the line the panel read as its base
         World w;

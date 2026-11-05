@@ -67,6 +67,22 @@ int main() {
         g = Open(); g.armed = true;       CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::Armed);
         g = Open(); g.leftIsSlot = false; CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::OtherSkill);
     }
+    // ---- the host's own rules (HostRules, single player / the host, melee_direct 2): its gate as HostRules fills it ----
+    {
+        // leftIsSlot is now the host's read of the attack slot (meleedirect::SlotPlain), no longer always true (B2)
+        auto host = [](bool armed, bool slotPlain) {
+            Gate g = Open();
+            g.armed = armed;
+            g.leftIsSlot = slotPlain;
+            g.first = true;   // rule 1: the first touch on a monster - the touch that used to be a direct hit whatever A held
+            g.t = {};
+            return g;
+        };
+        CHECK(Decide(host(false, true)) != Route::Key && WhyOf(host(false, true)) == Why::SentFirst);   // plain attack on A: direct
+        CHECK(Decide(host(false, false)) == Route::Key && WhyOf(host(false, false)) == Why::OtherSkill); // Zeal / Bash on A: the game casts it
+        CHECK(Decide(host(true, true)) == Route::Key && WhyOf(host(true, true)) == Why::Armed);          // an armed skill: the game casts it
+        CHECK(Decide(host(true, false)) == Route::Key);
+    }
     // ---- rule 1: the first touch on a monster is direct, whatever its speed, force or length ----
     {
         Gate g = Open();

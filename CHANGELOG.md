@@ -1,5 +1,20 @@
 # What's new in D2R VR
 
+## 0.204.0
+
+- **Quick blow is the default**: VR F4 plain attacks land on the animation's first frame, the swing never stops the hero, the touched
+  monster counts as in reach - through the game's own attack (skills, mana, the roll, damage stay the game's). Direct hit stays By the
+  rules, now only for a two-handed weapon held in both hands: the further monsters of one swing get the direct hit (the cleave), the first
+  is the game's quick attack. The headset's Melee page has a "Quick blow" tick (on) in place of "Direct hit by the rules" (Direct hit:
+  Settings > Strikes). Setup turns quick_blow=0 into 1 once in a kept d2r_vr.ini ([support] quick_blow_0204). In co-op the host's tick
+  holds for everyone.
+- **The log counts every blow**: once a minute "melee touch: this session so far - N touches handed to the game ...; quick blow: N blows
+  moved to the first frame ..." (the per-blow lines stop after a few).
+- **Direct hit keeps your skill**: a touch whose press is a skill - a melee skill armed with its button (`[gameplay] melee_skill_armed`), or
+  a skill on the attack slot (Zeal, Bash, a spell on A) - is the game's own attack, so the game casts that skill (its mana, damage and
+  effects). Before, in "Fully on" an armed skill was skipped (the wrist icon stayed, no mana spent), and in both modes a skill on A became the
+  plain attack. Single player and the host; a joined player already worked this way.
+
 ## 0.203.0
 
 - **Off as it comes (tried only in test builds)**: the 2D settings panel ([hud] game_menu_settings; F10 opens it, [hud] game_menu_key), Auto

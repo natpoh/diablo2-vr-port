@@ -163,6 +163,46 @@ int main() {
         CHECK(!LayoutProven(mov, 0xE8, getter, w2));
         CHECK(kUnitSkillList == 0x100 && kListCurrentSkill == 0x18 && kRowWeapsel == 0x208);
     }
+    // ---- the press is a skill: the key path (B1: an armed skill in Full; B2: a skill on the attack slot), in both modes ----
+    {
+        Gate g;
+        g.wanted = g.ready = true;
+        g.nowMs = 1000;
+        CHECK(Decide(g) == Route::Direct);           // nothing armed, the plain attack on A: the direct hit
+        g.armed = true;
+        CHECK(Decide(g) == Route::Key);              // B1: an armed melee skill - the game's cast (its mana, its damage)
+        g.armed = false;
+        g.slotPlain = false;
+        CHECK(Decide(g) == Route::Key);              // B2: Zeal / Bash / a spell on A - the game casts it
+        g.armed = true;
+        CHECK(Decide(g) == Route::Key);
+        g.f4 = false;
+        CHECK(Decide(g) == Route::Skip);             // another view: still nothing for a touch
+        g.f4 = true;
+        g.armed = false;
+        g.slotPlain = true;
+        g.minIntervalMs = 100;
+        g.lastMs = 950;
+        CHECK(Decide(g) == Route::Skip);             // the interval still holds for a plain touch
+        g.armed = true;
+        CHECK(Decide(g) == Route::Key);              // an armed touch is never swallowed by the interval: the game's cast
+        g.wanted = false;
+        CHECK(Decide(g) == Route::Key);              // off: the key, as ever
+    }
+    // ---- the attack slot's read: plain only when read, the basic attack, and fresh ----
+    {
+        CHECK(SlotIsPlain(true, kSkillAttack, 1000, 900));
+        CHECK(SlotIsPlain(true, 0, 1900, 900));                    // exactly kSlotFreshMs old
+        CHECK(!SlotIsPlain(true, 0, 1901, 900));                   // too old: not trusted - the key path
+        CHECK(!SlotIsPlain(false, 0, 1000, 900));                  // the read failed
+        CHECK(!SlotIsPlain(true, 0, 1000, 0));                     // never read
+        CHECK(!SlotIsPlain(true, 106, 1000, 900));                 // Zeal (106) on A
+        CHECK(!SlotIsPlain(true, 126, 1000, 900));                 // Bash (126) on A
+        CHECK(!SlotIsPlain(true, 1, 1000, 900));                   // Kick
+        CHECK(!SlotIsPlain(true, -1, 1000, 900));                  // nothing read into it
+        CHECK(!SlotIsPlain(true, 0, 800, 900));                    // a clock that stepped back: not fresh
+        CHECK(kSlotLookMs < kSlotFreshMs);                         // the look comes often enough to stay fresh
+    }
     std::printf("melee_direct_test: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

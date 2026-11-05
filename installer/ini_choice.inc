@@ -103,6 +103,21 @@ begin
   MoveOffReShadeKey(Ini, 'render', 'native_effects', 'without ReShade the sky, the fog and the ceiling are D2R VR''s own effect');
 end;
 
+// Kept settings from 0.203.2: quick blow is the default in 0.204. Serg 2026-11-05: "в принципе играется нормально с таким ударом, это хорошая
+// замена директ хит давай поставим его галочкой ... по умолчанию"; Direct hit stays as the player has it ("директ хит должен по прежнему быть
+// включен для двуручного меча и топоров": with quick blow on, By the rules is only a two-handed swing's further monsters). Once, at the first
+// update that has this (its mark [support] quick_blow_0204, one of the shipped defaults, comes in with the other new keys right after this -
+// missing = not done yet): [gameplay] quick_blow=0 (0.203.2's test default) becomes 1 (a missing key comes in as 1 anyway). A choice made after that stays.
+procedure MoveToQuickBlow(Ini: String);
+begin
+  if GetIniString('support', 'quick_blow_0204', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('gameplay', 'quick_blow', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('gameplay', 'quick_blow', '1', Ini);
+    Log('d2r_vr.ini: [gameplay] quick_blow=0 from an older version - on by default since 0.204: 1 now');
+  end;
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -174,6 +189,7 @@ begin
   begin
     TurnOffRawTests(Ini);   // (before the new keys go in: its own mark is one of them)
     MoveOffReShade(Ini);    // (the same: its mark [support] no_reshade_0203 is one of them)
+    MoveToQuickBlow(Ini);   // (the same: its mark [support] quick_blow_0204 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

@@ -876,6 +876,9 @@ target_compile_options(stand_still_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(move_attack_test cleanroom/tests/move_attack_test.cpp)
 target_include_directories(move_attack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(move_attack_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Quick blow ([gameplay] quick_blow, vr/quick_blow.h): the AnimData events moved to the first frame, whose attack, the faster gate, the touch's route.
+add_executable(quick_blow_test cleanroom/tests/quick_blow_test.cpp)
+target_compile_options(quick_blow_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The swing does not stop the hero ([gameplay] flat_attack_path, vr/attack_path.h): when it acts, the speed, who a blow is for.
 add_executable(attack_path_test cleanroom/tests/attack_path_test.cpp)
 target_compile_options(attack_path_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

@@ -1664,6 +1664,27 @@ std::vector<Item> g_items = {
            L"touch too slow or too weak: the normal attack. A TCP/IP game: who hosts decides. The host's box holds for every joined player with "
            L"the same version of the mod; a joined player's own box means nothing there. The host strikes those hits itself, so it works only "
            L"while the host plays in VR first person with hit by touch on. Unticked: the game's own rule. Live."),
+    // [gameplay] quick_blow (vr/quick_blow.h, Serg 2026-11-05: «весь функционал под отдельной галочкой», «чтобы эффекта замирания не было при каждом
+    // ударе это важно для вр»): who hosts decides, as the boxes above
+    Toggle(L"gameplay", L"quick_blow", L"Quick blow: the swing never stops the hero (VR)", 1,
+           L"EXPERIMENTAL - CHANGES HOW THE GAME PLAYS. VR first person (F4), plain attacks with any weapon but a bow or crossbow (Bash, Stun, "
+           L"Berserk and the like too; not Zeal, Fury or throws). In the game the blow lands on the attack animation's action frame, a quarter to "
+           L"half a second after the press, and the hero stands still for the whole animation. With this on: the blow lands on the animation's "
+           L"first frame (about 40 ms after the press); the hero walks or runs on with the stick through the whole swing, never frozen; a touch "
+           L"is the game's own attack (skills, mana, the hit roll, block, damage stay the game's) - with Strikes > Direct hit By the rules only "
+           L"a two-handed cleave's further monsters keep the direct hit; and the monster the blade touched counts as in reach, so a touch is no "
+           L"miss for distance (a wall still stops it). The animation's length and so the attack speed stay the game's, unless the box below is "
+           L"ticked. A TCP/IP game: who hosts decides - the host's box holds for every hero in its game (a joined player with the same mod version "
+           L"walks through the swing too). Unticked: the game's own rule. Live."),
+    Needs(L"gameplay", L"quick_blow", 1, Toggle(L"gameplay", L"quick_blow_faster", L"Quick blow: strike faster than the animation", 0,
+           L"GOES PAST THE GAME'S ATTACK SPEED. With quick blow on: once a blow is out, the next attack is let in without waiting for the rest "
+           L"of the animation (the game would queue it or refuse it until the animation's end), so every touch lands a blow - no sooner than the "
+           L"least wait below after the last blow. Never before a blow is out, never while the game refuses for its own reasons (a hit taken, "
+           L"a stun). A TCP/IP game: the host's box and wait hold for every hero in its game. Unticked: the next attack waits for the animation, "
+           L"as in the game. Live.")),
+    Needs(L"gameplay", L"quick_blow", 1, Needs(L"gameplay", L"quick_blow_faster", 1, Slider(L"gameplay", L"quick_blow_min_ms", L"Quick blow: the least wait between blows, ms", 0, 1000, 10, 200,
+           L"Strike faster than the animation: no next blow sooner than this after the last one (the server's frame is 40 ms, so the wait is "
+           L"counted in whole frames). 0: as fast as you touch. A TCP/IP game: the host's value. Live."))),
     // [hud] game_menu_settings (vr/flat_menu.h, vr/host_rules.h): the flat game's settings from the pause menu, the host's rules shown (2026-11-05,
     // Pavel's idea: Counter-Strike's list of a server's rules on a key and in the console)
     Group(L"In-game settings and the host's rules", L"A D2R VR settings button in the game's pause menu (2D on the monitor) and a list of the host's rules above in co-op."),

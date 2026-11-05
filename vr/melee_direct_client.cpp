@@ -592,10 +592,11 @@ void Flush() {
     g_fallback.store(0);
 }
 
-bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHandsOn, bool armed, bool tell, uint64_t nowMs, bool* extra) {
+bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHandsOn, bool armed, bool slotPlain, bool tell, uint64_t nowMs, bool* extra) {
     Gate g;   // the client's own gates are not this role's: the server's call needs none of them (its own checks stay: hostile, a wall, the modes)
-    g.wanted = g.ready = g.f4 = g.joined = g.melee = g.leftIsSlot = true;
+    g.wanted = g.ready = g.f4 = g.joined = g.melee = true;
     g.armed = armed;   // (an armed melee skill is the press's: the plain server attack would not be it)
+    g.leftIsSlot = slotPlain;   // (another skill on the attack slot is the press's too: the key path casts it - Why::OtherSkill)
     g.t = t;
     uint64_t since = 0;
     FillRules(g, monsterId, twoHanded, nowMs, &since, false);   // (a game of ours: our own cleave box)

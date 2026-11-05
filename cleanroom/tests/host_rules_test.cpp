@@ -19,12 +19,13 @@ static Values All(int a, int b, int c, int d) {
     Values v;
     const int x[4] = {a, b, c, d};
     for (int i = 0; i < 4; ++i) { v.v[i] = x[i]; v.known[i] = true; }
+    for (int i = 4; i < kCount; ++i) { v.v[i] = i % 2; v.known[i] = true; }   // the later rules (quick_blow, quick_blow_faster): on / off by turns
     return v;
 }
 
 static void Table() {
     // the Mechanics tab's "who hosts decides" keys, each once, ids unique and never 0, a default within its range
-    CHECK(kCount == 4);
+    CHECK(kCount == 6);   // ... and quick_blow, quick_blow_faster (2026-11-05)
     std::set<int> ids;
     std::set<std::wstring> keys;
     for (int i = 0; i < kCount; ++i) {

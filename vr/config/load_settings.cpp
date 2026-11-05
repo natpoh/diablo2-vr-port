@@ -6,6 +6,7 @@
 #include "../bone_cap.h"
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: the defaults and the range of [weapon_<kind>] flat_*
 #include "../view_keys.h"
+#include "../quick_blow.h"   // [gameplay] quick_blow_min_ms: its default
 
 using namespace D2RL;
 
@@ -1188,6 +1189,9 @@ void LoadSettings() {
     const int attackPath = (int)IniF(L"gameplay", L"flat_attack_path", 0.0f);   // the prototype: the swing does not stop the hero; it replaces the cut below
     attackpath::SetWanted(attackPath, IniF(L"gameplay", L"flat_attack_path_cone", 45.0f));
     moveattack::SetFlatWanted(attackPath > 0 ? 0 : (int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
+    // [gameplay] quick_blow, EXPERIMENTAL, on by default since 0.204 (vr/quick_blow.h): VR F4 - the blow on the first frame, the hero walks through the swing, the touch is the game's
+    // attack, its target in reach; quick_blow_faster: the next attack cuts the animation once the blow is out and quick_blow_min_ms passed
+    moveattack::SetQuick(IniB(L"gameplay", L"quick_blow", true), IniB(L"gameplay", L"quick_blow_faster", false), (int)IniF(L"gameplay", L"quick_blow_min_ms", (float)quickblow::kMinMsDefault));
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
     straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
     shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)

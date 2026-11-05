@@ -58,6 +58,8 @@
 #include "player_bodies.h"   // [multiplayer] pose_share_bodies: the other players among the bodies (their ids, their capsule)
 #include "melee_direct.h"
 #include "melee_direct_client.h"   // [gameplay] melee_direct_client: a joined TCP/IP player's touch sent as the game's own command for the monster
+#include "move_attack_wire.h"   // [gameplay] quick_blow: the touch is the game's attack (moveattack::QuickWanted)
+#include "quick_blow.h"
 #include "melee_press.h"
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's two paws strike as one weapon (one shared recovery)
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
@@ -1165,6 +1167,9 @@ std::atomic<PressOutcomeFn> g_pressOutcome{nullptr};    // ... and the hit count
 hitlatency::Stats g_lat;             // the timer's thread only
 hitlatency::Stats g_latDirect;       // the same for the direct hit's route (call -> hit), [gameplay] melee_direct
 ULONGLONG g_latPollAt = 0, g_latReportAt = 0;
+uint64_t g_sessionPressed = 0;      // touches handed to the game as its attack this session (the minute's tally line; the timer's thread)
+ULONGLONG g_tallyAt = 0;
+uint64_t g_tallyLast[4] = {};
 unsigned g_latTold = 0, g_latToldDirect = 0;
 
 void LatencyPoll(ULONGLONG now) {
@@ -1238,16 +1243,27 @@ void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::T
     // [gameplay] melee_direct (the user's experimental option, vr/melee_direct.h): the touch calls the game's attack itself.
     // Off, or not possible (no local server, a signature missing, a fault): the route is Key and nothing below changes.
     // Never for a thrown weapon (allowDirect false): the server's basic attack is a melee blow, not the throw the game's own attack makes of it.
-    if (allowDirect && meleedirect::Wanted()) {
-        const meleedirect::Route route = meleedirect::Plan(now, g_serverGame.load() != 0 && g_heroId.load() != 0);
+    // A press the game would read as a skill - a melee skill armed ([gameplay] melee_skill_armed), or a skill on the attack slot (A) - goes the key
+    // path in both modes, so the game casts that skill: the direct call is only ever the plain attack (Plan's Key).
+    // [gameplay] quick_blow (vr/quick_blow.h): the game's own attack, its blow on the first frame - Direct hit's call only for By the rules' extra blows
+    // of a two-handed cleave (the game has no one-swing-many-monsters); Full: the key for every touch.
+    const bool quick = moveattack::QuickWanted();
+    if (allowDirect && meleedirect::Wanted() && !(quick && !meleedirect::ByRules())) {
+        bool armedReady = false;
+        const bool armed = meleearm::Armed(&armedReady) >= 0;
+        const meleedirect::Route route = meleedirect::Plan(now, g_serverGame.load() != 0 && g_heroId.load() != 0, armed);
         if (route == meleedirect::Route::Skip) return;
         if (route == meleedirect::Route::Direct && meleedirect::ByRules()) {   // [gameplay] melee_direct 2: the touch by the rules (melee_direct_client.h)
             static unsigned toldRules = 0;
             const bool tell = toldRules < 20 || meleeboxes::Wanted();
             if (tell) ++toldRules;
-            bool ready = false, extra = false;
-            if (!meleedirectclient::HostRules(id, touch, twoHanded, twoHandsOn, meleearm::Armed(&ready) >= 0, tell, now, &extra)) {
+            bool extra = false;
+            if (!meleedirectclient::HostRules(id, touch, twoHanded, twoHandsOn, armed, meleedirect::SlotPlain(GetTickCount64()), tell, now, &extra)) {
                 PressKey(id, allowDirect, hand, now);   // a rule failed: the normal attack
+                return;
+            }
+            if (!quickblow::TouchDirect(quick, true, extra)) {   // [gameplay] quick_blow: the first monster's blow is the game's attack
+                PressKey(id, allowDirect, hand, now);
                 return;
             }
         }
@@ -3151,6 +3167,7 @@ void Tick(const Frame& f) {
             }
         }
         ++g_n.pressed;
+        ++g_sessionPressed;
         if (p.thrust) ++g_n.thrusts;
         approvedId = p.c->id;
         MarkContact(p.jd, p.c->id, p.c->body, p.thrust && thrustdebugwire::Wanted() ? meleeboxes::kCThrustOk : meleeboxes::kCGreen, false, now, p.thrust);   // [debug] melee_boxes: a counted contact: the ball, the arrow and the line in green (a thrust's blue with thrust_debug)
@@ -3218,6 +3235,19 @@ void Tick(const Frame& f) {
         }
     }
 
+    // the session's tally, once a minute while it grows (Serg, 2026-11-05: "сколько раз не сработал, сколько вообще ударов было нанесено за сессию"):
+    // the per-event lines stop after a few (each costs ~1 ms), this one counts them all
+    if (now - g_tallyAt >= 60000) {
+        g_tallyAt = now;
+        uint64_t t[4] = {g_sessionPressed, 0, 0, 0};
+        moveattack::QuickTally(&t[1], &t[2], &t[3]);
+        if (memcmp(t, g_tallyLast, sizeof t) != 0) {
+            memcpy(g_tallyLast, t, sizeof t);
+            LogF("melee touch: this session so far - %llu touches handed to the game as its attack; quick blow: %llu of our blows moved to the first frame, "
+                 "%llu of joined heroes', %llu targets counted in reach (the game's roll decides hit or miss)",
+                 (unsigned long long)t[0], (unsigned long long)t[1], (unsigned long long)t[2], (unsigned long long)t[3]);
+        }
+    }
     if (now - g_lastReportAt >= 10000) {
         g_lastReportAt = now;
         if (g_n.sweeps || g_n.thrustSweeps || g_n.touched || g_n.noHand) {

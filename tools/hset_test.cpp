@@ -2444,8 +2444,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 47 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee page's (the skill arming's two and Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
+    CHECK(live == 48 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee page's (the skill arming's two, quick blow, Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
     CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
     {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), ab = a | b;
@@ -2673,6 +2673,7 @@ static void TestBelt() {
         CHECK(!DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") == std::string::npos,
               "Direct hit off: no warning");
         on.values[kKeyMeleeDirect] = on.file[kKeyMeleeDirect] = 1.0f;
+        on.values[kKeyQuickBlow] = on.file[kKeyQuickBlow] = 0.0f;   // (quick blow on: By the rules is only the cleave, no warning - TestMelee)
         CHECK(DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") != std::string::npos,
               "Direct hit by the rules: the page warns");
         CHECK(!DirectHitWarns(OnPage(on, kPageBelt)), "only on the Melee page");
@@ -3302,7 +3303,7 @@ static int GdiWidth(const std::string& text, int cell, int weight) {   // the pa
 // The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
 static void TestMelee() {
     CHECK(RowsOn(kPageMelee) == 7 && CloseRows(kPageMelee) && !strcmp(kPageNames[kPageMelee], "Melee"),
-          "seven rows on the Melee page, closer (the touch's four, the skill arming and its icon, Direct hit by the rules)");
+          "seven rows on the Melee page, closer (the touch's four, the skill arming and its icon, quick blow)");
     const int on = KeyAt(kPageMelee, 0), speed = KeyAt(kPageMelee, 1), start = KeyAt(kPageMelee, 2), only = KeyAt(kPageMelee, 3);
     CHECK(!wcscmp(kDefs[only].section, L"gameplay") && !wcscmp(kDefs[only].key, L"melee_touch_only") && IsToggle(kDefs[only]) && kDefs[only].def == 1.0f && kDefs[only].live,
           "the trigger's tick: [gameplay] melee_touch_only, on as shipped, live");
@@ -3378,19 +3379,45 @@ static void TestMelee() {
     CHECK(std::string(StatusText(OnPage(s1, kPageMelee))).find("off") != std::string::npos, "with the tick off the page says so");
     CHECK(std::string(StatusText(OnPage(s0, kPageMelee))).find("applies by itself") != std::string::npos, "with it on, that a change applies by itself");
 
-    // Direct hit by the rules (Serg, 2026-10-30): the seventh row, a tick over [gameplay] melee_direct and melee_direct_client - D2R VR Settings > Strikes'
-    // choice (shared/direct_hit_mode.h): on = By the rules (2 / 1), off = Off (0 / 0); Fully on (1 / 2) shows the tick off and the page's line says so.
-    const int dh = KeyAt(kPageMelee, 6);
-    CHECK(dh == kKeyMeleeDirect && !wcscmp(kDefs[dh].section, L"gameplay") && !wcscmp(kDefs[dh].key, L"melee_direct") && IsToggle(kDefs[dh]) && kDefs[dh].def == 0.0f &&
-              kDefs[dh].live && !strcmp(kDefs[dh].label, "Direct hit by the rules"),
-          "the seventh row: [gameplay] melee_direct as a tick, off as shipped, live");
+    // Quick blow (Serg, 2026-11-05, 0.204: "хорошая замена директ хит давай поставим его галочкой во внутреннем оверлее по умолчанию"): the seventh row,
+    // [gameplay] quick_blow as a tick, on as shipped, live; clicked, that key alone is written.
+    const int qb = KeyAt(kPageMelee, 6);
+    CHECK(qb >= 0 && !wcscmp(kDefs[qb].section, L"gameplay") && !wcscmp(kDefs[qb].key, L"quick_blow") && IsToggle(kDefs[qb]) && kDefs[qb].def == 1.0f &&
+              kDefs[qb].live && !strcmp(kDefs[qb].label, "Quick blow"),
+          "the seventh row: [gameplay] quick_blow as a tick, on as shipped, live");
+    auto tick = [&](const char* file, double at) {   // the file, the page opened on it, the seventh tick clicked, its live write
+        Spit(path, file);
+        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+        float u, v;
+        Centre(kToggle(6, kPageMelee), &u, &v);
+        CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Change, qb, 1}), "the seventh row's tick is hit where it is drawn");
+        dm.Click(HitTest(kPageMelee, u, v));
+        dm.Live(at);
+        return dm.Live(at + Model::kLiveSettleMs + 1.0);
+    };
+    auto text = [&](const wchar_t* key) { return ini::Read(path.c_str(), L"gameplay", key).text; };
+    {   // no key (on as shipped) -> unticked: quick_blow=0, Direct hit's keys untouched
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 30.0);
+        CHECK(w.what == Do::Save && w.request.changed == Bit(qb), "the tick is written by itself");
+        CHECK(store::SaveRequest(path.c_str(), w.request) == Result::Saved && text(L"quick_blow") == L"0" && text(L"melee_direct") == L"2" &&
+                  text(L"melee_direct_client") == L"1", "unticked: quick_blow=0, melee_direct / melee_direct_client as they were");
+    }
+    {   // off -> ticked: quick_blow=1
+        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nquick_blow=0\r\n", 40.0);
+        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && text(L"quick_blow") == L"1", "ticked: quick_blow=1");
+    }
+
+    // Direct hit (Serg, 2026-10-30, the seventh row until 0.204): no row now (D2R VR Settings > Strikes), the panel still reads its two keys - the
+    // mode they say (shared/direct_hit_mode.h) - for the page's warning line, and writes them only when they change (never from this page).
+    const int dh = kKeyMeleeDirect;
+    CHECK(kDefs[dh].page == kNoPage && !wcscmp(kDefs[dh].key, L"melee_direct") && kDefs[dh].def == 0.0f, "Direct hit: no row any more, off as shipped");
     CHECK(kDefs[kKeyMeleeDirectClient].page == kNoPage && !wcscmp(kDefs[kKeyMeleeDirectClient].key, L"melee_direct_client") && kDefs[kKeyMeleeDirectClient].max == 2.0f &&
               kDefs[kKeyMeleeDirectClient].live, "its other key has no row: the mode the two say (0 - 2)");
     {
         struct Case { const char* file; float tick, mode; };
         const Case cases[] = {
             {"[gameplay]\r\nmelee_touch=1\r\n", 0.0f, 0.0f},                                           // none: Off
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},   // By the rules (his ini)
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},   // By the rules (0.203's)
             {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\n", 1.0f, 1.0f},                          // half of it: By the rules (as Settings reads it)
             {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},                   // the old client box: By the rules
             {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 0.0f, 2.0f},   // Fully on
@@ -3402,41 +3429,15 @@ static void TestMelee() {
             CHECK(s.values[dh] == c.tick && s.values[kKeyMeleeDirectClient] == c.mode, "Direct hit read as D2R VR Settings reads it");
         }
     }
-    auto directText = [&](const wchar_t* key) { return ini::Read(path.c_str(), L"gameplay", key).text; };
-    auto tick = [&](const char* file, double at) {   // the file, the page opened on it, the tick clicked, its live write
-        Spit(path, file);
-        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
-        float u, v;
-        Centre(kToggle(6, kPageMelee), &u, &v);
-        CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Change, dh, 1}), "the seventh row's tick is hit where it is drawn");
-        dm.Click(HitTest(kPageMelee, u, v));
-        dm.Live(at);
-        return dm.Live(at + Model::kLiveSettleMs + 1.0);
-    };
-    {   // Off -> ticked: By the rules, both keys, the neighbours as they were
-        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_min_speed=6.0\r\n", 30.0);
-        CHECK(w.what == Do::Save && w.request.changed == Bit(dh), "the tick is written by itself");
-        CHECK(store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"2" && directText(L"melee_direct_client") == L"1" &&
-                  directText(L"melee_min_speed") == L"6.0" && directText(L"melee_touch") == L"1", "ticked: melee_direct=2, melee_direct_client=1 (By the rules), the rest kept");
-        const Snapshot back = store::LoadSnapshot(path.c_str());
-        CHECK(back.values[dh] == 1.0f && back.values[kKeyMeleeDirectClient] == 1.0f, "and reads back ticked");
-    }
-    {   // his ini, By the rules -> unticked: Off, both keys
-        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_client_cleave=1\r\n", 40.0);
-        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"0" &&
-                  directText(L"melee_direct_client") == L"0" && directText(L"melee_direct_client_cleave") == L"1", "unticked: 0 / 0 (Off), the cleave box kept");
-    }
-    {   // Fully on: the tick shows off, the line says so; ticking it is By the rules
-        Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n");
-        CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("Fully on") != std::string::npos, "Fully on: the page's line says so");
-        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 50.0);
-        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && directText(L"melee_direct") == L"2" &&
-                  directText(L"melee_direct_client") == L"1", "Fully on, ticked: By the rules (2 / 1)");
-    }
-    {   // the other key changed outside meanwhile: a conflict, nothing written
-        const Action w = tick("[gameplay]\r\nmelee_touch=1\r\n", 60.0);
-        Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct_client=2\r\n");
-        CHECK(store::SaveRequest(path.c_str(), w.request) == Result::Conflict && directText(L"melee_direct_client") == L"2", "melee_direct_client changed outside: a conflict");
+    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n");
+    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("Fully on") != std::string::npos, "Fully on: the page's line says so");
+    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n");
+    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("game's own logic") != std::string::npos, "By the rules, quick blow off: the page's line warns");
+    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n");   // (0.204's defaults: quick blow on)
+    {
+        const Model qm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+        CHECK(!DirectHitWarns(qm) && DirectHitCleaveOnly(qm) && std::string(StatusText(qm)).find("two-handed") != std::string::npos,
+              "By the rules with quick blow on: no warning, the line says a two-handed swing's further monsters get Direct hit");
     }
     CHECK(TmpFiles() == 0, "no temp file left");
 }

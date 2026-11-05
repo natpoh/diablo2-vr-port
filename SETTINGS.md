@@ -845,6 +845,18 @@ through ReShade.
   TCP/IP game with it ticked, every hero in it (their next attack held by the
   host's server until the animation would have ended); joined to another's game,
   the tick does nothing.
+  *Quick blow: the swing never stops the hero* (Mechanics tab, F4, off,
+  EXPERIMENTAL - `[gameplay] quick_blow`): it changes the game. A plain attack's
+  blow lands on the animation's first frame (about 40 ms after the press instead
+  of a quarter to half a second), the hero walks or runs on through the whole
+  swing, a touch is the game's own attack (only a two-handed cleave's further
+  monsters keep the direct hit) and the monster touched counts as in reach (a wall
+  still stops the blow). The animation's length and the attack speed stay the
+  game's, unless *Quick blow: strike faster than the animation*
+  (`quick_blow_faster`) is ticked too: then the next attack is let in as soon as
+  the blow is out, no sooner than *the least wait between blows*
+  (`quick_blow_min_ms`, 200 ms). Not for bows, crossbows, throws, Zeal or Fury.
+  In a TCP/IP game the host's boxes hold for every hero in it.
 - **Melee: hit by touch, Direct hit, Quick strike, the shield bash** - moved to the Strikes tab (below), with the strike rules.
 - **Bow** (F4, off) - *Draw the string with both hands*: the free hand's trigger
   (or its grip) at the bow's string, pull back along the line to the bow and let

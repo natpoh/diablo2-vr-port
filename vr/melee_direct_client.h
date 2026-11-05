@@ -377,7 +377,9 @@ void SetMode(int mode);
 bool Wanted();
 // Single player and the host with [gameplay] melee_direct 2 (by the rules): the same rules for a touch whose direct hit is the server's
 // call (melee_direct.cpp). True: strike it (*extra: an extra hit of the cleave), noted as a direct hit; false: the normal attack.
-bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHandsOn, bool armed, bool tell, uint64_t nowMs, bool* extra);
+// `armed`: a melee skill armed for the press; `slotPlain`: the attack slot holds the plain attack, read fresh (meleedirect::SlotPlain) - the
+// host's own Why::OtherSkill: with another skill on A the press casts it, the server's plain attack would not be it.
+bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHandsOn, bool armed, bool slotPlain, bool tell, uint64_t nowMs, bool* extra);
 // [gameplay] melee_direct_client_min_speed (m/s), _min_force (N s), _min_length (m) - every read.
 void SetMins(const Mins& m);
 // The weight model must measure the strikes for the force rule (vrcam's weight thread, strike measuring on).

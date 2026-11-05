@@ -229,8 +229,13 @@ inline constexpr Def kDefs[] = {
     // Fully on stays in D2R VR Settings (the tick shows off then, the page's line says so, ticking it is By the rules). The seventh row: the page's rows
     // stand closer (hset_model.h RowStep). Live, F4 only.
     // Serg (2026-11-02): Direct hit changes the game's own logic - the detail says so, and the page's line warns while it is on (hset_scene.h StatusText).
+    // Serg (2026-11-05, 0.204): «хорошая замена директ хит давай поставим его галочкой во внутреннем оверлее по умолчанию а директ хит отключим» - the
+    // seventh row is [gameplay] quick_blow now (vr/quick_blow.h: the game's own attack, its blow on the first frame, the swing never stops the hero; on by
+    // default; in co-op the host's tick holds). Direct hit has no row any more (kNoPage): D2R VR Settings > Strikes; the page's line still warns while it is on.
+    {L"gameplay", L"quick_blow", "Quick blow", "The blow lands at once, the swing never stops you (F4)",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
     {L"gameplay", L"melee_direct", "Direct hit by the rules", "Changes the game's own logic: hits go to the server (F4)",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
     // -- no row: Direct hit's other key. The panel's value is the mode the two keys say (0 Off, 1 By the rules, 2 Fully on), the file's what it has.
     {L"gameplay", L"melee_direct_client", "Direct hit as the file has it", "0 off, 1 by the rules, 2 fully on",
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage, true},
@@ -403,6 +408,7 @@ constexpr int kKeyBarPlace = IndexOf(L"hud", L"bar_place");   // the toolbar typ
 constexpr int kKeyHide = IndexOf(L"hud", L"hide");
 constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt page's note
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
+constexpr int kKeyQuickBlow = IndexOf(L"gameplay", L"quick_blow");   // the Melee page's seventh row (0.204): with it on, By the rules is only the cleave's extras
 constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Melee page's tick: its two numbers do nothing without it
 constexpr int kKeyMeleeArmed = IndexOf(L"gameplay", L"melee_skill_armed");   // the Melee page's skill arming (needs the touch)
 constexpr int kKeyMeleeDirect = IndexOf(L"gameplay", L"melee_direct");   // the Melee page's Direct hit: a tick over its two keys (hset_store.cpp)

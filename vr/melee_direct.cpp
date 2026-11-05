@@ -49,6 +49,7 @@ constexpr uint64_t RVA_ATTACK = 0x42FEB0, RVA_TARGET = 0x48FE20, RVA_RANGE = 0x3
 constexpr uint64_t RVA_CALL1 = 0x42FFA5, RVA_CALL2 = 0x430105;   // the two calls of ServerTarget inside ServerAttack
 constexpr uint64_t RVA_RELATION = 0x48E460, RVA_LINE = 0x3502A0;
 constexpr uint64_t RVA_SERVER_WEAPON = 0x34B000, RVA_SKILL_LOOKUP = 0x33DCD0;   // [gameplay] melee_direct_by_hand: the weapon getter (its layout), SkillLookup (unit, id, owner)
+constexpr uint64_t RVA_SLOT_SKILL = 0x117D20;   // SlotSkill(slot): the controller slot's skill (0 = A, the attack slot), the UI thread's read (as melee_direct_client.cpp)
 // push rbp; push rsi; push r12; push r14; lea rbp,[rsp-118h]; sub rsp,218h
 const uint8_t kSigAttack[22] = {0x40, 0x55, 0x56, 0x41, 0x54, 0x41, 0x56, 0x48, 0x8D, 0xAC, 0x24, 0xE8, 0xFE, 0xFF, 0xFF, 0x48, 0x81, 0xEC, 0x18, 0x02, 0x00, 0x00};
 // push rbx; sub rsp,20h; mov rbx,rdx; call ...
@@ -67,6 +68,7 @@ const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_faulted{false};
 std::atomic<bool> g_remote{false};   // [gameplay] melee_direct_client_cleave as the host: the joined players' extra hits
+std::atomic<bool> g_quick{false};    // [gameplay] quick_blow: the reach of a quick attack's own blow (QuickReachBegin), the hooks go in for it
 std::atomic<bool> g_byRules{false};  // [gameplay] melee_direct 2: by the rules (melee_direct_client.h)
 std::atomic<bool> g_byHand{false};   // [gameplay] melee_direct_by_hand: the left weapon's blow as the game's "Left Hand Swing"
 std::atomic<int> g_leftLayout{0};    // ... its layout proven from the game's weapon getter: 0 not tried, 1 proven, 2 not (the left swap stays off)
@@ -313,7 +315,48 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
     }
 }
 
+// ---- the attack slot's skill (Gate::slotPlain): the UI thread reads it, the timer's thread asks ---------------------------------------------
+
+using SlotSkillFn = int (*)(int slot);
+bool CallSlotSkill(int slot, int* out) noexcept {
+    const uintptr_t fn = d2rsig::Addr(RVA_SLOT_SKILL);
+    if (!fn) return false;
+    __try { *out = reinterpret_cast<SlotSkillFn>(fn)(slot); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+uiticket::Ticket g_slotTicket;
+std::atomic<int32_t> g_slotSkill{-1};     // the A slot's skill as last read (-1 none yet)
+std::atomic<bool> g_slotRead{false};      // the last look could read it
+std::atomic<uint64_t> g_slotAt{0};        // when (GetTickCount64), 0 = never
+std::atomic<uint64_t> g_slotAskedAt{0};
+
+void __cdecl LookSlot(const PluginContext*, void* user) noexcept {
+    if (!g_slotTicket.Claim(uiticket::FromUser(user))) return;
+    int skill = -1;
+    const bool ok = CallSlotSkill(0, &skill);
+    g_slotSkill.store(ok ? skill : -1);
+    g_slotRead.store(ok);
+    const uint64_t now = GetTickCount64();
+    g_slotAt.store(now ? now : 1);
+    static int told = -100;
+    const int key = ok ? skill : -2;
+    if (key != told) {
+        told = key;
+        if (!ok) Log("melee direct: the attack slot's skill could not be read - every touch is the game's own attack (key path)");
+        else if (skill == kSkillAttack) Log("melee direct: the attack slot holds the plain attack - a touch may be a direct hit");
+        else LogF("melee direct: the attack slot holds skill %d - a touch is the game's own attack, the game casts that skill (no direct hit)", skill);
+    }
+}
+void AskSlot(uint64_t now) {
+    if (!g_ctx || !g_threads || !g_threads->runOnUiThread) return;
+    if (now - g_slotAskedAt.load() < kSlotLookMs) return;
+    g_slotAskedAt.store(now);
+    if (const uint32_t token = g_slotTicket.Start(now))
+        if (g_threads->runOnUiThread(g_ctx, &LookSlot, uiticket::ToUser(token)) != Threads::Result::Success) g_slotTicket.Claim(token);
+}
+
 }  // namespace
+
+bool SlotPlain(uint64_t nowMs) { return SlotIsPlain(g_slotRead.load(), g_slotSkill.load(), nowMs, g_slotAt.load()); }
 
 void Init(const PluginContext* ctx) {
     g_ctx = ctx;
@@ -344,13 +387,32 @@ void SetRemoteWanted(bool on) {
                : "melee direct: the joined players' extra hits are not struck here");
 }
 void SetMinIntervalMs(uint32_t ms) { g_minMs.store(ms); }
+void SetQuickWanted(bool on) {
+    if (g_quick.exchange(on) != on)
+        Log(on ? "melee direct: [gameplay] quick_blow - a quick attack's blow reaches the monster it is for (the reach test answered, the wall test the game's)"
+               : "melee direct: [gameplay] quick_blow off - the game's reach for every blow of the key");
+}
+
+bool QuickReachBegin(uintptr_t game, uintptr_t attacker) {
+    if (!g_quick.load(std::memory_order_relaxed) || g_state.load() != 1 || g_faulted.load() || !g_origTarget || t_win.active()) return false;
+    uintptr_t target = 0;
+    __try { target = g_origTarget(game, attacker); } __except (EXCEPTION_EXECUTE_HANDLER) { g_faulted.store(true); Log("melee direct: the server's target (quick blow) faulted - the option is off for this session"); return false; }
+    uint32_t type = 0;
+    if (!target || !Read(&type, target, sizeof type) || type != 1) return false;   // a monster only (a player, an object: the game's reach)
+    t_win.game = game;
+    t_win.attacker = attacker;
+    t_win.defender = target;
+    return true;
+}
+void QuickReachEnd() { t_win = Window{}; }
 bool Ready() { return g_state.load() == 1 && !g_faulted.load() && g_threads && g_threads->runOnGameThread; }
 
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
     Report(GetTickCount64());
-    if ((!g_wanted.load() && !g_remote.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
+    if (g_wanted.load()) AskSlot(GetTickCount64());   // the attack slot's skill, fresh for Plan (Gate::slotPlain)
+    if ((!g_wanted.load() && !g_remote.load() && !g_quick.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     const uintptr_t attack = d2rsig::Addr(RVA_ATTACK), target = d2rsig::Addr(RVA_TARGET), range = d2rsig::Addr(RVA_RANGE);
     const uintptr_t call1 = d2rsig::Addr(RVA_CALL1), call2 = d2rsig::Addr(RVA_CALL2);
@@ -381,10 +443,12 @@ void Install() {
     }
 }
 
-Route Plan(uint64_t nowMs, bool serverKnown) {
+Route Plan(uint64_t nowMs, bool serverKnown, bool armed) {
     Gate g;
     g.wanted = g_wanted.load();
     g.ready = serverKnown && Ready();
+    g.armed = armed;
+    g.slotPlain = SlotPlain(GetTickCount64());   // (the look's clock: GetTickCount64, like g_slotAt)
     g.nowMs = nowMs;
     g.lastMs = g_lastMs.load();
     g.minIntervalMs = g_byRules.load() ? 0 : g_minMs.load();   // (by the rules: the attack time per monster is the pace, not this)

@@ -37,4 +37,18 @@ void SetFlatViewFn(int (*fn)());
 // again by the plugin when the cut animation would have ended.
 bool HoldClick(void* unit, int type, int x, int y, uint64_t flags);
 
+// [gameplay] quick_blow, quick_blow_faster, quick_blow_min_ms (vr/quick_blow.h), live (vrcam's LoadSettings): VR F4 - a plain attack's blow
+// on its first frame (the server's frame scheduler hooked), its target counted in reach, and with `faster` the next attack let in once the
+// blow is out and `minMs` passed. Where the server runs here: single player, or a TCP/IP game we host - then for every hero in it.
+void SetQuick(bool on, bool faster, int minMs);
+// The tick on and nothing faulted (vr/attack_path_wire.cpp: the walk through the swing in F4; vr/melee_touch.cpp: the touch's route).
+bool QuickWanted();
+// [gameplay] quick_blow: this session's counts (Serg, 2026-11-05: "сколько вообще ударов было нанесено за сессию" - the per-event lines stop
+// after a few, these do not): blows moved to the first frame (our hero / joined heroes), quick blows whose target was counted in reach.
+void QuickTally(uint64_t* movedOwn, uint64_t* movedJoined, uint64_t* reach);
+// The scheduler's hook is in.
+bool QuickReady();
+// The server's thread: the attack of this hero that ends at `endFrame` is a quick one (vr/attack_path_wire.cpp: its blow keeps the monster touched).
+bool QuickAttack(uint32_t hero, int32_t endFrame);
+
 }  // namespace moveattack

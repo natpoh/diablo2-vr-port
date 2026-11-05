@@ -73,6 +73,11 @@ inline bool StepOn(int32_t nowFrame, int32_t lastAskFrame) { return nowFrame - l
 // Who may act: never online; with the server here, always; joined, only with a host that said yes lately.
 constexpr uint64_t kPeerFreshMs = 3000, kFrontFreshMs = 600;
 inline bool Allowed(bool online, bool serverHere, bool hostSaidYes) { return !online && (serverHere || hostSaidYes); }
+// [gameplay] quick_blow: our hero in VR first person walks through the swing with the server here and our tick, or joined with the host's.
+inline bool F4Quick(bool f4, bool online, bool serverHere, bool ownQuick, bool hostSaidLately, bool hostF4) {
+    if (!f4 || online) return false;
+    return serverHere ? ownQuick : hostSaidLately && hostF4;
+}
 // The key our client goes by: who hosts decides. Ours with the server here; joined, the host's while it keeps saying so.
 inline int ClientKey(bool online, bool serverHere, int ownKey, bool hostSaidLately, int hostKey) {
     if (online) return 0;
@@ -89,7 +94,12 @@ constexpr uint16_t kChannel = 0x4150;                       // "AP"
 constexpr uint64_t kToken = 0x4150415448000001ull;          // the protocol's version: client and host connect only when it is the same
 enum : uint16_t { kMsgHello = 1, kMsgFront = 2, kMsgAllow = 3 };
 struct HelloMsg { uint32_t hero; };                         // client -> host, once a second with the tick on: "this is my hero"
-struct AllowMsg { uint32_t key; };                          // host -> client, the answer: the host's key (0: no)
+struct AllowMsg { uint32_t key; };                          // host -> client, the answer: the host's key (0: no) | kAllowF4
+// [gameplay] quick_blow on the host: the swing does not stop the joined heroes in VR first person either (vr/quick_blow.h). An older client
+// refuses the answer (its key past 2) and stays as in the game.
+constexpr uint32_t kAllowF4 = 0x10;
+inline int AllowKey(uint32_t allow) { return static_cast<int>(allow & 0xF); }
+inline bool AllowF4(uint32_t allow) { return (allow & kAllowF4) != 0; }
 struct FrontMsg { uint32_t hero; uint32_t n; uint32_t ids[kCandidates]; };   // client -> host: who stands before its camera, the nearest first
 inline bool ParseHello(const void* d, uint32_t size, HelloMsg* m) {
     if (!d || size != sizeof *m) return false;
@@ -99,7 +109,7 @@ inline bool ParseHello(const void* d, uint32_t size, HelloMsg* m) {
 inline bool ParseAllow(const void* d, uint32_t size, AllowMsg* m) {
     if (!d || size != sizeof *m) return false;
     *m = *static_cast<const AllowMsg*>(d);
-    return m->key <= 2;
+    return AllowKey(m->key) <= 2 && (m->key & ~(kAllowF4 | 0xFu)) == 0;
 }
 inline bool ParseFront(const void* d, uint32_t size, FrontMsg* m) {
     if (!d || size != sizeof *m) return false;

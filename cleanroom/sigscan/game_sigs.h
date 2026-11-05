@@ -377,6 +377,8 @@ inline constexpr Sig kSigs[] = {
     {"ClientGameType", 0x2A233F4, Kind::Ref, "8B 05 ?? ?? ?? ?? 85 C0 74 08 83 C0 FB 83 F8 03 77 0A", 0x8CF2D, 0, 2, 6, 0, nullptr, nullptr, "move while attacking", "Direct hit"},
     // u32 geGameType: LAUNCH_SINGLE_PLAYER 0, LAUNCH_BNET_PLAYER 1, LAUNCH_TCPIP_PLAYER 2
     {"LaunchGameType", 0x32EF888, Kind::Ref, "F7 05 ?? ?? ?? ?? FD FF FF FF 74 14 48 8D 4C 24 48 C6 44 24 48 00", 0x5FF99C, 0, 2, 10, 0, nullptr, nullptr, "move while attacking", "Direct hit"},
+    // the server's scheduler of a unit's frame events at a mode's start (game, unit): reads the AnimData record [unit+0x70], queues each event - hooked: an attack's blow on the first frame
+    {"PlrFrameEvents", 0x491240, Kind::Code, "40 53 56 41 55 41 56 48 83 EC 78 44 8B B1 70 01 00 00 4C 8B E9", 0x491240, 0, 0, 0, 0, "40 53 56 41 55 41 56 48 83 EC 78 44 8B B1 70 01 00 00", nullptr, "quick blow", "Direct hit"},
     // index of the local player (a getter), called
     {"LocalIndex", 0x8B2D0, Kind::Ref, "E8 ?? ?? ?? ?? 3B F8 75 13 8B CF E8 ?? ?? ?? ?? 84 C0 74 08", 0x7B3A1, 0, 1, 5, 0, "8B 05 ?? ?? ?? ?? C3 CC", nullptr, "skill wheel", "Skill wheel"},
     // the client's player unit by index, called

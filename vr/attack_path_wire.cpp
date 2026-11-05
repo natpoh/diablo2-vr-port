@@ -36,6 +36,7 @@
 #include "move_attack_wire.h"
 #include "sigscan.h"
 #include "unit_scan.h"
+#include "view_gate.h"
 
 namespace gamestate { bool MenuOpen(); uint32_t KindOfItemClass(uint32_t classId); }
 
@@ -83,6 +84,7 @@ std::atomic<uint64_t> g_serverSeenMs{0};     // when the server's hook last ran 
 std::atomic<uint64_t> g_gameSinceMs{0};      // when our client's hero of this game appeared
 std::atomic<uint64_t> g_allowMs{0};          // when the host last said yes
 std::atomic<int> g_allowKey{0};
+std::atomic<bool> g_allowF4{false};          // the host's [gameplay] quick_blow: the joined heroes walk through the swing in VR F4 too
 namespace nw = D2RL::Network;
 const D2RL::PluginContext* g_ctx = nullptr;
 const D2RL::NetworkService* g_net = nullptr;
@@ -144,7 +146,9 @@ void Say(const char* fmt, ...) {
 void Fault(const char* where) {
     if (!g_faulted.exchange(true)) Say("vrcam: attack path - %s faulted: the option is OFF for this session", where);
 }
-bool On() { return g_key.load(std::memory_order_relaxed) > 0 && !g_faulted.load(std::memory_order_relaxed); }
+// The host's word for the heroes on its server: the key, or [gameplay] quick_blow (VR F4: the swing does not stop the hero).
+bool Quick() { return moveattack::QuickWanted(); }
+bool On() { return (g_key.load(std::memory_order_relaxed) > 0 || Quick()) && !g_faulted.load(std::memory_order_relaxed); }
 
 bool Read(void* d, uintptr_t s, size_t n) noexcept {
     if (s < 0x10000) return false;
@@ -310,7 +314,7 @@ bool ServerWalk(uintptr_t game, uintptr_t unit, uint32_t hero, int mode, const f
     float vec[2] = {}, point[2] = {};
     bool direct = false;
     if (!PointOfDir(unit, (uint32_t)x | (uint32_t)y << 16, dir, vec, point, &direct)) { Fault("the point of a direction (0x3ACC60)"); return false; }
-    const bool run = mode == 3 && RunAllowed(g_key.load(std::memory_order_relaxed));
+    const bool run = mode == 3 && (RunAllowed(g_key.load(std::memory_order_relaxed)) || Quick());   // (quick_blow: a walk or a run as the toggle says)
     const int velocity = VelocityFor(at->percent, run);
     if (!SetPathAndMake(path, unit, direct ? kPathVectorType : kPathFindType, direct ? vec : nullptr, mag, (int)point[0], (int)point[1], velocity, 0)) { Fault("the server's path"); return false; }
     at->walked = true;
@@ -448,10 +452,10 @@ void __cdecl OnHost(const D2RL::PluginContext*, nw::ChannelHandle, nw::PeerHandl
         HelloMsg m{};
         if (!ParseHello(data, size, &m)) return;
         AcquireSRWLockExclusive(&g_frontLock);
-        Peer* p = g_key.load() > 0 ? slot(m.hero) : nullptr;
+        Peer* p = g_key.load() > 0 || Quick() ? slot(m.hero) : nullptr;
         if (p) p->helloMs = now;
         ReleaseSRWLockExclusive(&g_frontLock);
-        const AllowMsg a{p ? (uint32_t)g_key.load() : 0u};
+        const AllowMsg a{p ? (uint32_t)g_key.load() | (Quick() ? kAllowF4 : 0u) : 0u};
         if (g_net && g_ctx) g_net->sendToClient(g_ctx, g_channel, peer, kMsgAllow, &a, sizeof a);
         static std::atomic<int> told{0};
         if (told.fetch_add(1) < 4) Say("vrcam: attack path - host: hero %u spoke on the channel, answered %u", m.hero, a.key);
@@ -467,9 +471,12 @@ void __cdecl OnHost(const D2RL::PluginContext*, nw::ChannelHandle, nw::PeerHandl
 void __cdecl OnClient(const D2RL::PluginContext*, nw::ChannelHandle, uint16_t id, const void* data, uint32_t size, void*) noexcept {
     AllowMsg m{};
     if (g_netDead.load() || id != kMsgAllow || !ParseAllow(data, size, &m)) return;
-    const int was = g_allowKey.exchange((int)m.key);
+    const int was = g_allowKey.exchange(AllowKey(m.key));
+    const bool wasF4 = g_allowF4.exchange(AllowF4(m.key));
     g_allowMs.store(m.key ? GetTickCount64() : 0, std::memory_order_release);
-    if (was != (int)m.key) Say("vrcam: attack path - joined: the host's key is %u (%s)", m.key, m.key ? "the host decides: the swing does not stop the hero" : "the host decides: not ticked, the hero stops as in the game");
+    if (was != AllowKey(m.key) || wasF4 != AllowF4(m.key))
+        Say("vrcam: attack path - joined: the host's key is %d, its quick blow %s (%s)", AllowKey(m.key), AllowF4(m.key) ? "on" : "off",
+            m.key ? "the host decides: the swing does not stop the hero" : "the host decides: not ticked, the hero stops as in the game");
 }
 void __cdecl OnConnection(const D2RL::PluginContext*, const nw::ConnectionEvent* ev, void*) noexcept {
     if (!ev || g_netDead.load()) return;
@@ -523,7 +530,7 @@ void SetLogger(void (*log)(const char*)) { g_log = log; }
 void SetForwardFn(bool (*fn)(float*, float*)) { g_forward.store(fn, std::memory_order_release); }
 // Ticked, or in a TCP/IP game, where the host may have ticked it: the hooks then pass through until someone did.
 bool Wanted() {
-    if (g_key.load() > 0) return true;
+    if (g_key.load() > 0 || Quick()) return true;
     uint32_t client = 0, launch = 0;
     const uintptr_t c = d2rsig::Addr(RVA_CLIENT_GAME_TYPE), l = d2rsig::Addr(RVA_LAUNCH_GAME_TYPE);
     return c && l && Read(&client, c, sizeof client) && Read(&launch, l, sizeof launch) && launch != moveattack::kLaunchBnet && (client != 0 || launch == moveattack::kLaunchTcpIp);
@@ -578,6 +585,15 @@ bool BeforeAction(uintptr_t game, uintptr_t unit, int code) {
         if (!SetPoint(path, at->x, at->y) || !SetTarget(unit, target)) { Fault("the shot's target"); return false; }
         return true;
     }
+    // [gameplay] quick_blow: the blow is on the attack's first frame - the monster it was started on (the one the blade touched), while hostile
+    if (moveattack::QuickAttack(hero, at->end) && at->hasTarget && at->targetType == 1) {
+        const uintptr_t t = Lookup(game, 1, at->targetId);
+        if (t && Hostile(game, unit, t)) {
+            if (!SetTarget(unit, t)) { Fault("the blow's target (0x34E0C0)"); return false; }
+            if (g_blows.fetch_add(1) < 60) Say("vrcam: attack path - quick blow (hero %u, mode %u, weapon kind %u): at monster %u, the one it was started on", hero, mode, weapon, at->targetId);
+            return true;
+        }
+    }
     uint32_t ids[kCandidates] = {};
     size_t n = 0;
     AcquireSRWLockShared(&g_frontLock);
@@ -620,7 +636,7 @@ bool SwallowStop(void* unit, int type) {
 
 void AfterCtrl(uint32_t player, uintptr_t mgr) {
     const GameKind game = KindOfGame();
-    if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed) || game.online || (game.single && g_key.load(std::memory_order_relaxed) == 0)) {
+    if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed) || game.online || (game.single && g_key.load(std::memory_order_relaxed) == 0 && !Quick())) {
         g_clientActs.store(false, std::memory_order_release);   // nothing to do here: off, and nobody else decides
         return;
     }
@@ -642,11 +658,13 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
     const uint64_t now = GetTickCount64();
     if (!game.serverHere) JoinedTick(head[kUnitId / 4], now);
     const bool hostYes = !game.serverHere && Fresh(now, g_allowMs.load(std::memory_order_acquire), kPeerFreshMs);
-    const int key = ClientKey(game.online, game.serverHere, g_key.load(std::memory_order_relaxed), hostYes, g_allowKey.load(std::memory_order_relaxed));
+    // [gameplay] quick_blow in VR first person: walk or run through the swing, by our tick with the server here, by the host's joined
+    const bool f4Quick = F4Quick(viewgate::F4(), game.online, game.serverHere, Quick(), hostYes, g_allowF4.load(std::memory_order_relaxed));
+    const int key = f4Quick ? 2 : ClientKey(game.online, game.serverHere, g_key.load(std::memory_order_relaxed), hostYes, g_allowKey.load(std::memory_order_relaxed));
     g_clientKey.store(key, std::memory_order_relaxed);
     Ask a;
     a.key = key;
-    a.flatView = moveattack::PathViewNow();
+    a.flatView = moveattack::PathViewNow() || f4Quick;
     a.menu = gamestate::MenuOpen();
     a.allowed = Allowed(game.online, game.serverHere, hostYes);
     a.mode = mode;
@@ -655,7 +673,7 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
     // Between attacks the server must not be told "no": the verdict stays with the view, the menu and the game until the mode says otherwise.
     g_clientActs.store(a.key > 0 && a.flatView && !a.menu && a.allowed, std::memory_order_release);
     if (!acts) return;
-    ScanFront(unit, !game.serverHere);
+    if (!f4Quick) ScanFront(unit, !game.serverHere);   // (VR F4: no flat camera's forward - a quick blow goes to the monster touched)
     static uint64_t lastSend = 0;
     if (now - lastSend >= kSendMs) {
         float grid[2] = {}, threshold = 0.0f;

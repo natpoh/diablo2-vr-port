@@ -46,8 +46,12 @@ using Scene = std::vector<Item>;
 
 // The Melee page with hit by touch and Direct hit on (by the rules, or Fully on as the file has it): its line warns, in amber - Direct hit
 // changes the game's own logic (D2R VR Settings > Strikes > Attention).
+// 0.204: with quick blow on, By the rules is only a two-handed swing's further monsters (vr/quick_blow.h) - a line of its own, not the warning.
+inline bool DirectHitCleaveOnly(const Model& m) {
+    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyQuickBlow] > 0.5f && m.Get()[kKeyMeleeDirect] > 0.5f;
+}
 inline bool DirectHitWarns(const Model& m) {
-    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && (m.Get()[kKeyMeleeDirect] > 0.5f || m.Get()[kKeyMeleeDirectClient] > 1.5f);
+    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && (m.Get()[kKeyMeleeDirect] > 0.5f || m.Get()[kKeyMeleeDirectClient] > 1.5f) && !DirectHitCleaveOnly(m);
 }
 // The line under the rows for a model's state. `window`: the pages are the skill panel's Settings tab (it is closed by B, its Close
 // button or the long press of the right stick click, not by the grips and a click).
@@ -90,7 +94,9 @@ inline const char* StatusText(const Model& m, bool window = false) {
         return m.Get()[kKeyDirectOn] > 0.5f ? uitext::Tr("vr.hset.status.keys_idle", "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings.")
                                             : uitext::Tr("vr.hset.status.keys_off", "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).");
     if (m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyMeleeDirect] < 0.5f && m.Get()[kKeyMeleeDirectClient] > 1.5f)   // the file says Fully on
-        return uitext::Tr("vr.hset.status.melee_direct_full", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes); its tick here is By the rules.");
+        return uitext::Tr("vr.hset.status.melee_direct_full2", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes): every touch goes to the server.");
+    if (DirectHitCleaveOnly(m))   // Serg (2026-11-05): "директ хит должен по прежнему быть включен для двуручного меча и топоров"
+        return uitext::Tr("vr.hset.status.melee_quick_cleave", "Quick blow on. A two-handed weapon in both hands: the further monsters of a swing get Direct hit.");
     if (DirectHitWarns(m))   // Serg (2026-11-02): the same warning as D2R VR Settings' Attention block
         return uitext::Tr("vr.hset.status.melee_direct_on", "Attention: Direct hit changes the game's own logic - hits go to the server directly; in co-op everyone is affected.");
     if (IsWorldPage(m.page))

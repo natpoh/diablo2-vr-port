@@ -1,6 +1,6 @@
 // host_rules.h - the host's rules: the mechanics keys of the Settings' Mechanics tab (and their kind) where WHO HOSTS DECIDES - in a TCP/IP
 // game the host's key holds for every player with the mod, a joined player's own key means nothing there (vr/attack_path.h ClientKey,
-// vr/melee_direct_client.h CleaveRule, vr/move_attack.h HostScope). [hud] game_menu_settings (vr/flat_menu.h) shows them: the flat game's
+// vr/melee_direct_client.h CleaveRule, vr/move_attack.h HostScope, vr/quick_blow.h). [hud] game_menu_settings (vr/flat_menu.h) shows them: the flat game's
 // in-game panel has them as a section of its own, the list on a key / in the pause menu (VR too, read only) and the D2RLoader console's
 // "vrrules" print them, Counter-Strike-like.
 //
@@ -41,6 +41,8 @@ inline constexpr Rule kRules[] = {
     {2, L"gameplay", L"flat_move_while_attacking", "2D views: strafe after each blow", 0, 3, {"Off", "Spear and bow", "Every weapon"}},
     {3, L"gameplay", L"move_while_attacking", "Spear and bow: walk on after the blow (VR F4)", 1, 2, {"Off", "On"}},
     {4, L"gameplay", L"melee_direct_client_cleave", "Two-handed swing hits each monster (VR)", 0, 2, {"Off", "On"}},
+    {5, L"gameplay", L"quick_blow", "Quick blow: the swing never stops the hero (VR)", 1, 2, {"Off", "On"}},
+    {6, L"gameplay", L"quick_blow_faster", "Quick blow: faster than the animation", 0, 2, {"Off", "On"}},
 };
 inline constexpr int kCount = static_cast<int>(sizeof kRules / sizeof kRules[0]);
 constexpr int kMaxRules = 16;   // what a message may carry (a newer host's extra ids are skipped by an older client)
@@ -166,6 +168,8 @@ inline const char* Label(int i) {
         case 2: return uitext::Tr("vr.rules.flat_move_while_attacking", "2D views: strafe after each blow");
         case 3: return uitext::Tr("vr.rules.move_while_attacking", "Spear and bow: walk on after the blow (VR F4)");
         case 4: return uitext::Tr("vr.rules.melee_direct_client_cleave", "Two-handed swing hits each monster (VR)");
+        case 5: return uitext::Tr("vr.rules.quick_blow", "Quick blow: the swing never stops the hero (VR)");
+        case 6: return uitext::Tr("vr.rules.quick_blow_faster", "Quick blow: faster than the animation");
         default: return "?";
     }
 }
