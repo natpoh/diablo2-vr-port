@@ -1,5 +1,11 @@
 # What's new in D2R VR
 
+## 0.205.0
+
+- **Crash reports carry the small dump**: D2R VR Crash Reporter ticks "Also send the small crash dump" as it comes. The dump holds the
+  threads' call stacks and the loaded modules (the small kind FlatVR and BodyWalk send), not the game's memory; you can still untick it.
+  Three freeze reports in a row came without it, and the freeze could not be found from the logs alone.
+
 ## 0.204.0
 
 - **Quick blow is the default**: VR F4 plain attacks land on the animation's first frame, the swing never stops the hero, the touched
