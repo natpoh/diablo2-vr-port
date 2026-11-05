@@ -489,6 +489,10 @@ void Install(const char* version) {
     MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
     at(a, L"d2r_vr_hang.dmp"); at(b, L"d2r_vr_hang_prev.dmp");
     MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
+    // The same for a device removal (vr/gpu_fault.cpp appends to d2r_vr_gpu_fault.txt): the 2026-11-05 batch's row 249 quoted one from
+    // 31.10 as if it were that game's. Only ever this run's now; the run before's in d2r_vr_gpu_fault_prev.txt.
+    at(a, L"d2r_vr_gpu_fault.txt"); at(b, L"d2r_vr_gpu_fault_prev.txt");
+    MoveFileExW(a, b, MOVEFILE_REPLACE_EXISTING);
     wchar_t sys[MAX_PATH];
     if (UINT n = GetSystemDirectoryW(sys, MAX_PATH); n && n < MAX_PATH - 16) {
         wcscat_s(sys, L"\\dbghelp.dll");

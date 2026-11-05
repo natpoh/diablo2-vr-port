@@ -68,10 +68,23 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.openGuide = on ? firststart::OpenRequest() : -1;
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
     if (on && g_hs.model.open && g_hs.model.page == hset::kPageOptions) f.players = playerscmd::Now();
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageCoop) f.mapShow = partycmd::MapNow();   // the Co-op page's map row: the game's two settings (read, cheap)
     if (on && g_hs.model.open && g_hs.model.page == hset::kPageParty) {   // the Party page: the game's roster, read on while it is up
         partycmd::Watch();
         f.party = partycmd::Now();
     }   // the Options page's Players row: the game's count (read, cheap)
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageVideo) {   // [autotune]: the Auto run's words, made again only when the run moved on
+        static hset::AutoTune made;
+        static uint64_t madeRev = 0;
+        static bool madeOn = false;
+        const bool enabled = autotunerun::Enabled();
+        if (autotunerun::Revision() != madeRev || enabled != madeOn) {
+            made = autotunetext::Make(autotunerun::Now(), enabled);
+            madeRev = made.revision;
+            madeOn = enabled;
+        }
+        f.autoTune = made;
+    }
     bool grips = true;
     for (int h = 0; h < 2; ++h) {
         const D2RVR_XrHand& o = in.hand[h];
@@ -157,8 +170,16 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         case hset::Do::Players:   // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
             playerscmd::Ask(out.action.players);
             break;
+        case hset::Do::AutoTune:   // the Video page's Auto: a run, its Keep, its Undo / Stop (vr/auto_tune_run.cpp logs each)
+            if (out.action.autoTune == 0) autotunerun::Start();
+            else if (out.action.autoTune == 1) autotunerun::Keep();
+            else autotunerun::Undo();
+            break;
         case hset::Do::Party:   // the Party page: the game's Party panel's own button (or its P key command; then the panel has closed), on the UI thread
             partycmd::Ask(out.action.party);
+            break;
+        case hset::Do::MapShow:   // the Co-op page's map row: the game's own key command 10 / 11 flips its Show Party / Show Party Names (vr/party_cmd.cpp logs it)
+            partycmd::MapToggle(out.action.mapShow);
             break;
         default: break;
     }

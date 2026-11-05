@@ -63,6 +63,11 @@ static void TestPure() {
     std::memcpy(longName.b + kId, "\x05\0\0\0", 4);
     CHECK(NameOf(longName).size() == kNameLen, "a name is never longer than the game's place for it");
     CHECK(std::string(hp::ClassName(3)) == "Paladin" && std::string(hp::ClassName(7)) == "Warlock" && !*hp::ClassName(8), "class names");
+    // the Co-op page's map row: the game's values 0 / 1, anything else not known; which switch reads which
+    CHECK(MapValueOf(0) == 0 && MapValueOf(1) == 1 && MapValueOf(2) == -1 && MapValueOf(-1) == -1, "a value read: 0 / 1, else not known");
+    const hp::MapShow ms{0, 1};
+    CHECK(ms.Of(hp::kMapParty) == 0 && ms.Of(hp::kMapNames) == 1 && ms.Of(2) == -1, "Party reads Show Party, Names Show Party Names");
+    CHECK(CallTarget(0x1000, -0x100) == 0x1000 + 5 - 0x100, "a call's target");
 }
 
 // -- against the snapshot ------------------------------------------------------------------------------------------------------------------------
@@ -103,6 +108,23 @@ static void TestSnapshot() {
     CHECK(AtList(0x139D91, {0xB8, 0xFF, 0xFF, 0x00, 0x00}) && AtList(0x139D9D, {0x66, 0x89, 0x43, 0x5A}) && kNoParty == 0xFFFF, "no party: 0xFFFF (the leave writes it)");
     // Open Party panel: the game's Party key command (0x02) opens panel 0x15, only outside mode 0
     CHECK(CallTarget(0x119BF4) == RVA_GAME_MODE && AtList(0x119BFF, {0xB9, 0x15, 0x00, 0x00, 0x00}), "the P command: panel 0x15, not offline");
+    // the Co-op page's map row: the two getters (mov eax, [rip + value]; ret), the values the settings' change listeners write, the two
+    // key commands' down() = the game's toggle of that setting, in the command table at 10 / 11
+    const uint64_t get[2] = {RVA_MAP_PARTY_GET, RVA_MAP_NAMES_GET}, down[2] = {RVA_MAP_PARTY_DOWN, RVA_MAP_NAMES_DOWN}, value[2] = {0x2A2CF98, 0x2A2CF9C};
+    const uint64_t setting[2] = {0xE2280, 0xE2160}, listener[2] = {0xD3DD0, 0xD3DC0};
+    for (int w = 0; w < 2; ++w) {
+        CHECK(At(get[w], kSigMapGet, sizeof kSigMapGet) && g_img[get[w] + 6] == kRet && RipTarget(get[w], I32(get[w] + 2), 6) == value[w], "a getter: its value");
+        CHECK(AtList(listener[w], {0x89, 0x0D}) && RipTarget(listener[w], I32(listener[w] + 2), 6) == value[w], "the setting's listener writes the same value");
+        CHECK(At(down[w], kSigMapDown, sizeof kSigMapDown) && CallTarget(down[w] + kDownCallAt) == get[w], "the command's down(): reads the getter");
+        CHECK(CallTarget(down[w] + 13) == setting[w] && AtList(down[w] + 0x1C, {0x48, 0x83, 0xC4, 0x20, 0x5B}) && CallTarget(down[w] + 0x21) == 0xD2F020,
+              "... then the setting, set to its opposite through its own setter");
+        uint64_t entry = 0;
+        std::memcpy(&entry, &g_img[RVA_CMD_TABLE + (uint64_t)hp::kMapCmd[w] * kCmdEntry], 8);
+        CHECK(entry == 0x140000000ull + down[w], "the command table: command 10 / 11 is that down()");
+    }
+    // the settings' names: "AutoMap Party" / "AutoMap Party Names" (the accessors load them)
+    CHECK(Str(0x1CC53F8) == "AutoMap Party" && Str(0x1CC5408) == "AutoMap Party Names", "the settings' names");
+    CHECK(RipTarget(0xE2360, I32(0xE2363), 7) == 0x1CC53F8 && RipTarget(0xE2240, I32(0xE2243), 7) == 0x1CC5408, "each accessor names its setting");
 }
 
 int main(int argc, char** argv) {

@@ -6,7 +6,8 @@
 //   3. the game's chosen and unable for good (its view, its fog not found, its dome's files missing): ours instead - no area without one;
 //   4. no fog, no sky, no ceiling with the camera off, outside a game area, under a flat menu in VR (EffectsPaused);
 //   5. a ceiling only from inside (never ThirdPerson, never from above) and only on a ceiling biome; the game's rock only on its list;
-//   6. [fog] caves=0: no fog underground; [fog] no_fog_river: none in the River of Flame.
+//   6. [fog] caves=0: no fog underground; [fog] no_fog_river: none in the River of Flame;
+//   7. the sky's and the fog's choices apart: who draws the sky never reads [fog] game_fog, who draws the fog never [sky] game_sky.
 // The world vrcam.cpp keeps (the area's state SkyTick sets, the view, the game's fog and dome) is faked here, below.
 #include "sky/sky_choice.h"
 #include "config/settings.h"
@@ -22,6 +23,7 @@ static char g_case[256] = "";
 static bool w_overhead = false, w_third = false, w_menuFlat = false, w_effectsPaused = false, w_gameView = true, w_gameFogBad = false,
             w_gameFogActive = false;
 static const char* w_skyCannot = nullptr;
+namespace autotunerun { bool Forced(const wchar_t*, const wchar_t*, float*) { return false; } }   // (vrc::IniF: no Auto run here)
 namespace vrc {
 std::atomic<bool> g_enabled{true}, g_inWorld{true};
 std::atomic<int> g_skyPalette{0};
@@ -100,6 +102,22 @@ int main() {
         if (g_noFogArea.load()) { CHECK(!fx::OurFogWanted()); CHECK(!fx::FogWanted()); }
         // the Arcane Sanctuary: its fog ours whatever the game's choice, with [sky] arcane_fog
         if (g_arcaneSky.load() && !g_set.arcaneFog.load()) CHECK(!fx::OurFogWanted());
+        // 7. the two choices apart (Settings' "Sky drawn by" and "Fog drawn by", Serg 2026-11-05: "new sky old fog, or new fog old sky"):
+        //    who draws the sky never reads the fog's choice, who draws the fog never the sky's - each of the four pairs answers as each alone
+        {
+            const bool sky = fx::OurSkyWanted(), fog = fx::FogWanted(), ourFog = fx::OurFogWanted();
+            const bool gf = g_set.gameFog.load(), act = w_gameFogActive;
+            g_set.gameFog.store(!gf);
+            w_gameFogActive = b(15) && !w_gameFogBad && !gf;
+            CHECK(fx::OurSkyWanted() == sky);
+            g_set.gameFog.store(gf);
+            w_gameFogActive = act;
+            const bool gs = g_set.gameSky.load();
+            g_set.gameSky.store(!gs);
+            CHECK(fx::FogWanted() == fog);
+            CHECK(fx::OurFogWanted() == ourFog);
+            g_set.gameSky.store(gs);
+        }
     }
     // 4. the camera off, outside a game area
     g_set.fogOn.store(true); g_set.ceilOn.store(true); g_ceilBiome.store(true); g_gameCeilBiome.store(true);

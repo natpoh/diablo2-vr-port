@@ -93,6 +93,50 @@ int main() {
         f = c.Step(true, false, false, false, false, true);
         Check(f.event == Event::Close && !c.Big(), "a press away from both: closed");
     }
+    {   // [hud] map_two_sizes: where the map is after each press, as xr.cpp keeps it (the front flag cleared at Open, flipped by Front;
+        // the front button's hit counts only while FrontButton). 0 the orb in the hand, 1 the big map on the left hand, 2 the big map in front.
+        struct Map {
+            Clicker c;
+            bool front = false;
+            bool onHandKey = true, twoSizes = true;
+            int rotates = 0;
+            Event Press(bool onMap, bool onBig, bool onButton, bool onFront) {
+                const bool fb = onFront && FrontButton(onHandKey, twoSizes);
+                c.Step(true, onMap, onBig, onButton, fb, false);   // let go first: who has the trigger
+                const Frame f = c.Step(true, onMap, onBig, onButton, fb, true);
+                c.Step(true, onMap, onBig, onButton, fb, false);
+                if (f.event == Event::Open) front = false;
+                if (f.event == Event::Front) front = !front;
+                if (f.event == Event::Rotate) ++rotates;
+                return f.event;
+            }
+            int Where() const { return !c.Big() ? 0 : BigOnHand(onHandKey, twoSizes, front) ? 1 : 2; }
+        };
+        Map m;   // Serg's: map_big_on_hand ticked, two sizes on
+        Check(m.Where() == 0, "two sizes: the orb in the hand to start");
+        Check(m.Press(true, false, false, false) == Event::Open && m.Where() == 2, "two sizes: a click on the orb - the big map in front at once (no middle size)");
+        Check(m.Press(false, true, true, false) == Event::Rotate && m.Where() == 2 && m.rotates == 1, "two sizes: the Rotate plate turns it and keeps it open");
+        Check(m.Press(false, false, false, true) == Event::Close && m.Where() == 0,
+              "two sizes: where the old button to the hand was - no button counts, so it is a press away: back to the orb");
+        m.Press(true, false, false, false);
+        Check(m.Press(false, true, false, false) == Event::Close && m.Where() == 0, "two sizes: a click on the big map - small in the orb again");
+        Check(m.Press(true, false, false, false) == Event::Open && m.Where() == 2, "two sizes: a click on the orb again - big in front again");
+        Check(!FrontButton(true, true) && !BigOnHand(true, true, false), "two sizes: no button to the hand hung, never held on the hand");
+
+        Map old;   // two sizes off: the three steps as before
+        old.twoSizes = false;
+        Check(old.Press(true, false, false, false) == Event::Open && old.Where() == 1, "three steps: a click on the orb - the big map on the left hand");
+        Check(old.Press(false, false, false, true) == Event::Front && old.Where() == 2, "three steps: its button - in front");
+        Check(old.Press(false, true, false, true) == Event::Front && old.Where() == 1, "three steps: the button again - back on the hand");
+        Check(old.Press(false, true, true, false) == Event::Rotate && old.Where() == 1, "three steps: Rotate keeps it where it is");
+        Check(old.Press(false, true, false, false) == Event::Close && old.Where() == 0, "three steps: a click on the big map - the orb");
+        Check(old.Press(true, false, false, false) == Event::Open && old.Where() == 1, "three steps: each opening starts on the hand");
+
+        Map plain;   // map_big_on_hand unticked: in front, two sizes or not - as before
+        plain.onHandKey = false; plain.twoSizes = false;
+        Check(plain.Press(true, false, false, false) == Event::Open && plain.Where() == 2, "no map_big_on_hand: in front as before");
+        Check(!FrontButton(false, false) && !FrontButton(false, true), "no map_big_on_hand: no button to the hand either way");
+    }
     {   // beside the inventory on the hand: left of the panel, not over it; the button above the big map
         const V3 at{0.0f, 1.2f, -0.4f}, right{1.0f, 0.0f, 0.0f}, up{0.0f, 1.0f, 0.0f};
         const V3 m = BesideLeft(at, right, up, 0.40f, 0.30f, 0.10f, 0.10f);

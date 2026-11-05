@@ -333,6 +333,10 @@ inline constexpr Def kDefs[] = {
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"openxr", L"headset_players", "Players from the headset", "The Options page's Players row asks the game",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    // -- no row: the Co-op page's row "The game's map shows" ([openxr] headset_map_party, hset_party.h MapShow): the game's own Show Party / Show
+    //    Party Names, shown and flipped by the game's key commands 10 / 11. On as shipped (a row: nothing happens until it is pressed); off, no row.
+    {L"openxr", L"headset_map_party", "Party on the map from the headset", "The Co-op page's Show Party / Show Party Names row",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     // -- no row: the Belt page's note - the potions on the belt are off in D2R VR Settings, so its sliders do nothing.
     {L"hands", L"belt_models", "Potions on the belt", "The game's own potion models on the hero's hips",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
@@ -416,6 +420,8 @@ static_assert(kKeyBeltOn >= 0 && kKeyBeltUp >= 0 && kKeyGrabTrigger >= 0 && kKey
 constexpr int kKeyPlayers = IndexOf(L"game", L"players");                 // the Options page's Players row: the game's count (DefType::Game)
 constexpr int kKeyPlayersOn = IndexOf(L"openxr", L"headset_players");    // ... and its switch
 constexpr int kKeyPartyOn = IndexOf(L"openxr", L"headset_party");        // the Party page's switch
+constexpr int kKeyMapPartyOn = IndexOf(L"openxr", L"headset_map_party");  // the Co-op page's map row's switch
+static_assert(kKeyMapPartyOn >= 0, "the Co-op page's map row's switch is in the table");
 static_assert(kKeyPartyOn >= 0, "the Party page's switch is in the table");
 static_assert(kKeyPlayers >= 0 && kKeyPlayersOn >= 0, "the Players row's keys are in the table");
 constexpr int kKeyDirectOn = IndexOf(L"openxr", L"direct_input");   // the Keys pages' note

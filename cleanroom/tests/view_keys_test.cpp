@@ -92,6 +92,41 @@ static void TestModeChangedMidPress() {
     CHECK(h.Take(kShift, 4, F1, false, false, false));
 }
 
+// [view] own_hotkeys: F9 - F12 (the plugin's own keys) kept from the game, or not
+static void TestOwnHotkeys() {
+    constexpr unsigned F9 = 0x78, F10 = 0x79, F11 = 0x7A;
+    CHECK(IsOwnHotkey(F9) && IsOwnHotkey(F10) && IsOwnHotkey(F11) && IsOwnHotkey(F12));
+    CHECK(!IsOwnHotkey(F8) && !IsOwnHotkey(F12 + 1) && !IsOwnHotkey(F1) && !IsOwnHotkey('P'));
+    OwnGate g;
+    // off: as before - every message the game's
+    for (unsigned vk = F9; vk <= F12; ++vk) {
+        CHECK(!g.Take(false, vk, true, false));
+        CHECK(!g.Take(false, vk, true, true));    // its repeat
+        CHECK(!g.Take(false, vk, false, false));   // its release
+    }
+    CHECK(g.taken == 0);
+    // on: the press, its repeats and its release ours (F11 the recentre, F12 the next view - not the game's automap party toggles)
+    CHECK(g.Take(true, F11, true, false));
+    CHECK(g.Take(true, F11, true, true));
+    CHECK(g.Take(true, F11, false, false));
+    CHECK(g.Take(true, F10, true, false) && g.Take(true, F10, false, false));
+    // other keys: never
+    CHECK(!g.Take(true, F8, true, false) && !g.Take(true, F8, false, false));
+    CHECK(!g.Take(true, F1, true, false) && !g.Take(true, 'W', true, false));
+    CHECK(g.taken == 0);
+    // switched off while F12 is held: its repeats and release still ours (the game never saw it go down)
+    CHECK(g.Take(true, F12, true, false));
+    CHECK(g.Take(false, F12, true, true));
+    CHECK(g.Take(false, F12, false, false));
+    // switched on while F9 is held: the game saw it go down - its repeats and release stay the game's
+    CHECK(!g.Take(false, F9, true, false));
+    CHECK(!g.Take(true, F9, true, true));    // its repeat after the switch: still the game's
+    CHECK(!g.Take(true, F9, false, false));
+    CHECK(g.taken == 0);
+    // a lone release (pressed before the window had focus): the game's
+    CHECK(!g.Take(true, F11, false, false));
+}
+
 int main() {
     TestIni();
     TestSwitches();
@@ -99,6 +134,7 @@ int main() {
     TestShift();
     TestNone();
     TestModeChangedMidPress();
+    TestOwnHotkeys();
     std::printf("view_keys_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

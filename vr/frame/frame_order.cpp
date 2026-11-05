@@ -408,6 +408,10 @@ uintptr_t HookDrawGameScreen(int a) {
             LogF("vrcam: replay submissions, a pair: %.3f ms in the ExecuteCommandLists loop (queue switches included) for %.1f lists in %.1f calls, %.1f signals after them, %.1f lists with no game call seen - [debug] replay_marks %d",
                  replay::g_eclUs * k2, replay::g_eclLists / (double)replay::g_stepPairs, replay::g_eclCalls / (double)replay::g_stepPairs,
                  replay::g_eclSignals / (double)replay::g_stepPairs, replay::g_eclUntagged / (double)replay::g_stepPairs, replay::g_marksOn.load());
+            if (replay::g_lateReplays)   // (the game's allocators of those lists would have been reset under them: vr/render/stereo/replay.cpp WaitForReplayedAllocs)
+                LogF("vrcam: replay - %u time(s) the replay of the lists the left pass reuses was not done in 100 ms when the left pass came: waited for it, the longest %.0f ms",
+                     replay::g_lateReplays, replay::g_lateReplayMaxMs);
+            replay::g_lateReplays = 0; replay::g_lateReplayMaxMs = 0.0;
             replay::g_eclUs = 0.0; replay::g_eclLists = replay::g_eclCalls = replay::g_eclSignals = replay::g_eclUntagged = 0;
             for (int i = 0; i < replay::kSteps; ++i) u[i] = 0.0;
             replay::g_stepPairs = 0;
@@ -510,7 +514,7 @@ static DWORD UpdateThreadBody() {
                 Log(uitrace::Arm(path) ? "vrcam: recording one frame of render targets to d2r_vr_uitrace.txt (Ctrl+F10)"
                     : uitrace::Busy() ? "vrcam: a frame recording is already under way"
                                       : "vrcam: Ctrl+F10 frame trace off - [debug] ui_trace=1 (Settings > Debug) and restart the game");
-            } else DumpSkeletons();
+            } else if (!flatmenu::TakesKey(VK_F10)) DumpSkeletons();   // ([hud] game_menu_key on F10: the panel's press, vr/flat_menu.h)
         }
         if (f9.Pressed(focus)) {
             if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {   // Ctrl + F9: memdiff, to find a flag by flipping it (Ctrl+Shift: start over)
@@ -542,6 +546,7 @@ static DWORD UpdateThreadBody() {
         hud::SetClassicView(ClassicNow());
         MapDirectionTick();   // [hud] map_direction
         MapRotateFlatTick();  // [hud] map_rotate_flat
+        FlatMapZoomTick();    // [hud] flat_map_zoom
         if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
             static ULONGLONG nextScale = 0;
             if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); }
@@ -627,6 +632,7 @@ static DWORD UpdateThreadBody() {
             frametrace::Scope melee(frametrace::kMeleeTick);   // [debug] frame_trace: hit by touch's share of this round
             MeleeTouchTick();   // [gameplay] melee_touch
         }
+        flatmenu::Tick(nowMs, g_inWorld.load());   // [hud] game_menu_settings: the overlay's callback with the key, the host's rules asked in a game
 #if D2RVR_FIRST_PERSON
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
@@ -767,6 +773,7 @@ static DWORD UpdateThreadBody() {
             if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::BowWanted() || g_set.leapByGaze.load() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim, a bow's pitch, leap_by_gaze or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             beltglow::Install();      // only once [hands] belt_inner_glow or belt_empty_bottle (darker) asks for it
+            auraview::Install();      // [render] aura_centre: its hook goes in once the option is ticked (vr/aura_view.cpp)
             owneffects::Install();    // [render] dim_own_effects: its two hooks only LOOK at the creation of overlays (in whether it is ticked or not, so a buff cast before it is ticked is known); a status line while it is on
             headshadow::Install();    // [arms] head_shadow: the model draw collector and Granny's skinning composite hooked once it is ticked (and the world-matrix hook asked for); a line when its state changes
             {   // native's laser, or FlatVR's on the menu panel

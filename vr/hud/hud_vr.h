@@ -64,6 +64,8 @@ extern int g_labelDepthNewN;
 // vr/hud/hud_ticks.cpp: the floor's pointer, the map's direction, the hand's inventory, the crosshair's depth
 void MapDirectionTick();
 void MapRotateFlatTick();
+void FlatMapZoomTick();
+bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l);
 bool FloorPointerAuto();
 void FloorPointerTick();
 void HandInventoryTick(ULONGLONG nowMs);

@@ -1,6 +1,7 @@
 // grab_lib.cpp - see grab_lib.h.
 
 #include "grab_lib.h"
+#include "weight_worlds.h"   // one lock round the library's calls that make or drop a Box3D world
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -147,7 +148,11 @@ bool Ensure() {
         ReleaseSRWLockExclusive(&g_lock);
         return false;
     }
-    void* world = create(nullptr);
+    void* world = nullptr;
+    {
+        const weightworlds::Hold hold;   // (vr/weight_worlds.h)
+        world = create(nullptr);
+    }
     if (!world) {
         Say("vrcam: grab library - d2r_vr_weight.dll made no world: [weight] grab_bodies does nothing");
         FreeLibrary(mod);
@@ -172,6 +177,7 @@ bool Ensure() {
 
 int Step(const D2rgbParams* params, const D2rgbBody* bodies, int n, const D2rgbHand* hands, float dt, D2rgbHandOut* out) {
     if (!Loaded() || !g_step || !g_world) return -1;
+    const weightworlds::Hold hold;   // (vr/weight_worlds.h)
     const int32_t r = g_step(g_world, params, bodies, n, hands, dt, out);
     Refused(r);
     return r;
@@ -193,6 +199,7 @@ int Links(D2rgbLink* out, int max) {
 
 int ReleaseAll() {
     if (!Loaded() || !g_release || !g_world) return 0;
+    const weightworlds::Hold hold;   // (vr/weight_worlds.h)
     const int32_t r = g_release(g_world);
     return r > 0 ? r : 0;
 }

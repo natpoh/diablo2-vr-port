@@ -5,6 +5,7 @@
 #include "../vrcam_headers.h"
 #include "engitem.h"
 #include "held_units.h"   // the units we placed let go, as the game does, when a game is left
+#include "sky_atlas.h"    // the domes' atlas: its layout's mark (DomeAtlasHasCap)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp: ::SafeRead and the rest are vrc's
@@ -1440,6 +1441,16 @@ std::string ModDataText(const char* rel, std::wstring* file) {
     }
     return text;
 }
+// The domes' atlas as D2R_VR_Settings made it holds each act's zenith in a square of its own (shared/sky_atlas.h HasCap: its header's mark,
+// tools/game_sky/make_sky_dome.py): read once - the game loads it once, at its start
+bool DomeAtlasHasCap() {
+    static const bool cap = [] {
+        std::wstring file;
+        const std::string head = ModDataText(skyatlas::kAtlas, &file);
+        return skyatlas::HasCap(head);
+    }();
+    return cap;
+}
 std::atomic<bool> g_domeShown{false};
 std::atomic<float> g_domeRadius{0.0f};   // the radius it is laid at now (skydome::DrawableRadius)
 bool DomeShown() { return g_domeShown.load(std::memory_order_relaxed); }
@@ -1508,12 +1519,11 @@ void SkyDomeFrame() {
     const bool ticked = skypaths::GameDomeWanted(g_set.gameSky.load(), fx::noreshade::FxWaiting());
     const int act = g_fogAct.load();
     const char* why = DomeWhyNot();
-    {   // our effect's sky chosen (or ours instead) and our effect still being built for this size: the game's dome meanwhile, where it can be
-        const int meanwhile = !g_set.gameSky.load() && fx::noreshade::FxWaiting() && g_skyPalette.load() >= 0 ? (*why ? 2 : 1) : 0;
+    {   // our effect's sky chosen and our effect still being built for this size: nothing meanwhile (skypaths::GameDomeWanted - no stand-in)
+        const int meanwhile = !g_set.gameSky.load() && fx::noreshade::FxWaiting() && g_skyPalette.load() >= 0 ? 1 : 0;
         static int told = 0;
         if (meanwhile != told) {
-            if (meanwhile == 1) Log("vrcam: the sky - our effect is still being built for this size: the game's dome meanwhile");
-            else if (meanwhile == 2) LogF("vrcam: the sky WAITS for our effect's build for this size (the game's dome cannot stand in here: %s)", why);
+            if (meanwhile) Log("vrcam: the sky WAITS for our effect's build for this size - nothing drawn in its place meanwhile");
             else if (told) Log("vrcam: the sky - our effect is built: its own sky again");
             told = meanwhile;
         }

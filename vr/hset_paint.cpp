@@ -78,6 +78,32 @@ bool Paint(const Model& m, const Hit& hover, std::vector<uint32_t>& rgba, const 
             FillRect(dc, &rc, br);
             DeleteObject(br);
         }
+        if (it.type == Item::Type::Button && it.part == Part::Check) {   // a tick box, its word beside it (the game look draws its own check box)
+            const int side = rc.bottom - rc.top - 16 < 40 ? (int)(rc.bottom - rc.top - 16) : 40;
+            const int bx = rc.left + 10, by = (rc.top + rc.bottom - side) / 2;
+            HPEN frame = CreatePen(PS_SOLID, 3, it.enabled ? kText : RGB(100, 116, 126));
+            HGDIOBJ oldPen = SelectObject(dc, frame);
+            HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Rectangle(dc, bx, by, bx + side, by + side);
+            SelectObject(dc, oldBrush);
+            if (it.selected) {   // the tick
+                HPEN tick = CreatePen(PS_SOLID, 5, it.colour == Role::Warn ? kWarn : kAccent);
+                SelectObject(dc, tick);
+                const POINT pts[3] = {{bx + side / 5, by + side / 2}, {bx + side * 2 / 5, by + side * 3 / 4}, {bx + side * 4 / 5, by + side / 4}};
+                Polyline(dc, pts, 3);
+                SelectObject(dc, frame);
+                DeleteObject(tick);
+            }
+            SelectObject(dc, oldPen);
+            DeleteObject(frame);
+            wchar_t t[128]{};
+            MultiByteToWideChar(CP_UTF8, 0, it.text.c_str(), -1, t, 128);
+            RECT tr{bx + side + 12, rc.top, rc.right - 4, rc.bottom};
+            SelectObject(dc, bold);
+            SetTextColor(dc, !it.enabled ? RGB(100, 116, 126) : c);
+            DrawTextW(dc, t, -1, &tr, DT_NOPREFIX | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_LEFT);
+            continue;
+        }
         wchar_t w[256]{};
         MultiByteToWideChar(CP_UTF8, 0, it.text.c_str(), -1, w, 256);
         SelectObject(dc, it.part == Part::Tab ? tab : it.face == Face::Bold ? bold : it.face == Face::Small ? small : normal);

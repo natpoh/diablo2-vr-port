@@ -203,6 +203,41 @@ int main() {
         CHECK(!ParseStrike(nullptr, kStrikeBytes, &h, &m));
         CHECK(kStrikeBytes <= 224);                          // D2RLoader's MaxPayloadSize
     }
+    // ---- who hosts decides: the hello and the host's rule ----
+    {
+        uint8_t b[16] = {};
+        CHECK(BuildHello(5, b, 4) == 0 && BuildHello(0, b, sizeof b) == 0);   // too small a buffer; no hero
+        CHECK(BuildHello(0x0A0B0C0Du, b, sizeof b) == kHelloBytes);
+        uint32_t h = 0;
+        CHECK(ParseHello(b, kHelloBytes, &h) && h == 0x0A0B0C0Du);
+        CHECK(!ParseHello(b, kHelloBytes + 1, &h) && !ParseHello(nullptr, kHelloBytes, &h));
+        b[0] = 9;
+        CHECK(!ParseHello(b, kHelloBytes, &h));              // another version
+        CHECK(!ParseHello(b, kStrikeBytes, &h));             // a strike is not a hello
+        Rule r;
+        r.box = true;
+        CHECK(BuildRule(r, b, 2) == 0 && BuildRule(r, b, sizeof b) == kRuleBytes);
+        Rule got;
+        got.canStrike = true;
+        CHECK(ParseRule(b, kRuleBytes, &got) && got.box && !got.canStrike);
+        r.canStrike = true;
+        BuildRule(r, b, sizeof b);
+        CHECK(ParseRule(b, kRuleBytes, &got) && got.box && got.canStrike);
+        b[1] = 2;
+        CHECK(!ParseRule(b, kRuleBytes, &got));              // not a yes or a no
+        BuildRule(r, b, sizeof b);
+        CHECK(!ParseRule(b, kRuleBytes - 1, &got) && !ParseRule(nullptr, kRuleBytes, &got));
+        CHECK(kMsgStrike != kMsgHello && kMsgHello != kMsgRule && kMsgStrike != kMsgRule && kHelloBytes <= 224 && kRuleBytes <= 224);
+        const Rule yes{true, true}, boxOnly{true, false}, no{false, true};
+        CHECK(CleaveRule(false, true, false, no) && !CleaveRule(false, false, true, yes));   // our own game: our box, whatever a host said
+        CHECK(CleaveRule(true, false, true, yes));            // joined: the host ticked it and can strike - on, our own box unticked
+        CHECK(!CleaveRule(true, true, true, no));             // joined: the host unticked it - off, our own box ticked
+        CHECK(!CleaveRule(true, true, true, boxOnly));        // the host ticked it but cannot strike now (not in VR F4)
+        CHECK(!CleaveRule(true, true, false, yes));           // the host silent lately (no mod, another version, the link lost)
+        CHECK(RetryMs(0, false) == 3000 && RetryMs(1, false) == 10000 && RetryMs(2, false) == 30000);
+        CHECK(RetryMs(3, false) == 60000 && RetryMs(50, false) == 60000);   // a refusing host: once a minute at most
+        CHECK(RetryMs(0, true) == 10000 && RetryMs(3, true) == 10000);      // an ask under way
+    }
     // ---- the host: a peer strikes for its own hero only ----
     {
         PeerHeroes p;

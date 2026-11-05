@@ -123,6 +123,8 @@ std::atomic<bool> g_mapTurnFlat{false};
 std::atomic<float> g_flatX{0.0f}, g_flatY{1.0f};
 std::atomic<ULONGLONG> g_flatAt{0};
 std::atomic<ULONGLONG> g_roundAt{0};   // the last interface pass that drew it turned (MapTurnState)
+std::atomic<bool> g_mapTurnWhole{false};
+std::atomic<bool> g_compassFlat{false};    // [hud] map_compass_flat: the compass strip over the turned map (SetMapCompassFlat)   // [hud] flat_map_zoom past level 0: not held to the circle, the whole box turned (SetMapTurnWhole)
 bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset() || g_mapTurnFlat.load(); }
 // What is taken out of the picture now: for FlatVR in first person, to be drawn back at another size otherwise.
 int HideNow() { return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load(); }
@@ -498,7 +500,8 @@ bool CopyOut(command_list* cl, resource src, const rect& r, int i) {
 
 // The pieces to draw back into the picture (classic views), from the last Publish. Under g_lock.
 // round: [hud] map_rotate_flat's turn of the map's piece (vr/map_turn.h RoundOnScreen), ok false = drawn straight.
-struct Picture { bool on[kShares] = {}; float box[kShares][4] = {}; ULONGLONG at = 0; mapturn::Round round; };
+// compass: [hud] map_compass_flat's strip over it (mapturn::CompassOnScreen), ok false = none.
+struct Picture { bool on[kShares] = {}; float box[kShares][4] = {}; ULONGLONG at = 0; mapturn::Round round; mapturn::CompassPlace compass; };
 Picture g_pic;
 
 // r grown z times about (ax, ay), in uv of a w x h screen: l, t, r, b.
@@ -780,6 +783,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
     }
     g_pic.round = mapturn::Round{};
+    g_pic.compass = mapturn::CompassPlace{};
     if (g_pic.on[kMap] && g_mapTurnFlat.load()) {   // [hud] map_rotate_flat: round about the hero, the camera's way up (north up until a way came)
         const ULONGLONG at = g_flatAt.load(), now = GetTickCount64();
         const bool known = at && now >= at && now - at <= 500;
@@ -787,6 +791,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
         g_pic.round = mapturn::RoundOnScreen(mapturn::For(false, true, known, bearing), g_pic.box[kMap], (float)(mapBox.right - mapBox.left),
                                              (float)(mapBox.bottom - mapBox.top));
         if (g_pic.round.ok) g_roundAt.store(GetTickCount64());
+        if (known && g_compassFlat.load()) g_pic.compass = mapturn::CompassOnScreen(g_pic.round, bearing);   // (as VR's: only with a way to show)
         static bool told = false;
         if (g_pic.round.ok && !told) {
             told = true;
@@ -1089,6 +1094,18 @@ bool PictureNow(int i, float box[4], uint64_t* srv) {
 // [hud] map_rotate_flat: vrcam's tick says whether the corner map in the picture is to turn (MapRotateFlatTick), each of our views its way on
 // the ground (mapdir::OnGround).
 void SetMapRotateFlat(bool on) { g_mapTurnFlat.store(on); }
+// [hud] flat_map_zoom (vr/flat_map_zoom.h): out of the circle - the map's whole box drawn turned (vrcam's FlatMapZoomTick, level -1 and less).
+void SetMapTurnWhole(bool whole) { g_mapTurnWhole.store(whole); }
+// [hud] map_compass_flat: the compass strip over the turned map (vrcam's MapRotateFlatTick); for the effect, where (uv l, t, r, b) and its
+// window's left edge in the picture (uv). False: none this frame.
+void SetMapCompassFlat(bool on) { g_compassFlat.store(on); }
+bool PictureCompass(float box[4], float* crop) {
+    std::lock_guard<std::mutex> g(g_lock);
+    const mapturn::CompassPlace& c = g_pic.compass;
+    for (int k = 0; k < 4; ++k) box[k] = c.box[k];
+    *crop = c.crop;
+    return c.ok && g_pic.round.ok && g_pic.on[kMap] && g_mapTurnFlat.load() && g_compassFlat.load();
+}
 // Why the turned map is or is not on the screen now, for vrcam's log: 0 not wanted, 1 the effect that draws it back is not running
 // (D2R_DepthFog.fx off, old, or not found - with ReShade or the plugin's own runtime), 2 no corner map in the interface (shut, the
 // whole-screen overlay, or its box not found: hud's "no map box" line says which boxes there were), 3 drawn turned.
@@ -1103,8 +1120,9 @@ void SetMapFlatHeading(float x, float y) {
     g_flatX.store(x); g_flatY.store(y); g_flatAt.store(GetTickCount64());
 }
 // For D2R_DepthFog.fx, with PictureNow(1): the map's piece drawn round and turned - circle = centre uv, radius uv (x, y), hero = the share's
-// uv of the hero, m = the share's uv per q (row-major 2 x 2). False: drawn straight, as the box says.
-bool PictureMapTurn(float circle[4], float hero[2], float m[4]) {
+// uv of the hero, m = the share's uv per q (row-major 2 x 2); whole: not held to the circle ([hud] flat_map_zoom). False: drawn straight.
+bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole) {
+    *whole = g_mapTurnWhole.load();
     std::lock_guard<std::mutex> g(g_lock);
     const mapturn::Round& r = g_pic.round;
     circle[0] = r.centre[0]; circle[1] = r.centre[1]; circle[2] = r.radius[0]; circle[3] = r.radius[1];

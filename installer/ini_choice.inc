@@ -82,6 +82,27 @@ begin
   TurnOffRawTest(Ini, 'weight', 'own_body');
 end;
 
+// Kept settings from the ReShade days: since 0.203 D2R VR uses no ReShade (the plugin's own hooks and effect runtime only). Serg 2026-11-05: "those
+// who had ReShade switch to the new way by themselves". Once, at the first update that has this (its mark [support] no_reshade_0203, one of the
+// shipped defaults, comes in with the other new keys right after this - missing = not done yet): [render] no_reshade=0 becomes 1 (the plugin
+// ignores it now; an older plugin put back for co-op goes the native way too), and [render] native_effects=0 becomes 1 - with ReShade gone, 0
+// would leave no sky, fog or ceiling at all. The player's own dxgi.dll ReShade is not touched. A native_effects=0 chosen after that stays.
+procedure MoveOffReShadeKey(Ini, Sec, Key, Why: String);
+begin
+  if IniValue(GetIniString(Sec, Key, '<none>', Ini)) = '0' then
+  begin
+    SetIniString(Sec, Key, '1', Ini);
+    Log('d2r_vr.ini: [' + Sec + '] ' + Key + '=0 from an older version - ' + Why + ': 1 now');
+  end;
+end;
+
+procedure MoveOffReShade(Ini: String);
+begin
+  if GetIniString('support', 'no_reshade_0203', '<none>', Ini) <> '<none>' then Exit;
+  MoveOffReShadeKey(Ini, 'render', 'no_reshade', 'D2R VR uses no ReShade since 0.203');
+  MoveOffReShadeKey(Ini, 'render', 'native_effects', 'without ReShade the sky, the fog and the ceiling are D2R VR''s own effect');
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -152,6 +173,7 @@ begin
   else
   begin
     TurnOffRawTests(Ini);   // (before the new keys go in: its own mark is one of them)
+    MoveOffReShade(Ini);    // (the same: its mark [support] no_reshade_0203 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

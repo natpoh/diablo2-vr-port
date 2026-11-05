@@ -27,7 +27,9 @@ enum class Align : uint8_t { Left, Center, Right };
 // What an item is a piece of, for a painter that draws each kind with a picture of its own (the skill panel's game look, vr/tiles_paint.cpp):
 // a row's band, a value's field, the slider's track / its filled part / its knob; a page tab, a less / more arrow, an on / off switch, one of
 // a row of choices, a toggle with two words of its own (Left / Right: a click flips it), any other button. The other painters go by the role alone.
-enum class Part : uint8_t { None, Row, Value, Track, TrackFill, Knob, Tab, Less, More, Switch, Choice, Flip, Action };
+// Check: a tick box with its word beside it (the Co-op page's map row, Serg 2026-11-05 "галочку"): the game look draws it as Switch (the game's own
+// check box), the panel's own painter a box with a tick when selected.
+enum class Part : uint8_t { None, Row, Value, Track, TrackFill, Knob, Tab, Less, More, Switch, Choice, Flip, Action, Check };
 
 struct Item {
     enum class Type : uint8_t { Fill, Text, Button };
@@ -68,6 +70,7 @@ inline const char* StatusText(const Model& m, bool window = false) {
         }
         return uitext::Tr("vr.coop.status.idle", "Each change is written to d2r-rooms.ini at once (the plugin's own file).");
     }
+    if (m.page == kPageVideo && m.AutoShown()) return m.Auto().status.c_str();   // the Auto run's own line (the plugin's words)
     if (!m.ready) return uitext::Tr("vr.hset.status.no_ini", "d2r_vr.ini was not found. Nothing can be changed.");
     switch (m.result) {
         case Result::Saving: return uitext::Tr("vr.hset.status.saving", "Saving...");
@@ -266,7 +269,14 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     }
 
     const bool canEdit = m.ready && !m.Busy();
-    if (m.page == kPageVideo) {
+    if (m.page == kPageVideo && m.AutoShown()) {
+        // -- the Auto run: its lines, Keep / Undo (Stop while it measures) -----------------------------------------
+        const AutoTune& at = m.Auto();
+        b.Text(at.title, kAutoTitle, Face::Bold, at.state == 2 ? Role::Accent : Role::Warn);
+        for (int i = 0; i < kAutoLines && i < (int)at.lines.size(); ++i) b.Text(at.lines[i], kAutoLine(i), Face::Small, Role::Text);
+        if (at.state == 2) b.Button(kAutoKeep, uitext::Tr("vr.autotune.keep", "Keep"), {Kind::Auto, 1, 0}, true, true, Role::Accent);
+        b.Button(kAutoUndo, at.state == 2 ? uitext::Tr("vr.autotune.undo", "Undo") : uitext::Tr("vr.autotune.stop", "Stop"), {Kind::Auto, 2, 0});
+    } else if (m.page == kPageVideo) {
         // -- the render size ----------------------------------------------------------------------------------
         const video::Pick pick = m.DraftPick();
         const video::Env& env = m.Env();
@@ -298,6 +308,8 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         const std::string limit = video::LimitText(pick, env);
         if (!limit.empty()) b.Text(limit, kVidLimit, Face::Small, Role::Warn);
         b.Text(uitext::Tr("vr.video.note", "Apply rebuilds the picture: the game freezes a few seconds (about 7)."), kVidNote, Face::Normal, Role::Warn);
+        if (m.Auto().on)   // [autotune]: measures and steps the settings down to the headset's rate (not with a size picked and not applied)
+            b.Button(kAutoBtn, uitext::Tr("vr.autotune.button", "Auto"), {Kind::Auto, 0, 0}, false, canEdit && !edited, Role::Accent);
     } else if (m.page == kPageBody) {
         // -- the T-pose measurement -----------------------------------------------------------------------------
         // (how you play, standing / seated, is the page's table row above: drawn with the other pages' rows below)
@@ -352,12 +364,28 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
                 }
             }
         }
-        const std::vector<coop::Line> lines = coop::Lines(m.Coop(), shown);
+        // [openxr] headset_map_party: the game's own Show Party / Show Party Names (hset_party.h MapShow) - under the three, the plugin there or not
+        const bool mapRow = m.MapShowOn();
+        if (mapRow) {
+            const party::MapShow& gm = m.GameMap();
+            const int y = RowY(kMapRow, -1);
+            b.Fill({32, y - 5, 960, kRowStep - 2}, kMapRow % 2 ? Role::RowB : Role::RowA, Part::Row);
+            b.Text(party::MapLabel(), {48, y - 2, 520, 32}, Face::Bold, Role::Text);
+            b.Text(party::MapDetail(gm), {48, y + 28, 530, 28}, Face::Small, gm.party == 0 ? Role::Warn : Role::Quiet);
+            for (int w = 0; w < party::kMapCount; ++w) {
+                const int v = m.MapShown(w);
+                b.Button(kMapBtn(w), party::MapButton(w), {Kind::MapShow, w, 1}, v > 0, v >= 0 && !m.MapBusy(), m.MapAsked() == w ? Role::Warn : Role::Text,
+                         Part::Check);   // ticked: the game shows it (amber: pressed, the game not there yet)
+            }
+        }
+        const bool under = mapRow && m.CoopReady();   // the lines below the map row then, fewer
+        const int most = under ? kCoopLinesUnderMap : coop::kLines;
+        const std::vector<coop::Line> lines = coop::Lines(m.Coop(), shown, most);
         const int first = m.CoopReady() ? 0 : -6;   // nothing to choose: the lines stand where the rows would be
-        for (int i = 0; i < (int)lines.size() && i < coop::kLines; ++i) {
+        for (int i = 0; i < (int)lines.size() && i < most; ++i) {
             const coop::Line& l = lines[(size_t)i];
             const Role ink = l.tone == coop::Tone::Good ? Role::Accent : l.tone == coop::Tone::Warn ? Role::Warn : l.tone == coop::Tone::Head ? Role::Text : Role::Quiet;
-            b.Text(l.text, kCoopLine(first + i), l.tone == coop::Tone::Head ? Face::Bold : Face::Small, ink);
+            b.Text(l.text, under ? kCoopLineUnderMap(i) : kCoopLine(first + i), l.tone == coop::Tone::Head ? Face::Bold : Face::Small, ink);
         }
     }
     if (m.page == kPageParty) {

@@ -72,7 +72,7 @@ struct RemoteCopy { uint32_t code = 0; float m[16] = {}; };
 void SetRemoteCopies(const RemoteCopy* c, int n);
 unsigned TakeRemoteCopiesDrawn();
 }
-namespace engitem { bool DomeShown(); int DomeBand(); float DomeRadius(); unsigned DomeIndexCount(); const char* SkyCannot(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
+namespace engitem { bool DomeShown(); int DomeBand(); bool DomeAtlasHasCap(); float DomeRadius(); unsigned DomeIndexCount(); const char* SkyCannot(); }   // [sky] game_sky: the game draws our sky this frame (the post pass's stands aside)
 namespace fx { namespace noreshade { bool FxWaiting(); } }   // [render] native_effects: our effect not drawing yet (its build for this size not there) - the game's dome meanwhile
 namespace engitem { bool CeilingShown(); bool CeilingByGame(); bool CeilingLowestHere(float groundY, float* lowestY); }   // [ceiling] game_ceiling: the game draws the cave ceiling this frame; the ceiling is the game's here (the post pass's stays off)
 namespace fx { bool CeilWanted(); bool GameCeilWanted(); }   // (a ceiling wanted here: [ceiling] enabled, first person, a ceiling biome / a natural cave, no menu)
@@ -337,8 +337,7 @@ std::string Utf8(const wchar_t* w);
 const std::wstring& ReShadeDir();   // where ReShade64.dll and the effect are: the mod's reshade folder or the game's
 const std::wstring& OurFilesDir();   // the folder of the plugin's own files
 }  // namespace vrc
-void LoadReShade();
-void LoadOurAddonForDxgiReShade(const wchar_t* gameDir);
+void LoadReShade();   // (0.203: loads and joins no ReShade - vr/plugin/reshade_load.cpp)
 namespace vrc {
 
 }  // namespace vrc

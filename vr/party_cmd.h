@@ -22,4 +22,10 @@ void Ask(const hset::party::Request& r);
 // vrcam's 1 ms timer (as gamecmd::Tick): a read or a press due goes to the UI thread.
 void Tick();
 
+// The Co-op page's map row ([openxr] headset_map_party): the game's Show Party / Show Party Names now (any thread, cheap: two numbers read; -1 not
+// known), and a press of one (any thread): the game's own key command 10 / 11 (vr/gamecmd.cpp), only where this game's command is the game's toggle
+// of that setting. The game flips it and keeps it in its Settings.json; nothing here writes either.
+hset::party::MapShow MapNow();
+void MapToggle(int what);
+
 }  // namespace partycmd

@@ -81,6 +81,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "reshade_env.h"        // another mod's RESHADE_* variables, cleared in this process before ReShade64.dll loads (LoadReShade)
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
+#include "auto_tune_run.h"   // [autotune]: the "Auto" graphics tuning - measured live, kept or undone by the player
 #include "headset_shot.h"  // [headset_shot]: a screenshot of what reaches the headset (every view: a support tool, not a feature of play)
 #include "headset_clip.h"  // [headset_shot] video: 10 s of what reaches the headset, to an .mp4
 #include "headset_grid.h"  // [headset_shot] grid: a calibration grid in each eye's picture
@@ -108,6 +109,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "flat_raw.h"      // [direct] flatvr_controls: BodyWalk's raw controllers (Game Link) as the plugin's own controls in FlatVR (pure part, tested)
 #include "map_direction.h"   // [hud] map_direction: the way our camera looks, on the game's isometric map (pure part, tested)
 #include "map_turn.h"        // [hud] map_rotate / map_compass: the head's turn held while it looks down at the map in the hand
+#include "flat_map_zoom.h"   // [hud] flat_map_zoom: + / - zoom the flat game's map (the game's own zoom, in eighths)
 #include "minimap_side.h"    // [hud] map_corner: the corner the start's Settings.json rewrite puts the game's map in (pure part, tested)
 #include "walk_path.h"     // [openxr] direct_bodywalk_walk: BodyWalk's walking stick mixed into the controller's in direct mode (pure part, tested)
 #include "walk_latency.h"  // [debug] walk_start_log: one line per walk start of BodyWalk's, from its stick leaving rest to the hero moving (pure part, tested)
@@ -148,7 +150,7 @@ namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void 
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready);
-                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4]); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
+                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(bool on); bool PictureCompass(float box[4], float* crop); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
 #include "d2rcam.h"
@@ -160,7 +162,7 @@ namespace partycmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }  
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void SetFlatMapZoom(int steps); bool FlatMapZoomSeen(float* game, float* drawn, int* mode); int FlatMapZoomHooks(); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
 namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
@@ -277,6 +279,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "world_contact.h"   // [weight] world_contact: the weapon and the bare hands meet the level's walls (drawn only)
 #include "own_models.h"      // [weight] world_contact: the entities of our item models (the belt's bottles), never walls
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
+#include "aura_view.h"            // [render] aura_centre: the Paladin's aura rings centred under the hero in VR
 #include "head_shadow.h"          // [arms] head_shadow: the hidden head still casts its shadow
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "belt_drop.h"       // [hands] belt_drop_ground: the game's own drop of a belt potion (the belt slot's click, the cursor's drop)
@@ -324,4 +327,5 @@ namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's 
 #include "melee_arm_game.h"   // [gameplay] melee_skill_armed: a melee skill's button arms it; every hit by touch is then that skill (vr/melee_arm.h)
 #include "armed_icon.h"       // [gameplay] melee_skill_armed_icon: the armed skill's icon in the mana medallion (vr/armed_icon.h)
 #include "wheel_icons.h"      // ... the game's own skill icon, as the skill panel's tiles draw it
+#include "flat_menu_wire.h"   // [hud] game_menu_settings: the flat game's settings in the pause menu, the host's rules (vr/flat_menu.h)
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)

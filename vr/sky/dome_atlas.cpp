@@ -4,6 +4,7 @@
 #define NOMINMAX
 #endif
 #include "dome_atlas.h"
+#include "sky_atlas.h"   // the pictures' layout (the zenith's square)
 
 #include <windows.h>
 #include <d3dcompiler.h>
@@ -50,7 +51,7 @@ template <class T> void Free(T*& p) { if (p) { p->Release(); p = nullptr; } }
 // yellow low band bare, and it showed through every tree's and bush's soft edge as a light rim. Baked, the trees' edges are blended over the
 // fog's colour by the game itself.
 const char kShader[] = R"(
-cbuffer C : register(b0) { float4 c0; float4 c1; float4 c2; float4 c3; float4 c4; };   // c0: band, its rows, width, mip; c1: night, mul, cap on, gain on; c2: zenith; c3: a fixed gain, on; c4: the fog's colour, its band's strength
+cbuffer C : register(b0) { float4 c0; float4 c1; float4 c2; float4 c3; float4 c4; float4 c5; float4 c6; };   // c0: band, its rows, width, mip; c1: night, mul, cap on, gain on; c2: zenith; c3: a fixed gain, on; c4: the fog's colour, its band's strength; c5: the zenith's square (on, its rows, its columns, its half side); c6: the panorama's top and bottom elevation, the band's inset in its picture
 Texture2D<float4> Day : register(t0);
 Texture2D<float4> NightBand : register(t1);
 Texture2D<float4> NightCap : register(t2);
@@ -64,10 +65,9 @@ float3 Scene(float3 srgb)
     return float3(dot(float3(0.6274040, 0.3292820, 0.0433136), lin), dot(float3(0.0690970, 0.9195400, 0.0113612), lin),
                   dot(float3(0.0163916, 0.0880132, 0.8955950), lin));
 }
-float3 NightAt(float az, float el)
+float3 NightAt(float3 d)
 {
-    const float ce = cos(radians(el));
-    const float3 d = float3(ce * sin(az), sin(radians(el)), ce * cos(az));
+    const float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
     float3 c = NightBand.SampleLevel(BandSmp, float2(frac(atan2(d.x, d.z) / 3.14159265), (65.0 - el) / 73.0), 0).rgb;
     const float w = smoothstep(40.0, 62.0, el);
     if (w > 0.0) {
@@ -92,16 +92,29 @@ void VS(uint id : SV_VertexID, out float4 pos : SV_Position)
     const float2 t = float2((id << 1) & 2, id & 2);
     pos = float4(t * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
 }
+// The texel's direction in its band's picture (shared/sky_atlas.h): the zenith's square by dir.xz / dir.y, else the panorama (column the
+// azimuth, row the elevation - from the panorama's top, or from 90 degrees in a picture without the square)
+float3 DirOf(float bu, float bv)
+{
+    if (c5.x > 0.5) bv = (bv - c6.z) / (1.0 - 2.0 * c6.z);   // (the picture's row as the band's v: shared/sky_atlas.h BandVOfPicture)
+    if (c5.x > 0.5 && bu < c5.z && bv < c5.y) {
+        const float2 q = (float2(bu / c5.z, bv / c5.y) * 2.0 - 1.0) * c5.w;
+        return normalize(float3(q.x, 1.0, q.y));
+    }
+    const float el = c5.x > 0.5 ? min(c6.x - (bv - c5.y) / (1.0 - c5.y) * (c6.x - c6.y), 90.0) : 90.0 - bv * 102.0;
+    const float az = bu * 6.28318531, ce = cos(radians(el));
+    return float3(ce * sin(az), sin(radians(el)), ce * cos(az));
+}
 float4 PS(float4 pos : SV_Position) : SV_Target
 {
     float3 c = Day.Load(int3((int2)pos.xy, (int)c0.w)).rgb;
-    const float el = 90.0 - (pos.y - c0.x * c0.y) / c0.y * 102.0;
+    const float3 d = DirOf(pos.x / c0.z, (pos.y - c0.x * c0.y) / c0.y);
+    const float el = degrees(asin(clamp(d.y, -1.0, 1.0)));
     [branch] if (c1.x > 0.0) {
-        const float az = pos.x / c0.z * 6.28318531;
-        float3 n = NightAt(az, el);
+        float3 n = NightAt(d);
         [branch] if (el < 0.0) {
             float3 m = 0.0;
-            [loop] for (int i = 0; i < 16; ++i) m += NightAt((i + 0.5) / 16.0 * 6.28318531, 0.0);
+            [loop] for (int i = 0; i < 16; ++i) { const float a = (i + 0.5) / 16.0 * 6.28318531; m += NightAt(float3(sin(a), 0.0, cos(a))); }
             n = lerp(n, m / 16.0, smoothstep(0.0, -6.0, el));
         }
         c = lerp(c, n, saturate(c1.x));
@@ -206,7 +219,7 @@ bool MakePipeline(ID3D12Device* dev) {
     rp[0].DescriptorTable = {1, &range};
     rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     rp[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    rp[1].Constants = {0, 0, 20};
+    rp[1].Constants = {0, 0, 28};
     rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     D3D12_STATIC_SAMPLER_DESC smp[2] = {};
     for (int i = 0; i < 2; ++i) {
@@ -473,10 +486,12 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     l->SetGraphicsRootDescriptorTable(0, g);
     l->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     const bool night = in.night > 0.0f && in.nightBand;
-    float k[20] = {(float)in.band, 0.0f, 0.0f, 0.0f, night ? in.night : 0.0f, in.mul, in.capOn && in.nightCap ? 1.0f : 0.0f, in.gain ? 1.0f : 0.0f,
+    float k[28] = {(float)in.band, 0.0f, 0.0f, 0.0f, night ? in.night : 0.0f, in.mul, in.capOn && in.nightCap ? 1.0f : 0.0f, in.gain ? 1.0f : 0.0f,
                    in.zenith[0], in.zenith[1], in.zenith[2], 0.0f,
                    in.gainRgb[0], in.gainRgb[1], in.gainRgb[2], in.gainFixed ? 1.0f : 0.0f,
-                   in.fog[0], in.fog[1], in.fog[2], in.fogBand};
+                   in.fog[0], in.fog[1], in.fog[2], in.fogBand,
+                   in.capLayout ? 1.0f : 0.0f, (float)skyatlas::kCapRows, (float)skyatlas::kCapCols, (float)skyatlas::kCapHalf,
+                   (float)skyatlas::PanoTopEl(), (float)skyatlas::kPanoLowEl, skyatlas::kInset, 0.0f};
     l->SetPipelineState(g_pso);
     for (uint32_t m = 0; m < g_mips; ++m) {
         uint32_t from = 0, to = 0;
@@ -486,7 +501,7 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
         k[1] = (float)(to - from);
         k[2] = (float)mw;
         k[3] = (float)m;
-        l->SetGraphicsRoot32BitConstants(1, 20, k, 0);
+        l->SetGraphicsRoot32BitConstants(1, 28, k, 0);
         const D3D12_CPU_DESCRIPTOR_HANDLE rt = Rtv(m);
         l->OMSetRenderTargets(1, &rt, FALSE, nullptr);
         const D3D12_VIEWPORT vp{0.0f, (float)from, (float)mw, (float)(to - from), 0.0f, 1.0f};
@@ -497,7 +512,7 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
     }
     {   // the gain it used, for the effect's next measure
         l->SetPipelineState(g_psoGain);
-        l->SetGraphicsRoot32BitConstants(1, 20, k, 0);
+        l->SetGraphicsRoot32BitConstants(1, 28, k, 0);
         const D3D12_CPU_DESCRIPTOR_HANDLE rt = Rtv(g_mips);
         l->OMSetRenderTargets(1, &rt, FALSE, nullptr);
         const D3D12_VIEWPORT vp{0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f};
@@ -547,7 +562,8 @@ bool Differs(const BakeIn& a, const BakeIn& b) {
            a.gainFixed != b.gainFixed || off(a.gainRgb[0], b.gainRgb[0]) || off(a.gainRgb[1], b.gainRgb[1]) || off(a.gainRgb[2], b.gainRgb[2]) ||
            a.nightCap != b.nightCap || (a.gain != nullptr) != (b.gain != nullptr) || off(a.zenith[0], b.zenith[0]) ||
            off(a.zenith[1], b.zenith[1]) || off(a.zenith[2], b.zenith[2]) || (a.fogBand > 0.0f) != (b.fogBand > 0.0f) ||
-           (b.fogBand > 0.0f && (std::fabs(a.fogBand - b.fogBand) > 0.01f || off(a.fog[0], b.fog[0]) || off(a.fog[1], b.fog[1]) || off(a.fog[2], b.fog[2])));
+           (b.fogBand > 0.0f && (std::fabs(a.fogBand - b.fogBand) > 0.01f || off(a.fog[0], b.fog[0]) || off(a.fog[1], b.fog[1]) || off(a.fog[2], b.fog[2]))) ||
+           a.capLayout != b.capLayout;
 }
 
 }  // namespace

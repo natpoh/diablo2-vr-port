@@ -9,6 +9,7 @@
 // "ours" flag, so its queue hooks let the runtime's work through.
 
 #include <cstdint>
+#include <vector>
 
 struct ID3D12Device;
 struct ID3D12CommandQueue;
@@ -166,6 +167,9 @@ void SetLaserWanted(bool menus);
 // [openxr] on and laser: the game's controller layout is to be kept under the laser's mouse
 // (vr/panel_input.cpp's hooks wanted).
 bool LaserOn();
+// [hud] map_compass: the compass strip's picture (mapturn::kAtlasW x kAtlasH, RGBA8, R in the low byte; black see-through) - the map in the
+// hand's, and the flat map's strip in D2R_DepthFog.fx ([hud] map_compass_flat). Empty when it could not be painted. Painted with GDI each call.
+std::vector<uint32_t> CompassPixels();
 // [openxr] on and menu_3d (docs/plan_laser_menus.md step 2): a menu open in first person keeps the
 // stereo pairs, its interface hung in front as a panel of its own (hud::SetPanelOut) - vrcam decides
 // when (F4 only).
@@ -192,6 +196,9 @@ bool LaserWanted(int* hand);
 void MenuPanelSize(float* widthM, float* distanceM);
 // Session and instance gone, FlatVR started again; from the game's exit paths.
 void Shutdown();
+// [openxr] end_session_on_exit (vr/exit_end.h): the game quits to Windows (`trigger` an exitend::Trigger) - the headset session is ended first,
+// waited for a bounded time on the calling thread (the game's window or UI thread). The key 0, or no session: nothing (a line in the log).
+void EndOnExit(int trigger);
 // A D3D12 device is going (ReShade's destroy_device): the session's own ends with it.
 void DeviceGone(ID3D12Device* dev);
 

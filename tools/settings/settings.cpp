@@ -65,8 +65,7 @@
 #include "d2r_vr_crash_watch.h"   // [support] crash_reports / send_logs: D2R VR Crash Reporter's place, its quiet event, a report's state (docs/crash_watchdog.md)
 #include "rtss_detect.h"         // [support] rtss_warning: RivaTuner's programs by name (the Home Warning row, UpdateRtssWarning)
 #include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
-#include "reshade_as.h"      // Home: the ReShade the player has as dxgi.dll is used as it is; the buttons for it, tested (shared/reshade_as.h)
-#include "reshade_paths.h"   // D2R VR's two search paths in that ReShade's ReShade.ini: append-only text edits, tested (shared/reshade_paths.h)
+#include "reshade_paths.h"   // D2R VR's two search paths (up to 0.202) out of a player's dxgi.dll ReShade's ReShade.ini again: text edits, tested (shared/reshade_paths.h)
 #include "bw_output.h"      // BodyWalk's Output in its settings file: does its pad reach the game (the Status row, tested)
 #include "bw_path.h"        // how BodyWalk's input reaches the game: Game Link direct, or its gamepad and Mapping (the Status row, tested)
 #include "bw_autorun.h"     // what the 3D choice and START start or close of BodyWalk and FlatVR (tested)
@@ -118,7 +117,8 @@ struct Item {
     const wchar_t* sdef = nullptr;           // File: the default path; Color: what an empty value means
     const wchar_t* tip = nullptr;            // the tooltip: what the short label leaves out
     std::vector<const wchar_t*> choices;     // Choice: the names of 0, 1, 2...
-    struct Need { const wchar_t* section; const wchar_t* key; float value; int item; const wchar_t* orKey = nullptr; int orItem = -1; };
+    struct Need { const wchar_t* section; const wchar_t* key; float value; int item; const wchar_t* orKey = nullptr; int orItem = -1;
+                  const wchar_t* orSection = nullptr; };   // (orKey's section: null = section's)
     std::vector<Need> needs;                 // greyed out unless every such key has its value - or its orKey has (items: set by Build)
     int tab = 0;                             // set by Build
     int modes = kBoth;                       // shown in flat, VR or both (Build folds in its tab's and group's)
@@ -285,6 +285,10 @@ Item Needs(const wchar_t* section, const wchar_t* key, float value, Item i) {
 Item NeedsEither(const wchar_t* section, const wchar_t* key, const wchar_t* orKey, float value, Item i) {
     i.needs.push_back({section, key, value, -1, orKey, -1}); return i;
 }
+// ... and with a key of another section (the game drawing the sky or the fog: [sky] game_sky or [fog] game_fog).
+Item NeedsEitherOf(const wchar_t* section, const wchar_t* key, const wchar_t* orSection, const wchar_t* orKey, float value, Item i) {
+    i.needs.push_back({section, key, value, -1, orKey, -1, orSection}); return i;
+}
 
 // The items of "Low life: red heartbeat vignette" (UI: F4 body): greyed unless native OpenXR is on and the vignette ticked.
 Item LowLife(Item i) { return Needs(L"openxr", L"on", 1, Needs(L"hud", L"low_hp_vignette", 1, i)); }
@@ -361,6 +365,13 @@ Item ViewKeys() {
     return Choice(L"view", L"keys", L"View keys", 0,
                   {L"F1 - F4", L"Shift + F1 - F4 (F1 - F8 stay the game's skills)", L"No F keys (F12, Settings, the controller)"}, kViewKeysTip);
 }
+// [view] own_hotkeys (vr/view_keys.h OwnGate): F9 - F12 kept from the game - its default keys there flipped its automap's Show Party / Party
+// Names with every F11 / F12 of ours (Serg's ally missing from the map, 2026-11-05). 0 = as before.
+constexpr const wchar_t* kOwnHotkeysTip =
+    L"F9 - F12 are the mod's keys: F9 mouse look, F10 a skeleton dump for us, F11 recentre, F12 next view. On: the game does not get them "
+    L"- with the game's default keys each F11 / F12 also switched its map's \"Show Party\" / \"Show Party Names\" off and on, and with "
+    L"them off your allies vanish from every map (Options > Automap: turn them on again there). Off: the game gets them too, as before. Live.";
+Item OwnHotkeys() { return Toggle(L"view", L"own_hotkeys", L"F9 - F12 only for the mod (not the game's map keys)", 0, kOwnHotkeysTip); }
 // [openxr] fov_override and its sliders: on the Stereo tab and on Home (under the views) both
 constexpr const wchar_t* kFovOverrideTip =
     L"For headsets or streamers whose picture stays distorted (e.g. an Apple Vision Pro via ALVR: the world cross-eyed or stretched "
@@ -406,6 +417,17 @@ constexpr const wchar_t* kAttackLeanTip =
     L"own. Not F1, VR F3 or F4. Unticked: as before. Live.";
 constexpr const wchar_t* kAttackLeanMaxTip =
     L"The most the swing leans, up or down: the spine bends as far as the point under the crosshair is below or above the chest, up to this. Live.";
+// [hud] map_compass_flat (vr/map_turn.h CompassOnScreen): the VR compass strip over the turned map on the screen
+constexpr const wchar_t* kMapCompassFlatTip =
+    L"With Map turns with the camera: the compass strip of the VR map (N, NE, E ...) over the round map on the screen, its middle the way "
+    L"the camera looks, N the game map's up. Under the map when the map is too near the top of the screen. Unticked: no strip. Live.";
+// [hud] flat_map_zoom (vr/flat_map_zoom.h): + / - zoom the flat game's map, the game's own zoom
+constexpr const wchar_t* kFlatMapZoomTip =
+    L"The flat game (on the monitor, any view), with the game's map open: - takes the round map (Map turns with the camera) out of its "
+    L"circle and shows the map's whole box, still turned; each further - makes the game draw it smaller, down to a quarter of its size, so "
+    L"the whole level fits; + goes back the same steps and into the circle. Ctrl + mouse wheel does the same. It is the game's own map "
+    L"zoom, so the game draws the map smaller itself - walls and markers stay sharp. The step is kept for the next game. While the chat "
+    L"line or a panel is open, or the map is shut, the keys are the game's. Unticked: the keys are the game's and the map is as before. Live.";
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2 / F3
 constexpr const wchar_t* kMapRotateFlatTip =
     L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round "
@@ -441,6 +463,11 @@ constexpr const wchar_t* kMapBigOnHandTip =
     L"The big map (Map in the hand: laser click makes it big), VR F4: held on your LEFT hand like the inventory - the same place over the "
     L"controller and the inventory's width (Native OpenXR) - with the inventory's button beside it to bring it in front, big, and back. "
     L"The Rotate map button over it. Unticked: the big map in front, as before. Live.";
+constexpr const wchar_t* kMapTwoSizesTip =
+    L"The map in the hand has two sizes only, VR F4: a laser click on the small map (the orb in your hand) brings the big map in front of you "
+    L"at once, and a click on the big map makes it small in your hand again. No middle size held on the left hand and no button to it - this "
+    L"overrides \"Big map held on the left hand\". The Rotate map button, the compass, the zoom and grabbing the big map stay as they are. "
+    L"Unticked: the three steps as before (with \"Big map held on the left hand\": on the hand first, its button to the front). Live.";
 constexpr const wchar_t* kMapBesideInventoryTip =
     L"VR F4, with the inventory on the left hand (Native OpenXR): the map held in that hand hangs beside the inventory's left edge instead "
     L"of under it, so both stay in sight; when the inventory closes it goes back to its own place. Unticked: as before (the inventory covers it). Live.";
@@ -631,7 +658,7 @@ std::vector<Item> g_items = {
            L"(Found by bearstonem/d2r-pcvr.)")),
     // [render] menu_wide (vr/vr_resolution.h MenuWide): the game's own menus drawn 16:9 in the headset
     Only(kVr, Toggle(L"render", L"menu_wide", L"Main menu at 16:9", 1,
-           L"Native OpenXR without ReShade (\"No ReShade\"; with ReShade it does nothing): the game lays its menus out for the shape of its picture, and a square picture (the square window, a square "
+           L"Native OpenXR: the game lays its menus out for the shape of its picture, and a square picture (the square window, a square "
            L"or the headset's render size) squeezed the main menu - its side panels over the hero, its bottom buttons cut off. On: while the "
            L"game shows its own menus (the main menu, the character list, Create New) its picture is 16:9, as wide as the render size, and "
            L"the panel in the headset has that shape. 3 s after the menu comes up the game takes the new size (a short rebuild of the "
@@ -649,6 +676,7 @@ std::vector<Item> g_items = {
           {L"F1  The game's own camera", L"F2  Third person", L"F3  First person: mouse look, W A S D"},
           L"Switch in the game with F1, F2, F3 (F12 goes round). With View keys at F1 - F4 the game does not get these keys; Shift + F1 - F4 gives them back to its skills."),
     Only(kFlat, ViewKeys()),
+    Only(kFlat, OwnHotkeys()),
     Only(kVr, InColumn(1, Group(L"View (F1 - F4 in the game)", L"The view in VR: F1 from above, F3 the game on your floor, F4 first person with the body following your controllers. Switch in the game with F1 - F4 (F12 goes round) - or with Shift + F1 - F4, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Radio(L"mode", L"vr_mode", 1, 1,
           {L"F1  From above", L"F2  Third person", L"F3  The game on your floor: look down at it and walk round it (mixed reality)",
@@ -656,12 +684,14 @@ std::vector<Item> g_items = {
           L"Switch in the game with F1 - F4 (F12 goes round). F3: the game lies on the floor of your room. "
           L"F4: arms on the controllers, the trunk held. With View keys at F1 - F4 the game does not get F1 - F4; Shift + F1 - F4 gives them back to its skills."),
     Only(kVr, ViewKeys()),
+    Only(kVr, OwnHotkeys()),
 #else
     Only(kFlat, InColumn(1, Group(L"View (F1, F2 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person (first person is coming soon). Switch in the game with F1, F2 (F12 goes round) - or with Shift + F1, F2, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Soon(2, Radio(L"mode", L"flat_view", 1, 1,
           {L"F1  The game's own camera", L"F2  Third person", L"F3  First person - coming soon"},
           L"Switch in the game with F1, F2 (F12 goes round). With View keys at F1 - F4 the game does not get these keys; Shift + F1 - F4 gives them back to its skills.")),
     Only(kFlat, ViewKeys()),
+    Only(kFlat, OwnHotkeys()),
     Only(kVr, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view in VR: F1 from above, F2 third person, F3 the game on your floor (first person is coming soon). Switch in the game with F1 - F3 (F12 goes round) - or with Shift + F1 - F3, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Soon(3, Radio(L"mode", L"vr_mode", 1, 1,
           {L"F1  From above", L"F2  Third person", L"F3  The game on your floor: look down at it and walk round it (mixed reality)",
@@ -669,6 +699,7 @@ std::vector<Item> g_items = {
           L"Switch in the game with F1 - F3 (F12 goes round). F3: the game lies on the floor of your room. "
           L"With View keys at F1 - F4 the game does not get F1 - F4; Shift + F1 - F4 gives them back to its skills.")),
     Only(kVr, ViewKeys()),
+    Only(kVr, OwnHotkeys()),
 #endif
     // A stereo picture that looks wrong (2026-11-02, Serg's wish: a player's F2/F3/F4 looked as if the eyes were swapped, and swapping them
     // did nothing; Stereo > "Set each eye's angles by hand" with its sliders fixed it): the advice under the views, where everyone sees it
@@ -692,9 +723,9 @@ std::vector<Item> g_items = {
     InColumn(1, Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. Each single value is on the Draw distance tab (and where it was: Performance, World, Sky); changing one of them shows Custom here.")),
     Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip),
     Status(L"draw_distance", L""),
-    // D2RLoader and ReShade: both ways to play (flat had no Install ReShade - a player found it in
-    // VR only, 2026-10-11 - the whole Status group was VR's).
-    InColumn(2, Group(L"The game and ReShade", L"Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and ReShade (the fog, the sky, the ceiling and FlatVR's depth need it). Buttons to share your own ReShade with the mod or put it aside, and to make the Arcane Sanctuary sky.")),
+    // D2RLoader and the mod's effect: both ways to play (flat had no Install ReShade - a player found it in VR only, 2026-10-11 - the whole Status
+    // group was VR's). Since 0.203 no ReShade at all (vr/plugin/reshade_load.cpp): no Install ReShade, no buttons for the player's own dxgi.dll ReShade.
+    InColumn(2, Group(L"The game and the mod", L"Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and the mod's own effect (the sky, the fog and the ceiling - D2R VR draws them itself, no ReShade needed). A ReShade of your own is left as it is. The button to make the Arcane Sanctuary sky.")),
     // [support] rtss_warning (shared/rtss_detect.h, UpdateRtssWarning): shown while RivaTuner Statistics Server or MSI Afterburner runs -
     // a player's game froze at its first picture inside RTSSHooks64.dll (2026-11-04). Only says so: nothing is closed or changed.
     Hide(Warning(L"rtss_warn", L"RivaTuner Statistics Server or MSI Afterburner is running. Its on-screen display hooks the game's picture and can "
@@ -705,30 +736,8 @@ std::vector<Item> g_items = {
     Hide(Button(L"@run", L"d2rloader_get", L"Download and install D2RLoader 1.3.1",
            L"Downloads D2RLoader 1.3.1 from d2rloader.net, checks it against the SHA-256 the site publishes and unpacks it "
            L"into the game's folder, beside D2R.exe. The mod runs only under D2RLoader.")),
-    Status(L"reshade", L"ReShade and the mod's effect"),
-    // Install ReShade: shown while there is no ReShade64.dll beside D2R.exe (RefreshStatus).
-    Hide(Button(L"@run", L"reshade_get", L"Install ReShade",
-           L"Downloads the current ReShade with add-on support from reshade.me, installs it for DirectX 10/11/12 and puts it "
-           L"in the mod as mods\\D2R-VR\\reshade\\ReShade64.dll (renamed from dxgi.dll: the plain D2R.exe refuses a dxgi.dll), "
-           L"which the mod loads itself. Shown only while there is no ReShade (no dxgi.dll next to D2R.exe either). "
-           L"The fog, the sky, the ceiling and the depth for FlatVR need it.")),
-    // A ReShade the player has as dxgi.dll is used as it is (shared/reshade_as.h): Setup and these buttons never rename, move or delete it. It needs D2R VR's two
-    // search paths in its ReShade.ini to find the mod's effect and pictures (D2R_VR_Settings.exe --reshade-paths, run by Setup); the one explicit choice is
-    // to put it aside (dxgi.dll.off) so that D2R VR's own ReShade can be installed. By the files there (RefreshStatus).
-    Hide(Button(L"@run", L"reshade_paths", L"Add D2R VR's folders to my ReShade (its search paths)",
-           L"The ReShade you have as dxgi.dll next to D2R.exe looks for effects and pictures in the game's folder, not in mods\\D2R-VR\\reshade where D2R VR's "
-           L"effect (D2R_DepthFog.fx) and pictures are. This adds D2R VR's two folders to EffectSearchPaths and TextureSearchPaths in your ReShade.ini - "
-           L"two list items at the end, nothing else of the file changes (a copy is kept as ReShade.ini.before_d2rvr; D2R VR's uninstaller takes them out "
-           L"again). D2R VR Setup does this by itself; press it if you installed ReShade after D2R VR. The game must be closed. Takes effect at the next "
-           L"start of the game.")),
-    Hide(Button(L"@run", L"reshade_aside", L"Put my dxgi.dll aside (dxgi.dll.off) - D2R VR gets its own ReShade",
-           L"Your ReShade stays as it is while it is dxgi.dll; D2R VR uses it. Only press this if you want D2R VR to have a ReShade of its own "
-           L"(mods\\D2R-VR\\reshade) instead: dxgi.dll is renamed to dxgi.dll.off (nothing is deleted, nothing replaced), then Install ReShade is offered. "
-           L"The game started without D2RLoader has no ReShade then. \"Bring my dxgi.dll back\" undoes it. Takes effect at the next start of the game.")),
-    Hide(Button(L"@run", L"reshade_back", L"Bring my dxgi.dll back (dxgi.dll.off / .bak)",
-           L"Renames dxgi.dll.off (or a dxgi.dll.bak you made yourself) back to dxgi.dll - the ReShade you put aside. D2R VR then uses that one as it is. "
-           L"Leave it as it is if you want D2R VR's own ReShade (Install ReShade). Takes effect at the next start of the game.")),
-    Status(L"reshade_note", L"IMPORTANT"),
+    // the mod's effect (ReShadeStatus): D2R_DepthFog.fx where D2R VR's own runtime reads it; the player's dxgi.dll ReShade left as it is
+    Status(L"reshade", L"The mod's effect (sky and fog)"),
     Status(L"arcane_sky", L"Arcane Sanctuary sky: not made yet"),
     Status(L"knock_props", L"Knockable props: off ([weight] knock_props, Weapon Weight)"),
     Status(L"world_contact", L"World contact walls: off ([weight] world_contact, Weapon Weight)"),
@@ -752,7 +761,6 @@ std::vector<Item> g_items = {
            L"again at the next START, D2R VR alone as before."),
     Status(L"data_mods", L"Other mods: not looked at yet"),
     Only(kVr, InColumn(2, Group(L"Status", L"What is installed and running: BodyWalk, FlatVR, Game Link, head tracking, the game with the mod. Here you also start BodyWalk and FlatVR, check for updates, and collect logs into a zip for support."))),   // the right column, under "The game and ReShade" (2026-10-14, the user's wish)
-    Status(L"depth_addon", L"FlatVR depth add-on"),
     Status(L"game_video", L"The game's video settings"),
     Status(L"bw_installed", L"BodyWalk installed"),
     Status(L"vigem", L"Xbox controller driver (ViGEmBus)"),
@@ -940,63 +948,75 @@ std::vector<Item> g_items = {
            L"are asked to run on the cores with the big L3 cache, and its drawing thread gets a higher priority - D2R's frame is "
            L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
     Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato to High) sets everything here at once: room rings, model radius, fog, sky, cave ceiling. Room rings, models and the frame cap need a game restart."),
-    Choice(L"@preset", L"preset", L"Quality preset", 3, {L"Light: no ReShade (native, eyes by turns)", L"Potato", L"Low", L"Medium", L"High", L"Custom"},
-           L"Sets the settings below at once. Light (a weak PC): no ReShade at all - the game in the headset with Native OpenXR, the eyes by "
+    Choice(L"@preset", L"preset", L"Quality preset", 3, {L"Light (native, eyes by turns)", L"Potato", L"Low", L"Medium", L"High", L"Custom"},
+           L"Sets the settings below at once. Light (a weak PC): the game in the headset with Native OpenXR, the eyes by "
            L"turns (one eye drawn a frame, the other made from it with the depth, the cheaper way: no rims, no strip filling, no sharper read, "
            L"its own picture not kept - Stereo tab), as Potato otherwise; the sky and the fog drawn by D2R VR itself (\"Sky and fog without "
-           L"ReShade\"), the menus as a flat picture. It ticks \"No ReShade\" below and sets the 3D in the headset to \"Native OpenXR - eyes "
+           L"ReShade\"), the menus as a flat picture. It sets the 3D in the headset to \"Native OpenXR - eyes "
            L"by turns\"; restart the game. "
-           L"Potato: as Low, but no ceiling, the 3D made from ReShade's depth instead of real stereo "
+           L"Potato: as Low, but no ceiling, the 3D made from the depth instead of real stereo "
            L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
            L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), ceiling on with coarse relief (8 steps). "
            L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, fog 30 to 250, finer ceiling relief. "
            L"Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
            L"(Potato) - it switches Native OpenXR off (set it again on the Home page). With Native OpenXR on this shows Custom. "
            L"Changing any of them by hand shows Custom."),
-    // [render] no_reshade (docs/plan_no_reshade.md): ReShade64.dll not loaded; vrcam hooks D3D12 itself - the flat game, and native OpenXR eyes by
-    // turns in VR. Shown in flat too (Serg, 2026-10-31: "why does the 2D mode start ReShade" - in flat there was no switch for it)
-    Toggle(L"render", L"no_reshade", L"No ReShade (restart the game)", 0,
-           L"The game runs without ReShade - D2R VR does not load ReShade64.dll at all and hooks the game's graphics itself. "
-           L"The flat game (a monitor): everything D2R VR draws there - the sky, the fog, the cave ceiling, the crosshair - comes from D2R VR "
-           L"itself with the box below; gone is only ReShade's own: its overlay (the Home key), its screenshots and any effect of your own in "
-           L"its presets. "
-           L"VR: only for \"3D in the headset: Native OpenXR - eyes by turns\" (Home): one eye drawn a frame, the other made on the graphics card "
-           L"with the game's depth. The sky, the fog and the cave ceiling come back drawn by D2R VR itself (the box below). Off with it: the "
-           L"overlays kept apart from the picture the second eye is made from (labels laid back, the wrist orbs - drawn into the picture), the "
-           L"lights' fix for the square window, and the menus as a panel (they show as the flat picture). On a GTX 1050 Ti the game went "
-           L"from about 44 to 53-60 frames a second without any effect. FlatVR works with it too, with the box \"FlatVR's picture without ReShade\" "
-           L"below (its stereo pair drawn in two passes: one pass, two pictures needs ReShade). Read when the game starts: restart it after a change. With your own "
-           L"ReShade as dxgi.dll beside the game it does nothing (the game loads that one itself). Off (the default): ReShade as before."),
-    // [render] flatvr_feed (on): with no_reshade, FlatVR's picture and depth from the plugin, through the blocks FlatVR's ReShade add-on uses (vr/flatvr_feed.h)
-    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"flatvr_feed", L"FlatVR's picture without ReShade (D2R VR hands it over itself)", 1,
-           L"With \"No ReShade\" FlatVR had no picture: it takes the game's picture and depth from ReShade's add-on (FlatVR_DepthProvider), and "
+    // [autotune] (vr/auto_tune_run.h, Serg 2026-11-05): "Auto" - the game measures its frames/s at the headset's rate and steps our effects,
+    // the stereo mode and the render size down (then back up while there is room), the player keeps or undoes it. Unticked: no Auto anywhere.
+    Only(kVr, Toggle(L"autotune", L"enabled", L"Auto graphics tuning", 0,
+           L"Adds an Auto button to the headset's settings panel (Video page) and below. Press it standing still in the game (in "
+           L"town is best): the game measures its frames a second with your settings, then tries each of D2R VR's effects one at a time "
+           L"(fog before effects, sky, fog, cave ceiling, distance blur, the fog's height), the 3D mode (full stereo -> eyes by turns) and "
+           L"the render size, turns down the dearest first until the headset's rate is reached (or half of it, if that cannot be), and "
+           L"brings back what still fits. It takes a minute or two; the picture freezes a few seconds when the render size changes. "
+           L"Nothing is written while it measures. Keep writes the result to d2r_vr.ini (the old one is copied to d2r_vr.ini.before_autotune "
+           L"first, the steps go to d2r_vr_autotune.txt); Undo, Stop or closing the game puts everything back. Frame generation and the "
+           L"game's own graphics options are never changed. Unticked: no Auto button, as before.")),
+    Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"run", L"Auto-tune now (the game must be running)",
+           L"Starts Auto in the running game, as the headset panel's Auto button does. Put the headset on and stand still: the steps and "
+           L"the result show on the headset panel's Video page (open it with a long press of the right stick click), with Keep and Undo "
+           L"there."))),
+    Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"keep", L"Keep the Auto result",
+           L"Writes the result of the last Auto run to d2r_vr.ini (the old one copied to d2r_vr.ini.before_autotune first), as Keep on the "
+           L"headset panel. Reopen this window afterwards to see the new values. Nothing happens while no result waits."))),
+    Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"undo", L"Undo / stop Auto",
+           L"Stops an Auto run or drops its result: everything as it was (d2r_vr.ini was not touched), as Undo on the headset panel."))),
+    // [render] flatvr_feed (on): FlatVR's picture and depth from the plugin, through the blocks FlatVR's ReShade add-on uses (vr/flatvr_feed.h). (No
+    // ReShade since 0.203: [render] no_reshade and its toggle are gone - these three were shown only with it)
+    Toggle(L"render", L"flatvr_feed", L"FlatVR's picture without ReShade (D2R VR hands it over itself)", 1,
+           L"Without ReShade FlatVR had no picture: it takes the game's picture and depth from ReShade's add-on (FlatVR_DepthProvider), and "
            L"BodyWalk's FlatVR said \"No picture from the ReShade addon\". On: D2R VR hands FlatVR the same itself, the same way the add-on does - "
            L"each picture of the game's window (a stereo pair as the two eyes side by side, only whole pairs), the scene's depth for FlatVR's 3D "
            L"from the depth, and which view each eye holds. Only while FlatVR runs and native OpenXR does not hold the headset. Live. Off: nothing "
-           L"handed over, as before.")),
-    // [render] native_effects (on): with no_reshade, D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h) - flat and VR
-    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"native_effects", L"Sky and fog without ReShade (drawn by D2R VR itself; restart the game)", 1,
-           L"With \"No ReShade\": D2R VR draws its own effect itself - the sky outdoors, the distance fog, the cave ceiling and the rest of what "
+           L"handed over, as before."),
+    // [render] native_effects (on): D2R_DepthFog.fx run by the plugin itself (vr/fx_native.h) - flat and VR
+    Toggle(L"render", L"native_effects", L"Sky and fog without ReShade (drawn by D2R VR itself; restart the game)", 1,
+           L"D2R VR draws its own effect itself - the sky outdoors, the distance fog, the cave ceiling and the rest of what "
            L"ReShade drew in the picture (the switches on this tab and on Sky / Ceiling still decide which). Its shaders are built in the "
            L"background when the game starts and at each new picture size - the first time a while (several seconds; the picture has no sky "
            L"till then), then from a cache beside d2r_vr.ini at once. What it costs the graphics card is in the log every 10 s. Off: no effect "
-           L"at all - the lightest. Read when the game starts.")),
+           L"at all - the lightest. Read when the game starts."),
     // [render] effect_world: a live A/B of the effect's own sky and fog; the medallions, labels, toolbar and phantoms stay
-    Needs(L"render", L"no_reshade", 1, Toggle(L"render", L"effect_world", L"Sky and fog of the effect drawn (live)", 1,
+    Toggle(L"render", L"effect_world", L"Sky and fog of the effect drawn (live)", 1,
            L"Unticked, the effect's own sky, fog and cave ceiling are not drawn at all - nor the fixes on the game's fog and sky, their colour "
            L"measures and the distance blur - while the medallions, the labels, the toolbar, the phantoms and the interface stay as they are. "
            L"For seeing what the sky and the fog cost (the log's \"native effects, 10 s\" line says each pass's time). The game's own sky and "
-           L"fog stay the game's. Live. Ticked: as before.")),
+           L"fog stay the game's. Live. Ticked: as before."),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
-    Choice(L"@skyfog", L"way", L"Sky and fog drawn by", 1, {L"The game draws them (new)", L"Our effect (old)"},
-           L"Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the "
-           L"game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's "
-           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky "
-           L"dome's files are made by this program at its start: the first time after an install or an update, restart a game already running."),
+    Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
+           L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
+           L"ours (VR F4; the flat game too with \"The game draws them in the flat game too\"). Our effect (old): the fog shader paints the sky "
+           L"in the void. Either goes with either fog (\"Fog drawn by\"): the sky's low part sinks into the fog's colour both ways. Live - the "
+           L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
+           L"already running."),
+    Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
+           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers - no frame time of ours (VR F4; the "
+           L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
+           L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"A distance fog. Who draws it: the selector above (our effect, or the game itself). With the sky on, it fades into the sky."),
-    Needs(L"fog", L"enabled", 1, Needs(L"@skyfog", L"way", 1, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
+           L"A distance fog. Who draws it: \"Fog drawn by\" above (our effect, or the game itself). With the sky on, it fades into the sky."),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
            L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
            L"Where the fog begins. World units (the hero is ~7.5 tall).")),
@@ -1008,13 +1028,10 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
            L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
-           L"A painted sky over the black void outdoors. Who draws it: the selector above (our effect, or the game's dome)."),
-    Toggle(L"@reshade", L"generic_depth", L"ReShade depth map (Generic Depth)", 1,
-           L"ReShade's Generic Depth add-on finds the game's depth buffer every frame. Off saves GPU time, but the fog, "
-           L"the sky, the ceiling and the 3D from the depth need it. Applies when the game is started again."),
+           L"A painted sky over the black void outdoors. Who draws it: \"Sky drawn by\" above (our effect, or the game's dome)."),
     Toggle(L"ceiling", L"enabled", L"Ceiling in caves and dungeons", 0,
            L"A ceiling over the black void in caves and dungeons, first person only (the Ceiling tab: who draws it, each room's height)."),
-    Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (ReShade / D2R VR's own)", L"The game (lit rock)"},
+    Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (D2R VR's own)", L"The game (lit rock)"},
            kGameCeilingTip)),
     Only(kVr, Slider(L"@game", L"Framerate Cap", L"Game frame cap, fps (0 = none)", 0, 300, 1, 180,
            L"The game's own frame cap (its Settings.json). Set from the headset's rate and the 3D choice (both on the Home page); can be changed by hand.")),
@@ -1027,7 +1044,7 @@ std::vector<Item> g_items = {
     Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. The single values are below (and where they were: Performance, World, Sky); changing one of them shows Custom on the slider."),
     Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip),
     Status(L"draw_distance", L""),
-    Group(L"What the slider sets", L"Each value the Draw distance slider writes, to set by hand. The fog's are greyed while the distance fog is off, the sky dome's while the game does not draw the sky (Sky tab: \"Sky and fog drawn by\"), the cave dome's while it is off."),
+    Group(L"What the slider sets", L"Each value the Draw distance slider writes, to set by hand. The fog's are greyed while the distance fog is off, the sky dome's while the game does not draw the sky (Sky tab: \"Sky drawn by\"), the cave dome's while it is off."),
     Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
     Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
     Slider(L"render", L"big_radius", L"Big objects: trees, houses, walls farther (0 = off)", 0, 1000, 100, 0,
@@ -1035,13 +1052,13 @@ std::vector<Item> g_items = {
            L"its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility "
            L"radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome "
            L"past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before."),
-    Needs(L"@skyfog", L"way", 0, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
+    Needs(L"sky", L"game_sky", 1, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
            Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
            L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
            L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
            L"use with each change."))),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"A distance fog. Who draws it: the Sky tab's selector (our effect, or the game itself). With the sky on, it fades into the sky."),
+           L"A distance fog. Who draws it: the Sky tab's \"Fog drawn by\" (our effect, or the game itself). With the sky on, it fades into the sky."),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
            L"Where the fog begins. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
@@ -1051,7 +1068,7 @@ std::vector<Item> g_items = {
            L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
            L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
     Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
@@ -1396,6 +1413,23 @@ std::vector<Item> g_items = {
            L"and its numbers are the game's; other players, F1 - F3 and flat see them as ever. The log says, per effect, whether it was moved. First person (F4) only. Live.")),
     Needs(L"render", L"lower_own_effects", 1, Only(kVr, Slider(L"render", L"own_effects_height_cm", L"Bone Armor's height, cm", -150, 50, 5, -60,
            L"How far from where the game puts them: 0 = the game's place, negative = lower (-60: about the waist), positive = higher. Live."))),
+    Only(kVr, Toggle(L"render", L"aura_centre", L"Paladin's auras under the hero", 0,
+           L"The rings of the Paladin's auras (Thorns, Might, Holy Fire, Holy Freeze, Conviction, Fanaticism ...) lie on the ground a step away from the hero in VR. The game's "
+           L"aura effects push every particle toward the camera when it appears - on the flat screen that push runs along your line of sight and changes nothing you see, in VR it "
+           L"moves the whole ring sideways and up. On: the push is taken away, so the ring lies at the hero's feet, where the flat game shows it. Every VR view (F1 - F4); the "
+           L"flat game as ever. Monsters' and mercenaries' copies of these auras are centred too. Visual only: the aura and its numbers are the game's. Live.")),
+    Needs(L"render", L"aura_centre", 1, Only(kVr, Slider(L"render", L"aura_lift_pct", L"Aura ring's lift, %", 0, 100, 5, 0,
+           L"How much of the game's upward push the rings keep: 0 = none, the ring at the feet (as the flat game shows it), 100 = all of it (the ring floats about 30 cm up). "
+           L"Raise it a little if the ground hides part of the ring. Live."))),
+    Only(kVr, Toggle(L"render", L"move_own_auras", L"Paladin's aura place", 0,
+           L"On: your own Paladin aura rings are drawn moved by the three sliders below - up / down, ahead / behind (ahead = where you look) and right / left. On top of "
+           L"\"Paladin's auras under the hero\". All three at 0 = where the game puts them. Every VR view; other players and the flat game see them as ever. Visual only. Live.")),
+    Needs(L"render", L"move_own_auras", 1, Only(kVr, Slider(L"render", L"own_auras_up_cm", L"Aura ring up / down, cm", -100, 100, 5, 0,
+           L"0 = the game's height, negative = lower, positive = higher. Live."))),
+    Needs(L"render", L"move_own_auras", 1, Only(kVr, Slider(L"render", L"own_auras_ahead_cm", L"Aura ring ahead / behind, cm", -100, 100, 5, 0,
+           L"Along where you look, level: positive = ahead of you, negative = behind. Live."))),
+    Needs(L"render", L"move_own_auras", 1, Only(kVr, Slider(L"render", L"own_auras_side_cm", L"Aura ring right / left, cm", -100, 100, 5, 0,
+           L"Positive = to your right, negative = to your left. Live."))),
 
 #endif
     Tab(L"Controls"),
@@ -1620,6 +1654,35 @@ std::vector<Item> g_items = {
            L"is the game's own. The game's own reach test still applies, so backing away "
            L"from a monster with a short weapon mostly misses. A TCP/IP game: who hosts decides. The host's box holds for every player with the same "
            L"version of the mod; a joined player's own box means nothing there. It replaces the 2D strafe option on the Controls tab. Unticked: the game's own rule."),
+    // [gameplay] melee_direct_client_cleave (vr/melee_direct_client.h CleaveRule): who hosts decides, as the box above (Serg, 2026-11-05)
+    Toggle(L"gameplay", L"melee_direct_client_cleave", L"A two-handed swing hits each monster it touches (VR)", 0,
+           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. VR first person (F4) with hit by touch and Strikes > Direct hit \"By the rules\": "
+           L"the game runs one attack at a time, so a swing through several monsters normally lands on the first only. On, with a TWO-HANDED "
+           L"weapon held in both hands: the first monster gets the direct hit; every other monster the same swing touches while that attack plays, "
+           L"with Direct hit's least speed AND force, gets the game's server attack for the hero, once (the hit roll, the damage and the weapon's "
+           L"wear are the game's; no animation of its own). No repeat on the same monster sooner than the attack takes. A one-handed weapon, or a "
+           L"touch too slow or too weak: the normal attack. A TCP/IP game: who hosts decides. The host's box holds for every joined player with "
+           L"the same version of the mod; a joined player's own box means nothing there. The host strikes those hits itself, so it works only "
+           L"while the host plays in VR first person with hit by touch on. Unticked: the game's own rule. Live."),
+    // [hud] game_menu_settings (vr/flat_menu.h, vr/host_rules.h): the flat game's settings from the pause menu, the host's rules shown (2026-11-05,
+    // Pavel's idea: Counter-Strike's list of a server's rules on a key and in the console)
+    Group(L"In-game settings and the host's rules", L"A D2R VR settings button in the game's pause menu (2D on the monitor) and a list of the host's rules above in co-op."),
+    Toggle(L"hud", L"game_menu_settings", L"In-game D2R VR settings (pause menu button, the host's rules)", 0,
+           L"2D on the monitor: a key (below, F10 by default) and a \"D2R VR settings\" button in the game's pause menu (Esc) open a panel with the settings that matter in 2D "
+           L"(field of view, the camera's distance in F2, the weapon in hand, aiming and clicking, the gamepad) and the host's rules - the boxes above, "
+           L"where who hosts decides. In single player and as the host you change them there; joined to someone's TCP/IP game you see the host's "
+           L"values, read from the host's mod (the same version), and cannot change them. A change is written into d2r_vr.ini at once and applies "
+           L"live. The host's rules are also listed: on the key below (2D), in the pause menu and for ten seconds after joining (VR too: the pause "
+           L"menu), and in D2RLoader's console with the command vrrules. Only shown: nothing here changes how the game plays. Unticked: no button, no list, "
+           L"nothing asked of the host. Live."),
+    Needs(L"hud", L"game_menu_settings", 1, Choice(L"hud", L"game_menu_key", L"Key: open and close the in-game settings (2D)", 1,
+           {L"None", L"F10", L"Insert", L"Delete", L"Page Up", L"Page Down"},
+           L"In the game (2D on the monitor) this key opens the D2R VR settings panel, in a menu or not; pressed again, Esc or its Close button "
+           L"close it. The game does not get the key (F10 is its Fade Automap). Ctrl + F10 stays the frame trace. None: only the pause menu's button.")),
+    Needs(L"hud", L"game_menu_settings", 1, Choice(L"hud", L"host_rules_key", L"Key: show the host's rules while held (2D)", 1,
+           {L"None", L"Home", L"End", L"Insert"},
+           L"While this key is held in the game (2D on the monitor), the host's rules stand in the top left corner - as in Counter-Strike. "
+           L"The game does not get the key. None: only the pause menu, the first seconds after joining and the console's vrrules.")),
     Only(kVr, Tab(L"Stereo")),
     // Native OpenXR (Performance > 3D in the headset > Native OpenXR): applied at once while the game runs.
     Group(L"Native OpenXR (the game itself in the headset)", L"Everything for native OpenXR: brightness, the flat picture for menus, F1 and F3 in real 3D, room-scale walking, Controls without BodyWalk, the skill panel, the eyes' angles and distance, the square window and vibration. Most of it changes live."),
@@ -1659,6 +1722,12 @@ std::vector<Item> g_items = {
            L"have not come the headset gets no picture that frame and the game goes on flat (the log says so, and when the headset answers). And no headset session is "
            L"started over a FlatVR that holds the headset and cannot be stopped (BodyWalk Lite has no Game Link): the Status column says to close BodyWalk and restart "
            L"SteamVR, and it is tried again while FlatVR runs. Needs a game restart. Off: as before. (d2r_vr.ini: wait_frame_ms.)"),
+    Toggle(L"openxr", L"end_session_on_exit", L"End the headset session before the game closes (native OpenXR)", 0,
+           L"Quitting to Windows crashed the game at its very end on the Oculus runtime and on Virtual Desktop (a security check, 0xC0000409, right after the "
+           L"game was saved - nothing lost, but a crash report each time). On: when the game quits - its window closed (the X, Alt+F4), Windows logging off, "
+           L"or Exit on the title screen - the headset session is ended first, the way switching native OpenXR off does it, and the game waits for that "
+           L"at most 3 seconds before it closes. Save and Exit to the character screen is not a quit: VR goes on there. Off: the session is left to the "
+           L"game's own exit, as before."),
     Toggle(L"openxr", L"stop_flatvr_watch", L"Stop FlatVR again if it starts during the native session", 1,
            L"BodyWalk's FlatVR is stopped through its Game Link when the native session starts - but only a FlatVR running at that moment. One started "
            L"later (BodyWalk opened after the game, its start held until SteamVR came up, its START button) ran beside the native session for the rest "
@@ -2098,6 +2167,7 @@ std::vector<Item> g_items = {
            L"Hung in the room: where the F4 tab puts them (forearm, hand)."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Needs(L"hud_third", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip))),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_size", L"Toolbar size, %", 30, 200, 1, 100,
            L"The toolbar in the picture, smaller or larger, about the middle of its bottom edge (then moved by the sliders below).")),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_near", L"Toolbar nearer / farther", -10, 10, 0.1f, 0,
@@ -2160,6 +2230,7 @@ std::vector<Item> g_items = {
            L"The corner map (Tab) smaller or larger, about its own corner. Needs D2R_DepthFog.fx on in ReShade (it draws "
            L"the map back); without it the game's own map stays. The mouse pointer lies on the game's ground by itself here."),
     Needs(L"hud_floor", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
+    Needs(L"hud_floor", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip))),
     Slider(L"hud_floor", L"map_near", L"Map nearer / farther", -10, 10, 0.1f, 0,
            L"Real stereo only: + brings the map towards the eyes, - pushes it behind the screen; 0 = where the game puts it."),
     Slider(L"hud_floor", L"map_x", L"Map left / right, %", -50, 50, 1, 0,
@@ -2218,6 +2289,12 @@ std::vector<Item> g_items = {
     Group(L"Toolbar and map (F2, F3)", L"The toolbar and the map in your own camera's views (F2 and F3): tick the arrow to see on the map which way you look."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip),
+    Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip)),
+    Toggle(L"hud", L"flat_map_zoom", L"Zoom the map out with - and back with +", 1, kFlatMapZoomTip),
+    Needs(L"hud", L"flat_map_zoom", 1, Slider(L"hud", L"flat_map_zoom_level", L"Map zoom step", -4, 0, 1, 0,
+           L"0: the map as before (round, if it turns with the camera). -1: out of the circle, the map's whole box at the game's own zoom. "
+           L"-2, -3, -4: the game draws it smaller each step, down to a quarter of its size, to see the whole level. - and + in the game set "
+           L"the same step and save it. Live.")),
     // Flat F1 and F2 draw the toolbar at [hud_top] / [hud_third] bar_size (vrcam BarSizeNow, whatever the platform), whose sliders are on
     // the VR-only tabs UI: F1 above / UI: F2 behind: a flat player had the shipped 74 / 71 % and no way to change them (2026-10-28).
     Group(L"Toolbar size (F1, F2)", L"How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back."),
@@ -2332,6 +2409,11 @@ std::vector<Item> g_items = {
            L"for each - Invite, Accept or Cancel invite, as the game's Party panel shows it - plus Leave party and Open Party panel (P). "
            L"The buttons run the game's own Party panel code, so no keyboard and no P key are needed; the game answers in its own words. "
            L"Only in a multiplayer game (TCP/IP or online). Off: no Party button. Live.")),
+    Needs(L"openxr", L"headset_settings", 1, Toggle(L"openxr", L"headset_map_party", L"Party on the map from the headset", 1,
+           L"The headset settings' Co-op page gets a row \"The game's map shows\" with two switches, Party and Names: the game's own "
+           L"Options > Automap > Show Party and Show Party Names, as the game has them now. With Show Party off the game draws no ally on "
+           L"any map - the one in your hand, the big one, the flat one. A press is the game's own key command for it, so the game flips "
+           L"it and keeps it in its own settings, as from its menu. Off: no row. Live.")),
     Needs(L"openxr", L"headset_settings", 1, Toggle(L"openxr", L"headset_players", L"Players from the headset", 0,
            L"The headset settings' Options page gets a working Players (difficulty) row: the game's own players count, 1 - 8, as the "
            L"chat command /players N sets it (the game's Options > Gameplay \"Offline Difficulty Scaling\"). - and + send the game that "
@@ -2722,6 +2804,7 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_compass", L"Compass over the map in the hand", 0, kMapCompassTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_click_big", L"Map in the hand: laser click makes it big", 0, kMapClickBigTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_stick_zoom", L"Zoom the map: laser on it + right stick up / down", 0, kMapStickZoomTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_two_sizes", L"Map: two sizes only (small in the hand, big in front)", 1, kMapTwoSizesTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_on_hand", L"Big map held on the left hand", 0, kMapBigOnHandTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_beside_inventory", L"Map beside the inventory on the hand", 0, kMapBesideInventoryTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_follow", L"Big map in front: stays in the room, follows slowly", 0, kMapBigFollowTip)),
@@ -3081,25 +3164,25 @@ std::vector<Item> g_items = {
     Tab(L"World"),
     Group(L"Fog", L"The distance fog, and fixes for the game's depth effects seen from our camera. Set where the fog is complete, its falloff, fog in caves and its colour, whether fire and spells are spared, and fixes for the game's own fogs, walls in front of the hero, roofs and lighting at a square window."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"A distance fog. Who draws it: the Sky tab's selector (our effect, or the game itself). With the sky on, it fades into the sky."),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_mist", L"The game's fog over its mist too", 1,
+           L"A distance fog. Who draws it: the Sky tab's \"Fog drawn by\" (our effect, or the game itself). With the sky on, it fades into the sky."),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_mist", L"The game's fog over its mist too", 1,
            L"The game's own fog pass adds its volumetric mist (lit by torches and the like) after the fog, never fogged by distance: in a cave "
            L"our dark fog turned the far walls black and the mist stayed, a light band behind the fires. Ticked: the mist fades with distance "
            L"as everything else does. Without ReShade only. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_caves_black", L"The game's fog darkens to black in caves", 1,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_caves_black", L"The game's fog darkens to black in caves", 1,
            L"Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left "
            L"alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. "
            L"Without ReShade only. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_our_curve", L"The game's fog by our curve", 0,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_our_curve", L"The game's fog by our curve", 0,
            L"The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own "
            L"start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far "
            L"range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 0,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 0,
            L"While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of "
            L"it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to \"Sky at night\" and by "
            L"the sky's brightness for each time of day. With the sky's colour (\"The fog's colour: measured from the game\" unticked): the day "
            L"sky's at the horizon at every hour; off, the night sky's by night - near black. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
            L"In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the "
            L"world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, "
            L"as it is drawn). Far objects show the sky through them. The game's fog only (with \"The game's fog as thick and as coloured as "
@@ -3109,7 +3192,7 @@ std::vector<Item> g_items = {
            L"before. Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
            L"land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the "
            L"effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live."),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_match", L"The game's fog as thick and as coloured as ours", 1,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_match", L"The game's fog as thick and as coloured as ours", 1,
            L"The game's fog came out darker than the act's fog colour (the area's colour grading) and thinner than ours (it thins above the "
            L"eye, and without our curve it is the game's own): in act 4 the far land stood as a dark silhouette and hid nothing. Ticked, the "
            L"effect makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by our "
@@ -3128,7 +3211,7 @@ std::vector<Item> g_items = {
            L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: "
            L"EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. "
            L"Without ReShade only. Live. Off: the effects never fogged.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
            L"The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none "
            L"above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, "
            L"nothing added. Outdoors only (underground no sky to keep clear). Without ReShade only. Off: the game's fog as it is. Live.")),
@@ -3140,7 +3223,7 @@ std::vector<Item> g_items = {
            L"The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, "
            L"the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. "
            L"Off: from the eyes, as before. Unticking \"thins with height\" instead gives the fog by distance alone, as our own fog. Live.")),
-    Needs(L"fog", L"enabled", 1, Needs(L"@skyfog", L"way", 1, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
            L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150, L"Where the fog begins. World units (the hero is ~7.5 tall).")),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600, L"Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start "
@@ -3313,24 +3396,29 @@ std::vector<Item> g_items = {
            L"d2rloader\\d2r_vr_libs). Unticked: the game's own death animation.")),
 
     Tab(L"Sky"),
-    Group(L"Sky and fog", L"Who draws the sky and the distance fog: the game itself (new) or our effect (old) - one choice for both."),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"render", L"game_drawn_flat", L"The game draws them in the flat game too", 0,
+    Group(L"Sky and fog", L"Who draws the sky and who draws the distance fog: the game itself (new) or our effect (old) - a choice each, any two together (the game's dome with our fog, our sky with the game's fog)."),
+    NeedsEitherOf(L"sky", L"game_sky", L"fog", L"game_fog", 1, Toggle(L"render", L"game_drawn_flat", L"The game draws them in the flat game too", 0,
            L"The sky dome, the cave dome and ceiling and the fog the game draws itself, also when you play on the monitor without a headset "
            L"(the flat first and third person views; from above stays as it is). Off: only in VR first person (F4). Live.")),
-    Choice(L"@skyfog", L"way", L"Sky and fog drawn by", 1, {L"The game draws them (new)", L"Our effect (old)"},
-           L"Who draws the sky and the distance fog, both at once. The game (new): its own fog pass with our numbers and a sky dome of ours the "
-           L"game draws itself - no frame time of ours (VR F4; without ReShade for its fog's options below). Our effect (old): the fog shader's "
-           L"sky and fog (ReShade's, or D2R VR's own without ReShade). Writes [sky] game_sky and [fog] game_fog together. Live - the game's sky "
-           L"dome's files are made by this program at its start: the first time after an install or an update, restart a game already running."),
+    Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
+           L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
+           L"ours (VR F4; the flat game too with \"The game draws them in the flat game too\"). Our effect (old): the fog shader paints the sky "
+           L"in the void. Either goes with either fog (\"Fog drawn by\"): the sky's low part sinks into the fog's colour both ways. Live - the "
+           L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
+           L"already running."),
+    Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
+           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers - no frame time of ours (VR F4; the "
+           L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
+           L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
     Group(L"Sky", L"A sky in the black void beyond the world, only in the open air. Set the clouds, whether the sky turns slowly, the sky over the dark rim round roofs and trees, and the Arcane Sanctuary's own stars all round and its fog."),
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
            L"A sky in the black void beyond the world. Only in the open air; hidden while a menu or side panel is open."),
-    Needs(L"@skyfog", L"way", 0, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
+    Needs(L"sky", L"game_sky", 1, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
            Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
            L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
            L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
            L"use with each change."))),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
     Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
@@ -3346,13 +3434,13 @@ std::vector<Item> g_items = {
            L"every other frame. Ticked: the sky goes over that pixel when it is dim (a glow's light edge stays); silhouettes come out a "
            L"pixel thinner. First person (F4) only. Unticked: as before. Live. Install the DLL and D2R_DepthFog.fx together. "
            L"From bearstonem/d2r-pcvr."))),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_past_far", L"The game's sky: past the game's haze in the flat game", 0,
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_past_far", L"The game's sky: past the game's haze in the flat game", 0,
            L"The game's own passes read the depth only to the far end of its range (about 1060 units) and take what lies past it as the sky. "
            L"In the flat game's views the dome, nearer than that on part of the screen, got the game's distance haze there and none past it: "
            L"a darker disc in a light veil, its size changing with the radius. Ticked, outside VR first person the dome is laid at least as far as "
            L"that range's end at the screen's farthest corner, so all of it is past the haze - one sky; a larger radius stays as set. VR first "
            L"person keeps the radius as set. Live.")),
-    Needs(L"sky", L"dome_tint", 1, Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_true_colour", L"The game's sky: our sky's colours", 0,
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_true_colour", L"The game's sky: our sky's colours", 0,
            L"The game draws our painted sky in its own scene, through its tone map and the area's colour grading - darker than our effect's "
            L"sky, which is drawn in the picture's own colours. Ticked, our effect measures what the game shows of the dome against the "
            L"painted sky it was made from and brings the dome to it, every area by its own numbers. A multiply in the effect's pass, which "
@@ -3363,23 +3451,23 @@ std::vector<Item> g_items = {
            L"and kept in d2r_vr_dome_gain.txt beside the settings (delete it to measure again). After that the sky is baked from those numbers "
            L"only when the light, the time of day or a slider changes - nothing measured or baked again while you play. Live. Off: measured "
            L"all the time, as before."))),
-    Needs(L"sky", L"dome_tint", 1, Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_in_game_colour", L"The game's sky: its colours drawn by the game", 1,
+    Needs(L"sky", L"dome_tint", 1, Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_in_game_colour", L"The game's sky: its colours drawn by the game", 1,
            L"Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, "
            L"blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game "
            L"draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness "
            L"of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own "
            L"effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect "
            L"recolours it as before."))),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
            L"The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with "
            L"no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"dome_fog_baked", L"The game's sky: its low part in the fog's colour", 1,
+    Needs(L"sky", L"game_sky", 1, Needs(L"fog", L"game_fog", 1, Toggle(L"sky", L"dome_fog_baked", L"The game's sky: its low part in the fog's colour", 1,
            L"With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low "
            L"part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's "
-           L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.")),
+           L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live."))),
     Needs(L"sky", L"dome_fog_baked", 1, Slider(L"sky", L"dome_fog_baked_strength", L"The game's sky: how much of the fog's colour", 0, 1, 0.05f, 1,
            L"1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.")),
-    Needs(L"@skyfog", L"way", 0, Toggle(L"sky", L"game_sky_closed", L"The game's sky: a whole sphere, one colour below", 1,
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_sky_closed", L"The game's sky: a whole sphere, one colour below", 1,
            L"The game-drawn sky ended 12 degrees under the horizon: past a cliff's edge its rim stood as a hard line with a hole "
            L"under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - "
            L"the sky's own at the horizon (with a fog drawn, the fog's: they meet in one colour). In every act, VR and flat. This "
@@ -3490,7 +3578,7 @@ std::vector<Item> g_items = {
     Toggle(L"ceiling", L"enabled", L"Ceiling in caves and dungeons", 0,
            L"A ceiling over the black void in caves and dungeons, first person only - the game's own (its lit stone) or our effect's "
            L"vault, as \"Who draws the ceiling\" says; each room's height below."),
-    Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (ReShade / D2R VR's own)", L"The game (lit rock)"},
+    Needs(L"ceiling", L"enabled", 1, Choice(L"ceiling", L"game_ceiling", L"Who draws the ceiling", 0, {L"Our effect (D2R VR's own)", L"The game (lit rock)"},
            kGameCeilingTip)),
     Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_wall", L"The game's ceiling: bent down into a wall at its rim", 0,
            L"A ring of the same lit rock round you where the game's ceiling ends (about 215 units out at tile size 10), from the ceiling down "
@@ -4743,6 +4831,15 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
            L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
            L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Toggle(L"gameplay", L"melee_direct_by_hand",
+           L"Direct hit: each hand strikes with its own weapon (two weapons)", 1,
+           L"Single player and the host, a weapon in each hand (Barbarian, Assassin). The game alternates the two weapons itself, on its "
+           L"server, every other attack; a direct hit skipped that and always struck with the RIGHT weapon. On: a direct blow of the "
+           L"LEFT-hand weapon is struck the way the game strikes its own left swings (its hidden \"Left Hand Swing\": the left weapon's "
+           L"damage and properties), the right hand's blow with the right weapon. So you choose the weapon for the monster: one weapon "
+           L"freezes, the other burns or poisons - strike with the hand whose weapon suits the monster in front of you. The hit roll and "
+           L"the damage stay the game's. Off: every direct blow with the right weapon, as before. A player who joined someone's game: the "
+           L"host alternates as the game does. Live."))),
     Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
            L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
            L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
@@ -4756,16 +4853,7 @@ std::vector<Item> g_items = {
            L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
            L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
            L"least length. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Toggle(L"gameplay", L"melee_direct_client_cleave",
-           L"Direct hit: a two-handed swing through a group hits each monster (past the game's rules)", 0,
-           L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. The game runs one attack at a time, so a swing through several monsters "
-           L"normally lands on the first only. On, with a TWO-HANDED weapon: the first monster gets the direct hit as above; every other monster "
-           L"the same swing touches while that attack plays, with the least speed AND force above, gets the game's server attack for your hero, "
-           L"once (the hit roll, the damage and the weapon's wear are the game's; no animation of its own) - in single player and as the host on "
-           L"this PC, as a joined player asked of the HOST over D2RLoader's network. No repeat on the same monster sooner than your attack takes. "
-           L"A one-handed weapon, or a touch too slow or too weak: the normal attack. JOINED: THE HOST MUST SET \"By the rules\" AND TICK THIS BOX "
-           L"TOO - it strikes only on its own say-so; with it off, those hits are dropped as without the box. Takes effect at the game's next "
-           L"start (the network channel). Off: as before."))),
+    // (the two-handed cleave, [gameplay] melee_direct_client_cleave, is on the Mechanics tab: a rule of the game, who hosts decides)
     Sub(L"Monsters you carry and throw (Weapon Weight > Grab bodies)"),
     // [weight] grab_moves_unit: what grab_throw carries and throws is moved by the game's own knockback (vr/grab_move.h; single player / host)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_moves_unit", L"The game moves what you carry and throw (a test)", 0,
@@ -6319,7 +6407,7 @@ const wchar_t* FileOf(const Item& it) { return wcscmp(it.section, L"@ui") == 0 ?
 constexpr int kPresets = 5;   // Light, Potato, Low, Medium, High; then Custom
 struct PresetKey { const wchar_t* section; const wchar_t* key; float v[kPresets]; };
 const PresetKey kPreset[] = {
-    {L"render", L"no_reshade", {1, 0, 0, 0, 0}},   // Light: ReShade64.dll not loaded (docs/plan_no_reshade.md); the fog and the sky drawn by D2R VR itself
+    // (Light set [render] no_reshade=1 until 0.203: no ReShade for any preset now)
     {L"render", L"native_effects", {1, 1, 1, 1, 1}},
     // Light, the eye made the cheaper way (docs/plan_no_reshade.md: on a GTX 1050 Ti the eye made took ~4.4 ms of the 13.9 a frame has at
     // 72 Hz): its rims, the strips beside near things and the sharper read off, its own picture not kept - the drawn eye's grid stays (it
@@ -6338,7 +6426,6 @@ const PresetKey kPreset[] = {
     {L"fog", L"caves_start", {60, 60, 60, 100, 100}},
     {L"fog", L"caves_end", {100, 100, 100, 200, 200}},
     {L"sky", L"enabled", {1, 1, 1, 1, 1}},
-    {L"@reshade", L"generic_depth", {1, 1, 1, 1, 1}},
     {L"ceiling", L"enabled", {0, 0, 1, 1, 1}},   // Low too (8 relief steps): players on Low had no ceilings at all
     {L"ceiling", L"steps", {8, 8, 8, 12, 20}},
     // Light: native OpenXR with the eyes by turns (the only mode without ReShade); Potato: FlatVR 3D depth (ReShade's depth, one frame a picture);
@@ -6436,47 +6523,6 @@ std::wstring ReShadeFiles() {
     return modlayout::OurFilesDir(game, ModInstall() ? modlayout::ModRoot(game) : std::wstring());
 }
 int ReShadePathsCheck();   // (below) are D2R VR's two folders in the search paths of the player's dxgi.dll ReShade? 0 yes, 1 no, 2 no dxgi.dll / not the mod
-// Where ReShade's files are for the Home buttons (shared/reshade_as.h): the game's folder, and the mod's reshade\ when D2R VR is the mod.
-reshadeas::Where ReShadeWhere() {
-    const std::wstring game = GameFolder();
-    return {game, ModInstall() ? modlayout::ModReShade(game) : std::wstring()};
-}
-// "@reshade" generic_depth: ReShade's Generic Depth add-on, on unless its name is in
-// [ADDON] DisabledAddons of the ReShade.ini in ReShade's folder (read when the game starts).
-constexpr const wchar_t* kGenericDepth = L"Generic Depth";
-std::vector<std::wstring> DisabledAddons() {
-    wchar_t buf[2048] = {};
-    GetPrivateProfileStringW(L"ADDON", L"DisabledAddons", L"", buf, 2048, (ReShadeFolder() + L"ReShade.ini").c_str());
-    std::vector<std::wstring> out;
-    std::wstring cur;
-    for (const wchar_t* c = buf;; ++c) {
-        if (*c == L',' || !*c) {
-            while (!cur.empty() && cur.back() == L' ') cur.pop_back();
-            size_t b = 0;
-            while (b < cur.size() && cur[b] == L' ') ++b;
-            if (b < cur.size()) out.push_back(cur.substr(b));
-            cur.clear();
-            if (!*c) break;
-        } else cur += *c;
-    }
-    return out;
-}
-float ReadReShadeValue(const Item&) {
-    for (const std::wstring& a : DisabledAddons()) if (_wcsicmp(a.c_str(), kGenericDepth) == 0) return 0.0f;
-    return 1.0f;
-}
-void WriteReShadeValue(const Item&, float v) {
-    const std::wstring ini = ReShadeFolder() + L"ReShade.ini";
-    if (GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES) return;   // no ReShade: nothing to switch
-    std::wstring list;
-    for (const std::wstring& a : DisabledAddons()) {
-        if (_wcsicmp(a.c_str(), kGenericDepth) == 0) continue;
-        list += (list.empty() ? L"" : L",") + a;
-    }
-    if (v == 0.0f) list += (list.empty() ? L"" : L",") + std::wstring(kGenericDepth);
-    WritePrivateProfileStringW(L"ADDON", L"DisabledAddons", list.c_str(), ini.c_str());
-}
-
 // "@stereo3d" source, the six modes (5: native OpenXR with the eyes by turns - [openxr] on with
 // afr alone, 2026-10-11): 0 stereo (one pass, two pictures - [stereo] afr,
 // pair_per_tick and replay_right), 1 stereo by turns (afr alone), 2 3D from ReShade's depth,
@@ -6588,9 +6634,6 @@ void WriteSquareWindow(bool on) {
         side = std::clamp((int)GetPrivateProfileIntW(L"openxr", L"window_size", 2000, g_ini), 640, 4000);
         side -= side % 8;
         if (!WriteGameWindow(side, side)) { SetStatus(L"square_window", 1, TR(L"status.settings_json.not_written", L"The game's Settings.json could not be written")); return; }
-        const std::wstring rs = ReShadeFolder() + L"ReShade.ini";
-        if (GetPrivateProfileIntW(L"DEPTH", L"UseAspectRatioHeuristics", 1, rs.c_str()) == 2)
-            WritePrivateProfileStringW(L"DEPTH", L"UseAspectRatioHeuristics", L"1", rs.c_str());
     } else {
         wchar_t b[32] = L"";
         GetPrivateProfileStringW(L"openxr", L"window_before", L"", b, 32, g_ini);
@@ -6787,12 +6830,9 @@ float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@preset") == 0) return (float)MatchPreset();
     if (wcscmp(it.section, L"@distance") == 0) return ReadDrawDistance();
     if (wcscmp(it.section, L"@stereo3d") == 0) return ReadStereo3D();
-    if (wcscmp(it.section, L"@reshade") == 0) return ReadReShadeValue(it);
     if (wcscmp(it.section, L"@game") == 0) { float v = it.def; ReadGameValue(it, &v); return v; }
     if (wcscmp(it.section, L"@window") == 0) return ReadSquareWindow();
     if (wcscmp(it.section, L"@bodywalk") == 0) return ReadBodyWalkValue(it);
-    if (wcscmp(it.section, L"@skyfog") == 0)
-        return GetPrivateProfileIntW(L"sky", L"game_sky", 0, g_ini) != 0 || GetPrivateProfileIntW(L"fog", L"game_fog", 0, g_ini) != 0 ? 0.0f : 1.0f;
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: Off 0 / 0, By the rules 2 / 1, Fully on 1 / 2 ([gameplay] melee_direct / melee_direct_client)
         return (float)directhit::FromKeys(GetPrivateProfileIntW(L"gameplay", L"melee_direct", 0, g_ini), GetPrivateProfileIntW(L"gameplay", L"melee_direct_client", 0, g_ini));
     }
@@ -6847,7 +6887,6 @@ void WriteValue(const Item& it, float v) {
         if (!WriteStereo3D(v)) { RefreshControls(); return; }   // the list back to what is set
         ApplyFrameCap(); ShowPreset(); return;
     }
-    if (wcscmp(it.section, L"@reshade") == 0) { WriteReShadeValue(it, v); ShowPreset(); return; }
     if (wcscmp(it.section, L"@game") == 0) {
         if (wcscmp(it.key, L"Framerate Cap") == 0 && g_platform == 1) WriteVrFrameCap((int)std::lround(v));   // VR's own cap: the player's kept first
         else WriteGameValue(it, v);
@@ -6863,15 +6902,6 @@ void WriteValue(const Item& it, float v) {
         WritePrivateProfileStringW(L"gameplay", L"melee_direct", std::to_wstring(d).c_str(), g_ini);
         WritePrivateProfileStringW(L"gameplay", L"melee_direct_client", std::to_wstring(c).c_str(), g_ini);
         RefreshControls();
-        ShowPreset();
-        return;
-    }
-    if (wcscmp(it.section, L"@skyfog") == 0) {   // the sky and the fog drawn the same way: both keys (old inis keep reading them)
-        const wchar_t* game = std::lround(v) == 0 ? L"1" : L"0";
-        WritePrivateProfileStringW(L"sky", L"game_sky", game, g_ini);
-        WritePrivateProfileStringW(L"fog", L"game_fog", game, g_ini);
-        RefreshControls();   // (the selector's twin on the other tab)
-        StartSkyDome();      // the dome's files made or taken out now
         ShowPreset();
         return;
     }
@@ -7330,11 +7360,12 @@ void Build(HWND page) {
     g_tabCount = tab + 1;
     for (Item& it : g_items)
         for (Item::Need& nd : it.needs)
-            for (size_t j = 0; j < g_items.size(); ++j)
-                if (g_items[j].key && wcscmp(g_items[j].section, nd.section) == 0) {
-                    if (wcscmp(g_items[j].key, nd.key) == 0) nd.item = (int)j;
-                    if (nd.orKey && wcscmp(g_items[j].key, nd.orKey) == 0) nd.orItem = (int)j;
-                }
+            for (size_t j = 0; j < g_items.size(); ++j) {
+                if (!g_items[j].key) continue;
+                if (wcscmp(g_items[j].section, nd.section) == 0 && wcscmp(g_items[j].key, nd.key) == 0) nd.item = (int)j;
+                if (nd.orKey && wcscmp(g_items[j].section, nd.orSection ? nd.orSection : nd.section) == 0 && wcscmp(g_items[j].key, nd.orKey) == 0)
+                    nd.orItem = (int)j;
+            }
     for (Item& it : g_items)
         if (it.showFor.key)
             for (size_t j = 0; j < g_items.size(); ++j)
@@ -8652,7 +8683,17 @@ void GameStoreEnvironment(const std::wstring& game) {
     SetEnvironmentVariableW(L"SteamGameId", steam ? L"2536520" : nullptr);
     LogLine(std::wstring(L"launch: the ") + (steam ? L"Steam copy - SteamAppId 2536520" : L"Battle.net copy - no Steam ids passed to the game"));
 }
+int ReShadePathsRemove();   // (below)
 int LaunchGame() {
+    {   // D2R VR's two folders of 0.202 and older out of a player's own dxgi.dll ReShade's ini before the game starts (Setup takes them out too, unless the
+        // game ran then): else that ReShade still loads D2R_DepthFog.fx and draws it on top of D2R VR's own effect (0.203: D2R VR uses no ReShade)
+        const std::wstring g = GameFolder();
+        if (ModInstall() && Exists(g + L"dxgi.dll") && ReShadePathsCheck() == 0) {
+            const int rc = ReShadePathsRemove();
+            LogLine(L"launch: D2R VR's folders (from before 0.203) taken out of the player's ReShade.ini: " +
+                    std::wstring(rc == 0 ? L"done" : rc == 3 ? L"not now, the game runs" : L"could not write"));
+        }
+    }
     ApplyWindowForPlatform();   // START in flat mode never meets VR's square (and in VR the square, if ticked)
     if (g_platform != 1) RestoreFrameCapForFlat();   // ... nor VR's frame cap (in VR START changes nothing: the rate was written when it was chosen)
     ApplySafeScreenForPlatform();   // ... nor VR's interface size (and in VR the game starts at 80 where the player chose none; the game is not running yet)
@@ -8882,8 +8923,7 @@ void AutoRun(bwauto::When when) {
 // three shared blocks each side writes while it runs.
 void D2RLoaderStatus();   // D2RLoader's row and its button (below, by the update check)
 void FrameGenStatus();    // [openxr] frame_generation: OFXR Bridge's row and its button (below)
-extern std::atomic<bool> g_rsBusy;   // Install ReShade (below)
-extern std::wstring g_rsError;
+int ReShadePathsRemove();   // (below) D2R VR's folders of before 0.203 out of the player's dxgi.dll ReShade's ini
 
 void LaunchButton();
 std::wstring Widen(const std::string& s);   // UTF-8 to UTF-16 (below)
@@ -8987,81 +9027,44 @@ void UpdateIpdStatus() {
     }
     SetStatus(L"ipd_measured", state, line.c_str());
 }
-// Home > The game and ReShade: ReShade's row and its buttons, flat and VR alike (RefreshStatus). Until 0.180 this was after RefreshStatus' VR-only
-// return: flat mode showed bare labels and no Install ReShade (a player, 2026-10-25).
+// Home > The game and the mod: the mod's effect, flat and VR alike (RefreshStatus). Since 0.203 D2R VR uses no ReShade (vr/plugin/reshade_load.cpp):
+// its own runtime reads D2R_DepthFog.fx and the pictures from the mod's reshade\ (ReShadeFiles). A dxgi.dll next to D2R.exe is the player's own
+// ReShade: left exactly as it is. Up to 0.202 Setup added D2R VR's two folders to its ReShade.ini (shared/reshade_paths.h) - so that ReShade loaded
+// our effect too (and rebuilt it in its present: crash reports 231 / 232 / 251); Setup takes them out again, and so does this, once, with the game
+// closed (only our own two list items; ReShade writes its ini back when the game ends, so not while it runs).
 void ReShadeStatus() {
-    // ReShade, and D2R VR's files in it. Two ways, by what is next to D2R.exe (shared/reshade_as.h, shared/reshade_paths.h):
-    //  - no dxgi.dll: D2R VR's own ReShade64.dll in mods\D2R-VR\reshade, which vrcam loads itself (the plain D2R.exe refuses a dxgi.dll), with the mod's effect;
-    //  - a dxgi.dll (the player's own ReShade): it is used as it is, and found D2R VR's effect and pictures through two search paths in its ReShade.ini.
-    // And FlatVR's depth add-on, which sits with the rest in the mod's reshade\ (ReShade loads it from there, or vrcam does for a dxgi.dll ReShade).
     wchar_t exe[MAX_PATH];
     DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
     while (n && exe[n - 1] != L'\\') --n;
     const std::wstring root(exe, n);
-    const std::wstring own = ReShadeFolder();     // where D2R VR's own ReShade64.dll is: the mod's reshade\ as the mod, else the game's folder
-    const std::wstring files = ReShadeFiles();    // where D2R VR's effect, pictures and add-on are: the mod's reshade\ (the game's folder before the mod layout)
-    const bool r64 = Exists(own + L"ReShade64.dll"), dx = Exists(root + L"dxgi.dll");
-    const bool mod = ModInstall();
+    const std::wstring files = ReShadeFiles();
+    const bool dx = Exists(root + L"dxgi.dll"), mod = ModInstall();
     const bool fx = Exists(files + L"reshade-shaders\\Shaders\\D2R_DepthFog.fx");
-    const bool pathsIn = dx && mod && ReShadePathsCheck() == 0;
-    if (dx && !fx)
-        SetStatus(L"reshade", kBad, TR(L"status.reshade.dxgi_no_fx", L"ReShade is there (dxgi.dll), the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again"));
-    else if (dx && mod && !pathsIn)
-        SetStatus(L"reshade", kWarn, TR(L"status.reshade.dxgi_no_paths", L"Your ReShade (dxgi.dll next to D2R.exe) is used as it is, but its ReShade.ini does not list D2R VR's folders yet "
-                                                                        L"(mods\\D2R-VR\\reshade): no fog, sky or ceiling through it. Press \"Add D2R VR's folders to my ReShade\" (game closed)"));
-    else if (dx && mod)
-        SetStatus(L"reshade", kOk, TR(L"status.reshade.dxgi_paths", L"Your ReShade (dxgi.dll next to D2R.exe) is used as it is; its search paths reach D2R VR's effect and pictures in mods\\D2R-VR\\reshade"));
-    else if (dx)
-        SetStatus(L"reshade", kOk, TR(L"status.reshade.dxgi", L"ReShade as dxgi.dll: the game loads it itself, D2R VR works with it"));
-    else if (!r64) {
-        // a ReShade64.dll beside D2R.exe in the mod layout is not D2R VR's (shared/mod_layout.h ReShadeDir): not used, not counted
-        const bool stray = mod && Exists(root + L"ReShade64.dll");
-        if (!g_rsBusy.load())
-            SetStatus(L"reshade", kBad, !g_rsError.empty() ? g_rsError.c_str()
-                                        : stray ? TR(L"status.reshade.stray", L"D2R VR's own ReShade is not installed (the ReShade64.dll next to D2R.exe is not D2R VR's - it is not used, "
-                                                                                     L"and is left where it is): no fog or sky - press Install ReShade")
-                                                : TR(L"status.reshade.none", L"ReShade not installed - press Install ReShade"));
+    bool pathsIn = dx && mod && ReShadePathsCheck() == 0;
+    static bool tookOut = false;
+    if (pathsIn && !tookOut && !ProcessRunning(L"D2R.exe") && !ProcessRunning(L"D2RLoader.exe")) {
+        tookOut = true;
+        const int rc = ReShadePathsRemove();
+        LogLine(L"reshade paths: D2R VR's folders (from before 0.203) found in the player's ReShade.ini - taken out: " +
+                std::wstring(rc == 0 ? L"done" : L"could not write"));
+        pathsIn = ReShadePathsCheck() == 0;
     }
-    else if (!fx)
-        SetStatus(L"reshade", kBad, TR(L"status.reshade.no_fx", L"ReShade is there, the mod's effect D2R_DepthFog.fx is not - run D2R VR Setup again"));
+    if (!fx)
+        SetStatus(L"reshade", kBad, TR(L"status.effect.no_fx", L"The mod's effect D2R_DepthFog.fx is missing from mods\\D2R-VR\\reshade - run D2R VR Setup again"));
+    else if (dx && pathsIn)
+        SetStatus(L"reshade", kWarn, TR(L"status.effect.dxgi_paths_left", L"D2R VR draws its sky and fog itself. Your own ReShade (dxgi.dll next to D2R.exe) still lists D2R VR's folders "
+                                                                          L"from an older version - close the game and open D2R VR Settings again to take them out"));
+    else if (dx)
+        SetStatus(L"reshade", kOk, TR(L"status.effect.dxgi", L"D2R VR draws its sky and fog itself, without ReShade. Your own ReShade (dxgi.dll next to D2R.exe) is left as it is and runs only your own effects"));
     else
-        SetStatus(L"reshade", kOk, mod ? TR(L"status.reshade.ok_mod", L"D2R VR's own ReShade and the mod's effect installed (mods\\D2R-VR\\reshade)")
-                                       : TR(L"status.reshade.ok", L"ReShade and the mod's effect installed"));
-    // [render] no_reshade (Performance > Quality: Light): the plugin does not load ReShade64.dll - none, or one without the effect, is not a fault then
-    // (the buttons stay: ReShade may be installed for later). A dxgi.dll of the player's is loaded by the game all the same: as above.
-    if (!dx && GetPrivateProfileIntW(L"render", L"no_reshade", 0, g_ini) != 0)
-        SetStatus(L"reshade", kOk, TR(L"status.reshade.not_used", L"Not used: \"No ReShade\" is on (Performance > Quality: Light) - the game runs without it: no fog, sky or ceiling"));
-    // which buttons, by the files there (shared/reshade_as.h, tested)
-    const reshadeas::Buttons show = reshadeas::ButtonsShown(ReShadeWhere(), pathsIn);
+        SetStatus(L"reshade", kOk, TR(L"status.effect.ok", L"D2R VR draws its sky and fog itself - no ReShade needed"));
     {   // what it was decided from, into the log when it changes (d2r_vr_settings.log)
         auto yn = [](bool b) { return b ? L"yes" : L"no"; };
-        const std::wstring facts = std::wstring(L"reshade status (") + (g_platform == 1 ? L"VR" : L"flat") + L", " + (mod ? L"the mod" : L"no mod layout") +
-                                   L"): dxgi.dll " + yn(dx) + L", ReShade64.dll in " + own + L" " + yn(r64) +
-                                   L", ReShade64.dll beside D2R.exe " + yn(Exists(root + L"ReShade64.dll")) + L", dxgi.dll.off " + yn(Exists(root + L"dxgi.dll.off")) +
-                                   L", dxgi.dll.bak " + yn(Exists(root + L"dxgi.dll.bak")) + L", D2R_DepthFog.fx " + yn(fx) + L", search paths " + yn(pathsIn) +
-                                   L" -> buttons: install " + yn(show.install) + L", paths " + yn(show.paths) + L", aside " + yn(show.aside) + L", back " + yn(show.back);
+        const std::wstring facts = std::wstring(L"effect status (") + (g_platform == 1 ? L"VR" : L"flat") + L", " + (mod ? L"the mod" : L"no mod layout") +
+                                   L"): dxgi.dll " + yn(dx) + L", D2R_DepthFog.fx " + yn(fx) + L", our folders in its ReShade.ini " + yn(pathsIn);
         static std::wstring told;
         if (facts != told) { told = facts; LogLine(facts); }
     }
-    for (const auto& [key, want] : {std::pair<const wchar_t*, bool>{L"reshade_get", show.install}, {L"reshade_paths", show.paths},
-                                    {L"reshade_aside", show.aside}, {L"reshade_back", show.back}})
-        if (Item* b = FindItem(L"@run", key)) {
-            const bool hide = !want;
-            if (b->hidden != hide) { b->hidden = hide; LayoutPage(); }
-        }
-    // the note: only while there is a dxgi.dll of the player's to say something about
-    SetStatus(L"reshade_note", kUnknown,
-              mod ? TR(L"status.reshade_note.mod", L"D2R VR does not rename, move or delete your dxgi.dll. To give D2R VR a ReShade of its own instead, put yours aside (the button above).")
-                  : TR(L"status.reshade_note.plain", L"A ReShade you have as dxgi.dll is used as it is."));
-    if (Item* nt = FindItem(L"@status", L"reshade_note")) {
-        const bool hide = !dx;
-        if (nt->hidden != hide) { nt->hidden = hide; LayoutPage(); }
-    }
-    const bool addon = Exists(files + L"FlatVR_DepthProvider.addon64");
-    SetStatus(L"depth_addon", addon ? kOk : kBad, addon ? TR(L"status.depth_addon.ok", L"FlatVR depth add-on installed")
-                                                        : TR(L"status.depth_addon.missing", L"FlatVR depth add-on missing from the mod's reshade folder - run D2R VR Setup again"));
-    if (!addon && !dx && GetPrivateProfileIntW(L"render", L"no_reshade", 0, g_ini) != 0)   // (no ReShade: nothing would load it)
-        SetStatus(L"depth_addon", kUnknown, TR(L"status.depth_addon.not_used", L"FlatVR depth add-on not used (\"No ReShade\" is on)"));
 }
 
 
@@ -10160,157 +10163,6 @@ void D2RLoaderThread(HWND wnd, std::wstring game) {
     PostD2RL(wnd, kOk, TR(L"status.d2rloader.installed", L"D2RLoader 1.3.1 installed - start the game with D2RLoader.exe"), true);
 }
 
-// ---- Install ReShade (Home > Status): reshade.me's current setup with add-on support,
-// headless, for D2RLoader.exe (D2R.exe while there is none); then its dxgi.dll is
-// renamed to ReShade64.dll and its search paths fixed, as D2R VR Setup did up to 0.145.
-std::atomic<bool> g_rsBusy{false};
-std::wstring g_rsError;
-constexpr UINT WM_APP_RESHADE = WM_APP + 41;
-
-bool HttpGet(const wchar_t* host, const std::wstring& path, std::vector<uint8_t>* data, DWORD* status) {
-    HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-    HINTERNET connect = session ? WinHttpConnect(session, host, INTERNET_DEFAULT_HTTPS_PORT, 0) : nullptr;
-    HINTERNET request = connect ? WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
-                                                     WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE) : nullptr;
-    DWORD size = sizeof *status;
-    *status = 0;
-    bool ok = request && WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
-              WinHttpReceiveResponse(request, nullptr) &&
-              WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
-                                  status, &size, WINHTTP_NO_HEADER_INDEX) && *status == 200;
-    if (ok) {
-        for (;;) {
-            DWORD avail = 0;
-            if (!WinHttpQueryDataAvailable(request, &avail) || !avail) break;
-            const size_t at = data->size();
-            data->resize(at + avail);
-            DWORD got = 0;
-            if (!WinHttpReadData(request, data->data() + at, avail, &got)) { ok = false; break; }
-            data->resize(at + got);
-        }
-    }
-    if (request) WinHttpCloseHandle(request);
-    if (connect) WinHttpCloseHandle(connect);
-    if (session) WinHttpCloseHandle(session);
-    return ok && !data->empty();
-}
-
-void PostReShade(HWND wnd, int state, std::wstring text, bool done) {
-    auto* p = new D2RLProgress{state, std::move(text), done};
-    if (!PostMessageW(wnd, WM_APP_RESHADE, 0, (LPARAM)p)) delete p;
-}
-
-void ReShadeThread(HWND wnd, std::wstring game) {
-    auto fail = [&](const Said& why) { LogLine(L"reshade: " + why.en); PostReShade(wnd, kBad, why.shown, true); };
-    // the current setup's name on reshade.me's front page, as BodyWalk finds it
-    std::vector<uint8_t> page;
-    DWORD status = 0;
-    if (!HttpGet(L"reshade.me", L"/", &page, &status)) { fail(SAY(L"status.reshade.no_site", L"Could not reach reshade.me (HTTP {status}) - try again", {{L"status", std::to_wstring(status)}})); return; }
-    const std::string html(page.begin(), page.end());
-    std::string name;
-    for (size_t p = html.find("ReShade_Setup_"); p != std::string::npos; p = html.find("ReShade_Setup_", p + 1)) {
-        const size_t e = html.find("_Addon.exe", p);
-        if (e != std::string::npos && e - p < 40) { name = html.substr(p, e - p + 10); break; }
-    }
-    if (name.empty()) { fail(SAY(L"status.reshade.not_found", L"Could not find the current ReShade with add-on support on reshade.me")); return; }
-    const std::wstring wname(name.begin(), name.end());
-    LogLine(L"reshade: downloading " + wname + L" from reshade.me");
-    PostReShade(wnd, kUnknown, TRF(L"status.reshade.downloading", L"Downloading {file} from reshade.me...", {{L"file", wname}}), false);
-    std::vector<uint8_t> setup;
-    if (!HttpGet(L"reshade.me", L"/downloads/" + wname, &setup, &status)) { fail(SAY(L"status.reshade.http", L"Could not download {file} (HTTP {status})", {{L"file", wname}, {L"status", std::to_wstring(status)}})); return; }
-    wchar_t tmp[MAX_PATH];
-    GetTempPathW(MAX_PATH, tmp);
-    const std::wstring exe = std::wstring(tmp) + wname;
-    {
-        std::ofstream out(exe, std::ios::binary | std::ios::trunc);
-        out.write((const char*)setup.data(), (std::streamsize)setup.size());
-        if (!out) { fail(SAY(L"status.reshade.not_saved", L"Could not save the ReShade setup to {path}", {{L"path", exe}})); return; }
-    }
-    PostReShade(wnd, kUnknown, TR(L"status.reshade.installing", L"Installing ReShade into the game's folder..."), false);
-    const std::wstring modReShade = ModInstall() ? modlayout::ModReShade(game) : std::wstring();
-    const std::wstring pluginsDir = ModInstall() ? modlayout::ModPlugins(game) : game + L"d2rloader\\plugins";
-    // One script: the headless setup for D2RLoader.exe (D2R.exe while there is none - the
-    // setup quits with code 1 for an exe that is not there), the search paths ReShade 6.8
-    // cannot read ('\**\**' -> '\**'), dxgi.dll -> ReShade64.dll, our mark for the uninstaller.
-    // As the mod, the new dxgi.dll goes straight into the mod's reshade\ as ReShade64.dll: a ReShade64.dll or ReShade.ini that was
-    // beside the game before is not D2R VR's (another mod's, or left from before 0.170) - never moved, replaced or deleted (until
-    // 2026-10-25 such a ReShade64.dll was kept and moved into the mod instead of the new one, the new one deleted).
-    // Elevated when the game's folder takes no writes (Program Files).
-    const std::wstring script =
-        L"$ErrorActionPreference='Stop'; $g=" + PsQuote(game) + L"; $s=" + PsQuote(exe) + L"; $mr = " + PsQuote(modReShade) +
-        L"; $t = Join-Path $g 'D2RLoader.exe'; if (-not (Test-Path -LiteralPath $t)) { $t = Join-Path $g 'D2R.exe' }" +
-        L"; $ini = Join-Path $g 'ReShade.ini'; $hadIni = Test-Path -LiteralPath $ini; $keep = $null; if ($mr -and $hadIni) { $keep = [IO.File]::ReadAllBytes($ini) }" +
-        L"; $p = Start-Process -FilePath $s -ArgumentList ('\"' + $t + '\" --api dxgi --headless') -Wait -PassThru" +
-        L"; if ($p.ExitCode -ne 0) { exit 10 + $p.ExitCode }" +
-        L"; if (Test-Path -LiteralPath $ini) { $c = [IO.File]::ReadAllText($ini); $n = $c.Replace('\\**\\**', '\\**'); if ($n -ne $c) { [IO.File]::WriteAllText($ini, $n) } }" +
-        L"; $d = Join-Path $g 'dxgi.dll'; $r = Join-Path $g 'ReShade64.dll'" +
-        // installed as the D2RLoader mod D2R-VR: ReShade and its ini go into the mod's own reshade\ (vrcam's ReShadeDir loads it from there)
-        L"; if ($mr) { if (-not (Test-Path -LiteralPath $d)) { exit 3 }; New-Item -ItemType Directory -Force -Path $mr | Out-Null" +
-        L"; Move-Item -LiteralPath $d -Destination (Join-Path $mr 'ReShade64.dll') -Force" +
-        L"; if ((Test-Path -LiteralPath $ini) -and -not (Test-Path -LiteralPath (Join-Path $mr 'ReShade.ini'))) { if ($hadIni) { Copy-Item -LiteralPath $ini -Destination (Join-Path $mr 'ReShade.ini') } else { Move-Item -LiteralPath $ini -Destination (Join-Path $mr 'ReShade.ini') } }" +
-        L"; if ($keep) { [IO.File]::WriteAllBytes($ini, $keep) } }" +   // the ReShade.ini that was beside the game: back as it was before the setup
-        L" else { if (Test-Path -LiteralPath $d) { if (Test-Path -LiteralPath $r) { Remove-Item -LiteralPath $d -Force } else { Rename-Item -LiteralPath $d -NewName 'ReShade64.dll' } }" +
-        L"; if (-not (Test-Path -LiteralPath $r)) { exit 3 } }" +
-        L"; $m = " + PsQuote(pluginsDir) + L"; if (Test-Path -LiteralPath $m) { Set-Content -LiteralPath (Join-Path $m 'd2r_vr_reshade_ours.txt') -Value 'ReShade was installed by D2R VR Settings.' }" +
-        L"; exit 0";
-    const std::wstring args = L"-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + EncodedCommand(script);
-    bool writable = false;
-    {
-        const std::wstring probe = game + L"d2r_vr_write_probe.tmp";
-        HANDLE f = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-        if (f != INVALID_HANDLE_VALUE) { writable = true; CloseHandle(f); }
-    }
-    SHELLEXECUTEINFOW sei{sizeof sei};
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
-    sei.lpVerb = writable ? L"open" : L"runas";
-    sei.lpFile = L"powershell.exe";
-    sei.lpParameters = args.c_str();
-    sei.nShow = SW_HIDE;
-    DWORD code = 1;
-    if (!ShellExecuteExW(&sei) || !sei.hProcess) {
-        DeleteFileW(exe.c_str());
-        fail(writable ? SAY(L"status.reshade.not_started", L"Could not start the ReShade setup")
-                      : SAY(L"status.reshade.admin", L"The game's folder needs administrator rights - allow it, and press Install ReShade again"));
-        return;
-    }
-    LogLine(L"reshade: setup and its moves running for " + game + (modReShade.empty() ? L" (no mod layout: ReShade64.dll beside D2R.exe)" : L" -> " + modReShade) +
-            (writable ? L"" : L" (as administrator: the game's folder takes no writes)"));
-    WaitForSingleObject(sei.hProcess, 300000);
-    GetExitCodeProcess(sei.hProcess, &code);
-    CloseHandle(sei.hProcess);
-    DeleteFileW(exe.c_str());
-    LogLine(L"reshade: the script ended with code " + std::to_wstring(code) + L" (0 done, 3 no dxgi.dll came out, 10+n the setup's own code n)" +
-            L"; the mod's ReShade64.dll now " + (Exists((modReShade.empty() ? game : modReShade) + L"ReShade64.dll") ? L"there" : L"missing"));
-    if (code == 3) { fail(SAY(L"status.reshade.antivirus", L"ReShade's setup ran, but no ReShade64.dll came out - an antivirus may have removed it")); return; }
-    if (code >= 10) { fail(SAY(L"status.reshade.setup_code", L"ReShade's setup did not finish (code {code}) - try again, or install it from reshade.me", {{L"code", std::to_wstring(code - 10)}})); return; }
-    if (code != 0) { fail(SAY(L"status.reshade.code", L"Could not install ReShade (code {code})", {{L"code", std::to_wstring(code)}})); return; }
-    LogLine(L"reshade: " + wname + L" installed into " + game);
-    PostReShade(wnd, kOk, TR(L"status.reshade.installed", L"ReShade installed - start the game with D2RLoader.exe"), true);
-}
-
-void StartReShadeInstall() {
-    if (g_rsBusy.exchange(true)) return;
-    if (Item* b = FindItem(L"@run", L"reshade_get")) EnableWindow(b->ctl, FALSE);
-    SetStatus(L"reshade", kUnknown, TR(L"status.reshade.looking", L"Looking for the current ReShade on reshade.me..."));
-    try {
-        std::thread(ReShadeThread, g_main, GameFolder()).detach();
-    } catch (const std::exception&) {
-        g_rsBusy.store(false);
-        SetStatus(L"reshade", kBad, TR(L"status.reshade.not_started", L"Could not start the ReShade setup"));
-    }
-}
-
-void StartArcaneSky();
-void OnReShadeProgress(D2RLProgress* raw) {
-    std::unique_ptr<D2RLProgress> p(raw);
-    SetStatus(L"reshade", p->state, p->text.c_str());
-    if (!p->done) return;
-    g_rsBusy.store(false);
-    g_rsError = p->state == kOk ? L"" : p->text;
-    if (Item* b = FindItem(L"@run", L"reshade_get")) EnableWindow(b->ctl, TRUE);
-    if (p->state == kOk) { RefreshStatus(); StartArcaneSky(); }   // the button goes away with ReShade there; the Arcane sky has its folder now
-}
-
 // ---------------------------------------------------------------------------
 // Collect logs for support (Home): one zip on the desktop the player posts in our
 // Discord. While the game runs, [debug] diag_go makes vrcam write 10 s of its frame log
@@ -10930,31 +10782,13 @@ bool WriteWhole(const std::wstring& path, const std::string& data) {   // beside
     if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) { DeleteFileW(tmp.c_str()); return false; }
     return true;
 }
-// Exit codes (also of --reshade-paths add): 0 they are in (or were), 1 could not write, 2 nothing to do (not the mod, or no dxgi.dll next to D2R.exe), 3 the game runs
-// (ReShade writes its ini back when the game ends: an edit now would be lost).
-int ReShadePathsAdd() {
-    const std::wstring game = GameFolder();
-    if (!ModInstall() || !Exists(game + L"dxgi.dll")) return 2;
-    if (ProcessRunning(L"D2R.exe") || ProcessRunning(L"D2RLoader.exe")) return 3;
-    bool redirected = false;
-    const std::wstring ini = ReShadeIniOfDxgi(game, &redirected);
-    std::string raw, bom, body;
-    const bool had = ReadFileText(ini, &raw);
-    if (had && !SplitIniText(raw, &bom, &body)) { LogLine(L"reshade paths: " + ini + L" is not a UTF-8 / ANSI file - not edited"); return 1; }
-    const PathForms f = ReShadePathForms(game, ini);
-    bool changed = false;
-    const std::string out = reshadepaths::Add(body, f.use, &changed);
-    if (!changed) { LogLine(L"reshade paths: already in " + ini); return 0; }
-    if (had && !Exists(ini + L".before_d2rvr")) CopyFileW(ini.c_str(), (ini + L".before_d2rvr").c_str(), TRUE);   // the player's file as it was, once
-    if (!had) { const size_t cut = ini.find_last_of(L'\\'); if (cut != std::wstring::npos) CreateDirectoryW(ini.substr(0, cut).c_str(), nullptr); }
-    if (!WriteWhole(ini, bom + out)) { LogLine(L"reshade paths: could not write " + ini); return 1; }
-    LogLine(L"reshade paths: D2R VR's two folders added to " + ini);
-    return 0;
-}
-// 0 taken out (or not there), 1 could not write. Never needs a dxgi.dll to be there; the backup goes when the file is back to it.
+// 0 taken out (or not there), 1 could not write, 2 not the mod, 3 the game runs (ReShade writes its ini back when the game ends: an edit now would be
+// lost). Only D2R VR's own two list items (shared/reshade_paths.h); the player's lines stay byte for byte. Never needs a dxgi.dll to be there; the
+// backup goes when the file is back to it. Since 0.203 nothing adds them any more: Setup and the uninstaller both take them out.
 int ReShadePathsRemove() {
     const std::wstring game = GameFolder();
     if (!ModInstall()) return 2;
+    if (ProcessRunning(L"D2R.exe") || ProcessRunning(L"D2RLoader.exe")) return 3;
     int rc = 0;
     bool redirected = false;
     const std::wstring first = ReShadeIniOfDxgi(game, &redirected);
@@ -10986,36 +10820,6 @@ int ReShadePathsCheck() {
         if (reshadepaths::Has(body, e)) return 0;
     return 1;
 }
-void ReShadePathsButton() {
-    const int rc = ReShadePathsAdd();
-    if (rc == 3)
-        MessageBoxW(g_main, TR(L"msg.reshade_ini_game_running", L"The game is running: ReShade writes its ReShade.ini back when the game ends, so a change now would be lost. Close the game and press the button again."),
-                    kAppName, MB_OK | MB_ICONINFORMATION);
-    else if (rc == 1)
-        MessageBoxW(g_main, TR(L"msg.reshade_ini_not_changed", L"Could not change your ReShade.ini (it may be read-only, in a folder that needs administrator rights, or not a plain text file). Nothing was changed."),
-                    kAppName, MB_OK | MB_ICONWARNING);
-    RefreshStatus();
-}
-// The one explicit choice: the player's dxgi.dll renamed to dxgi.dll.off (and back). Asks first; deletes and replaces nothing.
-void ReShadeAside(bool back) {
-    if (!back &&
-        MessageBoxW(g_main,
-                    TR(L"msg.reshade_aside", L"Put your ReShade (dxgi.dll next to D2R.exe) aside as dxgi.dll.off?\n\nNothing is deleted. D2R VR then has no ReShade until you press Install ReShade, which "
-                                             L"gives it one of its own in mods\\D2R-VR\\reshade. The game started without D2RLoader has no ReShade meanwhile. \"Bring my dxgi.dll back\" undoes this."),
-                    kAppName, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
-        return;
-    if (ProcessRunning(L"D2R.exe") || ProcessRunning(L"D2RLoader.exe")) {
-        MessageBoxW(g_main, TR(L"msg.game_running_close", L"The game is running - close it first."), kAppName, MB_OK | MB_ICONINFORMATION);
-        return;
-    }
-    const reshadeas::Result r = reshadeas::Apply(back ? reshadeas::Act::Back : reshadeas::Act::Aside, ReShadeWhere());
-    LogLine(std::wstring(L"reshade: ") + r.did + (r.ok ? L"" : L" - FAILED"));
-    if (!r.ok)
-        MessageBoxW(g_main, TRF(L"msg.rename_failed", L"Could not rename the file (error {error}). Nothing was changed. The folder may need administrator rights.", {{L"error", std::to_wstring(r.error)}}).c_str(),
-                    kAppName, MB_OK | MB_ICONWARNING);
-    RefreshStatus();
-}
-
 // "Forget the measurement": the stored T-pose numbers are cleared (the game reads the ini again at once and goes back to the
 // height from BodyWalk / "My height" and to "Arm length (scale)"). The box "Use the measured ..." is left as it is.
 void ForgetCalibration() {
@@ -11178,7 +10982,7 @@ domeassets::Result PrepareSkyDomeNow() {
     const std::wstring game = GameFolder();
     const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
     const bool sky = GetPrivateProfileIntW(L"sky", L"game_sky", 0, g_ini) != 0;
-    // The files kept ready whichever way "Sky and fog drawn by" is set (Serg on 0.192.1: set to the game while it ran, the files made only
+    // The files kept ready whichever way "Sky drawn by" is set (Serg on 0.192.1: set to the game while it ran, the files made only
     // then - and taken out again whenever our effect was chosen -, the game asked the dome before they were there: our old sky all along).
     // A dome's files are only read when the game draws the sky; ready, the choice works at once.
     const bool on = true;
@@ -11795,10 +11599,6 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"d2r_launch") == 0) LaunchGame();
                 else if (wcscmp(it.key, L"d2rloader_get") == 0) StartD2RLoaderInstall();
                 else if (wcscmp(it.key, L"framegen_get") == 0) StartFrameGenInstall();
-                else if (wcscmp(it.key, L"reshade_get") == 0) StartReShadeInstall();
-                else if (wcscmp(it.key, L"reshade_paths") == 0) ReShadePathsButton();
-                else if (wcscmp(it.key, L"reshade_aside") == 0) ReShadeAside(false);
-                else if (wcscmp(it.key, L"reshade_back") == 0) ReShadeAside(true);
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
                 else if (wcscmp(it.key, L"send_logs") == 0) StartCollectLogs(true);
                 else if (wcscmp(it.key, L"crash_offer") == 0) OfferCrashReport();
@@ -11886,7 +11686,6 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_REPLIES: UpdateReplyNotice(); return 0;
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
-    case WM_APP_RESHADE: OnReShadeProgress((D2RLProgress*)l); return 0;
     case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
     case WM_APP_HREPORT: OnHeadsetReportDone((D2RLProgress*)l); return 0;
     case WM_APP_ARCANE: OnArcaneDone((D2RLProgress*)l); return 0;
@@ -12201,13 +12000,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             return r.state == arcane::kMade ? 0 : r.state == arcane::kNotHere ? 2 : 1;
         }
         if (argv && argc >= 3 && wcscmp(argv[1], L"--reshade-paths") == 0) {
-            // D2R VR Setup (add, once at the end) and its uninstaller (remove): D2R VR's two folders in the search paths of the ReShade the player has as dxgi.dll
-            // (shared/reshade_paths.h; the dxgi.dll itself is never touched). add: 0 they are in, 1 could not write, 2 nothing to do (no dxgi.dll), 3 the game runs;
-            // remove: 0 out (or never in), 1 could not write; check: 0 in, 1 not, 2 no dxgi.dll. Setup goes on whatever comes back.
+            // D2R VR Setup and its uninstaller (remove): D2R VR's two folders out of the search paths of the ReShade the player has as dxgi.dll (shared/reshade_paths.h;
+            // the dxgi.dll itself is never touched). Up to 0.202 Setup ran add; since 0.203 D2R VR uses no ReShade and add does nothing (2). remove: 0 out (or never
+            // in), 1 could not write, 2 not the mod, 3 the game runs; check: 0 in, 1 not, 2 no dxgi.dll. Setup goes on whatever comes back.
             const std::wstring verb = argv[2];
             LocalFree(argv);
             FindIni();
-            if (verb == L"add") return ReShadePathsAdd();
+            if (verb == L"add") { LogLine(L"reshade paths: add - D2R VR uses no ReShade since 0.203: nothing added"); return 2; }
             if (verb == L"remove") return ReShadePathsRemove();
             if (verb == L"check") return ReShadePathsCheck();
             return 64;

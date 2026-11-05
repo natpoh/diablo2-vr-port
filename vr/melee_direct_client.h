@@ -41,9 +41,12 @@
 // game, so, when the swing has the least speed AND force, it is asked of the HOST over D2RLoader's plugin network (channel kChannel):
 // the host's plugin calls the server's basic attack for that player's hero on that monster, once (melee_direct.cpp, the same call as
 // the host's own Direct hit; the roll, the damage, the wear are the game's, no animation of its own). Rule 2 holds for it too. A
-// one-handed weapon's extra touch, or one too slow or too weak, is the normal attack (the game's one attack at a time decides). The
-// host must run the plugin with the same boxes ticked; a host with it off ignores the requests, and with no connection to the host
-// an extra hit is the plain command.
+// one-handed weapon's extra touch, or one too slow or too weak, is the normal attack (the game's one attack at a time decides).
+// Who hosts decides (the Mechanics tab, as flat_attack_path; Serg, 2026-11-05: "если на сервере включена, будет работать у всех, если
+// отключена, ни у кого не будет работать - хост задаёт правило"): in single player and as the host the box here is the rule; joined, the
+// HOST's box is, a joined player's own box means nothing. The host's channel is always there; a joined client says hello on it once a
+// second and the host answers with its rule (CleaveRule) - its box, and whether it can strike at all now (its hit by touch running on a
+// server of its own). A host that says nothing (no mod, another version) or says no: the game's one attack at a time.
 //
 // This header is the pure part; the game's side is vr/melee_direct_client.cpp; the test is cleanroom/tests/melee_direct_client_test.cpp.
 #pragma once
@@ -202,7 +205,7 @@ inline const char* WhyName(Why w) {
         case Why::TooWeak: return "normal: too weak";
         case Why::TooShort: return "normal: too short a swing";
         case Why::OneHanded: return "normal: one-handed (the game's one attack at a time)";
-        case Why::NoCleave: return "normal: another monster within the attack (no cleave box: the game's one attack at a time)";
+        case Why::NoCleave: return "normal: another monster within the attack (no cleave - the box, or joined the host's: the game's one attack at a time)";
         case Why::NotTwoHands: return "normal: a two-handed weapon in one hand";
         case Why::OtherSkill: return "normal: another skill on the left";
         case Why::Armed: return "normal: a skill is armed";
@@ -261,7 +264,7 @@ inline bool InAttack(uint64_t lastAt, uint32_t lastMonster, uint32_t monster, ui
     return lastAt && monster != lastMonster && now >= lastAt && now - lastAt < attackMs;
 }
 
-// The plugin network's channel (D2RLoader adds the plugin's id and scope) and the one message: "strike monster M for hero H".
+// The plugin network's channel (D2RLoader adds the plugin's id and scope) and its message for the strike: "strike monster M for hero H".
 constexpr uint16_t kChannel = 0x4448;                   // "DH"
 constexpr uint64_t kToken = 0x3143485643523244ull;      // "D2RVCHC1": must match exactly on the client and the host
 constexpr uint16_t kMsgStrike = 1;
@@ -288,6 +291,56 @@ inline bool ParseStrike(const void* data, uint32_t size, uint32_t* hero, uint32_
     *hero = h;
     *monster = m;
     return true;
+}
+
+// Who hosts decides: the hello (client -> host, once a second while connected: "this is my hero") and the host's answer, its rule.
+constexpr uint16_t kMsgHello = 2, kMsgRule = 3;
+constexpr uint8_t kRuleVersion = 1;
+constexpr uint32_t kHelloBytes = 5;                     // version, hero id (little endian)
+constexpr uint32_t kRuleBytes = 3;                      // version, the host's box, the host can strike now
+constexpr uint64_t kHelloMs = 1000, kRuleFreshMs = 3000;
+inline uint32_t BuildHello(uint32_t hero, uint8_t* b, uint32_t cap) {
+    if (!b || cap < kHelloBytes || !hero) return 0;
+    b[0] = kRuleVersion;
+    for (int i = 0; i < 4; ++i) b[1 + i] = static_cast<uint8_t>(hero >> (8 * i));
+    return kHelloBytes;
+}
+inline bool ParseHello(const void* data, uint32_t size, uint32_t* hero) {
+    const uint8_t* b = static_cast<const uint8_t*>(data);
+    if (!b || size != kHelloBytes || b[0] != kRuleVersion) return false;
+    uint32_t h = 0;
+    for (int i = 0; i < 4; ++i) h |= static_cast<uint32_t>(b[1 + i]) << (8 * i);
+    if (!h) return false;
+    *hero = h;
+    return true;
+}
+struct Rule { bool box = false, canStrike = false; };
+inline uint32_t BuildRule(const Rule& r, uint8_t* b, uint32_t cap) {
+    if (!b || cap < kRuleBytes) return 0;
+    b[0] = kRuleVersion;
+    b[1] = r.box ? 1 : 0;
+    b[2] = r.canStrike ? 1 : 0;
+    return kRuleBytes;
+}
+inline bool ParseRule(const void* data, uint32_t size, Rule* r) {
+    const uint8_t* b = static_cast<const uint8_t*>(data);
+    if (!b || size != kRuleBytes || b[0] != kRuleVersion || b[1] > 1 || b[2] > 1) return false;
+    r->box = b[1] != 0;
+    r->canStrike = b[2] != 0;
+    return true;
+}
+// The cleave for our hero now: in our own game (single player, the host) our box; joined, the host's rule while it keeps saying it -
+// its box ticked and able to strike - whatever our own box says.
+inline bool CleaveRule(bool joined, bool ownBox, bool hostSaidLately, const Rule& host) {
+    if (!joined) return ownBox;
+    return hostSaidLately && host.box && host.canStrike;
+}
+// A joined client's next ask for the host's channel: 10 s while one is under way; else 3 s, then 10, 30 and 60 s after each that came to
+// nothing (a host without the mod, or another version, answers every ask with D2RLoader's refusal - each one lines in its log).
+inline uint64_t RetryMs(unsigned failed, bool connecting) {
+    if (connecting) return 10000;
+    static constexpr uint64_t kSteps[] = {3000, 10000, 30000, 60000};
+    return kSteps[failed < 3 ? failed : 3];
 }
 
 // The host: each peer's hero, bound at its first request; a later request from that peer naming another hero is refused (a peer
@@ -329,12 +382,15 @@ bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHands
 void SetMins(const Mins& m);
 // The weight model must measure the strikes for the force rule (vrcam's weight thread, strike measuring on).
 bool WantsForce();
-// [gameplay] melee_direct_client_cleave (every read): as a joined player, the extra hits are asked of the host; as the host, the
-// joined players' requests are taken (TakeRemote). The channel itself is registered at the plugin's load only (InitNet).
+// [gameplay] melee_direct_client_cleave (every read): the rule of our own game (single player, the host) - as the host, the joined
+// players' requests are taken (TakeRemote) and every hello is answered with it. Joined, it means nothing: the host's rule decides.
 void SetCleave(bool on);
-// D2RLoaderLoadPlugin: the plugin network's channel, registered now or never this run (D2RLoader asks for it at the load) - when
-// [gameplay] melee_direct_client_cleave is on in the ini then. False: no channel (the extra hits are plain commands).
-bool InitNet(const D2RL::PluginContext* ctx, bool wanted);
+// The host, melee_touch's tick while it runs: it can strike for a joined player now (hit by touch on, a server game of ours, the
+// server's attack ready). Not said for a second (hit by touch stopped, another view, the flat game): it cannot.
+void SetHostCanStrike(bool can, uint64_t nowMs);
+// D2RLoaderLoadPlugin: the plugin network's channel, registered always (D2RLoader asks for it at the load only; the hello and the
+// rule run on it whatever the boxes say, and change nothing in play). False: no channel (no cleave as a joined player).
+bool InitNet(const D2RL::PluginContext* ctx);
 void ShutdownNet();
 // The host, the timer's thread: a joined player's extra hit to strike (his hero, the monster). False: none waiting.
 bool TakeRemote(uint32_t* hero, uint32_t* monster);

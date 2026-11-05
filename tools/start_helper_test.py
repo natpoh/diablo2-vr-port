@@ -340,8 +340,10 @@ def main():
     check(prepare(root) == 1 and tree_state(root) == before,
           "--prepare-assets: the mod's reshade\\reshade-shaders\\Textures there (its pictures go there whoever loads ReShade), no game archives -> exit 1, nothing written")
 
-    # 11. --reshade-paths (Setup: add at the end, the uninstaller: remove; the Home button: add): D2R VR's two folders in the search paths of the player's dxgi.dll ReShade
-    # (shared/reshade_paths.h). The dxgi.dll itself is never touched. add: 0 in, 1 could not write, 2 nothing to do (no dxgi.dll), 3 the game runs; check: 0 in, 1 not, 2 no dxgi.dll
+    # 11. --reshade-paths (0.203: D2R VR uses no ReShade). Up to 0.202 Setup ran add: D2R VR's two folders went into the search paths of the player's
+    # dxgi.dll ReShade (shared/reshade_paths.h), so it loaded our effect too. Now add does nothing (2), and remove - run by Setup and the uninstaller, and by
+    # Settings itself at its start with the game closed - takes exactly those two list items out again: his file back byte for byte, the copy gone. The
+    # dxgi.dll itself is never touched. remove: 0 out (or never in), 1 could not write, 2 not the mod, 3 the game runs; check: 0 in, 1 not, 2 no dxgi.dll
     # (read_bytes, not read_text: a text read turns the CRLF of the ini into LF)
     def reshade_paths(root, verb):
         p = subprocess.run([str(root / "D2R_VR_Settings.exe"), "--reshade-paths", verb], cwd=str(root), capture_output=True, timeout=60, stdin=subprocess.DEVNULL)
@@ -350,72 +352,86 @@ def main():
     stock = "[GENERAL]\r\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\r\nTextureSearchPaths=.\\reshade-shaders\\Textures\\**\r\nPresetPath=.\\ReShadePreset.ini\r\n"
     ours_fx = ".\\mods\\D2R-VR\\reshade\\reshade-shaders\\Shaders\\**"
     ours_tx = ".\\mods\\D2R-VR\\reshade\\reshade-shaders\\Textures\\**"
+
+    def with_ours(text, fx, tx):   # the file as 0.202's Setup left it: our two items appended to the two lists
+        return text.replace("Shaders\\**\r\n", "Shaders\\**," + fx + "\r\n").replace("Textures\\**\r\n", "Textures\\**," + tx + "\r\n")
+
+    old = with_ours(stock, ours_fx, ours_tx)
     root = make_game(scratch / "g11a", settings, loader, "[mode]\nplatform=1\n")
-    check(reshade_paths(root, "add") == 2 and reshade_paths(root, "check") == 2 and not (root / "ReShade.ini").exists(), "--reshade-paths: no dxgi.dll next to D2R.exe -> add / check say 2 (nothing to do), no ReShade.ini is made")
+    check(reshade_paths(root, "add") == 2 and reshade_paths(root, "check") == 2 and not (root / "ReShade.ini").exists(), "--reshade-paths: no dxgi.dll next to D2R.exe -> add / check say 2, no ReShade.ini is made")
     (root / "dxgi.dll").write_bytes(b"MZ PLAYERS RESHADE")
     dxb = (root / "dxgi.dll").read_bytes()
     dxt = os.stat(root / "dxgi.dll").st_mtime_ns
     (root / "ReShade.ini").write_text(stock, encoding="utf-8", newline="")
     check(reshade_paths(root, "check") == 1, "...a dxgi.dll and his ReShade.ini without our folders: check says 1")
-    check(reshade_paths(root, "add") == 0, "...add -> 0")
-    t = (root / "ReShade.ini").read_bytes().decode("utf-8")
-    check(ours_fx in t and ours_tx in t and reshade_paths(root, "check") == 0, "...his ReShade.ini lists the mod's reshade-shaders\\Shaders and \\Textures, check says 0")
-    check(t.replace("," + ours_fx, "").replace("," + ours_tx, "") == stock and (root / "ReShade.ini.before_d2rvr").read_bytes().decode("utf-8") == stock,
-          "...nothing else of his file changed, and a copy of it as it was is kept beside it")
-    check((root / "dxgi.dll").read_bytes() == dxb and os.stat(root / "dxgi.dll").st_mtime_ns == dxt, "...his dxgi.dll is the same bytes with the same time")
-    check(reshade_paths(root, "add") == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == t, "...a second add changes nothing")
-    # the game runs: ReShade writes its ini back when the game ends, so an edit now would be lost
+    check(reshade_paths(root, "add") == 2 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock and not (root / "ReShade.ini.before_d2rvr").exists(),
+          "...add -> 2 (D2R VR uses no ReShade): his ReShade.ini untouched, no copy made")
+    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock, "...remove with nothing of ours in it -> 0, nothing changes")
+    # an install of 0.202 or older: our folders in his file and the copy of it as it was beside it
+    (root / "ReShade.ini").write_text(old, encoding="utf-8", newline="")
+    (root / "ReShade.ini.before_d2rvr").write_text(stock, encoding="utf-8", newline="")
+    check(reshade_paths(root, "check") == 0, "an older install's folders in his ReShade.ini: check says 0")
+    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock and not (root / "ReShade.ini.before_d2rvr").exists(),
+          "...remove -> 0: his file is back byte for byte (only our two list items out) and the copy is gone")
+    check(reshade_paths(root, "check") == 1 and (root / "dxgi.dll").read_bytes() == dxb and os.stat(root / "dxgi.dll").st_mtime_ns == dxt,
+          "...check says 1 now; his dxgi.dll is the same bytes with the same time")
+    # his own change after ours: the copy stays (it is not his file any more), only our two items go
+    mine = old.replace("PresetPath=.\\ReShadePreset.ini", "PresetPath=.\\MyPreset.ini")
+    (root / "ReShade.ini").write_text(mine, encoding="utf-8", newline="")
+    (root / "ReShade.ini.before_d2rvr").write_text(stock, encoding="utf-8", newline="")
+    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock.replace("ReShadePreset.ini", "MyPreset.ini")
+          and (root / "ReShade.ini.before_d2rvr").exists(), "his own change after ours: only our two items go, his change stays, the copy is kept")
+    # the game runs: ReShade writes its ini back when the game ends, so an edit now would be lost - D2R VR Settings does it at its next start
     root = make_game(scratch / "g11b", settings, loader, "[mode]\nplatform=1\n")
     (root / "dxgi.dll").write_bytes(b"MZ")
-    (root / "ReShade.ini").write_text(stock, encoding="utf-8", newline="")
+    (root / "ReShade.ini").write_text(old, encoding="utf-8", newline="")
     fake_game = scratch / "g11_proc" / "D2R.exe"
     fake_game.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "PING.EXE", fake_game)
     hold = subprocess.Popen([str(fake_game), "-n", "40", "127.0.0.1"], stdout=subprocess.DEVNULL)
     try:
         time.sleep(0.5)
-        rc_running = reshade_paths(root, "add")
+        rc_running = reshade_paths(root, "remove")
     finally:
         hold.kill()
         hold.wait()
-    check(rc_running == 3 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock, "--reshade-paths add while the game runs -> 3, his ReShade.ini untouched")
-    # ReShade's own redirect: [INSTALL] BasePath in the ReShade.ini next to the exe moves ReShade's base - that folder's ReShade.ini is the one that counts, with absolute paths
+    check(rc_running == 3 and (root / "ReShade.ini").read_bytes().decode("utf-8") == old, "--reshade-paths remove while the game runs -> 3, his ReShade.ini untouched")
+    # ReShade's own redirect: [INSTALL] BasePath in the ReShade.ini next to the exe moves ReShade's base - our folders were written there absolute
     root = make_game(scratch / "g11c", settings, loader, "[mode]\nplatform=1\n")
     (root / "dxgi.dll").write_bytes(b"MZ")
     (root / "myreshade").mkdir()
-    (root / "myreshade" / "ReShade.ini").write_text(stock, encoding="utf-8", newline="")
+    abs_dir = str(root / "mods" / "D2R-VR" / "reshade")
+    (root / "myreshade" / "ReShade.ini").write_text(with_ours(stock, abs_dir + "\\reshade-shaders\\Shaders\\**", abs_dir + "\\reshade-shaders\\Textures\\**"),
+                                                    encoding="utf-8", newline="")
     (root / "ReShade.ini").write_text("[INSTALL]\r\nBasePath=.\\myreshade\r\n", encoding="utf-8", newline="")
     redirect0 = (root / "ReShade.ini").read_bytes().decode("utf-8")
-    check(reshade_paths(root, "add") == 0, "[INSTALL] BasePath=.\\myreshade in the ReShade.ini beside the exe: add -> 0")
-    inner = (root / "myreshade" / "ReShade.ini").read_bytes().decode("utf-8")
-    abs_fx = str(root / "mods" / "D2R-VR" / "reshade").lower() + "\\reshade-shaders\\shaders\\**"
-    check(abs_fx in inner.lower() and (root / "ReShade.ini").read_bytes().decode("utf-8") == redirect0,
-          "...the paths go into the redirected ReShade.ini (absolute, its base is not the game's folder); the file beside the exe is untouched")
-    check(reshade_paths(root, "check") == 0 and reshade_paths(root, "remove") == 0 and (root / "myreshade" / "ReShade.ini").read_bytes().decode("utf-8") == stock,
-          "...remove gives the redirected file back as it was")
-    # remove: the uninstaller's call - his file is back byte for byte (also a UTF-8 file with a mark), and the copy is gone
+    check(reshade_paths(root, "check") == 0 and reshade_paths(root, "remove") == 0 and (root / "myreshade" / "ReShade.ini").read_bytes().decode("utf-8") == stock
+          and (root / "ReShade.ini").read_bytes().decode("utf-8") == redirect0,
+          "[INSTALL] BasePath=.\\myreshade: remove gives the redirected file back as it was (absolute items); the file beside the exe is untouched")
+    # a UTF-8 file with a mark: the mark stays
     root = make_game(scratch / "g11d", settings, loader, "[mode]\nplatform=1\n")
     (root / "dxgi.dll").write_bytes(b"MZ")
-    bom = b"\xef\xbb\xbf" + stock.encode("utf-8")
-    (root / "ReShade.ini").write_bytes(bom)
-    check(reshade_paths(root, "add") == 0 and (root / "ReShade.ini").read_bytes().startswith(b"\xef\xbb\xbf") and ours_fx.encode() in (root / "ReShade.ini").read_bytes(),
-          "a ReShade.ini with a UTF-8 mark: the paths go in, the mark stays")
-    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes() == bom and not (root / "ReShade.ini.before_d2rvr").exists(),
-          "remove: his file is back byte for byte and the copy is gone")
+    bom = b"\xef\xbb\xbf"
+    (root / "ReShade.ini").write_bytes(bom + old.encode("utf-8"))
+    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes() == bom + stock.encode("utf-8"), "a ReShade.ini with a UTF-8 mark: our items out, the mark stays")
+    # without a dxgi.dll there (put aside): our items still go
     (root / "dxgi.dll").unlink()
-    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes() == bom, "remove without a dxgi.dll there: nothing to take out, nothing changes")
-    # no ReShade.ini at all (a fresh dxgi.dll): one is made with ReShade's stock lists and ours
-    root = make_game(scratch / "g11e", settings, loader, "[mode]\nplatform=1\n")
-    (root / "dxgi.dll").write_bytes(b"MZ")
-    check(reshade_paths(root, "add") == 0 and (root / "ReShade.ini").exists(), "no ReShade.ini yet: add makes one")
-    t = (root / "ReShade.ini").read_bytes().decode("utf-8")
-    check("EffectSearchPaths=.\\reshade-shaders\\Shaders\\**," + ours_fx in t and "TextureSearchPaths=.\\reshade-shaders\\Textures\\**," + ours_tx in t,
-          "...with ReShade's stock folders first and ours after them")
+    (root / "ReShade.ini").write_text(old, encoding="utf-8", newline="")
+    check(reshade_paths(root, "remove") == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock, "remove without a dxgi.dll there: our items out all the same")
     # an install from before the mod layout (the global plugin): not the mod, nothing to do
     root = make_game(scratch / "g11f", settings, loader, "[mode]\nplatform=1\n", layout="global")
     (root / "dxgi.dll").write_bytes(b"MZ")
     (root / "ReShade.ini").write_text(stock, encoding="utf-8", newline="")
-    check(reshade_paths(root, "add") == 2 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock, "an install from before the mod layout: add -> 2, his ReShade.ini untouched (the files are beside the game there)")
+    check(reshade_paths(root, "add") == 2 and reshade_paths(root, "remove") == 2 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock,
+          "an install from before the mod layout: add / remove -> 2, his ReShade.ini untouched")
+    # START (the launcher's --start, the Home button) takes them out too, before the game starts - Setup could not if the game ran then, and his ReShade
+    # would draw D2R_DepthFog.fx on top of D2R VR's own effect
+    root = make_game(scratch / "g11g", settings, loader, ini_native)
+    (root / "dxgi.dll").write_bytes(b"MZ PLAYERS RESHADE")
+    (root / "ReShade.ini").write_text(old, encoding="utf-8", newline="")
+    code, out, err, wins = start(root)
+    check(code == 0 and (root / "ReShade.ini").read_bytes().decode("utf-8") == stock and (root / "dxgi.dll").read_bytes() == b"MZ PLAYERS RESHADE",
+          "--start with an older install's folders in his ReShade.ini: started, our two items out before the game starts, his dxgi.dll untouched")
 
     # 12. [mods] merge_data_mods (shared/data_mods.h): a mod D2RMM built (mods\D2RMM) loads with D2R VR - its files copied into D2R-VR.mpq at --start,
     # copied again when D2RMM builds again, taken out when the tick is off; D2R VR's own file stays

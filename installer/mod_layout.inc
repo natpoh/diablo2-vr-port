@@ -210,88 +210,44 @@ begin
   end;
 end;
 
-// ---------------------------------------------------------------- ReShade in the mod
-// Needs the host's `ReShadeSetup: String` (a downloaded ReShade installer to run, or '': D2R VR Setup no longer downloads one).
-// D2R VR's own ReShade is ReShade64.dll in the mod's reshade folder (vrcam loads it from there, that folder its base). A dxgi.dll beside the game is the
-// PLAYER'S OWN ReShade: it is USED as it is - Setup never renames, moves, replaces or deletes it, and neither does the uninstaller (the old rule, "a dxgi.dll
-// becomes ReShade64.dll or goes", is gone; [reshade] as_dxgi in an old ini means nothing now). What a dxgi.dll ReShade cannot find by itself are D2R VR's
-// effect and pictures in mods\D2R-VR\reshade: its ReShade.ini gets two search paths for them (D2R_VR_Settings.exe --reshade-paths, shared/reshade_paths.h:
-// append-only, once, a copy kept as ReShade.ini.before_d2rvr), and the uninstaller takes them out again.
+// ---------------------------------------------------------------- the mod's effect, and no ReShade
+// Needs the host's `ReShadeSetup: String` (kept for the host's shape; never set, nothing runs it).
+// Since 0.203 D2R VR uses no ReShade (vr/plugin/reshade_load.cpp): its own runtime builds D2R_DepthFog.fx from the mod's reshade folder ([Files], mod_files.inc).
+// A dxgi.dll beside the game is the PLAYER'S OWN ReShade: Setup never renames, moves, replaces or deletes it, and neither does the uninstaller. Up to 0.202
+// Setup added D2R VR's two folders to ITS ReShade.ini (so it loaded our effect too - and rebuilt it in its present when the plugin set its defines: crash
+// reports 231 / 232 / 251); now Setup takes them out again (D2R_VR_Settings.exe --reshade-paths remove, shared/reshade_paths.h: only our own two list
+// items, the player's lines byte for byte; the copy ReShade.ini.before_d2rvr goes when the file is back to it). FlatVR's ReShade add-on and its keepalive
+// effect are not shipped any more (the plugin hands FlatVR its picture itself, vr/flatvr_feed.h): an earlier install's copies in the mod's reshade folder go.
 
-// D2R VR's two folders in the search paths of the player's dxgi.dll ReShade. The program is beside D2R.exe already (the [Files] lines are done at ssPostInstall).
-// Its exit code: 0 they are in, 1 could not write, 2 nothing to do (no dxgi.dll), 3 the game runs (the Home button does it later). Setup goes on whatever comes back.
-procedure AddReShadePaths(GameDir: String);
-var
-  Code: Integer;
-begin
-  if not FileExists(GameDir + '\D2R_VR_Settings.exe') then
-  begin
-    Log('D2R VR: D2R_VR_Settings.exe is not beside the game: the search paths of the player''s ReShade are not added');
-    Exit;
-  end;
-  if Exec(GameDir + '\D2R_VR_Settings.exe', '--reshade-paths add', GameDir, SW_HIDE, ewWaitUntilTerminated, Code) then
-    Log('D2R VR: D2R_VR_Settings --reshade-paths add: ' + IntToStr(Code) + ' (0 they are in, 1 could not write, 2 nothing to do, 3 the game runs: Settings > Home has a button)')
-  else
-    Log('D2R VR: D2R_VR_Settings --reshade-paths add did not start: ' + SysErrorMessage(Code));
-end;
-
+// D2R VR's two folders out of the search paths of the player's dxgi.dll ReShade. The program is beside D2R.exe already (the [Files] lines are done at
+// ssPostInstall). Its exit code: 0 out (or never in), 1 could not write, 2 not the mod, 3 the game runs (D2R VR Settings takes them out at its next start).
+// Setup goes on whatever comes back.
 procedure RemoveReShadePaths(GameDir: String);
 var
   Code: Integer;
 begin
   if not FileExists(GameDir + '\D2R_VR_Settings.exe') then Exit;
   if Exec(GameDir + '\D2R_VR_Settings.exe', '--reshade-paths remove', GameDir, SW_HIDE, ewWaitUntilTerminated, Code) then
-    Log('D2R VR: D2R_VR_Settings --reshade-paths remove: ' + IntToStr(Code) + ' (0 out, 1 could not write)')
+    Log('D2R VR: D2R_VR_Settings --reshade-paths remove: ' + IntToStr(Code) + ' (0 out, 1 could not write, 2 not the mod, 3 the game runs: D2R VR Settings does it later)')
   else
     Log('D2R VR: D2R_VR_Settings --reshade-paths remove did not start: ' + SysErrorMessage(Code));
 end;
 
 procedure PlaceReShade(GameDir: String);
 var
-  Code: Integer;
-  Raw: AnsiString;
-  Ini: String;
-  Target, R: String;
+  R: String;
 begin
   R := ModReShade(GameDir);
   ForceDirectories(R);
-  // (only with no ReShade at all: ReShade's setup would write a dxgi.dll over the player's)
-  if (ReShadeSetup <> '') and not FileExists(R + 'ReShade64.dll') and not FileExists(GameDir + '\dxgi.dll') then
-  begin
-    // ReShade's setup needs an exe that is there: without D2RLoader yet (not installed,
-    // or skipped on the folder page) it quit with code 1 (a player, 0.144, 2026-10-08).
-    // D2R.exe beside it gives the same dxgi.dll in the same folder.
-    Target := GameDir + '\D2RLoader.exe';
-    if not FileExists(Target) then Target := GameDir + '\D2R.exe';
-    if not Exec(ReShadeSetup, '"' + Target + '" --api dxgi --headless', '', SW_SHOW, ewWaitUntilTerminated, Code) or (Code <> 0) then
-      MsgBox('ReShade''s installer did not finish (code ' + IntToStr(Code) + '). Install ReShade with add-on support for D2RLoader.exe ' +
-             '(DirectX 10/11/12) from reshade.me, then rename dxgi.dll in the game''s folder to ReShade64.dll.', mbError, MB_OK)
-    else
-    begin
-      // ours: the uninstaller takes it away again (CurUninstallStepChanged)
-      SaveStringToFile(ModPlugins(GameDir) + 'd2r_vr_reshade_ours.txt', 'ReShade was installed by D2R VR Setup.', False);
-      // the one dxgi.dll Setup ever moves: the one ReShade's setup made JUST NOW (there was none before) - D2R.exe refuses an unsigned dxgi.dll, vrcam loads
-      // ReShade64.dll from the mod's reshade folder
-      if FileExists(GameDir + '\dxgi.dll') and not RenameFile(GameDir + '\dxgi.dll', R + 'ReShade64.dll') then
-        MsgBox('Could not move dxgi.dll from the game''s folder to ' + R + 'ReShade64.dll - do it by hand, or D2R.exe will not start.', mbError, MB_OK);
-    end;
-    // its setup writes its ini beside D2RLoader.exe: it goes with ReShade into the mod (unless the mod has one)
-    MoveInto(GameDir + '\ReShade.ini', R + 'ReShade.ini');
-  end;
-  // ReShade's headless setup writes its search paths as '...\Shaders\**\**', which
-  // ReShade 6.8 itself cannot resolve (error 123 in ReShade.log): no effect loads,
-  // so no fog and no sky. '...\**' is what it reads (2026-10-06).
-  if LoadStringFromFile(R + 'ReShade.ini', Raw) then
-  begin
-    Ini := String(Raw);
-    if StringChangeEx(Ini, '\**\**', '\**', True) > 0 then
-      SaveStringToFile(R + 'ReShade.ini', AnsiString(Ini), False);
-  end;
-  // a dxgi.dll beside the game: the player's own ReShade, used as it is
+  // FlatVR's ReShade add-on and keepalive effect of an earlier install (ours, in the mod's folder): not used without ReShade
+  DeleteFile(R + 'FlatVR_DepthProvider.addon64');
+  DeleteFile(R + 'FlatVR_Keepalive.addonfx');
+  DeleteFile(R + 'reshade-shaders\Shaders\FlatVR_Keepalive.addonfx');
+  // a dxgi.dll beside the game: the player's own ReShade, left exactly as it is - only D2R VR's folders of before 0.203 out of its ini
   if FileExists(GameDir + '\dxgi.dll') then
   begin
-    Log('D2R VR: ' + GameDir + '\dxgi.dll is the player''s own ReShade: left exactly as it is, and used (vrcam joins it)');
-    AddReShadePaths(GameDir);
+    Log('D2R VR: ' + GameDir + '\dxgi.dll is the player''s own ReShade: left exactly as it is (D2R VR does not use it)');
+    RemoveReShadePaths(GameDir);
   end;
 end;
 

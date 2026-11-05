@@ -1,6 +1,7 @@
 // vr/render/stereo/replay.cpp - one CPU pass, two GPU frames: the left eye's command lists run again as the right eye's (the replay) (cut from vr/vrcam.cpp, docs/plan_modules.md M14).
 // What it gives: vr/render/stereo/stereo.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
+#include "../../fence_wait.h"   // a fence wait that does not end on a wake meant for an older one
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -470,19 +471,38 @@ Pt SignalOn(ID3D12CommandQueue* q) {
     g_qf.push_back(x);
     return SignalOn(q);
 }
-void WaitFor(const Pt& p) {
-    if (!p.f || p.f->GetCompletedValue() >= p.v) return;
-    p.f->SetEventOnCompletion(p.v, g_event);
-    WaitForSingleObject(g_event, 100);
+// p reached, waited for ms at most. g_event is auto-reset and shared by these waits: one that ran out leaves its value armed, and the next woke at once
+// when that older value came and went on with its own not reached (vr/fence_wait.h) - so the value is looked at again after every wake.
+bool WaitMs(const Pt& p, DWORD ms) {
+    if (!p.f) return true;
+    return fencewait::WaitValue(p.v, ms, [&p] { return p.f->GetCompletedValue(); }, [&p](uint64_t v) { p.f->SetEventOnCompletion(v, g_event); },
+                                [](unsigned m) { WaitForSingleObject(g_event, m); }, [] { return pairtime::UsNow() / 1000.0; });
 }
+void WaitFor(const Pt& p) { WaitMs(p, 100); }
 // The allocator of a list we reuse: its last list must be done before it is reset - a reset under a list the GPU still runs removes the
 // device (2026-10-17). Waited for up to 2 s, not 100 ms: a GPU that is not done in that long is hung and the device is lost anyway.
 void WaitForAlloc(const Pt& p) {
-    if (!p.f || p.f->GetCompletedValue() >= p.v) return;
-    p.f->SetEventOnCompletion(p.v, g_event);
-    if (WaitForSingleObject(g_event, 2000) == WAIT_TIMEOUT) {
+    if (!WaitMs(p, 2000)) {
         static int told = 0;
         if (told++ < 3) Log("vrcam: replay - the GPU has not finished a list of ours in 2 s: its allocator is reset anyway (the device is likely hung)");
+    }
+}
+// The replay that ran the game's lists whose allocators the coming left pass resets (BeginLeft). It was waited for 100 ms and the pass went on whatever came:
+// the game would then reset and record into allocators the GPU is still replaying from - commands written over under the GPU. Found while reading a player's
+// GPU hangs of 2026-11-04 (RTX 5070, Oculus: DXGI_ERROR_DEVICE_HUNG with the GPU inside one of the game's draws early in its Forward Pass); his log does not show
+// this wait running out, so it is a hole closed, not his cause found. Up to 2 s now, as our own allocators; the times it took over 100 ms are counted for the
+// replay's 10 s line.
+uint32_t g_lateReplays = 0;   // this log period: replays not done in 100 ms when the left pass came
+double g_lateReplayMaxMs = 0.0;
+void WaitForReplayedAllocs(const Pt& p) {
+    if (WaitMs(p, 100)) return;
+    const double t0 = pairtime::UsNow();
+    const bool done = WaitMs(p, 1900);
+    ++g_lateReplays;
+    g_lateReplayMaxMs = std::max(g_lateReplayMaxMs, 100.0 + (pairtime::UsNow() - t0) / 1000.0);
+    if (!done) {
+        static int told = 0;
+        if (told++ < 3) Log("vrcam: replay - the replay of the lists the left pass reuses is not done in 2 s: the left pass goes on (the device is likely hung)");
     }
 }
 
@@ -1334,7 +1354,7 @@ void BeginLeft() {
     // (3 back buffers, 2 presents a pair); the last one may still run while this pass records
     {
         StepTimer st(kWaitPrev);
-        if (g_fence) WaitFor(g_ahead.load() >= 2 ? g_prevReplay : g_lastReplay);
+        if (g_fence) WaitForReplayedAllocs(g_ahead.load() >= 2 ? g_prevReplay : g_lastReplay);   // (not 100 ms and on: the game resets those allocators next)
         // The skipped right pass's wait on the swap chain's frame latency object: the game waits
         // once a pass, we present twice a pair - with one wait a pair the count drifted, DXGI
         // handed out the back buffer still on screen and the GPU waited for a newer present

@@ -137,6 +137,32 @@ int main() {
     // ---- names (the log tells why a touch was not struck) ----
     CHECK(Name(Verdict::Go)[0] == 'g');
     CHECK(Name(Verdict::Wall)[0] == 'a');
+    // ---- [gameplay] melee_direct_by_hand: which blow is the game's "Left Hand Swing" ----
+    CHECK(LeftSwing(true, true, 1, false));      // the left-hand weapon's blade, a weapon in each hand: the left swing
+    CHECK(!LeftSwing(true, true, 0, false));     // the right-hand weapon's blade: the plain attack (the right weapon)
+    CHECK(!LeftSwing(true, false, 1, false));    // one weapon (or a two-handed one): as before
+    CHECK(!LeftSwing(false, true, 1, false));    // the tick off: always the right weapon, as before
+    CHECK(!LeftSwing(true, true, 1, true));      // a joined player's extra hit: its hand is not known here
+    CHECK(!LeftSwing(true, true, -1, false));    // the slot not known
+    CHECK(kSkillLeftHandSwing == 5 && kWeapselLeft == 1);
+    // the node found must be the game's "Left Hand Swing"
+    CHECK(IsLeftHandSwing(5, 1));
+    CHECK(!IsLeftHandSwing(0, 0) && !IsLeftHandSwing(5, 0) && !IsLeftHandSwing(4, 1));   // Attack; a wrong weapsel; Left Hand Throw
+    // the layout, proven from the game's weapon getter (3.3.93787's bytes)
+    {
+        const uint8_t mov[7] = {0x48, 0x8B, 0x8F, 0x00, 0x01, 0x00, 0x00};
+        const uint8_t getter[13] = {0x48, 0x85, 0xC9, 0x75, 0x03, 0x33, 0xC0, 0xC3, 0x48, 0x8B, 0x41, 0x18, 0xC3};
+        const uint8_t weapsel[7] = {0x0F, 0xB6, 0x90, 0x08, 0x02, 0x00, 0x00};
+        CHECK(LayoutProven(mov, 0xE8, getter, weapsel));
+        CHECK(!LayoutProven(mov, 0xE9, getter, weapsel));   // not a call
+        uint8_t m2[7]; for (int i = 0; i < 7; ++i) m2[i] = mov[i]; m2[3] = 0x08;   // another offset of the skill list
+        CHECK(!LayoutProven(m2, 0xE8, getter, weapsel));
+        uint8_t g2[13]; for (int i = 0; i < 13; ++i) g2[i] = getter[i]; g2[11] = 0x10;   // the current skill elsewhere
+        CHECK(!LayoutProven(mov, 0xE8, g2, weapsel));
+        uint8_t w2[7]; for (int i = 0; i < 7; ++i) w2[i] = weapsel[i]; w2[3] = 0x10;   // the weapsel column elsewhere
+        CHECK(!LayoutProven(mov, 0xE8, getter, w2));
+        CHECK(kUnitSkillList == 0x100 && kListCurrentSkill == 0x18 && kRowWeapsel == 0x208);
+    }
     std::printf("melee_direct_test: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -104,6 +104,10 @@ struct Settings {
     float speed = 0.20f;   // [render] own_effects_speed_pct / 100: 0.01..1
     bool lower = false;    // [render] lower_own_effects
     float heightCm = 0.0f; // [render] own_effects_height_cm: -150..+50
+    bool auraMove = false;     // [render] move_own_auras
+    float auraUpCm = 0.0f;     // [render] own_auras_up_cm: -100..+100
+    float auraAheadCm = 0.0f;  // [render] own_auras_ahead_cm
+    float auraSideCm = 0.0f;   // [render] own_auras_side_cm (+ = to the right)
 };
 
 // -- the height ([render] lower_own_effects, own_effects_height_cm; the player's wish of 2026-10-25: "a slider for the height from the ground - lower, it may not be in the way
@@ -125,6 +129,71 @@ inline bool LiftMatrix(float m[16], float dy) {
 // Giving a lifted matrix back: the height read now is still the one we wrote (the game has not placed it again since) - then it is put back by the lift.
 inline bool StillLifted(float yNow, float yWrote) {
     return std::isfinite(yNow) && std::isfinite(yWrote) && std::fabs(yNow - yWrote) <= 1e-4f * (1.0f + std::fabs(yWrote));
+}
+
+// -- the Paladin's aura rings moved ([render] move_own_auras, own_auras_up_cm / _ahead_cm / _side_cm; Serg 2026-11-04: "a slider for the aura's shift, as we did for Bone
+// Armor"). The rings' own misplacement - the game's push toward the camera, sideways in VR - is taken away at its source by [render] aura_centre (vr/aura_view.h); these
+// sliders are the player's taste on top: the hero's own Paladin aura overlays (their definition is a file under data/hd/overlays/paladin/) drawn that many cm higher / lower,
+// ahead / behind and to the right / left, in every VR view (the same views aura_centre acts in; the flat game and other units as ever). Ahead is where the VR view looks,
+// level (the head in F4, the chase camera in F2); right is its right on the floor. The overlay's world matrix as the game computed it is moved, as Bone Armor's height is.
+constexpr float kAuraMinCm = -100.0f, kAuraMaxCm = 100.0f;
+inline float ClampAuraCm(float cm) { return !std::isfinite(cm) ? 0.0f : cm < kAuraMinCm ? kAuraMinCm : cm > kAuraMaxCm ? kAuraMaxCm : cm; }
+// An overlay definition's name is one of the Paladin's: data/hd/overlays/paladin/... (either slash, any case). Not a monster's or a mercenary's copy of an aura of his own
+// folder - the hero's tracker decides whose.
+inline bool IsPaladinOverlay(const char* raw) {
+    static const char kDir[] = "overlays/paladin/";
+    if (!raw) return false;
+    for (const char* p = raw; *p; ++p) {
+        size_t i = 0;
+        for (; i + 1 < sizeof kDir; ++i) {
+            char c = p[i];
+            if (!c) return false;
+            if (c == '\\') c = '/';
+            if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+            if (c != kDir[i]) break;
+        }
+        if (i + 1 == sizeof kDir) return p == raw || p[-1] == '/' || p[-1] == '\\';
+    }
+    return false;
+}
+// The move of one effect now, world units (x, y up, z), into out; false (out zero) when it is not moved: not on, not a Paladin aura of the hero's, not a VR view, the
+// scale or the view's ahead not known, every slider at 0. ahead: the VR view's level ahead on the floor (x, z; any length, not 0).
+// The world's right of a level ahead (x, z) is (-z, x) (vr/view/camera.cpp: ahead = (-sin h, -cos h), right = (cos h, -sin h)).
+inline bool AuraShift(bool paladin, Group g, bool vrView, const Settings& s, float unitsPerMetre, const float ahead[2], float out[3]) {
+    out[0] = out[1] = out[2] = 0.0f;
+    if (!s.auraMove || !paladin || g != Group::Aura || !vrView) return false;
+    if (!std::isfinite(unitsPerMetre) || unitsPerMetre <= 1e-4f) return false;
+    const float up = ClampAuraCm(s.auraUpCm), fw = ClampAuraCm(s.auraAheadCm), sd = ClampAuraCm(s.auraSideCm);
+    if (up == 0.0f && fw == 0.0f && sd == 0.0f) return false;
+    float ax = 0.0f, az = 0.0f;
+    if (fw != 0.0f || sd != 0.0f) {
+        if (!ahead || !std::isfinite(ahead[0]) || !std::isfinite(ahead[1])) return false;
+        const float l = std::sqrt(ahead[0] * ahead[0] + ahead[1] * ahead[1]);
+        if (!(l > 1e-4f)) return false;
+        ax = ahead[0] / l;
+        az = ahead[1] / l;
+    }
+    const float k = unitsPerMetre / 100.0f;
+    out[0] = (fw * ax - sd * az) * k;
+    out[1] = up * k;
+    out[2] = (fw * az + sd * ax) * k;
+    return true;
+}
+// A world matrix (the translation at m[12..14]) moved by d. False (and untouched) when it is not a plain one (as LiftMatrix).
+inline bool MoveMatrix(float m[16], const float d[3]) {
+    for (int i = 0; i < 16; ++i) if (!std::isfinite(m[i])) return false;
+    if (std::fabs(m[15] - 1.0f) > 1e-4f || !std::isfinite(d[0]) || !std::isfinite(d[1]) || !std::isfinite(d[2])) return false;
+    m[12] += d[0];
+    m[13] += d[1];
+    m[14] += d[2];
+    return true;
+}
+// Giving a moved matrix back: its place read now is still the one we wrote, each axis. Tighter than StillLifted: the floor's coordinates run to ~12000 units, where a
+// tolerance relative to the value would be over a unit (20 cm) - a ring the game placed again a few cm away must not be taken for ours. A float there is good to ~0.001.
+inline bool StillMoved(const float now[3], const float wrote[3]) {
+    for (int i = 0; i < 3; ++i)
+        if (!std::isfinite(now[i]) || !std::isfinite(wrote[i]) || std::fabs(now[i] - wrote[i]) > 2e-3f + 1e-6f * std::fabs(wrote[i])) return false;
+    return true;
 }
 inline float ClampPct(float pct) { return !std::isfinite(pct) ? 100.0f : pct < 0.0f ? 0.0f : pct > 100.0f ? 100.0f : pct; }
 
@@ -500,6 +569,7 @@ public:
         uint32_t entity = kNone;
         Group group = Group::None;
         bool solid = false;      // the table's mark: drawn or not drawn, never fainter
+        bool paladin = false;    // its definition is the Paladin's (IsPaladinOverlay): [render] move_own_auras
         State st;
         uint64_t addedAt = 0;
         bool seen = false;       // its effect component has been found once
@@ -513,11 +583,11 @@ public:
         char name[40] = {};
     };
 
-    Slot* Add(uint32_t entity, Group g, const char* name, uint64_t now, bool solid = false) {
+    Slot* Add(uint32_t entity, Group g, const char* name, uint64_t now, bool solid = false, bool paladin = false) {
         if (entity == kNone || (entity & 0xFFFFF) == 0xFFFFF) return nullptr;
         Slot* freeSlot = nullptr;
         for (Slot& s : slots_) {
-            if (s.entity == entity) { s.group = g; s.solid = solid; s.addedAt = now; return &s; }
+            if (s.entity == entity) { s.group = g; s.solid = solid; s.paladin = paladin; s.addedAt = now; return &s; }
             if (!freeSlot && s.entity == kNone) freeSlot = &s;
         }
         if (!freeSlot) return nullptr;
@@ -525,6 +595,7 @@ public:
         freeSlot->entity = entity;
         freeSlot->group = g;
         freeSlot->solid = solid;
+        freeSlot->paladin = paladin;
         freeSlot->addedAt = now;
         if (name) {
             size_t n = std::strlen(name);
@@ -610,6 +681,10 @@ void Configure(bool on, float bodyPct, float auraPct);
 void ConfigureSpeed(bool slow, float speedPct);
 // [render] lower_own_effects, own_effects_height_cm (-150..+50; 0 = the game's place): live.
 void ConfigureHeight(bool lower, float heightCm);
+// [render] move_own_auras, own_auras_up_cm / _ahead_cm / _side_cm (-100..+100; 0 = where the game puts them): live.
+void ConfigureAuraPlace(bool on, float upCm, float aheadCm, float sideCm);
+// The VR view's level ahead on the floor (x, z), as vrcam built the view last; false = not known (nothing is moved ahead or aside).
+void SetAheadSource(bool (*ahead)(float out[2]));
 // The world's units a metre, as vrcam knows them (the view's height over the player's eye height); 0 = not known (nothing is moved).
 void SetScaleSource(float (*unitsPerMetre)());
 bool Wanted();

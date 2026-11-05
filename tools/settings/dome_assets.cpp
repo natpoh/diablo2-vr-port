@@ -537,6 +537,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
     // [sky] game_sky: the live domes' pictures in one atlas (shared/sky_atlas.h), each dome its own band - Serg on 0.189: loaded in act 1,
     // act 2's own dome drew act 1's sky. The acts' pictures come with the mod's data; without them each dome names its own picture as before.
     std::string atlas, atlasWhy;
+    bool atlasCap = false;   // the atlas in use holds each act's zenith in a square of its own (shared/sky_atlas.h HasCap): the domes get their cap disc
     {
         std::vector<std::string> acts(skyatlas::kActBands);
         bool all = true;
@@ -554,7 +555,9 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
             const bool exists = ReadFile(path, &old);
             if (!arcanesky::MayReplace(exists, old, atlas, arcanesky::ReceiptValue(last, name))) {
                 ++kept;   // the player's own: left as it is - and used as it is
+                atlasCap = skyatlas::HasCap(old);
             } else {
+                atlasCap = skyatlas::HasCap(atlas);
                 if (!exists || old != atlas) {
                     if (!MakeDirs(path.substr(0, path.find_last_of(L'\\'))) || !WriteFile(path, atlas.data(), atlas.size())) {
                         atlasWhy = "could not write it (error " + std::to_string(GetLastError()) + ")";
@@ -606,7 +609,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
             if (band >= 0) {   // its uv in its own band
                 float from = 0.0f, to = 1.0f;
                 skyatlas::BandRange(band, &from, &to);
-                ownMesh = grannyremesh::DomeMesh(kRadius, from, to, closed);
+                ownMesh = grannyremesh::DomeMesh(kRadius, from, to, closed, atlasCap);
             }
             grannyremesh::Salt(&ownMesh, SaltOf(d));
             if (!grannyremesh::Read(card, &f, &why) || !grannyremesh::Remesh(f, ownMesh, names, lod, nullptr, &why)) {

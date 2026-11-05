@@ -282,6 +282,9 @@ struct Runtime::Impl {
     std::vector<std::pair<std::unique_ptr<Build>, int>> retired;
     HANDLE worker = nullptr;
     std::atomic<bool> busy{false}, cancel{false};
+    std::atomic<bool> warmBusy{false}, cancelWarm{false};   // the build running is a warming; it is to stop (fxbuildorder::StopWarm)
+    size_t warmIdx = 0;                                     // the warm list's place of the warming running (put back there when stopped)
+    uint32_t warmW = 0, warmH = 0;                          // ... and its size
     uint64_t wantGen = 1;                      // the definitions' generation
     std::map<std::string, std::string> defines;
     uint64_t triedGen = 0;                     // the last job started: (size, format, definitions)
@@ -434,6 +437,8 @@ struct Runtime::Impl {
             triedFmt = fmt;
         }
         busy = true;
+        warmBusy = compileOnly;
+        cancelWarm = false;
         d->AddRef();
         worker = BigThread([this, job]() {
             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
@@ -443,10 +448,12 @@ struct Runtime::Impl {
                 std::lock_guard<std::mutex> l(readyMx);
                 ready = std::move(b);
             }
+            warmBusy = false;
             busy = false;
         });
         if (!worker) {
             job.dev->Release();
+            warmBusy = false;
             busy = false;
             Log("vrcam: native effects - no thread for the build");
         }
@@ -574,11 +581,13 @@ bool Runtime::Impl::Compile(Build& b, const Job& job) {
     if (!compile) { b.error = "no d3dcompiler_47.dll"; return false; }
     std::atomic<size_t> next{0};
     std::atomic<uint32_t> compiledNow{0};
+    // (stopped: the runtime going away - or a warming the size in use is waiting behind, fxbuildorder::StopWarm)
+    auto stop = [&]() { return cancel.load() || (job.compileOnly && cancelWarm.load()); };
     auto work = [&]() {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         for (;;) {
             const size_t i = next.fetch_add(1);
-            if (i >= eps.size() || cancel.load()) return;
+            if (i >= eps.size() || stop()) return;
             Ep& e = eps[i];
             if (e.done) continue;
             ID3DBlob* out = nullptr;
@@ -603,7 +612,7 @@ bool Runtime::Impl::Compile(Build& b, const Job& job) {
         if (const HANDLE h = BigThread(work)) pool.push_back(h);
     work();
     for (HANDLE& h : pool) Join(h);
-    if (cancel.load()) { b.error = "cancelled"; return false; }
+    if (stop()) { b.error = "cancelled"; return false; }
     b.compiled = compiledNow.load();
     for (Ep& e : eps) {
         if (e.failed) {
@@ -1232,7 +1241,14 @@ std::unique_ptr<Build> Runtime::Impl::Make(const Job& job) {
     b->target = job.target;
     b->gen = job.gen;
     const auto t0 = std::chrono::steady_clock::now();
-    if (!Compile(*b, job)) return b;
+    if (!Compile(*b, job)) {
+        if (job.compileOnly) {   // a warming hands nothing over, stopped or not - never a "build failed" for the size in use
+            if (b->error == "cancelled") Log("vrcam: native effects - the warming of %ux%u stopped: the game took a size of its own first (put back in its turn)", job.w, job.h);
+            else Log("vrcam: native effects - the warming of %ux%u could not be compiled: %s", job.w, job.h, b->error.substr(0, 300).c_str());
+            return nullptr;
+        }
+        return b;
+    }
     if (job.compileOnly) {
         Log("vrcam: native effects - D2R_DepthFog.fx's shaders for %ux%u (a size built before) ready in the cache in %.1f s (%u from it, %u compiled): "
             "that size is quick to build when the game takes it", job.w, job.h, b->ms / 1000.0, b->cached, b->compiled);
@@ -1608,6 +1624,12 @@ bool Runtime::Impl::Frame(ID3D12Device* d, const D3D12_RESOURCE_DESC& target) {
     while (preAt < warm.size() && builtThisRun(warm[preAt])) ++preAt;
     const bool want = !cur || cur->w != target.Width || cur->h != target.Height || cur->target != fmt || cur->gen != wantGen;
     const bool tried = triedGen == wantGen && triedW == target.Width && triedH == target.Height && triedFmt == fmt;
+    if (fxbuildorder::StopWarm(warmBusy.load(), want, tried, warmW == target.Width && warmH == target.Height) && !cancelWarm.load()) {   // the size in use first, at once
+        cancelWarm = true;
+        preAt = std::min(preAt, warmIdx);   // (the warming stopped goes back in its turn)
+        Log("vrcam: native effects - the game took %llux%u while a size built before was being warmed: that warming stopped, this size built first",
+            (unsigned long long)target.Width, target.Height);
+    }
     switch (fxbuildorder::Next(busy.load(), want, tried, preAt < warm.size())) {
     case fxbuildorder::Job::InUse:
         stats.failed = false;
@@ -1615,7 +1637,10 @@ bool Runtime::Impl::Frame(ID3D12Device* d, const D3D12_RESOURCE_DESC& target) {
         StartJob(d, (uint32_t)target.Width, target.Height, fmt);
         break;
     case fxbuildorder::Job::Warm: {
+        warmIdx = preAt;
         const auto s = warm[preAt++];
+        warmW = s.first;
+        warmH = s.second;
         Log("vrcam: native effects - D2R_DepthFog.fx's shaders for %ux%u (built before) into the cache, in the background (the size in use is "
             "built)", s.first, s.second);
         StartJob(d, s.first, s.second, fmt, true);

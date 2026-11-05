@@ -69,6 +69,9 @@ std::atomic<bool> g_slow{false};                 // [render] slow_own_effects
 std::atomic<float> g_speed{0.20f};               // [render] own_effects_speed_pct / 100
 std::atomic<bool> g_lower{false};                // [render] lower_own_effects
 std::atomic<float> g_heightCm{0.0f};             // [render] own_effects_height_cm
+std::atomic<bool> g_auraMove{false};             // [render] move_own_auras
+std::atomic<float> g_auraCm[3] = {};             // [render] own_auras_up_cm, own_auras_ahead_cm, own_auras_side_cm
+bool (*g_ahead)(float out[2]) = nullptr;         // the VR view's level ahead (vrcam)
 std::atomic<int> g_state{0};   // 0 not tried, 1 hooks in, 2 not possible (another build?)
 BeginFn g_origBegin = nullptr;
 FinalizeFn g_origFinalize = nullptr;
@@ -210,10 +213,11 @@ unsigned TrackInto(Tracker* into, uintptr_t ret, Group g, const char* name, uint
     *instOut = inst;
     if (!ReadEntities(&ReadAt, inst, ents, kMaxEntities, &n)) return 0;
     const bool solid = SolidOf(name);
+    const bool paladin = IsPaladinOverlay(name);   // [render] move_own_auras: the definition's file is the Paladin's
     AcquireSRWLockExclusive(&g_lock);
     unsigned added = 0;
     for (uint32_t i = 0; i < n; ++i)
-        if (into->Add(ents[i], g, key, now, solid)) ++added;
+        if (into->Add(ents[i], g, key, now, solid, paladin)) ++added;
     ReleaseSRWLockExclusive(&g_lock);
     return added;
 }
@@ -669,13 +673,15 @@ bool SpeedPass(Tracker::Slot& s, uintptr_t effect, float target, bool f4, const 
 // -- [render] lower_own_effects: the hero's own solid overlays drawn lower (vr/own_effects.h: LiftFor, LiftMatrix). The tick (the registry's thread) publishes which entities
 // are lifted by how much; the writer at the world-matrix function (the renderer's thread, vr/potion_hide.cpp's hook) moves their matrices; the tick gives a matrix back when
 // its entity is no longer to be lifted and the game has not placed it again since.
+// [render] move_own_auras uses the same writer: the hero's Paladin aura rings moved on three axes, in every VR view (a slot's `aura`).
 constexpr size_t kLifts = 16;
 constexpr size_t kXformWorld = 0x40, kXformPrev = 0x80;   // a TransformComponent's world matrix and last frame's (as the potion hide writes them)
 struct Lift {
     std::atomic<uint32_t> entity{Tracker::kNone};
-    std::atomic<float> dy{0.0f};          // world units now (0: not lifted)
-    std::atomic<float> applied{0.0f};     // the lift of the last matrix written (what a give-back takes off)
-    std::atomic<float> wroteY{NAN};       // the height of the last matrix written
+    std::atomic<float> d[3] = {};         // world units now (x, y up, z; all 0: not moved)
+    std::atomic<float> applied[3] = {};   // the move of the last matrix written (what a give-back takes off)
+    std::atomic<float> wrote[3] = {NAN, NAN, NAN};   // the place of the last matrix written
+    std::atomic<bool> aura{false};        // [render] move_own_auras (any VR view) - else Bone Armor's height (F4)
     std::atomic<uint32_t> hits{0};        // matrices written
     uint64_t since = 0;                   // (the tick's) when it was published
     bool told = false, toldPlaced = false, toldNever = false;
@@ -684,22 +690,28 @@ struct Lift {
 Lift g_lifts[kLifts];
 float (*g_upm)() = nullptr;
 
+bool AnyMove(const float d[3]) { return d[0] != 0.0f || d[1] != 0.0f || d[2] != 0.0f; }
+// The views a move acts in: Bone Armor's height F4 only; the aura rings every VR view (as [render] aura_centre).
+bool MoveView(bool aura) { return aura ? viewgate::Number() > 0 : viewgate::F4(); }
+
 // The renderer's thread, after the game computed the entity's world matrix: one of ours? (a scan of 16 - most calls end at the first compare with kNone)
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     if (entity == Tracker::kNone) return;
     for (Lift& l : g_lifts) {
         if (l.entity.load(std::memory_order_relaxed) != entity) continue;
-        const float dy = l.dy.load(std::memory_order_relaxed);
-        if (dy == 0.0f || !viewgate::F4() || out < 0x10000 || component < 0x10000) return;
+        const float d[3] = {l.d[0].load(std::memory_order_relaxed), l.d[1].load(std::memory_order_relaxed), l.d[2].load(std::memory_order_relaxed)};
+        if (!AnyMove(d) || !MoveView(l.aura.load(std::memory_order_relaxed)) || out < 0x10000 || component < 0x10000) return;
         __try {
             float m[16];
             std::memcpy(m, reinterpret_cast<const void*>(out), sizeof m);
-            if (!LiftMatrix(m, dy)) return;
+            if (!MoveMatrix(m, d)) return;
             std::memcpy(reinterpret_cast<void*>(out), m, sizeof m);
             std::memcpy(reinterpret_cast<void*>(component + kXformWorld), m, sizeof m);
             std::memcpy(reinterpret_cast<void*>(component + kXformPrev), m, sizeof m);
-            l.applied.store(dy, std::memory_order_relaxed);
-            l.wroteY.store(m[13], std::memory_order_relaxed);
+            for (int i = 0; i < 3; ++i) {
+                l.applied[i].store(d[i], std::memory_order_relaxed);
+                l.wrote[i].store(m[12 + i], std::memory_order_relaxed);
+            }
             l.hits.fetch_add(1, std::memory_order_relaxed);
         } __except (EXCEPTION_EXECUTE_HANDLER) {
         }
@@ -707,48 +719,65 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
     }
 }
 
-// A lifted matrix given back (the tick's thread): when the entity's world height is still the one we wrote, the lift is taken off it.
+// A moved matrix given back (the tick's thread): when the entity's world place is still the one we wrote, the move is taken off it.
 void GiveBack(Lift& l) noexcept {
     const uint32_t e = l.entity.load();
-    const float applied = l.applied.load(), wrote = l.wroteY.load();
-    if (e == Tracker::kNone || l.hits.load() == 0 || applied == 0.0f) return;
+    const float applied[3] = {l.applied[0].load(), l.applied[1].load(), l.applied[2].load()};
+    const float wrote[3] = {l.wrote[0].load(), l.wrote[1].load(), l.wrote[2].load()};
+    if (e == Tracker::kNone || l.hits.load() == 0 || !AnyMove(applied)) return;
     __try {
         uintptr_t comp = 0;
-        float y = NAN;
-        if (!skel::EntityTransform(e, &comp) || !comp || !ReadAt(comp + kXformWorld + 13 * 4, &y, sizeof y) || !StillLifted(y, wrote)) return;   // (placed again by the game: nothing of ours on it)
-        const float back = y - applied;
-        std::memcpy(reinterpret_cast<void*>(comp + kXformWorld + 13 * 4), &back, sizeof back);
-        float yp = NAN;
-        if (ReadAt(comp + kXformPrev + 13 * 4, &yp, sizeof yp) && StillLifted(yp, wrote)) std::memcpy(reinterpret_cast<void*>(comp + kXformPrev + 13 * 4), &back, sizeof back);
+        float p[3] = {NAN, NAN, NAN};
+        if (!skel::EntityTransform(e, &comp) || !comp || !ReadAt(comp + kXformWorld + 12 * 4, p, sizeof p) || !StillMoved(p, wrote)) return;   // (placed again by the game: nothing of ours on it)
+        const float back[3] = {p[0] - applied[0], p[1] - applied[1], p[2] - applied[2]};
+        std::memcpy(reinterpret_cast<void*>(comp + kXformWorld + 12 * 4), back, sizeof back);
+        float pp[3] = {NAN, NAN, NAN};
+        if (ReadAt(comp + kXformPrev + 12 * 4, pp, sizeof pp) && StillMoved(pp, wrote)) std::memcpy(reinterpret_cast<void*>(comp + kXformPrev + 12 * 4), back, sizeof back);
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
 }
 
 struct LiftWant {
     uint32_t entity;
-    float dy;
+    float d[3];
     const char* name;
+    bool aura;
 };
 
-// The tick's thread: publish this frame's lifts; give back the ones that are no longer; say per effect what was done.
-void PublishLifts(const LiftWant* want, size_t n, float heightCm, float upm, uint64_t now) {
-    for (Lift& l : g_lifts) {   // the ones no longer wanted (or no longer lifted): given back, let go
+void LogMove(const Lift& l, const LiftWant& w, float heightCm, const float auraCm[3], float upm) {
+    if (!w.aura)
+        LogF("own effects: \"%s\" (entity %08X) - drawn %.0f cm %s in F4 (%.2f world units at %.2f units a metre; the overlay's world matrix as the game computed it, moved along its "
+             "up after the world-matrix function 0xE3A8C0 - visual only)", l.name, l.entity.load(), (double)std::fabs(heightCm), heightCm < 0 ? "lower" : "higher", (double)w.d[1], (double)upm);
+    else
+        LogF("own effects: \"%s\" (entity %08X) - the Paladin's aura ring drawn %.0f cm up, %.0f cm ahead, %.0f cm to the right in VR ([render] move_own_auras; %.2f %.2f %.2f world units "
+             "at %.2f units a metre, ahead = where the view looks; the overlay's world matrix as the game computed it, moved after the world-matrix function 0xE3A8C0 - visual only)",
+             l.name, l.entity.load(), (double)auraCm[0], (double)auraCm[1], (double)auraCm[2], (double)w.d[0], (double)w.d[1], (double)w.d[2], (double)upm);
+}
+
+// The tick's thread: publish this frame's moves; give back the ones that are no longer; say per effect what was done.
+void PublishLifts(const LiftWant* want, size_t n, float heightCm, const float auraCm[3], float upm, uint64_t now) {
+    for (Lift& l : g_lifts) {   // the ones no longer wanted (or no longer moved): given back, let go
         const uint32_t e = l.entity.load();
         if (e == Tracker::kNone) continue;
-        float dy = 0.0f;
-        for (size_t i = 0; i < n; ++i) if (want[i].entity == e) dy = want[i].dy;
-        if (dy != 0.0f) continue;
+        bool still = false;
+        for (size_t i = 0; i < n; ++i) if (want[i].entity == e && AnyMove(want[i].d)) still = true;
+        if (still) continue;
         GiveBack(l);
-        if (l.told) LogF("own effects: \"%s\" (entity %08X) - its height given back (the game's place: %s)", l.name, e, !g_lower.load() ? "lower_own_effects is off" : "not F4, or the slider at 0");
-        l.dy.store(0.0f);
+        if (l.told) {
+            if (l.aura.load())
+                LogF("own effects: \"%s\" (entity %08X) - the aura ring's place given back (the game's place: %s)", l.name, e,
+                     !g_auraMove.load() ? "move_own_auras is off" : "not a VR view, or the sliders at 0");
+            else
+                LogF("own effects: \"%s\" (entity %08X) - its height given back (the game's place: %s)", l.name, e, !g_lower.load() ? "lower_own_effects is off" : "not F4, or the slider at 0");
+        }
+        for (int i = 0; i < 3; ++i) { l.d[i].store(0.0f); l.applied[i].store(0.0f); l.wrote[i].store(NAN); }
         l.entity.store(Tracker::kNone);
         l.hits.store(0);
-        l.applied.store(0.0f);
-        l.wroteY.store(NAN);
+        l.aura.store(false);
         l.told = l.toldPlaced = l.toldNever = false;
     }
     for (size_t i = 0; i < n; ++i) {
-        if (want[i].dy == 0.0f) continue;
+        if (!AnyMove(want[i].d)) continue;
         Lift* slot = nullptr;
         for (Lift& l : g_lifts) if (l.entity.load() == want[i].entity) { slot = &l; break; }
         if (!slot) {
@@ -756,25 +785,28 @@ void PublishLifts(const LiftWant* want, size_t n, float heightCm, float upm, uin
             if (!slot) break;
             std::snprintf(slot->name, sizeof slot->name, "%s", want[i].name);
             slot->since = now;
-            slot->dy.store(want[i].dy);
+            for (int k = 0; k < 3; ++k) slot->d[k].store(want[i].d[k]);
+            slot->aura.store(want[i].aura);
             slot->entity.store(want[i].entity);
-        } else if (slot->dy.load() != want[i].dy) {
-            slot->dy.store(want[i].dy);
-            slot->told = false;   // (the slider moved: told again)
+        } else {
+            bool moved = false;
+            for (int k = 0; k < 3; ++k)
+                if (slot->d[k].load() != want[i].d[k]) { slot->d[k].store(want[i].d[k]); moved = true; }
+            if (moved && !want[i].aura) slot->told = false;   // (the slider moved: told again - the aura's ahead turns with the view every frame, so it is told once)
         }
         Lift& l = *slot;
         if (!l.told) {
             l.told = true;
-            LogF("own effects: \"%s\" (entity %08X) - drawn %.0f cm %s in F4 (%.2f world units at %.2f units a metre; the overlay's world matrix as the game computed it, moved along its "
-                 "up after the world-matrix function 0xE3A8C0 - visual only)", l.name, l.entity.load(), (double)std::fabs(heightCm), heightCm < 0 ? "lower" : "higher", (double)want[i].dy, (double)upm);
+            LogMove(l, want[i], heightCm, auraCm, upm);
         }
         const uint32_t hits = l.hits.load();
         if (hits && !l.toldPlaced) {
             l.toldPlaced = true;
-            LogF("own effects: \"%s\" (entity %08X) - the renderer has placed it lowered (%u matrices so far; now at height %.2f)", l.name, l.entity.load(), hits, (double)l.wroteY.load());
+            LogF("own effects: \"%s\" (entity %08X) - the renderer has placed it moved (%u matrices so far; now at %.2f %.2f %.2f)", l.name, l.entity.load(), hits, (double)l.wrote[0].load(),
+                 (double)l.wrote[1].load(), (double)l.wrote[2].load());
         } else if (!hits && !l.toldNever && now > l.since + 3000) {
             l.toldNever = true;
-            LogF("own effects: \"%s\" (entity %08X) - the world-matrix function has not placed this entity in 3 s - it is not lowered (its effect is placed some other way)", l.name, l.entity.load());
+            LogF("own effects: \"%s\" (entity %08X) - the world-matrix function has not placed this entity in 3 s - it is not moved (its effect is placed some other way)", l.name, l.entity.load());
         }
     }
 }
@@ -841,16 +873,30 @@ void ConfigureSpeed(bool slow, float speedPct) {
 void ConfigureHeight(bool lower, float heightCm) {
     g_heightCm.store(ClampHeightCm(heightCm));
     const bool was = g_lower.exchange(lower);
-    potionhide::WantHooksForEffects(lower);
+    potionhide::WantHooksForEffects(lower || g_auraMove.load());
     if (lower != was)
         LogF(lower ? "own effects: height on ([render] lower_own_effects) - the hero's solid effects (Bone Armor ...) are drawn %.0f cm from the game's place in first person (F4), visual only"
                    : "own effects: height off ([render] lower_own_effects=0) - the solid effects are drawn where the game puts them (%.0f cm kept for when it is ticked)",
              (double)ClampHeightCm(heightCm));
 }
 
+void ConfigureAuraPlace(bool on, float upCm, float aheadCm, float sideCm) {
+    g_auraCm[0].store(ClampAuraCm(upCm));
+    g_auraCm[1].store(ClampAuraCm(aheadCm));
+    g_auraCm[2].store(ClampAuraCm(sideCm));
+    const bool was = g_auraMove.exchange(on);
+    potionhide::WantHooksForEffects(on || g_lower.load());
+    if (on != was)
+        LogF(on ? "own effects: aura place on ([render] move_own_auras) - the hero's Paladin aura rings are drawn %.0f cm up, %.0f cm ahead, %.0f cm to the right in VR, visual only"
+                : "own effects: aura place off ([render] move_own_auras=0) - the aura rings are drawn where the game puts them (%.0f / %.0f / %.0f cm kept for when it is ticked)",
+             (double)ClampAuraCm(upCm), (double)ClampAuraCm(aheadCm), (double)ClampAuraCm(sideCm));
+}
+
+void SetAheadSource(bool (*ahead)(float out[2])) { g_ahead = ahead; }
+
 void SetScaleSource(float (*unitsPerMetre)()) { g_upm = unitsPerMetre; }
 
-bool Wanted() { return g_on.load() || g_slow.load() || g_lower.load(); }
+bool Wanted() { return g_on.load() || g_slow.load() || g_lower.load() || g_auraMove.load(); }
 
 void HideSummitBackdrop(bool hide) { g_backdropWant.store(hide, std::memory_order_relaxed); }
 void BackdropTick() { BackdropPass(GetTickCount64()); }
@@ -896,7 +942,8 @@ void Install() {
 
 void Tick() {
     if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed)) return;
-    if (!g_on.load(std::memory_order_relaxed) && !g_slow.load(std::memory_order_relaxed) && !g_lower.load(std::memory_order_relaxed) && !g_touched.load(std::memory_order_relaxed)) return;   // off, and nothing of ours to give back
+    if (!g_on.load(std::memory_order_relaxed) && !g_slow.load(std::memory_order_relaxed) && !g_lower.load(std::memory_order_relaxed) && !g_auraMove.load(std::memory_order_relaxed) &&
+        !g_touched.load(std::memory_order_relaxed)) return;   // off, and nothing of ours to give back
     ++g_ticks;
     AcquireSRWLockExclusive(&g_lock);
     if (g_cands.Count() != 0) {   // the table's overlays of units not known as the hero's: his, if they stand at his place (only while no key of his is known)
@@ -909,7 +956,7 @@ void Tick() {
             float p[3];
             if (!haveHero || !EntityPlace(c.entity, p)) continue;
             if (!NearHero(hero, p)) continue;
-            if (g_tracker.Add(c.entity, c.group, c.name, at, c.solid)) {
+            if (g_tracker.Add(c.entity, c.group, c.name, at, c.solid, c.paladin)) {
                 ++g_candsTaken;
                 LogF("own effects: \"%s\" (entity %08X) stands at the hero's place (%.1f %.1f %.1f; he is at %.1f %.1f %.1f) - taken as his (no key of the hero's is known)", c.name, c.entity, (double)p[0], (double)p[1], (double)p[2],
                      (double)hero[0], (double)hero[1], (double)hero[2]);
@@ -924,7 +971,7 @@ void Tick() {
     size_t nLifts = 0;
     if (g_tracker.Count() == 0) {
         ReleaseSRWLockExclusive(&g_lock);
-        if (LiftsLive()) PublishLifts(lifts, 0, 0.0f, 0.0f, GetTickCount64());   // (ours given back)
+        if (LiftsLive()) PublishLifts(lifts, 0, 0.0f, nullptr, 0.0f, GetTickCount64());   // (ours given back)
         if (g_hiddenModels.Count()) ScenePass(offEntry, heroAt, false, GetTickCount64());   // (ours given back)
         return;
     }
@@ -936,8 +983,16 @@ void Tick() {
     set.speed = g_speed.load(std::memory_order_relaxed);
     set.lower = g_lower.load(std::memory_order_relaxed);
     set.heightCm = g_heightCm.load(std::memory_order_relaxed);
+    set.auraMove = g_auraMove.load(std::memory_order_relaxed);
+    set.auraUpCm = g_auraCm[0].load(std::memory_order_relaxed);
+    set.auraAheadCm = g_auraCm[1].load(std::memory_order_relaxed);
+    set.auraSideCm = g_auraCm[2].load(std::memory_order_relaxed);
+    const float auraCm[3] = {set.auraUpCm, set.auraAheadCm, set.auraSideCm};
     const float upm = g_upm ? g_upm() : 0.0f;
     const bool f4 = viewgate::F4();
+    const bool vrView = viewgate::Number() > 0;   // [render] move_own_auras: every VR view
+    float ahead[2] = {NAN, NAN};
+    const bool aheadOk = set.auraMove && g_ahead && g_ahead(ahead);
     const uint64_t now = GetTickCount64();
     bool touched = false;
     const bool paramReady = FadeNameReady();
@@ -956,7 +1011,11 @@ void Tick() {
                 if (s.addedAt > heroAt[k]) heroAt[k] = s.addedAt;
             }
             const float dy = LiftFor(true, f4, set, upm);
-            if (dy != 0.0f && nLifts < kLifts) lifts[nLifts++] = LiftWant{s.entity, dy, s.name};
+            if (dy != 0.0f && nLifts < kLifts) lifts[nLifts++] = LiftWant{s.entity, {0.0f, dy, 0.0f}, s.name, false};
+        }
+        if (set.auraMove && s.paladin && s.group == Group::Aura && nLifts < kLifts) {   // [render] move_own_auras: the hero's Paladin aura rings
+            LiftWant w{s.entity, {0.0f, 0.0f, 0.0f}, s.name, true};
+            if (AuraShift(true, s.group, vrView, set, upm, aheadOk ? ahead : nullptr, w.d)) lifts[nLifts++] = w;
         }
         if (found == 0) continue;
         s.seen = true;
@@ -1010,7 +1069,7 @@ void Tick() {
     }
     ReleaseSRWLockExclusive(&g_lock);
     if (!g_faulted.load(std::memory_order_relaxed)) ScenePass(offEntry, heroAt, anySolid, now);   // (outside our lock: it takes the game's)
-    PublishLifts(lifts, nLifts, set.heightCm, upm, now);
+    PublishLifts(lifts, nLifts, set.heightCm, auraCm, upm, now);
     if (LiftsLive()) touched = true;
     if (g_hiddenModels.Count()) touched = true;
     g_touched.store(touched, std::memory_order_relaxed);   // anything of ours left to give back keeps the tick going after the option is unticked

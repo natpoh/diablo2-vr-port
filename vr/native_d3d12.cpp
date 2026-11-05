@@ -660,7 +660,9 @@ bool Install(const Sinks& sinks, LogFn log) {
     wchar_t sys[MAX_PATH];
     const UINT n = GetSystemDirectoryW(sys, MAX_PATH);
     if (!n || n >= MAX_PATH - 16) return false;
-    // (the system's own DLLs by their full path: a dxgi.dll beside the game - another ReShade - is not this mode's, vrcam stopped before)
+    // (the system's own DLLs by their full path: a dxgi.dll beside the game is the player's own ReShade - since 0.203 it is left as it is and
+    // never joined, and these hooks run beside it: the game loads it first, it hooks the same exports and vtables, and MinHook chains onto its
+    // jumps - whichever of the two sits outside, the game's calls pass through both)
     const HMODULE d3d12 = LoadLibraryW((std::wstring(sys) + L"\\d3d12.dll").c_str());
     const HMODULE dxgi = LoadLibraryW((std::wstring(sys) + L"\\dxgi.dll").c_str());
     bool ok = true;

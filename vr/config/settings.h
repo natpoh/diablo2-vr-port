@@ -33,6 +33,9 @@ struct Settings {
     // [view] keys (vr/view_keys.h): 0 F1 - F4 pick the view (the game does not get them), 1 Shift + F1 - F4 (a plain F1 - F8 is the
     // game's), 2 no F key (F12, Settings, the controller). -1 until read, so the first read logs.
     std::atomic<int>   viewKeys{-1};
+    // [view] own_hotkeys (vr/view_keys.h OwnGate): 1 = F9 - F12, the plugin's own keys, are not passed to the game (its default keys
+    // there toggle the automap's party markers); 0 as before. -1 until read, so the first read logs.
+    std::atomic<int>   ownHotkeys{-1};
     std::atomic<float> fov{60.0f};          // vertical FOV of the game camera; match the FlatVR screen's angular height
     std::atomic<bool>  fovFromFlatVR{true}; // fov follows the FlatVR screen's size and distance (BodyWalk's settings)
     std::atomic<float> distance{-1.0f};     // camera behind the eye point along the view; below 0 = in front of it (out of the head)
@@ -57,6 +60,9 @@ struct Settings {
     std::atomic<bool>  mapDirection{true};  // [hud] map_direction: an arrow on the hero's marker of the game's map, the way our camera looks (vr/map_direction.h)
     std::atomic<bool>  mapTurn{false};      // [hud] map_rotate or map_compass: the way the head looks, for the map in the hand (vr/map_turn.h, xr.cpp)
     std::atomic<bool>  mapRotateFlat{false};   // [hud] map_rotate_flat: the corner map in the picture round and turned, the camera's way up (MapRotateFlatTick)
+    std::atomic<bool>  mapCompassFlat{true};   // [hud] map_compass_flat: the compass strip over the turned map on the screen (mapturn::CompassOnScreen)
+    std::atomic<bool>  flatMapZoom{true};   // [hud] flat_map_zoom: + / - (and Ctrl + wheel) zoom the flat game's map, the game's own zoom (FlatMapZoomKey)
+    std::atomic<int>   flatMapZoomLevel{0};   // [hud] flat_map_zoom_level: its level, steps of 1/8 on the game's own (vr/flat_map_zoom.h), written back when changed
     std::atomic<int>   mapCorner{0};         // [hud] map_corner: 0 either, 1 left, 2 right - where [hud] map_rotate_flat puts a whole-screen map
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
@@ -438,6 +444,8 @@ struct Settings {
     // behind a hard swing, a two-handed one wants both hands - and a hand takes it where its grip closes on
     // the shaft, passing it from hand to hand. Off: the weapon sits fast in the game's grip, as before.
     std::atomic<bool>  weightOn{false};      // [weight] on
+    std::atomic<bool>  weightSecondLetsGo{true};   // [weight] second_lets_go (read once at load: arms.cpp asked the ini file on every tick - half a core on a player's PC)
+    std::atomic<bool>  weightDualCollide{true};    // [weight] dual_collide (the same)
     std::atomic<float> weightFeel{50.0f};   // [weight] feel: % of the weapon's mass
     std::atomic<float> weightStrength{100.0f};   // [weight] strength: % of the hands' strength
     std::atomic<float> weightGravity{100.0f};    // [weight] gravity_pct: % of g (0 = no gravity, only inertia)
@@ -631,6 +639,7 @@ bool ReloadIfChanged();
 
 // vr/config/reconcile.cpp: the game's own Settings.json as VR and flat mode want it
 void MiniMapForHand();
+void AutoMapPartyNote();   // the game's "AutoMap Party" / "AutoMap Party Names" read for one log line (vr/automap_party.h), never written
 void NoTemporalAA();
 void ReconcileFrameCap();
 void ReconcileGameWindow();

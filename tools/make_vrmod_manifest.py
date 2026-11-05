@@ -479,14 +479,15 @@ def selftest():
         L = "d2rloader/d2r_vr_libs/"        # the optional weight and grip libraries are not among the plugins
         expect(set(files) >= {P + "d2rl-vrcam.dll", L + "d2r_vr_weight.dll", L + "d2r_vr_grip.dll", P + "d2r_vr.ini", P + "d2r_vr.default.ini",
                               "reshade/reshade-shaders/Shaders/D2R_DepthFog.fx", "reshade/reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_act1.png",
-                              "reshade/reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_act2.png", "reshade/FlatVR_DepthProvider.addon64"},
-               "x-mod-files lists the plugin, both libraries, the ini and its defaults, the shader, the sky (a wildcard expanded), FlatVR's add-on")
+                              "reshade/reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_act2.png"},
+               "x-mod-files lists the plugin, both libraries, the ini and its defaults, the shader, the sky (a wildcard expanded)")
+        expect("reshade/FlatVR_DepthProvider.addon64" not in files and "reshade/FlatVR_Keepalive.addonfx" not in files,
+               "...and not FlatVR's ReShade add-on or its keepalive effect (no ReShade since 0.203)")
         expect(not any(k in files for k in ("vrmod-manifest.json", "launcher_icon.png")) and not any(k.startswith("..") for k in files),
                "...but not the manifest and its icon, and nothing outside the mod folder")
         expect(files[P + "d2rl-vrcam.dll"]["sha256"] == sha256_file(pay / "plugins/d2rl-vrcam.dll") and files[P + "d2rl-vrcam.dll"]["optional"] is False,
                "...with the shipped file's hash; the plugin is not optional")
-        expect(files[L + "d2r_vr_weight.dll"]["optional"] and files[L + "d2r_vr_grip.dll"]["optional"] and files["reshade/FlatVR_DepthProvider.addon64"]["optional"],
-               "...the libraries and the VR-only add-on are optional")
+        expect(files[L + "d2r_vr_weight.dll"]["optional"] and files[L + "d2r_vr_grip.dll"]["optional"], "...the libraries are optional")
         expect(files[P + "d2r_vr.ini"].get("user_edits") is True and "user_edits" not in files[P + "d2r_vr.default.ini"], "...d2r_vr.ini is the player's (user_edits), its defaults are not")
         expect(files[P + "d2r_vr.ini"]["sha256"] == files[P + "d2r_vr.default.ini"]["sha256"], "...and the seed and the defaults are the same shipped file")
         expect([e["path"] for e in m3["x-mod-files"]] == sorted((e["path"] for e in m3["x-mod-files"]), key=str.lower), "...sorted by path")

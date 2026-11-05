@@ -35,6 +35,33 @@ int main() {
         CHECK(order.size() == 4 && warmLeft == 0);      // then every size built before, once; the in-use one not again after a failure
         CHECK(inUseBuilt == !failInUse);
     }
+    // the game takes another size while a warming runs (playful_pony, 2026-11-04: 1024 at Lut Gholein while 1216 was warmed, 44 s): the
+    // warming stops at once and goes back in its turn; the size in use is built next, then the warming again
+    {
+        int warmLeft = 1, busyFor = 0;
+        bool running = false, warming = false, inUseBuilt = true, inUseTried = false, stopAsked = false;
+        int sizeTakenAt = 4, inUseStartedAt = -1, warmDoneAt = -1;
+        for (int present = 0; present < 200; ++present) {
+            if (present == sizeTakenAt) { inUseBuilt = false; inUseTried = false; }   // the game's new size: no build of its own
+            if (running) {
+                if (warming && stopAsked) { running = false; warming = false; ++warmLeft; stopAsked = false; }   // (stopped between two shaders: put back)
+                else if (--busyFor == 0) {
+                    running = false;
+                    if (warming) { warming = false; warmDoneAt = present; } else inUseBuilt = true;
+                }
+            }
+            if (StopWarm(running && warming, !inUseBuilt, inUseTried)) stopAsked = true;
+            const Job j = Next(running, !inUseBuilt, inUseTried, warmLeft > 0);
+            if (j == Job::InUse) { inUseTried = true; running = true; warming = false; busyFor = 3; if (inUseStartedAt < 0) inUseStartedAt = present; }
+            if (j == Job::Warm) { --warmLeft; running = true; warming = true; busyFor = 44; }   // (the long warming of a slow card)
+        }
+        std::printf("  a size taken 4 presents into a 44-present warming: its build started at present %d (before: 44), the warming done at %d\n",
+                    inUseStartedAt, warmDoneAt);
+        CHECK(inUseStartedAt >= 0 && inUseStartedAt <= sizeTakenAt + 2);   // at once, not after the warming
+        CHECK(inUseBuilt && warmDoneAt > inUseStartedAt && warmLeft == 0);  // the warming put back and done after it
+    }
+    CHECK(StopWarm(true, true, false) && !StopWarm(false, true, false) && !StopWarm(true, false, false) && !StopWarm(true, true, true));
+    CHECK(!StopWarm(true, true, false, true));   // the game took the very size being warmed: let it finish - its shaders are the ones wanted
     // while a build runs nothing else starts; nothing at all when all is done
     CHECK(Next(true, true, false, true) == Job::None);
     CHECK(Next(false, false, false, false) == Job::None);

@@ -38,6 +38,8 @@ struct FrameIn {
     float spanInUse = 0.0f;        // the span the hero's arms are fitted to now, metres (calib::SpanInUseM; 0 none), for the Body page's Arm span
     Players players;               // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
     party::View party;             // the game's roster (vr/party_cmd.h), for the Party page
+    party::MapShow mapShow;        // the game's Show Party / Show Party Names (vr/party_cmd.h MapNow), for the Co-op page's map row
+    AutoTune autoTune;             // [autotune]: the Video page's Auto run (vr/auto_tune_run.h, its words vr/auto_tune_text.h)
     int openGuide = -1;            // the first-start guide asks the panel to come up on its Guide page: the page to start on (vr/first_start.h), -1 none
     bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: that hand's grip holds the weapon (or another gesture holds it) - it does not arm the chord
     bool chordOn = true;           // [debug] settings_two_grip_chord: both grips + a click open / close it. The plugin passes the key, OFF by default (the author, 2026-10-23: "no
@@ -160,6 +162,8 @@ public:
         model.SetSpanInUse(in.spanInUse);
         model.SetPlayers(in.players, in.ms);
         model.SetParty(in.party, in.ms);
+        model.SetMapShow(in.mapShow, in.ms);
+        model.SetAuto(in.autoTune);
         model.Observe(in.snapshot);
 
         // closed from here: its controls stay zero until let go

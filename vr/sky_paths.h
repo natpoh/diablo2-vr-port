@@ -59,9 +59,10 @@ inline const char* GameFogCannot(bool gameDrawnView, bool gaveUp) {
 // The choice as it holds now: the game's chosen and able (or on its way)
 inline bool GameHolds(bool chosen, const char* cannot) { return chosen && !cannot; }
 
-// The game's dome laid: chosen - or our effect, whose sky is the path, not drawing yet (its build for this size still running: a minute at a
-// new build's first start, PC1 2026-10-29 17:50 - a black sky meanwhile). Our sky never draws over a shown dome (OurSky), so the two are
-// still never together: the dome until our effect draws, then put away.
-inline bool GameDomeWanted(bool gameSkyChosen, bool ourEffectWaiting) { return gameSkyChosen || ourEffectWaiting; }
+// The game's dome laid: when chosen, and only then. It also stood in while our effect - the sky chosen - was still being built for a size
+// (c5a58d31); taken out: the dome's models sit at the game's own test paths and are ours only once the Settings window made them - without
+// them the game drew its own test pillar there, a grey rock at hip height for a minute and a half (playful_pony, 0.202.0, 2026-11-04 17:59:
+// "the game built for tests/pillar01: material rocks03"). Nothing while our effect builds rather than a picture that is not ours.
+inline bool GameDomeWanted(bool gameSkyChosen, bool /*ourEffectWaiting*/) { return gameSkyChosen; }
 
 }  // namespace skypaths

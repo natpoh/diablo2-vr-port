@@ -136,7 +136,7 @@ inline std::string Line(const Readout& r) {
     switch (r.state) {
         case State::Off: return "frame generation: off (experimental, OFXR Bridge)";
         case State::NotInstalled: return "frame generation: on, but OFXR Bridge is not installed (D2R VR Settings > Home installs it)";
-        case State::RestartToStart: return "frame generation: loading OFXR Bridge - the VR session starts again (a moment of black)";
+        case State::RestartToStart: return "frame generation: on, but OFXR Bridge is not in this game (it was off or not installed at the start) - restart the game";
         case State::Failed: return "frame generation: OFXR Bridge did not start - the game runs without it (see the lines above)";
         case State::Starting: return "frame generation: OFXR Bridge loaded, waiting for the headset session";
         case State::Applying: std::snprintf(b, sizeof b, "frame generation: OFXR Bridge switching to %s", running.c_str()); return b;
@@ -157,8 +157,9 @@ inline std::string Line(const Readout& r) {
 }
 
 // ---- after bearstonem/d2r-pcvr v0.3.27 (MIT: a30c3eb, e595b8c) ----
-// It would run (on, installed, both eyes) but this instance has no bridge (it was off at the start, or installed since): the session is made again, and the new
-// instance names the layer - no game restart. Not by turns (it would only wait), not when it failed or cannot load.
+// It would run (on, installed, both eyes) but this instance has no bridge (it was off at the start, or installed since). The session was made again for it
+// once; since 2026-10-25 (every live start left the headset black) the game is restarted for it instead (frame_gen_lib.cpp Tick) - nothing is loaded live.
+// Not by turns (it would only wait), not when it failed or cannot load.
 inline bool LoadsWithNewSession(const Readout& r) { return r.state == State::RestartToStart; }
 // The loaded bridge failed a request made while it ran: under Virtual Desktop, resuming after by turns once it had made frames failed with 0x80070057 every
 // time and stayed failed, while a new session set it up afresh (his tester's RTX 4090 and his own PC, 2026-10-24) - so after a live request, once.

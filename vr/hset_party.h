@@ -60,6 +60,30 @@ struct Request {
 // How long a press waits for the game to show its answer (the player's state moves) before the button takes presses again.
 constexpr double kWaitMs = 1500.0;
 
+// -- the game's map: Show Party / Show Party Names -----------------------------------------------------------------
+// The Co-op page's row "The game's map shows" ([openxr] headset_map_party; Serg, 2026-11-05: "добавь тогда шоу пати нейм во внутренний оверлей
+// коператив"). The game's own Options > Automap > Show Party and Show Party Names: off, the game draws no party member (no name) on any automap -
+// the map in the hand, the orb, the big map, the flat map (vr/automap_party.h has the places). The row shows what the game holds now (its two
+// settings, read by vr/party_cmd.cpp) and a press is the game's own key command for it - 10 "Show Party on Automap", 11 "Show Party Names"
+// (CfgAutoMapParty / CfgAutoMapNames, gamecmd's executor as a key's press): the game flips its setting and keeps it in Settings.json itself.
+enum MapWhat : int { kMapParty = 0, kMapNames = 1 };
+constexpr int kMapCount = 2;
+constexpr uint32_t kMapCmd[kMapCount] = {10, 11};   // the game's key commands that flip them
+struct MapShow {
+    int party = -1;   // "AutoMap Party": 1 shown, 0 not; -1 not known (the game's code not found, not read)
+    int names = -1;   // "AutoMap Party Names"
+    int Of(int what) const { return what == kMapNames ? names : what == kMapParty ? party : -1; }
+    bool operator==(const MapShow& o) const { return party == o.party && names == o.names; }
+    bool operator!=(const MapShow& o) const { return !(*this == o); }
+};
+inline const char* MapLabel() { return uitext::Tr("vr.party.map", "The game's map shows"); }
+inline const char* MapDetail(const MapShow& m) {
+    if (m.party == 0) return uitext::Tr("vr.party.map.off", "Your party is hidden: allies on no map (the game's Show Party)");
+    if (m.party < 0) return uitext::Tr("vr.party.map.unknown", "The game's Show Party / Show Party Names (not read yet)");
+    return uitext::Tr("vr.party.map.detail", "Your party on every map, and their names (the game's own options)");
+}
+inline const char* MapButton(int what) { return what == kMapNames ? uitext::Tr("vr.party.map.names", "Names") : uitext::Tr("vr.party.map.party", "Show Party"); }
+
 // -- texts ------------------------------------------------------------------------------------------------------
 inline const char* ClassName(int cls) {
     static const char* const k[8] = {"Amazon", "Sorceress", "Necromancer", "Paladin", "Barbarian", "Druid", "Assassin", "Warlock"};

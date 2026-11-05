@@ -319,8 +319,8 @@ void PushArms() {
         w.on = holds.on;
         w.second = holds.second;
         w.secondKind = holds.secondKind;
-        w.secondLetsGo = IniB(L"weight", L"second_lets_go", true);
-        w.dualCollide = IniB(L"weight", L"dual_collide", true);   // [weight] dual_collide: the two weapons of a pair meet each other, steel on steel   // [weight] second_lets_go: the second weapon let go by its grip, as the first
+        w.secondLetsGo = g_set.weightSecondLetsGo.load();   // (from the settings' load: reading the 220 KB ini here on every tick held the update thread ~50 %, crash batch 2026-11-05)
+        w.dualCollide = g_set.weightDualCollide.load();   // [weight] dual_collide: the two weapons of a pair meet each other, steel on steel   // [weight] second_lets_go: the second weapon let go by its grip, as the first
         if (w.on) {
             w.kind = kind;
             w.twoHanded = (two & D2RVR_TWO_HANDED) != 0;
@@ -363,7 +363,7 @@ void PushArms() {
                 // as hit by touch has it against the monsters - the other weapon of the pair stops on it (the user, 2026-10-26: «меч проходит сквозь лезвие топора но
                 // не проходит сквозь древко»). The item's own volume, whether or not this pose's blade is measured (the skeleton checks the drawn bone's own unit: a
                 // pose without one - the other hand's throw - kept the head away for a moment, «the axe's blade is not solid»).
-                if (w.dualCollide && IniB(L"gameplay", L"melee_head_volume", true)) {
+                if (w.dualCollide && meleetouch::HeadVolume()) {
                     // A flat head (an axe's blade, a hammer's, a pick's, a pole-arm's) as the thin slab of capsules its mesh is (vr/weapon_head_parts.h), not the one
                     // capsule round it that is as thick as the head is tall (the user, 2026-10-28: «its collision volume is much bigger than the drawn model»).
                     static_assert(weaponheadparts::kParts == skel::Input::Weight::kHeadParts, "the head parts' table is the skeleton's");

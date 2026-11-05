@@ -1,6 +1,7 @@
 // vr/hud/window.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
+#include "../exit_end.h"    // [openxr] end_session_on_exit: which window messages are the game's quit
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -64,6 +65,12 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         LRESULT done = 0;
         if (vrres::Handle(h, msg, w, l, g_gameWndProc, done)) return done;
     }
+    // [openxr] end_session_on_exit: the window closed (the X, Alt+F4) or Windows ending - the headset session ends before the game sees it and tears down
+    if (const exitend::Trigger quit = exitend::FromWindow(msg, (uintptr_t)w); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
+    {   // [hud] game_menu_settings (vr/flat_menu.h): the pause menu's button and the panel over it take their clicks (the flat game only, the key on)
+        intptr_t done = 0;
+        if (flatmenu::OnWindowMessage(h, msg, (uintptr_t)w, (intptr_t)l, &done)) return (LRESULT)done;
+    }
     // [openxr] laser_typing (vr/typed_keys.h): a key-down the plugin did not send - its own carry kOwnKeyTag, its posted Esc is known by
     // the time - lets the game take its keyboard layout while the laser holds the controller one. Raw input may come before the message.
     if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
@@ -79,6 +86,8 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     if (g_inputLog.load() > 0 && (msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN || msg == WM_MBUTTONDOWN || msg == WM_XBUTTONDOWN ||
                                   ((msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) && !(l & (1 << 30)) && !ChatOpen())))
         InputLogWindow(msg, w);
+    // [hud] flat_map_zoom: + / - (and Ctrl + wheel) with the game's map open in the flat game zoom it - not the game's then (chat: letters)
+    if ((msg == WM_KEYDOWN || msg == WM_MOUSEWHEEL) && FlatMapZoomKey(msg, w, l)) return 0;
     // [gameplay] block_stray_clicks (F4): a mouse button the game gets from outside the plugin while it plays in the world with no panel open
     // (the log of 2026-10-14 16:26: four clicks "from a device" at the rhythm of a bow's draw and release) is dropped before the game sees it.
     // The mouse look's pointer and [bow] mode 2's own Shift + click are the game's by design.
@@ -92,6 +101,14 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         static viewkeys::Gate gate;   // this window's thread only
         if (gate.Take(g_set.viewKeys.load(), ViewCount(), (unsigned)w, msg == WM_KEYDOWN, (l & (1 << 30)) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0))
             return 0;
+    }
+    // [view] own_hotkeys (vr/view_keys.h OwnGate): F9 - F12 are the plugin's own (mouse look, the skeleton dump, recentre, next view - polled
+    // with GetAsyncKeyState, so they work either way); 1 = the game does not get them. Its default keys there flip its automap's Center /
+    // Fade / Show Party / Show Party Names in Settings.json: F11 / F12 of ours hid the ally from every map (2026-11-05). F10 comes as a
+    // system key (WM_SYSKEYDOWN).
+    if (msg == WM_KEYDOWN || msg == WM_KEYUP || msg == WM_SYSKEYDOWN || msg == WM_SYSKEYUP) {
+        static viewkeys::OwnGate own;   // this window's thread only
+        if (own.Take(g_set.ownHotkeys.load() == 1, (unsigned)w, msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN, (l & (1 << 30)) != 0)) return 0;
     }
     // Enter opening the chat line: its letters may come before the game has
     // set its flag, so they are let through for a moment (not on the Enter

@@ -263,7 +263,7 @@ static void TestHitTest() {
         Centre(kRecentre, &u, &v);
         CHECK(HitTest(p, u, v).kind == Kind::Recentre, "Recentre");
         // a row the page does not have is nothing
-        const int rows = p == kPageCoop ? kCoopRows : RowsOn(p);   // (the Co-op page's rows are its own, hset_coop.h)
+        const int rows = p == kPageCoop ? kCoopRows + 1 : RowsOn(p);   // (the Co-op page's rows are its own, hset_coop.h; the fourth its map row)
         if (rows < kRowsPerPage && !(p == kPageView && rows == kViewRow)) {   // (the first page's last row is the view buttons)
             Centre(kToggle(rows, p), &u, &v);
             CHECK(HitTest(p, u, v).kind == Kind::None, "past the last row is nothing");
@@ -3786,9 +3786,14 @@ static bool SceneHas(const Scene& sc, const std::string& part) {
         if (i.type != Item::Type::Fill && i.text.find(part) != std::string::npos) return true;
     return false;
 }
-static int CoopButtons(const Scene& sc) {
+static int CoopButtons(const Scene& sc) {   // the relay's own (not the map row's, [openxr] headset_map_party)
     int n = 0;
-    for (const Item& i : sc) if (i.type == Item::Type::Button && i.r.y >= kRowY0 && i.r.y < kStatus.y && i.text != "") ++n;
+    for (const Item& i : sc) if (i.type == Item::Type::Button && i.r.y >= kRowY0 && i.r.y < kStatus.y && i.r.y != RowY(kMapRow, -1) && i.text != "") ++n;
+    return n;
+}
+static int MapButtons(const Scene& sc) {
+    int n = 0;
+    for (const Item& i : sc) if (i.type == Item::Type::Button && i.r.y == RowY(kMapRow, -1)) ++n;
     return n;
 }
 
@@ -3877,8 +3882,10 @@ static void TestCoopModel() {
         Centre(kVal(r), &u, &v);
         CHECK(HitTest(kPageCoop, u, v).kind == Kind::None, "its value box is not a button");
     }
-    Centre(kToggle(kCoopRows), &u, &v);
-    CHECK(HitTest(kPageCoop, u, v).kind == Kind::None, "past the three rows: the lines are text");
+    Centre(kVal(kCoopRows), &u, &v);   // (the fourth row is the game's map row: its Party and Names, TestCoopMapRow)
+    CHECK(HitTest(kPageCoop, u, v).kind != Kind::Coop, "past the three rows: no relay choice");
+    Centre(kCoopLineUnderMap(0), &u, &v);
+    CHECK(HitTest(kPageCoop, u, v).kind == Kind::None, "the lines are text");
     CHECK(!Repeats({Kind::Coop, coop::kMode, 1}), "a held trigger steps a choice once (each step is a write)");
     for (int i = 0; i < coop::kLines; ++i) CHECK(kCoopLine(i).y >= RowY(kCoopRows - 1, -1) + kRowStep - 5 && kCoopLine(i).y + kCoopLine(i).h <= kStatus.y, "the lines between the rows and the status line");
 
@@ -3940,6 +3947,91 @@ static void TestCoopModel() {
     CHECK(r.revision == rev, "the same reading: no repaint");
     r.Observe(SnapCoop(CoopState()));
     CHECK(r.revision != rev, "a new one: repainted");
+}
+
+// [openxr] headset_map_party: the Co-op page's row "The game's map shows" - the game's own Show Party / Show Party Names (hset_party.h MapShow)
+// a map row's tick box: 1 ticked, 0 not, -1 not there (its word Party / Names, the Check part)
+static int MapTick(const Scene& sc, int what) {
+    for (const Item& i : sc)
+        if (i.type == Item::Type::Button && i.r.y == RowY(kMapRow, -1) && i.r.x == kMapBtn(what).x && i.part == Part::Check) return i.selected ? 1 : 0;
+    return -1;
+}
+static void TestCoopMapRow() {
+    // the key: on as shipped, no row of the table
+    const Def& key = kDefs[kKeyMapPartyOn];
+    CHECK(!wcscmp(key.section, L"openxr") && !wcscmp(key.key, L"headset_map_party") && IsToggle(key) && key.def == 1.0f && key.page == kNoPage,
+          "[openxr] headset_map_party: on as shipped, no row");
+    CHECK(party::kMapCmd[party::kMapParty] == 10 && party::kMapCmd[party::kMapNames] == 11, "the game's key commands: 10 Show Party, 11 Show Party Names");
+    // the place: under the three rows, the two switches apart and inside, the fewer lines under it above the status line
+    CHECK(kMapRow == kCoopRows && RowY(kMapRow, -1) - 5 >= RowY(kCoopRows - 1, -1) + kRowStep - 5, "the fourth row");
+    CHECK(Inside(kMapBtn(0)) && Inside(kMapBtn(1)) && !Overlap(kMapBtn(0), kMapBtn(1)) && kMapBtn(0).x >= 584, "the two switches inside, apart, right of the words");
+    CHECK(kCoopLineUnderMap(0).y >= RowY(kMapRow, -1) + kRowStep - 5, "the lines under the map row");
+    CHECK(kCoopLineUnderMap(kCoopLinesUnderMap - 1).y + kCoopLineUnderMap(kCoopLinesUnderMap - 1).h <= kStatus.y, "and above the status line");
+    float u, v;
+    for (int w = 0; w < party::kMapCount; ++w) {
+        Centre(kMapBtn(w), &u, &v);
+        CHECK((HitTest(kPageCoop, u, v) == Hit{Kind::MapShow, w, 1}), "Party / Names hit on the Co-op page");
+        CHECK(HitTest(kPageParty, u, v).kind != Kind::MapShow && HitTest(kPageVideo, u, v).kind != Kind::MapShow, "not on another page");
+    }
+    CHECK(!Repeats({Kind::MapShow, 0, 1}), "a held trigger flips it once");
+    // the model: a press is the game's command, nothing of the ini; shown flipped (amber) until the game shows it, or kWaitMs
+    Model m = OnPage(SnapCoop(CoopState()), kPageCoop);
+    CHECK(m.MapShowOn() && m.MapShown(0) == -1, "on; nothing read yet");
+    Action a = m.Click({Kind::MapShow, party::kMapParty, 1});
+    CHECK(a.what == Do::Nothing, "not known: a press does nothing");
+    m.SetMapShow({0, 1}, 1000.0);
+    CHECK(m.GameMap().party == 0 && m.MapShown(party::kMapParty) == 0 && m.MapShown(party::kMapNames) == 1, "the game's values shown");
+    Scene sc = Compose(m, {});
+    CHECK(SceneHas(sc, "The game's map shows") && MapTick(sc, 0) == 0 && MapTick(sc, 1) == 1 && MapButtons(sc) == 2, "the row: Party not ticked, Names ticked");
+    CHECK(SceneHas(sc, "allies on no map"), "Show Party off: the row says what it costs");
+    bool inside = true;
+    for (const Item& i : sc) if (i.type == Item::Type::Text && i.r.y >= kRowY0 && i.r.y < kStatus.y && i.r.y + i.r.h > kStatus.y) inside = false;
+    CHECK(inside, "every line above the status line, the map row there");
+    a = m.Click({Kind::MapShow, party::kMapParty, 1});
+    CHECK(a.what == Do::MapShow && a.mapShow == party::kMapParty && !m.Dirty(), "a press: the game's command for Show Party, the draft untouched");
+    CHECK(m.MapBusy() && m.MapShown(party::kMapParty) == 1, "shown flipped at once");
+    sc = Compose(m, {});
+    bool amber = false, waiting = true;
+    for (const Item& i : sc)
+        if (i.type == Item::Type::Button && i.r.y == RowY(kMapRow, -1)) {
+            if (i.text == "Show Party" && i.selected && i.colour == Role::Warn) amber = true;
+            if (i.enabled) waiting = false;
+        }
+    CHECK(amber && waiting, "amber, both switches wait");
+    CHECK(m.Click({Kind::MapShow, party::kMapNames, 1}).what == Do::Nothing, "no second press while one is on its way");
+    m.SetMapShow({0, 1}, 1500.0);
+    CHECK(m.MapBusy(), "the game not there yet: still waiting");
+    m.SetMapShow({1, 1}, 1600.0);
+    CHECK(!m.MapBusy() && m.MapShown(party::kMapParty) == 1, "the game flipped it: shown as it is");
+    a = m.Click({Kind::MapShow, party::kMapNames, 1});
+    CHECK(a.what == Do::MapShow && a.mapShow == party::kMapNames, "Names next");
+    m.SetMapShow({1, 1}, 1600.0 + party::kWaitMs + 1.0);
+    CHECK(!m.MapBusy() && m.MapShown(party::kMapNames) == 1, "the game did not take it in time: its value again");
+    CHECK(m.Click({Kind::MapShow, 2, 1}).what == Do::Nothing && m.Click({Kind::MapShow, -1, 1}).what == Do::Nothing, "no third switch");
+    // another page: nothing
+    Model p = OnPage(SnapCoop(CoopState()), kPageParty);
+    p.SetMapShow({1, 1}, 0.0);
+    CHECK(p.Click({Kind::MapShow, 0, 1}).what == Do::Nothing, "not from the Party page");
+    // the key off: no row, no press, the relay's lines where they were
+    Snapshot off = SnapCoop(CoopState());
+    off.values[kKeyMapPartyOn] = 0.0f;
+    off.file[kKeyMapPartyOn] = 0.0f;
+    Model o = OnPage(off, kPageCoop);
+    o.SetMapShow({0, 0}, 0.0);
+    CHECK(!o.MapShowOn() && o.Click({Kind::MapShow, 0, 1}).what == Do::Nothing, "off: a press does nothing");
+    sc = Compose(o, {});
+    bool lineAtOld = false;
+    for (const Item& i : sc) lineAtOld = lineAtOld || (i.type == Item::Type::Text && i.r.y == kCoopLine(0).y);
+    CHECK(MapButtons(sc) == 0 && !SceneHas(sc, "The game's map shows") && lineAtOld, "off: no row, the lines in their old place");
+    // the plugin not there: the map row still is (the game's own settings, D2R Rooms or not)
+    Model n = OnPage(SnapCoop(CoopState(false)), kPageCoop);
+    n.SetMapShow({1, 0}, 0.0);
+    sc = Compose(n, {});
+    CHECK(MapButtons(sc) == 2 && MapTick(sc, 1) == 0 && MapTick(sc, 0) == 1 && CoopButtons(sc) == 0, "no D2R Rooms: the map row alone");
+    bool clear = true;
+    for (const Item& i : sc) if (i.type == Item::Type::Text && i.r.y < RowY(kMapRow, -1) - 5 && i.r.y + i.r.h > RowY(kMapRow, -1) - 5) clear = false;
+    CHECK(clear, "the reason's lines above the map row");
+    CHECK(std::string(party::MapDetail({1, 1})) != party::MapDetail({0, 1}) && std::string(party::MapDetail({-1, -1})) != party::MapDetail({1, 1}), "the detail follows the game");
 }
 
 static void TestCoopScene() {
@@ -4213,14 +4305,18 @@ static void TestWorld() {
 static void DumpCoop(const std::string& dir) {
     std::vector<uint32_t> px;
     Model m = OnPage(SnapCoop(CoopState()), kPageCoop);
+    m.SetMapShow({0, 1}, 0.0);   // the game's map row: Show Party off, its names on
     float u, v;
     Centre(kInc(coop::kUse), &u, &v);
     Paint(m, HitTest(kPageCoop, u, v), px);
     WriteBmp(dir + "/hset_page_coop.bmp", px);
     m.Click({Kind::Coop, coop::kMode, 1});
+    m.Click({Kind::MapShow, party::kMapParty, 1});
     Paint(m, {}, px);
     WriteBmp(dir + "/hset_page_coop_pending.bmp", px);
-    Paint(OnPage(SnapCoop(CoopState(false)), kPageCoop), {}, px);
+    Model miss = OnPage(SnapCoop(CoopState(false)), kPageCoop);
+    miss.SetMapShow({1, 1}, 0.0);
+    Paint(miss, {}, px);
     WriteBmp(dir + "/hset_page_coop_missing.bmp", px);
 }
 
@@ -4255,6 +4351,69 @@ static bool HasLabel(const Scene& sc, const std::string& t, Item* got = nullptr)
         if (it.type != Item::Type::Fill && it.text == t) { if (got) *got = it; return true; }
     return false;
 }
+// [autotune] the Video page's Auto (vr/auto_tune_run.h): its button only with the feature on and nothing edited; while a run measures or its
+// result waits, the run's lines instead of the render size, Stop / Keep / Undo, and the size controls take nothing.
+static void TestAutoTune() {
+    CHECK(Inside(kAutoBtn) && !Overlap(kAutoBtn, kRecentre) && !Overlap(kAutoBtn, kClose) && !Overlap(kAutoBtn, kApply), "Auto between Recentre and Close");
+    CHECK(Inside(kAutoKeep) && Inside(kAutoUndo) && !Overlap(kAutoKeep, kAutoUndo) && kAutoKeep.y + kAutoKeep.h <= kStatus.y, "Keep and Undo above the status line");
+    CHECK(kAutoLine(kAutoLines - 1).y + kAutoLine(kAutoLines - 1).h <= kAutoKeep.y && kAutoLine(0).y >= kAutoTitle.y + kAutoTitle.h, "the lines between the title and Keep");
+    for (int i = 0; i < video::kPresetCount; ++i) CHECK(!Overlap(kPreset(i), kAutoKeep) && !Overlap(kPreset(i), kAutoUndo), "a preset clear of Keep / Undo");
+    CHECK(!Overlap(kSlTrack, kAutoKeep) && !Overlap(kSlTrack, kAutoUndo), "the slider clear of Keep / Undo");
+    float u, v;
+    Centre(kAutoBtn, &u, &v);
+    CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Auto, 0, 0}) && HitTest(kPageLife, u, v).kind != Kind::Auto, "Auto is hit on the Video page only");
+    Centre(kAutoKeep, &u, &v);
+    CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Auto, 1, 0}), "Keep is hit");
+    Centre(kAutoUndo, &u, &v);
+    CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Auto, 2, 0}), "Undo is hit");
+
+    {   // off: no button, nothing pressed
+        Model m = OnPage(SnapWith({}), kPageVideo);
+        CHECK(!HasLabel(Compose(m, {}), "Auto"), "off: no Auto button");
+        CHECK(m.Click({Kind::Auto, 0, 0}).what == Do::Nothing, "off: Auto's place takes nothing");
+    }
+    Model m = OnPage(SnapWith({}), kPageVideo);
+    AutoTune at;
+    at.on = true;
+    at.revision = 1;
+    m.SetAuto(at);
+    Item btn;
+    CHECK(HasLabel(Compose(m, {}), "Auto", &btn) && btn.type == Item::Type::Button && btn.r.x == kAutoBtn.x && btn.enabled, "on: the Auto button");
+    Action a = m.Click({Kind::Auto, 0, 0});
+    CHECK(a.what == Do::AutoTune && a.autoTune == 0, "Auto starts a run");
+    CHECK(m.Click({Kind::Auto, 1, 0}).what == Do::Nothing && m.Click({Kind::Auto, 2, 0}).what == Do::Nothing, "nothing runs: Keep / Undo take nothing");
+    // running: its lines, Stop, the size controls hidden and taking nothing
+    at.state = 1;
+    at.revision = 2;
+    at.title = "Auto: measuring";
+    at.status = "Each setting is tried";
+    at.lines = {"Your settings: 62 frames/s", "Tried Sky on -> off: 62 -> 71 frames/s"};
+    m.SetAuto(at);
+    const Scene run = Compose(m, {});
+    CHECK(HasLabel(run, "Stop") && !HasLabel(run, "Keep") && HasLabel(run, "Tried Sky on -> off: 62 -> 71 frames/s"), "running: the lines and Stop");
+    CHECK(std::string(StatusText(m)) == "Each setting is tried", "running: the run's status line");
+    const video::Pick before = m.DraftPick();
+    CHECK(m.Click({Kind::Preset, 1, 0}).what == Do::Nothing && m.DraftPick() == before, "running: a preset's place takes nothing");
+    CHECK(m.Click({Kind::Auto, 0, 0}).what == Do::Nothing, "running: Auto again takes nothing");
+    a = m.Click({Kind::Auto, 2, 0});
+    CHECK(a.what == Do::AutoTune && a.autoTune == 2, "running: Stop");
+    CHECK(m.Click({Kind::Auto, 1, 0}).what == Do::Nothing, "running: no Keep yet");
+    // waiting: Keep and Undo
+    at.state = 2;
+    at.revision = 3;
+    m.SetAuto(at);
+    const Scene wait = Compose(m, {});
+    CHECK(HasLabel(wait, "Keep") && HasLabel(wait, "Undo") && !HasLabel(wait, "Stop"), "a result: Keep and Undo");
+    a = m.Click({Kind::Auto, 1, 0});
+    CHECK(a.what == Do::AutoTune && a.autoTune == 1, "Keep");
+    a = m.Click({Kind::Auto, 2, 0});
+    CHECK(a.what == Do::AutoTune && a.autoTune == 2, "Undo");
+    // the same revision: no repaint asked
+    const uint64_t rev = m.revision;
+    m.SetAuto(at);
+    CHECK(m.revision == rev, "the same run: no repaint");
+}
+
 static void TestParty() {
     // the page and its place: under the Co-op tab, no tab of its own
     CHECK(!std::strcmp(kPageNames[kPageParty], "Party") && TabOf(kPageParty) == TabOf(kPageCoop) && TabPage(TabOf(kPageParty)) == kPageCoop && kPageGuide == kPageCount - 1,
@@ -4429,9 +4588,11 @@ int main(int argc, char** argv) {
     TestCoopPure();
     TestCoopModel();
     TestCoopScene();
+    TestCoopMapRow();
     TestCoopStore();
     TestWorld();
     TestParty();
+    TestAutoTune();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

@@ -925,7 +925,8 @@ void GameItem(Canvas& cv, Fonts& fonts, const hset::Item& it, Rect r, int tabPx)
     case P::Tab: GameTab(cv, fonts, r, it.text.c_str(), on, hot, true, tabPx); return;
     case P::Less:
     case P::More: Fit(cv, Art(it.part == P::Less ? S::ArrowLeft : S::ArrowRight), !en ? 2 : hot ? 1 : 0, Rect{r.l + 4.0f, r.t + 4.0f, r.r - 4.0f, r.b - 4.0f}); return;
-    case P::Switch: {   // the check box (0 empty, 1 lit, 2 not usable, 4 ticked, 5 ticked and lit), the word beside it
+    case P::Switch:
+    case P::Check: {   // the check box (0 empty, 1 lit, 2 not usable, 4 ticked, 5 ticked and lit), the word beside it
         const float side = std::min(r.b - r.t - 6.0f, 64.0f);
         const Rect box{r.l + 6.0f, cy - 0.5f * side, r.l + 6.0f + side, cy + 0.5f * side};
         Fit(cv, Art(S::Checkbox), on ? (hot ? 5 : 4) : !en ? 2 : hot ? 1 : 0, box, !en && on ? 0.55f : 1.0f);

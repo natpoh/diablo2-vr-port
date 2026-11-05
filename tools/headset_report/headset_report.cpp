@@ -513,7 +513,8 @@ modfiles::ModFacts ModFiles(const std::wstring& ini) {
     for (const std::wstring& p : {mod + L"\\d2rloader\\plugins\\d2rl-vrcam.dll", game + L"\\d2rloader\\plugins\\d2rl-vrcam.dll"})
         if (Exists(p)) L("  %s", FileLine(p, true).c_str());
     for (const std::wstring& p : {game + L"\\D2R_VR_Settings.exe", game + L"\\D2R_VR_Headset_Report.exe", game + L"\\D2RLoader.exe", game + L"\\D2R.exe",
-                                  mod + L"\\reshade\\FlatVR_DepthProvider.addon64", mod + L"\\vrmod-manifest.json"})
+                                  game + L"\\dxgi.dll", mod + L"\\vrmod-manifest.json"})   // (dxgi.dll: a player's own ReShade - left as it is,
+                                                                                         // D2R VR uses no ReShade since 0.203; FlatVR's add-on not shipped)
         L("  %s", FileLine(p).c_str());
     const std::string manifest = ReadSmall(mod + L"\\vrmod-manifest.json");
     if (!manifest.empty()) {

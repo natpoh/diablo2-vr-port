@@ -177,4 +177,15 @@ inline V3 BesideLeft(V3 at, V3 right, V3 up, float panelW, float panelH, float w
 // [hud] map_big_on_hand: the Rotate button over the big map held on the hand (under it the controller): centred, a gap above its top edge.
 inline V3 ButtonAbove(V3 at, V3 up, float panelH, float bh, float gap = 0.02f) { return Add(at, Mul(up, 0.5f * panelH + gap + 0.5f * bh)); }
 
+// -- [hud] map_two_sizes: the map's two sizes only (Serg, 2026-11-04, 0.202) ------------------------------------------------------------
+// "The medium map on the hand is not needed, leave only two: a small one - a click on it brings the big one in front at once; take the
+// reduce button off it, a click on it makes it small in the hand's sphere again." With map_big_on_hand the click on the orb opened the
+// big map held on the left hand (the middle size) and its square button brought it to the front and back. Two sizes: the orb in the hand
+// and the big map in front; the click on the orb opens it in front, no button to the hand is hung (and none counts), a click on the big
+// map puts it back in the orb (as before: Clicker's Close - anywhere but its Rotate button). 0: the three steps as before.
+// The big map held on the hand this frame: map_big_on_hand ticked, not two sizes, and its button has not brought it to the front.
+inline bool BigOnHand(bool bigOnHandKey, bool twoSizes, bool frontPressed) { return bigOnHandKey && !twoSizes && !frontPressed; }
+// The button that takes the big map to the front and back on the hand is hung (and its press counts).
+inline bool FrontButton(bool bigOnHandKey, bool twoSizes) { return bigOnHandKey && !twoSizes; }
+
 }  // namespace maplaser

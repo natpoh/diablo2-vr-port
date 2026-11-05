@@ -110,6 +110,7 @@ bool OwnBodyWanted();
 // [gameplay] melee_head_volume (vr/metal_head.h Volume, live): a headed weapon (an axe, a polearm, a hammer, a mace, a spear) has its head as a volume of its own where
 // its model has it - an axe's blade beside the shaft - and its shaft as thin as the model's; the debug's boxes draw it. Off: one capsule along the weapon, as before.
 void SetHeadVolume(bool on);
+bool HeadVolume();   // (what SetHeadVolume last set: read per tick without asking the ini file)
 // [weight] npc_bodies (live): the bodies (Bodies, DrawBodies) also of the non-hostile units near - town NPCs, hirelings - each marked hostile = false
 // (monsterbodies::Body::hostile), for trying [weight] stab_in and the monsters' push on them. They are only bodies: the touch still presses only on a
 // monster the server calls hostile.

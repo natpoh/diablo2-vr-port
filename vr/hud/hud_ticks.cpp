@@ -1,5 +1,9 @@
 // vr/hud/hud_ticks.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "ini_txn.h"   // [hud] flat_map_zoom: its level written back
+
+#include <climits>
+#include <thread>
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -63,6 +67,7 @@ void MapRotateFlatTick() {
     const int platform = g_set.platform.load(), view = ViewNow();
     const mapturn::FlatWhy why = mapturn::FlatGate(g_set.mapRotateFlat.load(), g_inWorld.load(), platform, view, g_enabled.load(), ClassicNow());
     hud::SetMapRotateFlat(mapturn::FlatTurns(why));
+    hud::SetMapCompassFlat(mapturn::FlatTurns(why) && g_set.mapCompassFlat.load());   // [hud] map_compass_flat: the strip over it, as VR's
     // only a corner map has a box to turn: the game's whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
     gamestate::SetMapSideFlat(mapturn::FlatTurns(why) ? g_set.mapCorner.load() : -1);
     const char* where = platform == 1 ? "VR" : "flat";
@@ -85,6 +90,83 @@ void MapRotateFlatTick() {
                                          "put in a corner: a gamestate line says so)",
                                          "drawn turned"};
     LogF("vrcam: map on the screen turned (%s F%d): %s", where, view, kState[state]);
+}
+
+// [hud] flat_map_zoom (vr/flat_map_zoom.h): + / - (and Ctrl + wheel) zoom the flat game's map - the game's own zoom, steered in eighths by
+// gamestate's hook on its scale call. The level lives here (the window's thread steps it, this tick hands it on and writes it back to the
+// ini a second and a half after the last press, on a thread of its own - shared/ini_txn); an ini changed from outside (Settings) wins.
+bool ChatOpen();   // (vr/input/walk.cpp)
+flatzoom::Keeper g_flatZoom;                  // the level: the keys, the ini, our own write of it (flatzoom::Keeper)
+std::atomic<ULONGLONG> g_flatZoomSaveAt{0};   // when the level is to be written (0: nothing to write)
+std::atomic<bool> g_flatZoomSaving{false};
+void FlatZoomSaveRun() {
+    for (;;) {
+        const int v = g_flatZoom.Live();
+        g_flatZoom.Writing(v);   // (its reload coming back is ours, not Settings')
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        wchar_t text[16];
+        swprintf_s(text, L"%d", v);
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+            const ini::Text now = ini::Read(g_iniPath, L"hud", L"flat_map_zoom_level");
+            const ini::Change c{L"hud", L"flat_map_zoom_level", L"0", now.present ? now.text : L"0", text};
+            r = ini::Commit(g_iniPath, {c}, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: flat map zoom - [hud] flat_map_zoom_level=%d written", v);
+        else LogF("vrcam: flat map zoom - [hud] flat_map_zoom_level=%d NOT written (%s: %s)", v, r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+        if (g_flatZoom.Live() == v) { g_flatZoomSaving.store(false); return; }   // (pressed again while writing: once more)
+    }
+}
+// The window's thread (GameWndProc): a press that is the zoom's steps the level and is not the game's (true).
+bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l) {
+    int dir = 0;
+    if (msg == WM_KEYDOWN) dir = flatzoom::KeyDir((unsigned)w);
+    else if (msg == WM_MOUSEWHEEL) dir = flatzoom::WheelDir(GET_WHEEL_DELTA_WPARAM(w), (GET_KEYSTATE_WPARAM(w) & MK_CONTROL) != 0);
+    if (dir == 0) return false;
+    if (!flatzoom::Takes(g_set.flatMapZoom.load(), g_set.platform.load() == 0, g_inWorld.load(), gamestate::AutoMapOpen(), ChatOpen(), gamestate::MenuOpen()))
+        return false;
+    static ULONGLONG lastAt = 0;   // a held key repeats ~30 times a second: a step at most every 150 ms of it
+    const ULONGLONG now = GetTickCount64();
+    if (msg == WM_KEYDOWN && (l & (1 << 30)) && now - lastAt < 150) return true;
+    lastAt = now;
+    const int was = g_flatZoom.Live(), next = g_flatZoom.Press(dir);
+    if (next != was) {
+        g_flatZoomSaveAt.store(now + 1500);
+        LogF("vrcam: flat map zoom - level %d (%s): %s", next, msg == WM_MOUSEWHEEL ? "Ctrl + wheel" : dir > 0 ? "+" : "-",
+             next >= 0 ? "the map as before (round, if it turns)" : next == -1 ? "out of the circle, the whole box at the game's own zoom"
+                                                                 : "out of the circle, the game draws it smaller (an eighth of zoom a step)");
+    }
+    return true;
+}
+// Every tick: the level handed to gamestate's hook while it may act (the key on, the flat game, in a game; 0 otherwise - the game's own), the
+// ini's level taken when it changed from outside, the level written when due, and what the game drew at in the log when that changes.
+void FlatMapZoomTick() {
+    if (g_flatZoom.Ini(g_set.flatMapZoomLevel.load()) && g_flatZoom.Live() != 0)   // the start, or Settings changed it (not our own write)
+        LogF("vrcam: flat map zoom - level %d from the ini", g_flatZoom.Live());
+    const bool on = g_set.flatMapZoom.load() && g_set.platform.load() == 0 && g_inWorld.load();
+    const int level = g_flatZoom.Live();
+    gamestate::SetFlatMapZoom(on ? level : 0);
+    hud::SetMapTurnWhole(on && !flatzoom::InCircle(level));   // (only seen while the map turns: [hud] map_rotate_flat)
+    const ULONGLONG at = g_flatZoomSaveAt.load(), now = GetTickCount64();
+    if (at && now >= at && !g_flatZoomSaving.exchange(true)) {
+        g_flatZoomSaveAt.store(0);
+        std::thread(FlatZoomSaveRun).detach();
+    }
+    static int toldHooks = 0;
+    const int hooks = gamestate::FlatMapZoomHooks();
+    if (on && flatzoom::Steers(level) && hooks == -1 && toldHooks != -1) {
+        toldHooks = -1;
+        Log("vrcam: flat map zoom - the game's map zoom is NOT reachable on this game build (its draw or scale call differs): - shrinks nothing");
+    }
+    float game = 0.0f, drawn = 0.0f;
+    int mode = -1;
+    if (!on || !flatzoom::Steers(level) || !gamestate::FlatMapZoomSeen(&game, &drawn, &mode) || !(drawn > 0.0f)) return;
+    static float toldDrawn = -1.0f;
+    static int toldMode = -2;
+    if (drawn == toldDrawn && mode == toldMode) return;
+    toldDrawn = drawn; toldMode = mode;
+    LogF("vrcam: flat map zoom - the game draws its %s map at %.3f (its own %.3f, level %d: %.2f times its size)",
+         mode == 0 ? "whole-screen" : mode == 1 ? "left corner" : mode == 2 ? "right corner" : "", drawn, game, level, flatzoom::Times(game, level));
 }
 
 // [openxr] hand_inventory (vr/hand_inventory.h, "the walk with the inventory up"): the game's walk is locked while its controller inventory

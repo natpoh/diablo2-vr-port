@@ -67,4 +67,39 @@ struct Gate {
     }
 };
 
+// [view] own_hotkeys (Settings > Home, under View keys): F9 - F12 are the plugin's own keys in every view and every mode - F9 mouse look
+// (Ctrl + F9 memdiff), F10 the skeleton dump (Ctrl + F10 the frame trace), F11 recentre, F12 next view - read with GetAsyncKeyState, so the
+// game got the same press too. Diablo II's default keys have its automap toggles there: F9 Center Automap, F10 Fade Automap, F11 "Show
+// Party on Automap", F12 "Show Party Names" (the game's commands 8 - 11; Serg's characters from before 2026-10-18 still have them). Each
+// F11 / F12 of ours flipped the game's "AutoMap Party" / "AutoMap Party Names" in its Settings.json, unseen: Serg's file has both at 0
+// (his backups flip 0 / 1 between 2026-10-03 and -10-15), and at 0 the game draws no party member on any automap (D2R.exe 3.3.93787
+// +0xD7707: a party member's marker skipped; +0xD2805: the far ones from the roster skipped) - the ally missing from the map in the
+// hand, the big map and the flat map alike (2026-11-05, a co-op game with the manager PC).
+//   0  as before: the game gets F9 - F12 as well.
+//   1  the game does not get them (down, repeats, up; WM_SYSKEYDOWN too - F10 is a system key): a game key the player put there
+//      deliberately is lost, which the plugin's own key on it made a double action anyway.
+inline bool IsOwnHotkey(unsigned vk) { return vk >= 0x78 && vk <= 0x7B; }   // VK_F9 - VK_F12
+
+// The game window's messages for F9 - F12: true = the game does not get this one. One per window, on its thread. A press taken keeps its
+// repeats and its release even if the switch goes off meanwhile; a press let through keeps its release too (the game saw it go down).
+struct OwnGate {
+    uint32_t taken = 0;   // bit vk - VK_F9
+
+    // `on` [view] own_hotkeys, `vk` the message's key, `down` a key-down (WM_KEYDOWN / WM_SYSKEYDOWN), false a key-up, `repeat` the
+    // key-down's repeat bit (lParam bit 30).
+    bool Take(bool on, unsigned vk, bool down, bool repeat) {
+        if (!IsOwnHotkey(vk)) return false;
+        const uint32_t bit = 1u << (vk - 0x78);
+        if (!down) {
+            const bool ours = (taken & bit) != 0;
+            taken &= ~bit;
+            return ours;
+        }
+        if (taken & bit) return true;   // a repeat of a press taken
+        if (!on || repeat) return false;   // (a repeat of a press the game saw go down: the game's)
+        taken |= bit;
+        return true;
+    }
+};
+
 }  // namespace viewkeys

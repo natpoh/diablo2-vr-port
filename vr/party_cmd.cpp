@@ -185,6 +185,82 @@ void Init(const PluginContext* ctx) {
     g_threads = Query<ThreadService>(ctx);
 }
 
+// -- the game's Show Party / Show Party Names (the Co-op page's map row) ------------------------------------------------------------------
+namespace {
+std::mutex g_mapLock;
+uintptr_t g_mapValue[hp::kMapCount] = {};   // where each value is (g_mapLock)
+bool g_mapCmdOk[hp::kMapCount] = {};        // command 10 / 11 is the game's toggle of it (g_mapLock)
+ULONGLONG g_mapLook = 0;
+bool g_mapTold = false;
+
+// Under g_mapLock: the getters' values and the two commands checked, looked for again twice a second while one is missing.
+bool MapFound() {
+    if (g_mapValue[0] && g_mapValue[1] && g_mapCmdOk[0] && g_mapCmdOk[1]) return true;
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_mapLook < 500) return false;
+    g_mapLook = now;
+    const uint64_t get[hp::kMapCount] = {RVA_MAP_PARTY_GET, RVA_MAP_NAMES_GET}, down[hp::kMapCount] = {RVA_MAP_PARTY_DOWN, RVA_MAP_NAMES_DOWN};
+    for (int w = 0; w < hp::kMapCount; ++w) {
+        const uintptr_t g = d2rsig::Addr(get[w]);
+        if (!g_mapValue[w] && g && d2rsig::Check(get[w], kSigMapGet, sizeof kSigMapGet)) {
+            int32_t disp = 0;
+            uint8_t ret = 0;
+            if (Peek(&disp, g + 2, 4) && Peek(&ret, g + 6, 1) && ret == kRet) g_mapValue[w] = (uintptr_t)RipTarget(g, disp, 6);
+        }
+        const uintptr_t d = d2rsig::Addr(down[w]);
+        if (!g_mapCmdOk[w] && g && d && d2rsig::Check(down[w], kSigMapDown, sizeof kSigMapDown)) {
+            int32_t rel = 0;
+            uint8_t call = 0;
+            uintptr_t entry = 0;
+            const uintptr_t table = d2rsig::Addr(RVA_CMD_TABLE + (uint64_t)hp::kMapCmd[w] * kCmdEntry);
+            g_mapCmdOk[w] = table && Peek(&call, d + kDownCallAt, 1) && call == 0xE8 && Peek(&rel, d + kDownCallAt + 1, 4)
+                            && (uintptr_t)CallTarget(d + kDownCallAt, rel) == g && Peek(&entry, table, sizeof entry) && entry == d;
+        }
+    }
+    const bool all = g_mapValue[0] && g_mapValue[1] && g_mapCmdOk[0] && g_mapCmdOk[1];
+    if (all && !g_mapTold) {
+        g_mapTold = true;
+        Log("vrcam: party - the game's Show Party / Show Party Names on its map and their key commands 10 / 11 found (the headset's Co-op page)");
+    }
+    return all;
+}
+}  // namespace
+
+hp::MapShow MapNow() {
+    hp::MapShow m;
+    std::lock_guard<std::mutex> lock(g_mapLock);
+    MapFound();
+    int32_t v = 0;
+    if (g_mapValue[0] && Peek(&v, g_mapValue[0], 4)) m.party = MapValueOf(v);
+    if (g_mapValue[1] && Peek(&v, g_mapValue[1], 4)) m.names = MapValueOf(v);
+    return m;
+}
+
+void MapToggle(int what) {
+    if (what < 0 || what >= hp::kMapCount) return;
+    bool ok;
+    int was = -1;
+    {
+        std::lock_guard<std::mutex> lock(g_mapLock);
+        MapFound();
+        ok = g_mapCmdOk[what];
+        int32_t v = 0;
+        if (g_mapValue[what] && Peek(&v, g_mapValue[what], 4)) was = MapValueOf(v);
+    }
+    char line[220];
+    const char* name = what == hp::kMapNames ? "Show Party Names" : "Show Party";
+    if (!ok) {
+        snprintf(line, sizeof line, "vrcam: party - the game's %s on its map NOT flipped: its key command %u is not the game's toggle of it in this build",
+                 name, hp::kMapCmd[what]);
+        Log(line);
+        return;
+    }
+    gamecmd::Tap(hp::kMapCmd[what]);   // the game's own command, as its key's press (on the UI thread soon after)
+    snprintf(line, sizeof line, "vrcam: party - the game's %s on its map: was %s, its key command %u pressed (the game flips it and keeps it in its Settings.json)",
+             name, was == 1 ? "on" : was == 0 ? "off" : "?", hp::kMapCmd[what]);
+    Log(line);
+}
+
 void Watch() { g_watchUntil.store(GetTickCount64() + 1000); }
 
 hp::View Now() {

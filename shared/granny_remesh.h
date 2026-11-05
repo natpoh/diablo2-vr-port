@@ -49,6 +49,8 @@
 #include "rans.h"
 #endif
 
+#include "sky_atlas.h"   // the domes' pictures' layout (the zenith cap: DomeMesh's cap)
+
 namespace grannyremesh {
 
 #pragma pack(push, 1)
@@ -358,46 +360,83 @@ constexpr float kRings[] = {kLowEl, -6, 0, 4, 8, 13, 18, 24, 30, 37, 44, 52, 60,
 // under the rim at -12 degrees nothing, the void and the fog through it). These rings all take the panorama's bottom row, which
 // make_sky_dome.py paints one colour - the horizon's (its 0 degree row's mean) -, so the lower half is that one colour with no edge.
 constexpr float kClosedRings[] = {-90, -72, -54, -38, -25};
-inline Mesh DomeMesh(float radius, float vFrom = 0.0f, float vTo = 1.0f, bool closed = false) {
+// cap (a picture with skyatlas::HasCap's mark - its zenith in a square of its own, shared/sky_atlas.h): the band's rings up to
+// skyatlas::CapEl(), their v the panorama's there (skyatlas::PanoV); above it a disc of kCapRings rings evenly in dir.xz / dir.y down to the
+// zenith's one vertex, its uv the square's (skyatlas::CapUv) - the old sky's own coordinates, smooth through the pole: no fan.
+constexpr int kCapRings = 6;
+inline Mesh DomeMesh(float radius, float vFrom = 0.0f, float vTo = 1.0f, bool closed = false, bool cap = false) {
     Mesh m;
     m.scale = radius;
     std::vector<float> ringEl;
     if (closed) ringEl.assign(std::begin(kClosedRings), std::end(kClosedRings));
-    ringEl.insert(ringEl.end(), std::begin(kRings), std::end(kRings));
+    const float capEl = (float)skyatlas::CapEl();
+    for (float el : kRings)
+        if (!cap || el < capEl) ringEl.push_back(el);
+    if (cap) ringEl.push_back(capEl);   // (the band ends at the disc's edge)
     const int rings = (int)ringEl.size(), row = kSegments + 1;
     const int16_t w = (int16_t)std::lround(std::log2(radius) / 13.0 * 32767.0);   // (the game's own: 326.123 -> 21045)
     for (int k = 0; k < 3; ++k) { m.mn[k] = 1e30f; m.mx[k] = -1e30f; }
+    auto vertex = [&](const double d[3], double a, double u, double v) {   // a: the azimuth (the tangent's)
+        Vertex x{};
+        for (int k = 0; k < 3; ++k) {
+            x.pos[k] = (int16_t)std::lround(d[k] * 32767.0);
+            x.normal[k] = Snorm8((float)-d[k]);   // inward
+            const float p = (float)(d[k] * radius);
+            if (p < m.mn[k]) m.mn[k] = p;
+            if (p > m.mx[k]) m.mx[k] = p;
+        }
+        x.pos[3] = w;
+        x.tangent[0] = Snorm8((float)std::cos(a)); x.tangent[1] = 0; x.tangent[2] = Snorm8((float)-std::sin(a)); x.tangent[3] = -127;
+        x.uv[0] = Half((float)u);
+        x.uv[1] = Half((float)(vFrom + (vTo - vFrom) * v));
+        m.v.push_back(x);
+    };
     for (int i = 0; i < rings; ++i) {
         const double e = ringEl[i] * 3.14159265358979 / 180.0;
         const float below = ringEl[i] < kLowEl ? kLowEl : ringEl[i];   // (under the panorama: its bottom row)
         for (int j = 0; j <= kSegments; ++j) {
             const double u = (double)j / kSegments, a = u * 2.0 * 3.14159265358979;
             const double d[3] = {std::cos(e) * std::sin(a), std::sin(e), std::cos(e) * std::cos(a)};
-            Vertex v{};
-            for (int k = 0; k < 3; ++k) {
-                v.pos[k] = (int16_t)std::lround(d[k] * 32767.0);
-                v.normal[k] = Snorm8((float)-d[k]);   // inward
-                const float p = (float)(d[k] * radius);
-                if (p < m.mn[k]) m.mn[k] = p;
-                if (p > m.mx[k]) m.mx[k] = p;
-            }
-            v.pos[3] = w;
-            v.tangent[0] = Snorm8((float)std::cos(a)); v.tangent[1] = 0; v.tangent[2] = Snorm8((float)-std::sin(a)); v.tangent[3] = -127;
-            v.uv[0] = Half((float)u);
-            v.uv[1] = Half(vFrom + (vTo - vFrom) * ((kHighEl - below) / (kHighEl - kLowEl)));
-            m.v.push_back(v);
+            vertex(d, a, u, cap ? skyatlas::PanoV(below) : (kHighEl - below) / (kHighEl - kLowEl));
         }
     }
+    auto both = [&](uint16_t a, uint16_t b, uint16_t c) {
+        m.idx.insert(m.idx.end(), {a, b, c});
+        m.idx.insert(m.idx.end(), {a, c, b});   // and the other way round
+    };
     for (int i = 0; i + 1 < rings; ++i)
         for (int j = 0; j < kSegments; ++j) {
             const uint16_t a = (uint16_t)(i * row + j), b = (uint16_t)(i * row + j + 1), c = (uint16_t)((i + 1) * row + j), d = (uint16_t)((i + 1) * row + j + 1);
             const bool zenith = ringEl[i + 1] >= 90.0f, nadir = ringEl[i] <= -90.0f;   // (one point: one triangle a column)
-            const uint16_t tris[2][3] = {{a, b, c}, {b, d, c}};
-            for (int t = nadir ? 1 : 0; t < (zenith ? 1 : 2); ++t) {
-                m.idx.insert(m.idx.end(), {tris[t][0], tris[t][1], tris[t][2]});
-                m.idx.insert(m.idx.end(), {tris[t][0], tris[t][2], tris[t][1]});   // and the other way round
+            if (!nadir) both(a, b, c);
+            if (!zenith) both(b, d, c);
+        }
+    if (cap) {   // the disc: rings at q = dir.xz / dir.y of kCapDisc ... down to 0, the last one point
+        const size_t first = m.v.size();
+        for (int r = 0; r < kCapRings; ++r) {
+            const double qr = skyatlas::kCapDisc * (double)(kCapRings - r) / kCapRings;
+            for (int j = 0; j <= kSegments; ++j) {
+                const double a = (double)j / kSegments * 2.0 * 3.14159265358979, qx = qr * std::sin(a), qz = qr * std::cos(a);
+                const double l = std::sqrt(qx * qx + 1.0 + qz * qz), d[3] = {qx / l, 1.0 / l, qz / l};
+                double u = 0.0, v = 0.0;
+                skyatlas::CapUv(qx, qz, &u, &v);
+                vertex(d, a, u, v);
             }
         }
+        const double up[3] = {0.0, 1.0, 0.0};
+        double u = 0.0, v = 0.0;
+        skyatlas::CapUv(0.0, 0.0, &u, &v);
+        vertex(up, 0.0, u, v);
+        const uint16_t top = (uint16_t)(m.v.size() - 1);
+        for (int r = 0; r < kCapRings; ++r)
+            for (int j = 0; j < kSegments; ++j) {
+                const uint16_t a = (uint16_t)(first + r * row + j), b = (uint16_t)(first + r * row + j + 1);
+                if (r + 1 == kCapRings) { both(a, b, top); continue; }
+                const uint16_t c = (uint16_t)(a + row), d = (uint16_t)(b + row);
+                both(a, b, c);
+                both(b, d, c);
+            }
+    }
     return m;
 }
 

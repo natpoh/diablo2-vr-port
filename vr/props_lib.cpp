@@ -1,6 +1,7 @@
 // props_lib.cpp - see props_lib.h.
 
 #include "props_lib.h"
+#include "weight_worlds.h"   // one lock round the library's calls that make or drop a Box3D world
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -158,8 +159,16 @@ bool Ensure() {
     return true;
 }
 
-void* Create(const D2rpParams* params) { return g_loaded.load() ? g_fns.create(params) : nullptr; }
-void Destroy(void* world) { if (g_loaded.load() && world) g_fns.destroy(world); }
+void* Create(const D2rpParams* params) {
+    if (!g_loaded.load()) return nullptr;
+    const weightworlds::Hold hold;   // (vr/weight_worlds.h: never made while another thread makes or drops a world)
+    return g_fns.create(params);
+}
+void Destroy(void* world) {
+    if (!g_loaded.load() || !world) return;
+    const weightworlds::Hold hold;
+    g_fns.destroy(world);
+}
 int32_t Clear(void* world, float floorY) { return g_loaded.load() && world ? g_fns.clear(world, floorY) : -1; }
 int32_t SetProps(void* world, const D2rpProp* props, int32_t n) { return g_loaded.load() && world ? g_fns.setProps(world, props, n) : -1; }
 int32_t SetStatics(void* world, const D2rpBox* boxes, int32_t n) { return g_loaded.load() && world ? g_fns.setStatics(world, boxes, n) : -1; }

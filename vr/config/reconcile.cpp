@@ -2,6 +2,7 @@
 // corner, the windowed size, the frame cap, the safe screen, the safe window (cut from vr/vrcam.cpp, docs/plan_modules.md M2 - the
 // map's config group). What it gives: vr/config/settings.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../automap_party.h"   // the game's Show Party / Show Party Names in its Settings.json (AutoMapPartyNote)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -108,6 +109,26 @@ void MiniMapForHand() {
         LogF("vrcam: the game's AutoMapMode is %d (its map not on the %s - only that one comes into the hand, [hud] map_corner) and "
              "Settings.json could not be written: put the mini map on the %s in the game's options (Automap)", mode, side, side);
     }
+}
+
+// The game's own Options > Automap > Show Party / Show Party Names (vr/automap_party.h): off, the game draws no party member on any
+// automap - the ally missing from the map in the hand, the big map and the flat map alike (2026-11-05). Only read, at the start, for one
+// log line (the player's choice is his; [view] own_hotkeys keeps the plugin's F11 / F12 from flipping them with the game's default keys).
+void AutoMapPartyNote() {
+    PWSTR dir = nullptr;
+    std::wstring path;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\Settings.json";
+    if (dir) CoTaskMemFree(dir);
+    FILE* f = path.empty() ? nullptr : _wfopen(path.c_str(), L"rb");
+    if (!f) return;
+    std::string text(1 << 16, ' ');
+    text.resize(fread(text.data(), 1, text.size(), f));
+    fclose(f);
+    const automapparty::State s = automapparty::Read(text);
+    if (const char* advice = automapparty::Advice(s))
+        LogF("vrcam: the game's Settings.json has \"AutoMap Party\": %d, \"AutoMap Party Names\": %d - %s", s.party, s.names, advice);
+    else
+        LogF("vrcam: the game's automap shows the party (\"AutoMap Party\": %d, \"AutoMap Party Names\": %d; -1 not in Settings.json)", s.party, s.names);
 }
 
 // The game's windowed size, at the plugin's start - before the game reads Settings.json (shared/window_json.h, the policy and its

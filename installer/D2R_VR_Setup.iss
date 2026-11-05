@@ -10,7 +10,7 @@
 ;                               file), the skill-icon cache
 ;       d2rloader\d2r_vr_libs\  the optional weight and grip libraries (not among the plugins: D2RLoader would reject them)
 ;       d2rloader\logs\         the plugin's own logs, D2R VR Authentic Settings' launch log
-;       reshade\               ReShade with its ini and presets, the fog/sky shader, our sky pictures, FlatVR's add-on
+;       reshade\               the fog/sky shader and our sky pictures, which D2R VR's own runtime builds (no ReShade since 0.203)
 ;       BodyWalkVR\            BodyWalk Portable (VR, when no BodyWalk is installed)
 ;       D2R-VR.mpq\modinfo.json, vrmod-manifest.json + launcher_icon.png (for the shared launcher), D2R_VR_LICENSE.txt
 ;     Outside that folder: D2R VR Authentic Settings beside D2R.exe (the launcher's START and Settings button name it), D2RLoader's own
@@ -24,14 +24,11 @@
 ;     Nothing is written into another mod's folder (d2r-pcvr's mods\D2R-PCVR); the uninstaller removes only mods\D2R-VR;
 ;   - carries the launcher's own Setup (build_installer.ps1; installer\launcher\launcher_pin.txt) and, after the mod is in, runs it
 ;     silently as the original user when the launcher is missing or older (launcher_bundle.inc); the uninstaller leaves the launcher installed;
-;   - ReShade: D2R VR Authentic Settings has the button (Install ReShade): it downloads the current ReShade with add-on support
-;     from reshade.me, installs it headless, renames its dxgi.dll to ReShade64.dll - the
-;     plain D2R.exe refuses an unsigned dxgi.dll, vrcam loads ReShade64.dll
-;     itself under D2RLoader (vr\vrcam.cpp, LoadReShade) - and moves it into the mod's reshade folder.
-;     A dxgi.dll that is next to D2R.exe already is the PLAYER'S OWN ReShade and is used as it is: Setup and the uninstaller never rename, move,
-;     replace or delete it. D2R VR's effect and pictures (mods\D2R-VR\reshade) reach it through two search paths added to ITS ReShade.ini
-;     (D2R_VR_Settings.exe --reshade-paths add, at the end of Setup; append-only, a copy kept as ReShade.ini.before_d2rvr; the uninstaller
-;     takes them out again), and the plugin loads FlatVR's add-on from the mod's folder (mod_layout.inc PlaceReShade);
+;   - ReShade: none since 0.203 - the plugin hooks the game's D3D12 itself and builds its effect with its own runtime (vr\plugin\reshade_load.cpp;
+;     crash reports 231 / 232 / 251: ReShade rebuilt our effect in its present for minutes). A dxgi.dll that is next to D2R.exe is the PLAYER'S
+;     OWN ReShade: Setup and the uninstaller never rename, move, replace or delete it, and D2R VR does not use it. Up to 0.202 Setup added D2R VR's
+;     two folders to ITS ReShade.ini; Setup and the uninstaller take them out again (D2R_VR_Settings.exe --reshade-paths remove: only our own two
+;     list items; mod_layout.inc PlaceReShade). FlatVR's ReShade add-on and keepalive effect are not shipped; an earlier install's copies go;
 ;   - VR only: BodyWalk. None installed: the BodyWalk Portable this Setup
 ;     carries (vjoy installer\make_bodywalk_portable.ps1; LITE on its first
 ;     start) goes into <game>\mods\D2R-VR\BodyWalkVR, with ViGEmBus and a
@@ -46,8 +43,7 @@
 ;     Bridge plugin out), the game's Game Link manifest into BodyWalk's
 ;     game_link folder (the mod's actions are in BodyWalk's Mapping from its
 ;     first start), BodyWalk's settings are set for the mod
-;     (D2R_VR_Settings.exe --setup-bodywalk), and the FlatVR depth addon goes
-;     into the mod's reshade folder;
+;     (D2R_VR_Settings.exe --setup-bodywalk);
 ;   - writes the chosen way to play into d2r_vr.ini ([mode] platform).
 
 #ifndef ModVersion
@@ -500,8 +496,8 @@ begin
   end;
 end;
 
-// ReShade in the mod's reshade folder (PlaceReShade): in mod_layout.inc, which installer\tests\mod_layout_test.iss runs for real.
-// (It is called after the files are in, CurStepChanged; ReShadeSetup above is the host's variable it reads.)
+// The mod's reshade folder, and D2R VR's folders of 0.202 and older out of a player's own ReShade.ini (PlaceReShade): in mod_layout.inc, which
+// installer\tests\mod_layout_test.iss runs for real. (It is called after the files are in, CurStepChanged; ReShadeSetup above stays '' - no ReShade.)
 
 // ---------------------------------------------------------------- d2r_vr.ini
 // An update never wipes a tuned d2r_vr.ini (DecideIni on the Ready page, ApplyIni after the files are in): ini_choice.inc, which
@@ -607,9 +603,7 @@ begin
     BodyWalkPortable := False;
     BodyWalkFresh := False;
     DownloadPage.Clear;
-    // ReShade: no longer installed here - D2R VR Authentic Settings has the button (Home > Status >
-    // Install ReShade), after D2RLoader: its headless setup quit with code 1 for a player
-    // whose folder had no D2RLoader.exe yet (0.144, 2026-10-08).
+    // ReShade: none at all since 0.203 (D2R VR's own runtime draws the effect); before, Settings had an Install ReShade button.
     if IsVR then
     begin
       // none installed: FindBodyWalk says no and points at the portable copy. One older than

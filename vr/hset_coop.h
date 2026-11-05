@@ -177,7 +177,8 @@ inline bool Differs(const roomsbridge::Status& s, const roomsbridge::Config& c) 
     return ModeIndex(s.mode) != ModeIndex(c.mode) || roomsbridge::detail::Lower(s.use) != roomsbridge::detail::Lower(c.use);
 }
 
-inline std::vector<Line> Lines(const State* st, const roomsbridge::Config& shown) {
+// `most`: the lines there is room for (fewer under the Co-op page's map row, hset_model.h kCoopLinesUnderMap).
+inline std::vector<Line> Lines(const State* st, const roomsbridge::Config& shown, int most = kLines) {
     std::vector<Line> out;
     if (!st) {
         out.push_back({uitext::Tr("vr.coop.reading", "Reading D2R Rooms' files..."), Tone::Quiet});
@@ -195,7 +196,7 @@ inline std::vector<Line> Lines(const State* st, const roomsbridge::Config& shown
                        Tone::Head});
     else
         out.push_back({uitext::Tr("vr.coop.plugin_no_status", "D2R Rooms is installed; it writes what it knows while the game runs (nothing yet)."), Tone::Head});
-    const auto room = [&](size_t keep) { return out.size() + keep < (size_t)kLines; };   // a line more fits with `keep` still to come (the note)
+    const auto room = [&](size_t keep) { return out.size() + keep < (size_t)most; };   // a line more fits with `keep` still to come (the note)
     if (st->statusThere && Differs(s, shown)) out.push_back({InForceText(s), Tone::Warn});
     // the relays: the plugin's view when there is one, else the file's list unchecked
     int n = 0;

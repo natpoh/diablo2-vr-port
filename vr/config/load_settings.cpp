@@ -62,6 +62,12 @@ void LoadSettings() {
     // [view] keys (Settings > Home > View keys; vr/view_keys.h): which F keys pick the view
     if (const int keys = viewkeys::ModeFromIni(IniF(L"view", L"keys", 0.0f)); keys != g_set.viewKeys.exchange(keys))
         LogF("vrcam: view keys %d - %s ([view] keys; F12 next view, the controller and Settings in every mode)", keys, viewkeys::ModeName(keys));
+    // [view] own_hotkeys (Settings > Home, under View keys; vr/view_keys.h OwnGate): F9 - F12 kept from the game
+    if (const int own = IniB(L"view", L"own_hotkeys", false) ? 1 : 0; own != g_set.ownHotkeys.exchange(own))
+        LogF("vrcam: own hotkeys %d - %s ([view] own_hotkeys)", own,
+             own ? "F9 - F12 (mouse look, skeleton dump, recentre, next view) are the plugin's only: the game does not get them - its "
+                   "default keys there (Center / Fade Automap, Show Party, Show Party Names) are not flipped with each press"
+                 : "the game gets F9 - F12 too, as before - with its default keys each F11 / F12 also flips its automap's Show Party / Party Names");
     g_set.fov.store(std::clamp(IniF(L"camera", L"fov", 60.0f), 20.0f, 140.0f));
     g_set.fovFromFlatVR.store(IniB(L"camera", L"fov_from_flatvr", true) && g_set.platform.load() == 1);   // no FlatVR on a monitor
     g_set.distance.store(std::clamp(IniF(L"camera", L"distance", -1.0f), -20.0f, 1500.0f));
@@ -88,6 +94,9 @@ void LoadSettings() {
     owneffects::Configure(IniB(L"render", L"dim_own_effects", false), IniF(L"render", L"dim_own_effects_pct", 30.0f), IniF(L"render", L"dim_own_auras_pct", 50.0f));   // the hero's own effects fainter (vr/own_effects.h), F4 only
     owneffects::ConfigureSpeed(IniB(L"render", L"slow_own_effects", false), IniF(L"render", L"own_effects_speed_pct", 20.0f));   // Bone Armor (the solid effects) turning slower, F4 only
     owneffects::ConfigureHeight(IniB(L"render", L"lower_own_effects", false), IniF(L"render", L"own_effects_height_cm", 0.0f));   // Bone Armor (the solid effects) drawn lower, F4 only
+    auraview::Configure(IniB(L"render", L"aura_centre", false), IniF(L"render", L"aura_lift_pct", 0.0f));   // the Paladin's aura rings centred under the hero (vr/aura_view.h), every VR view
+    owneffects::ConfigureAuraPlace(IniB(L"render", L"move_own_auras", false), IniF(L"render", L"own_auras_up_cm", 0.0f), IniF(L"render", L"own_auras_ahead_cm", 0.0f),
+                                   IniF(L"render", L"own_auras_side_cm", 0.0f));   // the hero's Paladin aura rings moved (vr/own_effects.h AuraShift), every VR view
     g_set.entityPoolMb.store(std::clamp((int)IniF(L"render", L"entity_pool_mb", 280.0f), 0, 4096));
     g_set.mouseLook.store(IniB(L"input", L"mouse_look", false));
     g_set.hudHide.store(std::clamp((int)IniF(L"hud", L"hide", 0.0f), 0, 2));
@@ -243,7 +252,10 @@ void LoadSettings() {
     g_set.mapCorner.store(std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2));
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
-    g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));   // the corner map on the screen turned with the camera: MapRotateFlatTick
+    g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));
+    g_set.mapCompassFlat.store(IniB(L"hud", L"map_compass_flat", true));   // the compass over the turned map on the screen: MapRotateFlatTick
+    g_set.flatMapZoom.store(IniB(L"hud", L"flat_map_zoom", true));   // + / - zoom the flat game's map: FlatMapZoomTick, FlatMapZoomKey
+    g_set.flatMapZoomLevel.store(flatzoom::Clamped((int)std::lround(IniF(L"hud", L"flat_map_zoom_level", 0.0f))));   // the corner map on the screen turned with the camera: MapRotateFlatTick
     // The same while the game runs: the game's map put back in the middle (its options) is put in a corner again, by the game's own
     // setter (vr/minimap_side.h) - the start's Settings.json rewrite (MiniMapForHand) holds only when the plugin runs before the game reads it.
     gamestate::SetMapSide(g_set.platform.load() == 1 && g_set.hudMap.load() == 1 ? std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2) : -1);
@@ -485,6 +497,10 @@ void LoadSettings() {
         // [debug] diag_go: D2R VR Settings' Collect logs writes a new value - 10 s of the frame
         // log (and FlatVR's pose trace beside it) for the logs it zips. The value at start is
         // only noted: a capture begins on a change while the game runs.
+        // [autotune] enabled: the "Auto" graphics tuning (its button in the headset's Video page and in D2R VR Settings); run / keep / undo:
+        // Settings' buttons write a new value - a run starts, its result is kept / undone on a change while the game runs (vr/auto_tune_run.h)
+        autotunerun::Configure(g_iniPath, IniB(L"autotune", L"enabled", false), (int)IniF(L"autotune", L"run", 0.0f), (int)IniF(L"autotune", L"keep", 0.0f),
+                               (int)IniF(L"autotune", L"undo", 0.0f));
         static int lastDiag = INT_MIN;
         const int diag = (int)IniF(L"debug", L"diag_go", 0.0f);
         if (lastDiag != INT_MIN && diag != lastDiag) flog::StartDiag();
@@ -1181,6 +1197,7 @@ void LoadSettings() {
     const int clientMode = std::clamp((int)std::lround(IniF(L"gameplay", L"melee_direct_client", 0.0f)), 0, 2);
     meleedirect::SetWanted(directMode != 0);   // the user's direct hit where the server runs (vr/melee_direct.h)
     meleedirect::SetByRules(directMode == 2);
+    meleedirect::SetByHand(IniB(L"gameplay", L"melee_direct_by_hand", true));   // a blow of the left-hand weapon is the game's "Left Hand Swing" (the author: on)
     meleedirect::SetMinIntervalMs((uint32_t)std::clamp(IniF(L"gameplay", L"melee_direct_min_ms", 0.0f), 0.0f, 3000.0f));
     meleedirectclient::SetMode(clientMode);   // a joined TCP/IP player's touch: the game's own command (vr/melee_direct_client.h)
     {   // ... and its rules for a touch: the least speed where it touched (m/s), force (the strike's score, N s) and swing length (m)
@@ -1190,10 +1207,25 @@ void LoadSettings() {
         m.length = std::clamp(IniF(L"gameplay", L"melee_direct_client_min_length", 0.2f), 0.0f, 3.0f);
         meleedirectclient::SetMins(m);
     }
-    {   // [gameplay] melee_direct_client_cleave: a swing's extra hits through the host's server attack (needs melee_direct_client; the host ticks both too)
-        const bool cleave = IniB(L"gameplay", L"melee_direct_client_cleave", false) && (clientMode == 1 || directMode == 2);   // (by the rules only)
+    {   // [gameplay] melee_direct_client_cleave: a swing's extra hits through the server's attack - who hosts decides: the box is the rule of a game
+        // of ours (single player, and every joined player when we host), whatever our own Direct hit (its rules apply where a touch is "by the
+        // rules" only: HostRules, a joined player's mode 1); joined, the host's box decides (vr/melee_direct_client.h CleaveRule)
+        const bool cleave = IniB(L"gameplay", L"melee_direct_client_cleave", false);
         meleedirectclient::SetCleave(cleave);
         meleedirect::SetRemoteWanted(cleave);   // as the host: the joined players' extra hits are struck here
+    }
+    {   // [hud] game_menu_settings (vr/flat_menu.h): the flat game's settings from the pause menu, the host's rules' list ([hud] host_rules_key) -
+        // and our own values of the host's rules (vr/host_rules.h: what we answer a joined player's mod as the host, what our own game shows)
+        flatmenu::Configure(IniB(L"hud", L"game_menu_settings", false), (int)IniF(L"hud", L"game_menu_key", 1.0f), (int)IniF(L"hud", L"host_rules_key", 1.0f),
+                            g_set.platform.load() == 0);
+        hostrules::Values own;
+        for (int i = 0; i < hostrules::kCount; ++i) {
+            wchar_t t[32] = L"";
+            GetPrivateProfileStringW(hostrules::kRules[i].section, hostrules::kRules[i].key, L"", t, (DWORD)std::size(t), g_iniPath);
+            own.v[i] = hostrules::Parse(i, t);
+            own.known[i] = true;
+        }
+        flatmenu::SetOwnRules(own);
     }
     meleetouch::SetUnchecked(g_set.meleeTouchUnchecked.load());
     meleetouch::SetNoAttack(IniB(L"debug", L"melee_touch_no_attack", false));   // a touch presses nothing (the stab and the push tried alone)
@@ -1379,6 +1411,8 @@ void LoadSettings() {
     g_set.carryCm.store(std::clamp(IniF(L"hands", L"carry_cm", 40.0f), 0.0f, 150.0f));
     g_set.bothAttach.store(IniB(L"hands", L"both_attach", true));
     g_set.weightOn.store(IniB(L"weight", L"on", false));
+    g_set.weightSecondLetsGo.store(IniB(L"weight", L"second_lets_go", true));
+    g_set.weightDualCollide.store(IniB(L"weight", L"dual_collide", true));
     weightwire::ConfigureGripNoChord(IniB(L"weight", L"weapon_grip_no_chord", false));   // a grip on the weapon is no modifier of the panels' chords and the A / RT slot controls (vr/weight_wire.h)
     shoulderwire::SetDraw(g_set.shoulderDraw.load() && (g_set.weightOn.load() || g_set.shieldStow.load() || g_set.rangedHolster.load()));   // [hands] shoulder_draw: a weapon to draw (the weight model) or the shield to put away
     g_set.weightFeel.store(std::clamp(IniF(L"weight", L"feel", 50.0f), 0.0f, 300.0f));
@@ -1609,6 +1643,11 @@ FILETIME g_uiIniTime{};
 bool ReloadIfChanged() {
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (!GetFileAttributesExW(g_iniPath, GetFileExInfoStandard, &fa)) return false;
+    if (autotunerun::TakeReload()) {   // [autotune]: a run changed the values it hands the reads - read again, the file untouched
+        g_iniTime = fa.ftLastWriteTime;
+        LoadSettings();
+        return true;
+    }
     if (CompareFileTime(&fa.ftLastWriteTime, &g_iniTime) == 0) {
         std::wstring ui = g_iniPath;
         ui.resize(ui.find_last_of(L"\\/") + 1);

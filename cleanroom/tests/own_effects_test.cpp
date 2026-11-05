@@ -428,6 +428,81 @@ void Height() {
     EXPECT(StillLifted(11880.0f, 11880.0005f));                  // (a large height's last bits)
 }
 
+// [render] move_own_auras: the hero's Paladin aura rings moved up / ahead / aside in every VR view (AuraShift, MoveMatrix, StillMoved, IsPaladinOverlay, the slot's mark)
+void AuraPlace() {
+    // whose an overlay is by its definition's file: the Paladin's folder only, any case, either slash
+    EXPECT(IsPaladinOverlay("data/hd/overlays/paladin/aura_thorns_front.json") && IsPaladinOverlay("DATA\\HD\\Overlays\\Paladin\\Aura_Might_Back.json"));
+    EXPECT(IsPaladinOverlay("overlays/paladin/holyfreeze.json"));
+    EXPECT(!IsPaladinOverlay("data/hd/overlays/necro/bonearmor_front.json") && !IsPaladinOverlay("data/hd/overlays/barbarian/battleorders.json"));
+    EXPECT(!IsPaladinOverlay("data/hd/overlays/notpaladin/x.json") && !IsPaladinOverlay("data/hd/xoverlays/paladin/x.json"));   // the folder's own name, whole
+    EXPECT(!IsPaladinOverlay("aura_thorns_front") && !IsPaladinOverlay("") && !IsPaladinOverlay(nullptr));                       // a bare key: not known as his
+    EXPECT(ClampAuraCm(40.0f) == 40.0f && ClampAuraCm(-400.0f) == kAuraMinCm && ClampAuraCm(400.0f) == kAuraMaxCm && ClampAuraCm(NAN) == 0.0f);
+
+    Settings s;
+    s.auraMove = true;
+    s.auraUpCm = -15.0f;
+    const float north[2] = {0.0f, -1.0f};   // the view looks along -z (heading 0: ahead (-sin 0, -cos 0)); its right is +x ((cos 0, -sin 0))
+    float d[3];
+    // up only: 15 cm lower at 5 units a metre = 0.75 units down, nothing across the floor
+    EXPECT(AuraShift(true, Group::Aura, true, s, 5.0f, north, d) && std::fabs(d[1] + 0.75f) < 1e-5f && d[0] == 0.0f && d[2] == 0.0f);
+    EXPECT(AuraShift(true, Group::Aura, true, s, 5.0f, nullptr, d) && std::fabs(d[1] + 0.75f) < 1e-5f);   // up needs no ahead
+    // ahead 20 cm, right 10 cm, looking along -z: ahead -> -z, right -> +x
+    s.auraUpCm = 0.0f;
+    s.auraAheadCm = 20.0f;
+    s.auraSideCm = 10.0f;
+    EXPECT(AuraShift(true, Group::Aura, true, s, 5.0f, north, d) && std::fabs(d[2] + 1.0f) < 1e-5f && std::fabs(d[0] - 0.5f) < 1e-5f && d[1] == 0.0f);
+    // the view turned right by 90 degrees (heading -90: ahead (+1, 0), right (0, +1) - camera.cpp's (cos h, -sin h)): ahead -> +x, right -> +z; ahead of any length
+    const float east[2] = {3.0f, 0.0f};
+    EXPECT(AuraShift(true, Group::Aura, true, s, 5.0f, east, d) && std::fabs(d[0] - 1.0f) < 1e-5f && std::fabs(d[2] - 0.5f) < 1e-5f);
+    // the right is the view's right: (cos h, -sin h) for every heading
+    for (float h = -3.0f; h <= 3.0f; h += 0.5f) {
+        const float a[2] = {-std::sin(h), -std::cos(h)};
+        Settings r;
+        r.auraMove = true;
+        r.auraSideCm = 100.0f;
+        EXPECT(AuraShift(true, Group::Aura, true, r, 1.0f, a, d) && std::fabs(d[0] - std::cos(h)) < 1e-4f && std::fabs(d[2] + std::sin(h)) < 1e-4f);
+    }
+    // nothing moves: not on, not his Paladin's, not an aura, not a VR view, no scale, ahead / aside without an ahead, every slider at 0
+    EXPECT(!AuraShift(false, Group::Aura, true, s, 5.0f, north, d) && d[0] == 0.0f && d[1] == 0.0f && d[2] == 0.0f);
+    EXPECT(!AuraShift(true, Group::Body, true, s, 5.0f, north, d));
+    EXPECT(!AuraShift(true, Group::Aura, false, s, 5.0f, north, d));   // the flat game
+    EXPECT(!AuraShift(true, Group::Aura, true, s, 0.0f, north, d) && !AuraShift(true, Group::Aura, true, s, NAN, north, d));
+    EXPECT(!AuraShift(true, Group::Aura, true, s, 5.0f, nullptr, d));
+    const float zero[2] = {0.0f, 0.0f}, nan2[2] = {NAN, 1.0f};
+    EXPECT(!AuraShift(true, Group::Aura, true, s, 5.0f, zero, d) && !AuraShift(true, Group::Aura, true, s, 5.0f, nan2, d));
+    Settings z;
+    z.auraMove = true;
+    EXPECT(!AuraShift(true, Group::Aura, true, z, 5.0f, north, d));
+    s.auraMove = false;
+    EXPECT(!AuraShift(true, Group::Aura, true, s, 5.0f, north, d));
+    // the slider's ends hold: 400 cm asked = 100 cm
+    Settings big;
+    big.auraMove = true;
+    big.auraUpCm = 400.0f;
+    EXPECT(AuraShift(true, Group::Aura, true, big, 2.0f, north, d) && std::fabs(d[1] - 2.0f) < 1e-5f);
+
+    // the matrix moved on three axes, and given back only while it is still where we wrote it
+    float m[16] = {0.9f, 0, -0.1f, 0, 0, 1, 0, 0, 0.1f, 0, 0.9f, 0, 11502.0f, 0.03f, 11889.0f, 1.0f};
+    const float mv[3] = {0.5f, -0.75f, -1.0f};
+    EXPECT(MoveMatrix(m, mv) && std::fabs(m[12] - 11502.5f) < 1e-3f && std::fabs(m[13] - (0.03f - 0.75f)) < 1e-5f && std::fabs(m[14] - 11888.0f) < 1e-3f && m[0] == 0.9f);
+    float bad[16] = {};
+    EXPECT(!MoveMatrix(bad, mv) && bad[12] == 0.0f);
+    const float nanmv[3] = {0.0f, NAN, 0.0f};
+    float ok[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 6, 7, 1};
+    EXPECT(!MoveMatrix(ok, nanmv) && ok[12] == 5.0f && ok[13] == 6.0f && ok[14] == 7.0f);
+    const float wrote[3] = {11502.5f, -0.72f, 11888.0f};
+    const float same[3] = {11502.5f, -0.72f, 11888.0f}, placed[3] = {11502.0f, -0.72f, 11888.0f}, lost[3] = {11502.5f, NAN, 11888.0f};
+    EXPECT(StillMoved(same, wrote) && !StillMoved(placed, wrote) && !StillMoved(lost, wrote));
+
+    // the tracker keeps the mark, and a re-add updates it
+    Tracker t;
+    Tracker::Slot* sl = t.Add(0x00400010u, Group::Aura, "aurathornsfront", 1000, false, true);
+    EXPECT(sl && sl->paladin && !sl->solid);
+    EXPECT(t.Add(0x00400010u, Group::Aura, "aurathornsfront", 2000, false, false) == sl && !sl->paladin);
+    Tracker::Slot* bo = t.Add(0x00400011u, Group::Aura, "battleorders", 1000);
+    EXPECT(bo && !bo->paladin);   // (the default: not his Paladin's)
+}
+
 void Models() {
     // [sky] summit_backdrop_hidden: the Summit's ground picture as MtnTop.json / ColossalSummit.json name it, any slash, case, level of detail; nothing else
     EXPECT(IsSummitBackdrop("data/hd/env/model/expansion/mountaintop/expansion_mountaintop_skybox/skybox01.model"));
@@ -713,6 +788,7 @@ int main() {
     Solid();
     Speed();
     Height();
+    AuraPlace();
     Models();
     Reading();
     Hero();

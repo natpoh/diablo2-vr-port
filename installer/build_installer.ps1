@@ -5,10 +5,10 @@
 #
 # The mod's own files come from build\Release (build them first), the sky
 # pictures from reshade\sky (OUR skies only - never extracted\, that is
-# Blizzard's art), the FlatVR addon from BodyWalk's Release_main build, BodyWalk's
-# Game Link plugin from its standalone build (vjoy plugins/game_link).
+# Blizzard's art), BodyWalk's Game Link plugin from its standalone build (vjoy plugins/game_link).
+# (No FlatVR ReShade add-on since 0.203: D2R VR uses no ReShade.)
 #
-#   -Addon <file>     another FlatVR addon than Release_main's (one the bundled BodyWalk knows)
+#   -Addon <file>     accepted and not used (the FlatVR ReShade add-on is not shipped since 0.203)
 #   -GameLink <file>  another game_link.dll than the standalone build's
 #   -WeightLibs <dir> where d2r_vr_weight.dll and d2r_vr_grip.dll are (the private weight_physics build)
 #   -CrashReporter <file> D2R_VR_Crash_Reporter.exe ([support] crash_reports / send_logs; the private vjoy build: cpp_src\crash_reporter\build.ps1 -Product d2r_vr)
@@ -76,8 +76,6 @@ $ErrorActionPreference = "Stop"
 $BodyWalkProfile = @{ Name = "0165"; CloudGameId = 43; CloudProfileId = 56 }
 $root = Split-Path $PSScriptRoot -Parent
 $payload = Join-Path $PSScriptRoot "payload"
-$addon = $Addon
-$keepalive = "C:\wsl\vjoy\cpp_src\flatvr\reshade_depth_addon\FlatVR_Keepalive.addonfx"
 $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 
 $build = if ($BuildDir) { $BuildDir } else { Join-Path $root "build\Release" }
@@ -217,12 +215,9 @@ foreach ($act in 1..5) {
 }
 # the flat crosshair, beside the skies (vrcam [input] crosshair; tools/gen_crosshair.py)
 Copy-Item (Join-Path $root "reshade\sky\D2R_Crosshair.png") "$payload\sky\"
-Copy-Item $addon "$payload\game\FlatVR_DepthProvider.addon64"
-# The keepalive effect BodyWalk writes into a game: vjoy's copy when there is one, else
-# ours beside this script (installer\FlatVR_Keepalive.addonfx) - never the live game,
-# which a clean test empties.
-if (Test-Path $keepalive) { Copy-Item $keepalive "$payload\game\" }
-else { Copy-Item (Join-Path $PSScriptRoot "FlatVR_Keepalive.addonfx") "$payload\game\" }
+# FlatVR's ReShade add-on and its keepalive effect are not staged since 0.203: D2R VR uses no ReShade, the plugin hands FlatVR its picture
+# itself (vr/flatvr_feed.h). -Addon is still accepted (release scripts pass it) and not used.
+if ($PSBoundParameters.ContainsKey("Addon")) { Write-Host "-Addon: not used any more (no FlatVR ReShade add-on in the payload since 0.203)" }
 
 # BodyWalk Portable for players without BodyWalk: built by vjoy's own script
 # from Release_main (build BodyWalk first), the same folder as the site's zip.
@@ -305,5 +300,24 @@ if (Test-Path -LiteralPath $pdb) {
     Write-Host "symbols: $pdbDir (d2rl-vrcam.dll + .pdb)"
 } else {
     Write-Warning "NO SYMBOLS: $pdb is not there - this version's crashes cannot be mapped to functions (CMakeLists' Release /Zi /DEBUG)"
+}
+# ... and the weight library's (0.202.0's crash row 248 at d2r_vr_weight.dll+0x81D32 had none): the shipped d2r_vr_weight.dll with the .pdb and .map its
+# build writes beside it (weight_physics CMakeLists, /Zi /DEBUG /MAP since claude/world-table-lock) - from -WeightLibs, the same folder the payload took it from.
+$weightDll = Join-Path $WeightLibs "d2r_vr_weight.dll"
+$weightPdb = Join-Path $WeightLibs "d2r_vr_weight.pdb"
+if ((Test-Path -LiteralPath $weightDll) -and (Test-Path -LiteralPath $weightPdb)) {
+    $pdbDir = Join-Path $releases "pdb\$shownVersion"
+    New-Item -ItemType Directory -Force $pdbDir | Out-Null
+    $weightFiles = @($weightDll, $weightPdb)
+    $weightMap = Join-Path $WeightLibs "d2r_vr_weight.map"
+    if (Test-Path -LiteralPath $weightMap) { $weightFiles += $weightMap }
+    Copy-Item -LiteralPath $weightFiles -Destination $pdbDir -Force
+    $weightHash = (Get-FileHash $weightDll -Algorithm SHA256).Hash
+    @("", "d2r_vr_weight.dll $shownVersion symbols, from $WeightLibs (the payload's copy)   Shipped DLL SHA-256 $weightHash",
+      "  llvm-symbolizer.exe --obj=d2r_vr_weight.dll 0x180NNNNNN   (or d2r_vr_weight.map: the function at or below the address)") |
+        Add-Content -LiteralPath (Join-Path $pdbDir "README.txt") -Encoding ascii
+    Write-Host "symbols: $pdbDir (d2r_vr_weight.dll + .pdb)"
+} elseif (Test-Path -LiteralPath $weightDll) {
+    Write-Warning "NO WEIGHT LIBRARY SYMBOLS: no d2r_vr_weight.pdb beside $weightDll - build weight_physics with its PDB (claude/world-table-lock on) for -WeightLibs"
 }
 Write-Host $(if ($carriedLauncher) { "the installer carries the D2R VR Launcher: $carriedLauncher" } else { "the installer carries NO launcher (built with -NoLauncher)" })

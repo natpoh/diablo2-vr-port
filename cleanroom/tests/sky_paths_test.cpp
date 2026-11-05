@@ -8,7 +8,7 @@
 //      VR's other views' too (57.webp, with the fallback sky);
 //   6. the game's chosen but unable for good (its dome's files missing, refused, no model, not placed; a view it does not draw in; its fog
 //      not found): ours instead - not while it is on its way (no black sky, never both);
-//   7. our effect still being built: the game's dome stands in;
+//   7. our effect still being built: nothing stands in (the dome's model is the game's test pillar without our files - 2026-11-04);
 //   8. the Summits ([sky] game_skybox): our painted sky behind the game's sea of clouds whatever the choice, first and third person.
 #include "sky_paths.h"
 
@@ -120,7 +120,7 @@ int main() {
     }
     // 7. our effect still being built (a new build's first start): the game's dome stands in for our sky; once ours draws, the dome goes
     {
-        CHECK(GameDomeWanted(false, true));    // ours chosen, ours not drawing yet: the dome meanwhile
+        CHECK(!GameDomeWanted(false, true));   // ours chosen, ours not drawing yet: nothing - not the dome's model (the game's test pillar without our files)
         CHECK(!GameDomeWanted(false, false));  // ours drawing: no dome
         CHECK(GameDomeWanted(true, false) && GameDomeWanted(true, true));
         CHECK(!OurSky(true, false, false, true));   // the dome still shown in the first frame ours draws again: ours waits a frame, never both

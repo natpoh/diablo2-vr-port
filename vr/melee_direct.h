@@ -99,6 +99,38 @@ inline bool AnswersRange(const Window& w, uintptr_t attacker, uintptr_t defender
     return w.active() && w.attacker == attacker && w.defender == defender;
 }
 
+// ---- [gameplay] melee_direct_by_hand: the left weapon's blow for the left hand ----------------------------------------------------
+// The game alternates a dual wielder's plain attacks ON THE SERVER: its command parser (0x4FDB40 -> 0x4FC0F0) flips a flag on the
+// hero's "Attack" skill node at every attack command and, every other time with a weapon in each hand, swaps the skill for the hidden
+// "Left Hand Swing" (skills.txt id 5: weapsel 1, the left weapon; the same server functions as Attack, animation S3). The direct call
+// skips that parser, so without this every direct blow of a Barbarian or Assassin with two weapons was the right weapon's
+// (releases/analysis/dual_wield_weapon_choice_2026-11-04.md). With the option, a blow whose blade is the game's LEFT-hand weapon is
+// struck the way the game strikes its own left swings: for the one call, the hero's current skill is his own "Left Hand Swing" node
+// (found by the game's SkillLookup, as 0x4FC0F0 finds it), and the game's weapon getter picks the left weapon by that skill's weapsel.
+// The roll, the damage of that weapon, the rest of the attack stay the game's; the current skill is put back right after the call.
+// One weapon, a two-handed weapon, the right-hand weapon, a joined player's extra hit (its hand is not known here): as before.
+constexpr int kSkillLeftHandSwing = 5;
+constexpr uint8_t kWeapselLeft = 1;
+inline bool LeftSwing(bool byHand, bool weaponInEachHand, int slot, bool remote) { return byHand && weaponInEachHand && slot == 1 && !remote; }
+
+// The layout the swap stands on, proven from the game's own weapon getter (ServerUnitWeapon 0x34B000) where this build has it: at +0x141
+// "mov rcx, [rdi + 0x100]" (the unit's skill list), at +0x14E "call <getter>" with the getter "test rcx, rcx; jne +3; xor eax, eax; ret;
+// mov rax, [rcx + 0x18]; ret" (the list's current skill), and at +0x16C "movzx edx, byte [rax + 0x208]" (the skills.txt row's weapsel).
+// Each array: the bytes found there (the call's 5: E8 and its rel32, followed by the caller).
+constexpr uint32_t kAtSkillList = 0x141, kAtGetterCall = 0x14E, kAtWeapsel = 0x16C;
+constexpr uintptr_t kUnitSkillList = 0x100, kListCurrentSkill = 0x18, kRowWeapsel = 0x208;
+inline bool LayoutProven(const uint8_t listMov[7], uint8_t callOp, const uint8_t getter[13], const uint8_t weapsel[7]) {
+    static const uint8_t kList[7] = {0x48, 0x8B, 0x8F, 0x00, 0x01, 0x00, 0x00};
+    static const uint8_t kGetter[13] = {0x48, 0x85, 0xC9, 0x75, 0x03, 0x33, 0xC0, 0xC3, 0x48, 0x8B, 0x41, 0x18, 0xC3};
+    static const uint8_t kWeapsel[7] = {0x0F, 0xB6, 0x90, 0x08, 0x02, 0x00, 0x00};
+    for (int i = 0; i < 7; ++i) if (listMov[i] != kList[i] || weapsel[i] != kWeapsel[i]) return false;
+    if (callOp != 0xE8) return false;
+    for (int i = 0; i < 13; ++i) if (getter[i] != kGetter[i]) return false;
+    return true;
+}
+// The node found is the game's "Left Hand Swing": its row's id (int16 at row + 0) is 5 and its weapsel the left weapon.
+inline bool IsLeftHandSwing(int16_t rowId, uint8_t weapsel) { return rowId == kSkillLeftHandSwing && weapsel == kWeapselLeft; }
+
 // ---- the game's side (vr/melee_direct.cpp) ----------------------------------------------------------------------------------
 
 struct Request {
@@ -107,6 +139,7 @@ struct Request {
     uint32_t monsterId = 0;   // the touched monster's id, the same on the client and on the server
     uintptr_t lookup = 0;     // the server's unit lookup (game, type, id)
     bool remote = false;      // [gameplay] melee_direct_client_cleave: a joined player's extra hit, asked of this host (heroId is HIS hero)
+    bool leftHand = false;    // [gameplay] melee_direct_by_hand: the blade is the game's left-hand weapon (LeftSwing) - struck as the game's "Left Hand Swing"
 };
 
 // [gameplay] melee_direct_client_cleave, the host's side: a joined player's extra hit is struck only within this reach of the
@@ -130,6 +163,10 @@ void SetMinIntervalMs(uint32_t ms);
 // [gameplay] melee_direct_client_cleave on THIS PC as the host: the joined players' extra hits are struck here (the hooks go in for it
 // even with melee_direct off; those requests are struck in any view - the host may be in another one).
 void SetRemoteWanted(bool on);
+// [gameplay] melee_direct_by_hand (every read): a blow of the left-hand weapon is the game's "Left Hand Swing" (LeftSwing above). Off: the
+// right weapon, as before.
+void SetByHand(bool on);
+bool ByHand();
 // The two hooks (the server's target and reach tests) and the proofs of the code, tried again from the timer until they
 // are in; only while wanted. No local server found, a signature missing or a fault: Ready() stays false, the key path runs.
 void Install();

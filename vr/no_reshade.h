@@ -4,15 +4,16 @@
 
 namespace nors {
 
+// Since 0.203 (Serg, 2026-11-05: "from the new build don't use ReShade at all - we take the depth map without it") there is no ReShade path:
+// ReShade64.dll is never loaded, a ReShade in the game is never joined, and [render] no_reshade in an old ini means nothing. Crash reports
+// 231 / 232 / 251: our D2R_DepthFog.fx defines made ReShade rebuild the effect synchronously in its present - minutes on an i7-4790, the
+// game killed as hung - also through a player's own dxgi.dll ReShade, which no_reshade=1 used to join anyway.
 enum class Start {
-    ReShade,      // [render] no_reshade=0: ReShade as before (the default)
-    PlayerDxgi,   // no_reshade=1, but the player's own ReShade is beside the game as dxgi.dll: the game loads it itself - joined as before
-    None,         // no_reshade=1: ReShade64.dll not loaded, the plugin's own D3D12 hooks (vr/native_d3d12.h)
+    None,            // the plugin's own D3D12 hooks (vr/native_d3d12.h), nothing else
+    BesidePlayers,   // the same, with the player's own ReShade beside the game as dxgi.dll: the game loads it itself, it is left exactly as it is
+                     // (never renamed, moved or deleted) and runs its own effects; nothing of D2R VR goes through it
 };
-inline Start Decide(bool iniOn, bool dxgiBesideGame) {
-    if (!iniOn) return Start::ReShade;
-    return dxgiBesideGame ? Start::PlayerDxgi : Start::None;
-}
+inline Start Decide(bool dxgiBesideGame) { return dxgiBesideGame ? Start::BesidePlayers : Start::None; }
 
 // The modes made for it: the flat game ([mode] platform=0: one picture on the monitor - the plugin's own hooks and, with native_effects, its own
 // runtime for the effect cover all it draws there), and VR with native OpenXR, the eyes by turns (afr=1, pair_per_tick=0) with the other eye

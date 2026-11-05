@@ -41,6 +41,4 @@ Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\D2R-VR.mpq\data
 Source: "{#PayloadDir}\launcher\vrmod-manifest.json"; DestDir: "{app}\{#ModDir}"; Flags: ignoreversion
 Source: "{#PayloadDir}\launcher\launcher_icon.png"; DestDir: "{app}\{#ModDir}"; Flags: ignoreversion
 ; VR: the headset side.
-; FlatVR's add-on is ReShade's: it goes where the mod's ReShade looks for add-ons (its base, the mod's reshade folder)
-Source: "{#PayloadDir}\game\FlatVR_DepthProvider.addon64"; DestDir: "{app}\{#ModDir}\reshade"; Flags: ignoreversion; Check: IsVR
-Source: "{#PayloadDir}\game\FlatVR_Keepalive.addonfx"; DestDir: "{app}\{#ModDir}\reshade"; Flags: ignoreversion; Check: IsVR
+; (FlatVR's ReShade add-on and its keepalive effect: not shipped since 0.203 - no ReShade; the plugin hands FlatVR its picture itself, vr/flatvr_feed.h)

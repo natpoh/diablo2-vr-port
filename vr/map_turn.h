@@ -153,12 +153,14 @@ inline const char* FlatWhyText(FlatWhy w) {
 }
 
 // The share's uv for a screen point p (uv), as the effect does it; false outside the circle.
-inline bool RoundAt(const Round& r, float px, float py, float* u, float* v) {
+// whole ([hud] flat_map_zoom past level 0, vr/flat_map_zoom.h): not held to the circle - the whole share, turned, wherever it lands (false only
+// off the share).
+inline bool RoundAt(const Round& r, float px, float py, float* u, float* v, bool whole = false) {
     if (!r.ok) return false;
     const float qx = (px - r.centre[0]) / r.radius[0], qy = (py - r.centre[1]) / r.radius[1];
-    if (qx * qx + qy * qy > 1.0f) return false;
+    if (!whole && qx * qx + qy * qy > 1.0f) return false;
     Apply(r.map, qx, qy, u, v);
-    return true;
+    return !whole || (*u >= 0.0f && *u <= 1.0f && *v >= 0.0f && *v <= 1.0f);
 }
 
 // The way the head looks, for the map in the hand: its turn in the room held while it looks (nearly) straight down - at the hand - where
@@ -187,5 +189,25 @@ inline int Crop(float bearing) {
 }
 // Which label (0 N, 1 NE ... 7 NW) and tick a strip column x has: the strip's column for bearing b is Crop(b) + kWindow / 2.
 inline int StepAt(int x) { return (x - kWindow / 2 + kPeriod) / (kPeriod / 32); }
+
+// [hud] map_compass_flat: the same strip over the round map on the SCREEN (RoundOnScreen; flat F2 / F3, VR F2 / F3), drawn by D2R_DepthFog.fx
+// from the strip's own picture (xr.cpp PaintCompass). As wide as the circle, its window's shape, a gap above the circle - or under it when
+// the circle is too near the screen's top for it (the game's corner map is at the top: 0.202.2's flat map had nothing over it). box: uv l, t,
+// r, b of the screen; crop: the window's left edge in the picture, uv (Crop / kAtlasW).
+struct CompassPlace { float box[4] = {0.0f, 0.0f, 0.0f, 0.0f}; float crop = 0.0f; bool below = false, ok = false; };
+inline CompassPlace CompassOnScreen(const Round& r, float bearing) {
+    CompassPlace c;
+    if (!r.ok || !(r.radius[0] > 0.0f) || !(r.radius[1] > 0.0f)) return c;
+    const float h = 2.0f * r.radius[1] * (float)kStripH / (float)kWindow, gap = 0.15f * h;
+    float top = r.centre[1] - r.radius[1] - gap - h;
+    if (top < 0.0f) { top = r.centre[1] + r.radius[1] + gap; c.below = true; }
+    c.box[0] = r.centre[0] - r.radius[0];
+    c.box[1] = top;
+    c.box[2] = r.centre[0] + r.radius[0];
+    c.box[3] = top + h;
+    c.crop = (float)Crop(bearing) / (float)kAtlasW;
+    c.ok = std::isfinite(c.box[0] + c.box[1] + c.box[2] + c.box[3]);
+    return c;
+}
 
 }  // namespace mapturn

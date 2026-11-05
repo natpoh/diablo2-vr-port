@@ -47,7 +47,6 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "plate_world.h"   // [hud] monster_bar_room: the monster's health bar over its head, in the room (HangPlate)
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (HangNotice)
 #include "rtv_slots.h"     // the render-target views of the interface chains, handed out and given back (EnsureHudOut)
-#include "reshade_shield.h"
 #include "panel_input.h"
 #include "typed_keys.h"   // [openxr] laser_typing: the laser's own Ctrl / Shift carry kOwnKeyTag
 #include "xr_layers.h"
@@ -55,6 +54,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
+#include "exit_end.h"   // [openxr] end_session_on_exit: the session ended before the game closes (exit_end.h)
 #include "bounded_call.h"   // [openxr] busy_guard: xrWaitFrame and xrBeginSession on a thread of their own, waited for with a limit (bounded_call.h)
 #include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
 #include "pointer_cache.h"   // the mouse pointer's picture known by what it shows (pointer_cache.h Key)
@@ -63,6 +63,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "sticker_atlas.h"  // the pictures painted once a session, in one swapchain (g_stickers)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
+#include "auto_tune_run.h"   // [autotune]: each frame counted for the "Auto" graphics tuning; a run's values for the render size and the stereo mode
 #include "body_calibration.h"   // StandingEyeY: the standing eyes' height over the floor, from the T-pose measurement
 #include "views3d.h"   // [openxr] views_3d: F1 as a window, F3 as the room (the pure maths)
 #include "eye_gap.h"   // [openxr] ipd_auto / ipd_mm: the eye distance of the stereo pair - the runtime's or the player's (the pure maths)
@@ -75,6 +76,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "session_end.h"   // a live session end off the game's present: the exit asked for, the runtime's handles destroyed on a thread of their own
 #include "api_layers_lib.h"   // [openxr] block_listed_layers: implicit OpenXR layers known to break the picture off in this process (shared/api_layers.h)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
+#include "auto_tune_text.h"   // [autotune]: the Video page's words of an Auto run
 #include "weight_wire.h"   // [weight] weapon_grip_no_chord: a grip on the weapon does not arm the settings panel's chord
 #include "hset_life.h"
 #include "low_hp_game.h"   // its low-life pages show the vignette as a preview (lowhp::SetPreview)
@@ -153,6 +155,7 @@ struct Cfg {
     bool stopFlatVrWatch = true;   // stop_flatvr_watch: ... and stopped again when it starts while the session runs (vr/flatvr_gate.h Watch); 0 = only at the start
     bool busyGuard = true;    // busy_guard: the runtime's blocking calls with a limit, no session over a FlatVR that holds the headset (unticked: as before)
     unsigned waitFrameMs = 150;   // wait_frame_ms: how long the draw thread waits for xrWaitFrame (and xrBeginSession) before the VR frame is left out
+    bool endOnExit = false;   // end_session_on_exit: the game's quit to Windows ends the session first (vr/exit_end.h); 0 = left to the game's exit, as before. Live
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
@@ -186,6 +189,7 @@ struct Cfg {
     bool mapRotate = false;   // [hud] map_rotate: ... and turned so the way you look is up (from above too); live
     bool mapCompass = false;  // [hud] map_compass: a compass strip over the map in the hand (F4); live
     bool mapBigOnHand = false;  // [hud] map_big_on_hand: the big map held on the LEFT hand like the inventory ([openxr] hand_inventory's place and width), a button to the front; live
+    bool mapTwoSizes = true;    // [hud] map_two_sizes: only the orb and the big map in front - no middle size on the hand, no button to it (vr/map_laser.h BigOnHand / FrontButton); live
     bool mapBesideInv = false;  // [hud] map_beside_inventory: while the inventory hangs on the left hand, the map in that hand beside it (not under it); live
     bool mapBigFollow = false;  // [hud] map_big_follow: the big map in front kept in the room, coming round after the gaze lazily, its height fixed (vr/map_laser.h Follow); live
     bool mapBigGrab = false;    // [hud] map_big_grab: the right laser + grip drags the big map in front, the stick nearer / farther; kept in map_big_dist_m / side_deg / up_m; live
@@ -370,6 +374,8 @@ void TellEyes(const XrView views[2], const eyeframe::Quat q[2], const eyeframe::
 bool g_colorScaleExt = false;
 bool g_final = false;                 // the game is closing: no session again
 std::atomic<bool> g_stopWanted{false};  // [openxr] on went to 0 while a session runs: the draw thread ends it
+std::atomic<uint64_t> g_exitAt{0};
+std::atomic<DWORD> g_presentTid{0};     // the thread of the game's presents (OnPresent): a quit that comes on it does not wait for it      // [openxr] end_session_on_exit: when a quit to Windows ended the session (GetTickCount64; 0 none) - no new one while the game closes
 
 // [openxr] busy_guard: xrWaitFrame has no time limit and the headset may be another app's (FlatVR over BodyWalk Lite on SteamVR: it never returned, with the session lock held,
 // the game hung until Task Manager, 2026-10-18). The two calls that can block the draw thread - xrWaitFrame, xrBeginSession - run on a thread of their own; the draw thread
@@ -645,6 +651,13 @@ XrVector3f g_cPos{};
 
 // 10 s statistics
 struct Stats { uint32_t frames = 0, pairs = 0, monos = 0, noRender = 0, noViews = 0; double waitUs = 0, waitMax = 0, frameUs = 0; ULONGLONG since = 0; } g_st;
+double g_lastWaitUs = 0;   // what xrWaitFrame blocked for the frame being made ([autotune]: a frame's own time is its interval less this)
+// [autotune]: an int key a run is trying (vr/auto_tune_run.h Forced), else the file's
+int IniIntRun(const wchar_t* sec, const wchar_t* key, int def, const wchar_t* ini) {
+    float v = 0.0f;
+    if (autotunerun::Forced(sec, key, &v)) return (int)std::lround(v);
+    return (int)GetPrivateProfileIntW(sec, key, def, ini);
+}
 double g_beginUs = 0.0;
 PairTiming g_clock{};   // the pair's time inside our calls (xr.h LastPairTiming), reset by BeginPair
 xrfail::Streak g_failStreak[3];   // xrWaitFrame, xrBeginFrame, xrEndFrame: the runtime's failed frames in a row (xr_failure.h)
@@ -2007,8 +2020,8 @@ void Teardown() {   // under g_lock or before the session exists
 }
 
 bool StartSession() {
-    // before the runtime is in the game: ReShade's DXGI factory must not take its asks for no adapter (reshade_shield.cpp)
-    reshade_shield::Install(g_log);
+    // (the ReShade shield - ReShade64.dll's DXGI factory kept from an adapter call on no adapter - is gone with ReShade in 0.203: the plugin
+    // never loads ReShade64.dll, and the shield never covered a player's dxgi.dll ReShade)
     // [openxr] block_listed_layers: the implicit layers known to break the picture ([openxr] blocked_layers) switched off for this process before the
     // loader looks for layers - only while the eyes are drawn our own way (runtime_fov off); every other layer is left as it is (shared/api_layers.h).
     // What was found, for D2R VR Settings' Status ([session] layers_off / layers_listed_in / layers_in in d2r_vr_headset.ini).
@@ -2125,6 +2138,7 @@ bool StartSession() {
                                                          std::min({vv[0].maxImageRectHeight, vv[1].maxImageRectHeight, maxSwapchain.h})})
                                            : 0);
             WriteHeadsetInfo(sp.systemName, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()));
+            autotunerun::SetRecommended(vrres::Unpack(g_vrRecommended.load()).w, vrres::Unpack(g_vrRecommended.load()).h);   // ([autotune]: the headset's size, stepped down from)
         }
     }
 
@@ -4078,6 +4092,7 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         onFront = maplaser::RayQuad(v3(from), v3(dir), g_bigFrontBtn, 4.0f);
         onBig = maplaser::RayQuad(v3(from), v3(dir), g_bigQuad, 4.0f);
     }
+    if (!maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes)) onFront = maplaser::Hit{};   // ([hud] map_two_sizes: no button to the hand counts)
     const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig);
     if (f.claim) { r.trigger = 0.0f; r.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
     {   // [hud] map_big_grab: the right grip on the big map in front takes it; the laser drags it, the stick nearer / farther (as menu_zoom: forward nearer)
@@ -4254,9 +4269,9 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     maplaser::Place pl = maplaser::PlaceAt(g_bigSpot, aspect);
     XrQuaternionf q = Yaw(g_bigSpot.yaw);
     bool onHand = false;
-    if (g_cfg.mapBigOnHand && !g_bigFront && g_viewsOk) {
+    if (maplaser::BigOnHand(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, g_bigFront) && g_viewsOk) {
         // [hud] map_big_on_hand: held over the left controller like the inventory ([openxr] hand_inventory's place, hand_inventory_width_m wide),
-        // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame.
+        // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame. [hud] map_two_sizes: never.
         XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
         const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
         if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
@@ -4318,7 +4333,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
         keep(g_bigButton, pl.button, pl.bw, pl.bh);
     }
     g_bigFrontBtn = maplaser::Quad{};
-    if (g_cfg.mapBigOnHand && nl < max) {   // the inventory's own button beside its top right corner: to the front, or back on the hand
+    if (maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes) && nl < max) {   // the inventory's own button beside its top right corner: to the front, or back on the hand
         nl = HangHandButton(layers, nl, max, g_bigLayer[0], onHand);
         if (g_btnShown.ok) {
             keep(g_bigFrontBtn, {g_btnShown.pose.position.x, g_btnShown.pose.position.y, g_btnShown.pose.position.z}, g_btnShown.side, g_btnShown.side);
@@ -4649,6 +4664,7 @@ bool OpenFrame(Kind kind) {
     if (++g_framesRunning == 90) GuardClear("the session runs: 90 frames");
     const double t1 = UsNow();
     g_st.waitUs += t1 - t0;
+    g_lastWaitUs = t1 - t0;
     g_st.waitMax = std::max(g_st.waitMax, t1 - t0);
     if (kind == kPair) g_clock.wait = t1 - t0;
     if (crumb) LogF("vrcam: openxr -   should render %d, display period %.2f ms; xrBeginFrame", (int)g_fs.shouldRender, g_fs.predictedDisplayPeriod / 1e6);
@@ -5775,6 +5791,7 @@ void CloseFrame() {
     const double now = UsNow();
     g_st.frameUs += now - g_beginUs;
     ++g_st.frames;
+    autotunerun::OnFrame(now, g_lastWaitUs, (double)g_fs.predictedDisplayPeriod, viewgate::F4());   // ([autotune]: nothing unless a run measures)
     g_kind = kNone;
     if (!g_st.since) g_st.since = GetTickCount64();
     if (GetTickCount64() - g_st.since >= 10000) {
@@ -5790,6 +5807,9 @@ void CloseFrame() {
 }
 
 }  // namespace
+
+// [hud] map_compass_flat: the same compass picture for the flat map's strip (vr/render/effects/effects.cpp uploads it into D2R_DepthFog.fx).
+std::vector<uint32_t> CompassPixels() { return PaintCompass(); }
 
 void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
@@ -5888,6 +5908,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.stopFlatVrWatch = f(L"stop_flatvr_watch", 1.0f) != 0.0f;   // (live)
     g_cfg.busyGuard = f(L"busy_guard", 1.0f) != 0.0f;   // the runtime's blocking calls with a limit; no session over a FlatVR that cannot be stopped
     g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
+    g_cfg.endOnExit = f(L"end_session_on_exit", 0.0f) != 0.0f;   // (live: read when the game quits)
     g_reapDrainMaxMs.store(std::clamp(f(L"reap_drain_max_ms", 200.0f), 20.0f, 500.0f));   // (chain_reaper.h DrainMs; 20 = as before)
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
@@ -5971,7 +5992,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.handHoldMs = std::clamp(f(L"hand_hold_ms", 1000.0f), 0.0f, 10000.0f);
     {   // eyes by turns (D2R VR Settings > Performance > 3D in the headset > Native OpenXR - eyes by turns)
         static int said = -1;
-        const bool turns = GetPrivateProfileIntW(L"stereo", L"afr", 0, ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, ini) == 0;
+        const bool turns = IniIntRun(L"stereo", L"afr", 0, ini) != 0 && IniIntRun(L"stereo", L"pair_per_tick", 0, ini) == 0;
         if (on && (int)turns != said) {
             said = turns;
             Log(turns ? "vrcam: openxr - eyes by turns: one eye a game frame, the other as it was last drawn"
@@ -6099,6 +6120,7 @@ void LoadSettings(const wchar_t* ini) {
                                        : "vrcam: openxr - the map (F4): no zoom by the stick ([hud] map_stick_zoom=0)");
             }
             g_cfg.mapBigOnHand = GetPrivateProfileIntW(L"hud", L"map_big_on_hand", 0, ini) != 0;
+            g_cfg.mapTwoSizes = GetPrivateProfileIntW(L"hud", L"map_two_sizes", 1, ini) != 0;
             g_cfg.mapBesideInv = GetPrivateProfileIntW(L"hud", L"map_beside_inventory", 0, ini) != 0;
             g_cfg.mapBigFollow = GetPrivateProfileIntW(L"hud", L"map_big_follow", 0, ini) != 0;
             g_cfg.mapBigGrab = GetPrivateProfileIntW(L"hud", L"map_big_grab", 0, ini) != 0;
@@ -6123,12 +6145,14 @@ void LoadSettings(const wchar_t* ini) {
                      (int)g_cfg.mapBigFollow, (int)g_cfg.mapBigGrab, g_cfg.bigDistM, g_cfg.bigSideDeg, g_cfg.bigUpM);
             }
             static int saidHand = 0;
-            const int handNow = (g_cfg.mapBigOnHand ? 1 : 0) | (g_cfg.mapBesideInv ? 2 : 0);
+            const int handNow = (g_cfg.mapBigOnHand ? 1 : 0) | (g_cfg.mapBesideInv ? 2 : 0) | (g_cfg.mapTwoSizes ? 4 : 0) | 8;
             if (handNow != saidHand) {
                 saidHand = handNow;
-                LogF("vrcam: openxr - the map and the left hand (F4): the big map %s; with the inventory on the hand the map %s ([hud] map_big_on_hand %d, map_beside_inventory %d)",
-                     g_cfg.mapBigOnHand ? "held on the left hand, a button to the front" : "in front", g_cfg.mapBesideInv ? "beside it" : "where it always is",
-                     (int)g_cfg.mapBigOnHand, (int)g_cfg.mapBesideInv);
+                const bool held = maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes);
+                LogF("vrcam: openxr - the map and the left hand (F4): the big map %s; with the inventory on the hand the map %s ([hud] map_big_on_hand %d, "
+                     "map_two_sizes %d, map_beside_inventory %d)",
+                     held ? "held on the left hand, a button to the front" : g_cfg.mapTwoSizes ? "in front at the orb's click, a click on it back to the orb (two sizes)" : "in front",
+                     g_cfg.mapBesideInv ? "beside it" : "where it always is", (int)g_cfg.mapBigOnHand, (int)g_cfg.mapTwoSizes, (int)g_cfg.mapBesideInv);
             }
             static int saidBig = 0;
             if ((int)g_cfg.mapClickBig != saidBig) {
@@ -6276,8 +6300,8 @@ void LoadSettings(const wchar_t* ini) {
         haptics::ConfigureExtras(x);
     }
     {   // [render] vr_resolution_px (a square's side) and vr_resolution (the older mode), live: render_size.h reads the two together
-        const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, ini);
-        const int px = (int)GetPrivateProfileIntW(L"render", L"vr_resolution_px", 0, ini);
+        const int mode = IniIntRun(L"render", L"vr_resolution", 0, ini);
+        const int px = IniIntRun(L"render", L"vr_resolution_px", 0, ini);
         g_cfg.vrPick = rendersize::FromIni(mode, px);
         g_cfg.menuWide = GetPrivateProfileIntW(L"render", L"menu_wide", 1, ini) != 0;   // [render] menu_wide (live)
         if (!g_headsetPath[0]) {   // what the runtime says of the headset goes beside the ini for D2R VR Settings (WriteHeadsetInfo)
@@ -6347,6 +6371,14 @@ void Stop(bool final);
 // The session started on the game's device and queue (a worker thread), once.
 void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_state.load() != kIdle || !dev || !queue) return;
+    if (const uint64_t at = g_exitAt.load()) {   // [openxr] end_session_on_exit: the game is closing - its presents go on a while, no session over them
+        if (exitend::HoldStart(at, GetTickCount64())) {
+            static uint64_t told = 0;
+            if (told != at) { told = at; Log("vrcam: openxr - no new session: the game is closing (end_session_on_exit)"); }
+            return;
+        }
+        if (g_exitAt.exchange(0)) Log("vrcam: openxr - the game did not close in 30 s after its quit (a dialog cancelled?): a session again");
+    }
     if (g_goneBusy.load() > 0) {   // the last session's end still on its own thread: one instance at a time - tried again at the next present
         static ULONGLONG told = 0;
         if (GetTickCount64() - told > 5000) { told = GetTickCount64(); Log("vrcam: openxr - a new session waits for the last one's end to finish"); }
@@ -6973,6 +7005,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
         vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
                       vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide);
     }
+    g_presentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     if (DeviceLost()) return;
     if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);
     // inside a pair: its own frame - and a pass of two presents its own eye (the replay copied it already)
@@ -7048,6 +7081,89 @@ void Stop(bool final) {
 }
 
 void Shutdown() { Stop(true); }
+
+// [openxr] end_session_on_exit (vr/exit_end.h): the game's quit to Windows ends the headset session before the game tears its D3D12 device down - the way a live
+// switch-off does it (the draw thread between two frames, or our own thread if no present takes it; the runtime's handles on the end's own thread,
+// vr/session_end.h), waited for a bounded time.
+namespace {
+DWORD WINAPI ExitEndThread(void* p) {
+    const exitend::Trigger t = (exitend::Trigger)(intptr_t)p;
+    const double t0 = UsNow();
+    const char* how = "the draw thread ended it between two frames";
+    for (;;) {
+        exitend::Progress pr;
+        pr.stopTaken = !g_stopWanted.load();
+        const int st = g_state.load();
+        pr.sessionGone = st == kIdle || st == kFailed;
+        pr.endsBusy = g_goneBusy.load();
+        const double ms = (UsNow() - t0) / 1000.0;
+        switch (exitend::WaitStep(ms, pr)) {
+            case exitend::Step::Done:
+                LogF("vrcam: openxr - the game quits (%s): the headset session ended before the game's device goes, in %.0f ms (%s)", exitend::Name(t), ms, how);
+                return 0;
+            case exitend::Step::GiveUp:
+                LogF("vrcam: openxr - the game quits (%s): the session's end not through in %.0f ms (%s) - the game goes on closing, as before", exitend::Name(t), ms,
+                     !pr.stopTaken ? "the stop was not taken" : !pr.sessionGone ? "the session still ending" : "the runtime's handles still being destroyed");
+                return 0;
+            case exitend::Step::StopHere:
+                if (g_stopWanted.exchange(false)) {
+                    how = "ended on our own thread - no present took it";
+                    Stop(false);
+                    continue;
+                }
+                break;
+            case exitend::Step::Wait:
+                break;
+        }
+        Sleep(5);
+    }
+}
+}  // namespace
+
+void EndOnExit(int trigger) {
+    const exitend::Trigger t = (exitend::Trigger)trigger;
+    const uint64_t now = GetTickCount64();
+    const int st = g_state.load();
+    const uint64_t at = g_exitAt.load();
+    switch (exitend::Decide(g_cfg.endOnExit, st == kStarting || st == kCreated, exitend::HoldStart(at, now))) {
+        case exitend::Begin::Off: {
+            static bool told = false;
+            if (!told && (st == kStarting || st == kCreated)) {
+                told = true;
+                LogF("vrcam: openxr - the game quits (%s): the headset session is left to the game's exit, as before ([openxr] end_session_on_exit=0)", exitend::Name(t));
+            }
+            return;
+        }
+        case exitend::Begin::NoSession: {
+            static bool told = false;
+            if (!told) { told = true; LogF("vrcam: openxr - the game quits (%s): no headset session to end", exitend::Name(t)); }
+            return;
+        }
+        case exitend::Begin::Already:
+            return;
+        case exitend::Begin::End:
+            break;
+    }
+    g_exitAt.store(now ? now : 1);   // no new session while the game closes (Start)
+    LogF("vrcam: openxr - the game quits (%s): the headset session is ended first ([openxr] end_session_on_exit)", exitend::Name(t));
+    g_stopWanted.store(true);   // the draw thread takes it at its next present, between two frames
+    // On the present's own thread (a quit inside a present): it cannot wait for itself - its next present ends the session, or the DLL's detach does.
+    if (GetCurrentThreadId() == g_presentTid.load(std::memory_order_relaxed)) return;
+    HANDLE h = CreateThread(nullptr, 0, &ExitEndThread, (void*)(intptr_t)trigger, 0, nullptr);
+    if (!h) return;   // (the draw thread still takes the stop)
+    // The quit's thread (the game's window or UI thread) waits for the end: the game tears nothing down meanwhile. Messages sent to it are taken while it waits
+    // (a present that sends one to the game's window must not wait on us); the wait has a limit of its own past the end's budget.
+    const ULONGLONG until = GetTickCount64() + (ULONGLONG)exitend::kBudgetMs + 250;
+    for (;;) {
+        const ULONGLONG n = GetTickCount64();
+        if (n >= until) break;
+        const DWORD r = MsgWaitForMultipleObjects(1, &h, FALSE, (DWORD)(until - n), QS_SENDMESSAGE);
+        if (r != WAIT_OBJECT_0 + 1) break;   // the end's thread done, the limit, or a failure
+        MSG m;
+        PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);   // (sent messages are handled inside the peek)
+    }
+    CloseHandle(h);
+}
 
 void DeviceGone(ID3D12Device* dev) {
     if (dev && dev == g_dev && g_state.load() != kIdle) Shutdown();

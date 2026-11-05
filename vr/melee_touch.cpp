@@ -1230,7 +1230,8 @@ bool NoAttack(uint32_t id, ULONGLONG now) {
 
 void PressKey(uint32_t id, bool allowDirect, int hand, ULONGLONG now);
 // `touch`: the touch as measured ([gameplay] melee_direct_client's rules: speed, force, the swing's length); `twoHanded` the weapon.
-void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::Touch& touch = {}, bool twoHanded = false, bool twoHandsOn = false) {
+// `leftWeapon`: the blade that touched is the game's left-hand weapon with a weapon in each hand ([gameplay] melee_direct_by_hand: a direct blow is the game's "Left Hand Swing").
+void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::Touch& touch = {}, bool twoHanded = false, bool twoHandsOn = false, bool leftWeapon = false) {
     frametrace::Note(frametrace::kPress);   // [debug] frame_trace: a touch was accepted - the game's attack is asked for (key or direct)
     const ULONGLONG now = GetTickCount64();
     if (NoAttack(id, now)) return;
@@ -1259,6 +1260,7 @@ void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::T
             req.heroId = g_heroId.load();
             req.monsterId = id;
             req.lookup = g_origLookup ? reinterpret_cast<uintptr_t>(g_origLookup) : d2rsig::Addr(RVA_LOOKUP);
+            req.leftHand = leftWeapon;   // [gameplay] melee_direct_by_hand (melee_direct.cpp decides with its own tick)
             meleedirect::Submit(req, now);
             meleeboxes::Struck(id, meleeboxes::kStruckDirect, now);   // [debug] melee_boxes: the drawing only
             return;
@@ -1756,6 +1758,7 @@ void SetShieldsWanted(bool on) {
         Log(on ? "melee touch: monster shields on - a monster's shield and its weapons stop the held weapon; a blow they stop is no hit (the game's own block roll is for the blows that land)"
                : "melee touch: monster shields off");
 }
+bool HeadVolume() { return g_headVolume.load(std::memory_order_relaxed); }
 void SetHeadVolume(bool on) {
     if (g_headVolume.exchange(on) != on) Log(on ? "melee touch: head volumes on - a headed weapon's head is a volume of its own where its model has it, its shaft as thin as the model's"
                                                 : "melee touch: head volumes off - one capsule along the weapon, as before");
@@ -2266,7 +2269,9 @@ void Tick(const Frame& f) {
         uint32_t backId = 0;
         int backHand = 0;
         if (meleedirectclient::TakeFallback(&backId, &backHand) && viewgate::F4()) PressKey(backId, true, backHand, now);
-        // [gameplay] melee_direct_client_cleave, the host: a joined player's extra hit - the server's attack for his hero (vr/melee_direct.cpp)
+        // [gameplay] melee_direct_client_cleave, the host: a joined player's extra hit - the server's attack for his hero (vr/melee_direct.cpp);
+        // whether it can be struck here at all goes into the answer to the joined players' hello (who hosts decides)
+        meleedirectclient::SetHostCanStrike(g_serverGame.load() != 0 && meleedirect::Ready(), now);
         for (uint32_t rh = 0, rm = 0; meleedirectclient::TakeRemote(&rh, &rm);) {
             const uintptr_t game = g_serverGame.load();
             if (!game || rh == g_heroId.load()) continue;   // not hosting (no server here), or our own hero named: nothing
@@ -2699,6 +2704,7 @@ void Tick(const Frame& f) {
         float need = 0.0f;
         float approach = -1.0f;   // ... and its arrival's closing speed, m/s ([gameplay] melee_direct_client's speed rule)
         const char* forceWhat = "";
+        int slot = -1;            // the game's slot of the weapon that touched (0 the right hand's, 1 the left's): [gameplay] melee_direct_by_hand
     };
     Pending pend[2];
     int npend = 0;
@@ -2887,6 +2893,7 @@ void Tick(const Frame& f) {
                     if (npend < 2) {
                         Pending& p = pend[npend++];
                         p = Pending{side, c, strikedir::Judgement{}, v[k].score, ks[k].serial, 0.0f, false, thrust::Verdict{}};
+                        p.slot = sb.slot;
                         p.force = true;
                         p.need = v[k].need;
                         p.approach = appr[k];
@@ -3097,7 +3104,10 @@ void Tick(const Frame& f) {
             if ((byThrust ? g_thrustHits[side] : g_hits[side]).Insert(f.session, strokeId, first->id)) {
                 if (byThrust && g_engine[side].StrokeId()) g_hits[side].Insert(f.session, g_engine[side].StrokeId(), first->id);
                 if (!byThrust && g_thrustEngine[side].StrokeId()) g_thrustHits[side].Insert(f.session, g_thrustEngine[side].StrokeId(), first->id);
-                if (npend < 2) pend[npend++] = {side, first, firstJd, firstSpeed, strokeId, byThrust ? tsweep.speed : sweep.speed, byThrust, firstVerdict};
+                if (npend < 2) {
+                    pend[npend] = {side, first, firstJd, firstSpeed, strokeId, byThrust ? tsweep.speed : sweep.speed, byThrust, firstVerdict};
+                    pend[npend++].slot = sb.slot;
+                }
             }
         }
     }
@@ -3159,7 +3169,8 @@ void Tick(const Frame& f) {
         }
 #endif
         if (dual.dual) ApproveDual(p.c->id, hand, dual);
-        else Approve(p.c->id, !thrown, p.side, TouchOf(p), f.twoHanded && !paws, f.twoHandsOn && !paws);   // ([gameplay] melee_direct_client: its speed, force and the hands' paths)
+        else Approve(p.c->id, !thrown, p.side, TouchOf(p), f.twoHanded && !paws, f.twoHandsOn && !paws,
+                     meleedirect::LeftSwing(meleedirect::ByHand(), dualBlades && !paws, p.slot, false));   // [gameplay] melee_direct_by_hand: the left weapon's blade   // ([gameplay] melee_direct_client: its speed, force and the hands' paths)
         if (paws) {   // [shapeshift] claw_hits: the one recovery starts - the hero's attack time (the game's speed), for both paws
             g_claws.Struck(claw);
             if (g_clawTold < kClawLines) {

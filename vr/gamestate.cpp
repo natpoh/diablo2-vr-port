@@ -33,6 +33,7 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "exit_end.h"   // [openxr] end_session_on_exit: which UI message is the game's quit
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "d2r_vr_state.h"
 #include "table_rows.h"   // an item class read from the game checked against the Items table it indexes
@@ -48,11 +49,13 @@
 #include "sigscan.h"
 #include "minimap_side.h"
 #include "map_zoom.h"   // [hud] map_stick_zoom: the big map's zoom, the game's own (bigzoom, below)
+#include "flat_map_zoom.h"   // [hud] flat_map_zoom: the flat game's map, the same call, + / - in eighths
 #include "plate_world.h"   // the hook's latest anchor for the plate, taken with each read (FollowBox)
 #include "hand_inventory.h"   // [openxr] hand_inventory: which panels are the inventory
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
+namespace xr { void EndOnExit(int trigger); }   // [openxr] end_session_on_exit: the title screen's Exit ends the headset session first (vr/xr.cpp)
 namespace directinput { void SetVendorOpen(bool open); }   // a vendor's panel: the left stick's hold is the vendor's repair all (direct_input.h)
 
 using namespace D2RL;
@@ -77,6 +80,7 @@ D2RVR_State* g_state = nullptr;
 uiticket::Ticket g_readQueued;   // ReadItems() queued (ui_ticket.h: a run that never comes is queued again)
 std::atomic<uint32_t> g_weapon{D2RVR_WEAPON_UNKNOWN};
 std::atomic<uint32_t> g_menu{0};
+std::atomic<bool> g_pause{false};   // the game's pause menu (Esc: PauseLayout, PauseLayoutGarden) is open - [hud] game_menu_settings' button (vr/flat_menu.h)
 std::atomic<bool> g_npcDialogOnly{false};   // the only menu open is an NPC's small dialogue box (Talk / Trade / Cancel), [hud] npc_dialog_no_bar
 std::atomic<bool> g_laserPanels{false};   // [openxr] laser on: d2r-pcvr's extra modal panels are menus too (IsMenuPanel)
 std::atomic<uint32_t> g_set{0};      // 1 / 2: the active weapon set
@@ -411,9 +415,15 @@ PanelDraw g_origPanel = nullptr;
 Scale g_origScale = nullptr;
 std::atomic<bool> g_ready{false};
 std::atomic<int> g_tried{0};                 // 0 not yet, 1 tried (in or not)
+std::atomic<bool> g_installed{false};        // Install has finished (g_ready is the answer from then on)
 std::atomic<float> g_wanted{0.0f};           // the stick's zoom (the game's units), 0 = the game's own
 std::atomic<float> g_drawn{0.0f};            // what the big map's last scale call really drew at (0: none seen)
 std::atomic<uint64_t> g_miniRva{0}, g_leftRva{0};   // the map mode's globals (MaintainMapSide's, once checked)
+// [hud] flat_map_zoom (vr/flat_map_zoom.h): the flat game's level (past -1: an eighth of zoom less a step than its own) - any map mode, the
+// AutoMap panel's call only; and what the last such call came with and was given (the log: FlatMapZoomSeen)
+std::atomic<int> g_flatSteps{0};
+std::atomic<float> g_flatGame{0.0f}, g_flatDrawn{0.0f};
+std::atomic<int> g_flatMode{-1};
 thread_local void* t_panel = nullptr;        // the panel this thread is drawing (OnPanelDraw's span)
 bool IsMapPanel(void* self) noexcept {
     const uintptr_t vt = d2rsig::Addr(kPanelVtableRva);
@@ -432,11 +442,21 @@ uint64_t OnPanelDraw(void* self) {
     return r;
 }
 void* OnScale(void* out, void* rect, void* extra, float zoom) {
-    if (t_panel && g_mapBig.load(std::memory_order_relaxed) && g_ready.load(std::memory_order_relaxed)) {
+    const bool big = g_mapBig.load(std::memory_order_relaxed);
+    const int flat = big ? 0 : g_flatSteps.load(std::memory_order_relaxed);
+    if (t_panel && (big || flatzoom::Steers(flat)) && g_ready.load(std::memory_order_relaxed)) {
         const uint64_t mini = g_miniRva.load(std::memory_order_relaxed), left = g_leftRva.load(std::memory_order_relaxed);
-        if (mini && ReadMapMode(mini, left) == 0 && IsMapPanel(t_panel)) {   // the whole-screen map, drawn by the AutoMap panel
+        const int mode = mini ? ReadMapMode(mini, left) : -1;
+        if (big && mode == 0 && IsMapPanel(t_panel)) {   // the whole-screen map, drawn by the AutoMap panel
             const float use = mapzoom::GameArg(zoom, g_wanted.load(std::memory_order_relaxed));
             g_drawn.store(mapzoom::GameRounded(use), std::memory_order_relaxed);
+            return g_origScale(out, rect, extra, use);
+        }
+        if (flatzoom::Steers(flat) && IsMapPanel(t_panel)) {   // [hud] flat_map_zoom: the flat game's map, in whatever mode it is drawn
+            const float use = flatzoom::Arg(zoom, flat);
+            g_flatGame.store(zoom, std::memory_order_relaxed);
+            g_flatDrawn.store(mapzoom::GameRounded(use), std::memory_order_relaxed);
+            g_flatMode.store(mode, std::memory_order_relaxed);
             return g_origScale(out, rect, extra, use);
         }
     }
@@ -448,11 +468,12 @@ void Install() {
     const bool a = d2rsig::Hook(kPanelDrawRva, kPanelEntry, sizeof kPanelEntry, reinterpret_cast<void*>(&OnPanelDraw), reinterpret_cast<void**>(&g_origPanel));
     const bool b = a && d2rsig::Hook(kScaleRva, kScaleEntry, sizeof kScaleEntry, reinterpret_cast<void*>(&OnScale), reinterpret_cast<void**>(&g_origScale));
     g_ready.store(a && b && d2rsig::Addr(kPanelVtableRva) != 0);
+    g_installed.store(true);
     char line[300];
     snprintf(line, sizeof line, "gamestate: the big map's zoom - %s (the map panel's draw %s, the map's scale %s, the panel's vtable %s)%s",
-             g_ready.load() ? "the game's own zoom, steered by the stick" : "NOT steered: the big map is magnified as a picture instead",
+             g_ready.load() ? "the game's own zoom, steered (the stick on the big map, + / - on the flat game's)" : "NOT steered: the big map is magnified as a picture instead, the flat game's not zoomed",
              a ? "hooked" : d2rsig::Addr(kPanelDrawRva) ? "bytes differ" : "not found", b ? "hooked" : !a ? "not tried" : d2rsig::Addr(kScaleRva) ? "bytes differ" : "not found",
-             d2rsig::Addr(kPanelVtableRva) ? "found" : "not found", " ([hud] map_stick_zoom)");
+             d2rsig::Addr(kPanelVtableRva) ? "found" : "not found", " ([hud] map_stick_zoom, flat_map_zoom)");
     Log(line);
 }
 }   // namespace bigzoom
@@ -476,7 +497,9 @@ void MaintainMapSide(bool havePlayer) {
     const bool want = corner >= 0 && havePlayer && g_menu.load() == 0;
     // [hud] map_rotate_flat: wanted, or a map this lease moved to give back (no menu up either way; the hand's own keeping goes first)
     const bool flat = !want && corner < 0 && havePlayer && g_menu.load() == 0 && (flatCorner >= 0 || flatLease.Moved());
-    if ((!want && !flat) || checked < 0) return;
+    // [hud] flat_map_zoom: the setter's globals and the zoom's hooks wanted, the map's side left alone (no want, no flat: returns below)
+    const bool zoom = havePlayer && flatzoom::Steers(bigzoom::g_flatSteps.load());
+    if ((!want && !flat && !zoom) || checked < 0) return;
     const uint64_t now = GetTickCount64();
     if (checked == 0) {
         if (triedAt && now - triedAt < 5000) return;
@@ -495,7 +518,8 @@ void MaintainMapSide(bool havePlayer) {
     const int mode = ReadMapMode(globals.mini, globals.left);
     bigzoom::g_miniRva.store(globals.mini);   // ([hud] map_stick_zoom: its scale call reads the mode too)
     bigzoom::g_leftRva.store(globals.left);
-    if (bigzoom::g_wanted.load() > 0.0f) bigzoom::Install();   // (once: the first zoom asked for)
+    if (bigzoom::g_wanted.load() > 0.0f || zoom) bigzoom::Install();   // (once: the first zoom asked for)
+    if (!want && !flat) return;   // (the flat zoom alone: nothing more to do here)
     {   // [hud] map_click_big: the whole screen while big (asked again a second later if the game put it back), the Keeper's corner after
         static uint64_t bigAt = 0;
         static int bigTold = 0;
@@ -992,6 +1016,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
         snprintf(b, sizeof b, "gamestate: ui message '%s' '%s' text '%.80s'", target, command, text);
         Log(b);
     }
+    if (const exitend::Trigger quit = exitend::FromUi(target, command); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
     if (strcmp(target, "PanelManager") == 0) {
         const bool before = g_menu.load() != 0;
         if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel")) {
@@ -1001,6 +1026,11 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
         else if (!strcmp(command, "ClosePanel") || !strcmp(command, "UnloadPanel")) g_panels.erase(text);
         else if (!strcmp(command, "UnloadAll") || !strcmp(command, "CloseAll")) g_panels.clear();
         g_autoMap.store(g_panels.count("AutoMap") ? 1 : 0);
+        {
+            bool pause = false;
+            for (const std::string& n : g_panels) if (n.rfind("PauseLayout", 0) == 0) pause = true;
+            g_pause.store(pause);
+        }
         noticecard::SetOpen(g_panels.count("NotificationPanel") != 0);
         bool menu = false, invOnly = true;
         for (const std::string& n : g_panels)
@@ -1231,6 +1261,7 @@ uint32_t HandsKey() { return g_handsKey.load(); }
 bool LeftShield() { return g_leftShield.load(); }
 int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+bool PauseMenuOpen() { return g_pause.load(); }   // [hud] game_menu_settings: the game's pause menu (Esc) is open
 bool InventoryOnly() { return g_invOnly.load(); }   // [openxr] hand_inventory: the menu open is the inventory alone (the tabbed menu or the inventory panel)
 bool NpcDialogOnly() { return g_npcDialogOnly.load(); }   // an NPC's dialogue box is the only menu open
 void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
@@ -1544,6 +1575,15 @@ void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); 
 void SetMapSideFlat(int corner) { g_mapSideFlat.store(std::clamp(corner, -1, 2)); }
 void SetMapBig(bool big) { g_mapBig.store(big); }
 // [hud] map_stick_zoom: the big map's zoom wanted (the game's units; 0 = the game's own), and what its last draw was really given (0: none)
+// [hud] flat_map_zoom: the flat game's level (flatzoom: 0 and -1 the game's own zoom - the hook is not asked for -, -2.. smaller); what the AutoMap panel's last
+// call came with (game) and drew at (drawn), in which map mode (0 the whole screen, 1 / 2 a corner, -1 not known). False: the hooks not in.
+void SetFlatMapZoom(int steps) { bigzoom::g_flatSteps.store(flatzoom::Clamped(steps)); }
+bool FlatMapZoomSeen(float* game, float* drawn, int* mode) {
+    *game = bigzoom::g_flatGame.load(); *drawn = bigzoom::g_flatDrawn.load(); *mode = bigzoom::g_flatMode.load();
+    return bigzoom::g_ready.load();
+}
+// 0 not tried yet (or the install under way: read mid-install it once said "not reachable" a moment before the hooks were in, 0.202.2), 1 in, -1 not
+int FlatMapZoomHooks() { return !bigzoom::g_installed.load() ? 0 : bigzoom::g_ready.load() ? 1 : -1; }
 void SetBigMapZoom(float wanted) { bigzoom::g_wanted.store(std::isfinite(wanted) && wanted > 0.0f ? wanted : 0.0f); if (!(wanted > 0.0f)) bigzoom::g_drawn.store(0.0f); }
 float BigMapZoomDrawn() { return bigzoom::g_ready.load() ? bigzoom::g_drawn.load() : 0.0f; }   // [hud] map_click_big: the game's whole-screen map while true (MaintainMapSide)   // -1 off, else [hud] map_corner
 void SetViewMode(uint32_t mode) { if (g_view.exchange(mode) != mode) Publish(); }

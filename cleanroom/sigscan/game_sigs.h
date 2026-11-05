@@ -142,6 +142,12 @@ inline constexpr Sig kSigs[] = {
     {"ModelListLock", 0x122AD60, Kind::Ref, "E8 ?? ?? ?? ?? 48 81 C7 B8 EF 02 00 4C 8D 7D 6F 48 B8 FF FF FF FF FF FF FF 7F", 0xE1B3A4, 0, 1, 5, 0, "48 FF 25 ?? ?? ?? ?? CC", nullptr, "Bone Armor's bones are drawn in F4", "Aim and attack"},
     // the game's SRW unlock (an import thunk), called on the renderer's model list lock
     {"ModelListUnlock", 0x122AD90, Kind::Ref, "E8 ?? ?? ?? ?? 49 8B 04 24 8B 98 D0 00 00 00 E8 ?? ?? ?? ?? 48 8B C8", 0xE1B500, 0, 1, 5, 0, "48 FF 25 ?? ?? ?? ?? CC", nullptr, "Bone Armor's bones are drawn in F4", "Aim and attack"},
+    // PopcornFX script view.direction (out stream, view-index stream, scene context), hooked
+    {"AuraViewDir", 0xC04BB0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 54 41 56 41 57 48 83 EC 30 45 33 F6 4C 8B E2", 0xC04BB0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18", nullptr, "the Paladin's aura rings sit off the feet in VR", "Aim and attack"},
+    // inside view.direction: the views' list (+0x310, count +0x318), checked
+    {"AuraViewDirViews", 0xC04BE5, Kind::Code, "49 8B 80 10 03 00 00 41 8B A8 18 03 00 00 48 89 44 24 20 89 6C 24 28", 0xC04BE5, 0, 0, 0, 0, "49 8B 80 10 03 00 00 41 8B A8 18 03 00 00", nullptr, "the Paladin's aura rings sit off the feet in VR", "Aim and attack"},
+    // effect.position's instance lookup (the scene's pool at +0x230), checked
+    {"FxInstanceLookup", 0xA91150, Kind::Code, "85 D2 78 26 48 8B 81 30 02 00 00 44 8B C2 41 81 E0 FF 01 00 00 8B D2", 0xA91150, 0, 0, 0, 0, "85 D2 78 26 48 8B 81 30 02 00 00 44 8B C2", nullptr, "the Paladin's aura rings sit off the feet in VR", "Aim and attack"},
     // the game's table sets (DataTables* x 4, 16-byte steps): +0x14D8 is the AnimData.D2 table
     {"AnimTables", 0x2A9A580, Kind::Ref, "48 8D 0D ?? ?? ?? ?? 48 03 C0 48 8B 04 C1 48 8B 80 D8 14 00 00 48 83 C4 28", 0x300760, 0, 3, 7, 0, nullptr, nullptr, "a quicker bow release", "Aim and attack"},
     // the controller skill bank in use (0 or 16), called

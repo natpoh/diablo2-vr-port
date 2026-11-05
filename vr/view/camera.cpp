@@ -412,6 +412,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     if (TopStereoOn()) return TopStereoView(in, out);
     if (!g_enabled.load() || !in.lookAtValid) return false;
     const float* G = in.gameView;   // row-major, v * M: column i is the game camera's axis i in the world
+    auraview::SetGameView(G);       // [render] aura_centre: the aura effects keep this camera's lift, not its sideways push (vr/aura_view.h)
     const float* L = in.lookAt;
     V3 fwd, ahead, right, up, eye, hang;
     V3 mapAhead{};   // [hud] map_rotate / map_compass: as `ahead` in native F4, the head's turn held while it looks down at the hand (mapturn::HeadHold)

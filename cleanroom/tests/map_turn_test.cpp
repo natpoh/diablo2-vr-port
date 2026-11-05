@@ -179,6 +179,23 @@ int main() {
         Check(!MapFor(For(true, false, true, 0.0f), 0.0f, H, 1.0f).ok, "no width: no map");
         Check(MapFor(For(true, false, true, 0.0f), W, H, NAN).ok, "a stretch that is not a number: taken as 1");
     }
+    {   // [hud] map_compass_flat: the strip over the round map on the screen - as wide as the circle, its window's shape in screen pixels, over
+        // the circle with a gap, under it when the circle is near the screen's top (the game's corner map), its window from the bearing
+        const float sw = 1920.0f, sh = 1080.0f, w = 640.0f, h = 400.0f;
+        const float low[4] = {1240.0f / sw, 400.0f / sh, 1880.0f / sw, 800.0f / sh}, top[4] = {1240.0f / sw, 10.0f / sh, 1880.0f / sw, 410.0f / sh};
+        const Round r = RoundOnScreen(For(false, true, true, 1.0f), low, w, h);
+        const CompassPlace c = CompassOnScreen(r, 1.0f);
+        Check(c.ok && !c.below, "compass: room above: over the circle");
+        Check(Near(c.box[0], r.centre[0] - r.radius[0], 1e-5f) && Near(c.box[2], r.centre[0] + r.radius[0], 1e-5f), "compass: as wide as the circle");
+        const float pw = (c.box[2] - c.box[0]) * sw, ph = (c.box[3] - c.box[1]) * sh;
+        Check(Near(ph / pw, (float)kStripH / (float)kWindow, 2e-3f), "compass: the window's shape in screen pixels");
+        Check(c.box[3] < r.centre[1] - r.radius[1] && c.box[1] >= 0.0f, "compass: above the circle, a gap between, on the screen");
+        Check(Near(c.crop, (float)Crop(1.0f) / (float)kAtlasW, 1e-6f) && c.crop + (float)kWindow / (float)kAtlasW <= 1.0f, "compass: the window from the bearing, inside the picture");
+        const Round rt = RoundOnScreen(For(false, true, true, 0.0f), top, w, h);
+        const CompassPlace ct = CompassOnScreen(rt, 0.0f);
+        Check(ct.ok && ct.below && ct.box[1] > rt.centre[1] + rt.radius[1] && ct.box[3] <= 1.0f, "compass: the corner map at the top: under the circle");
+        Check(!CompassOnScreen(Round{}, 0.0f).ok, "compass: no circle, no strip");
+    }
     {   // the head's turn held while it looks down at the hand
         HeadHold k;
         Check(!k.Update(0.0f, -0.1f), "nothing known while looking straight down from the start");

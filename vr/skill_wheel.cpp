@@ -153,6 +153,9 @@ void SettingsAct(const wheel::Step& s) {
     case hset::Do::Party:       // the Party page: the game's Party panel's own button (or its P key command; then the window has closed), on the UI thread
         partycmd::Ask(s.settings.party);
         break;
+    case hset::Do::MapShow:     // the Co-op page's map row: the game's own key command 10 / 11 flips its Show Party / Show Party Names (vr/party_cmd.cpp logs it)
+        partycmd::MapToggle(s.settings.mapShow);
+        break;
     case hset::Do::Preview:     // "Preview 5 s" on the Life and Look pages: the vignette and the beat for five seconds with the rows as they stand (vr/low_hp.h PreviewWindow)
         lowhp::PlayPreview();
         break;
@@ -216,6 +219,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageParty) partycmd::Watch();   // the Party page: the roster read on
         host.party = partycmd::Now();
+        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageCoop) host.mapShow = partycmd::MapNow();   // the Co-op page's map row (read, cheap)
         host.calibrating = calib::Running();
         host.openGuide = f4 ? firststart::OpenRequest() : -1;   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp; F4's)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord

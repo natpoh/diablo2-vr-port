@@ -1,5 +1,53 @@
 # What's new in D2R VR
 
+## 0.203.0
+
+- **Off as it comes (tried only in test builds)**: the 2D settings panel ([hud] game_menu_settings; F10 opens it, [hud] game_menu_key), Auto
+  graphics tuning ([autotune] enabled), the headset session ended at quit ([openxr] end_session_on_exit). The sky and fog as before: our
+  own (Settings, Sky: "Sky drawn by" / "Fog drawn by").
+- **Flat map**: zoomed out with -, it stays zoomed out (it snapped back a few frames later); the compass strip (N / E / S / W) over the turned
+  map, as in VR.
+- **The game-drawn dome**: no circle where its zenith cap meets the band (the cap fades into the band the way our old sky lays them).
+- **Sky and fog chosen apart** (Settings: "Sky drawn by" and "Fog drawn by" instead of one selector): the game's dome with our fog, or our
+  sky with the game's fog ([sky] game_sky and [fog] game_fog, as the plugin always read them).
+- **The game-drawn dome's zenith without the fan of triangles**: the top is a cap laid like our old sky's zenith (one atlas, shared/sky_atlas.h);
+  the domes of all five acts made again.
+- **No ReShade at all**: D2R VR draws its sky, fog and cave ceiling itself (its own D3D12 runtime) and never loads or joins a
+  ReShade - not ours, not a player's own dxgi.dll ReShade, which is left as it is (our folders are taken out of its ReShade.ini).
+  Setup moves a kept d2r_vr.ini off ReShade once (no_reshade=0 / native_effects=0 become 1). Fixes the hang at the title screen
+  when a player's own ReShade rebuilt our effect in its present (crash reports 231, 232, 251).
+- **Sky without ReShade at a new picture size**: a size taken while the effects were still being built is built at once (the sky
+  stayed at the old size on a GTX 1650).
+- **Crash fixes**: the weight library's world made and dropped by two threads at once (row 248); the arms no longer read the ini
+  file every tick; GPU fault files hold only this run (the reporter quoted an old crash); the replay's fence waits no longer end on a
+  stale wake; `[openxr] end_session_on_exit` (off): quitting to Windows ends the headset session first (the exit crashes, group A).
+- **Who hosts decides the cleave** (`[gameplay] melee_direct_client_cleave`, now on the Mechanics tab): in TCP/IP the host's box holds
+  for every joined player; no more refused asks filling the host's log (manager PC team).
+- **2D in-game settings** (`[hud] game_menu_settings`, off): a "D2R VR settings" button in the flat pause menu with the 2D keys and the
+  host's rules; the host's rules list on Home and with the console command `vrrules`.
+- **Map**: two sizes in the hand (orb and the big map, `[hud] map_two_sizes`); in the flat game - and + zoom the map out of its circle
+  and back (`[hud] flat_map_zoom`).
+- **Allies back on the map** (`[view] own_hotkeys`, Home > View keys): F9 - F12 are the mod's keys only - the game no longer gets them.
+  With the game's default keys each F11 (recentre) / F12 (next view) also switched its map's "Show Party" / "Show Party Names" off and on,
+  and with them off the party members vanish from every map, VR and flat. If an ally is still missing: the game's Options > Automap >
+  Show Party on (the log says at the start when it is off).
+- **Show Party / Show Party Names from the headset** (`[openxr] headset_map_party`, on): the headset settings' Co-op page has a row "The
+  game's map shows" with two switches, Party and Names - the game's own Options > Automap settings as the game has them now; a press is
+  the game's own key command for it, so the game flips it and keeps it, as from its menu. No keyboard and no game menu needed in VR.
+- **Paladin aura rings** at the feet by default (`[render] aura_lift_pct`).
+- **Direct hit: each hand strikes with its own weapon (two weapons)** (`[gameplay] melee_direct_by_hand`, on): in single player and as the
+  host, with a weapon in each hand, a direct blow of the left-hand weapon is the game's own "Left Hand Swing" (the left weapon's damage
+  and properties); before, every direct blow was the right weapon's, because the game alternates the two on its server and the direct
+  call skipped that. So you pick the weapon for the monster: one freezes, the other burns or poisons - strike with the hand whose
+  weapon suits it.
+- **Auto graphics tuning** (a new box, off as it comes, `[autotune] enabled`, Settings > Performance): an Auto button on the headset
+  panel's Video page (and "Auto-tune now" in Settings). Standing still in the game, it measures the frames a second at the headset's rate,
+  tries each of our effects (fog before effects, sky, fog full / light / off, cave ceiling, distance blur, the fog's height), the 3D mode
+  (full stereo -> eyes by turns) and the render size one at a time, turns down the dearest per picture lost until the headset's rate holds
+  (or half of it), then brings back what still fits. Nothing is written while it measures; Keep writes the result to d2r_vr.ini (the old
+  one copied to d2r_vr.ini.before_autotune, the steps in d2r_vr_autotune.txt), Undo / Stop / closing the game puts everything back.
+  Frame generation and the game's own graphics options are never changed.
+
 ## 0.202.0
 
 - **Crash fixes** found through the first crash reports of 0.201.0:

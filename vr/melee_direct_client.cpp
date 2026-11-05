@@ -63,7 +63,10 @@ std::atomic<bool> g_joined{false};   // Joined(...) and Settled: a joined TCP/IP
 uint64_t g_joinedSince = 0;          // the timer's thread only
 std::atomic<bool> g_leftIsSlot{false};
 std::atomic<float> g_minSpeed{2.5f}, g_minForce{1.5f}, g_minLength{0.2f};   // [gameplay] melee_direct_client_min_speed (m/s) / _min_force (N s) / _min_length (m)
-std::atomic<bool> g_cleave{false};      // [gameplay] melee_direct_client_cleave
+std::atomic<bool> g_cleave{false};      // [gameplay] melee_direct_client_cleave: the rule of our own game (single player, the host)
+std::atomic<uint64_t> g_canStrikeAt{0}; // the host: when melee_touch last said it can strike for a joined player (0: never / it cannot)
+std::atomic<bool> g_ruleBox{false}, g_ruleCan{false};   // joined: the host's last rule (CleaveRule) ...
+std::atomic<uint64_t> g_ruleAt{0};      // ... and when it came (0: none, or the connection lost)
 uint64_t g_lastCmdAt = 0;               // the last command (not an extra hit): when and to which monster (the timer's thread only)
 uint32_t g_lastCmdMonster = 0;
 // the plugin network
@@ -73,6 +76,8 @@ nw::ChannelHandle g_channel = nw::InvalidChannelHandle;
 std::atomic<bool> g_netDead{false};
 std::atomic<bool> g_connected{false};   // the client's connection to the host's channel (the UI thread's look)
 uint64_t g_connectTriedAt = 0;          // the UI thread only
+unsigned g_connectFailed = 0;           // asks of the host's channel that came to nothing since the last connection (RetryMs; the UI thread only)
+uint64_t g_helloAt = 0;                 // the last hello sent (the UI thread only)
 PeerHeroes g_peers;                     // the host: each peer's hero (under g_remoteLock)
 std::mutex g_remoteLock;
 std::array<std::pair<uint32_t, uint32_t>, 8> g_remoteQ{};   // the host: (hero, monster) to strike, oldest first
@@ -273,24 +278,38 @@ void __cdecl Look(const PluginContext*, void* user) noexcept {
              same ? "a touch is sent as the game's command" : "a touch presses the attack (it sets the left skill back)");
     }
     g_leftIsSlot.store(same);
-    g_lookAt.store(GetTickCount64());
-    // [gameplay] melee_direct_client_cleave: the connection to the host's channel, asked for again after 3 s (10 s while connecting)
-    if (g_cleave.load() && g_net && g_channel != nw::InvalidChannelHandle && !g_netDead.load()) {
+    const uint64_t now = GetTickCount64();
+    const bool resumed = g_lookAt.exchange(now) == 0;   // the first look of a joined game in F4 (Tick forgets the look outside one)
+    // [gameplay] melee_direct_client_cleave, who hosts decides: the connection to the host's channel, whatever our own box says (asked
+    // again by RetryMs), and the hello once a second while connected - the host answers with its rule (OnClient)
+    if (g_net && g_channel != nw::InvalidChannelHandle && !g_netDead.load()) {
+        if (resumed) { g_connectFailed = 0; g_connectTriedAt = 0; }
         nw::ChannelInfo info{};
         info.structSize = nw::ChannelInfoSize;
         const bool got = g_net->getChannelInfo(g_ctx, g_channel, &info) == nw::Result::Success;
         const bool conn = got && info.connectionState == nw::ConnectionState::Connected;
+        const bool connecting = got && info.connectionState == nw::ConnectionState::Connecting;
         if (g_connected.exchange(conn) != conn)
-            LogF("melee direct (client): the host's channel %s", conn ? "connected - the extra hits of a swing are asked of the host" :
-                 "not connected - the extra hits are plain commands until it is");
-        const uint64_t now = GetTickCount64();
-        if (!conn && now - g_connectTriedAt >= (got && info.connectionState == nw::ConnectionState::Connecting ? 10000u : 3000u)) {
+            LogF("melee direct (client): the host's channel %s", conn ? "connected - the host's cleave rule is asked for" :
+                 "not connected - no cleave until it is (the game's one attack at a time)");
+        if (conn) {
+            g_connectFailed = 0;
+            g_connectTriedAt = 0;
+            uint32_t head[4] = {};
+            uint8_t b[kHelloBytes];
+            if (now - g_helloAt >= kHelloMs && hero && Read(head, hero, sizeof head)) {
+                g_helloAt = now;
+                if (const uint32_t n = BuildHello(head[2], b, sizeof b)) g_net->sendToHost(g_ctx, g_channel, kMsgHello, b, n);
+            }
+        } else if (!g_connectTriedAt || now - g_connectTriedAt >= RetryMs(g_connectFailed, connecting)) {
+            if (g_connectTriedAt && !connecting) ++g_connectFailed;   // the last ask came to nothing: the next one later
             g_connectTriedAt = now;
             const nw::Result r = g_net->connectToHost(g_ctx, g_channel);
             static int toldR = -1;
             if (static_cast<int>(r) != toldR) {
                 toldR = static_cast<int>(r);
-                LogF("melee direct (client): asked the host's channel - %u (0 = asked; a host without the box answers nothing)", static_cast<unsigned>(r));
+                LogF("melee direct (client): asked the host's channel - %u (0 = asked; a host without the mod or on another version refuses: asked "
+                     "again later each time, up to once a minute)", static_cast<unsigned>(r));
             }
         }
     }
@@ -298,8 +317,33 @@ void __cdecl Look(const PluginContext*, void* user) noexcept {
 
 // ---- [gameplay] melee_direct_client_cleave: the host's side of the channel ----------------------------------------------------------
 
+// The host can strike now: melee_touch said so within the last second (it stops saying it outside hit by touch on a server of ours).
+bool CanStrike(uint64_t nowMs) {
+    const uint64_t at = g_canStrikeAt.load();
+    return at && nowMs >= at && nowMs - at <= 1000;
+}
+
 void __cdecl OnHost(const PluginContext*, nw::ChannelHandle, nw::PeerHandle peer, uint16_t id, const void* data, uint32_t size, void*) noexcept {
-    if (g_netDead.load() || id != kMsgStrike) return;
+    if (g_netDead.load()) return;
+    if (id == kMsgHello) {   // who hosts decides: the answer to a joined client's hello is our rule
+        uint32_t helloHero = 0;
+        if (!ParseHello(data, size, &helloHero)) return;
+        Rule r;
+        r.box = g_cleave.load();
+        r.canStrike = CanStrike(GetTickCount64());
+        uint8_t b[kRuleBytes];
+        if (const uint32_t n = BuildRule(r, b, sizeof b); n && g_net && g_ctx) g_net->sendToClient(g_ctx, g_channel, peer, kMsgRule, b, n);
+        static std::atomic<int> told{0};
+        static std::atomic<int> toldRule{-1};
+        const int state = (r.box ? 1 : 0) | (r.canStrike ? 2 : 0);
+        if (told.fetch_add(1) < 4 || toldRule.exchange(state) != state)
+            LogF("melee direct (host): hero %u said hello - answered: cleave %s", helloHero,
+                 !r.box ? "off (the box is unticked here: the game's one attack at a time for everyone)"
+                 : r.canStrike ? "on (the joined players' extra hits are struck here)"
+                               : "ticked, but this PC cannot strike now (hit by touch not running on a game of ours: not VR F4?) - off for them until it can");
+        return;
+    }
+    if (id != kMsgStrike) return;
     uint32_t hero = 0, monster = 0;
     if (!ParseStrike(data, size, &hero, &monster)) return;
     const char* refused = nullptr;
@@ -319,13 +363,18 @@ void __cdecl OnHost(const PluginContext*, nw::ChannelHandle, nw::PeerHandle peer
     ++g_n.remoteTaken;
 }
 
-// The rules' facts for a touch on `monsterId` now (the timer's thread): its measured values come in g.t already.
-void FillRules(Gate& g, uint32_t monsterId, bool twoHanded, uint64_t nowMs, uint64_t* since) {
+// The rules' facts for a touch on `monsterId` now (the timer's thread): its measured values come in g.t already. `joined`: the cleave is
+// the host's rule (CleaveRule), else our own box.
+void FillRules(Gate& g, uint32_t monsterId, bool twoHanded, uint64_t nowMs, uint64_t* since, bool joined) {
     g.mins = {g_minSpeed.load(), g_minForce.load(), g_minLength.load()};
     g.tooSoon = g_perMonster.TooSoon(monsterId, nowMs, g_clock.Ms(), since);
     g.first = !g_perMonster.Known(monsterId);
     g.extra = InAttack(g_lastCmdAt, g_lastCmdMonster, monsterId, nowMs, g_clock.Ms());
-    g.cleave = g_cleave.load();
+    const uint64_t ruleAt = g_ruleAt.load();
+    Rule host;
+    host.box = g_ruleBox.load();
+    host.canStrike = g_ruleCan.load();
+    g.cleave = CleaveRule(joined, g_cleave.load(), ruleAt && nowMs >= ruleAt && nowMs - ruleAt <= kRuleFreshMs, host);
     g.twoHanded = twoHanded;
 }
 // A direct hit went to `monsterId` (the timer's thread): rule 1's and rule 2's memory; the attack's window is the first monster's (an extra
@@ -347,10 +396,25 @@ void Tell(const char* role, uint32_t monsterId, Why w, uint64_t since, const Gat
          g.t.speed, g.t.force, g.t.hand[0], g.t.hand[1], g.mins.speed, g.mins.force, g.mins.length, two);
 }
 
-void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t, const void*, uint32_t, void*) noexcept {}
+// Joined: the host's rule, the answer to our hello (who hosts decides; our own box means nothing here).
+void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, const void* data, uint32_t size, void*) noexcept {
+    Rule r;
+    if (g_netDead.load() || id != kMsgRule || !ParseRule(data, size, &r)) return;
+    g_ruleBox.store(r.box);
+    g_ruleCan.store(r.canStrike);
+    const uint64_t now = GetTickCount64();
+    g_ruleAt.store(now ? now : 1);
+    static std::atomic<int> told{-1};
+    const int state = (r.box ? 1 : 0) | (r.canStrike ? 2 : 0);
+    if (told.exchange(state) != state)
+        LogF("melee direct (client): the host decides - cleave %s", !r.box ? "off (unticked there: the game's one attack at a time)"
+             : r.canStrike ? "on (a two-handed swing's extra hits are asked of the host)"
+                           : "ticked there, but the host cannot strike now (its hit by touch is not running) - off until it can");
+}
 
 void __cdecl OnConnection(const PluginContext*, const nw::ConnectionEvent* ev, void*) noexcept {
     if (g_netDead.load() || !nw::HasConnectionEventField(ev, nw::ConnectionEventRequiredSize)) return;
+    if (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected) g_ruleAt.store(0);   // (joined: no rule without the host)
     if (ev->peer != nw::InvalidPeerHandle && (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected)) {
         std::lock_guard<std::mutex> lock(g_remoteLock);
         g_peers.Forget(ev->peer);
@@ -387,15 +451,17 @@ void SetMins(const Mins& m) {
 bool WantsForce() { return g_wanted.load() && g_joined.load(); }
 void SetCleave(bool on) {
     if (g_cleave.exchange(on) != on)
-        Log(on ? "melee direct (client): cleave on - an extra hit of a swing is the server's attack, asked of the host (past the game's one attack at a time)"
-               : "melee direct (client): cleave off");
+        Log(on ? "melee direct: cleave on - the rule of a game of ours (single player, and every joined player when we host): a two-handed swing's extra hits "
+                 "are the server's attack (past the game's one attack at a time); joined, the host's box decides"
+               : "melee direct: cleave off - in a game of ours the game's one attack at a time (for the joined players too when we host); joined, the host's box decides");
 }
+void SetHostCanStrike(bool can, uint64_t nowMs) { g_canStrikeAt.store(can ? (nowMs ? nowMs : 1) : 0); }
 
-bool InitNet(const PluginContext* ctx, bool wanted) {
-    if (!wanted || !ctx) return false;
+bool InitNet(const PluginContext* ctx) {
+    if (!ctx) return false;
     if (ctx->QueryService(&g_net) != ServiceQueryResult::Success || !HasNetworkServiceField(g_net, NetworkServiceRequiredSize)) {
         g_net = nullptr;
-        ctx->LogInfo("vrcam: melee direct (client): D2RLoader has no network service - the extra hits are plain commands");
+        ctx->LogInfo("vrcam: melee direct (client): D2RLoader has no network service - no cleave as a joined player, none asked of us as the host");
         return false;
     }
     nw::ChannelRegistration reg{};
@@ -407,8 +473,8 @@ bool InitNet(const PluginContext* ctx, bool wanted) {
     reg.connectionState = &OnConnection;
     const nw::Result r = g_net->registerChannel(ctx, &reg, &g_channel);
     char b[200];
-    snprintf(b, sizeof b, "vrcam: melee direct (client): channel %u %s ([gameplay] melee_direct_client_cleave: the extra hits of a swing)",
-             static_cast<unsigned>(kChannel), r == nw::Result::Success ? "registered" : "NOT registered - the extra hits are plain commands");
+    snprintf(b, sizeof b, "vrcam: melee direct (client): channel %u %s ([gameplay] melee_direct_client_cleave: who hosts decides, the extra hits of a swing)",
+             static_cast<unsigned>(kChannel), r == nw::Result::Success ? "registered" : "NOT registered - no cleave over the network");
     ctx->LogInfo(b);
     if (r != nw::Result::Success) { g_channel = nw::InvalidChannelHandle; return false; }
     return true;
@@ -498,7 +564,7 @@ bool Send(uint32_t heroId, uint32_t monsterId, int hand, bool melee, bool armed,
     g.leftIsSlot = g_leftIsSlot.load() && Fresh(g_lookAt.load(), nowMs);
     g.t = t;
     g.mins = {g_minSpeed.load(), g_minForce.load(), g_minLength.load()};
-    FillRules(g, monsterId, twoHanded, nowMs, &since);
+    FillRules(g, monsterId, twoHanded, nowMs, &since, g.joined);   // (joined: the host's cleave rule)
     g.twoHandsOn = twoHandsOn;
     if (g_mode.load() == 2) { g.tooSoon = false; g.first = true; g.extra = false; }   // fully on: every accepted touch (no rules, no cleave)
     const Why w = WhyOf(g);
@@ -532,7 +598,7 @@ bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHands
     g.armed = armed;   // (an armed melee skill is the press's: the plain server attack would not be it)
     g.t = t;
     uint64_t since = 0;
-    FillRules(g, monsterId, twoHanded, nowMs, &since);
+    FillRules(g, monsterId, twoHanded, nowMs, &since, false);   // (a game of ours: our own cleave box)
     g.twoHandsOn = twoHandsOn;
     const Why w = WhyOf(g);
     ++g_n.key[static_cast<int>(w)];

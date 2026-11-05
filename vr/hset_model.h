@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "hset_body.h"
 #include "hset_coop.h"      // the Co-op page: D2R Rooms' relay bridge, its own d2r-rooms.ini
@@ -172,6 +173,12 @@ constexpr Rect kBodyStep(int i) { return {48, 446 + i * 29, 944, 27}; }
 // up to coop::kLines lines of what the plugin knows, above the status line.
 constexpr int kCoopRows = coop::kWhatCount;
 constexpr Rect kCoopLine(int i) { return {48, 358 + i * 26, 944, 26}; }
+// [openxr] headset_map_party: the row "The game's map shows" under the three (hset_party.h MapShow) - its two switches, Party and Names - and the
+// lines below it then, fewer (kCoopLinesUnderMap).
+constexpr int kMapRow = kCoopRows;
+constexpr Rect kMapBtn(int what) { return what == 0 ? Rect{584, RowY(kMapRow, -1), 222, kRowH} : Rect{814, RowY(kMapRow, -1), 178, kRowH}; }   // Show Party, Names
+constexpr Rect kCoopLineUnderMap(int i) { return {48, 358 + kRowStep + i * 26, 944, 26}; }
+constexpr int kCoopLinesUnderMap = 5;
 // The Party page (hset_party.h): a title line, a row a player (name, level and class, state, the game's button for him), Leave party and Open Party
 // panel under them. The Co-op page's Party button and the Party page's Relay button stand where the low-life pages' Preview does (kPreviewBtn).
 constexpr Rect kPartyTitle = {32, 148, 960, 34};
@@ -187,17 +194,36 @@ constexpr Rect kRecentre = {32, 620, 280, 68};
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
 constexpr Rect kClose = {532, 620, 220, 68};
 constexpr Rect kApply = {772, 620, 220, 68};
+// The Video page's Auto ([autotune] enabled; vr/auto_tune_run.h): its button where the low-life pages' Preview stands. While a run measures or
+// its result waits, the page shows the run's lines instead of the render size, and Keep / Undo (Stop while it runs) under them.
+constexpr Rect kAutoBtn = {324, 620, 200, 68};
+constexpr int kAutoLines = 10;
+constexpr Rect kAutoTitle = {32, 148, 960, 36};
+constexpr Rect kAutoLine(int i) { return {48, 188 + i * 32, 944, 30}; }
+constexpr Rect kAutoKeep = {32, 516, 300, 46};
+constexpr Rect kAutoUndo = {344, 516, 300, 46};
+// What the plugin says of the run, every frame the panel is up on the Video page; the words are the plugin's (in the player's language).
+struct AutoTune {
+    bool on = false;          // [autotune] enabled: the Auto button is there
+    int state = 0;            // 0 nothing runs, 1 a run measures, 2 its result waits for Keep or Undo
+    uint64_t revision = 0;    // the plugin's: anything below changed
+    std::string title, status;
+    std::vector<std::string> lines;
+    bool operator==(const AutoTune& o) const { return on == o.on && state == o.state && revision == o.revision; }
+    bool operator!=(const AutoTune& o) const { return !(*this == o); }
+};
 // The panel in the room: its width in metres (the height follows the atlas), and where it stands from the eyes.
 constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
 enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span, Coop,
-                  Party, PartyLeave, PartyOpen };
+                  Party, PartyLeave, PartyOpen, Auto, MapShow };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4),
-                      // a Coop row's choice (coop::What), a Party row's player (0 .. party::kMaxOthers - 1)
+                      // a Coop row's choice (coop::What), a Party row's player (0 .. party::kMaxOthers - 1), a MapShow's switch (party::MapWhat)
     int delta = 0;    // -1 / +1 (a toggle: 1; a Slider's stepper)
+                      // (an Auto's index: 0 the Auto button, 1 Keep, 2 Undo / Stop)
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index && delta == o.delta; }
     bool operator!=(const Hit& o) const { return !(*this == o); }
 };
@@ -239,6 +265,9 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
     if (page == kPageView)
         for (int i = 0; i < kViews; ++i) if (kViewBtn(i).Contains(x, y)) return {Kind::View, i + 1, 0};
     if (page == kPageVideo) {
+        if (kAutoBtn.Contains(x, y)) return {Kind::Auto, 0, 0};   // (the model takes these only as the run's state allows)
+        if (kAutoKeep.Contains(x, y)) return {Kind::Auto, 1, 0};
+        if (kAutoUndo.Contains(x, y)) return {Kind::Auto, 2, 0};
         for (int i = 0; i < video::kPresetCount; ++i) if (kPreset(i).Contains(x, y)) return {Kind::Preset, i, 0};
         if (kSlDec.Contains(x, y)) return {Kind::Slider, -1, -1};
         if (kSlInc.Contains(x, y)) return {Kind::Slider, -1, 1};
@@ -253,6 +282,7 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
         return {};
     }
     if (page == kPageCoop) {   // the bridge's switch, then the two choices' < and > (the model takes none while the plugin is not there)
+        for (int w = 0; w < party::kMapCount; ++w) if (kMapBtn(w).Contains(x, y)) return {Kind::MapShow, w, 1};   // (only while its row is there: the model's)
         if (kToggle(coop::kEnabled).Contains(x, y)) return {Kind::Coop, coop::kEnabled, 1};
         for (int r = coop::kMode; r < kCoopRows; ++r) {
             if (kDec(r).Contains(x, y)) return {Kind::Coop, r, -1};
@@ -288,7 +318,9 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
 // -- the panel's state ---------------------------------------------------------------------------
 // GuideDone: the last page's Done - the window closes, the guide is over. Players: the game's own "/players N" (vr/players_cmd.h), nothing of the ini.
 // Coop: a [relay] line of d2r-rooms.ini to write (the store's SubmitCoop), at once. Party: a press of the game's party buttons (vr/party_cmd.h).
-enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone, Players, Coop, Party };
+// AutoTune: the Video page's Auto - autoTune 0 start a run, 1 Keep its result, 2 Undo it (or stop the run).
+// MapShow: the game's own key command 10 / 11 (Show Party / Show Party Names on its automap, hset_party.h), nothing of the ini.
+enum class Do { Nothing, Save, Close, Recentre, Calibrate, View, Preview, GuideDone, Players, Coop, Party, AutoTune, MapShow };
 struct Action {
     Do what = Do::Nothing;
     Request request;   // with Save
@@ -296,6 +328,8 @@ struct Action {
     int players = 0;   // with Players: the count to ask the game for, 1 - 8
     coop::Edit coop;   // with Coop
     party::Request party;   // with Party
+    int autoTune = 0;       // with AutoTune
+    int mapShow = -1;       // with MapShow: party::kMapParty / kMapNames
 };
 
 class Model {
@@ -316,7 +350,12 @@ class Model {
     double askedAt_ = 0, clock_ = 0;    // when it was asked; the last clock SetPlayers was given (ms)
     int answer_ = 0;                    // the last ask's answer: 1 the game took it, -1 it did not (in time), 0 none since the panel opened
     party::View party_;                 // the Party page: the game's roster as the plugin read it
+    AutoTune auto_;                     // the Video page's Auto: the plugin's run
     party::Request partyAsked_;         // a press on its way to the game (what None: none)
+    party::MapShow map_;                // the Co-op page's map row: the game's Show Party / Show Party Names as the plugin read them
+    int mapAsked_ = -1;                 // the switch pressed and not shown flipped by the game yet (-1: none) ...
+    int mapFrom_ = -1;                  // ... and what it was then
+    double mapAskedAt_ = 0, mapClock_ = 0;
     double partyAskedAt_ = 0, partyClock_ = 0;
     std::shared_ptr<const coop::State> coop_;   // the Co-op page: D2R Rooms' files as last read
     std::optional<coop::Edit> coopPending_;      // a [relay] line on its way to d2r-rooms.ini (shown at once)
@@ -423,6 +462,14 @@ public:
         else if (ms - askedAt_ > kPlayersWaitMs) { asked_ = 0; answer_ = -1; ++revision; }
     }
     const Players& GamePlayers() const { return players_; }
+    // The Video page's Auto: the plugin's run, every frame the page is up.
+    void SetAuto(const AutoTune& a) {
+        if (a == auto_) return;
+        auto_ = a;
+        ++revision;
+    }
+    const AutoTune& Auto() const { return auto_; }
+    bool AutoShown() const { return auto_.on && auto_.state != 0; }   // the page shows the run, not the render size
     bool PlayersOn() const { return draft_[kKeyPlayersOn] > 0.5f; }   // [openxr] headset_players
     // - / + do something: the switch on, the game's count known and the game taking the command now, no ask on its way.
     bool PlayersUsable() const { return ready && PlayersOn() && players_.count >= kPlayersMin && players_.takes && !asked_; }
@@ -443,6 +490,23 @@ public:
         if (partyAsked_.what != party::Ask::None && ms - partyAskedAt_ > party::kWaitMs) { partyAsked_ = {}; ++revision; }
     }
     const party::View& Party() const { return party_; }
+    // The Co-op page's map row ([openxr] headset_map_party): the game's two settings as read now (the plugin's, every frame the page is up) and a
+    // clock (ms). A press waits for the game to show it flipped, or party::kWaitMs, before the switches take another.
+    void SetMapShow(const party::MapShow& v, double ms) {
+        mapClock_ = ms;
+        if (v != map_) { map_ = v; ++revision; }
+        if (mapAsked_ < 0) return;
+        if (map_.Of(mapAsked_) != mapFrom_ || ms - mapAskedAt_ > party::kWaitMs) { mapAsked_ = -1; ++revision; }
+    }
+    const party::MapShow& GameMap() const { return map_; }
+    bool MapShowOn() const { return draft_[kKeyMapPartyOn] > 0.5f; }   // [openxr] headset_map_party: the row is there
+    bool MapBusy() const { return mapAsked_ >= 0; }
+    int MapAsked() const { return mapAsked_; }
+    // What a switch shows: the game's value, flipped while a press of it is on its way (amber); -1 not known.
+    int MapShown(int what) const {
+        const int v = map_.Of(what);
+        return what == mapAsked_ && v >= 0 ? 1 - v : v;
+    }
     bool PartyOn() const { return draft_[kKeyPartyOn] > 0.5f; }   // [openxr] headset_party
     bool PartyBusy() const { return partyAsked_.what != party::Ask::None; }
     const party::Request& PartyAsked() const { return partyAsked_; }
@@ -622,6 +686,15 @@ public:
                 a.what = Do::Party;
                 a.party = partyAsked_;
                 return a;
+            case Kind::MapShow:   // the game's Show Party / Show Party Names: its own key command flips it (the game keeps it in its Settings.json)
+                if (page != kPageCoop || !MapShowOn() || MapBusy() || hit.index < 0 || hit.index >= party::kMapCount || map_.Of(hit.index) < 0) return a;
+                mapAsked_ = hit.index;
+                mapFrom_ = map_.Of(hit.index);
+                mapAskedAt_ = mapClock_;
+                ++revision;
+                a.what = Do::MapShow;
+                a.mapShow = hit.index;
+                return a;
             case Kind::PartyOpen:   // the game's own Party key command (P): its panel, for the laser (the game opens it in a multiplayer game only)
                 if (page != kPageParty || !PartyOn() || !party_.known) return a;
                 a.what = Do::Party;
@@ -685,12 +758,21 @@ public:
                 if (!IsLifePage(page)) return a;
                 a.what = Do::Preview;
                 return a;
+            case Kind::Auto:   // start a run (nothing edited on the page: a size not applied would be measured as not there), Keep, Undo / Stop
+                if (page != kPageVideo || !auto_.on) return a;
+                if (hit.index == 0 && auto_.state == 0 && ready && !Busy() && !VideoEdited()) a.autoTune = 0;
+                else if (hit.index == 1 && auto_.state == 2) a.autoTune = 1;
+                else if (hit.index == 2 && auto_.state != 0) a.autoTune = 2;
+                else return a;
+                a.what = Do::AutoTune;
+                return a;
             case Kind::Preset:
+                if (AutoShown()) return a;   // (hidden under the run's lines)
                 if (!ready || Busy() || hit.index < 0 || hit.index >= video::kPresetCount) return a;
                 SetPick(video::PickOfPreset(hit.index));
                 return a;
             case Kind::Slider: {
-                if (!ready || Busy()) return a;
+                if (!ready || Busy() || AutoShown()) return a;
                 if (hit.index >= rendersize::kSideMin) {   // a place on the track
                     SetPick(video::Square(hit.index));
                 } else if (hit.delta != 0) {   // a stepper at its end: the first press takes the side the slider rests at, the next ones step from it

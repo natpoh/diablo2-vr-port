@@ -48,6 +48,7 @@ namespace {
 constexpr uint64_t RVA_ATTACK = 0x42FEB0, RVA_TARGET = 0x48FE20, RVA_RANGE = 0x348650;
 constexpr uint64_t RVA_CALL1 = 0x42FFA5, RVA_CALL2 = 0x430105;   // the two calls of ServerTarget inside ServerAttack
 constexpr uint64_t RVA_RELATION = 0x48E460, RVA_LINE = 0x3502A0;
+constexpr uint64_t RVA_SERVER_WEAPON = 0x34B000, RVA_SKILL_LOOKUP = 0x33DCD0;   // [gameplay] melee_direct_by_hand: the weapon getter (its layout), SkillLookup (unit, id, owner)
 // push rbp; push rsi; push r12; push r14; lea rbp,[rsp-118h]; sub rsp,218h
 const uint8_t kSigAttack[22] = {0x40, 0x55, 0x56, 0x41, 0x54, 0x41, 0x56, 0x48, 0x8D, 0xAC, 0x24, 0xE8, 0xFE, 0xFF, 0xFF, 0x48, 0x81, 0xEC, 0x18, 0x02, 0x00, 0x00};
 // push rbx; sub rsp,20h; mov rbx,rdx; call ...
@@ -67,6 +68,8 @@ const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_faulted{false};
 std::atomic<bool> g_remote{false};   // [gameplay] melee_direct_client_cleave as the host: the joined players' extra hits
 std::atomic<bool> g_byRules{false};  // [gameplay] melee_direct 2: by the rules (melee_direct_client.h)
+std::atomic<bool> g_byHand{false};   // [gameplay] melee_direct_by_hand: the left weapon's blow as the game's "Left Hand Swing"
+std::atomic<int> g_leftLayout{0};    // ... its layout proven from the game's weapon getter: 0 not tried, 1 proven, 2 not (the left swap stays off)
 std::atomic<uint32_t> g_minMs{0};
 std::atomic<int> g_state{0};                 // 0 not tried, 1 hooks in, 2 not possible (another build?)
 TargetFn g_origTarget = nullptr;
@@ -106,6 +109,14 @@ bool CallLine(uintptr_t fn, uintptr_t a, uintptr_t b, int* out) noexcept {
 }
 bool CallRangeRaw(RangeFn fn, uintptr_t a, uintptr_t d, int range, int* out, int* result) noexcept {
     __try { *result = fn(a, d, range, out); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+using SkillLookupFn = uintptr_t (*)(uintptr_t unit, int id, int owner);
+bool CallSkillLookup(uintptr_t fn, uintptr_t unit, int id, uintptr_t* out) noexcept {
+    __try { *out = reinterpret_cast<SkillLookupFn>(fn)(unit, id, -1); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool WritePtr(uintptr_t at, uintptr_t v) noexcept {
+    if (at < 0x10000) return false;
+    __try { *reinterpret_cast<uintptr_t*>(at) = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool CallAttack(uintptr_t fn, uintptr_t game, uintptr_t player) noexcept {
     __try { reinterpret_cast<AttackFn>(fn)(game, player, 0, 1); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -148,6 +159,7 @@ struct Counters {
     unsigned refused[8] = {};
     unsigned faults = 0;
     unsigned remoteAsked = 0, remoteCalled = 0, remoteFar = 0, remoteSoon = 0;
+    unsigned leftSwings = 0, leftNot = 0;   // [gameplay] melee_direct_by_hand: left-hand blows struck as "Left Hand Swing" / not (the node not found)
 } g_n;
 // [gameplay] melee_direct_client_cleave: when each (hero, monster) was last struck for a joined player (the game's thread only)
 struct RemoteSlot { uint32_t hero = 0, monster = 0; ULONGLONG at = 0; };
@@ -172,12 +184,35 @@ void Report(ULONGLONG now) {
     g_reportAt = now;
     if (!g_n.asked && !g_n.called) return;
     LogF("melee direct: %u asked, %u called the game's attack, %u too old, refused: %u no hero, %u hero's mode, %u no monster, %u dying, %u not hostile, %u wall; "
-         "joined players' extra hits: %u asked, %u struck, %u beyond the reach, %u too soon on the same monster",
+         "joined players' extra hits: %u asked, %u struck, %u beyond the reach, %u too soon on the same monster; left-hand blows: %u as \"Left Hand Swing\", %u not",
          g_n.asked, g_n.called, g_n.stale, g_n.refused[static_cast<int>(Verdict::NoPlayer)], g_n.refused[static_cast<int>(Verdict::PlayerMode)],
          g_n.refused[static_cast<int>(Verdict::NoMonster)], g_n.refused[static_cast<int>(Verdict::MonsterDying)],
          g_n.refused[static_cast<int>(Verdict::NotHostile)], g_n.refused[static_cast<int>(Verdict::Wall)],
-         g_n.remoteAsked, g_n.remoteCalled, g_n.remoteFar, g_n.remoteSoon);
+         g_n.remoteAsked, g_n.remoteCalled, g_n.remoteFar, g_n.remoteSoon, g_n.leftSwings, g_n.leftNot);
     g_n = {};
+}
+
+// [gameplay] melee_direct_by_hand: the layout the left swap writes by, proven once from the game's own weapon getter (LayoutProven). Its code
+// is decrypted as it runs: not readable yet, tried again at the next left-hand blow; read and not as expected (another build), off for good.
+bool LeftLayout() {
+    if (g_leftLayout.load() != 0) return g_leftLayout.load() == 1;
+    const uintptr_t fn = d2rsig::Addr(RVA_SERVER_WEAPON);
+    uint8_t list[7] = {}, call[5] = {}, getter[13] = {}, weapsel[7] = {};
+    if (!fn || !Read(list, fn + kAtSkillList, sizeof list) || !Read(call, fn + kAtGetterCall, sizeof call) || !Read(weapsel, fn + kAtWeapsel, sizeof weapsel)) return false;
+    int32_t rel = 0;
+    memcpy(&rel, call + 1, 4);
+    const uintptr_t target = fn + kAtGetterCall + 5 + static_cast<intptr_t>(rel);
+    if (call[0] != 0xE8 || !Read(getter, target, sizeof getter)) {
+        if (call[0] == 0xE8) return false;   // (the getter not readable yet: tried again)
+        g_leftLayout.store(2);
+        Log("melee direct: by hand - the game's weapon getter is not as expected (another build?): every direct blow stays the right weapon's");
+        return false;
+    }
+    const bool ok = LayoutProven(list, call[0], getter, weapsel);
+    g_leftLayout.store(ok ? 1 : 2);
+    Log(ok ? "melee direct: by hand - the hero's skill list and current skill are where the game's weapon getter reads them; a left-hand blow is the game's \"Left Hand Swing\""
+           : "melee direct: by hand - the game's weapon getter is not as expected (another build?): every direct blow stays the right weapon's");
+    return ok;
 }
 
 void Strike(const Request& r) noexcept {
@@ -221,10 +256,30 @@ void Strike(const Request& r) noexcept {
         }
         if (RemoteTooSoon(r.heroId, r.monsterId, GetTickCount64())) { ++g_n.remoteSoon; return; }
     }
+    // [gameplay] melee_direct_by_hand: the left-hand weapon's blow - for this one call the hero's current skill is his own "Left Hand Swing", the
+    // skill the game swaps in for its own left swings (0x4FC0F0); its weapon getter then takes the left weapon. Put back right after the call.
+    uintptr_t currentAt = 0, wasCurrent = 0;
+    bool swapped = false;
+    if (r.leftHand && !r.remote && g_byHand.load() && LeftLayout()) {
+        uintptr_t list = 0, node = 0, row = 0;
+        int16_t id = -1;
+        uint8_t weapsel = 0;
+        const uintptr_t lookupSkill = d2rsig::Addr(RVA_SKILL_LOOKUP);
+        if (lookupSkill && Read(&list, player + kUnitSkillList, sizeof list) && list && Read(&wasCurrent, list + kListCurrentSkill, sizeof wasCurrent) &&
+            CallSkillLookup(lookupSkill, player, kSkillLeftHandSwing, &node) && node && Read(&row, node, sizeof row) && row && Read(&id, row, sizeof id) &&
+            Read(&weapsel, row + kRowWeapsel, sizeof weapsel) && IsLeftHandSwing(id, weapsel)) {
+            currentAt = list + kListCurrentSkill;
+            swapped = WritePtr(currentAt, node);
+        }
+        ++(swapped ? g_n.leftSwings : g_n.leftNot);
+        static unsigned toldNot = 0;
+        if (!swapped && ++toldNot <= 6) LogF("melee direct: a left-hand blow on monster %u - the hero's \"Left Hand Swing\" not found: struck with the right weapon", r.monsterId);
+    }
     // The call: the touched monster is the target and the reach inside this one call only.
     t_win = {r.game, player, monster};
     const bool ok = CallAttack(attack, r.game, player);
     t_win = {};
+    if (swapped && !WritePtr(currentAt, wasCurrent)) g_faulted.store(true);   // (the hero's own current skill back - never left swapped)
     if (!ok) {
         ++g_n.faults;
         g_faulted.store(true);
@@ -272,6 +327,13 @@ void SetWanted(bool on) {
                : "melee direct: off");
 }
 bool Wanted() { return g_wanted.load(); }
+void SetByHand(bool on) {
+    if (g_byHand.exchange(on) != on)
+        Log(on ? "melee direct: by hand - a blow of the left-hand weapon is the game's \"Left Hand Swing\" (the left weapon), the right hand's the plain attack"
+               : "melee direct: every direct blow with the right weapon (the game's alternation is not repeated)");
+}
+bool ByHand() { return g_byHand.load(); }
+
 void SetByRules(bool on) {
     if (g_byRules.exchange(on) != on) Log(on ? "melee direct: by the rules (the first touch, the attack time, speed + force + length)" : "melee direct: every accepted touch");
 }

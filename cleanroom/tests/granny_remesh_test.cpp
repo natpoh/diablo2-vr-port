@@ -87,6 +87,83 @@ int main(int argc, char** argv) {
             CHECK(closed.v[0].pos[1] == -32767 && closed.v[0].pos[0] == 0 && closed.v[0].pos[2] == 0);   // (the nadir)
         }
         CHECK(skyatlas::BandOf("act1") == 0 && skyatlas::BandOf("act5") == 4 && skyatlas::BandOf("cave") == 5 && skyatlas::BandOf("test") == -1);
+        // 3b. the zenith's square (Serg 2026-11-05: "на куполе оно с треугольниками" - the fan where the panorama closed on one point)
+        {
+            // the layout: texel for texel the old sky's zenith picture at the shipped 4096 x 1024 (256 texels = 0.25 of 1024, PaintedSky's 0.4)
+            CHECK(std::fabs(skyatlas::kCapHalf - 0.3125) < 1e-12 && std::fabs(skyatlas::kCapDisc - 0.29296875) < 1e-12);
+            CHECK(std::fabs(2.0 * skyatlas::kCapHalf * 0.4 * 1024.0 - 4096.0 * skyatlas::kCapCols) < 1e-9);
+            CHECK(std::fabs(skyatlas::CapEl() - 73.67) < 0.02 && std::fabs(skyatlas::PanoTopEl() - skyatlas::CapEl() - 1.0) < 1e-12);
+            CHECK(std::fabs(skyatlas::PanoV(skyatlas::PanoTopEl()) - skyatlas::kCapRows) < 1e-12 && std::fabs(skyatlas::PanoV(-12.0) - 1.0) < 1e-12);
+            bool back = true;
+            for (double el = -12.0; el <= 74.0; el += 0.5) back = back && std::fabs(skyatlas::PanoEl(skyatlas::PanoV(el)) - el) < 1e-9;
+            for (double qx = -0.3; qx <= 0.3; qx += 0.05)
+                for (double qz = -0.3; qz <= 0.3; qz += 0.05) {
+                    double u = 0, v = 0, x = 0, z = 0;
+                    skyatlas::CapUv(qx, qz, &u, &v);
+                    skyatlas::CapQ(u, v, &x, &z);
+                    back = back && std::fabs(x - qx) < 1e-9 && std::fabs(z - qz) < 1e-9 && skyatlas::InCap(u, v);
+                }
+            CHECK(back);
+            const float from = skyatlas::BandV(0, 0.0f), to = skyatlas::BandV(0, 1.0f);
+            const Mesh capped = DomeMesh(800.0f, from, to, false, true);
+            bool inRange2 = true;
+            for (uint16_t i : capped.idx) inRange2 = inRange2 && i < capped.v.size();
+            CHECK(inRange2 && capped.v.size() < 65536 && capped.mx[1] > 799.0f);
+            // the band's rings up to the disc's edge, then the disc's rings and its one vertex at the zenith
+            const int bandRings = (int)std::count_if(std::begin(kRings), std::end(kRings), [](float e) { return e < skyatlas::CapEl(); }) + 1;
+            const size_t row = kSegments + 1, discFirst = (size_t)bandRings * row;
+            CHECK(capped.v.size() == discFirst + (size_t)kCapRings * row + 1);
+            // the band's top ring and the disc's edge: the same places (no gap), each its own uv - the panorama at CapEl, the square's edge
+            bool sameEdge = true, panoV = true, discUv = true;
+            for (size_t j = 0; j < row; ++j) {
+                const Vertex& a = capped.v[discFirst - row + j];
+                const Vertex& b = capped.v[discFirst + j];
+                for (int k = 0; k < 3; ++k) sameEdge = sameEdge && std::abs(a.pos[k] - b.pos[k]) <= 2;
+                panoV = panoV && std::fabs(unhalf(a.uv[1]) - (from + (to - from) * (float)skyatlas::PanoV(skyatlas::CapEl()))) < 2e-3f;
+            }
+            CHECK(sameEdge && panoV);
+            // every disc vertex's uv is the square's for its own direction (q = dir.xz / dir.y) - inside the square, never near its edge
+            for (size_t i = discFirst; i < capped.v.size(); ++i) {
+                const Vertex& x = capped.v[i];
+                const double dy = x.pos[1] / 32767.0, qx = x.pos[0] / 32767.0 / dy, qz = x.pos[2] / 32767.0 / dy;
+                double u = 0, v = 0;
+                skyatlas::CapUv(qx, qz, &u, &v);
+                const float bu = unhalf(x.uv[0]), bv = (unhalf(x.uv[1]) - from) / (to - from);
+                discUv = discUv && std::fabs(bu - u) < 1.5e-3 && std::fabs(bv - v) < 2e-3 && bu > 0.0f && bu < (float)skyatlas::kCapCols && bv > 0.0f &&
+                         bv < (float)skyatlas::kCapRows;
+            }
+            CHECK(discUv);
+            // no fan: round the zenith the triangles' uv span about as much as their places do (the old dome's last ring: a 1/64 wedge of
+            // u squeezed into a point - 64 times the texels across the pole than around it)
+            const Vertex& top = capped.v.back();
+            CHECK(top.pos[1] == 32767 && std::fabs(unhalf(top.uv[0]) - (float)(skyatlas::kCapCols * 0.5)) < 1e-3f);
+            double worst = 0.0;
+            for (size_t j = 0; j + 1 < row; ++j) {
+                const Vertex& a = capped.v[capped.v.size() - 1 - row + j];
+                const Vertex& b = capped.v[capped.v.size() - 1 - row + j + 1];
+                const double du = (unhalf(a.uv[0]) - unhalf(b.uv[0])) / skyatlas::kCapCols, dv = (unhalf(a.uv[1]) - unhalf(b.uv[1])) / (to - from) / skyatlas::kCapRows;
+                const double ru = (unhalf(a.uv[0]) - unhalf(top.uv[0])) / skyatlas::kCapCols, rv = (unhalf(a.uv[1]) - unhalf(top.uv[1])) / (to - from) / skyatlas::kCapRows;
+                const double ratio = std::sqrt(ru * ru + rv * rv) / std::max(1e-9, std::sqrt(du * du + dv * dv));
+                worst = std::max(worst, ratio);
+            }
+            CHECK(worst < 12.0);   // (a 64-gon's radius over its side: 10.2 - an even fan, not a squeezed wedge)
+            // the mark: a picture laid so, and one without
+            std::string withMark(skyatlas::kHeader, '\0'), without = withMark;
+            std::memcpy(&withMark[skyatlas::kCapMarkAt], skyatlas::kCapMark, 8);
+            CHECK(skyatlas::HasCap(withMark) && !skyatlas::HasCap(without) && !skyatlas::HasCap(std::string()));
+            // "cap2": the picture laid in the atlas' frame - the band's v at PictureV of its rows (BandV's inset), and back; a "cap1" picture
+            // (laid by the band's v straight: a circle at the rim on 0.202.2) is not taken as capped
+            std::string cap1 = withMark;
+            cap1[skyatlas::kCapMarkAt + 7] = '1';
+            CHECK(!skyatlas::HasCap(cap1) && skyatlas::kCapMark[7] == '2');
+            CHECK(std::fabs(skyatlas::PictureV(0.0) - skyatlas::kInset) < 1e-9 && std::fabs(skyatlas::PictureV(1.0) - (1.0 - skyatlas::kInset)) < 1e-9);
+            CHECK(std::fabs(skyatlas::BandV(0, 0.3f) - (float)skyatlas::PictureV(0.3) / (float)skyatlas::kBandCount) < 1e-6f);
+            for (double v = -0.1; v <= 1.1; v += 0.05) back = back && std::fabs(skyatlas::BandVOfPicture(skyatlas::PictureV(v)) - v) < 1e-9;
+            CHECK(back);
+            // without the mark: the old dome, as before
+            const Mesh old = DomeMesh(800.0f, from, to, false, false);
+            CHECK(old.v.size() == m.v.size() && old.idx == m.idx);
+        }
         // the atlas as the game's graphics card has it (vrcam's probe of the game's view of it): 2048 x 3072 BC6H - not a band, not RGBA
         CHECK(skyatlas::IsAtlasTexture(2048, 3072, 95) && skyatlas::IsAtlasTexture(2048, 3072, 94) && skyatlas::IsAtlasTexture(2048, 3072, 96));
         CHECK(!skyatlas::IsAtlasTexture(2048, 512, 95) && !skyatlas::IsAtlasTexture(2048, 3072, 10) && !skyatlas::IsAtlasTexture(2048, 3071, 95));

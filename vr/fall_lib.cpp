@@ -1,6 +1,7 @@
 // fall_lib.cpp - see fall_lib.h.
 
 #include "fall_lib.h"
+#include "weight_worlds.h"   // one lock round the library's calls that make or drop a Box3D world
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -183,6 +184,7 @@ bool Ensure() {
 }
 
 int KnockDown(const D2rfKnock& k) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded()) return 0;
     void* w = World();
     if (!w) return 0;
@@ -192,6 +194,7 @@ int KnockDown(const D2rfKnock& k) {
 }
 
 int Step(float dt) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return 0;
     const int32_t r = g_step(g_world, dt);
     Refused(r);
@@ -206,6 +209,7 @@ int Poses(D2rfPose* out, int max) {
 }
 
 int LetGo(uint32_t id, int how) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return 0;
     const int32_t r = g_letGo(g_world, id, how);
     Refused(r);
@@ -213,6 +217,7 @@ int LetGo(uint32_t id, int how) {
 }
 
 int Home(uint32_t id, const float joint[D2RF_JOINTS][3]) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return 0;
     const int32_t r = g_home(g_world, id, joint);
     Refused(r);
@@ -220,6 +225,7 @@ int Home(uint32_t id, const float joint[D2RF_JOINTS][3]) {
 }
 
 int Grab(const D2rfKnock& body, int hand, const float point[3], int joint) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded()) return 0;
     void* w = World();
     if (!w) return 0;
@@ -229,6 +235,7 @@ int Grab(const D2rfKnock& body, int hand, const float point[3], int joint) {
 }
 
 int Hand(uint32_t id, int hand, const float pos[3]) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return 0;
     const int32_t r = g_hand(g_world, id, hand, pos);
     Refused(r);
@@ -236,6 +243,7 @@ int Hand(uint32_t id, int hand, const float pos[3]) {
 }
 
 int Release(uint32_t id, int hand) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return 0;
     const int32_t r = g_release(g_world, id, hand);
     Refused(r);
@@ -250,18 +258,21 @@ int Held(uint32_t id, int hand, float a[3], float b[3], float* r) {
 }
 
 void Reset() {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_world) return;
     g_destroy(g_world);
     g_world = nullptr;
 }
 
 void SetBalance(bool on) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     g_balance = on;
     if (Loaded() && g_setBalance)
         if (void* w = World()) g_setBalance(w, on ? 1 : 0);
 }
 
 int SetHandStrength(uint32_t id, int hand, float strength) {
+    const weightworlds::Hold hold;   // (a world may be made or dropped: vr/weight_worlds.h)
     if (!Loaded() || !g_setHandStrength) return 0;
     void* w = World();
     return w ? g_setHandStrength(w, id, hand, strength) : 0;
@@ -270,6 +281,7 @@ int SetHandStrength(uint32_t id, int hand, float strength) {
 void SetStrength(float strength) {
     if (!std::isfinite(strength)) return;
     g_strength = strength;
+    const weightworlds::Hold hold;   // (a world may be made: vr/weight_worlds.h)
     if (Loaded() && g_setStrength)
         if (void* w = World()) g_setStrength(w, strength);
 }

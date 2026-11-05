@@ -92,6 +92,7 @@ struct SettingsIn {
     float spanInUse = 0.0f;       // the span the hero's arms are fitted to now (calib::SpanInUseM), for the Body page's Arm span
     hset::Players players;        // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
     hset::party::View party;      // the game's roster (vr/party_cmd.h), for the Party page
+    hset::party::MapShow mapShow; // the game's Show Party / Show Party Names (vr/party_cmd.h MapNow), for the Co-op page's map row
 };
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
@@ -337,6 +338,7 @@ public:
             settings_.SetSpanInUse(host->spanInUse);
             settings_.SetPlayers(host->players, f.time * 1000.0);
             settings_.SetParty(host->party, f.time * 1000.0);
+            settings_.SetMapShow(host->mapShow, f.time * 1000.0);
             settings_.Observe(host->ini);
             if (tabNow == Tab::Settings && !toggle) {
                 float su = 0.0f, sv = 0.0f;
@@ -423,6 +425,7 @@ public:
                 settings_.SetSpanInUse(host->spanInUse);
                 settings_.SetPlayers(host->players, f.time * 1000.0);
                 settings_.SetParty(host->party, f.time * 1000.0);
+                settings_.SetMapShow(host->mapShow, f.time * 1000.0);
                 clicker_.Reset();
             } else if (!open && wasOpen) {
                 if (settings_.GuideShown() && !resume_) out.guideEnd = settings_.GuideFinished() ? 1 : 2;   // (the measurement's hiding is no end: it comes back)

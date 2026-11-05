@@ -43,7 +43,7 @@ ap.add_argument("--iscc", default=r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 ap.add_argument("--standin", required=True, help="fake_launcher_setup.exe: the carried launcher Setup's stand-in (exit 0)")
 ap.add_argument("--standin-fail", required=True, help="fake_launcher_setup_fail.exe: the same, exit code 5")
 ap.add_argument("--payload169", help="D2R VR 0.169's staged payload (installer\\payload of the build that made it): the real files of the earlier-install fixture")
-ap.add_argument("--settings-exe", help="the real D2R_VR_Settings.exe: Setup and the uninstaller run it for the player's dxgi.dll ReShade (--reshade-paths add / remove); without it section 2d is skipped")
+ap.add_argument("--settings-exe", help="the real D2R_VR_Settings.exe: Setup and the uninstaller run it for the player's dxgi.dll ReShade (--reshade-paths remove: D2R VR's folders of 0.202 and older out of its ini); without it section 2d (b) is skipped")
 ap.add_argument("--real-game", help="a real game folder (read only): its small files are copied into a scratch folder for the second migration fixture")
 args = ap.parse_args()
 work = Path(args.scratch).resolve()
@@ -118,7 +118,7 @@ NEW_WEIGHT = b"MZ weight library of 0.169 (d2r_vr_libs)\0" + NOISE[12000:19000]
 NEW_GRIP = b"MZ grip library of 0.169 (d2r_vr_libs)\0" + NOISE[19000:24000]
 BEAR_DLL = b"MZ" + b"\0" * 62 + NOISE[:500000] + "d2r_vr_icons".encode("utf-16-le") + b"\0d2r-vr-vrcam\0" + NOISE[500000:]
 DEFAULTS_V1 = ("[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n[hands]\nbow_draw=1\nweight=1\n[render]\nfog=30\n[weight]\ndeath_ragdoll=0\n").replace("\n", "\r\n")
-DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[support]\nraw_tests_off_0201=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark)
+DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[support]\nraw_tests_off_0201=1\nno_reshade_0203=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark)
 PLAYERS_RESHADE_INI = ("[ADDON]\nDisabledAddons=\nOverlayCollapsed=Effect Runtime Sync,FlatVR Depth Provider v2.19@FlatVR_DepthProvider.addon64\n\n[DEPTH]\nDepthCopyBeforeClears=2\n\n"
                        "[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nIntermediateCachePath=C:\\Temp\\ReShade\nNoDebugInfo=1\nPresetPath=.\\ReShadePreset.ini\n"
                        "TextureSearchPaths=.\\reshade-shaders\\Textures\\**\n\n[OVERLAY]\nDocking=[Docking][Data],DockSpace   ID=0xB0DF600F Pos=8,,8 Size=1008,,1008 Split=X\nShowFPS=2\n"
@@ -149,8 +149,6 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
     put(payload / "sky/D2R_Ceiling_cave.png", "CEILING " + tag)
     # the sky dome's pictures (mod_files.inc: skydome\*.dds into the mod's mpq): the manifest tool stops on a pattern with nothing staged
     put(payload / "skydome/d2r_vr_skydome_test.dds", b"DDS " + tag.encode())
-    put(payload / "game/FlatVR_DepthProvider.addon64", b"MZ ADDON " + tag.encode())
-    put(payload / "game/FlatVR_Keepalive.addonfx", "// keepalive " + tag + "\n")
     r = subprocess.run([sys.executable, "-I", str(repo / "tools" / "make_vrmod_manifest.py"), "--out", str(payload / "launcher"),
                         "--payload", str(payload), "--version-label", version], capture_output=True, text=True)
     if r.returncode != 0:
@@ -455,7 +453,9 @@ def migration_sections():
         for n in ("ReShade64.dll", "ReShade.ini", "ReShadePreset.ini", "ReShade.log"):
             check(same(n, mr + n) and n not in after, f"{n} (ReShade was ours) moved byte for byte into the mod's reshade folder")
         check(same("FlatVR_DepthProvider.log", mr + "FlatVR_DepthProvider.log") and "FlatVR_DepthProvider.addon64" not in after and "FlatVR_Keepalive.addonfx" not in after,
-              "the add-on and its log left the game's root (the add-on is the new one, in the mod's reshade folder)")
+              "the add-on and its log left the game's root (the log into the mod's reshade folder)")
+        check(not (game / MOD / "reshade/FlatVR_DepthProvider.addon64").exists() and not (game / MOD / "reshade/FlatVR_Keepalive.addonfx").exists(),
+              "...and FlatVR's ReShade add-on and keepalive are not in the mod either (0.203: no ReShade, not shipped; the moved copies go)")
         sky_real = [k for k in before if k.startswith("reshade-shaders/Textures/D2R_Sky_ours/") and not k.endswith(("D2R_Sky_act1.png", "D2R_Crosshair.png"))]
         check(sky_real and all(k not in after for k in sky_real) and all(after.get(mr + k) == before[k] for k in sky_real[:5]) and not (game / "reshade-shaders/Textures").exists(),
               f"the sky pictures ({len(sky_real)} real ones) moved into the mod's reshade folder, none left in the game's reshade-shaders")
@@ -689,7 +689,8 @@ def main():
     check((game / MOD / "d2rloader/plugins/d2r_vr.default.ini").read_bytes() == DEFAULTS_V1.encode(), "d2r_vr.default.ini is the shipped default, as it is")
     check((game / MOD / "reshade/reshade-shaders/Shaders/D2R_DepthFog.fx").exists() and (game / MOD / "reshade/reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_act1.png").exists(),
           "the shader and the sky are in the mod's reshade folder")
-    check((game / MOD / "reshade/FlatVR_DepthProvider.addon64").exists() and (game / MOD / "reshade/FlatVR_Keepalive.addonfx").exists(), "VR: FlatVR's add-on is in the mod's reshade folder")
+    check(not (game / MOD / "reshade/FlatVR_DepthProvider.addon64").exists() and not (game / MOD / "reshade/FlatVR_Keepalive.addonfx").exists(),
+          "VR: no FlatVR ReShade add-on or keepalive (0.203: no ReShade - the plugin hands FlatVR its picture itself)")
     check((game / MOD / "d2rloader/d2r_vr_libs/d2r_vr_weight.dll").read_bytes() == weight_v1 and (game / MOD / "d2rloader/d2r_vr_libs/d2r_vr_grip.dll").read_bytes() == grip_v1,
           "the weight and grip libraries are in the mod's d2rloader\\d2r_vr_libs - the folder the plugin (vr\\weight_lib.cpp, grip_lib.cpp) and Settings look in first, the plugin's own folder being mods\\D2R-VR\\d2rloader\\plugins - byte for byte")
     check(not (game / MOD / "d2rloader/plugins/d2r_vr_weight.dll").exists() and not (game / MOD / "d2rloader/plugins/d2r_vr_grip.dll").exists(), "...and none among the mod's plugins (D2RLoader would reject them there)")
@@ -792,14 +793,14 @@ def main():
     check((mp / "d2r_vr.default.ini").read_bytes() == DEFAULTS_V1.encode(), "d2r_vr.default.ini is the new Setup's")
     R = game / MOD / "reshade"
     check(sha(R / "ReShade64.dll") == B2["ReShade64.dll"] and sha(R / "ReShadePreset.ini") == B2["ReShadePreset.ini"], "ReShade (it was ours) moved into the mod's reshade, byte for byte")
-    check((R / "ReShade.ini").read_bytes() == b"[GENERAL]\r\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\r\n",
-          "...its ini too, with ReShade 6.8's search path fixed ('\\**\\**' -> '\\**'), the rest byte for byte")
+    check((R / "ReShade.ini").read_bytes() == b"[GENERAL]\r\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\\**\r\n",
+          "...its ini too, byte for byte (0.203: nothing loads that ReShade any more, its search path is not fixed up)")
     for n in ("ReShade64.dll", "ReShade.ini", "ReShadePreset.ini", "FlatVR_DepthProvider.addon64", "FlatVR_Keepalive.addonfx"):
         check(not (game / n).exists(), f"{n} is no longer beside D2R.exe")
-    check((R / "FlatVR_DepthProvider.addon64").read_bytes() == b"MZ ADDON v1", "FlatVR's add-on in the mod is the new one")
+    check(not (R / "FlatVR_DepthProvider.addon64").exists(), "FlatVR's ReShade add-on moved out of the game's root and is not kept in the mod (0.203: not used)")
     check("old shader" not in rd(R / "reshade-shaders/Shaders/D2R_DepthFog.fx") and not (game / "reshade-shaders/Shaders/D2R_DepthFog.fx").exists(), "the shader moved, then the new one replaced it")
-    check(sha(R / "reshade-shaders/Shaders/FlatVR_Keepalive.addonfx") == B2["reshade-shaders/Shaders/FlatVR_Keepalive.addonfx"] and
-          not (game / "reshade-shaders/Shaders/FlatVR_Keepalive.addonfx").exists(), "FlatVR's keepalive effect moved")
+    check(not (R / "reshade-shaders/Shaders/FlatVR_Keepalive.addonfx").exists() and not (game / "reshade-shaders/Shaders/FlatVR_Keepalive.addonfx").exists(),
+          "FlatVR's keepalive effect moved out of the game's reshade-shaders and is not kept in the mod (0.203: not used)")
     check(S.get("reshade-shaders/Shaders/Players_Own.fx") == B2["reshade-shaders/Shaders/Players_Own.fx"], "the player's own effect stays beside the game")
     check(rd(R / "reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_act1.png") == "SKY-A1 v1" and rd(R / "reshade-shaders/Textures/D2R_Sky_ours/D2R_Sky_old_only.png") == "OLD-ONLY",
           "the sky folder moved; the new pictures replaced the old ones of the same name")
@@ -890,7 +891,7 @@ def main():
     left = snap(game)
     check(left.get("ReShade64.dll") == B2c["ReShade64.dll"] and left.get("ReShade.ini") == B2c["ReShade.ini"], "...and the uninstaller leaves them")
 
-    print("\n=== 2d. a player's own ReShade as dxgi.dll beside the game: used as it is - never renamed, moved, replaced or deleted")
+    print("\n=== 2d. a player's own ReShade as dxgi.dll beside the game: left as it is - never renamed, moved, replaced or deleted; D2R VR does not use it (0.203)")
     OUR_EFFECT = b".\\mods\\D2R-VR\\reshade\\reshade-shaders\\Shaders\\**"
     OUR_TEXTURE = b".\\mods\\D2R-VR\\reshade\\reshade-shaders\\Textures\\**"
 
@@ -918,18 +919,19 @@ def main():
     dx0 = dxgi_state()
     rc, log = run_setup("c2g_install", "v1")
     check(rc == 0 and dxgi_state() == dx0 and (game / MOD / "reshade/ReShade64.dll").read_bytes() == b"MZ OUR OWN RESHADE",
-          "the mod's own ReShade64.dll and a dxgi.dll of the player's: both stay (the plugin joins the dxgi.dll and does not load the other)")
+          "the mod's own ReShade64.dll and a dxgi.dll of the player's: both stay (0.203: the plugin loads neither and joins neither)")
     run_uninstall("c2g_uninstall")
     check(dxgi_state() == dx0 and not (game / MOD).exists(), "...the uninstaller takes the mod's folder (its own ReShade) and leaves the player's dxgi.dll")
-    # no dxgi.dll at all: nothing of ReShade is written outside the mod (D2R VR's own ReShade64.dll comes with the Install ReShade button, into mods\D2R-VR\reshade)
+    # no dxgi.dll at all: nothing of ReShade is written outside the mod (and no ReShade anywhere: D2R VR's own runtime builds the effect from the mod's reshade folder)
     fresh_game()
     rc, log = run_setup("c2h_install", "v1")
     check(rc == 0 and not (game / "dxgi.dll").exists() and not (game / "ReShade.ini").exists() and (game / MOD / "reshade/reshade-shaders/Shaders/D2R_DepthFog.fx").exists(),
           "no dxgi.dll: no ReShade.ini and no dxgi.dll are made beside the game; D2R VR's effect is in the mod's reshade folder")
     run_uninstall("c2h_uninstall")
 
-    # (b) with the REAL D2R_VR_Settings.exe: his ReShade.ini gets D2R VR's two search paths (so his dxgi.dll ReShade finds the mod's effect and pictures), once, and the
-    # uninstaller takes them out again
+    # (b) with the REAL D2R_VR_Settings.exe (0.203: D2R VR uses no ReShade): his ReShade.ini, as an install of 0.202 or older left it - D2R VR's two folders
+    # appended to its search paths and the copy of it as it was beside it - gets them taken out again by Setup: his file back byte for byte, the copy gone; a
+    # file without them is never touched, and nothing is ever added
     if not args.settings_exe:
         print("  (skipped: --settings-exe, the real D2R_VR_Settings.exe, not given)")
     else:
@@ -939,29 +941,38 @@ def main():
         dx0 = dxgi_state()
         rc, log = run_setup("c2f_install", "realexe")
         S2d = snap(game)
-        ini1 = (game / "ReShade.ini").read_bytes()
-        check(rc == 0 and "--reshade-paths add: 0" in log, "Setup runs D2R_VR_Settings --reshade-paths add and it says 0 (the paths are in)")
-        check(dxgi_state() == dx0 and not (game / "dxgi.dll.off").exists() and not (game / MOD / "reshade/ReShade64.dll").exists(),
-              "his dxgi.dll is the same bytes with the same time; nothing renamed, nothing made in its place")
-        check(OUR_EFFECT in ini1 and OUR_TEXTURE in ini1 and ini1 != ini0, "his ReShade.ini lists D2R VR's two folders (EffectSearchPaths, TextureSearchPaths)")
-        check(ini1.replace(b"," + OUR_EFFECT, b"").replace(b"," + OUR_TEXTURE, b"") == ini0, "...and nothing else of his file changed (taking our two list items out gives his file, every byte)")
-        check((game / "ReShade.ini.before_d2rvr").exists() and (game / "ReShade.ini.before_d2rvr").read_bytes() == ini0, "...a copy of his file as it was is beside it (ReShade.ini.before_d2rvr)")
-        others = sorted(k for k in S2d if k not in B2d and not k.startswith(MOD + "/") and not k.startswith("unins000") and k not in ROOT_PROGRAMS + ("ReShade.ini.before_d2rvr",))
+        check(rc == 0 and "--reshade-paths remove: 0" in log and "--reshade-paths add" not in log, "Setup runs D2R_VR_Settings --reshade-paths remove (never add) and it says 0")
+        check((game / "ReShade.ini").read_bytes() == ini0 and not (game / "ReShade.ini.before_d2rvr").exists() and dxgi_state() == dx0 and not (game / "dxgi.dll.off").exists()
+              and not (game / MOD / "reshade/ReShade64.dll").exists(),
+              "his ReShade.ini without our folders: untouched, every byte, no copy made; his dxgi.dll the same bytes with the same time; nothing made in its place")
+        others = sorted(k for k in S2d if k not in B2d and not k.startswith(MOD + "/") and not k.startswith("unins000") and k not in ROOT_PROGRAMS)
         check(not others and S2d["ReShadePreset.ini"] == B2d["ReShadePreset.ini"] and S2d["reshade-shaders/Shaders/Own.fx"] == B2d["reshade-shaders/Shaders/Own.fx"],
               f"his preset and his own effect are untouched, nothing else is made beside the game (stray: {others})")
-        # an update over it: nothing changes again
-        rc, log = run_setup("c2f_update", "realexe")
-        check(rc == 0 and (game / "ReShade.ini").read_bytes() == ini1 and (game / "ReShade.ini.before_d2rvr").read_bytes() == ini0 and dxgi_state() == dx0,
-              "a second Setup over it: his ReShade.ini is the same (the paths are added once), the copy is still his original, dxgi.dll as before")
         run_uninstall("c2f_uninstall")
+        # an install of 0.202 or older: our two folders in his ReShade.ini, the copy of his file beside it
+        fresh_game("dxgi_ini")
+        B2o = snap(game)
+        ini0 = (game / "ReShade.ini").read_bytes()
+        old = ini0.replace(b"Shaders\\**\r\n", b"Shaders\\**," + OUR_EFFECT + b"\r\n").replace(b"Textures\\**\r\n", b"Textures\\**," + OUR_TEXTURE + b"\r\n")
+        check(old != ini0 and OUR_EFFECT in old and OUR_TEXTURE in old, "(the fixture: his ReShade.ini as 0.202's Setup left it, with our two folders)")
+        (game / "ReShade.ini").write_bytes(old)
+        (game / "ReShade.ini.before_d2rvr").write_bytes(ini0)
+        dx0 = dxgi_state()
+        rc, log = run_setup("c2o_install", "realexe")
+        check(rc == 0 and "--reshade-paths remove: 0" in log and (game / "ReShade.ini").read_bytes() == ini0 and not (game / "ReShade.ini.before_d2rvr").exists(),
+              "an update over 0.202: D2R VR's two folders taken out of his ReShade.ini - his original, every byte - and the copy is gone")
+        check(dxgi_state() == dx0 and not (game / "dxgi.dll.off").exists(), "...his dxgi.dll the same bytes with the same time")
+        rc, log = run_setup("c2o_update", "realexe")
+        check(rc == 0 and (game / "ReShade.ini").read_bytes() == ini0 and dxgi_state() == dx0, "a second Setup over it: nothing changes again")
+        run_uninstall("c2o_uninstall")
         left2d = snap(game)
-        check((game / "ReShade.ini").read_bytes() == ini0 and not (game / "ReShade.ini.before_d2rvr").exists(),
-              "the uninstaller takes D2R VR's two folders out again: his ReShade.ini is his original, every byte, and the copy is gone")
-        check(dxgi_state() == dx0 and not (game / "dxgi.dll.off").exists() and not (game / "mods").exists(), "...his dxgi.dll the same bytes with the same time; the mod's folder is gone")
         TOML_KEY = "d2rloader/config/d2rloader.toml"   # (D2RLoader's own setting: allow_global_extensions stays switched on, as it does after every uninstall)
-        check({k: v for k, v in left2d.items() if not k.startswith("unins000") and k != TOML_KEY} == {k: v for k, v in B2d.items() if k != TOML_KEY},
-              "...and the game folder is exactly what it was before Setup")
-        # the Home button's case: the paths are not in, the game folder has no Settings run yet (Setup could not: the game was running) - covered by start_helper_test.py
+        check((game / "ReShade.ini").read_bytes() == ini0 and dxgi_state() == dx0 and not (game / "mods").exists(),
+              "the uninstaller: his ReShade.ini his original, his dxgi.dll the same; the mod's folder is gone")
+        check({k: v for k, v in left2d.items() if not k.startswith("unins000") and k != TOML_KEY} ==
+              {k: v for k, v in B2o.items() if k != TOML_KEY and k != "ReShade.ini.before_d2rvr"},
+              "...and the game folder is what it was before the old install (no copy of his ini left)")
+        # Settings' own start takes them out too, with the game closed (ReShadeStatus) - covered by start_helper_test.py's --reshade-paths cases
 
     # ------------------------------------------------------------------ 2e. the settings program's shortcuts
     print("\n=== 2e. the settings program is \"D2R VR Authentic Settings\": its shortcuts, and the old names gone")
@@ -1098,8 +1109,8 @@ def main():
     rc, log = run_setup("c5_install1", "v1")
     mp = game / MOD / "d2rloader/plugins"
     # (a) the player changed his settings
-    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
-             + "[calibration]\r\nheight=1.82\r\n")   # (the raw tests on from an older version, as denails75r's 2026-11-04)
+    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77\r\nno_reshade=0\r\nnative_effects=0").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
+             + "[calibration]\r\nheight=1.82\r\n")   # (the raw tests on from an older version, as denails75r's 2026-11-04; ReShade on, as before 0.203)
     put(mp / "d2r_vr.ini", tuned)
     put(game / MOD / "D2R-VR.mpq/modinfo.json", '{ "name": "D2R-VR", "savepath": "../", "description": "edited by the player" }')
     put(mp / "d2r_vr_headset.ini", "[headset]\nipd=0.07\n")
@@ -1124,6 +1135,9 @@ def main():
     check(cur.get(("weight", "death_ragdoll")) == "1", "...and death_ragdoll, still at v1's default 0 (off), is on now as v2's default (TurnOnOldDefaults)")
     check(cur.get(("weight", "world_contact")) == "0" and cur.get(("weight", "own_body")) == "0" and cur.get(("weight", "world_contact_hands")) == "0"
           and cur.get(("support", "raw_tests_off_0201")) == "1", "...the raw tests left on (world_contact, own_body) are off, the mark is set (TurnOffRawTests)")
+    check(cur.get(("render", "no_reshade")) == "1" and cur.get(("render", "native_effects")) == "1" and cur.get(("support", "no_reshade_0203")) == "1",
+          "...an old ini on ReShade (no_reshade=0, native_effects=0) is moved to the native way by itself: both 1, the mark set (MoveOffReShade, 0.203)")
+    check("[render] no_reshade=0 from an older version" in log and "[render] native_effects=0 from an older version" in log, "...and the Setup log says so")
     check((mp / "d2r_vr.default.ini").read_bytes() == DEFAULTS_V2.encode(), "d2r_vr.default.ini is v2's")
     check("take_new=0 changed=1" in rd(work / "ready.txt"), "the question was asked (a changed ini); a silent run answers Yes = keep")
     check(rd(mp / "d2r_vr_headset.ini") == "[headset]\nipd=0.07\n" and rd(game / MOD / "reshade/ReShade.ini") == "[GENERAL]\nmine=1\n", "the headset ini and the mod's ReShade.ini are the player's")
@@ -1132,6 +1146,12 @@ def main():
           "the launcher's manifest is the update's (new version), not the old one")
     check(rd(game / MOD / "d2rloader/logs/d2r-vr-vrcam.log") == "a log\n", "logs are left")
     check(b'default_mod = "D2R-VR"' in (game / "d2rloader/config/d2rloader.toml").read_bytes(), "default_mod stays")
+    # once only: native_effects=0 chosen after the move (the lightest, no effect) stays through the next update
+    put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("native_effects=1", "native_effects=0"))
+    rc, log = run_setup("c5_install2a", "v2")
+    cur = ini_keys(rd(mp / "d2r_vr.ini"))
+    check(rc == 0 and cur.get(("render", "native_effects")) == "0" and cur.get(("render", "no_reshade")) == "1" and "=0 from an older version" not in log,
+          "a later update (the mark there): his native_effects=0 chosen since stays, nothing moved again")
     # a raw test the player ticks again after that stays on at the next update: the mark says it was done
     put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("world_contact=0", "world_contact=1"))
     rc, log = run_setup("c5_install2b", "v2")

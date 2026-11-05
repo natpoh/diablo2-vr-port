@@ -56,6 +56,8 @@ extern uint32_t g_eclLists;
 extern uint32_t g_eclSignals;
 extern uint32_t g_eclUntagged;
 extern double g_eclUs;
+extern uint32_t g_lateReplays;      // replays not done in 100 ms when the next left pass came (waited for, up to 2 s), this log period
+extern double g_lateReplayMaxMs;
 extern std::atomic<bool> g_fxAtHold;
 extern std::atomic<bool> g_fxFence;
 extern std::atomic<bool> g_fxSync;

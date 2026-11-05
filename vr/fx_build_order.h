@@ -20,4 +20,13 @@ inline Job Next(bool busy, bool inUseWanted, bool inUseTried, bool warmLeft) {
     return Job::None;
 }
 
+// A warming running while the game takes a size with no build of its own: the warming is stopped at once (between two shaders) and put
+// back in its turn - one build at a time, and the size in use waited behind it. playful_pony (GTX 1650, 0.202.0, 2026-11-04 17:59): the
+// 995 build done, 1216 warmed (44 s, cold), the game took 1024 at Lut Gholein 9 s in - its build started only when the warming ended,
+// "0 passes in 0 presents (995x995)" for half a minute.
+// Not when the size taken IS the one being warmed: its shaders are on their way into the cache, the build after takes them all from there.
+inline bool StopWarm(bool warmRunning, bool inUseWanted, bool inUseTried, bool warmingTheSizeInUse = false) {
+    return warmRunning && inUseWanted && !inUseTried && !warmingTheSizeInUse;
+}
+
 }  // namespace fxbuildorder

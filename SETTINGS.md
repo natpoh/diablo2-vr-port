@@ -84,6 +84,12 @@ the headset-only ones.
   still" - a short Shift + F1 does nothing to the hero). *No F keys*: F1 - F8
   are all the game's; the view changes with F12, here, or the controller's
   view buttons. F12 and the controller work with every choice. Live.
+- **F9 - F12 only for the mod** - `[view] own_hotkeys`: F9 mouse look, F10 a
+  skeleton dump, F11 recentre, F12 next view are the mod's keys. On: the game
+  does not get them - with the game's default keys there each F11 / F12 also
+  switched its map's *Show Party* / *Show Party Names* off and on, and with
+  them off your allies vanish from every map (turn them on again in the game's
+  Options > Automap). Off: the game gets them too, as before. Live.
 - **Draw distance** - *Draw distance (near - far)*, stops 1 - 8, sets together
   what is set apart on Performance, World and Sky: the room rings and the model
   visibility radius (`[render] rings`, `model_radius`) - the edge of the drawn
@@ -319,6 +325,17 @@ and towns. Visual only, live.
   Bone Armor and the other solid effects are drawn *Bone Armor's height, cm* (`own_effects_height_cm`,
   -150 .. +50 in steps of 5, -60 shipped; 0 = the game's place) lower or higher, so they circle below
   the eyes. Where the renderer draws them only; visual only, F4 only.
+  *Paladin's auras under the hero* (`[render] aura_centre`): the Paladin's aura rings (Thorns, Might,
+  Holy Fire, Holy Freeze, Conviction, Fanaticism ...) lay a step off the feet in VR. The game's aura
+  effects push each particle toward the camera when it appears - along the line of sight on the flat
+  screen, sideways and up in VR. On: the push is taken away, so the ring lies at the hero's feet, where
+  the flat game shows it; *Aura ring's lift, %* (`aura_lift_pct`, 0 - 100, 0 shipped) keeps that share
+  of the game's upward push (100 = about 30 cm up). Every VR view (F1 - F4), monsters' and mercenaries'
+  copies too; the flat game as ever. Visual only.
+  *Paladin's aura place* (`[render] move_own_auras`): your own Paladin aura rings drawn moved by
+  *Aura ring up / down*, *ahead / behind* and *right / left* (`own_auras_up_cm`, `own_auras_ahead_cm`,
+  `own_auras_side_cm`, -100 .. +100 cm in steps of 5, 0 = the game's place; ahead = where the VR view
+  looks). Every VR view; visual only.
 
 ## Controls
 

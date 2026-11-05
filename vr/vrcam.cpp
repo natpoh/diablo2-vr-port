@@ -119,9 +119,9 @@ std::atomic<float> g_iconLiftMm{1.0f};   // [gameplay] melee_skill_armed_icon_li
 
 
 std::atomic<bool> g_ownDepth{true};   // [render] own_depth (scenedepth::)
-// [render] no_reshade (off): ReShade64.dll not loaded at all - native OpenXR eyes by turns on the plugin's own D3D12 hooks (vr/native_d3d12.h),
-// no fog, sky, ceiling, overlays, one-pass stereo or light bounds (docs/plan_no_reshade.md). Decided once, at the plugin's load (LoadReShade).
-bool g_noReShade = false;
+// No ReShade: since 0.203 always (vr/plugin/reshade_load.cpp) - ReShade64.dll never loaded, a ReShade in the game never joined; the plugin's
+// own D3D12 hooks (vr/native_d3d12.h) and effect runtime (vr/fx_native.h). Set at the plugin's load (LoadReShade); [render] no_reshade is gone.
+bool g_noReShade = true;
 std::atomic<bool> g_squareWin{false};   // [openxr] square_window: D2R VR Settings' square game window
 // The left eye's view as last built, and the half-eye shift in it (VrViewInner): the
 // replay makes the right eye's camera constants from them.
@@ -917,9 +917,9 @@ void StartProbe() {
 // For xr.cpp (this file's own namespace is not seen from there): the balls over the belt's bottles.
 int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(out, max); }
 
-// ReShade's loading (LoadReShade, LoadOurAddonForDxgiReShade): vr/plugin/reshade_load.cpp
+// The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.202.0";
+static const char g_info_version[] = "0.203.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1039,6 +1039,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     directinput::SetBeltSink(&BeltFlickSink);   // ... and the belt potions of a thumbstick's flick with the left trigger held ([direct] belt_flick_flat_views, vr/belt_flick.h)
     crash::Step("settings (d2r_vr.ini)");
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
+    autotunerun::SetLogger(&Log);   // [autotune]: a line a measure of a run
     monitoreye::SetLogger(&Log);
     monitorlayers::SetLogger(&Log);
     headshot::SetLogger(&Log);   // [headset_shot]: one line a shot
@@ -1063,6 +1064,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     ReloadIfChanged();
     NoTemporalAA();
     MiniMapForHand();
+    AutoMapPartyNote();   // (only reads: the game's Show Party / Show Party Names off hides an ally from every map - a log line says so)
     ReconcileGameWindow();   // flat: no square window left from VR; VR: the player's own window kept first (before SafeGameWindow's cut)
     ReconcileFrameCap();     // flat: the player's own frame cap back from VR's rate; VR: his own kept
     if (ReconcileSafeScreen()) hud::SetInterfaceScale(GameInterfaceScale());   // flat: the player's own interface size back; VR: 80 where he chose none (the toolbar's cut follows the file)
@@ -1076,21 +1078,14 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     d2rsig::SetShiftTest(GetPrivateProfileIntW(L"debug", L"sig_shift_test", 0, g_iniPath));
     d2rsig::Resolve(ctx);
 
-    crash::Step("ReShade (ReShade64.dll and its add-ons, FlatVR's depth add-on among them)");
-    LoadReShade();
-    // The game makes its pipelines at startup and ReShade does not replay init_pipeline for those made before an
-    // add-on joined: the light culling's replacement (the game's light-bin shader, light_bounds.h) joins now,
-    // not with the rest on the update thread's first tick.
-    if (!g_noReShade && lightbounds::Wanted() && fx::JoinReShade()) lightbounds::Register(&Log);
-    if (!g_noReShade && refleye::Wanted() && fx::JoinReShade()) refleye::Register(&Log);   // ([render] reflections_per_eye: its passes are made then too)
-    if (!g_noReShade && fogspare::Wanted() && fx::JoinReShade()) fogspare::Register(&Log);   // (the same: the game's resolve pipeline is made at its start)
-    if (!g_noReShade && fogframe::Wanted() && fx::JoinReShade()) fogframe::Register(&Log);   // ([render] fog_in_frame: the same pipeline)
+    crash::Step("no ReShade (says whether the player's own dxgi.dll ReShade is beside the game - left as it is)");
+    LoadReShade();   // (never loads or joins a ReShade since 0.203)
     crash::Step("camera callbacks, MinHook, the hero's skeleton");
     d2rcam::SetCallbacks(&VrView, &VrProj);
     d2rcam::SetFrameCallback(&VrFrame);
     d2rcam::SetRayOverride(&VrRay);
     MH_Initialize();   // XInput only; game code is hooked through the loader
-    if (g_noReShade) {   // [render] no_reshade: D3D12 and DXGI hooked by the plugin, before the game makes its device and swap chain
+    if (g_noReShade) {   // D3D12 and DXGI hooked by the plugin, before the game makes its device and swap chain (always, since 0.203)
         crash::Step("no ReShade: the plugin's own D3D12 / DXGI hooks");
         fx::noreshade::Install();
     }
@@ -1178,8 +1173,15 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 #endif
     shoulderwire::Init(ctx);   // the shoulder swap listens to direct_input's frames
     weightwire::Init(ctx);     // [weight]: so does the grip of a hand on the weapon
+    auraview::Init(ctx);       // [render] aura_centre: the Paladin's aura rings under the hero in VR (its hook goes in when ticked)
     owneffects::Init(ctx);     // [render] dim_own_effects: the hero's own effects fainter (its two hooks only look, so they are in whether it is ticked or not)
     owneffects::SetHeroSource(+[]() -> uintptr_t { return (uintptr_t)g_heroUnit.load(); }, &GestureHeroId);   // the hero as the aim function knows him, besides the game's own getter
+    owneffects::SetAheadSource(+[](float o[2]) -> bool {   // [render] move_own_auras: ahead = where the VR view looks, level (vr/view/camera.cpp's g_headAhead)
+        if (!g_headOk.load()) return false;
+        o[0] = g_headAhead[0].load();
+        o[1] = g_headAhead[2].load();
+        return std::isfinite(o[0]) && std::isfinite(o[1]);
+    });
     owneffects::SetScaleSource(+[]() -> float { return std::max(1.0f, ViewHeight()) / UserEyeHeightM(); });   // [render] lower_own_effects: cm as world units, as the view's own scale
     pointpickup::Init(ctx);    // [input] point_pickup: grip held + trigger on the highlighted item picks it up, Show items held for its name
     belttrigger::Init(ctx);    // [belt] hold_takes_trigger: and the triggers of a hand that holds a belt bottle
@@ -1217,8 +1219,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     meleetouch::Init(ctx);
     grabmove::Init(ctx);   // [weight] grab_moves_unit (vr/grab_move.cpp)
     attackpath::InitNet(ctx);   // [gameplay] flat_attack_path: a joined player's channel to the host
-    meleedirectclient::InitNet(ctx, IniB(L"gameplay", L"melee_direct_client_cleave", false) &&
-                                        (IniF(L"gameplay", L"melee_direct_client", 0.0f) >= 0.5f || IniF(L"gameplay", L"melee_direct", 0.0f) >= 1.5f));   // the channel now or never this run
+    flatmenu::Init(ctx, g_iniPath);   // [hud] game_menu_settings: the host's rules channel "HR" (always: D2RLoader takes channels at the load only) and the console's "vrrules"
+    meleedirectclient::InitNet(ctx);   // [gameplay] melee_direct_client_cleave: who hosts decides - the channel always (D2RLoader takes it at the load only)
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread
     merctint::Init(ctx);   // [hud] merc_tint reads the merc's life on the UI thread
@@ -1270,7 +1272,6 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again
     g_enabled.store(false);
     d2rcam::SetEnabled(false);
-    if (fx::g_joined) { reshade::unregister_addon(g_self); fx::g_joined = false; fx::g_registered = false; }
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
     rtsswatch::Stop();     // [support] rtss_warning: its thread (it ends by itself after the first minute), before the log goes)
@@ -1279,6 +1280,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back
     attackpath::ShutdownNet();   // [gameplay] flat_attack_path: its channel given back
     meleedirectclient::ShutdownNet();   // [gameplay] melee_direct_client_cleave: the channel given back
+    flatmenu::Shutdown();   // [hud] game_menu_settings: the overlay's callback, the channel, the ini writer's thread
     logasync::Shutdown();   // [debug] log_async: the lines that wait are written, its thread joined, before the context goes
     sessionlogs::Stop();   // [support] session_logs: the last copy, after the lines that waited
     g_ctx = nullptr;

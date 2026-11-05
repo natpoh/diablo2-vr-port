@@ -33,6 +33,23 @@ inline constexpr uint8_t kPartyLeaveSeven[5] = {0xB9, 0x07, 0x00, 0x00, 0x00};  
 constexpr uint32_t kLeaveSevenAt = 9;
 inline constexpr uint8_t kSigGameMode[2] = {0x8B, 0x05};
 
+// The game's Show Party / Show Party Names on its automap (the Co-op page's map row, hset_party.h MapShow; vr/automap_party.h has why). Read: the
+// game's own getters, each `mov eax, [rip + its value]; ret` (the values the settings "AutoMap Party" 0xE2280 / "AutoMap Party Names" 0xE2160
+// put there at load and on every change, 0xD3DD0 / 0xD3DC0). Flipped: the game's key commands 10 / 11, whose down() is the game's toggle of that
+// setting (0x119E90: `setting = !getter()`, the setting's own setter 0xD2F020) - checked in the command table (0x22A7930, 0x18 a command) first.
+constexpr uint64_t RVA_MAP_PARTY_GET = 0xD34A0, RVA_MAP_NAMES_GET = 0xD3490;
+constexpr uint64_t RVA_MAP_PARTY_DOWN = 0x119E90, RVA_MAP_NAMES_DOWN = 0x119EC0;
+constexpr uint64_t RVA_CMD_TABLE = 0x22A7930;
+constexpr uint32_t kCmdEntry = 0x18;
+inline constexpr uint8_t kSigMapGet[2] = {0x8B, 0x05};   // mov eax, [rip + disp32] ... (6 bytes), then ret
+constexpr uint8_t kRet = 0xC3;
+inline constexpr uint8_t kSigMapDown[5] = {0x40, 0x53, 0x48, 0x83, 0xEC};   // push rbx; sub rsp, 0x20; call the getter ...
+constexpr uint32_t kDownCallAt = 6;   // call rel32 to the getter at +6 (5 bytes)
+// The target of a call rel32 at `at`.
+constexpr uint64_t CallTarget(uint64_t at, int32_t rel) { return at + 5 + (uint64_t)(int64_t)rel; }
+// A value read from the game: 0 / 1 as the game has it, anything else (garbage) not known.
+constexpr int MapValueOf(int32_t raw) { return raw == 0 ? 0 : raw == 1 ? 1 : -1; }
+
 // A roster entry's fields.
 constexpr uint32_t kName = 0x00, kNameLen = 0x3D, kId = 0x48, kClass = 0x54, kLevel = 0x58, kPartyId = 0x5A, kState = 0x68, kNext = 0x148;
 constexpr uint32_t kEntryRead = 0x6C;   // the bytes read of an entry (to its state)

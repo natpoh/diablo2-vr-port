@@ -28,9 +28,11 @@ bool HandRay(float* o, float* d, float* dRaw = nullptr);
 namespace fx {
 bool g_registered = false;
 bool g_joined = false;   // reshade::register_addon(g_self) done - by TryRegister, or at the plugin's load for lightbounds
+// Since 0.203 D2R VR never joins a ReShade (vr/plugin/reshade_load.cpp): not ours (never loaded) and not the player's own dxgi.dll one -
+// joining let our defines rebuild the effect in ReShade's present (crash reports 231 / 232 / 251). Nothing registers with ReShade, so none of
+// its events ever reach the plugin; the code behind them stays only as the stand-in's shape (vr/native_rsapi.h).
 bool JoinReShade() {
-    if (!g_joined && g_self) g_joined = reshade::register_addon(g_self);
-    return g_joined;
+    return false;
 }
 // The effect's two techniques: [0] the left eye's frames (and mono), [1] the
 // right eye's. The eye of a frame is which one is on, not a uniform: under
@@ -1095,7 +1097,7 @@ void OnReshadePresent(reshade::api::effect_runtime* rt) {
                   d3d12 ? (ID3D12CommandQueue*)rt->get_command_queue()->get_native() : nullptr, (ID3D12Resource*)rt->get_current_back_buffer().handle, sw, sh);
 }
 
-// [render] no_reshade (docs/plan_no_reshade.md, step 3): ReShade64.dll is not in the game; the plugin's own hooks (vr/native_d3d12.h) give what
+// No ReShade (docs/plan_no_reshade.md, step 3; the only path since 0.203): the plugin's own hooks (vr/native_d3d12.h) give what
 // its events gave native OpenXR eyes by turns - the game's present (PresentCommon, as reshade_present), the scene's depth for the eye made
 // (scenedepth: the binds and barriers counted, the copy before the present, as the effects' begin did) and the share of the screen the scene is
 // drawn at (renderscale, DLSS). Nothing else: no effect, so no fog, sky, ceiling or overlays; no replay (one pass, two pictures), no light
@@ -1137,7 +1139,7 @@ void Tell() {
                         nors::kOffFlat);
         else if (byTurns) Log("vrcam: no ReShade - native OpenXR eyes by turns: one eye drawn a frame, the other made on the GPU with the game's depth");
         else Log("vrcam: no ReShade - NOT native OpenXR eyes by turns with the eye made ([openxr] on, [stereo] afr=1 pair_per_tick=0 turn_warp=1): "
-                 "[render] no_reshade is made for that mode only - one pass two pictures needs ReShade (the pair is drawn in two passes); FlatVR's "
+                 "the plugin's own hooks are made for that mode - one pass two pictures went with ReShade (the pair is drawn in two passes); FlatVR's "
                  "picture and depth come from the plugin itself with [render] flatvr_feed");
     }
     natived3d::WatchIndexCount(g_set.gameSky.load() ? engitem::DomeIndexCount() : 0);
@@ -1183,6 +1185,7 @@ void Tell() {
         if (const reshade::api::effect_uniform_variable u = g_fx->find_uniform_variable("D2R_DepthFog.fx", "SkyTex"); u.handle) g_fx->get_uniform_value_float(u, &skyTex, 1);
         char blur[48] = "off";   // [render] distance_blur: its two passes' time (ms a present), whether or not among the dearest
         if (on("DistBlurOn")) snprintf(blur, sizeof blur, "on, %.2f ms", fs.MsOf("PS_DistBlur"));
+        autotunerun::NoteGpu(fs.MsOf("PS_DepthFog"), fs.MsOf("PS_DistBlur"), fogfx::Hooked());   // ([autotune]: the order its probes run in)
         LogF("vrcam: native effects, 10 s: %s, sky %s (picture %d), fog %s, ceiling %s, distance blur %s; on the graphics card %.2f ms a present (the overlays "
              "apart not timed); %u passes in %u presents and %u overlay draws, %u left out with nothing to draw (D2R_DepthFog.fx, %ux%u) - dearest "
              "passes (ms a present, and when run): %s",
@@ -1280,6 +1283,7 @@ void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandLi
     const bool three = !g_set.domeTint.load();
     in.on = g_set.gameSky.load() && (g_set.domeInGameColour.load() || three);
     in.band = engitem::DomeBand();
+    in.capLayout = engitem::DomeAtlasHasCap();   // (the pictures' layout: the zenith's square or not)
     in.night = g_domeBake.night;
     in.mul = g_domeBake.mul;
     in.capOn = g_domeBake.capOn;
@@ -2131,8 +2135,39 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         if (on) SetFloats(rt, i ? "GameMapBox" : "GameBarBox", box, 4);
         if (i == 1) {   // [hud] map_rotate_flat: the map round about the hero, turned (vr/map_turn.h RoundOnScreen); an older effect has no such uniform
             float circle[4], hero[2], m[4];
-            const bool turn = on && hud::PictureMapTurn(circle, hero, m);
+            bool whole = false;
+            const bool turn = on && hud::PictureMapTurn(circle, hero, m, &whole);
             SetBool(rt, "GameMapTurnOn", turn);
+            SetBool(rt, "GameMapTurnWhole", turn && whole);   // [hud] flat_map_zoom: out of the circle (an older effect: none, the circle stays)
+            // [hud] map_compass_flat: the compass strip over it - its picture (xr.cpp's, painted once) uploaded into GameCompassTex once per effect load
+            float cbox[4], crop = 0.0f;
+            bool compass = turn && hud::PictureCompass(cbox, &crop);
+            if (compass) {
+                static uint64_t upVar = 0;
+                static bool failed = false;
+                const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "GameCompassTex");
+                if (!tv.handle) {
+                    static bool told = false;
+                    if (!told) { told = true; Log("vrcam: flat map compass - D2R_DepthFog.fx has no GameCompassTex: an older one, copy the new one in (the DLL and the effect together)"); }
+                    compass = false;
+                } else if (tv.handle != upVar && !failed) {
+                    const std::vector<uint32_t> px = xr::CompassPixels();
+                    if (px.size() == (size_t)mapturn::kAtlasW * mapturn::kAtlasH) {
+                        rt->update_texture(tv, mapturn::kAtlasW, mapturn::kAtlasH, px.data());
+                        upVar = tv.handle;
+                        Log("vrcam: flat map compass - its strip uploaded into D2R_DepthFog.fx (the VR compass's picture; the window moves with the way you look)");
+                    } else {
+                        failed = true;
+                        Log("vrcam: flat map compass - its picture could not be painted: no compass");
+                    }
+                }
+                compass = compass && tv.handle == upVar;
+            }
+            SetBool(rt, "GameCompassOn", compass);
+            if (compass) {
+                SetFloats(rt, "GameCompassBox", cbox, 4);
+                SetFloat(rt, "GameCompassCrop", crop);
+            }
             if (turn) {
                 SetFloats(rt, "GameMapTurnCircle", circle, 4);
                 SetFloats(rt, "GameMapTurnHero", hero, 2);

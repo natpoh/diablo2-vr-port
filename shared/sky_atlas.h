@@ -7,6 +7,7 @@
 // D2R_VR_Settings stacks the acts' painted skies (the mod's data: sky_act<1-5>_day_HDR.dds, BC6H, 2048 x 512, all the same) and a
 // black band for the cave dome into data/hd/env/texture/d2r_vr/sky/sky_domes_HDR.dds (dome_assets.cpp Prepare); the debug domes keep their
 // own. Pure; tested in cleanroom/tests/granny_remesh_test.cpp and dome_assets_test.cpp.
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -28,6 +29,49 @@ inline int BandOf(const std::string& dome) {
 constexpr float kInset = 4.0f / 512.0f;
 inline float BandV(int band, float v) { return ((float)band + kInset + v * (1.0f - 2.0f * kInset)) / (float)kBandCount; }
 inline void BandRange(int band, float* from, float* to) { *from = BandV(band, 0.0f); *to = BandV(band, 1.0f); }
+
+// ---- a band's picture with its zenith cap (2026-11-05) ----
+// Serg: "почему на старом типе отрисовки небо нормальное а на куполе оно с треугольниками" - at the zenith the dome showed a fan of streaks.
+// The panorama lays the sky by (azimuth, elevation), and its top row is ONE point of the sky: the dome's last ring closed on it, one
+// triangle a column, each a thin wedge of the zenith picture squeezed round the pole (and the graphics card's mip there the coarsest).
+// Our old sky (D2R_DepthFog.fx PaintedSkyAt) takes its zenith picture by the view ray - dir.xz / dir.y * 0.4, one tile of it per 2.5 of
+// that - and round the pole those coordinates are as smooth as anywhere. So a picture made by tools/game_sky/make_sky_dome.py with
+// HasCap's mark holds, in the top quarter of its rows and as many columns (a square: the picture is four times as wide as high), the sky
+// straight overhead laid exactly so: q = dir.xz / dir.y from -kCapHalf to +kCapHalf - at the shipped 4096 x 1024 that square is 256
+// texels for 0.25 of the 1024-texel zenith picture, texel for texel what the old sky sampled. The dome above CapEl() is a disc with those
+// coordinates as its uv (shared/granny_remesh.h DomeMesh), the panorama below it (PanoV: its rows from kCapRows down, CapEl() + 1 degree to
+// -12 - its first rows a little above the disc's edge, so the cap's square is never filtered into the band's top ring). Pure.
+constexpr double kPanoLowEl = -12.0;                   // the panorama's bottom (make_sky_dome.py LOW_EL)
+constexpr double kCapRows = 0.25;                      // of a band's picture: the cap's square's rows ...
+constexpr double kCapCols = kCapRows / 4.0;            // ... and columns (the picture four times as wide as high)
+constexpr double kCapHalf = 256.0 / (2.0 * 0.4 * 1024.0);   // its half side in dir.xz / dir.y: 256 texels for 0.25 of the 1024-texel zenith picture
+constexpr double kCapDisc = kCapHalf * (1.0 - 2.0 * 8.0 / 256.0);   // the disc's radius: 8 texels inside the square all round (its mips' margin)
+constexpr size_t kCapMarkAt = 32;                      // the DDS header's dwReserved1 (the format leaves it to tools)
+// "cap2" (2026-11-05, Serg on 0.202.2: a circle at the disc's edge, the clouds inside it "a different tone" and not carrying on the ones
+// outside): the dome's uv (BandV) reach a band's picture kInset off its top and bottom, but "cap1" pictures were laid by the band's v
+// straight over all their rows - the square drawn up to 8 texels off along z and the panorama 4 rows (0.45 degrees) low, so the two
+// sides of the rim showed the sky from different places. A "cap2" picture is laid in the atlas' own frame: its row at PictureV(the band's
+// v). The mesh is the same; a "cap1" picture is not taken as a capped one (the old dome) rather than drawn with the seam.
+constexpr char kCapMark[8] = {'D', '2', 'R', 'V', 'c', 'a', 'p', '2'};
+inline bool HasCap(const std::string& dds) { return dds.size() >= kCapMarkAt + 8 && std::memcmp(dds.data() + kCapMarkAt, kCapMark, 8) == 0; }
+inline double CapEl() { return 90.0 - std::atan(kCapDisc) * 57.29577951308232; }   // the disc's edge, degrees (73.68)
+inline double PanoTopEl() { return CapEl() + 1.0; }
+// A band's v (the dome's uv: PanoV, CapUv) as the row of its picture the atlas puts there (BandV: kInset off the band's edges), and back
+inline double PictureV(double bandV) { return kInset + bandV * (1.0 - 2.0 * kInset); }
+inline double BandVOfPicture(double pictureV) { return (pictureV - kInset) / (1.0 - 2.0 * kInset); }
+// The panorama's v (0 the picture's top, 1 its bottom) at an elevation, and back
+inline double PanoV(double el) { return kCapRows + (PanoTopEl() - el) / (PanoTopEl() - kPanoLowEl) * (1.0 - kCapRows); }
+inline double PanoEl(double v) { return PanoTopEl() - (v - kCapRows) / (1.0 - kCapRows) * (PanoTopEl() - kPanoLowEl); }
+// The cap's uv in the picture for q = dir.xz / dir.y, and back
+inline void CapUv(double qx, double qz, double* u, double* v) {
+    *u = (qx / kCapHalf + 1.0) * 0.5 * kCapCols;
+    *v = (qz / kCapHalf + 1.0) * 0.5 * kCapRows;
+}
+inline void CapQ(double u, double v, double* qx, double* qz) {
+    *qx = (u / kCapCols * 2.0 - 1.0) * kCapHalf;
+    *qz = (v / kCapRows * 2.0 - 1.0) * kCapHalf;
+}
+inline bool InCap(double u, double v) { return u < kCapCols && v < kCapRows; }
 
 // ---- the DDS files (a DX10 header: BC6H) ----
 constexpr size_t kHeader = 4 + 124 + 20;   // "DDS ", DDS_HEADER, DDS_HEADER_DXT10

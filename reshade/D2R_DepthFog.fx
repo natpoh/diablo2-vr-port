@@ -2097,6 +2097,15 @@ uniform bool GameMapTurnOn < hidden = true; > = false;
 uniform float4 GameMapTurnCircle < hidden = true; > = float4(0.0, 0.0, 1.0, 1.0);
 uniform float2 GameMapTurnHero < hidden = true; > = float2(0.5, 0.5);
 uniform float4 GameMapTurnM < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform bool GameMapTurnWhole < hidden = true; > = false;
+// [hud] map_compass_flat (vrcam vr/map_turn.h CompassOnScreen): the VR map's compass strip over the turned map - its picture (xr.cpp
+// PaintCompass: two revolutions side by side, 1536 x 96, the marker's wedge under it at 0,96 32 x 16; RGBA8, black see-through) uploaded by
+// vrcam; GameCompassBox where on the screen (uv l, t, r, b), GameCompassCrop the window's left edge in it (uv; the window is a third wide).
+uniform bool GameCompassOn < hidden = true; > = false;
+uniform float4 GameCompassBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float GameCompassCrop < hidden = true; > = 0.0;
+texture2D GameCompassTex { Width = 1536; Height = 112; Format = RGBA8; };
+sampler2D GameCompassSmp { Texture = GameCompassTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };   // [hud] flat_map_zoom past level 0: not held to the circle - the whole map, turned
 texture2D GameBarTex : D2R_GAME_BAR;
 texture2D GameMapTex : D2R_GAME_MAP;
 sampler2D GameBarSmp { Texture = GameBarTex; AddressU = CLAMP; AddressV = CLAMP; };
@@ -2271,12 +2280,28 @@ float4 GameMapRound(float2 uv)
 {
     const float2 q = (uv - GameMapTurnCircle.xy) / GameMapTurnCircle.zw;
     const float r2 = dot(q, q);
-    if (r2 > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    if (r2 > 1.0 && !GameMapTurnWhole) return float4(0.0, 0.0, 0.0, 1.0);
     const float2 t = GameMapTurnHero + float2(dot(GameMapTurnM.xy, q), dot(GameMapTurnM.zw, q));
     if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
     const float4 c = tex2Dlod(GameMapSmp, float4(t, 0, 0));
-    const float k = saturate((1.0 - sqrt(r2)) / 0.03);
+    const float k = GameMapTurnWhole ? 1.0 : saturate((1.0 - sqrt(r2)) / 0.03);   // (out of the circle: no rim, the map's own edge)
     return float4(c.rgb * k, 1.0 - (1.0 - c.a) * k);
+}
+
+// [hud] map_compass_flat: the strip's window at GameCompassBox, the marker's gold wedge over its middle at its top edge (premultiplied; alpha
+// the world through).
+float4 GameCompass(float2 uv)
+{
+    const float2 t = (uv - GameCompassBox.xy) / (GameCompassBox.zw - GameCompassBox.xy);
+    if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    const float mw = 32.0 / 512.0, mh = 16.0 / 96.0;   // the marker: its share of the window's width and the strip's height
+    if (abs(t.x - 0.5) < 0.5 * mw && t.y < mh)
+    {
+        const float4 m = tex2Dlod(GameCompassSmp, float4((t.x - 0.5 + 0.5 * mw) / mw * (32.0 / 1536.0), (96.0 + t.y / mh * 16.0) / 112.0, 0, 0));
+        if (m.a > 0.5) return float4(m.rgb, 0.0);
+    }
+    const float4 s = tex2Dlod(GameCompassSmp, float4(GameCompassCrop + t.x * (512.0 / 1536.0), t.y * (96.0 / 112.0), 0, 0));
+    return float4(s.rgb, 1.0 - s.a);
 }
 
 // The toolbar and the map drawn back, as one premultiplied layer (alpha = the world through).
@@ -2292,6 +2317,11 @@ float4 GamePieces(float2 uvIn, float eyeSign)
         const float2 at = src - float2(eyeSign * GameMapShift, 0.0);
         const float4 m = GameMapTurnOn ? GameMapRound(at) : GamePiece(GameMapSmp, GameMapBox, at);   // the map over the toolbar where they meet
         p = float4(m.rgb + p.rgb * m.a, p.a * m.a);
+        [branch] if (GameMapTurnOn && GameCompassOn)
+        {
+            const float4 c = GameCompass(at);   // the compass over the map
+            p = float4(c.rgb + p.rgb * c.a, p.a * c.a);
+        }
     }
     return p;
 }
