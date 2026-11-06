@@ -25,6 +25,7 @@
 #include "solids_assets.h"    // [weight] world_contact: the level pieces' solid parts out of their own meshes (CascLib)
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
 #include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
+#include "allies_place.h"    // [hud] allies_place: where the allies are shown (F4), and the one-time move of the three old ticks
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
 #include <tlhelp32.h>
@@ -64,6 +65,7 @@
 #include "crash_reply.h"         // our reply to a crash report the player sent: sent.jsonl / replies.jsonl, the answer, the notice (tested)
 #include "d2r_vr_crash_watch.h"   // [support] crash_reports / send_logs: D2R VR Crash Reporter's place, its quiet event, a report's state (docs/crash_watchdog.md)
 #include "rtss_detect.h"         // [support] rtss_warning: RivaTuner's programs by name (the Home Warning row, UpdateRtssWarning)
+#include "game_version.h"        // the game data's version from D2RLoader's log: older than 3.x a Warning on Home (UpdateGameVersionWarning; crash group K)
 #include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
 #include "reshade_paths.h"   // D2R VR's two search paths (up to 0.202) out of a player's dxgi.dll ReShade's ReShade.ini again: text edits, tested (shared/reshade_paths.h)
 #include "bw_output.h"      // BodyWalk's Output in its settings file: does its pad reach the game (the Status row, tested)
@@ -74,6 +76,8 @@
 #include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
 #include "ceiling_levels.h"   // the Ceiling tab's rooms in the game's order, with the levels each covers (checked by dome_assets_test)
 #include "../../vr/direct_remap.h"   // [direct]: the list of controller buttons ("@remap" rows), read and written by the plugin's own parser (tested)
+#include "../../vr/strike_stats.h"   // [stats] strike_stats: the Stats tab reads the plugin's strike_stats.txt (its parser, tested)
+#include "../../vr/weapon_names.h"   // ... and names the weapons by their item codes
 #include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
 #include "../../vr/low_hp_eq.h"      // [hud] low_hp_cover_eq / low_mp_cover_eq: the vignettes' equalizer - its points and range (tested: low_hp_eq_test)
 #include "../../vr/low_mp.h"         // [hud] low_mp_vignette: the low-mana blue's band keys and defaults (low_mp_cover_eq_<percent>; tested: low_mp_test)
@@ -428,6 +432,13 @@ constexpr const wchar_t* kFlatMapZoomTip =
     L"the whole level fits; + goes back the same steps and into the circle. Ctrl + mouse wheel does the same. It is the game's own map "
     L"zoom, so the game draws the map smaller itself - walls and markers stay sharp. The step is kept for the next game. While the chat "
     L"line or a panel is open, or the map is shut, the keys are the game's. Unticked: the keys are the game's and the map is as before. Live.";
+// [hud] flat_map_place (vr/minimap_side.h PlaceMode): the flat game's map left, in the middle or right, whether it turns or not
+constexpr const wchar_t* kFlatMapPlaceTip =
+    L"The flat game (on the monitor): where the game's map is. Left or Right: the corner map there - round and turned if Map turns with the "
+    L"camera is ticked. Centre: the game's whole-screen map over the middle of the view, as before (it has no box of its own, so it does "
+    L"not turn; the arrow on it still shows where you look). The mod puts the map there with the game's own setter while you play, for "
+    L"this session only - the game's options keep their own choice. As in the game's options: the map where the game's options put it "
+    L"(with Map turns with the camera, a whole-screen map goes in the top right corner while it turns). Live.";
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2 / F3
 constexpr const wchar_t* kMapRotateFlatTip =
     L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round "
@@ -435,7 +446,7 @@ constexpr const wchar_t* kMapRotateFlatTip =
     L"VR F3 (the game on your floor): the way your head looks across the floor is up - walk round the game and the map turns. The gold "
     L"arrow (Arrow on the map) then points up. Only a corner map can turn: with the game's map in the middle of the screen (its whole-screen "
     L"map) it is put in the top right corner while it turns (Corner map is: left puts it left) and back to the whole screen when it does not - "
-    L"for this session only, the game's options keep your choice. Not F1 (the "
+    L"for this session only, the game's options keep your choice (Map on the screen picks left, centre or right yourself). Not F1 (the "
     L"game's camera and its window never turn there) and not VR F4 (its map in the hand has its own Turns with you). Needs D2R_DepthFog.fx "
     L"on (it draws the map back). Unticked: the map as the game draws it. Live.";
 // [hud] map_top_down / map_rotate / map_compass (vr/map_turn.h, after bearstonem/d2r-pcvr's wrist map): the map in the hand, VR F4
@@ -731,6 +742,10 @@ std::vector<Item> g_items = {
     Hide(Warning(L"rtss_warn", L"RivaTuner Statistics Server or MSI Afterburner is running. Its on-screen display hooks the game's picture and can "
                  L"freeze the game at its first picture in VR. Close RivaTuner / MSI Afterburner, or in RivaTuner set Application detection "
                  L"level None (or turn its On-Screen Display off) for D2R.exe and D2RLoader.exe.")),
+    // The game data older than 3.x (shared/game_version.h, UpdateGameVersionWarning; crash rows 272 / 275): D2RLoader's own log says so - a broken install.
+    Hide(Warning(L"game_old", L"The game's data is older than 3.x (D2RLoader's log) while the game program is newer: a broken or old install, and the "
+                 L"game will likely crash before its title screen. Repair it: Battle.net - Diablo II: Resurrected - the gear by Play - Scan and Repair "
+                 L"(Steam: Properties - Installed Files - Verify integrity), then start again.")),
     Status(L"d2rloader", L"D2RLoader"),
     // Download and install D2RLoader: shown while there is no D2RLoader.exe beside D2R.exe (D2RLoaderStatus).
     Hide(Button(L"@run", L"d2rloader_get", L"Download and install D2RLoader 1.3.1",
@@ -1685,6 +1700,28 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"quick_blow", 1, Needs(L"gameplay", L"quick_blow_faster", 1, Slider(L"gameplay", L"quick_blow_min_ms", L"Quick blow: the least wait between blows, ms", 0, 1000, 10, 200,
            L"Strike faster than the animation: no next blow sooner than this after the last one (the server's frame is 40 ms, so the wait is "
            L"counted in whole frames). 0: as fast as you touch. A TCP/IP game: the host's value. Live."))),
+    // [hud] swing_timer (vr/swing_timer.h, Serg 2026-11-05: "держать игрока в курсе движка, чтобы он не махал впустую"; "всё это ставится по галочке
+    // в настройках, кому не надо - отключит"): only shown, so a group of its own, not under the warning's mechanics
+    Group(L"Swing timer", L"After each attack, how long until the game takes the next one, and what the blow did. Only shown: the game's attack speed and roll stay as they are."),
+    Toggle(L"hud", L"swing_timer", L"Swing timer: when the next attack counts", 0,
+           L"VR first person (F4) and the monitor's F2 / F3. Nothing is shown until you attack: no ring means go. Once the game starts an attack, "
+           L"a ring in the middle of the view fills until the game lets the next attack in. Red: the game refuses a new attack now - a touch then "
+           L"is lost and says \"too soon\". Amber: the game's last moments of the animation - an attack now is kept and lands as the animation ends. "
+           L"Green: in. Then the ring melts away. Inside it, what the blow did: the life it took (a critical hit in gold and larger; one swing "
+           L"through several monsters summed, with x2, x3 ...), or miss, blocked, dodged, avoided. Nothing here changes the game: its attack "
+           L"speed, its roll and its damage are its own - the ring only shows its timing so you swing with it, not into it. Single player or a "
+           L"game you host: exact. Joined to someone's TCP/IP game: the ring from your hero's own animation (close, not exact) and no numbers. "
+           L"The monitor needs D2R_DepthFog.fx on in ReShade. Unticked: nothing shown. Live."),
+    Needs(L"hud", L"swing_timer", 1, Choice(L"hud", L"swing_timer_style", L"Swing timer: where", 0, {L"Ring in the middle", L"Bar at the top"},
+           L"Ring in the middle: a small ring round the middle of the view (in VR before the eyes, on the monitor round the crosshair), the "
+           L"number inside it. Bar at the top: a bar across the top of the view filling left to right, the numbers rising over it and fading. Live.")),
+    // [gameplay] swing_pace_joined (vr/swing_timer.h PaceAt, Serg 2026-11-05: "расчёт на клиенте, регистрация на сервере. Для жёлтой зоны небольшая
+    // задержка, для красной - промах"): changes what a joined client sends, so a box of its own, the timer's picture not needed
+    Toggle(L"gameplay", L"swing_pace_joined", L"Joined: send a touch when the host takes it (VR)", 0,
+           L"Joined to someone else's TCP/IP game, VR first person (F4). The host's game decides when your hero may attack again, and a touch it refuses is lost. Ticked: your PC counts your hero's attack the way the swing timer does (from your hero's own animation) and sends a touch only when the host will take it - a touch while it would refuse is not sent (\"too soon\"), one in the last moments of the attack is held and sent as it ends, so it is never thrown away on the way. The attack, its speed and its roll stay the host's game's. Works from your second attack on (the first one is measured). Single player or a game you host: nothing changes (your own game decides at once). Unticked: every touch is sent as it comes. Live."),
+    Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_numbers", L"Swing timer: show what the blow did", 1,
+           L"The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone (\"too soon\" "
+           L"still shows). Single player or a game you host only: a joined player's blows are rolled on the host's machine. Live.")),
     // [hud] game_menu_settings (vr/flat_menu.h, vr/host_rules.h): the flat game's settings from the pause menu, the host's rules shown (2026-11-05,
     // Pavel's idea: Counter-Strike's list of a server's rules on a key and in the console)
     Group(L"In-game settings and the host's rules", L"A D2R VR settings button in the game's pause menu (2D on the monitor) and a list of the host's rules above in co-op."),
@@ -2311,6 +2348,7 @@ std::vector<Item> g_items = {
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip),
     Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip)),
+    Choice(L"hud", L"flat_map_place", L"Map on the screen", 0, {L"As in the game's options", L"Left", L"Centre", L"Right"}, kFlatMapPlaceTip),
     Toggle(L"hud", L"flat_map_zoom", L"Zoom the map out with - and back with +", 1, kFlatMapZoomTip),
     Needs(L"hud", L"flat_map_zoom", 1, Slider(L"hud", L"flat_map_zoom_level", L"Map zoom step", -4, 0, 1, 0,
            L"0: the map as before (round, if it turns with the camera). -1: out of the circle, the map's whole box at the game's own zoom. "
@@ -2441,6 +2479,27 @@ std::vector<Item> g_items = {
            L"very line, no keyboard needed; the game checks it, keeps it and says so, and the row shows the count read back from the game. "
            L"The game takes it only in a game of your own: single player, or as the host of a TCP/IP game. Off: the row only shows the "
            L"game's count, nothing is sent. Live.")),
+    // [openxr] hands_kept / bare_hand_poses / panels_key (vr/hand_keep.h, docs/notes/no_controllers.md): the hands and the panels when the runtime gives no controllers
+    Toggle(L"openxr", L"hands_kept", L"Hands stay when the controllers are gone (F4)", 0,
+           L"VR first person (F4), native OpenXR. When the headset stops giving the controllers (Quest switches to hand tracking, Virtual "
+           L"Desktop stops sending them) a hand has no place, and everything on it vanished: the wrist medallions, the map in the hand with "
+           L"the allies' portraits, the laser. Ticked: such a hand keeps a place by your head - where it last was (never seen: at rest below "
+           L"and in front of you) - and comes round with your turns slowly (at most 0.5 m/s, so it never strikes, throws or swings anything); "
+           L"it presses nothing. The controller back, the hand is where the controller is at once. Off: as before. Live."),
+    Toggle(L"openxr", L"game_front", L"Without controllers the game keeps the keyboard (Esc, Save and Exit)", 0,
+           L"Native OpenXR. With no controller in either hand (put down, or the headset switched to hand tracking) and you playing in the headset, the "
+           L"keyboard is the way to the game's pause menu - but a click outside the game (or a hand-tracking pinch on the desktop) gives the keyboard "
+           L"to another program, and Esc then goes there: the game cannot be left. Ticked: that program gives the keyboard back to the game's window "
+           L"after 2 seconds (never D2R VR Authentic Settings), and Esc pressed meanwhile is posted to the game's window, so the pause menu (Save and "
+           L"Exit) comes up in front of you. Off: the keyboard stays where Windows puts it, as before. Live."),
+    Toggle(L"openxr", L"bare_hand_poses", L"Hand tracking: your bare hands place the arms (F4)", 0,
+           L"VR first person (F4), native OpenXR, a headset with hand tracking. A bare hand (no controller in it) places its arm and what "
+           L"hangs off it - the medallions, the map - where your real hand is (the pose the headset gives for it, else its palm), and still "
+           L"presses nothing in the game: no attack, no button. Its pinch reaches only the headset settings and the skill panel while one of "
+           L"them is up (the laser hand's pinch is their trigger). Off: a bare hand places nothing, as before. Live."),
+    Choice(L"openxr", L"panels_key", L"Key that opens the skill panel / headset settings", 0, {L"None", L"Insert", L"Home", L"End"},
+           L"With the game window in front, this keyboard key opens and closes the skill panel (or, without one, the settings panel in the "
+           L"headset) as the long press of the right stick does - for when the headset gives no controllers. Live."),
     // [screen] menu_distance_m: vrcam asks FlatVR for it through Game Link (GameState, host API 6).
     Group(L"Belt potions", L"The potions of your belt hang on the hero's hips as the game's own models (F4). Take one with the grip and tip it at your mouth to drink, throw it on the ground or to your mercenary. The sliders set where the belt hangs, a hand's reach, how a bottle sits in the hand and how it lights up."),
     Toggle(L"hands", L"belt_models", L"Potions on the belt, the game's own models", 1,
@@ -2576,6 +2635,27 @@ std::vector<Item> g_items = {
     Needs(L"hands", L"belt_throw_merc", 1, Slider(L"hands", L"belt_merc_reach_cm", L"Mercenary: landed this near his feet, cm", 20, 500, 10, 150,
            L"A potion thrown to the mercenary that lands within this distance of his feet is his. Live.")),
     Group(L"Item labels on the ground", L"The names of items on the ground in first person (F4): the box's opacity, their size, smaller far away, and their stereo depth, so each label sits at its own item instead of floating far off. The names over monsters are set in Monster plates."),
+    // [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): our own sharp names in the game's places, F4
+    Toggle(L"hud", L"labels_own", L"Item labels: our own, sharp (test)", 0,
+           L"The names of items on the ground drawn by the mod instead of the game's copy: sharp at any render size, in the item's colour, each at its "
+           L"own item's depth. The game still lays them out, so pointing at them, the mouse, Show Items and picking up work as before. The opacity "
+           L"below applies to them too; their size by distance is their own (the \"Our labels\" sliders below). First person (F4). Needs the D2R_DepthFog.fx of the same build. Live. Unticked: "
+           L"the game's labels, as before."),
+    // [hud] labels_own_* (vr/own_labels.h CurveK): our labels' own size by distance - one smooth curve (Serg, 0.205.6: "even shrinking by distance")
+    Slider(L"hud", L"labels_own_near_pct", L"Our labels: size near, %", 10, 300, 5, 100,
+           L"Our own sharp labels (item names, and the name over a monster with \"Name over a monster: our own\") at the near distance below and nearer, in % "
+           L"of the game's size. Between the near and the far distance they shrink smoothly - one even curve by the distance, no step - to the far size. "
+           L"For our labels these take the place of the size and size-far-away sliders (for the monster plate too while its name is ours); the game's "
+           L"labels keep those. Live."),
+    Slider(L"hud", L"labels_own_far_pct", L"Our labels: size far, %", 10, 300, 5, 40,
+           L"Our own labels at the far distance below and farther, in % of the game's size. Live."),
+    Slider(L"hud", L"labels_own_near_m", L"Our labels: near distance, m", 0.5f, 10, 0.5f, 1.5f,
+           L"Up to this distance from you our labels keep their near size. Live."),
+    Slider(L"hud", L"labels_own_far_m", L"Our labels: far distance, m", 3, 60, 1, 20,
+           L"From this distance on our labels keep their far size; between the two they shrink evenly. Live."),
+    Slider(L"hud", L"labels_own_min_px", L"Our labels: smallest height, px", 0, 80, 2, 24,
+           L"Our own item labels are never drawn smaller than this many pixels of the eye's picture, however far or "
+           L"small the game would make them, so they stay readable at 5-10 m. 0 = no limit. Live."),
     Slider(L"hud", L"labels_alpha", L"Item labels: opacity", 0, 1, 0.05f, 1,
            L"How much of the dark box behind the names of items on the ground is drawn in first person (F4): 1 = as the game draws "
            L"it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "
@@ -2604,6 +2684,27 @@ std::vector<Item> g_items = {
            L"The name of the item your hand points at (Controls: Pick up by pointing), in % of the other item labels' size above - its rim "
            L"and colour stay. 100 = as the other names. Live."),
     Group(L"Monster plates", L"The name and health bar over the monster you target: opacity, size, smaller far away, height and stereo depth, so in F4 it sits at its monster. Plate over the monster's head keeps it a set gap over the head at any distance."),
+    // [hud] monster_names_own (vr/own_names.h, docs/notes/custom_labels.md stage 2): the plate's name drawn by us, sharp, F4
+    Toggle(L"hud", L"monster_names_own", L"Name over a monster: our own, sharp (test)", 0,
+           L"The name in the plate over the monster you target drawn by the mod instead of the game's copy: sharp at any render size, in the game's "
+           L"colours (unique gold, champion blue). The bar, its frame and the targeting stay the game's. It has its own size, size far away and backdrop "
+           L"(\"Our names\" below) and stands at its monster's own depth; the plate's sliders stay the game plate's. First person (F4); not with the plate hung in the room. Needs the "
+           L"D2R_DepthFog.fx of the same build. Live. Unticked: the game's name, as before."),
+    // [hud] npc_names_own (vr/own_names.h): the hover names over NPCs, objects, portals - the game's hover tooltip's texts drawn by us, F4
+    Toggle(L"hud", L"npc_names_own", L"Names over NPCs and objects: our own, sharp (test)", 0,
+           L"The names the game shows over the NPCs (Warriv, Kashya, Akara...), objects, portals and exits you point at, drawn by the mod instead of "
+           L"the game's copy: sharp at any render size, where the game puts them, on the game's own dark box, with the size and backdrop of \"Our names\" "
+           L"below. First person (F4). Needs the "
+           L"D2R_DepthFog.fx of the same build. Live. Unticked: the game's names, as before."),
+    // [hud] names_own_* (vr/own_names.h NameLook): our names' own three sliders - none of the game plate's (Serg, 0.205.9)
+    Slider(L"hud", L"names_own_size_pct", L"Our names: size, %", 20, 300, 5, 100,
+           L"Our own names over monsters and NPCs (the two ticks above), in % of the game's text. Our names take none of the plate's sliders below "
+           L"(they are the game plate's); these three are theirs. Live."),
+    Slider(L"hud", L"names_own_far_pct", L"Our names: size far away, % of the size", 10, 150, 5, 60,
+           L"Our names over a monster far off this much of the size above: at the near distance of \"Our labels\" (Item labels group) and nearer "
+           L"the size above, at its far distance and farther this share of it, one smooth curve between. 100 = the same size at any distance. Live."),
+    Slider(L"hud", L"names_own_alpha", L"Our names: backdrop opacity", 0, 1, 0.05f, 0,
+           L"A dark box behind our names: 0 = none (the game's bar shows round the letters), 1 = solid. The letters stay whole. Live."),
     // [hud] monster_alpha, monster_size: the plate over the monster - HUDMonsterHealth's TargetAttached with a pad (gamestate ReadPlate)
     Slider(L"hud", L"monster_alpha", L"Name over a monster: opacity", 0, 1, 0.05f, 1,
            L"The name plate the game shows for the monster you target (box, frame and name alike): 1 = as the game draws it, "
@@ -2830,6 +2931,22 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_beside_inventory", L"Map beside the inventory on the hand", 0, kMapBesideInventoryTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_follow", L"Big map in front: stays in the room, follows slowly", 0, kMapBigFollowTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_grab", L"Big map in front: grab and move it (laser + grip)", 0, kMapBigGrabTip)),
+    // [hud] allies_place (shared/allies_place.h): where the allies are shown in VR F4 - one place of three (Serg, test 0.205.6: "a selector, not ticks")
+    Needs(L"openxr", L"on", 1, Choice(L"hud", L"allies_place", L"Allies shown (F4)", 0, {L"The game's row at the top", L"Under the map in the hand", L"On the right wrist"},
+           L"VR first person (F4), native OpenXR. Where your mercenary, your summons and your party are shown - in one place only. The game's row at "
+           L"the top: the game's own portraits, as it draws them (in the headset at the very edge of the view). Under the map in the hand: a grid of tiles "
+           L"under the map held in your hand, and under the big map when it is up (bigger there). On the right wrist: the same tiles over the right wrist "
+           L"when you turn its back to your eyes (the wrist status panel's place and size). Each tile: the game's own portrait, the name, the life bar "
+           L"(green, yellow, red), a group's count and a player's level. Read from the game's own lists, single player and co-op alike; nothing in the game "
+           L"is changed. The portraits are copied from your game into d2r_vr_game_ui beside the plugin (without them: initials). Live.")),
+    Needs(L"openxr", L"on", 1, ShowFor(L"hud", L"allies_place", 1u << 1, Slider(L"hud", L"allies_map_cols", L"Allies under the map: tiles across", 1, 8, 1, 4,
+           L"How many tiles stand side by side under the map; the rows are as many as your allies need. Live."))),
+    Needs(L"openxr", L"on", 1, ShowFor(L"hud", L"allies_place", 1u << 1, Slider(L"hud", L"ally_portraits_size", L"Allies under the map: width, % of the map", 50, 200, 5, 125,
+           L"How wide four tiles are, in percent of the map's width (the orb in the hand: its ball); more or fewer across keep the tiles that size. "
+           L"125: a little wider than the orb. At most 40 cm under the map in the hand and 60 cm under the big map. Live."))),
+    Needs(L"openxr", L"on", 1, ShowFor(L"hud", L"allies_place", 1u << 2, Slider(L"hud", L"allies_wrist_cols", L"Allies on the wrist: tiles across", 1, 8, 1, 3,
+           L"How many tiles stand side by side over the right wrist (each a 2.5th of the wrist status panel's width); the rows are as many as your "
+           L"allies need, the bottom one on the panel's place. Live."))),
     Choice(L"hud", L"hide", L"Hide the game's interface", 0, {L"Nothing", L"The toolbar", L"All of it"},
            L"The game draws its whole interface into a layer of its own. \"The toolbar\" empties only the toolbar's strip "
            L"(found from the screen's size and the game's interface size); "
@@ -3083,14 +3200,13 @@ std::vector<Item> g_items = {
            L"Damage, Decrepify, Chilled, Poisoned ...) under a red rim - and the right wrist what you COMMAND: how many skeletons, mages, golems, wolves, ravens, vines, sentries, hydras, "
            L"demons you have, and your mercenary (a red 0 when it is dead). Read from the game's own lists, nothing is changed. The skill icons come from the local icon cache (see the skill "
            L"wheel); without it the chips show initials. Needs the plugin and the effect of this version; the wrists as such are the medallions above. Live."))),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Toggle(L"hud", L"wrist_status_companions", L"Show the summons and the mercenary", 1,
-           L"Counters for your skeletons, mages, golems, revived monsters, valkyrie, decoy, ravens, wolves, grizzly, spirit, vines, shadows, sentries, traps, hydras, demons and the mercenary. Live.")))),
+    // (the summons' and the merc's counters are gone from the wrist status: the allies are shown where Map > Allies shown says - [hud] allies_place)
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Toggle(L"hud", L"wrist_status_effects", L"Show the buffs, auras and curses", 1,
            L"One chip for each effect that is on you: the helpful ones (auras, buffs, potions, shrines) under a green rim, the harmful ones (curses, ailments) first under a red one, a form or a "
            L"trade-off under a gold one. More than the panel holds: the last chip says how many are left. Live.")))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Choice(L"hud", L"wrist_status_sides", L"Which wrist shows what", 0,
-           {L"Effects on the left, summons on the right", L"Summons on the left, effects on the right", L"Both on both wrists"},
-           L"Where the two kinds of chips come up. A wrist with nothing to show does not come up at all. Live.")))),
+           {L"Effects on the left wrist", L"Effects on the right wrist", L"Effects on both wrists"},
+           L"Which wrist shows the effects' chips (the allies on the right wrist, Map > Allies shown, stand over them). Live.")))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_size_cm", L"Panel width, cm", 6, 16, 0.5f, 10,
            L"How wide the panel is; the chips are a sixth of it. Live.")))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"openxr", L"on", 1, Needs(L"hud", L"wrist_status", 1, Slider(L"hud", L"wrist_status_height_cm", L"Panel height over the wrist, cm", -5, 15, 0.5f, 7,
@@ -4835,24 +4951,27 @@ std::vector<Item> g_items = {
     Warning(L"game_logic", L"These make the game do what its own rules wouldn't: attacks and positions are sent to the game server directly. They change how the "
             L"game plays, and in co-op everyone is affected. Turn them off to play by the game's own rules. (Everything else in the mod is another way of input: "
             L"the game decides.)"),
-    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"By the rules", L"Fully on (not recommended)"},
+    Needs(L"gameplay", L"melee_touch", 1, Choice(L"@directhit", L"mode", L"Direct hit", 0, {L"Off", L"Two-handed extras", L"By the rules", L"Always (not recommended)"},
            L"Off: the touch presses the game's own attack (its animation, its attack rate, its reach). "
-           L"BY THE RULES: the FIRST touch on a monster is a direct hit. Then a touch on the SAME monster sooner than your hero's attack takes "
+           L"TWO-HANDED EXTRAS: a two-handed weapon held in both hands - the 2nd and further monsters one swing goes through get a direct hit by "
+           L"the rules below (the game has no one-swing-many-monsters; needs the cleave box below); the first monster and every other touch are the "
+           L"game's own attack (with quick blow: its blow on the first frame). "
+           L"BY THE RULES: the FIRST touch on a monster is a direct hit too. Then a touch on the SAME monster sooner than your hero's attack takes "
            L"(measured from his own attack animation, so it follows his attack speed) is the game's own attack - poking fast wins nothing. After "
            L"that, a touch on it is a direct hit again only for a real swing: the least speed, force and swing length (your controller's own "
            L"path) below. Another monster is never too soon. A TWO-HANDED weapon needs both hands on it (the two-hand grip): in one hand its "
            L"touch is the game's own attack. A touch that fails a rule still attacks: the game's own attack, never nothing. The two-handed "
            L"cleave only with its own box below. "
-           L"FULLY ON (not recommended): every accepted touch is a direct hit, as the old experimental box did. "
+           L"ALWAYS (not recommended): every accepted touch is a direct hit, as the old experimental box did, quick blow or not. "
            L"What a direct hit is: in single player and as the host, the plugin calls the game's server attack itself (the hit roll, the damage "
            L"and the wear are the game's; no animation, no wait for the attack rate, no walking up). As a player who JOINED someone's TCP/IP game, "
            L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
            L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
-           L"Writes [gameplay] melee_direct and melee_direct_client. Live. F4 only, like hit by touch.")),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 2, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
+           L"Writes [gameplay] melee_direct, melee_direct_client and melee_direct_scope. Live. F4 only, like hit by touch.")),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 3, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
            L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
            L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Toggle(L"gameplay", L"melee_direct_by_hand",
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2) | (1u << 3), Toggle(L"gameplay", L"melee_direct_by_hand",
            L"Direct hit: each hand strikes with its own weapon (two weapons)", 1,
            L"Single player and the host, a weapon in each hand (Barbarian, Assassin). The game alternates the two weapons itself, on its "
            L"server, every other attack; a direct hit skipped that and always struck with the RIGHT weapon. On: a direct blow of the "
@@ -4861,15 +4980,15 @@ std::vector<Item> g_items = {
            L"freezes, the other burns or poisons - strike with the hand whose weapon suits the monster in front of you. The hit roll and "
            L"the damage stay the game's. Off: every direct blow with the right weapon, as before. A player who joined someone's game: the "
            L"host alternates as the game does. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Slider(L"gameplay", L"melee_direct_client_min_speed", L"Direct hit: least swing speed, m/s", 0.0f, 6.0f, 0.1f, 2.5f,
            L"How fast the blade must move where it touched for the touch to be a direct hit. Real swings are 2 - 6 m/s, pokes about "
            L"1. A strike judged by force counts its arrival's speed. For a repeat on the same monster, and for the cleave. A slower touch is the "
            L"normal attack (the button). 0: no least speed. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
            L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
            L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
            L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
-    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 1, Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
            L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
            L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
            L"For a repeat on the same monster (the first touch on a monster is direct anyway). A shorter swing is the normal attack. 0: no "
@@ -4901,6 +5020,10 @@ std::vector<Item> g_items = {
            L"whatever it weighs, so you do not end up inside it; other heavy ones (bosses, big monsters) only stagger. What the game's knockback refuses stays put. "
            L"The move only in single player or when you host the game (a joined player's are drawn only). Damage, the hit roll and the stun stay the game's. "
            L"F4. Unticked: the landing throws nothing, as before."))),
+    // [stats] strike_stats (vr/strike_stats_wire.cpp): the touch's blows counted per hero and weapon into Saved Games\...\D2R VR Stats\strike_stats.txt
+    Group(L"Strike statistics", L"How many blows you struck by touch, this game and all time, per hero and per weapon, with the speed and the force of your strikes."),
+    Toggle(L"stats", L"strike_stats", L"Count my strikes (statistics)", 1,
+           L"VR first person (F4), Hit by touch: every blow your blade hands to the game is counted - this game and all time, for each hero and each weapon (the base item: Long Sword, Axe...): how many, the speed where the blade touched (m/s, the average and the best) and the strike's force (N s, when the weapon has weight), and the swings that touched a monster but landed nothing (too slow, or the rules: the shaft, not toward it...). The game's roll still decides hit or miss: these are the blows you struck. Kept in Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt (your heroes' names stay on this computer, never in a log or a report); delete the file to start over. Counting only - nothing of the game or the touch changes. Unticked: nothing counted, the file left as it is. Live."),
     Group(L"Skills to BodyWalk", L"Your character's skills go to BodyWalk (Mapping > Game skills): give each one a gesture you record or a button there, and BodyWalk tells the game which skill to cast. The game casts it its own way, from its skill buttons."),
     Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 0,
            L"Your character's learned skills (their names in your game's language, their trees, which of the game's skill buttons each is on) go to "
@@ -5997,6 +6120,10 @@ std::vector<Item> g_items = {
            L"With \"The game draws the sky\" on: our dome in one bright magenta instead of the sky's picture, or the game's own Arreat Summit sky "
            L"model placed the same way - seen, the game draws it; not seen, it does not (the log's \"game sky\" lines count its draws and say "
            L"whether its model loaded). Needs the test files in the mod's data folder. Live."),
+    // [debug] own_labels_dump (vr/own_labels_wire.h DumpAtlas): our labels and names as painted, once, beside the log - view only
+    Toggle(L"debug", L"own_labels_dump", L"Write our labels' and names' picture once (d2r_vr_own_labels.bmp)", 0,
+           L"With our own item labels or names over monsters on: once they are shown, the picture they are drawn from (every name painted so far) is written to "
+           L"d2rloader\\logs\\d2r_vr_own_labels.bmp, to hold against the game's own text. It only writes the file; it changes nothing in play."),
     Toggle(L"debug", L"frame_log", L"Log every frame", 0,
            L"Every pair, view, hero pose and present to d2r_vr_frames.csv beside the ini, and FlatVR its per-frame pose trace."),
     Toggle(L"debug", L"frame_trace", L"Log the long frames and what the plugin spent in them", 0,
@@ -6855,7 +6982,8 @@ float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@window") == 0) return ReadSquareWindow();
     if (wcscmp(it.section, L"@bodywalk") == 0) return ReadBodyWalkValue(it);
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: Off 0 / 0, By the rules 2 / 1, Fully on 1 / 2 ([gameplay] melee_direct / melee_direct_client)
-        return (float)directhit::FromKeys(GetPrivateProfileIntW(L"gameplay", L"melee_direct", 0, g_ini), GetPrivateProfileIntW(L"gameplay", L"melee_direct_client", 0, g_ini));
+        return (float)directhit::FromKeys(GetPrivateProfileIntW(L"gameplay", L"melee_direct", 0, g_ini), GetPrivateProfileIntW(L"gameplay", L"melee_direct_client", 0, g_ini),
+                                          (int)GetPrivateProfileIntW(L"gameplay", L"melee_direct_scope", -1, g_ini), GetPrivateProfileIntW(L"gameplay", L"quick_blow", 1, g_ini) != 0);
     }
     wchar_t buf[64], def[64];
     swprintf_s(def, L"%g", it.def);
@@ -6918,10 +7046,11 @@ void WriteValue(const Item& it, float v) {
     if (wcscmp(it.section, L"@window") == 0) { WriteSquareWindow(v != 0.0f); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: one choice writes the key where the server runs and the joined player's
-        int d = 0, c = 0;
-        directhit::ToKeys((int)std::lround(v), &d, &c);
+        int d = 0, c = 0, scope = -1;
+        directhit::ToKeys((int)std::lround(v), &d, &c, &scope);
         WritePrivateProfileStringW(L"gameplay", L"melee_direct", std::to_wstring(d).c_str(), g_ini);
         WritePrivateProfileStringW(L"gameplay", L"melee_direct_client", std::to_wstring(c).c_str(), g_ini);
+        if (scope >= 0) WritePrivateProfileStringW(L"gameplay", L"melee_direct_scope", std::to_wstring(scope).c_str(), g_ini);   // (Off / Always: kept)
         RefreshControls();
         ShowPreset();
         return;
@@ -8236,6 +8365,29 @@ void UpdateRtssWarning() {
         LayoutPage();
     }
 }
+// Home > The game and the mod: the game data older than 3.x (shared/game_version.h) - D2RLoader's own log, read every 10 s on Home. Only says so.
+void UpdateGameVersionWarning() {
+    static ULONGLONG at = 0;
+    if (at && GetTickCount64() - at < 10000) return;
+    at = GetTickCount64();
+    Item* row = FindItem(L"@status", L"game_old");
+    if (!row) return;
+    const std::wstring path = GameFolder() + L"d2rloader\\logs\\d2rloader.log";
+    gamever::Version v;
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        static char head[65536];
+        DWORD got = 0;
+        if (ReadFile(f, head, sizeof head, &got, nullptr)) v = gamever::FindInLog(head, got);
+        CloseHandle(f);
+    }
+    const bool hide = gamever::Judge(v) != gamever::Support::TooOld;
+    if (row->hidden != hide) {
+        row->hidden = hide;
+        if (!hide) LogLine((L"The game's data is " + std::to_wstring(v.major) + L"." + std::to_wstring(v.minor) + L" (D2RLoader's log), older than 3.x - the warning shown on Home").c_str());
+        LayoutPage();
+    }
+}
 void UpdateReplyNotice();   // (below: our reply to a sent report, on Home)
 void UpdateCrashRepStatus() {
     static ULONGLONG at = 0;
@@ -9105,6 +9257,7 @@ void RefreshStatus() {
     ShowDrawDistance();  // Draw distance: its stop and line (a key may have been changed in the ini meanwhile)
     D2RLoaderStatus();   // The game and ReShade: flat and VR alike
     UpdateRtssWarning();   // ... and the RivaTuner warning while RTSS / Afterburner runs
+    UpdateGameVersionWarning();   // ... and the game data older than 3.x (a broken install)
     ReShadeStatus();
     if (g_platform != 1) return;
     UpdateResolutionTexts();   // the render size's status line and tips (the game may have written the headset's numbers meanwhile)
@@ -9425,6 +9578,205 @@ void AddThrustTable() {
 }
 
 // The tab goes last, after Debug.
+// [stats] strike_stats (vr/strike_stats.h, written by the plugin's vr/strike_stats_wire.cpp): the Stats tab - the player's strike statistics read from
+// Saved Games\Diablo II Resurrected\D2R VR Stats\strike_stats.txt (Serg 2026-11-06, "и во внешнем тоже"). Only reads the file: the last game's blows by
+// weapon, all time by hero and by weapon - how many, the speed where the blade touched and the strike's force (average, best), the swings that missed.
+// The tables have room for kStatsRows rows each; a row not used is left out of the page (Item::hidden) until the file has it.
+constexpr int kStatsRows = 10;
+const wchar_t* const kStatsTables[3] = {L"ss_g", L"ss_h", L"ss_w"};   // the last game's weapons, all time's heroes, all time's weapons
+
+void AddStatsTab() {
+    std::vector<Item> add;
+    add.push_back(Only(kVr, Tab(L"Stats")));
+    add.push_back(Group(L"Strike statistics", L"How many blows you struck by touch in VR first person (F4), in your last game and all time, per hero and per weapon: the speed where "
+                                              L"the blade touched and the force of the strike (average and best), and the swings that touched a monster but landed nothing."));
+    add.push_back(Toggle(L"stats", L"strike_stats", L"Count my strikes (statistics)", 1,
+                         L"The same tick as Strikes > Strike statistics. Ticked: in F4 every blow hit by touch hands to the game is counted (this game and all time, per hero "
+                         L"and per weapon) into Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt. Your heroes' names stay on this computer. Counting "
+                         L"only - nothing of the game or the touch changes. Unticked: nothing counted, the file left as it is. Live."));
+    add.push_back(Status(L"ss_file", L"Reading the strike statistics..."));
+    const auto cell = [](int c, Item i) { i.cell = c; return i; };
+    const wchar_t* const head[7] = {L"Weapon", L"Blows", L"Speed", L"Best", L"Force", L"Best", L"Missed"};   // (the units: in each table's line - a cell has no room)
+    const wchar_t* const headTip[7] = {
+        L"The base item the blade belongs to (the game's own name: a unique or a set item counts under its base), bare fists, or a druid's claws.",
+        L"The blows you struck by touch: each one the touch handed to the game as its own attack (the game still rolls hit or miss).",
+        L"The average speed where the blade touched the monster, m/s (a strike judged by force: how fast it arrived).",
+        L"The fastest blow's speed, m/s.",
+        L"The average force of a strike, N s, as the weight model measures it (a weapon with weight; bare hands and a weapon without it have none: a dash).",
+        L"The strongest blow's force, N s.",
+        L"The swings that touched a monster but landed nothing: too slow, or not by the rules (the shaft or the butt, not toward it, too small, too weak)."};
+    const wchar_t* const groups[3] = {L"Your last game", L"All time: each hero", L"All time: each weapon (every hero)"};
+    const wchar_t* const groupHelp[3] = {
+        L"The game the plugin last counted: every hero you played in it, the blows by weapon (the most first).",
+        L"Every hero the statistics know, the most blows first. A hero whose name could not be read is \"Your hero\".",
+        L"Every weapon you struck with, all your heroes together, the most blows first."};
+    for (int t = 0; t < 3; ++t) {
+        add.push_back(Group(groups[t], groupHelp[t]));
+        add.push_back(Status(Keep(std::wstring(kStatsTables[t]) + L"_line"), L""));
+        for (int c = 0; c < 7; ++c) {
+            Item h = Status(Keep(std::wstring(kStatsTables[t]) + L"_h" + std::to_wstring(c)), t == 1 && c == 0 ? L"Hero" : head[c]);
+            h.tip = t == 1 && c == 0 ? L"The hero (his name and class, as the game has them)." : headTip[c];
+            h.cell = c;   // (the item table's words: translated)
+            add.push_back(h);
+        }
+        for (int r = 0; r <= kStatsRows; ++r)   // row 0: the total of the table; then a row a weapon / hero
+            for (int c = 0; c < 7; ++c) {
+                Item i = cell(c, Status(Keep(std::wstring(kStatsTables[t]) + L"_" + std::to_wstring(r) + L"_" + std::to_wstring(c)), L""));
+                i.tr = true;   // (set by the code)
+                i.hidden = true;
+                add.push_back(i);
+            }
+    }
+    g_items.insert(g_items.end(), add.begin(), add.end());
+}
+
+// The numbers of a row: blows, speed average / best, force average / best, missed ("-" none counted).
+void StatsRowTexts(const strikestats::Agg& g, std::wstring out[6]) {
+    wchar_t b[32];
+    out[0] = std::to_wstring(g.blows);
+    if (g.speedN) { swprintf_s(b, L"%.1f", g.SpeedAvg()); out[1] = b; swprintf_s(b, L"%.1f", g.speedBest); out[2] = b; }
+    else out[1] = out[2] = L"-";
+    if (g.forceN) { swprintf_s(b, L"%.1f", g.ForceAvg()); out[3] = b; swprintf_s(b, L"%.1f", g.forceBest); out[4] = b; }
+    else out[3] = out[4] = L"-";
+    out[5] = std::to_wstring(g.Misses());
+}
+void StatsAdd(strikestats::Agg& to, const strikestats::Agg& g) {
+    to.blows += g.blows;
+    to.speedSum += g.speedSum;
+    to.speedN += g.speedN;
+    to.speedBest = std::max(to.speedBest, g.speedBest);
+    to.forceSum += g.forceSum;
+    to.forceN += g.forceN;
+    to.forceBest = std::max(to.forceBest, g.forceBest);
+    to.missSlow += g.missSlow;
+    to.missOff += g.missOff;
+}
+std::wstring StatsWeaponName(uint32_t code) {
+    if (code == strikestats::kBareHands) return TR(L"stats.bare_fists", L"Bare fists");
+    if (code == strikestats::kPaws) return TR(L"stats.paws", L"Claws (shapeshifted)");
+    if (const char* n = weaponnames::Name(code)) return Wide(n);
+    return Wide(strikestats::CodeText(code).c_str());
+}
+std::wstring StatsHeroName(const strikestats::Hero& h) {
+    static const wchar_t* const cls[8] = {L"Amazon", L"Sorceress", L"Necromancer", L"Paladin", L"Barbarian", L"Druid", L"Assassin", L"Warlock"};   // (the game's class names)
+    const std::wstring c = h.cls >= 0 && h.cls < 8 ? cls[h.cls] : L"";
+    if (h.name.empty()) return c.empty() ? std::wstring(TR(L"stats.hero_unnamed", L"Your hero")) : c;
+    return c.empty() ? Wide(h.name.c_str()) : Wide(h.name.c_str()) + L" (" + c + L")";
+}
+
+// The tab's tables from the file, while the tab is shown: read again when the file changed (the plugin writes it every minute while the game runs).
+void RefreshStats() {
+    const Item* head = FindItem(L"@status", L"ss_file");
+    if (!head || g_tab != head->tab) return;
+    static std::wstring path;
+    if (path.empty()) {
+        PWSTR dir = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &dir))) path = std::wstring(dir) + L"\\Diablo II Resurrected\\D2R VR Stats\\strike_stats.txt";
+        if (dir) CoTaskMemFree(dir);
+        wchar_t test[MAX_PATH] = {};   // (a check of this tab by script reads a sample file instead of the player's: tools only, nothing sets it in play)
+        if (GetEnvironmentVariableW(L"D2RVR_STATS_FILE", test, MAX_PATH)) path = test;
+    }
+    static FILETIME seen{};
+    static bool shown = false;
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    const bool there = !path.empty() && GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fa);
+    if (shown && there && CompareFileTime(&fa.ftLastWriteTime, &seen) == 0) return;
+    if (shown && !there && seen.dwLowDateTime == 0 && seen.dwHighDateTime == 0) return;
+    shown = true;
+    seen = there ? fa.ftLastWriteTime : FILETIME{};
+    strikestats::Store store;
+    int64_t started = 0, updated = 0;
+    bool read = false;
+    if (there) {
+        std::ifstream f(path, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        read = store.Parse(text, &started, &updated);
+    }
+    const auto timeText = [](int64_t t) {
+        if (t <= 0) return std::wstring();
+        const time_t tt = (time_t)t;
+        tm lt{};
+        if (localtime_s(&lt, &tt) != 0) return std::wstring();
+        wchar_t b[40];
+        swprintf_s(b, L"%04d-%02d-%02d %02d:%02d", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+        return std::wstring(b);
+    };
+    if (!there) SetStatus(L"ss_file", kUnknown, TR(L"stats.file.none", L"No statistics yet: swing at a monster in VR first person (F4) with Hit by touch on; the game writes them every minute."));
+    else if (!read) SetStatus(L"ss_file", kWarn, TR(L"stats.file.bad", L"strike_stats.txt could not be read (the game keeps a .bak of the last good one beside it)."));
+    else SetStatus(L"ss_file", kOk, TRF(L"stats.file.read", L"Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt, written {time}", {{L"time", timeText(updated)}}).c_str());
+
+    // the three tables: the rows (a name and an Agg), the total first
+    struct Row { std::wstring name; strikestats::Agg g; };
+    std::vector<Row> tables[3];
+    std::wstring lines[3];
+    {   // the last game: its weapons, every hero who struck in it together
+        std::map<uint32_t, strikestats::Agg> byWeapon;
+        strikestats::Agg total;
+        std::wstring who;
+        for (const strikestats::Hero& h : store.Heroes()) {
+            if (h.session.Empty()) continue;
+            StatsAdd(total, h.session);
+            who += (who.empty() ? L"" : L", ") + StatsHeroName(h);
+            for (const strikestats::Weapon& w : h.weapons) if (!w.session.Empty()) StatsAdd(byWeapon[w.code], w.session);
+        }
+        tables[0].push_back({TR(L"stats.all_weapons", L"All weapons"), total});
+        for (const auto& kv : byWeapon) tables[0].push_back({StatsWeaponName(kv.first), kv.second});
+        lines[0] = who.empty() ? std::wstring(TR(L"stats.game.none", L"No blows by touch in the last game."))
+                               : TRF(L"stats.game.line", L"Started {time}: {who}", {{L"time", timeText(started)}, {L"who", who}});
+    }
+    {   // all time: each hero
+        strikestats::Agg total;
+        for (const strikestats::Hero& h : store.Heroes()) StatsAdd(total, h.total);
+        tables[1].push_back({TR(L"stats.all_heroes", L"All heroes"), total});
+        for (const strikestats::Hero& h : store.Heroes()) if (!h.total.Empty()) tables[1].push_back({StatsHeroName(h), h.total});
+        lines[1] = TRF(L"stats.heroes.line", L"{n} hero(es)", {{L"n", std::to_wstring(tables[1].size() - 1)}});
+    }
+    {   // all time: each weapon, every hero together
+        std::map<uint32_t, strikestats::Agg> byWeapon;
+        strikestats::Agg total;
+        for (const strikestats::Hero& h : store.Heroes())
+            for (const strikestats::Weapon& w : h.weapons) {
+                if (w.total.Empty()) continue;
+                StatsAdd(byWeapon[w.code], w.total);
+                StatsAdd(total, w.total);
+            }
+        tables[2].push_back({TR(L"stats.all_weapons", L"All weapons"), total});
+        for (const auto& kv : byWeapon) tables[2].push_back({StatsWeaponName(kv.first), kv.second});
+        lines[2] = TRF(L"stats.weapons.line", L"{n} weapon(s)", {{L"n", std::to_wstring(tables[2].size() - 1)}});
+    }
+    bool relayout = false;
+    for (int t = 0; t < 3; ++t) {
+        std::vector<Row>& rows = tables[t];
+        std::stable_sort(rows.begin() + 1, rows.end(), [](const Row& a, const Row& b) { return a.g.blows != b.g.blows ? a.g.blows > b.g.blows : a.g.Misses() > b.g.Misses(); });
+        const int more = std::max(0, (int)rows.size() - 1 - kStatsRows);
+        if (rows[0].g.blows) lines[t] += TR(L"stats.units", L" - speed in m/s, force in N s");
+        if (more > 0) lines[t] += TRF(L"stats.more", L" - the {n} most used shown, {more} more in the file", {{L"n", std::to_wstring(kStatsRows)}, {L"more", std::to_wstring(more)}});
+        SetStatus((std::wstring(kStatsTables[t]) + L"_line").c_str(), kUnknown, lines[t].c_str());
+        const bool any = rows[0].g.blows || rows[0].g.Misses();
+        for (int r = 0; r <= kStatsRows; ++r) {
+            const bool use = any && r < (int)rows.size();
+            std::wstring texts[7];
+            if (use) {
+                texts[0] = rows[(size_t)r].name;
+                StatsRowTexts(rows[(size_t)r].g, texts + 1);
+            }
+            for (int c = 0; c < 7; ++c) {
+                const std::wstring key = std::wstring(kStatsTables[t]) + L"_" + std::to_wstring(r) + L"_" + std::to_wstring(c);
+                for (Item& it : g_items) {
+                    if (it.kind != Kind::Status || it.cell != c || wcscmp(it.key, key.c_str()) != 0) continue;
+                    if (it.hidden != !use) { it.hidden = !use; relayout = true; }
+                    if (it.ctl) {
+                        wchar_t now[128];
+                        GetWindowTextW(it.ctl, now, 128);
+                        if (texts[c] != now) SetWindowTextW(it.ctl, texts[c].c_str());
+                    }
+                }
+            }
+        }
+    }
+    if (relayout) LayoutPage();
+}
+
 void AddGameCodeTab() {
     std::vector<Item> add;
     add.push_back(Tab(L"Status"));
@@ -11071,6 +11423,26 @@ void StartMenuArt() {
     }
 }
 
+// [hud] ally_portraits: the game's own portraits beside the plugin (menu_assets.cpp PreparePortraits), on a thread of its own. At the start and when the
+// tick is set; the result to the log.
+menuassets::Result PreparePortraitsNow() {
+    std::wstring dir = g_ini;
+    const size_t slash = dir.find_last_of(L"\\/");
+    dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
+    return menuassets::PreparePortraits(GameFolder(), dir, GetPrivateProfileIntW(L"hud", L"allies_place", 0, g_ini) != 0);   // ([hud] allies_place: under the map or on the wrist)
+}
+
+void StartPortraits() {
+    try {
+        std::thread([] {
+            const menuassets::Result r = PreparePortraitsNow();
+            LogLine(L"allies' portraits: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"allies' portraits: could not be started");
+    }
+}
+
 void StartKurastBoat() {
     if (g_boatBusy.exchange(true)) {
         g_boatAgain.store(true);
@@ -11643,6 +12015,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"world_contact") == 0 || wcscmp(it.key, L"world_contact_hands") == 0)) StartSolidsCatalog();
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
+                if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
                                                          wcscmp(it.key, L"game_sky_closed") == 0)) ||
                     (wcscmp(it.section, L"debug") == 0 && wcscmp(it.key, L"game_sky_test") == 0))
@@ -11699,6 +12072,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartSkyDome();
         StartGameCeiling();
         StartMenuArt();
+        StartPortraits();
         StartDataMods();
         PostMessageW(wnd, WM_APP_ASK_CRASH, 0, 0);   // [support] crash_reports: the one-time question, once the window is up
         return 0;
@@ -11725,6 +12099,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         RefreshRadios();
         RefreshWeaponList();
         RefreshGameCode();
+        RefreshStats();   // [stats] strike_stats: the Stats tab, while it is shown (read again when the file changed)
         FollowHeadsetShot();
         static int tick = 0;
         if (++tick % 2 == 0) RefreshStatus();
@@ -12015,6 +12390,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
+            timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made
             const arcane::Result r = PrepareArcane();
             LogLine(L"arcane sky: " + r.text);
@@ -12035,6 +12411,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         if (argv && argc >= 3 && wcscmp(argv[1], L"--lang-template") == 0) {   // tools/lang_sync.py: the item table's English, keyed
             AddStrikeTable();
             AddThrustTable();
+            AddStatsTab();
             AddGameCodeTab();
             AddRoomsRows();
             FillLanguageItem();
@@ -12088,11 +12465,28 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             WritePrivateProfileStringW(L"debug", L"npc_bodies", nullptr, g_ini);
         }
     }
+    {   // [hud] allies_place (0.205.7) took the place of three ticks (0.205.5 - 0.205.6: ally_portraits, allies_game_hide, wrist_status_companions): an ini
+        // with any of them and no place gets the place they meant (shared/allies_place.h FromOldTicks, as the plugin reads it), the old lines go
+        wchar_t now[16];
+        GetPrivateProfileStringW(L"hud", L"allies_place", L"", now, 16, g_ini);
+        auto old = [](const wchar_t* key) {
+            wchar_t v[16];
+            GetPrivateProfileStringW(L"hud", key, L"", v, 16, g_ini);
+            return v[0] ? (int)wcstol(v, nullptr, 10) : -1;
+        };
+        const int portraits = old(L"ally_portraits"), hide = old(L"allies_game_hide"), companions = old(L"wrist_status_companions");
+        if (portraits >= 0 || hide >= 0 || companions >= 0) {
+            if (!now[0])
+                WritePrivateProfileStringW(L"hud", L"allies_place", std::to_wstring(alliesplace::FromOldTicks(portraits, hide, old(L"wrist_status"), companions)).c_str(), g_ini);
+            for (const wchar_t* k : {L"ally_portraits", L"allies_game_hide", L"wrist_status_companions"}) WritePrivateProfileStringW(L"hud", k, nullptr, g_ini);
+        }
+    }
     wchar_t buf[32];
     GetPrivateProfileStringW(L"window", L"zoom", L"1", buf, 32, g_uiIni);
     g_zoom = std::clamp(std::round(wcstof(buf, nullptr) * 10.0f) / 10.0f, 0.7f, 2.0f);
     AddStrikeTable();
     AddThrustTable();
+    AddStatsTab();
     AddGameCodeTab();
     AddRoomsRows();
     FillLanguageItem();

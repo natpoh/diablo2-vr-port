@@ -509,6 +509,21 @@ void SetVendorOpen(bool open) {
 
 bool SecondRowOn() { return g_secondRow.load(); }
 
+std::atomic<int> g_panelKey{0};   // [openxr] panels_key's virtual key (0 = none)
+void SetPanelKey(int vk) { g_panelKey.store(vk); }
+void RequestPause() { g_pauseAt.store(GetTickCount64()); }
+void PanelKeyTick(bool focus) {
+    static bool was = false;
+    static int told = 0;
+    const int vk = g_panelKey.load();
+    const bool now = vk && focus && (GetAsyncKeyState(vk) & 0x8000) != 0;
+    if (now && !was) {
+        g_panelAt.store(GetTickCount64());   // as a long press asks (TakeSkillPanelToggle): the skill panel, else the headset settings
+        if (told < 5 && ++told) LogF("vrcam: direct input - the panels' key pressed ([openxr] panels_key): the skill panel / the headset settings asked for, as by the right stick's long press");
+    }
+    was = now;
+}
+
 bool TakeSkillPanelToggle() {
     const ULONGLONG at = g_panelAt.exchange(0);
     return at && GetTickCount64() - at < 1000;

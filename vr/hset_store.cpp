@@ -289,13 +289,18 @@ Snapshot LoadSnapshot(const wchar_t* path) {
         s.file[kKeySnap] = snapRaw;                  // as the file has it (0: a legacy "smooth"), what a conflict is judged by
         s.values[kKeySnap] = Normalize(kKeySnap, turnmode::SnapDegrees(snapRaw));
         s.file[kKeySmooth] = s.values[kKeySmooth] = smooth;
-        // Direct hit: the tick is By the rules (shared/direct_hit_mode.h), the other key's value the mode the two say; the file's texts are what a conflict is judged by
+        // Direct hit: melee_direct_client's row is the mode the three keys say (shared/direct_hit_mode.h: 0 Off, 1 Two-handed extras, 2 By the rules,
+        // 3 Always; a missing scope: what quick blow made of By the rules in 0.204); melee_direct's value 1 while it is By the rules either way (the page's
+        // line). The file's texts are what a conflict is judged by.
         const float directRaw = Parse(ini::Read(path, kDefs[kKeyMeleeDirect].section, kDefs[kKeyMeleeDirect].key), 0.0f);
         const float clientRaw = Parse(ini::Read(path, kDefs[kKeyMeleeDirectClient].section, kDefs[kKeyMeleeDirectClient].key), 0.0f);
-        const int mode = directhit::FromKeys((int)std::lround(directRaw), (int)std::lround(clientRaw));
+        const float scopeRaw = Parse(ini::Read(path, kDefs[kKeyMeleeDirectScope].section, kDefs[kKeyMeleeDirectScope].key), -1.0f);
+        const float quickRaw = Parse(ini::Read(path, kDefs[kKeyQuickBlow].section, kDefs[kKeyQuickBlow].key), kDefs[kKeyQuickBlow].def);
+        const int mode = directhit::FromKeys((int)std::lround(directRaw), (int)std::lround(clientRaw), (int)std::lround(scopeRaw), quickRaw > 0.5f);
         s.file[kKeyMeleeDirect] = directRaw;
         s.file[kKeyMeleeDirectClient] = clientRaw;
-        s.values[kKeyMeleeDirect] = mode == directhit::kRules ? 1.0f : 0.0f;
+        s.file[kKeyMeleeDirectScope] = s.values[kKeyMeleeDirectScope] = scopeRaw;
+        s.values[kKeyMeleeDirect] = mode == directhit::kCleave || mode == directhit::kRules ? 1.0f : 0.0f;
         s.values[kKeyMeleeDirectClient] = (float)mode;
     }
     return s;
@@ -308,11 +313,12 @@ Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     // A new snap angle in an ini that says snap=0 for smooth turning (no `smooth` key) must not turn it into a snap profile:
     // `smooth` is written with it, as the mode the panel showed. (Switching the mode alone writes `smooth` alone.)
     if ((write & Bit(kKeySnap)) && !(write & Bit(kKeySmooth))) write |= Bit(kKeySmooth);
-    // Direct hit's tick writes both of its keys, as D2R VR Settings' choice does: on = By the rules (2 / 1), off = Off (0 / 0).
-    const Mask directKeys = Bit(kKeyMeleeDirect) | Bit(kKeyMeleeDirectClient);
-    if (write & directKeys) write |= directKeys;
-    int directText[2] = {0, 0};
-    directhit::ToKeys(r.values[kKeyMeleeDirect] > 0.5f ? directhit::kRules : directhit::kOff, &directText[0], &directText[1]);
+    // Direct hit's row writes its keys, as D2R VR Settings' choice does (shared/direct_hit_mode.h): melee_direct, melee_direct_client, and the scope for
+    // Two-handed extras / By the rules (Off / Always leave it as it is).
+    int directText[3] = {0, 0, -1};
+    directhit::ToKeys((int)std::lround(r.values[kKeyMeleeDirectClient]), &directText[0], &directText[1], &directText[2]);
+    const Mask directKeys = Bit(kKeyMeleeDirect) | Bit(kKeyMeleeDirectClient) | (directText[2] >= 0 ? Bit(kKeyMeleeDirectScope) : Mask{});
+    if (write & (Bit(kKeyMeleeDirect) | Bit(kKeyMeleeDirectClient))) write |= directKeys;
     for (int i = 0; i < kCount; ++i)
         if (write & Bit(i)) {
             const Def& d = kDefs[i];
@@ -328,8 +334,8 @@ Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
             }
             // A key that is missing in the file means what the panel saw when it read it (the default, or for the turn keys what the
             // legacy rule made of it), so a key that is still missing is no conflict.
-            const bool directKey = i == kKeyMeleeDirect || i == kKeyMeleeDirectClient;
-            changes.push_back({d.section, d.key, Text(r.base[i]), Text(r.base[i]), directKey ? Text((float)directText[i == kKeyMeleeDirect ? 0 : 1]) : Text(r.values[i])});
+            const int directSlot = i == kKeyMeleeDirect ? 0 : i == kKeyMeleeDirectClient ? 1 : i == kKeyMeleeDirectScope ? 2 : -1;
+            changes.push_back({d.section, d.key, Text(r.base[i]), Text(r.base[i]), directSlot >= 0 ? Text((float)directText[directSlot]) : Text(r.values[i])});
         }
     if (changes.empty()) return Result::Saved;
     switch (ini::Commit(path, changes, L".before-headset-menu", why)) {

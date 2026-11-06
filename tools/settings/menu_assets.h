@@ -18,4 +18,8 @@ struct Result {
 // A piece already there as the game has it is not written again.
 Result Prepare(const std::wstring& game, const std::wstring& pluginDir, bool on);
 
+// [hud] ally_portraits: the game's own portraits of the players, the mercenary and the summons (shared/ally_portrait_files.h) into the same folder, as
+// portrait_<name>.sprite. Off: nothing is read or written. Each portrait on its own: one the game does not have is left out (the plugin draws initials).
+Result PreparePortraits(const std::wstring& game, const std::wstring& pluginDir, bool on);
+
 }  // namespace menuassets

@@ -130,6 +130,7 @@ void ApplyBackgroundSleep();
 void HookGameWindow();
 void InstallBiomeHook();
 void InstallClientSize(bool on);
+void InstallLabelWidthGuard();
 void InstallRoomHeightHook();
 extern std::atomic<bool> g_renderDirty, g_bigDirty;
 namespace roofhook { void Install(); void Tick(); }   // [render] keep_roofs

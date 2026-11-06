@@ -188,6 +188,10 @@ bool HandInventoryHung();
 // input) must read them from PairInput / the published input - already zero there - or hold its output neutral.
 // The panel itself never sends a click or a key to the game.
 bool HeadsetSettingsOpen();
+// [openxr] game_front (docs/notes/no_controllers.md): the key is on, the headset session is focused and neither hand has a controller (none, or a
+// bare hand) - lately (the last headset frame within half a second). The update thread then gives the game's window the keyboard back and posts
+// a pressed Esc to it (vr/input/actions.cpp GameFrontTick). Any thread.
+bool KeepGameInFront();
 // [openxr] laser whatever [openxr] on says, and its hand (0 left, 1 right): on FlatVR its laser is the
 // mouse on a menu's panel (hud.cpp hands it the hand).
 bool LaserWanted(int* hand);

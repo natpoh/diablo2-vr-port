@@ -96,6 +96,7 @@ extern std::atomic<float> g_walkTheta;
 // vr/input/actions.cpp: keys and the mouse sent to the game, the pause key; the game's actions from the pad (interact apart from
 // attack, the item grab, ApplyActions), the interact target's hook
 void PauseKeyTick();
+void GameFrontTick();   // [openxr] game_front: no controllers - the game's window gets the keyboard back, Esc reaches it (update thread)
 extern std::atomic<ULONGLONG> g_postedEscAt;
 using InteractTargetFn = uintptr_t (*)(uintptr_t mgr, uint32_t player);
 constexpr uint64_t RVA_INTERACT_TARGET = 0x18D960;

@@ -30,6 +30,12 @@ const Sheet& Get(Sprite s);
 // The game's fonts by family name when they were taken in, else nullptr; and whether `face` has every letter of `text`.
 const wchar_t* TitleFace();   // Exocet (the game's titles and buttons)
 const wchar_t* TextFace();    // Formal436 (its lines)
+// Formal436 alone, whatever skill_panel_game_look says ([hud] labels_own's names): taken from the cache the first time it is asked, nullptr
+// while the cache has no such file. Asked on a painter's thread.
+const wchar_t* TextFaceAlone();
+const wchar_t* TitleFaceAlone();
+// A font file's family as GDI names it (its name table's name 1, Windows' platform, US English first); empty when it does not read.
+std::wstring FamilyInFontFile(const std::string& bytes);   // ... and Exocet the same way (our names whose game style is Exocet)
 bool Covers(const wchar_t* face, const std::wstring& text);
 
 // Tests: the cache's folder (default: d2r_vr_game_ui beside this DLL); forgets what was read.

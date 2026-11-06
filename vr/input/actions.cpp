@@ -64,6 +64,51 @@ std::string ForegroundProgram() {
 //    2026-10-17: the long press asked for Esc and the old version dropped it, "nothing happens") - the key is posted to the game's own window instead,
 //    the very WM_KEYDOWN / WM_KEYUP its window procedure gets from the keyboard. Never into another program's window.
 // Each request says which way it went, or why not.
+// [openxr] game_front (docs/notes/no_controllers.md): without controllers the keyboard is the way to the pause menu (Save and Exit) - and Serg's
+// 2026-11-06 session lost it: with Quest's hand tracking the game's window was in front 17 %, 33 %, then 0 % of the time to the end, his Esc went
+// to another program and the game could not be left. With the key on, the headset session focused and no controller in either hand
+// (xr::KeepGameInFront): a press of Esc while another program has the keyboard is posted to the game's window (PauseKeyTick's way, F4), and a
+// program that has held the keyboard for 2 s gives it back to the game's window (not D2R VR Settings: the player is at the monitor then). The
+// update thread, every millisecond; each try told (the first 20).
+bool BringGameFront(HWND w) {
+    HWND fg = GetForegroundWindow();
+    const DWORD me = GetCurrentThreadId(), fgTid = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    MSG m;
+    PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE);   // (a queue for this thread: AttachThreadInput needs one)
+    const bool attached = fgTid && fgTid != me && AttachThreadInput(me, fgTid, TRUE);   // the foreground's input state shared a moment: Windows lets it go
+    if (IsIconic(w)) ShowWindow(w, SW_RESTORE);
+    BringWindowToTop(w);
+    SetForegroundWindow(w);
+    if (attached) AttachThreadInput(me, fgTid, FALSE);
+    return GameFocused();
+}
+void GameFrontTick() {
+    static ULONGLONG lostAt = 0, triedAt = 0;
+    static bool escWas = false;
+    static int told = 0;
+    if (!xr::KeepGameInFront()) { lostAt = 0; escWas = false; return; }
+    const bool focused = GameFocused();
+    const bool esc = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+    if (esc && !escWas && !focused) {
+        directinput::RequestPause();   // PauseKeyTick posts it to the game's window (the keyboard is another program's)
+        if (told++ < 20) LogF("vrcam: openxr - game_front: Esc pressed while %s has the keyboard - posted to the game's window", ForegroundProgram().c_str());
+    }
+    escWas = esc;
+    if (focused) { lostAt = 0; return; }
+    const ULONGLONG now = GetTickCount64();
+    if (!lostAt) lostAt = now;
+    if (now - lostAt < 2000 || now - triedAt < 2000) return;
+    triedAt = now;
+    const std::string who = ForegroundProgram();
+    if (_stricmp(who.c_str(), "D2R_VR_Settings.exe") == 0) return;   // the mod's own settings in front: the player is at the monitor
+    HWND w = GameWindow();
+    if (!w) return;
+    const bool ok = BringGameFront(w);
+    if (told++ < 20)
+        LogF("vrcam: openxr - game_front: %s had the keyboard for %.1f s with no controller in the hands - the game's window brought to the front: %s", who.c_str(),
+             (double)(now - lostAt) / 1000.0, ok ? "it has the keyboard again" : "Windows refused (Esc is still posted to it)");
+}
+
 std::atomic<ULONGLONG> g_postedEscAt{0};   // PauseKeyTick posted its Esc to the game's window then ([openxr] laser_typing: not the player's)
 void PauseKeyTick() {
     static bool down = false, byMessage = false;

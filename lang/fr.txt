@@ -114,6 +114,7 @@ group.draw_distance.help = Jusqu'où le monde est dessiné autour de vous, en un
 group.the_game_and_the_mod = Le jeu et le mod
 group.the_game_and_the_mod.help = Vérifie et installe ce dont le mod a besoin : D2RLoader (le mod ne tourne que sous lui) et l'effet propre du mod (le ciel, le brouillard et le plafond - D2R VR les dessine lui-même, sans ReShade). Votre propre ReShade est laissé tel quel. Le bouton pour créer le ciel du Sanctuaire des Arcanes.
 @status.rtss_warn.label = RivaTuner Statistics Server ou MSI Afterburner est en cours d'exécution. Son affichage à l'écran s'accroche à l'image du jeu et peut figer le jeu sur sa première image en RV. Fermez RivaTuner / MSI Afterburner, ou dans RivaTuner réglez Application detection level sur None (ou désactivez son On-Screen Display) pour D2R.exe et D2RLoader.exe.
+@status.game_old.label = Les données du jeu sont antérieures à 3.x (journal de D2RLoader) alors que le programme du jeu est plus récent : une installation abîmée ou ancienne, et le jeu plantera sans doute avant son écran titre. Réparez-la : Battle.net - Diablo II: Resurrected - la roue dentée près de Jouer - Analyser et réparer (Steam : Propriétés - Fichiers installés - Vérifier l'intégrité), puis relancez.
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = Télécharger et installer D2RLoader 1.3.1
 @run.d2rloader_get.tip = Télécharge D2RLoader 1.3.1 depuis d2rloader.net, le vérifie avec le SHA-256 que le site publie et le décompresse dans le dossier du jeu, à côté de D2R.exe. Le mod ne fonctionne que sous D2RLoader.
@@ -810,6 +811,20 @@ gameplay.quick_blow_faster.tip = DÉPASSE LA VITESSE D'ATTAQUE DU JEU. Avec le c
 gameplay.quick_blow_min_ms.label = Coup rapide : l'attente minimale entre les coups, ms
 gameplay.quick_blow_min_ms.tip = Frapper plus vite que l'animation : aucun coup suivant avant ce délai après le dernier (l'image du serveur dure 40 ms, l'attente se compte donc en images entières). 0 : aussi vite que vous touchez. Une partie TCP/IP : la valeur de l'hôte. En direct.
 
+# --- Swing timer ---
+group.swing_timer = Minuteur d'attaque
+group.swing_timer.help = Après chaque attaque, combien de temps avant que le jeu accepte la suivante, et ce qu'a fait le coup. Affichage seulement : la vitesse d'attaque et le jet du jeu restent tels quels.
+hud.swing_timer.label = Minuteur d'attaque : quand la prochaine attaque compte
+hud.swing_timer.tip = VR première personne (F4) et F2 / F3 du moniteur. Rien ne s'affiche tant que vous n'attaquez pas : pas d'anneau signifie allez-y. Dès que le jeu lance une attaque, un anneau au milieu de la vue se remplit jusqu'à ce que le jeu admette l'attaque suivante. Rouge : le jeu refuse maintenant une nouvelle attaque - un contact est alors perdu et dit "trop tôt". Ambre : les derniers instants de l'animation du jeu - une attaque maintenant est gardée et part à la fin de l'animation. Vert : c'est bon. Puis l'anneau s'efface. Dedans, ce qu'a fait le coup : la vie retirée (un coup critique en doré et plus grand ; un balayage à travers plusieurs monstres additionné, avec x2, x3 ...), ou raté, bloqué, esquivé, évité. Rien ici ne change le jeu : sa vitesse d'attaque, son jet et ses dégâts sont les siens - l'anneau ne montre que son rythme pour que vous frappiez avec lui, pas contre lui. Solo ou partie que vous hébergez : exact. Rejoint à une partie TCP/IP d'un autre : l'anneau vient de l'animation de votre héros (proche, pas exact) et sans chiffres. Le moniteur demande D2R_DepthFog.fx activé dans ReShade. Décoché : rien d'affiché. Immédiat.
+hud.swing_timer_style.label = Minuteur d'attaque : où
+hud.swing_timer_style.tip = Anneau au milieu : un petit anneau autour du milieu de la vue (en VR devant les yeux, sur le moniteur autour du viseur), le nombre à l'intérieur. Barre en haut : une barre en travers du haut de la vue qui se remplit de gauche à droite, les nombres montant dessus et s'effaçant. Immédiat.
+hud.swing_timer_style.choice0 = Anneau au milieu
+hud.swing_timer_style.choice1 = Barre en haut
+gameplay.swing_pace_joined.label = Rejoint : envoyer un contact quand l'hôte l'accepte (VR)
+gameplay.swing_pace_joined.tip = Rejoint à une partie TCP/IP d'un autre, VR première personne (F4). Le jeu de l'hôte décide quand votre héros peut attaquer de nouveau, et un contact qu'il refuse est perdu. Coché : votre PC compte l'attaque de votre héros comme le minuteur d'attaque (d'après l'animation de votre héros) et n'envoie un contact que lorsque l'hôte l'accepte - un contact qu'il refuserait n'est pas envoyé ("trop tôt"), un contact dans les derniers instants de l'attaque est retenu et envoyé à sa fin, de sorte qu'il n'est jamais jeté en chemin. L'attaque, sa vitesse et son jet restent ceux du jeu de l'hôte. Fonctionne dès votre deuxième attaque (la première est mesurée). Solo ou partie que vous hébergez : rien ne change (votre propre jeu décide aussitôt). Décoché : chaque contact est envoyé tel qu'il vient. Immédiat.
+hud.swing_timer_numbers.label = Minuteur d'attaque : montrer ce qu'a fait le coup
+hud.swing_timer_numbers.tip = La vie retirée par le coup, ou raté / bloqué / esquivé / évité, dans l'anneau ou au-dessus de la barre. Décoché : le minuteur seul ("trop tôt" s'affiche toujours). Solo ou partie que vous hébergez seulement : les coups d'un joueur qui a rejoint sont tirés sur la machine de l'hôte. Immédiat.
+
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = Réglages en jeu et règles de l'hôte
 group.in_game_settings_and_the_host_s_rules.help = Un bouton de réglages D2R VR dans le menu pause du jeu (2D sur le moniteur) et une liste des règles de l'hôte au-dessus en coop.
@@ -1082,7 +1097,7 @@ group.toolbar_and_map_from_behind.help = La barre d'outils et la carte à la tro
 hud.map_direction.label = Flèche de la carte : là où vous regardez
 hud.map_direction.tip = Dans les vues de votre propre caméra (F2 et F3 à plat, F2 et F4 en RV), la carte du jeu reste tournée comme pour sa propre caméra du dessus, donc elle ne montre pas de quel côté vous regardez. Coché : une petite flèche dorée à côté du marqueur de votre héros au milieu de la mini-carte du jeu (et de la carte plein écran) pointe là où la caméra regarde - dans l'image, et sur la carte à la main. Dessinée seulement par-dessus la carte du jeu ; la carte et ce qu'elle contient sont ceux du jeu. F1 et le sol (F3 en RV) comme avant. Décoché : la carte comme avant. Effet immédiat.
 hud.map_rotate_flat.label = La carte tourne avec la caméra
-hud.map_rotate_flat.tip = La mini-carte du jeu à l'écran dans les vues de votre propre caméra (plat F2 et F3, VR F2 et F3 avec la carte dans l'image) : dessinée autour de votre héros, vue de dessus, et tournée de sorte que la direction du regard de la caméra soit le haut - tournez la souris et la carte tourne avec vous. VR F3 (le jeu sur votre sol) : la direction où votre tête regarde sur le sol est le haut - marchez autour du jeu et la carte tourne. La flèche dorée (Arrow on the map) pointe alors vers le haut. Seule une mini-carte peut tourner : avec la carte du jeu au milieu de l'écran (sa carte plein écran), elle est placée dans le coin supérieur droit pendant qu'elle tourne (Corner map is : left la met à gauche) et revient en plein écran quand elle ne tourne pas - pour cette session seulement, les options du jeu gardent votre choix. Pas F1 (la caméra du jeu et sa fenêtre n'y tournent jamais) ni VR F4 (sa carte dans la main a son propre Turns with you). Nécessite D2R_DepthFog.fx activé (il redessine la carte). Décoché : la carte telle que le jeu la dessine. Immédiat.
+hud.map_rotate_flat.tip = La carte en coin du jeu à l'écran dans les vues de votre propre caméra (plat F2 et F3, VR F2 et F3 avec la carte dans l'image) : dessinée autour de votre héros, vue d'en haut et tournée pour que la direction où regarde la caméra soit en haut - tournez la souris et la carte tourne avec vous. VR F3 (le jeu sur votre sol) : la direction où votre tête regarde sur le sol est en haut - marchez autour du jeu et la carte tourne. La flèche dorée (Flèche de la carte) pointe alors vers le haut. Seule une carte en coin peut tourner : avec la carte du jeu au milieu de l'écran (sa carte plein écran) elle est mise dans le coin en haut à droite pendant qu'elle tourne (La carte en coin est : gauche la met à gauche) et revient en plein écran quand elle ne tourne pas - pour cette session seulement, les options du jeu gardent votre choix (Carte à l'écran choisit gauche, centre ou droite vous-même). Pas F1 (la caméra du jeu et sa fenêtre n'y tournent jamais) ni VR F4 (sa carte dans la main a son propre Tourne avec vous). Demande D2R_DepthFog.fx activé (il redessine la carte). Décoché : la carte telle que le jeu la dessine. Immédiat.
 hud.map_compass_flat.label = Boussole sur la carte tournée
 hud.map_compass_flat.tip = Avec Carte tournant avec la caméra : la bande de boussole de la carte RV (N, NE, E ...) sur la carte ronde à l'écran, son milieu étant la direction du regard de la caméra, N le haut de la carte du jeu. Sous la carte quand elle est trop près du haut de l'écran. Décoché : pas de bande. Immédiat.
 hud_third.bar_near.tip = Vraie stéréo seulement : + rapproche la barre d'outils des yeux, - la repousse derrière l'écran ; 0 = là où le jeu la met.
@@ -1182,6 +1197,10 @@ body.flat_weapon_adjust.tip = Première personne (F3) : chaque bras avec sa main
 # --- Toolbar and map (F2, F3) ---
 group.toolbar_and_map_f2_f3 = Barre d'outils et carte (F2, F3)
 group.toolbar_and_map_f2_f3.help = La barre d'outils et la carte dans les vues de votre propre caméra (F2 et F3) : cochez la flèche pour voir sur la carte de quel côté vous regardez.
+hud.flat_map_place.label = Carte à l'écran
+hud.flat_map_place.tip = Le jeu à plat (sur le moniteur) : où est la carte du jeu. Gauche ou Droite : la carte en coin là - ronde et tournée si La carte tourne avec la caméra est coché. Centre : la carte plein écran du jeu au milieu de la vue, comme avant (elle n'a pas de cadre propre, donc ne tourne pas ; la flèche dessus montre toujours où vous regardez). Le mod met la carte là avec le setter propre du jeu pendant que vous jouez, pour cette session seulement - les options du jeu gardent leur propre choix. Comme dans les options du jeu : la carte là où les options du jeu la mettent (avec La carte tourne avec la caméra, une carte plein écran va dans le coin en haut à droite pendant qu'elle tourne). Immédiat.
+hud.flat_map_place.choice0 = Comme dans les options du jeu
+hud.flat_map_place.choice2 = Centre
 hud.flat_map_zoom.label = Dézoomer la carte avec - et revenir avec +
 hud.flat_map_zoom.tip = Le jeu à plat (sur le moniteur, toute vue), carte du jeu ouverte : - sort la carte ronde (Carte tournant avec la caméra) de son cercle et montre toute la boîte de la carte, toujours tournée ; chaque - suivant fait dessiner la carte plus petite par le jeu, jusqu'au quart de sa taille, pour que tout le niveau tienne ; + revient par les mêmes pas et dans le cercle. Ctrl + molette de la souris fait pareil. C'est le zoom de carte propre du jeu, donc le jeu dessine lui-même la carte plus petite - murs et repères restent nets. Le pas est gardé pour la partie suivante. Pendant que la ligne de discussion ou un panneau est ouvert, ou que la carte est fermée, les touches sont celles du jeu. Décoché : les touches sont celles du jeu et la carte comme avant. Immédiat.
 hud.flat_map_zoom_level.label = Pas de zoom de la carte
@@ -1251,6 +1270,14 @@ openxr.headset_map_party.label = Groupe sur la carte depuis le casque
 openxr.headset_map_party.tip = La page Coop des réglages du casque reçoit une ligne « La carte du jeu montre » avec deux interrupteurs, Groupe et Noms : les options propres du jeu Options > Carte automatique > Afficher le groupe et Afficher les noms du groupe, telles que le jeu les a maintenant. Avec Afficher le groupe désactivé, le jeu ne dessine aucun allié sur aucune carte - celle dans votre main, la grande, la plate. Un appui est la commande clavier propre du jeu pour cela, donc le jeu la bascule et la garde dans ses propres réglages, comme depuis son menu. Désactivé : pas de ligne. Immédiat.
 openxr.headset_players.label = Joueurs depuis le casque
 openxr.headset_players.tip = La page Options des réglages du casque reçoit une ligne Joueurs (difficulté) qui fonctionne : le nombre de joueurs du jeu, de 1 à 8, comme le règle la commande de chat /players N (l'option du jeu Options > Jouabilité « Ajustement de la difficulté hors ligne »). - et + envoient au jeu cette ligne même, sans clavier ; le jeu la vérifie, la garde et le dit, et la ligne affiche le nombre relu dans le jeu. Le jeu ne l'accepte que dans une partie à vous : en solo, ou comme hôte d'une partie TCP/IP. Désactivé : la ligne affiche seulement le nombre du jeu, rien n'est envoyé. Immédiat.
+openxr.hands_kept.label = Les mains restent quand les manettes sont parties (F4)
+openxr.hands_kept.tip = VR première personne (F4), OpenXR natif. Quand le casque ne donne plus les manettes (le Quest passe au suivi des mains, Virtual Desktop cesse de les envoyer), une main n'a plus de place, et tout ce qui y était a disparu : les médaillons du poignet, la carte dans la main avec les portraits des alliés, le laser. Coché : une telle main garde une place près de votre tête - là où elle était en dernier (jamais vue : au repos sous vous et devant vous) - et suit lentement vos virages (0,5 m/s au plus, donc elle ne frappe, ne jette ni ne brandit jamais rien) ; elle n'appuie sur rien. La manette revenue, la main est aussitôt là où est la manette. Décoché : comme avant. Immédiat.
+openxr.game_front.label = Sans manettes, le jeu garde le clavier (Échap, Sauvegarder et quitter)
+openxr.game_front.tip = OpenXR natif. Sans manette dans aucune main (posées, ou casque passé au suivi des mains) et en jouant dans le casque, le clavier est le chemin vers le menu pause du jeu - mais un clic hors du jeu (ou un pincement du suivi des mains sur le bureau) donne le clavier à un autre programme, et Échap va alors là-bas : on ne peut plus quitter le jeu. Coché : ce programme rend le clavier à la fenêtre du jeu après 2 secondes (jamais D2R VR Authentic Settings), et un Échap pressé entre-temps est envoyé à la fenêtre du jeu, de sorte que le menu pause (Sauvegarder et quitter) s'affiche devant vous. Décoché : le clavier reste où Windows le met, comme avant. Immédiat.
+openxr.bare_hand_poses.label = Suivi des mains : vos mains nues placent les bras (F4)
+openxr.bare_hand_poses.tip = VR première personne (F4), OpenXR natif, un casque avec suivi des mains. Une main nue (sans manette) place son bras et ce qui y est suspendu - les médaillons, la carte - là où est votre vraie main (la pose que le casque donne pour elle, sinon sa paume), et n'appuie toujours sur rien dans le jeu : ni attaque ni bouton. Son pincement n'atteint que les réglages du casque et le panneau de compétences tant que l'un d'eux est ouvert (le pincement de la main laser est leur gâchette). Décoché : une main nue ne place rien, comme avant. Immédiat.
+openxr.panels_key.label = Touche qui ouvre le panneau de compétences / les réglages du casque
+openxr.panels_key.tip = Avec la fenêtre du jeu au premier plan, cette touche du clavier ouvre et ferme le panneau de compétences (ou, sans lui, le panneau de réglages dans le casque) comme l'appui long du stick droit - pour quand le casque ne donne pas de manettes. Immédiat.
 
 # --- Belt potions ---
 group.belt_potions = Potions de la ceinture
@@ -1366,6 +1393,18 @@ hands.belt_merc_reach_cm.tip = Une potion jetée au mercenaire qui atterrit à m
 
 # --- Item labels on the ground ---
 group.item_labels_on_the_ground.help#4 = Les noms des objets au sol en première personne (F4) : l'opacité de la boîte, leur taille, plus petits au loin, et leur profondeur stéréo, pour que chaque étiquette se tienne à son objet au lieu de flotter au loin. Les noms au-dessus des monstres se règlent dans Plaques des monstres.
+hud.labels_own.label = Étiquettes d'objets : les nôtres, nettes (test)
+hud.labels_own.tip = Les noms des objets au sol dessinés par le mod au lieu de la copie du jeu : nets à toute taille de rendu, dans la couleur de l'objet, chacun à la profondeur de son propre objet. Le jeu les place toujours, donc les viser, la souris, Afficher les objets et ramasser fonctionnent comme avant. L'opacité ci-dessous s'y applique aussi ; leur taille selon la distance est la leur (les curseurs "Nos étiquettes" ci-dessous). Première personne (F4). Demande le D2R_DepthFog.fx de la même version. Immédiat. Décoché : les étiquettes du jeu, comme avant.
+hud.labels_own_near_pct.label = Nos étiquettes : taille de près, %
+hud.labels_own_near_pct.tip = Nos propres étiquettes nettes (noms d'objets, et le nom au-dessus d'un monstre avec "Nom au-dessus d'un monstre : le nôtre") à la distance proche ci-dessous et en deçà, en % de la taille du jeu. Entre la distance proche et la lointaine elles rétrécissent en douceur - une courbe régulière selon la distance, sans palier - jusqu'à la taille lointaine. Pour nos étiquettes, ceux-ci remplacent les curseurs de taille et de taille au loin (aussi pour la plaque du monstre tant que son nom est le nôtre) ; les étiquettes du jeu les gardent. Immédiat.
+hud.labels_own_far_pct.label = Nos étiquettes : taille de loin, %
+hud.labels_own_far_pct.tip = Nos propres étiquettes à la distance lointaine ci-dessous et au-delà, en % de la taille du jeu. Immédiat.
+hud.labels_own_near_m.label = Nos étiquettes : distance proche, m
+hud.labels_own_near_m.tip = Jusqu'à cette distance de vous, nos étiquettes gardent leur taille proche. Immédiat.
+hud.labels_own_far_m.label = Nos étiquettes : distance lointaine, m
+hud.labels_own_far_m.tip = À partir de cette distance, nos étiquettes gardent leur taille lointaine ; entre les deux elles rétrécissent régulièrement. Immédiat.
+hud.labels_own_min_px.label = Nos étiquettes : hauteur minimale, px
+hud.labels_own_min_px.tip = Nos propres étiquettes d'objets ne sont jamais dessinées plus petites que ce nombre de pixels de l'image de l'œil, si loin ou petites que le jeu les ferait, pour qu'elles restent lisibles à 5-10 m. 0 = pas de limite. Immédiat.
 hud.labels_alpha.tip = Quelle part de la boîte sombre derrière les noms des objets au sol est dessinée en première personne (F4) : 1 = comme le jeu la dessine, 0 = pas de boîte, les noms seuls. Les noms restent clairs. Par le code d'étiquettes du jeu (le journal de vrcam dit « item-label hook in ») ; sur une autre version du jeu il ne fait rien ici.
 hud.labels_size.tip = Les noms des objets au sol et leurs boîtes en première personne (F4), plus petits ou plus grands, chacun autour du point en dessous. 100 = celui du jeu. Les infobulles d'objets et tout autre texte gardent leur taille.
 hud.labels_far.label = Étiquettes d'objets : taille au loin, % de la taille ci-dessus
@@ -1381,6 +1420,16 @@ input.point_pickup_label_pct.tip = Le nom de l'objet que votre main désigne (Co
 
 # --- Monster plates ---
 group.monster_plates.help#3 = Le nom et la barre de vie au-dessus du monstre que vous ciblez : opacité, taille, plus petit au loin, hauteur et profondeur stéréo, pour qu'en F4 il se tienne à son monstre. Plaque au-dessus de la tête du monstre la garde à un écart fixe au-dessus de la tête à toute distance.
+hud.monster_names_own.label = Nom au-dessus d'un monstre : le nôtre, net (test)
+hud.monster_names_own.tip = Le nom dans la plaque au-dessus du monstre que vous ciblez, dessiné par le mod au lieu de la copie du jeu : net à toute taille de rendu, aux couleurs du jeu (unique doré, champion bleu). La barre, son cadre et le ciblage restent ceux du jeu. Il a sa propre taille, taille au loin et fond ("Nos noms" ci-dessous) et se tient à la profondeur de son monstre ; les curseurs de la plaque restent ceux de la plaque du jeu. Première personne (F4) ; pas avec la plaque accrochée dans la pièce. Demande le D2R_DepthFog.fx de la même version. Immédiat. Décoché : le nom du jeu, comme avant.
+hud.npc_names_own.label = Noms au-dessus des PNJ et objets : les nôtres, nets (test)
+hud.npc_names_own.tip = Les noms que le jeu montre au-dessus des PNJ (Warriv, Kashya, Akara...), objets, portails et sorties que vous visez, dessinés par le mod au lieu de la copie du jeu : nets à toute taille de rendu, là où le jeu les met, sur la propre boîte sombre du jeu, avec la taille et le fond de "Nos noms" ci-dessous. Première personne (F4). Demande le D2R_DepthFog.fx de la même version. Immédiat. Décoché : les noms du jeu, comme avant.
+hud.names_own_size_pct.label = Nos noms : taille, %
+hud.names_own_size_pct.tip = Nos propres noms au-dessus des monstres et des PNJ (les deux cases ci-dessus), en % du texte du jeu. Nos noms n'utilisent aucun des curseurs de la plaque ci-dessous (ce sont ceux de la plaque du jeu) ; ces trois-ci sont les leurs. Immédiat.
+hud.names_own_far_pct.label = Nos noms : taille au loin, % de la taille
+hud.names_own_far_pct.tip = Nos noms au-dessus d'un monstre lointain ont cette part de la taille ci-dessus : à la distance proche de "Nos étiquettes" (groupe Étiquettes d'objets) et en deçà la taille ci-dessus, à sa distance lointaine et au-delà cette part, une courbe douce entre les deux. 100 = la même taille à toute distance. Immédiat.
+hud.names_own_alpha.label = Nos noms : opacité du fond
+hud.names_own_alpha.tip = Une boîte sombre derrière nos noms : 0 = aucune (la barre du jeu se voit autour des lettres), 1 = pleine. Les lettres restent entières. Immédiat.
 hud.monster_alpha.tip#2 = La plaque de nom que le jeu montre pour le monstre que vous ciblez (boîte, cadre et nom ensemble) : 1 = comme le jeu la dessine, 0 = disparue. Toutes les vues. Demande D2R_DepthFog.fx activé dans ReShade.
 hud.monster_size.label = Nom au-dessus d'un monstre : taille, %
 hud.monster_size.tip = Cette plaque plus petite ou plus grande autour de son milieu. 100 = celle du jeu. Toutes les vues.
@@ -1543,6 +1592,17 @@ hud.map_big_follow.label = Grande carte devant : reste dans la pièce, suit lent
 hud.map_big_follow.tip = La grande carte devant vous, VR F4 : elle reste où elle est dans la pièce quand vous tournez la tête ; ce n'est que lorsque vous regardez bien ailleurs (plus de 35 degrés) qu'elle revient vers votre regard, lentement, jamais d'un saut. Sa hauteur reste là où elle a été placée. Décoché : elle reste là où vous regardiez quand vous avez cliqué, comme avant. En direct.
 hud.map_big_grab.label = Grande carte devant : la saisir et la déplacer (laser + poignée)
 hud.map_big_grab.tip = La grande carte devant vous, VR F4 : pointez le laser droit vers elle et tenez la poignée droite pour la prendre - bougez la main pour la porter, le stick droit avant / arrière la rapproche / l'éloigne. Lâchez et elle reste là, et s'ouvre là désormais (gardé dans l'ini) ; une place gardée hors de vue (derrière vous, loin sur le côté) s'ouvre plutôt devant. Décoché : pas déplacée à la main, comme avant. En direct.
+hud.allies_place.label = Alliés affichés (F4)
+hud.allies_place.tip = VR première personne (F4), OpenXR natif. Où sont affichés votre mercenaire, vos invocations et votre groupe - à un seul endroit. La rangée du jeu en haut : les propres portraits du jeu, tels qu'il les dessine (dans le casque tout au bord de la vue). Sous la carte dans la main : une grille de tuiles sous la carte tenue dans votre main, et sous la grande carte quand elle est ouverte (plus grandes là). Au poignet droit : les mêmes tuiles au-dessus du poignet droit quand vous tournez son dos vers vos yeux (la place et la taille du panneau d'état du poignet). Chaque tuile : le propre portrait du jeu, le nom, la barre de vie (verte, jaune, rouge), le nombre d'un groupe et le niveau d'un joueur. Lu dans les propres listes du jeu, en solo comme en coop ; rien n'est modifié dans le jeu. Les portraits sont copiés de votre jeu dans d2r_vr_game_ui à côté du plugin (sans eux : initiales). Immédiat.
+hud.allies_place.choice0 = La rangée du jeu en haut
+hud.allies_place.choice1 = Sous la carte dans la main
+hud.allies_place.choice2 = Au poignet droit
+hud.allies_map_cols.label = Alliés sous la carte : tuiles par rangée
+hud.allies_map_cols.tip = Combien de tuiles côte à côte sous la carte ; les rangées sont aussi nombreuses que vos alliés l'exigent. Immédiat.
+hud.ally_portraits_size.label = Alliés sous la carte : largeur, % de la carte
+hud.ally_portraits_size.tip = La largeur de quatre tuiles, en pourcentage de la largeur de la carte (l'orbe dans la main : sa boule) ; plus ou moins par rangée gardent cette taille de tuile. 125 : un peu plus large que l'orbe. Au plus 40 cm sous la carte dans la main et 60 cm sous la grande carte. Immédiat.
+hud.allies_wrist_cols.label = Alliés au poignet : tuiles par rangée
+hud.allies_wrist_cols.tip = Combien de tuiles côte à côte au-dessus du poignet droit (chacune large d'un 2,5e de la largeur du panneau d'état du poignet) ; les rangées sont aussi nombreuses que vos alliés l'exigent, celle du bas à la place du panneau. Immédiat.
 hud.hide.label = Masquer l'interface du jeu
 hud.hide.tip = Le jeu dessine toute son interface dans une couche à part. « La barre d'outils » ne vide que la bande de la barre d'outils (trouvée d'après la taille de l'écran et la taille de l'interface du jeu) ; les étiquettes au-dessus des monstres, les infobulles et les boutiques restent. « Tout » : le monde seul. « Type de barre d'outils » ci-dessus règle ceci et Où ensemble.
 hud.hide.choice1 = La barre d'outils
@@ -1734,15 +1794,13 @@ hud.hand_vitals_pulse_eq.label = Les boules battent avec les vignettes
 hud.hand_vitals_pulse_eq.tip = Tant que la vignette rouge de vie basse est affichée, la boule de vie brille et gonfle sur SON battement - au même moment, au même rythme - et tant que la vignette bleue de mana bas est affichée, la boule de mana bat avec la bleue (UI: F4 body). Une vignette désactivée ou absente : la boule de vie comme ci-dessus, la boule de mana immobile. Désactivé : les boules exactement comme avant. Immédiat.
 hud.wrist_status.label = État au poignet : invocations, mercenaire, bonus, auras, malédictions (F4)
 hud.wrist_status.tip = De petites icônes et des compteurs qui apparaissent à côté des médaillons quand le DOS d'un poignet est tourné vers vos yeux (première personne RV, F4, OpenXR natif). Par défaut, le poignet gauche montre ce qui est SUR vous - les auras et bonus que vous avez (Puissance, Bouclier sacré, Armure de givre, Ordres de bataille, une potion, un sanctuaire ...) avec les malédictions et altérations qui vous nuisent (Amplification des dégâts, Décrépitude, Glacé, Empoisonné ...) sous un liseré rouge - et le poignet droit ce que vous COMMANDEZ : combien de squelettes, mages, golems, loups, corbeaux, vignes, sentinelles, hydres, démons vous avez, et votre mercenaire (un 0 rouge quand il est mort). Lu dans les propres listes du jeu, rien n'est modifié. Les icônes de compétences viennent du cache d'icônes local (voir la roue de compétences) ; sans lui, les pastilles montrent des initiales. Nécessite le plugin et l'effet de cette version ; les poignets en tant que tels sont les médaillons ci-dessus. Immédiat.
-hud.wrist_status_companions.label = Afficher les invocations et le mercenaire
-hud.wrist_status_companions.tip = Des compteurs pour vos squelettes, mages, golems, monstres ressuscités, valkyrie, leurre, corbeaux, loups, grizzly, esprits, vignes, ombres, sentinelles, pièges, hydres, démons et le mercenaire. Immédiat.
 hud.wrist_status_effects.label = Afficher les bonus, auras et malédictions
 hud.wrist_status_effects.tip = Une pastille pour chaque effet qui est sur vous : les bénéfiques (auras, bonus, potions, sanctuaires) sous un liseré vert, les nuisibles (malédictions, altérations) d'abord, sous un liseré rouge, une forme ou un compromis sous un liseré doré. S'il y en a plus que le panneau ne peut contenir : la dernière pastille dit combien il en reste. Immédiat.
 hud.wrist_status_sides.label = Quel poignet montre quoi
-hud.wrist_status_sides.tip = Où apparaissent les deux sortes de pastilles. Un poignet sans rien à montrer n'apparaît pas du tout. Immédiat.
-hud.wrist_status_sides.choice0 = Effets à gauche, invocations à droite
-hud.wrist_status_sides.choice1 = Invocations à gauche, effets à droite
-hud.wrist_status_sides.choice2 = Les deux sur les deux poignets
+hud.wrist_status_sides.tip = Quel poignet montre les pastilles des effets (les alliés au poignet droit, Carte > Alliés affichés, se tiennent au-dessus). Immédiat.
+hud.wrist_status_sides.choice0 = Effets au poignet gauche
+hud.wrist_status_sides.choice1 = Effets au poignet droit
+hud.wrist_status_sides.choice2 = Effets aux deux poignets
 hud.wrist_status_size_cm.label = Largeur du panneau, cm
 hud.wrist_status_size_cm.tip = La largeur du panneau ; les pastilles en font un sixième. Immédiat.
 hud.wrist_status_height_cm.label = Hauteur du panneau au-dessus du poignet, cm
@@ -2971,9 +3029,10 @@ group.attention_these_change_the_game_s_own_logic = Attention : ces options chan
 group.attention_these_change_the_game_s_own_logic.help = Les options de ce bloc dépassent volontairement les propres règles de Diablo II : elles font faire au serveur du jeu ce que ses propres règles d'attaque et de déplacement ne feraient pas. Direct hit (selon les règles) et le déplacement de ce que vous portez et lancez sont activés tels que le mod est livré ; désactivées (décochées), c'est la logique propre du jeu, tel qu'il se joue sans le mod. Direct hit : un contact de votre arme devient aussitôt l'attaque du serveur - pas d'animation, pas de vitesse d'attaque, pas d'approche à pied. Le jeu déplace ce que vous portez et lancez, et ce que vous renversez : un monstre que vous portez, lancez ou faites tomber est mis sur une autre case par le propre recul du jeu. En solo et en tant qu'hôte, le jeu change pour tous ceux qui y sont. Tout le reste du mod - la frappe au contact, le poids des armes, les ragdolls, saisir un monstre sans ce déplacement - n'est qu'une autre façon de donner au jeu son entrée : le jeu décide toujours.
 @status.game_logic.label = Ces options font faire au jeu ce que ses propres règles ne feraient pas : les attaques et les positions sont envoyées directement au serveur du jeu. Elles changent la façon dont le jeu se joue, et en coopération tout le monde est concerné. Désactivez-les pour jouer selon les propres règles du jeu. (Tout le reste du mod est une autre façon d'entrer les commandes : le jeu décide.)
 @directhit.mode.label = Direct hit
-@directhit.mode.tip = Désactivé : le contact presse l'attaque propre du jeu (son animation, sa vitesse d'attaque, sa portée). SELON LES RÈGLES : le PREMIER contact sur un monstre est un coup direct. Ensuite, un contact sur le MÊME monstre plus tôt que ce que dure l'attaque de votre héros (mesuré d'après sa propre animation d'attaque, donc cela suit sa vitesse d'attaque) est l'attaque propre du jeu - piquer vite ne rapporte rien. Après cela, un contact sur lui redevient un coup direct seulement pour un vrai coup d'arme : la vitesse, la force et la longueur de coup minimales (le trajet de votre manette elle-même) ci-dessous. Un autre monstre n'est jamais trop tôt. Une arme À DEUX MAINS demande les deux mains dessus (la prise à deux mains) : dans une seule main, son contact est l'attaque propre du jeu. Un contact qui échoue à une règle attaque quand même : l'attaque propre du jeu, jamais rien. Le balayage à deux mains seulement avec sa propre case ci-dessous. ENTIÈREMENT ACTIVÉ (déconseillé) : chaque contact accepté est un coup direct, comme le faisait l'ancienne case expérimentale. Ce qu'est un coup direct : en solo et en tant qu'hôte, le plugin appelle lui-même l'attaque serveur du jeu (le jet de toucher, les dégâts et l'usure sont ceux du jeu ; pas d'animation, pas d'attente de la vitesse d'attaque, pas de marche jusqu'au monstre). En tant que joueur qui a REJOINT la partie TCP/IP de quelqu'un, il envoie la commande propre du jeu « attaquer ce monstre » - celle qu'envoie un clic dessus - et le serveur de l'hôte fait toute l'attaque (l'hôte n'a besoin de rien pour cela). Seulement tant que la compétence de votre emplacement d'attaque est celle de la main du héros et qu'aucune compétence de mêlée n'est armée. Écrit [gameplay] melee_direct et melee_direct_client. En direct. F4 seulement, comme la frappe au contact.
-@directhit.mode.choice1 = Selon les règles
-@directhit.mode.choice2 = Entièrement activé (déconseillé)
+@directhit.mode.tip = Désactivé : le contact presse l'attaque propre du jeu (son animation, sa vitesse d'attaque, sa portée). EXTRAS À DEUX MAINS : une arme à deux mains tenue des deux mains - le 2e monstre et les suivants qu'un balayage traverse reçoivent un coup direct selon les règles ci-dessous (le jeu n'a pas de un-balayage-plusieurs-monstres ; demande la case de balayage ci-dessous) ; le premier monstre et tout autre contact sont l'attaque propre du jeu (avec le coup rapide : son coup à la première image). SELON LES RÈGLES : le PREMIER contact sur un monstre est aussi un coup direct. Ensuite, un contact sur le MÊME monstre plus tôt que ne l'admet l'attaque de votre héros (mesuré d'après sa propre animation d'attaque, donc il suit sa vitesse d'attaque) est l'attaque propre du jeu - piquer vite ne rapporte rien. Après cela, un contact n'est de nouveau un coup direct que pour un vrai balayage : la vitesse, la force et la longueur de balayage minimales (le propre trajet de votre manette) ci-dessous. Un autre monstre n'est jamais trop tôt. Une arme À DEUX MAINS demande les deux mains dessus (la prise à deux mains) : à une main, son contact est l'attaque propre du jeu. Un contact qui échoue à une règle attaque quand même : l'attaque propre du jeu, jamais rien. Le balayage à deux mains seulement avec sa propre case ci-dessous. TOUJOURS (déconseillé) : tout contact accepté est un coup direct, comme l'ancienne case expérimentale, coup rapide ou non. Ce qu'est un coup direct : en solo et comme hôte, le plugin appelle lui-même l'attaque serveur du jeu (le jet de touche, les dégâts et l'usure sont ceux du jeu ; pas d'animation, pas d'attente de la vitesse d'attaque, pas de marche d'approche). Comme joueur qui a REJOINT une partie TCP/IP, il envoie la propre commande du jeu "attaquer ce monstre" - celle qu'envoie un clic dessus - et le serveur de l'hôte fait toute l'attaque (l'hôte n'a besoin de rien pour cela). Seulement tant que la compétence de votre emplacement d'attaque est celle que le héros tient en main et qu'aucune compétence de mêlée n'est armée. Écrit [gameplay] melee_direct, melee_direct_client et melee_direct_scope. Immédiat. F4 seulement, comme la Frappe au contact.
+@directhit.mode.choice1 = Extras à deux mains
+@directhit.mode.choice2 = Selon les règles
+@directhit.mode.choice3 = Toujours (déconseillé)
 gameplay.melee_direct_min_ms.label = Coup direct (entièrement activé) : écart min. entre les coups, ms
 gameplay.melee_direct_min_ms.tip = Solo et hôte, entièrement activé : 0 = aucune limite au-delà de « un monstre est touché une fois par coup ». Plus : après un coup direct, les contacts dans ce délai ne font rien - pour garder le rythme proche de celui du jeu si les coups viennent trop vite. En direct.
 gameplay.melee_direct_by_hand.label = Coup direct : chaque main frappe avec sa propre arme (deux armes)
@@ -2993,6 +3052,12 @@ weight.knock_down_moves_unit.tip = Demande Weapon Weight > Monsters' bodies > «
 group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = Monstres autour de votre atterrissage après un Bond (Poids des armes > Corps des monstres)
 weight.leap_landing_scatter.label = Les monstres sont projetés là où vous atterrissez après un Bond (un test)
 weight.leap_landing_scatter.tip = Demande Poids des armes > Corps des monstres et la bibliothèque weight avec le knock-down. Immédiat. Coché : quand votre Barbare atterrit après un Bond ou une Attaque bondissante, les monstres humanoïdes à environ 3 m du point (et ceux que le propre recul du Bond du jeu touche un peu plus loin) sont projetés d'UNE case loin de votre point d'atterrissage - le propre recul du jeu met chaque unité sur cette case et son corps y tombe, donc l'endroit où vous la voyez et celui où le jeu l'a concordent ; plus elle était près, plus elle vole haut, jamais plus loin. Celle sur laquelle vous atterrissez pile est aussi poussée de sa case (au centre exact : dans le sens de votre bond), quel que soit son poids, pour que vous ne finissiez pas dedans ; les autres lourds (boss, grands monstres) vacillent seulement. Ce que le recul du jeu refuse reste en place. Le déplacement seulement en solo ou quand vous hébergez la partie (chez un joueur qui a rejoint, seulement dessiné). Les dégâts, le jet de toucher et l'étourdissement restent ceux du jeu. F4. Décoché : l'atterrissage ne projette rien, comme avant.
+
+# --- Strike statistics ---
+group.strike_statistics = Statistiques de frappes
+group.strike_statistics.help = Combien de coups vous avez portés au contact, dans cette partie et en tout, par héros et par arme, avec la vitesse et la force de vos frappes.
+stats.strike_stats.label = Compter mes frappes (statistiques)
+stats.strike_stats.tip = VR première personne (F4), Frappe au contact : chaque coup que votre lame remet au jeu est compté - dans cette partie et en tout, pour chaque héros et chaque arme (l'objet de base : Épée longue, Hache...) : combien, la vitesse où la lame a touché (m/s, la moyenne et la meilleure) et la force de la frappe (N s, quand l'arme a du poids), et les balayages qui ont touché un monstre sans rien porter (trop lents, ou les règles : le manche, pas vers lui...). Le jet du jeu décide toujours de la touche ou du raté : ce sont les coups que vous avez portés. Conservé dans Parties sauvegardées > Diablo II Resurrected > D2R VR Stats > strike_stats.txt (les noms de vos héros restent sur cet ordinateur, jamais dans un journal ni un rapport) ; supprimez le fichier pour repartir de zéro. Comptage seulement - rien du jeu ni du contact ne change. Décoché : rien n'est compté, le fichier reste tel quel. Immédiat.
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = Compétences vers BodyWalk
@@ -3620,6 +3685,8 @@ debug.game_sky_test.choice1 = Notre dôme en un magenta vif
 debug.game_sky_test.choice2 = Le modèle de ciel du Sommet d'Arreat du jeu
 debug.game_sky_test.choice3 = L'unité du Sommet nommant notre modèle magenta
 debug.game_sky_test.choice4 = Notre modèle magenta au chemin propre du Sommet
+debug.own_labels_dump.label = Écrire une fois l'image de nos étiquettes et noms (d2r_vr_own_labels.bmp)
+debug.own_labels_dump.tip = Avec nos propres étiquettes d'objets ou noms au-dessus des monstres activés : une fois affichés, l'image dont ils sont dessinés (chaque nom peint jusque-là) est écrite dans d2rloader\logs\d2r_vr_own_labels.bmp, pour la comparer au propre texte du jeu. Elle n'écrit que le fichier ; elle ne change rien en jeu.
 debug.frame_log.label = Journaliser chaque image
 debug.frame_log.tip = Chaque paire, vue, pose du héros et affichage dans d2r_vr_frames.csv à côté de l'ini, et FlatVR sa trace de pose par image.
 debug.frame_trace.label = Journaliser les images longues et ce que le plugin y a dépensé
@@ -3744,6 +3811,38 @@ debug.arrow_flight_trace.tip = Avec « Arc : dessiner nous-mêmes la flèche tir
 debug.arrow_flight_fx_off.label = Arc : les flèches dessinées par nous sans leurs effets (un test)
 debug.arrow_flight_fx_off.tip = Avec « Arc : dessiner nous-mêmes la flèche tirée » activé : l'effet propre d'une flèche élémentaire (feu, givre, étincelles) est désactivé par l'interrupteur propre du jeu pendant que nous dessinons la flèche - au cas où l'effet du jeu resterait sur le chemin du jeu au lieu de suivre le nôtre. Les explosions des coups ne sont pas touchées. Immédiat.
 
+# ===== Tab: Stats =====
+tab.stats = Statistiques
+
+# --- Strike statistics ---
+group.strike_statistics.help#2 = Combien de coups vous avez portés au contact en VR première personne (F4), dans votre dernière partie et en tout, par héros et par arme : la vitesse où la lame a touché et la force de la frappe (moyenne et meilleure), et les balayages qui ont touché un monstre sans rien porter.
+stats.strike_stats.tip#2 = La même case que Frappes > Statistiques de frappes. Cochée : en F4, chaque coup que la Frappe au contact remet au jeu est compté (cette partie et en tout, par héros et par arme) dans Parties sauvegardées > Diablo II Resurrected > D2R VR Stats > strike_stats.txt. Les noms de vos héros restent sur cet ordinateur. Comptage seulement - rien du jeu ni du contact ne change. Décochée : rien n'est compté, le fichier reste tel quel. Immédiat.
+@status.ss_file.label = Lecture des statistiques de frappes...
+
+# --- Your last game ---
+group.your_last_game = Votre dernière partie
+group.your_last_game.help = La partie que le plugin a comptée en dernier : chaque héros que vous y avez joué, les coups par arme (les plus nombreux d'abord).
+@status.ss_g_h0.tip = L'objet de base auquel appartient la lame (le propre nom du jeu : un unique ou un objet de set compte sous sa base), poings nus, ou les griffes d'un druide.
+@status.ss_g_h1.tip = Les coups que vous avez portés au contact : chacun que le contact a remis au jeu comme sa propre attaque (le jeu tire toujours touche ou raté).
+@status.ss_g_h2.tip = La vitesse moyenne où la lame a touché le monstre, m/s (une frappe jugée à la force : à quelle vitesse elle est arrivée).
+@status.ss_g_h3.label = Meilleur
+@status.ss_g_h3.tip = La vitesse du coup le plus rapide, m/s.
+@status.ss_g_h4.label = Force
+@status.ss_g_h4.tip = La force moyenne d'une frappe, N s, telle que la mesure le modèle de poids (une arme avec du poids ; les mains nues et une arme sans poids n'en ont pas : un tiret).
+@status.ss_g_h5.tip = La force du coup le plus fort, N s.
+@status.ss_g_h6.label = Ratés
+@status.ss_g_h6.tip = Les balayages qui ont touché un monstre sans rien porter : trop lents, ou hors des règles (le manche ou le pommeau, pas vers lui, trop petits, trop faibles).
+
+# --- All time: each hero ---
+group.all_time_each_hero = En tout : chaque héros
+group.all_time_each_hero.help = Chaque héros que connaissent les statistiques, les plus de coups d'abord. Un héros dont le nom n'a pu être lu est "Votre héros".
+@status.ss_h_h0.label = Héros
+@status.ss_h_h0.tip = Le héros (son nom et sa classe, tels que le jeu les a).
+
+# --- All time: each weapon (every hero) ---
+group.all_time_each_weapon_every_hero = En tout : chaque arme (tous les héros)
+group.all_time_each_weapon_every_hero.help = Chaque arme avec laquelle vous avez frappé, tous vos héros ensemble, les plus de coups d'abord.
+
 # ===== Tab: Status =====
 
 # --- The game's code ---
@@ -3804,15 +3903,18 @@ vr.hset.page.life = Vie
 vr.hset.page.look = Aspect
 vr.hset.page.body = Corps
 vr.hset.page.belt = Ceinture
-vr.hset.page.melee = Mêlée
+vr.hset.page.touch = Contact
+vr.hset.page.attack = Attaque
 vr.hset.page.contact = Contact
 vr.hset.page.monsters_react = Réactions des monstres
 vr.hset.page.grab = Saisie
 vr.hset.page.more = Plus
 vr.hset.page.co_op = Coop
 vr.hset.page.party = Groupe
+vr.hset.page.stats = Stats
 vr.hset.page.guide = Guide
 vr.hset.page.controls = Commandes
+vr.hset.page.melee = Mêlée
 vr.hset.page.world = Monde
 vr.hset.screen.menu_distance_m.label = Distance du panneau
 vr.hset.screen.menu_distance_m.detail = Un panneau ouvert dans le jeu : inventaire, coffre, marchand
@@ -3892,10 +3994,16 @@ vr.hset.gameplay.melee_skill_armed_icon.label = Compétence armée dans le mana
 vr.hset.gameplay.melee_skill_armed_icon.detail = Son icône dans le médaillon de mana
 vr.hset.gameplay.quick_blow.label = Coup rapide
 vr.hset.gameplay.quick_blow.detail = Le coup porte aussitôt, l'élan ne vous arrête jamais (F4)
+vr.hset.gameplay.quick_blow_faster.label = Attaque plus rapide
+vr.hset.gameplay.quick_blow_faster.detail = Avec coup rapide : le suivant au-delà de la vitesse du jeu (F4)
 vr.hset.gameplay.melee_direct.label = Direct hit selon les règles
 vr.hset.gameplay.melee_direct.detail = Change la logique propre du jeu : les coups vont au serveur (F4)
-vr.hset.gameplay.melee_direct_client.label = Direct hit comme dans le fichier
-vr.hset.gameplay.melee_direct_client.detail = 0 désactivé, 1 selon les règles, 2 complètement activé
+vr.hset.gameplay.melee_direct_client.label = Direct hit
+vr.hset.gameplay.melee_direct_client.detail = Extras 2H : les autres monstres d'un balayage à deux mains
+vr.hset.gameplay.melee_direct_scope.label = Portée de Direct hit
+vr.hset.gameplay.melee_direct_scope.detail = 0 extras à deux mains, 1 chaque contact selon règles
+vr.hset.hud.swing_timer.label = Minuteur d'attaque
+vr.hset.hud.swing_timer.detail = Un anneau montre quand la prochaine attaque compte (F4)
 vr.hset.direct.left_trigger.label = Gâchette gauche
 vr.hset.direct.left_x.label = X gauche
 vr.hset.direct.left_y.label = Y gauche
@@ -4002,6 +4110,14 @@ vr.hset.hud.ordinary_mob_bars.label = Plaques : monstres ordinaires
 vr.hset.hud.ordinary_mob_bars.detail = Affichées : toutes les plaques. Masquées : seulement champions, boss, PNJ
 vr.hset.value.shown = Affichées
 vr.hset.value.hidden = Masquées
+vr.hset.hud.allies_place.label = Alliés affichés
+vr.hset.hud.allies_place.detail = Mercenaire, invocations, groupe : un endroit sur trois (F4)
+vr.hset.hud.names_own_size_pct.label = Nos noms : taille
+vr.hset.hud.names_own_size_pct.detail = Nos noms nets sur monstres et PNJ, % du jeu
+vr.hset.hud.names_own_far_pct.label = Nos noms : taille au loin
+vr.hset.hud.names_own_far_pct.detail = % de la taille pour un monstre lointain
+vr.hset.hud.names_own_alpha.label = Nos noms : fond
+vr.hset.hud.names_own_alpha.detail = Une boîte sombre derrière : 0 aucune, 1 pleine
 vr.hset.hud.hide.label = Interface hors de l'image
 vr.hset.hud.hide.detail = 0 rien, 1 la barre d'outils, 2 tout
 vr.toolbar.wrists = Poignets
@@ -4295,6 +4411,20 @@ thrusts.tip.on = coché : ce type frappe d'estoc (une pointe dans l'axe de la la
 thrusts.tip.min_speed = la vitesse minimale d'un estoc, m/s. 0 (ou moins de 0,3) = le général. Immédiat.
 thrusts.tip.cm = jusqu'où la pointe avance dans l'axe de la lame, cm. 0 (ou moins de 1) = le général. Immédiat.
 thrusts.tip.min_accel = le pic d'accélération minimal d'un estoc, m/s² (piquer, pas pousser). 0 = le général. Immédiat.
+stats.bare_fists = Poings nus
+stats.paws = Griffes (métamorphosé)
+stats.hero_unnamed = Votre héros
+stats.file.none = Pas encore de statistiques : frappez un monstre en VR première personne (F4) avec la Frappe au contact activée ; le jeu les écrit chaque minute.
+stats.file.bad = strike_stats.txt n'a pas pu être lu (le jeu garde à côté une copie .bak du dernier bon).
+stats.file.read = Parties sauvegardées > Diablo II Resurrected > D2R VR Stats > strike_stats.txt, écrit {time}
+stats.all_weapons = Toutes les armes
+stats.game.none = Aucun coup au contact dans la dernière partie.
+stats.game.line = Commencée {time} : {who}
+stats.all_heroes = Tous les héros
+stats.heroes.line = {n} héros
+stats.weapons.line = {n} arme(s)
+stats.units = - vitesse en m/s, force en N s
+stats.more = - les {n} plus utilisées affichées, {more} de plus dans le fichier
 status.sig.not_scanned = Pas encore analysé - lancez le jeu : le mod cherche ses adresses à chaque démarrage
 status.sig.scanning = Analyse en cours...
 status.sig.start_game = Lancez le jeu - le mod analyse au démarrage
@@ -4504,6 +4634,12 @@ menu_art.no_archives = impossible d'ouvrir les archives du jeu (erreur {error}) 
 menu_art.not_written = impossible d'écrire {file} (erreur {error})
 menu_art.missing = absents de ce jeu : {files} - le panneau des compétences garde son propre aspect
 menu_art.made = créé à partir de votre jeu : ses propres cadres, boutons et curseurs pour le panneau des compétences (d2r_vr_game_ui)
+portrait_art.off = désactivé ([hud] ally_portraits)
+portrait_art.no_plugin_dir = le dossier du plugin est introuvable : les tuiles des alliés montrent des initiales
+portrait_art.ready = prêt : les propres portraits du jeu à côté du plugin (d2r_vr_game_ui)
+portrait_art.no_archives = les archives du jeu n'ont pas pu être ouvertes (erreur {error}) ; nouvel essai au prochain démarrage
+portrait_art.not_written = impossible d'écrire {file} (erreur {error})
+portrait_art.made = {n} des {all} portraits du jeu copiés depuis votre jeu pour les tuiles des alliés (d2r_vr_game_ui)
 data_mods.no_mod = seulement dans le mod propre à D2R VR (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici
 data_mods.off_removed = désactivé - les fichiers des autres mods retirés du mod de D2R VR
 data_mods.off = désactivé
@@ -4579,6 +4715,11 @@ vr.flatmenu.flat_no_pad = Cacher la manette au jeu (souris et clavier)
 vr.flatmenu.flat_portal_no_oval = Pas d'ovale noir dans le portail de ville
 vr.flatmenu.stick_pitch_flat = Le stick droit de la manette regarde en haut et en bas
 vr.flatmenu.flat_map_zoom = - et + dézooment la carte hors de son cercle et reviennent
+vr.flatmenu.flat_map_place = Carte à l'écran
+vr.flatmenu.flat_map_place.game = Comme dans les options du jeu
+vr.flatmenu.flat_map_place.left = Gauche
+vr.flatmenu.flat_map_place.centre = Centre
+vr.flatmenu.flat_map_place.right = Droite
 vr.rules.on = Activé
 vr.rules.off = Désactivé
 vr.rules.flat_attack_path = Le coup n'arrête pas le héros (2D)
@@ -4648,6 +4789,13 @@ vr.coop.rooms_none = Aucun salon ouvert dans la liste.
 vr.coop.rooms = Salons ouverts : {n}
 vr.coop.when = Relu à chaque CREATE GAME : un changement compte à partir du prochain, sans redémarrage. Un salon ouvert maintenant garde son mode.
 vr.keys.custom = Perso (ini)
+vr.directhit.cleave = Extras 2H
+vr.directhit.rules = Selon règles
+vr.directhit.always = Toujours
+vr.directhit.off = Non
+vr.allies.map = Sous la carte
+vr.allies.wrist = Au poignet
+vr.allies.game = En haut
 vr.party.map = La carte du jeu montre
 vr.party.map.off = Votre groupe est caché : alliés sur aucune carte (Afficher le groupe du jeu)
 vr.party.map.unknown = Afficher le groupe / Afficher les noms du groupe du jeu (pas encore lu)
@@ -4684,8 +4832,8 @@ vr.hset.status.video_idle = Choisissez une taille, puis Appliquer. Elle prend ef
 vr.hset.status.body_idle = Calibrer le corps masque ce panneau ; il revient quand la mesure est faite.
 vr.hset.status.keys_idle = Choisissez ce que fait un bouton, puis Appliquer. Combinaisons et autres appuis longs : D2R VR Authentic Settings.
 vr.hset.status.keys_off = Commandes sans BodyWalk est désactivé : ces boutons ne font rien (le mapping de BodyWalk fait les commandes).
-vr.hset.status.melee_direct_full2 = Direct hit est complètement activé (D2R VR Authentic Settings > Strikes) : chaque contact va au serveur.
-vr.hset.status.melee_quick_cleave = Coup rapide activé. Arme à deux mains tenue des deux mains : les autres monstres d'un même coup reçoivent le Direct hit.
+vr.hset.status.melee_direct_always = Direct hit Toujours (déconseillé) : chaque contact va au serveur, hors des règles du jeu.
+vr.hset.status.melee_cleave = Direct hit Extras 2H : une arme à deux mains tenue des deux mains - les autres monstres d'un balayage reçoivent Direct hit.
 vr.hset.status.melee_direct_on = Attention : Direct hit change la logique propre du jeu - les coups vont directement au serveur ; en coopération, tout le monde est concerné.
 vr.hset.status.world_idle = Chaque changement s'applique tout seul (F4). Ils demandent les bras sur les manettes ; le reste est dans D2R VR Authentic Settings.
 vr.hset.status.melee_idle = Chaque changement s'applique de lui-même. Première personne (F4) seulement.
@@ -4725,6 +4873,25 @@ vr.party.you_alone = Vous n'êtes dans aucun groupe
 vr.party.nobody = Personne d'autre n'est encore dans cette partie.
 vr.party.leave = Quitter le groupe
 vr.party.open = Ouvrir le panneau de groupe (P)
+vr.stats.this_game_btn = Cette partie
+vr.stats.all_time_btn = En tout
+vr.stats.no_hero = Aucun coup compté
+vr.stats.blows = Coups
+vr.stats.speed = Vitesse
+vr.stats.force = Force
+vr.stats.landed = Portés
+vr.stats.missed_sub = et {n} balayages ratés
+vr.stats.best_sub = meilleur {v}
+vr.stats.no_force = une arme avec du poids
+vr.stats.landed_sub = des balayages qui ont touché
+vr.stats.col.weapon = Arme
+vr.stats.col.blows = Coups
+vr.stats.col.speed = Vitesse m/s
+vr.stats.col.force = Force N s
+vr.stats.col.missed = Ratés
+vr.stats.col.weapon_of = Arme - {n} sur {all}
+vr.stats.none_ever = Aucun coup au contact pour l'instant.
+vr.stats.none_game = Aucun coup au contact dans cette partie pour l'instant.
 vr.guide.not_now = Pas maintenant
 vr.guide.back = Retour
 vr.guide.measure_now = Mesurer
@@ -4738,6 +4905,43 @@ vr.party.back = Relais
 vr.hset.recentre = Recentrer la vue
 vr.hset.close = Fermer
 vr.hset.apply = Appliquer
+vr.stats.class.amazon = Amazone
+vr.stats.class.sorceress = Sorcière
+vr.stats.class.necromancer = Nécromancien
+vr.stats.class.paladin = Paladin
+vr.stats.class.barbarian = Barbare
+vr.stats.class.druid = Druide
+vr.stats.class.assassin = Assassin
+vr.stats.class.warlock = Démoniste
+vr.stats.hero_unnamed = Votre héros
+vr.stats.bare_fists = Poings nus
+vr.stats.paws = Griffes (métamorphosé)
+vr.stats.kind.unarmed = sans arme
+vr.stats.kind.bow = arc
+vr.stats.kind.crossbow = arbalète
+vr.stats.kind.sword = épée
+vr.stats.kind.axe = hache
+vr.stats.kind.mace = masse
+vr.stats.kind.scepter = sceptre
+vr.stats.kind.wand = baguette
+vr.stats.kind.staff = bâton
+vr.stats.kind.polearm = arme d'hast
+vr.stats.kind.spear = lance
+vr.stats.kind.dagger = dague
+vr.stats.kind.throwing = arme de jet
+vr.stats.kind.javelin = javelot
+vr.stats.kind.claw = griffe
+vr.stats.kind.orb = orbe
+vr.stats.kind.other = autre
+vr.stats.hero_of = Héros {i} sur {n}
+vr.stats.playing = (en jeu)
+vr.stats.since_ever = - en tout
+vr.stats.since_game = - cette partie depuis {time}
+vr.stats.this_game = - cette partie
+vr.stats.status.off = Les statistiques de frappes sont désactivées (D2R VR Authentic Settings > Frappes) : rien de nouveau n'est compté.
+vr.stats.status.reading = Lecture des statistiques de frappes...
+vr.stats.status.empty = Pas encore de coups : frappez un monstre en première personne (F4), frappe au contact.
+vr.stats.status.idle = Moyenne / meilleur. Les coups portés au contact (F4) ; le jeu tire toujours touche ou raté.
 vr.video.preset_window = Taille fenêtre
 vr.video.preset_headset = Celle du casque
 vr.video.not_known = pas encore connue
@@ -4752,6 +4956,11 @@ vr.video.now = Le jeu dessine {size} maintenant.
 vr.video.now_unknown = La taille de l'image du jeu n'est pas encore connue.
 vr.video.recommended = Votre casque recommande {size}.
 vr.video.recommended_unknown = La taille de votre casque est lue quand le jeu démarre pour la première fois une session.
+vr.swing.miss = raté
+vr.swing.blocked = bloqué
+vr.swing.dodged = esquivé
+vr.swing.avoided = évité
+vr.swing.too_soon = trop tôt
 vr.tiles.edit = Modifier compét.
 vr.tiles.close = Fermer
 vr.tiles.back = Retour
@@ -4826,6 +5035,10 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+hud.wrist_status_companions.label = Afficher les invocations et le mercenaire
+hud.wrist_status_companions.tip = Des compteurs pour vos squelettes, mages, golems, monstres ressuscités, valkyrie, leurre, corbeaux, loups, grizzly, esprits, vignes, ombres, sentinelles, pièges, hydres, démons et le mercenaire. Immédiat.
+vr.hset.status.melee_direct_full2 = Direct hit est complètement activé (D2R VR Authentic Settings > Strikes) : chaque contact va au serveur.
+vr.hset.status.melee_quick_cleave = Coup rapide activé. Arme à deux mains tenue des deux mains : les autres monstres d'un même coup reçoivent le Direct hit.
 vr.hset.status.melee_direct_full = Direct hit est complètement activé (D2R VR Authentic Settings > Strikes) ; sa case ici correspond à Selon les règles.
 @skyfog.way.label = Ciel et brouillard dessinés par
 @skyfog.way.tip = Qui dessine le ciel et le brouillard lointain, les deux à la fois. Le jeu (nouveau) : sa propre passe de brouillard avec nos valeurs et un dôme de ciel à nous que le jeu dessine lui-même - aucun temps d'image de notre part (VR F4 ; sans ReShade pour les options de son brouillard ci-dessous). Notre effet (ancien) : le ciel et le brouillard du shader de brouillard (celui de ReShade, ou celui de D2R VR sans ReShade). Écrit ensemble [sky] game_sky et [fog] game_fog. Immédiat - les fichiers du dôme de ciel du jeu sont faits par ce programme à son démarrage : la première fois après une installation ou une mise à jour, redémarrez un jeu déjà lancé.

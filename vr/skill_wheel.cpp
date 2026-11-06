@@ -26,6 +26,7 @@
 #include "hset_view.h"
 #include "hset_life.h"
 #include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
+#include "hset_stats_feed.h"   // the Settings tab's Stats page: the strike statistics ([stats] strike_stats)
 #include "party_cmd.h"     // the Settings tab's Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the Settings tab's Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"
@@ -219,7 +220,12 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageParty) partycmd::Watch();   // the Party page: the roster read on
         host.party = partycmd::Now();
-        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageCoop) host.mapShow = partycmd::MapNow();   // the Co-op page's map row (read, cheap)
+        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageCoop) host.mapShow = partycmd::MapNow();
+        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageStats) {   // [stats] strike_stats: the Stats page (a copy when they changed)
+            static hset::stats::View statsView;
+            hset::stats::Feed(statsView);
+            host.stats = statsView;
+        }   // the Co-op page's map row (read, cheap)
         host.calibrating = calib::Running();
         host.openGuide = f4 ? firststart::OpenRequest() : -1;   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp; F4's)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord
@@ -367,6 +373,7 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
 }
 
 bool Enabled() { return g_on.load(); }
+bool IsOpen() { return g_on.load() && g_open.load(); }
 bool TriggerCastsSkill() { return g_on.load() && g_triggerSkill.load(); }
 bool SettingsTabOn() { return g_on.load() && g_settingsTab.load(); }
 void SetTwoGripChord(bool on) { g_twoGripChord.store(on); }

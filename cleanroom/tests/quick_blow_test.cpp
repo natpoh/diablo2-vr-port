@@ -98,9 +98,13 @@ static void TestJudge() {
 
 static void TestRoute() {
     CHECK(TouchDirect(false, false, false) && TouchDirect(false, true, false) && TouchDirect(false, true, true));   // off: as before
-    CHECK(!TouchDirect(true, false, false) && !TouchDirect(true, false, true));   // Full: the key
-    CHECK(!TouchDirect(true, true, false));   // By the rules, the first monster: the key
+    CHECK(TouchDirect(true, false, false) && TouchDirect(true, false, true));   // Always (2026-11-06): direct, quick blow or not
+    CHECK(!TouchDirect(true, true, false));   // By the rules, scope missing, the first monster: the key (0.204)
     CHECK(TouchDirect(true, true, true));     // ... a cleave's further monster: direct
+    // melee_direct_scope (Serg 2026-11-06): 0 the two-handed extras only, 1 every touch by the rules - quick blow or not
+    CHECK(!TouchDirect(true, true, false, 0) && !TouchDirect(false, true, false, 0) && TouchDirect(true, true, true, 0) && TouchDirect(false, true, true, 0));
+    CHECK(TouchDirect(true, true, false, 1) && TouchDirect(false, true, false, 1) && TouchDirect(true, true, true, 1));
+    CHECK(TouchDirect(true, false, false, 0) && TouchDirect(true, false, false, 1));   // Always ignores the scope
 }
 
 static void TestFaster() {

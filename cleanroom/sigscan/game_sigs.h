@@ -295,6 +295,34 @@ inline constexpr Sig kSigs[] = {
     {"CursorHeightRet", 0x7F4B2, Kind::Code, "48 C1 E8 20 48 83 C4 28 C3 8B 05 ?? ?? ?? ?? 48 83 C4 28 C3", 0x7F4B2, 0, 0, 0, 0, "48 C1 E8 20 48 83 C4 28", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
     // return address in SetCursorPosition of GetWidth, which tail-jumps to ClientSize
     {"CursorWidthRet", 0x14FB2A, Kind::Code, "8B 1D ?? ?? ?? ?? FF C8 33 FF 85 DB 79 04 8B DF EB 05", 0x14FB2A, 0, 0, 0, 0, "8B 1D ?? ?? ?? ?? FF C8", nullptr, "menus and the mouse follow the VR render size", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet1", 0x88008F, Kind::Code, "8B F8 E8 ?? ?? ?? ?? 44 8B F0 8D 0C 1B 44 2B F1 48 8D 54 24 38", 0x88008F, 0, 0, 0, 0, "8B F8 E8 ?? ?? ?? ?? 44 8B F0", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet2", 0x88020E, Kind::Code, "E8 ?? ?? ?? ?? 8B F8 8D 14 1B 2B FA 48 8D 8E 18 FD FF FF 48 8D 54 24 30", 0x88020E, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 8B F8 8D 14 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet3", 0x880275, Kind::Code, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F 89 7C 24 30 2B DA 89 7C 24 34", 0x880275, 0, 0, 0, 0, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet4", 0x880372, Kind::Code, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F 89 7C 24 20 2B DA 89 7C 24 24", 0x880372, 0, 0, 0, 0, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet5", 0x8803F2, Kind::Code, "8B F0 E8 ?? ?? ?? ?? 8D 0C 1B 2B F1 48 8D 54 24 20 48 8B CF", 0x8803F2, 0, 0, 0, 0, "8B F0 E8 ?? ?? ?? ?? 8D 0C 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (layout)
+    {"LabelWidthRet6", 0x880DD8, Kind::Code, "8B F8 E8 ?? ?? ?? ?? 8D 0C 1B 2B F9 3B F7 7F 31 44 38 25 ?? ?? ?? ??", 0x880DD8, 0, 0, 0, 0, "8B F8 E8 ?? ?? ?? ?? 8D 0C 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (layout)
+    {"LabelWidthRet7", 0x880EE9, Kind::Code, "8B F8 E8 ?? ?? ?? ?? 8D 0C 1B 2B F9 3B F7 7F 7B 41 0F B6 86 38 0A 00 00", 0x880EE9, 0, 0, 0, 0, "8B F8 E8 ?? ?? ?? ?? 8D 0C 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (layout: the stacked parts' max width)
+    {"LabelWidthRet8", 0x880F9C, Kind::Code, "8B D8 E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 49 8B 37 F7 DF 4D 69 6F 08 E8 02 00 00 66 41 0F 6E 8E 3C 0A 00 00", 0x880F9C, 0, 0, 0, 0, "8B D8 E8 ?? ?? ?? ?? E8 ?? ?? ?? ??", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (layout)
+    {"LabelWidthRet9", 0x881033, Kind::Code, "8B D8 E8 ?? ?? ?? ?? 8D 0C 3F 89 7D C8 2B D9 89 7D CC 8D 0C 3F", 0x881033, 0, 0, 0, 0, "8B D8 E8 ?? ?? ?? ?? 8D 0C 3F", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (layout)
+    {"LabelWidthRet10", 0x8810DD, Kind::Code, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F 89 7D C8 2B DA 89 7D CC 8D 14 3F", 0x8810DD, 0, 0, 0, 0, "8B D8 E8 ?? ?? ?? ?? 8D 14 3F", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet11", 0x881792, Kind::Code, "E8 ?? ?? ?? ?? 8B F8 44 8D 14 1B 48 8D 54 24 20 48 8B CE", 0x881792, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 8B F8 44 8D 14 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet12", 0x88188A, Kind::Code, "99 2B C2 D1 F8 3B D8 7E 3F E8 ?? ?? ?? ?? 66 41 0F 6E 8F 3C 0A 00 00 48 8D 54 24 40", 0x88188A, 0, 0, 0, 0, "99 2B C2 D1 F8 3B D8 7E 3F", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // return address of a hover label GetWidth call (position)
+    {"LabelWidthRet13", 0x881F2B, Kind::Code, "E8 ?? ?? ?? ?? 8B F8 8D 0C 1B 2B F9 48 8D 54 24 20 48 8B CD", 0x881F2B, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 8B F8 8D 0C 1B", nullptr, "hover labels laid out in the VR picture (no hang)", "Laser menus"},
+    // a hover label part's SetMaxSize({w, h}), hooked: a width <= 0 becomes none (0x7FFFFFFF)
+    {"LabelSetMaxSize", 0x8DACE0, Kind::Code, "48 8B 02 48 89 81 DC 02 00 00 C6 81 C4 00 00 00 01 E9 ?? ?? ?? ??", 0x8DACE0, 0, 0, 0, 0, "48 8B 02 48 89 81 DC 02 00 00", nullptr, "hover labels never hang on a negative width", "Laser menus"},
     // call IsControllerLayout in the item tooltip's producer: the result is the queued tooltip's delay flag (return address checked)
     {"TooltipDelay", 0x2C3DCA, Kind::Code, "E8 ?? ?? ?? ?? 4C 8D 44 24 20 88 85 14 01 00 00 48 8D 54 24 21", 0x2C3DCA, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 4C 8D 44 24 20 88 85 14 01 00 00", nullptr, "item tooltips at once under the laser", "Laser menus"},
     // mov ecx, 10h; call KeyState in the tooltip's equipped-item comparison: Shift shows it (return address checked)

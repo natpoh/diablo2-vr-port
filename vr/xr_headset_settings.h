@@ -69,6 +69,11 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     f.view = on ? 4 : 0;   // the panel is F4's: the view it stands in is F4 (viewgate has no number)
     if (on && g_hs.model.open && g_hs.model.page == hset::kPageOptions) f.players = playerscmd::Now();
     if (on && g_hs.model.open && g_hs.model.page == hset::kPageCoop) f.mapShow = partycmd::MapNow();   // the Co-op page's map row: the game's two settings (read, cheap)
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageStats) {   // [stats] strike_stats: the Stats page (a copy when they changed)
+        static hset::stats::View statsView;
+        hset::stats::Feed(statsView);
+        f.stats = statsView;
+    }
     if (on && g_hs.model.open && g_hs.model.page == hset::kPageParty) {   // the Party page: the game's roster, read on while it is up
         partycmd::Watch();
         f.party = partycmd::Now();

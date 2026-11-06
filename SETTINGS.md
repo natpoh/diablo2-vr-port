@@ -857,6 +857,18 @@ through ReShade.
   the blow is out, no sooner than *the least wait between blows*
   (`quick_blow_min_ms`, 200 ms). Not for bows, crossbows, throws, Zeal or Fury.
   In a TCP/IP game the host's boxes hold for every hero in it.
+- **Swing timer** (VR F4 and the monitor's F2 / F3, off - `[hud] swing_timer`): only shown, the game is
+  untouched. Nothing is drawn until you attack - no ring means go. After an attack the game started, a
+  ring in the middle of the view (`swing_timer_style` 0; 1 = a bar at the top) fills until the game lets
+  the next attack in: red while its attack gate refuses one (a touch then says "too soon"), amber in its
+  last five frames (an attack is kept for the animation's end), green in - then it melts away. Inside it
+  (or rising over the bar) what the blow did: the life it took, a crit in gold, one swing's monsters
+  summed, or miss / blocked / dodged / avoided (`swing_timer_numbers`). Single player or a game you host:
+  exact; joined: the timer from your hero's animation, no numbers. The monitor needs D2R_DepthFog.fx.
+- **Joined: send a touch when the host takes it** (VR F4, off - `[gameplay] swing_pace_joined`): joined to
+  someone's TCP/IP game, your PC counts your hero's attack from his animation and sends a touch only when
+  the host's game will take it: not while it would refuse one, held in the attack's last moments and sent
+  as it ends. The attack stays the host's; single player and hosting are unchanged.
 - **Melee: hit by touch, Direct hit, Quick strike, the shield bash** - moved to the Strikes tab (below), with the strike rules.
 - **Bow** (F4, off) - *Draw the string with both hands*: the free hand's trigger
   (or its grip) at the bow's string, pull back along the line to the bow and let
@@ -1033,6 +1045,10 @@ ticks the other). The blade's geometry stays in Weapon Adjust and Debug.
   attack rate stay. The melee rows of the hero's class and the Paladin's Smite, never the bow, throws, spells or kicks; offline only; put back exactly when off.
 - **Shield bash** (off) - *Shield bash casts Smite*: with Smite on a pad skill slot, a hard bash of the shield through a monster casts one Smite at it. *The least speed*
   (0.8 m/s) and *how far the shield moves to start a bash* (8 cm) are the bash's own numbers, apart from hit by touch's.
+- **Strike statistics** (on, `[stats] strike_stats`, live) - *Count my strikes*: in F4 every blow hit by touch hands to the game is counted, this game and all time,
+  per hero and per weapon (the base item): how many, the speed where the blade touched (average, best) and the strike's force in N s (average, best; when the weapon has
+  weight), and the swings that touched a monster but landed nothing (too slow / the rules). Kept in *Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt*
+  (the heroes' names stay there, never in a log or a report); delete it to start over. Counting only.
 - **Debug** - *Draw the capsules of Hit by touch* shows what is tested and why a contact did not count. The blade, the trail and the marks are green only while a contact would
   count; at a contact that was refused there is a ball on the touching point, an arrow along its way, a thin line to the nearest point of the monster's axis, and the monster's
   capsule tinted: **red** - not toward the monster (**blue** with *Not toward the monster in red* unticked), **amber** - the swing too small for the kind, too slow where it touched, or
@@ -1321,6 +1337,14 @@ own* (`log_async`) for a stutter, and *... where it is slow* (`log_async_auto`, 
 and its arrow*; the bow's draw vectors in the headset. After a throw the log tells
 for five seconds what the game does with it (`[debug] throw_trace`, read only;
 on when the key is missing, off in the settings that come with the mod).
+
+## Stats
+
+VR only. The strike statistics the game counts in F4 with Hit by touch (*Count my strikes*, the same tick as Strikes > Strike statistics), read from
+*Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt* (the game writes it every minute while it runs): **Your last game** - the blows by
+weapon of every hero you played in it; **All time: each hero**; **All time: each weapon** (every hero together). A row: blows, the speed where the blade
+touched (m/s, average and best), the strike's force (N s, average and best; a weapon with weight) and the swings that touched a monster but missed. The
+headset's settings panel has the same numbers on its Stats tab, one hero at a time.
 
 ## Status
 

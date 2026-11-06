@@ -1,6 +1,7 @@
 // vr/render/depth/scene_depth.cpp - the scene's depth for our effects: how much of the screen the game draws at (renderscale), the camera behind the depth for FlatVR (depthcam), the depth-stencil picked and copied (scenedepth) (cut from vr/vrcam.cpp, docs/plan_modules.md M13).
 // What it gives: vr/render/depth/depth.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
+#include "../../finite_hold.h"   // FlatVR's depth camera: never a NaN
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -134,10 +135,22 @@ void Publish() {
     if (!g_enabled.load() || !g_inWorld.load() || !TrueScale(&ipd, &conv) || !LiveScreen(&w, &h, &d) || d <= 0.0f) return;
     const float eyeM = g_set.eyeMm.load() * 0.001f;
     if (!(eyeM > 0.01f)) return;
-    g_block->near_world = g_lastNear.load();
-    g_block->units_per_metre = ipd / eyeM;
-    g_block->tan_half_w = 0.5f * w / d;
-    g_block->tan_half_h = 0.5f * h / d;
+    // Never a NaN or an infinity to FlatVR (vr/finite_hold.h): a camera not there yet (no near plane, no scale) stops the counter
+    // instead - FlatVR then goes back to its depth sliders, as when the world is not 1:1. FlatVR checks three of these, not tan_half_h.
+    const float c[4] = {g_lastNear.load(), ipd / eyeM, 0.5f * w / d, 0.5f * h / d};
+    if (!finitehold::Finite(c, 4) || !(c[0] > 0.0f) || !(c[1] > 0.0f)) {
+        static finitehold::Hold<1> missed;   // (its counter and once-a-while line only)
+        float z = NAN; missed.Take(&z);
+        if (missed.Due(GetTickCount64()))
+            LogF("vrcam: FlatVR's depth camera NOT sent %llu time(s): near %g, units a metre %g, tan %g x %g - not finite or not there "
+                 "(no camera yet); FlatVR uses its depth sliders meanwhile (log at most every 10 s)",
+                 (unsigned long long)missed.TakeCount(), c[0], c[1], c[2], c[3]);
+        return;
+    }
+    g_block->near_world = c[0];
+    g_block->units_per_metre = c[1];
+    g_block->tan_half_w = c[2];
+    g_block->tan_half_h = c[3];
     g_block->version = FLATVR_DEPTH_CAMERA_VERSION;
     MemoryBarrier();
     g_block->counter = g_block->counter + 1;

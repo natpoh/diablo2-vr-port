@@ -60,6 +60,7 @@
 #include "melee_direct_client.h"   // [gameplay] melee_direct_client: a joined TCP/IP player's touch sent as the game's own command for the monster
 #include "move_attack_wire.h"   // [gameplay] quick_blow: the touch is the game's attack (moveattack::QuickWanted)
 #include "quick_blow.h"
+#include "swing_timer_wire.h"   // [hud] swing_timer: a touch while red says "too soon"
 #include "melee_press.h"
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's two paws strike as one weapon (one shared recovery)
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
@@ -83,6 +84,7 @@
 #include "stroke_contact.h"
 #include "ui_ticket.h"
 #include "frame_trace.h"   // [debug] frame_trace: what the touch's hooks and jobs cost a pair, and when a sweep, a press, a hit happened
+#include "strike_stats_wire.h"   // [stats] strike_stats: the blows counted per hero and weapon (counting only)
 
 #if __has_include("direct_input.h")
 #include "direct_input.h"   // the direct-input branch is in the tree: the press goes through it
@@ -1234,21 +1236,51 @@ bool NoAttack(uint32_t id, ULONGLONG now) {
 }
 
 void PressKey(uint32_t id, bool allowDirect, int hand, ULONGLONG now);
+// [gameplay] swing_pace_joined (vr/swing_timer.h PaceAt): a touch held for the client's green, sent by Tick (one at a time, the newest wins).
+struct PaceHeld {
+    bool on = false;
+    uint32_t id = 0;
+    bool allowDirect = false;
+    int hand = 0;
+    meleedirectclient::Touch touch;
+    bool twoHanded = false, twoHandsOn = false, leftWeapon = false;
+    ULONGLONG at = 0;
+};
+PaceHeld g_paceHeld;   // (the update thread's: Approve and Tick)
+unsigned g_paceTold = 0;
 // `touch`: the touch as measured ([gameplay] melee_direct_client's rules: speed, force, the swing's length); `twoHanded` the weapon.
 // `leftWeapon`: the blade that touched is the game's left-hand weapon with a weapon in each hand ([gameplay] melee_direct_by_hand: a direct blow is the game's "Left Hand Swing").
-void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::Touch& touch = {}, bool twoHanded = false, bool twoHandsOn = false, bool leftWeapon = false) {
+// `paced`: a touch [gameplay] swing_pace_joined held, sent now (not judged again).
+void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::Touch& touch = {}, bool twoHanded = false, bool twoHandsOn = false, bool leftWeapon = false,
+             bool paced = false) {
     frametrace::Note(frametrace::kPress);   // [debug] frame_trace: a touch was accepted - the game's attack is asked for (key or direct)
     const ULONGLONG now = GetTickCount64();
     if (NoAttack(id, now)) return;
+    swingtimer::NoteTouch(now);   // [hud] swing_timer: a touch while the game refuses an attack says "too soon" (only shown; the touch goes on as ever)
+    // [gameplay] swing_pace_joined: no server of ours here (joined to another's game) - the host's gate would refuse a touch now: not sent; in its last
+    // moments: held and sent at the client's green (Tick). The calculation is the client's, the attack the host's as ever.
+    if (!paced && g_serverGame.load() == 0) {
+        const swingtimer::Pace pace = swingtimer::PaceTouch(now);
+        if (pace != swingtimer::Pace::Send) {
+            if (pace == swingtimer::Pace::Hold) g_paceHeld = {true, id, allowDirect, hand, touch, twoHanded, twoHandsOn, leftWeapon, now};
+            if (g_paceTold < 12) {
+                ++g_paceTold;
+                LogF("melee touch: joined - monster %u's touch %s ([gameplay] swing_pace_joined)", id,
+                     pace == swingtimer::Pace::Hold ? "held for the client's green" : "not sent: the host's gate refuses an attack now");
+            }
+            return;
+        }
+    }
     // [gameplay] melee_direct (the user's experimental option, vr/melee_direct.h): the touch calls the game's attack itself.
     // Off, or not possible (no local server, a signature missing, a fault): the route is Key and nothing below changes.
     // Never for a thrown weapon (allowDirect false): the server's basic attack is a melee blow, not the throw the game's own attack makes of it.
     // A press the game would read as a skill - a melee skill armed ([gameplay] melee_skill_armed), or a skill on the attack slot (A) - goes the key
     // path in both modes, so the game casts that skill: the direct call is only ever the plain attack (Plan's Key).
-    // [gameplay] quick_blow (vr/quick_blow.h): the game's own attack, its blow on the first frame - Direct hit's call only for By the rules' extra blows
-    // of a two-handed cleave (the game has no one-swing-many-monsters); Full: the key for every touch.
+    // [gameplay] quick_blow (vr/quick_blow.h): the game's own attack, its blow on the first frame - Direct hit's call as [gameplay] melee_direct_scope says
+    // (quickblow::TouchDirect): 0 only By the rules' extra blows of a two-handed cleave (the game has no one-swing-many-monsters), 1 every touch by
+    // the rules; Always (Serg 2026-11-06: "включено всегда"): every touch direct, quick blow or not.
     const bool quick = moveattack::QuickWanted();
-    if (allowDirect && meleedirect::Wanted() && !(quick && !meleedirect::ByRules())) {
+    if (allowDirect && meleedirect::Wanted()) {
         bool armedReady = false;
         const bool armed = meleearm::Armed(&armedReady) >= 0;
         const meleedirect::Route route = meleedirect::Plan(now, g_serverGame.load() != 0 && g_heroId.load() != 0, armed);
@@ -1262,7 +1294,7 @@ void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::T
                 PressKey(id, allowDirect, hand, now);   // a rule failed: the normal attack
                 return;
             }
-            if (!quickblow::TouchDirect(quick, true, extra)) {   // [gameplay] quick_blow: the first monster's blow is the game's attack
+            if (!quickblow::TouchDirect(quick, true, extra, meleedirect::Scope())) {   // [gameplay] melee_direct_scope / quick_blow: the first monster's blow is the game's attack
                 PressKey(id, allowDirect, hand, now);
                 return;
             }
@@ -2270,9 +2302,53 @@ void NoteHands(const D2RVR_Shared* sh, uint32_t epoch) {
     }
 }
 
+// ---- [stats] strike_stats (vr/strike_stats_wire.h): the blows counted per hero and weapon - counting only, nothing of the touch's decisions ----
+namespace {
+uint32_t StatsCode(const SideBlade& sb) { return sb.paw ? strikestats::kPaws : sb.code; }   // (a form's paw: no item)
+// a stroke's key for the missed swings: the swing engine's stroke, the thrust engine's (its own numbers), a weight-model strike's serial
+uint64_t StatsKey(bool force, bool thrust, uint64_t id) { return id | (force ? 1ull << 63 : 0ull) | (thrust ? 1ull << 62 : 0ull); }
+// The hero the blows are his: his name and class read from his own client unit (unit +0x10 his PlayerData, its first 16 bytes the name the
+// game keeps; +0x04 the class), once a game (his unit id), a few tries. A name that does not read is the unnamed hero. Local only: the
+// name goes into the statistics' file and nowhere else (no log line).
+uint32_t g_statsHeroFor = 0;
+int g_statsHeroTries = 0;
+bool g_statsHeroNamed = false;
+ULONGLONG g_statsHeroAt = 0;
+void StatsHero(ULONGLONG now) {
+    const uint32_t id = g_heroId.load();
+    if (id != g_statsHeroFor) { g_statsHeroFor = id; g_statsHeroTries = 0; g_statsHeroNamed = false; }
+    if (!id || g_statsHeroNamed || g_statsHeroTries >= 5 || (g_statsHeroTries && now - g_statsHeroAt < 1000)) return;
+    ++g_statsHeroTries;
+    g_statsHeroAt = now;
+    const uintptr_t unit = ClientUnit(id, 0);
+    uintptr_t data = 0;
+    uint32_t cls = 0xFFFFFFFFu;
+    char name[16] = {};
+    const bool read = unit && Read(&data, unit + 0x10, sizeof data) && data >= 0x10000 && Read(name, data, sizeof name);
+    if (unit && !Read(&cls, unit + 0x04, sizeof cls)) cls = 0xFFFFFFFFu;
+    g_statsHeroNamed = read && strikestats::ValidName(name, sizeof name);
+    strikestatswire::SetHero(g_statsHeroNamed ? name : nullptr, cls < 8 ? static_cast<int>(cls) : -1);
+}
+void StatsRefused(int side, uint64_t key, const SideBlade& sb, bool slow, ULONGLONG now) {
+    if (!strikestatswire::On()) return;
+    StatsHero(now);
+    strikestatswire::Refused(side, key, StatsCode(sb), sb.kind, slow, now);
+}
+}  // namespace
+
 void Tick(const Frame& f) {
     const ULONGLONG now = GetTickCount64();
+    strikestatswire::Tick(now);   // [stats] strike_stats: the missed swings that have settled (cheap when off)
     ReleasePress(now, false);
+    if (g_paceHeld.on) {   // [gameplay] swing_pace_joined: the held touch at the client's green; given up when it waited too long
+        if (now - g_paceHeld.at > swingtimer::kHoldMaxMs || g_serverGame.load() != 0) {
+            g_paceHeld.on = false;
+        } else if (swingtimer::PaceTouch(now) == swingtimer::Pace::Send) {
+            const PaceHeld h = g_paceHeld;
+            g_paceHeld.on = false;
+            Approve(h.id, h.allowDirect, h.hand, h.touch, h.twoHanded, h.twoHandsOn, h.leftWeapon, true);
+        }
+    }
     LatencyPoll(now);
     doubleswing::Tick();   // [hands] double_swing_by_hands: the hero's mana is read for its decisions (cheap when off)
     meleearm::Tick();      // [gameplay] melee_skill_armed: the same, while a skill is armed
@@ -2721,6 +2797,7 @@ void Tick(const Frame& f) {
         float approach = -1.0f;   // ... and its arrival's closing speed, m/s ([gameplay] melee_direct_client's speed rule)
         const char* forceWhat = "";
         int slot = -1;            // the game's slot of the weapon that touched (0 the right hand's, 1 the left's): [gameplay] melee_direct_by_hand
+        uint32_t statsCode = 0, statsKind = 0;   // [stats] strike_stats: the weapon that touched (its item code; StatsCode) and its kind
     };
     Pending pend[2];
     int npend = 0;
@@ -2881,6 +2958,7 @@ void Tick(const Frame& f) {
                     static unsigned told = 0;
                     const bool tell = told < 12 || meleeboxes::Wanted() || g_forceDebug.load();
                     if (!due) {
+                        if (!was && dur[k] >= strikemeasure::kWindowS) StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: too weak, its window over
                         if (!was && dur[k] >= strikemeasure::kWindowS && tell && ForceToldOnce(ks[k].serial)) {
                             ++told;
                             LogF("melee touch: %c hand, strike %u on monster %u NOT counted by force - %s: %.2f N s (%.2f in the first 150 ms%s), needs %.2f (%s, steel %.2f kg)%s", side ? 'L' : 'R',
@@ -2894,6 +2972,7 @@ void Tick(const Frame& f) {
                     const bool shaft = rule.metalHead && sb.headAlong > 0.0f && ks[k].along >= 0.0f && ks[k].along < sb.headAlong;
                     const bool butt = rule.notButt && front > 0.0f && ks[k].along >= 0.0f && ks[k].along < front;
                     if (shaft || butt) {
+                        StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: a push with the shaft or the butt
                         if (tell && ForceToldOnce(ks[k].serial ^ 0x80000000u)) {
                             ++told;
                             LogF("melee touch: %c hand, strike %u on monster %u by force - %s: it met the body at %.0f%% of the weapon's length (%s at %.0f%%) - a push, no hit", side ? 'L' : 'R',
@@ -2910,6 +2989,8 @@ void Tick(const Frame& f) {
                         Pending& p = pend[npend++];
                         p = Pending{side, c, strikedir::Judgement{}, v[k].score, ks[k].serial, 0.0f, false, thrust::Verdict{}};
                         p.slot = sb.slot;
+                        p.statsCode = StatsCode(sb);
+                        p.statsKind = sb.kind;
                         p.force = true;
                         p.need = v[k].need;
                         p.approach = appr[k];
@@ -3050,6 +3131,7 @@ void Tick(const Frame& f) {
             const float at = touch.speed;
             if (at < least) {
                 ++g_n.slowPart;
+                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, true, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - too slow: %.1f m/s where it touched, the least is %.1f", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, at, least);
                 // [debug] melee_boxes: an amber ball (and the arrow, the line, the tint) where the blade met the monster too slowly, and a line (kind, speed, the way)
@@ -3064,6 +3146,7 @@ void Tick(const Frame& f) {
             if (jd.why != strikedir::Why::Counts) {
                 const int reason = jd.why == strikedir::Why::Away || jd.why == strikedir::Why::Backward ? 0 : jd.why == strikedir::Why::NotHead || jd.why == strikedir::Why::Butt || jd.why == strikedir::Why::Shaft ? 1 : 2;
                 (reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : g_n.small)++;
+                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, false, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%.1f m/s where it touched)", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, strikedir::WhyText(jd.why), at);
                 const int colour = reason == 0 ? meleeboxes::kCBlue : reason == 1 ? meleeboxes::kCGrey : meleeboxes::kCAmber;
@@ -3122,6 +3205,8 @@ void Tick(const Frame& f) {
                 if (!byThrust && g_thrustEngine[side].StrokeId()) g_thrustHits[side].Insert(f.session, g_thrustEngine[side].StrokeId(), first->id);
                 if (npend < 2) {
                     pend[npend] = {side, first, firstJd, firstSpeed, strokeId, byThrust ? tsweep.speed : sweep.speed, byThrust, firstVerdict};
+                    pend[npend].statsCode = StatsCode(sb);
+                    pend[npend].statsKind = sb.kind;
                     pend[npend++].slot = sb.slot;
                 }
             }
@@ -3168,6 +3253,10 @@ void Tick(const Frame& f) {
         }
         ++g_n.pressed;
         ++g_sessionPressed;
+        if (strikestatswire::On()) {   // [stats] strike_stats: the blow, its speed where it touched (a strike by force: its arrival) and force (N s) - counting only
+            StatsHero(now);
+            strikestatswire::Blow(p.side, StatsKey(p.force, p.thrust, p.stroke), p.statsCode, p.statsKind, p.force ? p.approach : p.speed, p.force ? p.speed : ForceNow(p.c->id));
+        }
         if (p.thrust) ++g_n.thrusts;
         approvedId = p.c->id;
         MarkContact(p.jd, p.c->id, p.c->body, p.thrust && thrustdebugwire::Wanted() ? meleeboxes::kCThrustOk : meleeboxes::kCGreen, false, now, p.thrust);   // [debug] melee_boxes: a counted contact: the ball, the arrow and the line in green (a thrust's blue with thrust_debug)

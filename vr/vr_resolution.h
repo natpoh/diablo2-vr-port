@@ -99,6 +99,28 @@ inline uint64_t CanvasAnswer(Asker asker, Size game, uint64_t native, bool on) {
     return NativeSize(asker == Asker::Ui ? UiCanvas(game) : game);   // (the same today: the whole picture for both)
 }
 
+// -- the hover label over a world object (its name + the controller button's glyph) -----------------------------------------
+// The game's label panel (3.3.93787: 0x87FF00-0x881FD2) keeps a side margin made from the interface's size (0x881380, through the
+// UI caller ClientSizeUiRet4: the picture) and lays its parts out across GetWidth() 0x7F510. GetWidth tail-jumps to the query, so
+// the query sees the label code's own return address - not one of the interface's - and answered the WINDOW's width. With a big
+// square picture in a small window the two parts stacked got max width (window - 2*margin*s - gap*s)/2 - padding < 0, and the
+// game's text wrap (D2RLoader+0x906620) never ends with a negative width: every line "does not fit", forever (crash reports
+// 230, 247, 259, 260, 269; dumps of 259/260/269, 2026-11-06). The label code's GetWidth callers are interface callers now
+// (vr/vrcam.cpp kLabelWidthRets): the margin and the width come from the same picture.
+//
+// The game's arithmetic for the stacked parts' max width (0x880F7E-0x88100A), here to be tested: the margin and the gap scaled
+// by the interface's scale and truncated, the half rounded toward zero, the part's left and right padding taken off.
+inline int32_t HoverLabelPartMaxWidth(int32_t width, int32_t margin, int32_t gap, float scale, int32_t padLeft, int32_t padRight) {
+    const int32_t m = (int32_t)((float)margin * scale), g = (int32_t)((float)gap * scale);
+    const int32_t half = (width - 2 * m - g) / 2;
+    return half - padRight - padLeft;
+}
+// The safety net at the label part's SetMaxSize (0x8DACE0, vr/vrcam.cpp HookLabelSetMaxSize): a width the wrap cannot end with
+// (<= 0) becomes "none" - what the part's constructor sets (0x7FFFFFFF) - the label is laid out on one line instead of hanging
+// the game. View only: nothing of the game's state but this label's layout.
+inline constexpr int32_t kLabelNoMaxWidth = 0x7FFFFFFF;
+inline int32_t LabelMaxWidth(int32_t width) { return width <= 0 ? kLabelNoMaxWidth : width; }
+
 // -- when to ask ------------------------------------------------------------------------------
 
 inline constexpr uint64_t kAwayMs = 30000;      // the headset away this long: the window's size is given back

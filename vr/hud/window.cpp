@@ -2,11 +2,18 @@
 #include "../vrcam_headers.h"
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
 #include "../exit_end.h"    // [openxr] end_session_on_exit: which window messages are the game's quit
+#include "../menu_ready.h"  // no window move and no mouse message before the game's menus exist (crash group J)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
 
+namespace gamestate { bool PanelManagerSpoke(); }
+
 namespace vrc {
+
+// vr/menu_ready.h (crash group J, rows 270 / 271): the game's menus are up - latched in HookGameWindow's tick, read by the window procedure.
+std::atomic<bool> g_menusUp{false};
+std::atomic<uint64_t> g_gameWndSeenAt{0};
 
 // ---- Mouse and keys ----------------------------------------------------------
 bool GameFocused() {
@@ -61,6 +68,12 @@ void InputLogWindow(UINT msg, WPARAM w) {
 }
 
 LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
+    // the game's menus not up yet (its start, before step 17 makes their memory): a mouse message would become a UI message they cannot take (menu_ready.h)
+    if (menuready::DropBeforeMenu(msg, g_menusUp.load(std::memory_order_relaxed))) {
+        static std::atomic<bool> told{false};
+        if (!told.exchange(true)) Log("vrcam: a mouse message to the game's window dropped: its menus are not up yet (the game's start) - the mouse is the game's once they are");
+        return 0;
+    }
     {   // [render] vr_resolution: the size the game is asked for arrives here, on the window's thread (and a mouse position is the game's pixel)
         LRESULT done = 0;
         if (vrres::Handle(h, msg, w, l, g_gameWndProc, done)) return done;
@@ -322,6 +335,7 @@ void LaserFitTick() {
     if (!g_gameWnd || now - at < 2000) return;
     at = now;
     if (g_set.platform.load() != 1 || !xr::On() || !IniB(L"openxr", L"laser", false) || !IniB(L"openxr", L"laser_fit_window", true)) return;
+    if (!menuready::MayMoveWindow(g_menusUp.load())) return;   // not during the game's start: a moved window sends its menus a mouse event too early (menu_ready.h)
     if (IsIconic(g_gameWnd) || IsZoomed(g_gameWnd)) return;   // (maximized: its client area is the work area already)
     vrres::Size game{};
     const bool mayResize = vrres::GameSize(g_gameWnd, &game);
@@ -353,6 +367,14 @@ void LaserFitTick() {
 }
 
 void HookGameWindow() {
+    if (!g_menusUp.load()) {   // (latched: once up, up)
+        const bool frontend = FrontendSettled();
+        if (menuready::Up(gamestate::PanelManagerSpoke(), g_inWorld.load(), frontend, g_gameWndSeenAt.load(), GetTickCount64())) {
+            g_menusUp.store(true);
+            LogF("vrcam: the game's menus are up (%s): the window may be moved and the mouse reaches them", gamestate::PanelManagerSpoke() ? "its panel manager spoke"
+                 : g_inWorld.load() ? "in a world" : frontend ? "the title screen settled" : "30 s after its window - nothing heard of its UI");
+        }
+    }
     BigWindowTick();
     LaserFitTick();
     vrres::SetHeroReady(HeroSettled());
@@ -366,6 +388,8 @@ void HookGameWindow() {
     g_gameWndProc = (WNDPROC)SetWindowLongPtrW(h, GWLP_WNDPROC, (LONG_PTR)&GameWndProc);
     if (g_gameWndProc) {
         g_gameWnd = h;
+        const uint64_t seen = GetTickCount64();
+        g_gameWndSeenAt.store(seen ? seen : 1);
         vrres::Attach(h);   // [render] vr_resolution: a size may be asked for this window now
     }
 }

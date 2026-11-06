@@ -27,6 +27,9 @@
 // moved to the first frame. Around a quick attack's blow the frame trigger opens melee_direct's reach window (the attack's target is in
 // reach, the game's wall test stays), and with [gameplay] quick_blow_faster the attack-mode gate lets the next attack in once the blow is
 // out and quick_blow_min_ms passed. The walk through the swing is vr/attack_path_wire.cpp's.
+//
+// [hud] swing_timer (vr/swing_timer.h, its own tick, only shown) reads the scheduler too: at our hero's attack start its length in the server's
+// frames goes to the timer. For it alone the hooks go in as for the options above and pass everything through untouched.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -34,6 +37,7 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -45,6 +49,7 @@
 #include "move_attack_wire.h"
 #include "quick_blow.h"
 #include "sigscan.h"
+#include "swing_timer_wire.h"
 #include "view_gate.h"
 
 namespace gamestate { uint32_t WeaponType(); bool MenuOpen(); uint32_t KindOfItemClass(uint32_t classId); }
@@ -100,6 +105,7 @@ using FrameEventsFn = uint64_t (*)(uintptr_t game, uintptr_t unit);
 void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{false}, g_faulted{false};
 std::atomic<bool> g_quick{false}, g_faster{false};   // [gameplay] quick_blow, quick_blow_faster (vr/quick_blow.h)
+std::atomic<bool> g_swing{false};   // [hud] swing_timer: our hero's attack starts told to the timer (SetSwingWanted)
 std::atomic<uint64_t> g_tallyOwn{0}, g_tallyJoined{0}, g_tallyReach{0};   // [gameplay] quick_blow: the session's counts (QuickTally)
 std::atomic<uint32_t> g_quickMinMs{quickblow::kMinMsDefault};   // [gameplay] quick_blow_min_ms
 std::atomic<int> g_quickState{0};          // the scheduler's hook: 0 not tried, 1 in, 2 not possible
@@ -277,7 +283,7 @@ bool WritePtr(uintptr_t at, uintptr_t v) noexcept {
     if (at < 0x10000) return false;
     __try { *reinterpret_cast<uintptr_t*>(at) = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-uint64_t HookFrameEvents(uintptr_t game, uintptr_t unit) {
+uint64_t FrameEventsQuick(uintptr_t game, uintptr_t unit) {
     if (!QuickLive()) return g_origFrameEvents(game, unit);
     quickblow::Ask a;
     a.on = true;
@@ -316,6 +322,28 @@ uint64_t HookFrameEvents(uintptr_t game, uintptr_t unit) {
         else
             Say("vrcam: quick blow - hero %u, mode %u: %s", id, a.mode, shift == 0 ? "the blow is on the first frame already" : "no blow in this animation's frames - the game's own");
     }
+    return r;
+}
+
+// [hud] swing_timer: our hero's attack starts now on our server - its frames to the animation's end and the frame the gate lets the next one in
+// (the game's: one frame left; with quick_blow_faster on a quick attack: its least wait after the blow, which lands on the next frame). Read only.
+void NoteSwing(uintptr_t game, uintptr_t unit) {
+    uint32_t id = 0, mode = 0;
+    bool own = false;
+    if (!ServerPlayer(game, unit, &id, &mode, &own) || !own || !swingtimer::TimedMode(mode)) return;
+    int32_t end = 0, now = 0;
+    if (!CallEventFrame(game, unit, &end) || !Read(&now, game + kGameFrame, sizeof now)) return;
+    const int32_t frames = FramesLeft(end, now);
+    int32_t green = frames - 1;
+    if (g_faster.load(std::memory_order_relaxed) && QuickLive() && quickblow::QuickMode(mode) && g_quickNotes.Is(id, end))
+        green = std::min(green, 1 + quickblow::MinFrames(g_quickMinMs.load(std::memory_order_relaxed)));
+    swingtimer::NoteServerStart(GetTickCount64(), frames, green);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 4) Say("vrcam: swing timer - our hero's attack (mode %u): %d server frame(s), the next one in from frame %d", mode, (int)frames, (int)green);
+}
+uint64_t HookFrameEvents(uintptr_t game, uintptr_t unit) {
+    const uint64_t r = FrameEventsQuick(game, unit);
+    if (g_swing.load(std::memory_order_relaxed)) NoteSwing(game, unit);
     return r;
 }
 
@@ -470,6 +498,14 @@ void ReplayClick(uintptr_t unit, uint64_t now) {
     if (++told <= 12) Say("vrcam: move while attacking - flat: the %s click pressed in the cut animation's rest is made now, as the game would have taken it", c.type == 0 ? "left" : "right");
 }
 
+// [hud] swing_timer with none of the options on: the hero's id only (AfterCtrl's first lines).
+void NoteHeroId(uint32_t player) {
+    uintptr_t unit = 0;
+    uint32_t head[4] = {};
+    if (!CallClientPlayer(player, &unit) || !unit || !Read(head, unit, sizeof head) || head[kUnitType / 4] != 0) return;
+    g_heroId.store(head[kUnitId / 4], std::memory_order_relaxed);
+}
+
 // After the controller's own update of a player: the hero's id for the server's side and, while a cut attack plays, the stick's walk.
 void AfterCtrl(uintptr_t mgr, uint32_t player) {
     uintptr_t unit = 0;
@@ -572,6 +608,7 @@ void HookCtrlUpdate(uintptr_t mgr, uint32_t player, uint32_t dt) {
     g_origCtrl(mgr, player, dt);
     attackpath::AfterCtrl(player, mgr);
     if (Live()) AfterCtrl(mgr, player);
+    else if (g_swing.load(std::memory_order_relaxed)) NoteHeroId(player);   // [hud] swing_timer alone: only whose attacks are ours
 }
 
 }  // namespace
@@ -648,6 +685,9 @@ void QuickTally(uint64_t* movedOwn, uint64_t* movedJoined, uint64_t* reach) {
 }
 
 bool QuickWanted() { return g_quick.load() && !g_faulted.load(); }
+
+void SetSwingWanted(bool on) { g_swing.store(on); }
+uint32_t HeroId() { return g_heroId.load(std::memory_order_relaxed); }
 bool QuickReady() { return g_quickState.load() == 1; }
 bool QuickAttack(uint32_t hero, int32_t endFrame) { return QuickLive() && g_quickNotes.Is(hero, endFrame); }
 
@@ -656,7 +696,7 @@ bool QuickAttack(uint32_t hero, int32_t endFrame) { return QuickLive() && g_quic
 void InstallQuick() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if (!g_quick.load() || g_quickState.load() != 0 || g_state.load() != 1 || GetTickCount64() < retryAt) return;
+    if (!(g_quick.load() || g_swing.load()) || g_quickState.load() != 0 || g_state.load() != 1 || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);
     if (!d2rsig::Addr(RVA_FRAME_EVENTS)) return;
     if (!d2rsig::Check(RVA_FRAME_EVENTS, kSigFrameEvents, sizeof kSigFrameEvents)) {
@@ -674,7 +714,9 @@ void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
     InstallQuick();
-    if (!(g_on.load() || g_flatScope.load() != kScopeNone || attackpath::Wanted() || g_quick.load()) || g_state.load() != 0 || GetTickCount64() < retryAt) return;
+    if (!(g_on.load() || g_flatScope.load() != kScopeNone || attackpath::Wanted() || g_quick.load() || g_swing.load()) || g_state.load() != 0 ||
+        GetTickCount64() < retryAt)
+        return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_GATE) || !d2rsig::Addr(RVA_MODE_ALLOWED) || !d2rsig::Addr(RVA_TRIGGER) || !d2rsig::Addr(RVA_EVENT_FRAME) || !d2rsig::Addr(RVA_UNIT_WEAPON) ||
         !d2rsig::Addr(RVA_CTRL_UPDATE) || !d2rsig::Addr(RVA_WALK_DIR) || !d2rsig::Addr(RVA_CMD_FLAGS) || !d2rsig::Addr(RVA_CLIENT_PLAYER))

@@ -1,5 +1,37 @@
 # What's new in D2R VR
 
+## 0.206.0
+
+- **Freeze at an item or NPC label fixed** (crash reports 230, 247, 259, 260, 269): with a large VR picture (`vr_resolution_px` 2880 and
+  more) the game's hover label got a negative width and its text wrap never ended. The label now gets the picture's width.
+- **Night crashes fixed** (crash reports 261, 270, 271): the video memory check no longer keeps an adapter another module may have
+  released; the laser no longer moves the game window or sends it mouse input before the game's menus are up.
+- **A GPU device-lost fixed in the effect runtime without ReShade** (crash report 276): an effect texture uploaded again freed its old
+  upload buffer while a queued copy still read it; it now waits a few frames like the runtime's other buffers.
+- **Old game data said loudly** (crash reports 272, 275): when D2RLoader finds game data older than 3.x, the log and the Settings Home tab
+  say to run Scan and Repair (Battle.net) or Verify (Steam).
+- **Headset Melee tab in two pages, Touch and Attack.** Attack holds quick blow, the faster attack, Direct hit and the swing timer.
+- **Direct hit with four choices** (headset Melee > Attack and Settings > Strikes): Off / Two-handed extras (only a two-handed swing's
+  further monsters - as 0.204 shipped it) / By the rules (the first touch too) / Always (not recommended). New key
+  `[gameplay] melee_direct_scope`.
+- **Strike statistics** (`[stats] strike_stats`): blows this session and all time, per weapon with their speed and force - a Stats page in
+  the headset and a Stats tab in D2R VR Settings.
+- **Allies' portraits under the map in your hand** (`[hud] allies_place`, on): choose one place for the mercenary, the summons and the party
+  - the game's row at the top, a grid under the map in your hand, or tiles on the right wrist (portrait, name, life). The game's portrait
+  row is no longer cut off when moved into view; the mercenary's real name.
+- **Swing timer with the damage** (`[hud] swing_timer`, on): after each attack a ring in the middle of the view fills until the game lets
+  the next attack in (red: too soon, amber: last frames, green: go), with the blow's outcome inside - the damage, a crit, miss or block.
+- **Flat game: the map left, centre or right** (`[hud] flat_map_place`), and no map over menus.
+- **No crash on quit with Virtual Desktop** (`[openxr] end_session_on_exit`, now on): the headset session ends at quit and the runtime's
+  handles go at the process's exit.
+- **Playing without controllers** (on, for testing): when Quest switches to hand tracking or the controllers drop out, the wrist medallions,
+  the hand map and the laser stay where the hand was (`[openxr] hands_kept`); a tracked bare hand places the arm (`bare_hand_poses`); Insert on
+  the keyboard opens the skill panel / headset settings (`panels_key`); Esc reaches the game so you can quit (`game_front`).
+- **FlatVR never gets a NaN** from D2R VR: when the game camera is missing, the last good head and pose are held.
+- **Tried in test builds, off as it comes:** our own sharp item labels and names over monsters and NPCs (`[hud] labels_own`,
+  `monster_names_own`, `npc_names_own` - still in work), touches paced to the host (`[gameplay]
+  swing_pace_joined`).
+
 ## 0.205.0
 
 - **Crash reports carry the small dump**: D2R VR Crash Reporter ticks "Also send the small crash dump" as it comes. The dump holds the

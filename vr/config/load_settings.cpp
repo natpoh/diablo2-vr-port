@@ -231,7 +231,7 @@ void LoadSettings() {
     {   // [hud] wrist_status (vr/wrist_status.h): summons, the mercenary, buffs, auras and curses over a wrist turned to the eyes, VR F4 on native OpenXR only; off by default
         wriststatus::Config ws;
         ws.on = IniB(L"hud", L"wrist_status", false);
-        ws.companions = IniB(L"hud", L"wrist_status_companions", true);
+        ws.companions = false;   // the summons' and the merc's counters: gone - the allies are shown where [hud] allies_place says (on the wrist: our tiles)
         ws.effects = IniB(L"hud", L"wrist_status_effects", true);
         ws.sides = (int)IniF(L"hud", L"wrist_status_sides", 0.0f);   // 0 the effects on the left wrist and the companions on the right, 1 the other way, 2 both on both
         ws.sizeCm = IniF(L"hud", L"wrist_status_size_cm", 10.0f);
@@ -242,6 +242,17 @@ void LoadSettings() {
         ws.flip = IniB(L"debug", L"wrist_status_flip", false);
         wriststatus::Configure(ws);
     }
+    {   // [hud] allies_place (shared/allies_place.h, vr/ally_portraits.h): where the allies are shown in VR F4 - the game's row, under the map, on the wrist
+        allyportraits::Config ap;
+        const int place = (int)IniF(L"hud", L"allies_place", -1.0f);
+        ap.place = place >= 0 ? place   // (not in the file yet: the three ticks of 0.205.5 - 0.205.6, read for it)
+                              : alliesplace::FromOldTicks((int)IniF(L"hud", L"ally_portraits", -1.0f), (int)IniF(L"hud", L"allies_game_hide", -1.0f),
+                                                          (int)IniF(L"hud", L"wrist_status", -1.0f), (int)IniF(L"hud", L"wrist_status_companions", -1.0f));
+        ap.sizePct = IniF(L"hud", L"ally_portraits_size", 125.0f);
+        ap.mapCols = (int)IniF(L"hud", L"allies_map_cols", (float)alliesplace::kMapColsDefault);
+        ap.wristCols = (int)IniF(L"hud", L"allies_wrist_cols", (float)alliesplace::kWristColsDefault);
+        allyportraits::Configure(ap);
+    }
     g_set.hudMap.store(std::clamp((int)IniF(L"hud", L"map", 0.0f), 0, 1));
     hud::SetMapMode(g_set.hudMap.load());
     hud::SetInterfaceScale(GameInterfaceScale());
@@ -249,8 +260,10 @@ void LoadSettings() {
     // far as the 1920 x 1920 picture it was measured on - at the user's 2048 x 2048 (80 %) the horns, the statues' hands and the globes' tops stayed 10 - 55 px over the cut. So the strip
     // can be made taller above (hide_up_pct) and below (hide_down_pct), percent of the picture's height; [debug] hide_strip_tint paints the strip a see-through magenta to see its edges.
     hud::SetToolbarCut(IniF(L"hud", L"hide_up_pct", 0.0f), IniF(L"hud", L"hide_down_pct", 0.0f), IniB(L"debug", L"hide_strip_tint", false));
-    hud::SetMapCorner((int)IniF(L"hud", L"map_corner", 0.0f));
     g_set.mapCorner.store(std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2));
+    g_set.mapPlaceFlat.store(std::clamp((int)IniF(L"hud", L"flat_map_place", 0.0f), 0, 3));   // left / middle / right in the flat game: MapRotateFlatTick
+    // (the flat game's map put left or right by flat_map_place: its box looked for in either corner, whatever map_corner says)
+    hud::SetMapCorner(g_set.platform.load() == 0 && g_set.mapPlaceFlat.load() != 0 ? 0 : g_set.mapCorner.load());
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
     g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));
@@ -314,11 +327,26 @@ void LoadSettings() {
     g_set.plateStereoFar.store(std::clamp(IniF(L"hud", L"monster_stereo_far", 1.0f), -20.0f, 20.0f));
     g_set.plateStereoNearM.store(std::clamp(IniF(L"hud", L"monster_stereo_near_m", platelook::kNearM), 0.0f, 30.0f));
     g_set.plateStereoFarM.store(std::clamp(IniF(L"hud", L"monster_stereo_far_m", platelook::kFarM), 0.5f, 60.0f));
-    plateworld::SetTrack(g_set.plateFar.load() < 0.995f || g_set.plateDepthBody.load() > 0.005f || g_set.plateStereoByDistance.load() || plateworld::Steadying());   // the hook notes the targeted monster for them
+    plateworld::SetTrack(g_set.plateFar.load() < 0.995f || g_set.plateDepthBody.load() > 0.005f || g_set.plateStereoByDistance.load() || plateworld::Steadying() ||
+                         IniB(L"hud", L"monster_names_own", false));   // (monster_names_own: our names' depth and size by distance need the target's distance)   // the hook notes the targeted monster for them
+    g_set.ownSizeNear.store(std::clamp(IniF(L"hud", L"labels_own_near_pct", 100.0f), 10.0f, 300.0f));   // our labels' size by distance (ownlabels::CurveK), live
+    g_set.ownSizeFar.store(std::clamp(IniF(L"hud", L"labels_own_far_pct", 40.0f), 10.0f, 300.0f));
+    g_set.ownNearM.store(std::clamp(IniF(L"hud", L"labels_own_near_m", 1.5f), 0.1f, 20.0f));
+    g_set.ownFarM.store(std::clamp(IniF(L"hud", L"labels_own_far_m", 20.0f), 1.0f, 60.0f));
+    g_set.ownMinPx.store(std::clamp(IniF(L"hud", L"labels_own_min_px", 24.0f), 0.0f, 80.0f));   // our labels and names never smaller than this (px of the eye), live
+    g_set.monsterNamesOwn.store(IniB(L"hud", L"monster_names_own", false));
+    g_set.npcNamesOwn.store(IniB(L"hud", L"npc_names_own", false));
+    g_set.ownLabelsDump.store(IniB(L"debug", L"own_labels_dump", false));   // our labels' atlas to a picture once (view only), live
+    g_set.namesSize.store(std::clamp(IniF(L"hud", L"names_own_size_pct", 100.0f), 20.0f, 300.0f));   // our names' own size, by distance, backdrop (ownnames::NameLook), live
+    g_set.namesFar.store(std::clamp(IniF(L"hud", L"names_own_far_pct", 60.0f), 10.0f, 150.0f));
+    g_set.namesAlpha.store(std::clamp(IniF(L"hud", L"names_own_alpha", 0.0f), 0.0f, 1.0f));   // F4: the hover names over NPCs, objects, portals drawn by us (vr/own_names.h), live   // F4: the names in the target's plate drawn by us, sharp (vr/own_names.h), live
     plateworld::SetFollow(platelook::PlateNeedsBox(true, PlateDepthForBox(), g_set.labelsNearBody.load(), g_set.plateAlpha.load(), g_set.plateSize.load(),
-                                                   g_set.plateFar.load(), g_set.plateDepthBody.load()));   // F4 needs the plate's box: the hook says where the plate hangs (PlateBoxUv)
+                                                   g_set.plateFar.load(), g_set.plateDepthBody.load()) ||
+                          g_set.monsterNamesOwn.load());   // (monster_names_own: our names stand in the plate's box)   // F4 needs the plate's box: the hook says where the plate hangs (PlateBoxUv)
     g_set.labelsDepthBody.store(std::clamp(IniF(L"hud", L"labels_depth_body", 0.0f), 0.0f, 150.0f) * 0.01f);
     g_set.labelsFarBody.store(std::clamp(IniF(L"hud", L"labels_far", 100.0f), 20.0f, 100.0f) * 0.01f);
+    g_set.labelsOwn.store(IniB(L"hud", L"labels_own", false));   // F4: our own sharp item labels in the game's places (vr/own_labels.h), live
+    ownlabels::SetWanted(g_set.labelsOwn.load());
     for (int i = 0; i < 2; ++i) {
         const wchar_t* sec = i == 0 ? L"hud_top" : L"hud_third";
         g_set.pointerNear[i].store(std::clamp(IniF(sec, L"pointer_near", 0.0f), -20.0f, 20.0f));
@@ -1195,12 +1223,14 @@ void LoadSettings() {
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
     straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
     shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)
+    hitoutcome::SetWanted(IniB(L"debug", L"hit_outcome", false));   // the log tells every roll of the hero's blow on a monster and the life it took (vr/hit_outcome.h)
     straywalk::SetClickWanted(IniB(L"gameplay", L"block_stray_clicks", true));  // F4: no mouse button reaches the game in the world with no panel open
     // Settings' "Direct hit" selector writes both: Off 0 / 0, By the rules 2 / 1, Fully on 1 / 2 (the old tick boxes' 1 kept their meaning)
     const int directMode = std::clamp((int)std::lround(IniF(L"gameplay", L"melee_direct", 0.0f)), 0, 2);
     const int clientMode = std::clamp((int)std::lround(IniF(L"gameplay", L"melee_direct_client", 0.0f)), 0, 2);
     meleedirect::SetWanted(directMode != 0);   // the user's direct hit where the server runs (vr/melee_direct.h)
     meleedirect::SetByRules(directMode == 2);
+    meleedirect::SetScope((int)std::lround(IniF(L"gameplay", L"melee_direct_scope", -1.0f)));   // 0 two-handed extras, 1 every touch by the rules, missing: 0.204's way
     meleedirect::SetByHand(IniB(L"gameplay", L"melee_direct_by_hand", true));   // a blow of the left-hand weapon is the game's "Left Hand Swing" (the author: on)
     meleedirect::SetMinIntervalMs((uint32_t)std::clamp(IniF(L"gameplay", L"melee_direct_min_ms", 0.0f), 0.0f, 3000.0f));
     meleedirectclient::SetMode(clientMode);   // a joined TCP/IP player's touch: the game's own command (vr/melee_direct_client.h)
@@ -1234,6 +1264,9 @@ void LoadSettings() {
     meleetouch::SetUnchecked(g_set.meleeTouchUnchecked.load());
     meleetouch::SetNoAttack(IniB(L"debug", L"melee_touch_no_attack", false));   // a touch presses nothing (the stab and the push tried alone)
     meleetouch::SetClientVerdict(g_set.meleeTouchClientVerdict.load());
+    // [hud] swing_timer (vr/swing_timer.h): the attack's ring (0) or bar (1) after an attack the game started, the outcome in it - only shown
+    swingtimer::SetPace(IniB(L"gameplay", L"swing_pace_joined", false));   // joined: a touch sent when the host's gate takes it (vr/swing_timer.h PaceAt)
+    swingtimer::SetWanted(IniB(L"hud", L"swing_timer", false), (int)IniF(L"hud", L"swing_timer_style", 0.0f), IniB(L"hud", L"swing_timer_numbers", true));
     thrustdebugwire::SetWanted(IniB(L"debug", L"thrust_debug", false));   // the thrust's readout over the weapon hand, the blade tinted, a log line per thrust (vr/thrust_debug.h)
     thrustdebugwire::SetOnly(IniB(L"debug", L"thrust_debug_only", false));   // ... only the thrusts: the swing's colours, marks and log lines left out of the debug
     g_set.stabDebug.store(IniB(L"debug", L"stab_debug", false));   // [debug] stab_debug: the stab's readout and marks (vr/stab_debug.h)

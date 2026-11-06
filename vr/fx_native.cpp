@@ -297,6 +297,11 @@ struct Runtime::Impl {
     struct Sem { ID3D12Resource* res; DXGI_FORMAT fmt; };
     std::unordered_map<std::string, Sem> semantics;
     std::vector<std::pair<ID3D12Resource*, int>> oldSemantics;
+    // An effect texture's upload buffer replaced by a newer upload (update_texture: [hud] labels_own's atlas, the swing timer's picture): still read
+    // by the copy recorded in a list the queue may not have run yet - let go kRetireFrames Renders later. It was released at once (Uploads) and, with
+    // the names' atlas going up between the two eyes' passes, the card read a freed buffer: the device removed with DXGI_ERROR_INVALID_CALL / HUNG
+    // 1-5 minutes in (crash report row 276 and Serg's 0.205.8-0.205.13 reports, all with labels_own and monster_names_own on).
+    std::vector<std::pair<ID3D12Resource*, int>> oldUploads;
     bool toldViews = false;
 
     // The pictures, apart from the builds (Options::pictureWanted; the present's thread, but the reads' queue and results under picMx): one
@@ -380,6 +385,7 @@ struct Runtime::Impl {
         Release(color);
         for (auto& c : oldColors) Release(c.first);
         for (auto& c : oldSemantics) Release(c.first);
+        for (auto& c : oldUploads) Release(c.first);
         for (auto& s : semantics) Release(s.second.res);
         Release(targetRtv);
         Release(tsHeap);
@@ -1333,7 +1339,8 @@ void Runtime::Impl::Uploads(Build& b, ID3D12GraphicsCommandList* l) {
             std::vector<UINT64> rowBytes(n);
             UINT64 total = 0;
             dev->GetCopyableFootprints(&rd, 0, n, 0, fp.data(), rows.data(), rowBytes.data(), &total);
-            Release(t.upload);
+            if (t.upload) oldUploads.push_back({t.upload, kRetireFrames});   // (not released: the last copy from it may not have run yet)
+            t.upload = nullptr;
             D3D12_HEAP_PROPERTIES hp{};
             hp.Type = D3D12_HEAP_TYPE_UPLOAD;
             D3D12_RESOURCE_DESC bd{};
@@ -1578,6 +1585,10 @@ bool Runtime::Impl::Frame(ID3D12Device* d, const D3D12_RESOURCE_DESC& target) {
         for (Texture& t : cur->textures) Release(t.upload);
     for (auto it = oldSemantics.begin(); it != oldSemantics.end();) {
         if (--it->second <= 0) { it->first->Release(); it = oldSemantics.erase(it); }
+        else ++it;
+    }
+    for (auto it = oldUploads.begin(); it != oldUploads.end();) {
+        if (--it->second <= 0) { it->first->Release(); it = oldUploads.erase(it); }
         else ++it;
     }
     for (auto it = oldColors.begin(); it != oldColors.end();) {

@@ -387,6 +387,9 @@ std::atomic<int> g_mapSideCorner{-1};
 // [hud] map_rotate_flat (minimapside::FlatLease): -1 not wanted, else [hud] map_corner - the flat game's whole-screen map put in a corner while
 // it is to turn, put back after. Set by vrcam's MapRotateFlatTick.
 std::atomic<int> g_mapSideFlat{-1};
+// [hud] flat_map_place (minimapside::PlaceKeeper): -1 the game's own, else the game's mode the flat game's map is kept in (1 left, 0 the
+// whole screen, 2 right) - left, middle or right whether it turns or not. Set by vrcam's MapRotateFlatTick; FlatLease steps aside meanwhile.
+std::atomic<int> g_mapPlaceFlat{-1};
 // [hud] map_click_big (vr/map_laser.h): the map made big by the laser - the game's whole-screen map (mode 0) by the same setter, put back in its
 // corner by the Keeper once it is let go. Set by xr.cpp.
 std::atomic<bool> g_mapBig{false};
@@ -493,10 +496,12 @@ void MaintainMapSide(bool havePlayer) {
     static minimapside::Keeper keeper;
     static int told = 0;
     static minimapside::FlatLease flatLease;
-    const int corner = g_mapSideCorner.load(), flatCorner = g_mapSideFlat.load();
+    static minimapside::PlaceKeeper placeKeeper;
+    const int corner = g_mapSideCorner.load(), flatCorner = g_mapSideFlat.load(), place = g_mapPlaceFlat.load();
     const bool want = corner >= 0 && havePlayer && g_menu.load() == 0;
-    // [hud] map_rotate_flat: wanted, or a map this lease moved to give back (no menu up either way; the hand's own keeping goes first)
-    const bool flat = !want && corner < 0 && havePlayer && g_menu.load() == 0 && (flatCorner >= 0 || flatLease.Moved());
+    // [hud] map_rotate_flat: wanted, or a map this lease moved to give back; [hud] flat_map_place: the player's place (no menu up either way;
+    // the hand's own keeping goes first)
+    const bool flat = !want && corner < 0 && havePlayer && g_menu.load() == 0 && (place >= 0 || flatCorner >= 0 || flatLease.Moved());
     // [hud] flat_map_zoom: the setter's globals and the zoom's hooks wanted, the map's side left alone (no want, no flat: returns below)
     const bool zoom = havePlayer && flatzoom::Steers(bigzoom::g_flatSteps.load());
     if ((!want && !flat && !zoom) || checked < 0) return;
@@ -538,7 +543,7 @@ void MaintainMapSide(bool havePlayer) {
         bigAt = 0;
     }
     if (flat) {
-        const int set = flatLease.Step(flatCorner >= 0, mode, flatCorner, now);
+        const int set = place >= 0 ? placeKeeper.Step(place, mode, now) : flatLease.Step(flatCorner >= 0, mode, flatCorner, now);
         if (set < 0) return;
         if (!CallMapSetter(d2rsig::Addr(minimapside::kSetterRva), set)) {
             checked = -1;
@@ -546,7 +551,15 @@ void MaintainMapSide(bool havePlayer) {
             return;
         }
         static int flatTold = 0;
-        if (flatTold < 10) {
+        if (place >= 0) {
+            static int placeTold = 0;
+            if (placeTold < 10) {
+                ++placeTold;
+                Log(set == 1 ? "gamestate: [hud] flat_map_place - the game's map put in the left corner (the game's own setter, this session only)"
+                    : set == 2 ? "gamestate: [hud] flat_map_place - the game's map put in the right corner (the game's own setter, this session only)"
+                               : "gamestate: [hud] flat_map_place - the game's map put in the middle, its whole-screen map (the game's own setter, this session only)");
+            }
+        } else if (flatTold < 10) {
             ++flatTold;
             Log(set ? (set == 1 ? "gamestate: [hud] map_rotate_flat - the game's whole-screen map put in the left corner to be turned (the game's own setter, this "
                                   "session only; its options keep the player's choice)"
@@ -1003,6 +1016,7 @@ bool Has(const char* s, const char* part) {
 // size and dies when that is very tall (3000 on a 4000x4000 monitor, 2026-10-11) - vrcam's square window
 // grows the window only after it.
 std::atomic<uint64_t> g_titleAt{0};
+std::atomic<bool> g_panelManagerSpoke{false};   // the game's UI system is up: its panel manager sent a message (vr/menu_ready.h)
 SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const SharedEvents::UiMessageEvent* e, void*) noexcept {
     if (!e) return SharedEvents::UiMessageAction::Continue;
     const char* target = e->target ? e->target : "";
@@ -1018,6 +1032,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     }
     if (const exitend::Trigger quit = exitend::FromUi(target, command); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
     if (strcmp(target, "PanelManager") == 0) {
+        if (!g_panelManagerSpoke.exchange(true)) Log("gamestate: the game's UI system is up (its panel manager's first message): its menus may take the mouse");
         const bool before = g_menu.load() != 0;
         if (!strcmp(command, "OpenPanel") || !strcmp(command, "OpenExclusivePanel")) {
             if (*text) g_panels.insert(text);
@@ -1267,6 +1282,7 @@ bool NpcDialogOnly() { return g_npcDialogOnly.load(); }   // an NPC's dialogue b
 void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
 void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }
+bool PanelManagerSpoke() { return g_panelManagerSpoke.load(); }   // vr/menu_ready.h: the game's menus exist
 uint64_t LocalPlayer() { return g_player.load(); }
 
 bool AutoMapOpen() { return g_autoMap.load() != 0; }
@@ -1573,6 +1589,7 @@ bool SetAutoMap(bool open) {
 }
 void SetMapSide(int corner) { g_mapSideCorner.store(std::clamp(corner, -1, 2)); }
 void SetMapSideFlat(int corner) { g_mapSideFlat.store(std::clamp(corner, -1, 2)); }
+void SetMapPlaceFlat(int mode) { g_mapPlaceFlat.store(std::clamp(mode, -1, 2)); }   // [hud] flat_map_place: minimapside::PlaceMode, -1 the game's own
 void SetMapBig(bool big) { g_mapBig.store(big); }
 // [hud] map_stick_zoom: the big map's zoom wanted (the game's units; 0 = the game's own), and what its last draw was really given (0: none)
 // [hud] flat_map_zoom: the flat game's level (flatzoom: 0 and -1 the game's own zoom - the hook is not asked for -, -2.. smaller); what the AutoMap panel's last

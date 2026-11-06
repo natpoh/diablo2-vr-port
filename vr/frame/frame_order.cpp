@@ -505,6 +505,7 @@ static DWORD UpdateThreadBody() {
         if (f11.Pressed(focus)) Recenter();
         headshot::KeyTick(focus);   // [headset_shot] key: a screenshot of what reaches the headset
         headclip::KeyTick(focus);   // [headset_shot] video_key: 10 s of it
+        directinput::PanelKeyTick(focus);   // [openxr] panels_key: the skill panel / headset settings without the controller's stick (vr/hand_keep.h)
         FlatVrCentreTick();
         if (f10.Pressed(focus)) {
             if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {   // Ctrl + F10: one frame of render targets, to find the interface's
@@ -570,7 +571,7 @@ static DWORD UpdateThreadBody() {
         fx::PlateWorldTick(nowMs);   // [hud] monster_bar_room
         fx::NoticeCardTick(nowMs);   // [hud] notice_card
         HandInventoryTick(nowMs);    // [openxr] hand_inventory
-        if (g_inWorld.load() && (PlateWanted() || AlliesMoved() || plateworld::Active() || plateworld::LiftWanted() || PlateTurnsWanted())) {   // the plate's place: over the monster, it moves with it
+        if (g_inWorld.load() && (PlateWanted() || AlliesMoved() || AlliesHidden(nullptr) || plateworld::Active() || plateworld::LiftWanted() || PlateTurnsWanted())) {   // the plate's place: over the monster, it moves with it
             static ULONGLONG nextPlate = 0;
             if (nowMs >= nextPlate) { nextPlate = nowMs + 10; gamestate::PollPlate(); }
         }
@@ -603,6 +604,7 @@ static DWORD UpdateThreadBody() {
         playerscmd::Tick();   // the headset's Players row: "/players N" on the UI thread
         partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
+        GameFrontTick();   // [openxr] game_front: no controllers - the keyboard back to the game, Esc posted to it (before PauseKeyTick sends it)
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
         {   // [gestures] skill_link: the skills to BodyWalk, its casts back - every ~10 ms, the casts are pad presses (off: the list emptied once, then nothing)
             static ULONGLONG linkAt = 0;
@@ -628,6 +630,15 @@ static DWORD UpdateThreadBody() {
             const ULONGLONG t = GetTickCount64();
             if (t - castAt >= 10) { castAt = t; haptics::HeroMode(HeroAnimMode(), haptics::FromSkel(AimHand())); }
         }
+        if (swingtimer::Active() && g_inWorld.load()) {   // [hud] swing_timer, [gameplay] swing_pace_joined: the hero's own client mode - the attack's start where no server of ours tells it
+            static ULONGLONG swingAt = 0;
+            const ULONGLONG t = GetTickCount64();
+            if (t - swingAt >= 10) {
+                swingAt = t;
+                const int mode = HeroAnimMode();
+                swingtimer::NoteClientMode(mode >= 0, mode >= 0 ? (uint32_t)mode : 0u, t);
+            }
+        }
         {
             frametrace::Scope melee(frametrace::kMeleeTick);   // [debug] frame_trace: hit by touch's share of this round
             MeleeTouchTick();   // [gameplay] melee_touch
@@ -641,6 +652,7 @@ static DWORD UpdateThreadBody() {
         merctint::Tick(merctint::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] merc_tint: the merc and its life, 5 a second (a no-op when off)
         handvitals::Tick(g_enabled.load() && g_inWorld.load());   // [hud] hand_vitals: the hero's life and mana, 5 a second (a no-op when off or outside F4)
         wriststatus::Tick(g_enabled.load() && g_inWorld.load());   // [hud] wrist_status: the hero's companions and effects, 5 a second (a no-op when off or outside F4)
+        allyportraits::Tick(g_enabled.load() && g_inWorld.load());   // [hud] ally_portraits: the party and our pets, 5 a second (a no-op when off or outside F4)
         FloorPointerTick();   // F3: the mouse pointer on the game's ground, as the head moves
         CrosshairDepthTick();   // F2's crosshair: nearer as the camera looks down
         AfrQuietWhenOff();
@@ -729,6 +741,7 @@ static DWORD UpdateThreadBody() {
             GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
             InstallClientSize(IniB(L"render", L"vr_resolution_ui", true));   // [render] vr_resolution_ui (live; the hook goes in once)
+            InstallLabelWidthGuard();   // the hover label's SetMaxSize: no negative width (a hung game), whatever made it
             ApplyRender();
             ApplyPools();
             HookGameWindow();
@@ -766,7 +779,9 @@ static DWORD UpdateThreadBody() {
             shottrace::Install();   // [debug] shot_trace: the game's click-command sender, once asked for
             InstallSpellAimHooks();
             InstallSlotSkillHook();   // [hands] throw_auto_skill
-            haptics::Install();   // only once [openxr] haptics asks for it
+            haptics::Install();   // only once [openxr] haptics asks for it (or [debug] hit_outcome: the same hook tells the rolls)
+            hitoutcome::Install();   // [debug] hit_outcome: the game's damage function, once asked for
+            hitoutcome::Drain(nowMs);   // ... and what the two observers saw, into the log
             stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
             spatialaudio::Install(g_inWorld.load());   // only once [audio] head_follow asks for it (and at the plugin's load, below)
             soundtrace::Install();                     // [debug] sound_trace: only once it is ticked

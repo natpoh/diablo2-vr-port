@@ -28,7 +28,7 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 19;
+constexpr int kMaxPages = 21;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
@@ -41,22 +41,27 @@ constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands
 // (hset_model.h kWorldSub). So a page is not always a tab: kTabCount tabs, TabOf / TabPage between the two.
 // Party (Serg, 2026-11-01: invite to a party from the headset, vr/hset_party.h) has no tab either: it is the Co-op tab's second page, reached by
 // the Co-op page's Party button (the bottom bar) and back by its Relay button; a flick passes it between World's pages and the Guide.
+// Stats (Serg, 2026-11-06: the strike statistics, [stats] strike_stats; vr/hset_stats.h) is a tab of its own before the Guide: it only shows.
 enum Page : int {
     kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageKeysL = 3, kPageKeysR = 4, kPageVibration = 5, kPageHud = 6,
-    kPageLife = 7, kPageLook = 8, kPageBody = 9, kPageBelt = 10, kPageMelee = 11,
-    kPageWorld = 12, kPageWorldReact = 13, kPageWorldGrab = 14, kPageWorldMore = 15, kPageCoop = 16, kPageParty = 17, kPageGuide = 18
+    kPageLife = 7, kPageLook = 8, kPageBody = 9, kPageBelt = 10, kPageMelee = 11, kPageMeleeAttack = 12,
+    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageCoop = 17, kPageParty = 18, kPageStats = 19, kPageGuide = 20
 };
-constexpr int kPageCount = 19;
+constexpr int kPageCount = 21;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 // Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
 // buttons on top as World's four are.
 constexpr int kKeysPages = 2;    // kPageKeysL, kPageKeysR
 constexpr bool IsKeysPage(int page) { return page >= kPageKeysL && page < kPageKeysL + kKeysPages; }
-// A tab of several pages (World, Controls): a row of buttons on top, one a page; its first page, how many.
-constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page); }
-constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : page; }
-constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : 1; }
+// Melee (Serg, 2026-11-06: the swing timer, the faster attack and a four-way Direct hit on it - ten rows) is one TAB of two pages: Touch (hit by touch's
+// six) and Attack (quick blow, the faster attack, Direct hit, the swing timer), picked by a row of two buttons on top as Controls' two are.
+constexpr int kMeleePages = 2;   // kPageMelee, kPageMeleeAttack
+constexpr bool IsMeleePage(int page) { return page >= kPageMelee && page < kPageMelee + kMeleePages; }
+// A tab of several pages (World, Controls, Melee): a row of buttons on top, one a page; its first page, how many.
+constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page) || IsMeleePage(page); }
+constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : IsMeleePage(page) ? kPageMelee : page; }
+constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : IsMeleePage(page) ? kMeleePages : 1; }
 // The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, else the page itself.
 constexpr int LeadOf(int page) { return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page; }
 constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
@@ -72,8 +77,9 @@ constexpr int TabPage(int tab) {
     return kPageGuide;
 }
 constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
-static_assert(kTabCount == 14 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop),
-              "fourteen tabs over the nineteen pages");
+static_assert(kTabCount == 15 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
+                  TabOf(kPageMeleeAttack) == TabOf(kPageMelee),
+              "fifteen tabs over the twenty-one pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 128 bits: the Vibration page took the
@@ -232,13 +238,28 @@ inline constexpr Def kDefs[] = {
     // Serg (2026-11-05, 0.204): «хорошая замена директ хит давай поставим его галочкой во внутреннем оверлее по умолчанию а директ хит отключим» - the
     // seventh row is [gameplay] quick_blow now (vr/quick_blow.h: the game's own attack, its blow on the first frame, the swing never stops the hero; on by
     // default; in co-op the host's tick holds). Direct hit has no row any more (kNoPage): D2R VR Settings > Strikes; the page's line still warns while it is on.
+    // Serg (2026-11-06): the Melee tab's second page, Attack - "там должна быть галочка ускоренной атаки которую мы сделали и директ хит селектор с
+    // несколькими выборами 1 выключен 2 только двуручное оружие на вторую и последующие цели по правилам 3 по правилам 4 включено всегда не рекомендуется",
+    // and the swing timer's tick ("эта галочка отображать кольцо должна быть внутри оверлея меле"). Live, F4 only.
     {L"gameplay", L"quick_blow", "Quick blow", "The blow lands at once, the swing never stops you (F4)",
-     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMelee, true},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
+    // [gameplay] quick_blow_faster (vr/quick_blow.h): the next attack once the blow is out, past the game's attack speed (quick_blow_min_ms in D2R VR Settings)
+    {L"gameplay", L"quick_blow_faster", "Faster attack", "With quick blow: the next one past the game's speed (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
+    // -- no row: Direct hit's first key (By the rules / Always is what melee_direct_client's row writes; the page's line warns while it is on).
     {L"gameplay", L"melee_direct", "Direct hit by the rules", "Changes the game's own logic: hits go to the server (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
-    // -- no row: Direct hit's other key. The panel's value is the mode the two keys say (0 Off, 1 By the rules, 2 Fully on), the file's what it has.
-    {L"gameplay", L"melee_direct_client", "Direct hit as the file has it", "0 off, 1 by the rules, 2 fully on",
-     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage, true},
+    // Direct hit: the four choices of D2R VR Settings > Strikes (shared/direct_hit_mode.h) on [gameplay] melee_direct_client's row - its value is the mode
+    // (0 Off, 1 Two-handed extras, 2 By the rules, 3 Always), named by vr/hset_names.h; the store reads and writes melee_direct, melee_direct_client and
+    // melee_direct_scope together (hset_store.cpp).
+    {L"gameplay", L"melee_direct_client", "Direct hit", "2H extras: a two-handed swing's further monsters",
+     1.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageMeleeAttack, true},
+    // -- no row: Direct hit's scope (0 the two-handed extras, 1 every touch by the rules; -1 missing: 0.204's way).
+    {L"gameplay", L"melee_direct_scope", "Direct hit's scope", "0 two-handed extras, 1 every touch by the rules",
+     -1.0f, -1.0f, 1.0f, 1.0f, "%.0f", "", "", kNoPage, true},
+    // [hud] swing_timer (vr/swing_timer.h): the ring after each attack until the game lets the next one in, the blow's outcome inside (style / numbers: Settings)
+    {L"hud", L"swing_timer", "Swing timer", "A ring shows when the next attack counts (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
     //
     // Left and Right (the Controls tab's two pages): the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is
@@ -374,6 +395,17 @@ inline constexpr Def kDefs[] = {
      0.0f, -60.0f, 40.0f, 5.0f, "%+.0f%%", "", "", kPageHud},
     {L"hud", L"ordinary_mob_bars", "Plates: ordinary monsters", "Shown: all plates. Hidden: only champions, bosses, NPCs",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Shown", "Hidden", kPageHud},
+    // [hud] allies_place (shared/allies_place.h): where the allies (the merc, the summons, the party) are shown in F4 - one of three (Serg, test 0.205.6):
+    // the game's own row at the top, our grid under the map in the hand, our tiles on the right wrist. A stepper: its value box names the place (vr/hset_names.h).
+    {L"hud", L"allies_place", "Allies shown", "The merc, the summons, the party: one place of three (F4)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageHud},
+    // our names over monsters and NPCs ([hud] monster_names_own / npc_names_own, vr/own_names.h NameLook): their own three - D2R VR Settings has them too. Live.
+    {L"hud", L"names_own_size_pct", "Our names: size", "Our sharp names over monsters and NPCs, % of the game's",
+     100.0f, 20.0f, 300.0f, 5.0f, "%.0f%%", "", "", kPageHud, true},
+    {L"hud", L"names_own_far_pct", "Our names: size far away", "% of the size for a monster far off",
+     60.0f, 10.0f, 150.0f, 5.0f, "%.0f%%", "", "", kPageHud, true},
+    {L"hud", L"names_own_alpha", "Our names: backdrop", "A dark box behind them: 0 none, 1 solid",
+     0.0f, 0.0f, 1.0f, 0.05f, "%.2f", "", "", kPageHud, true},
     // -- no row: the toolbar type's other key. 0 the toolbar stays in the picture, 1 it is cut out, 2 the whole interface is.
     {L"hud", L"hide", "Interface out of the picture", "0 nothing, 1 the toolbar, 2 all of it",
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
@@ -408,11 +440,13 @@ constexpr int kKeyBarPlace = IndexOf(L"hud", L"bar_place");   // the toolbar typ
 constexpr int kKeyHide = IndexOf(L"hud", L"hide");
 constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt page's note
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
-constexpr int kKeyQuickBlow = IndexOf(L"gameplay", L"quick_blow");   // the Melee page's seventh row (0.204): with it on, By the rules is only the cleave's extras
+constexpr int kKeyQuickBlow = IndexOf(L"gameplay", L"quick_blow");   // Melee > Attack's first row (0.204)
+constexpr int kKeyMeleeDirectScope = IndexOf(L"gameplay", L"melee_direct_scope");   // Direct hit's third key (no row)
 constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Melee page's tick: its two numbers do nothing without it
 constexpr int kKeyMeleeArmed = IndexOf(L"gameplay", L"melee_skill_armed");   // the Melee page's skill arming (needs the touch)
 constexpr int kKeyMeleeDirect = IndexOf(L"gameplay", L"melee_direct");   // the Melee page's Direct hit: a tick over its two keys (hset_store.cpp)
 constexpr int kKeyMeleeDirectClient = IndexOf(L"gameplay", L"melee_direct_client");
+constexpr int kKeyAlliesPlace = IndexOf(L"hud", L"allies_place");   // [hud] allies_place: a stepper with names (vr/hset_names.h AlliesPlaceName)
 static_assert(kKeyMeleeDirect >= 0 && kKeyMeleeDirectClient >= 0, "Direct hit's keys are in the table");
 constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-button take: the Belt page's last row (it reads the trigger through direct input)
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
@@ -452,15 +486,16 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
-                                               "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Guide"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
+                                               "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Guide"};
 constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
-                                              "World", "Co-op", "Guide"};
+                                              "World", "Co-op", "Stats", "Guide"};
 // The tabs' font (vr/hset_paint.cpp: Segoe UI, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
 // Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths did for
-// fourteen (939 of 960); fifteen (World) take 24, and so do fourteen again (Controls in place of Left and Right). tools/hset_test.cpp measures them again.
-constexpr int kTabFontPx = 24;
-constexpr int kTabNameW[kTabCount] = {40, 67, 49, 72, 79, 39, 30, 40, 42, 33, 51, 51, 53, 50};
+// fourteen (939 of 960); fifteen (World) take 24, and so do fourteen again (Controls in place of Left and Right); fifteen with Stats take 22 (925 of 960:
+// at 24 they need 978). tools/hset_test.cpp measures them again.
+constexpr int kTabFontPx = 22;
+constexpr int kTabNameW[kTabCount] = {38, 62, 45, 67, 73, 36, 29, 38, 39, 30, 47, 48, 48, 39, 46};
 // The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
 // a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
 // faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.
@@ -490,11 +525,13 @@ constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageL
 // in F4 only). View 4 (F4) and 0 (not known: D2R VR Settings' own panel, a test) show everything, as before.
 constexpr bool FlatView(int view) { return view >= 1 && view <= 3; }
 constexpr bool F4OnlyPage(int page) {
-    return page == kPageVibration || page == kPageLife || page == kPageLook || page == kPageBody || page == kPageBelt || page == kPageMelee || IsWorldPage(page);
+    return page == kPageVibration || page == kPageLife || page == kPageLook || page == kPageBody || page == kPageBelt || IsMeleePage(page) || IsWorldPage(page) ||
+           page == kPageStats;   // (the strike statistics: the touch counts in F4 only)
 }
 constexpr bool F4OnlyKey(int key) {
     return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||
-                                        key == IndexOf(L"hud", L"ordinary_mob_bars"));
+                                        key == IndexOf(L"hud", L"ordinary_mob_bars") || key == kKeyAlliesPlace || key == IndexOf(L"hud", L"names_own_size_pct") ||
+                                        key == IndexOf(L"hud", L"names_own_far_pct") || key == IndexOf(L"hud", L"names_own_alpha"));   // (where the allies are, our names: F4 only)
 }
 constexpr bool PageShown(int page, int view) { return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)); }
 constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key)); }

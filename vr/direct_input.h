@@ -148,6 +148,12 @@ void SetVendorOpen(bool open);
 // its own open gesture is the long press, [openxr] skill_wheel_open=1). A request older than a second is dropped, so a
 // panel that was not listening does not open late. Any thread.
 bool TakeSkillPanelToggle();
+// [openxr] panels_key (vr/hand_keep.h KeyVk): the keyboard key that asks for the skill panel as the long press does (0 = none) - for a player whose
+// runtime gives no controllers (hand tracking, docs/notes/no_controllers.md). PanelKeyTick: the 1 ms update thread, the game window in front.
+void SetPanelKey(int vk);
+// [openxr] game_front: the keyboard's Esc pressed while another program has the keyboard - asked as the pause button asks (TakePauseToggle, F4).
+void RequestPause();
+void PanelKeyTick(bool focus);
 
 // The left trigger is the second row of skill buttons ([direct] left_trigger is the pad's LT, the default): layout::SecondRowOn of the table
 // LoadSettings read. False: the left trigger has its own action (or none) and the second row is off. Any thread.

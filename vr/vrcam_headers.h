@@ -68,6 +68,9 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "weapon_head_parts.h"   // ... a flat head as the thin slab of capsules its mesh is
 #include "thrust_stroke.h"   // hit by touch: the thrust - a poke along the blade with its own speed and distance
 #include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand
+#include "swing_timer_wire.h"   // [hud] swing_timer: the attack's ring (or bar) and its outcome, VR first person and the monitor's F2 / F3
+#include "own_labels_wire.h"   // [hud] labels_own: the item labels on the ground painted by us (F4), their atlas and its worker
+#include "game_ui.h"           // ... the game's Formal436 for them, from D2R VR Settings' game-art cache
 #include "stab_debug.h"          // [debug] stab_debug: the stab's readout and marks
 #include "melee_direct.h"  // the user's experimental direct hit (melee_direct.cpp)
 #include "melee_direct_client.h"   // [gameplay] melee_direct_client: the touch of a joined TCP/IP player as the game's own command (melee_direct_client.cpp)
@@ -162,7 +165,7 @@ namespace partycmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }  
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
-namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void SetFlatMapZoom(int steps); bool FlatMapZoomSeen(float* game, float* drawn, int* mode); int FlatMapZoomHooks(); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
+namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void SetMapPlaceFlat(int mode); void SetFlatMapZoom(int steps); bool FlatMapZoomSeen(float* game, float* drawn, int* mode); int FlatMapZoomHooks(); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
 namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
@@ -213,6 +216,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "health.h"        // [debug] health: one line per feature every 10 s, a mark where a chain is broken (vr/health.h)
 #include "vrcam_internal.h"   // what the parts cut from this file share with it (docs/plan_modules.md)
 #include "diag/diag.h"       // M1: the observers - frame log, pair times, draw profile, cb compare, replay trace, crash reports
+#include "strike_stats_wire.h"   // [stats] strike_stats: the player's strike statistics (vr/strike_stats_wire.cpp)
 #include "diag/save_backups.h"   // [support] save_backups: the game's saves copied into D2R VR Backups (power cuts zero them)
 #include "config/settings.h"  // M2: the settings (struct Settings, g_set)
 #include "world/area.h"       // M4: the area (the biome the game set, [sky] outdoor)
@@ -242,6 +246,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "arm_reach.h"
 #include "spell_aim_model.h"
 #include "shot_trace_wire.h"
+#include "hit_outcome_wire.h"   // [debug] hit_outcome: the hero's blows on monsters told in the log (vr/hit_outcome.h)
 #include "throw_aim.h"
 #include "throw_hand.h"
 #include "throw_cast.h"
@@ -312,6 +317,7 @@ namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's 
 #include "merc_tint_game.h"   // [hud] merc_tint: the wounded merc tinted red by the effect (vr/merc_tint.h)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/hand_vitals.h)
 #include "wrist_status_wire.h"   // [hud] wrist_status: the hero's companions and the effects on it, over a wrist turned to the eyes (vr/wrist_status.h)
+#include "ally_portraits_wire.h"   // [hud] ally_portraits: the allies' portraits under the map in the hand (vr/ally_portraits.h)
 #include "hand_orbs.h"   // [hud] hand_vitals_style orbs: life and mana as 3D balls on the wrists, drawn by the effect (vr/hand_orbs.h)
 #include "render_resolution.h"   // [render] vr_resolution: a render size apart from the window's
 #include "mod_layout.h"   // D2R VR as the D2RLoader mod D2R-VR: ReShade from the mod's own folder (shared/mod_layout.h)

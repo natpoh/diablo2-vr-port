@@ -39,6 +39,7 @@ struct FrameIn {
     Players players;               // the game's players count and whether it takes /players now (vr/players_cmd.h), for the Options page's Players row
     party::View party;             // the game's roster (vr/party_cmd.h), for the Party page
     party::MapShow mapShow;        // the game's Show Party / Show Party Names (vr/party_cmd.h MapNow), for the Co-op page's map row
+    stats::View stats;             // the strike statistics (vr/hset_stats_feed.h), for the Stats page
     AutoTune autoTune;             // [autotune]: the Video page's Auto run (vr/auto_tune_run.h, its words vr/auto_tune_text.h)
     int openGuide = -1;            // the first-start guide asks the panel to come up on its Guide page: the page to start on (vr/first_start.h), -1 none
     bool gripTaken[2] = {false, false};   // [weight] weapon_grip_no_chord: that hand's grip holds the weapon (or another gesture holds it) - it does not arm the chord
@@ -163,6 +164,7 @@ public:
         model.SetPlayers(in.players, in.ms);
         model.SetParty(in.party, in.ms);
         model.SetMapShow(in.mapShow, in.ms);
+        if (model.page == kPageStats) model.SetStats(in.stats);
         model.SetAuto(in.autoTune);
         model.Observe(in.snapshot);
 

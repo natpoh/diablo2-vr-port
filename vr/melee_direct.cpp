@@ -33,6 +33,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "hit_latency.h"
+#include "hit_outcome.h"   // [debug] hit_outcome: the rolls and the damage inside our call are marked as Direct hit's
 #include "melee_direct.h"
 #include "sigscan.h"
 #include "ui_ticket.h"
@@ -279,7 +280,9 @@ void Strike(const Request& r) noexcept {
     }
     // The call: the touched monster is the target and the reach inside this one call only.
     t_win = {r.game, player, monster};
+    hitoutcome::t_direct = true;
     const bool ok = CallAttack(attack, r.game, player);
+    hitoutcome::t_direct = false;
     t_win = {};
     if (swapped && !WritePtr(currentAt, wasCurrent)) g_faulted.store(true);   // (the hero's own current skill back - never left swapped)
     if (!ok) {
@@ -381,6 +384,15 @@ void SetByRules(bool on) {
     if (g_byRules.exchange(on) != on) Log(on ? "melee direct: by the rules (the first touch, the attack time, speed + force + length)" : "melee direct: every accepted touch");
 }
 bool ByRules() { return g_byRules.load(); }
+std::atomic<int> g_scope{-1};   // [gameplay] melee_direct_scope
+void SetScope(int scope) {
+    scope = scope < -1 ? -1 : scope > 1 ? 1 : scope;
+    if (g_scope.exchange(scope) != scope)
+        Log(scope == 0 ? "melee direct: [gameplay] melee_direct_scope=0 - by the rules, a two-handed swing's further monsters only (the first: the game's attack)"
+            : scope == 1 ? "melee direct: [gameplay] melee_direct_scope=1 - by the rules, every touch (the first one too, quick blow or not)"
+                         : "melee direct: [gameplay] melee_direct_scope missing - with quick blow the cleave's extras, without it every touch by the rules");
+}
+int Scope() { return g_scope.load(); }
 void SetRemoteWanted(bool on) {
     if (g_remote.exchange(on) != on)
         Log(on ? "melee direct: the joined players' extra hits are struck on this PC when it hosts ([gameplay] melee_direct_client_cleave)"

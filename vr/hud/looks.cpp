@@ -104,6 +104,14 @@ bool PlateFaded() {
 // [hud] allies_x, allies_y: the allies' portraits elsewhere - the interface comes out for that too, the
 // portraits' corner drawn back moved (AlliesBoxUv). The target's plate is kept out of that corner: read too.
 bool AlliesMoved() { return std::abs(g_set.alliesX.load()) > 0.0005f || std::abs(g_set.alliesY.load()) > 0.0005f; }
+// [hud] allies_game_hide: the game's own portraits hidden in VR F4 (a key of its own): the same corner moved off the picture, as wide as what the game
+// draws now (allyportraits::GameCornerToHide).
+bool AlliesHidden(float* units) {
+    float u = 0.0f;
+    const bool on = g_enabled.load() && allyportraits::GameCornerToHide(&u);
+    if (units) *units = u;
+    return on;
+}
 // [hud] durability_x, durability_y, durability_scale, durability_hide: the item-condition figure (vr/durability_figure.h) moved, sized or hidden - the interface comes
 // out for that too, in first person (F4) only; all four at their defaults: nothing is done.
 durab::Look DurabilityLook() {
@@ -117,8 +125,11 @@ durab::Look DurabilityLook() {
 bool DurabilityMoved() { return g_enabled.load() && FullBody() && durab::Moved(DurabilityLook()); }
 bool LabelsWanted() {
     if (PlateFaded()) return true;
-    if (g_inWorld.load() && AlliesMoved()) return true;
+    if (g_inWorld.load() && (AlliesMoved() || AlliesHidden(nullptr))) return true;
     if (g_inWorld.load() && DurabilityMoved()) return true;
+    if (g_inWorld.load() && AfrOn() && OwnLabelsNow()) return true;   // [hud] labels_own: the effect draws ours in each item label's place
+    if (g_inWorld.load() && AfrOn() && MonsterNamesOwnNow()) return true;   // [hud] monster_names_own: ... and ours in the target's plate
+    if (g_inWorld.load() && AfrOn() && NpcNamesOwnNow()) return true;   // [hud] npc_names_own: ... and ours for the names over NPCs and objects
     if (FloorView()) return g_inWorld.load() && g_set.labelsAlphaFloor.load() < 0.995f && !LabelBoxNative();
     return LabelsTilted();
 }

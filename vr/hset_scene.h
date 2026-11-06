@@ -6,6 +6,7 @@
 //   vr/tiles_paint.cpp the same pages on the skill panel window's Settings tab, scaled and in that window's own style.
 // The hit test (hset_model.h HitTest) reads the same rectangles, so what is drawn is what is clicked.
 
+#include "direct_hit_mode.h"   // the Melee > Attack row's Direct hit modes
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -44,19 +45,19 @@ struct Item {
 };
 using Scene = std::vector<Item>;
 
-// The Melee page with hit by touch and Direct hit on (by the rules, or Fully on as the file has it): its line warns, in amber - Direct hit
-// changes the game's own logic (D2R VR Settings > Strikes > Attention).
-// 0.204: with quick blow on, By the rules is only a two-handed swing's further monsters (vr/quick_blow.h) - a line of its own, not the warning.
-inline bool DirectHitCleaveOnly(const Model& m) {
-    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyQuickBlow] > 0.5f && m.Get()[kKeyMeleeDirect] > 0.5f;
-}
+// The Melee tab's pages with hit by touch on and Direct hit By the rules or Always (Melee > Attack's row: shared/direct_hit_mode.h): its line warns, in
+// amber - Direct hit changes the game's own logic (D2R VR Settings > Strikes > Attention). Two-handed extras (only a two-handed swing's further monsters:
+// the game has no one-swing-many-monsters) - a line of its own, not the warning.
+inline int DirectHitMode(const Model& m) { return (int)std::lround(m.Get()[kKeyMeleeDirectClient]); }
+inline bool DirectHitCleaveOnly(const Model& m) { return IsMeleePage(m.page) && m.Get()[kKeyMeleeTouch] > 0.5f && DirectHitMode(m) == directhit::kCleave; }
 inline bool DirectHitWarns(const Model& m) {
-    return m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && (m.Get()[kKeyMeleeDirect] > 0.5f || m.Get()[kKeyMeleeDirectClient] > 1.5f) && !DirectHitCleaveOnly(m);
+    return IsMeleePage(m.page) && m.Get()[kKeyMeleeTouch] > 0.5f && (DirectHitMode(m) == directhit::kRules || DirectHitMode(m) == directhit::kFull);
 }
 // The line under the rows for a model's state. `window`: the pages are the skill panel's Settings tab (it is closed by B, its Close
 // button or the long press of the right stick click, not by the grips and a click).
 inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageGuide) return firststart::Nav(std::clamp(m.guide, 0, firststart::kPageCount - 1));   // the guide's own foot, whatever else is going on
+    if (m.page == kPageStats) return stats::StatusText(m.Stats());   // the strike statistics: nothing of d2r_vr.ini
     if (m.page == kPageParty) {   // the game's party: nothing of d2r_vr.ini
         if (!m.PartyOn()) return uitext::Tr("vr.party.status.off", "Party is off: D2R VR Authentic Settings, Party in the headset.");
         if (!m.Party().known) return uitext::Tr("vr.party.status.no_game", "Parties are in a multiplayer game (TCP/IP or online): here there is no one to invite.");
@@ -93,15 +94,15 @@ inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageKeysL || m.page == kPageKeysR)
         return m.Get()[kKeyDirectOn] > 0.5f ? uitext::Tr("vr.hset.status.keys_idle", "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings.")
                                             : uitext::Tr("vr.hset.status.keys_off", "Controls without BodyWalk is off: these buttons do nothing (BodyWalk's mapping is the controls).");
-    if (m.page == kPageMelee && m.Get()[kKeyMeleeTouch] > 0.5f && m.Get()[kKeyMeleeDirect] < 0.5f && m.Get()[kKeyMeleeDirectClient] > 1.5f)   // the file says Fully on
-        return uitext::Tr("vr.hset.status.melee_direct_full2", "Direct hit is Fully on (D2R VR Authentic Settings > Strikes): every touch goes to the server.");
+    if (IsMeleePage(m.page) && m.Get()[kKeyMeleeTouch] > 0.5f && DirectHitMode(m) == directhit::kFull)
+        return uitext::Tr("vr.hset.status.melee_direct_always", "Direct hit Always (not recommended): every touch goes to the server, past the game's rules.");
     if (DirectHitCleaveOnly(m))   // Serg (2026-11-05): "директ хит должен по прежнему быть включен для двуручного меча и топоров"
-        return uitext::Tr("vr.hset.status.melee_quick_cleave", "Quick blow on. A two-handed weapon in both hands: the further monsters of a swing get Direct hit.");
+        return uitext::Tr("vr.hset.status.melee_cleave", "Direct hit 2H extras: a two-handed weapon in both hands - a swing's further monsters get Direct hit.");
     if (DirectHitWarns(m))   // Serg (2026-11-02): the same warning as D2R VR Settings' Attention block
         return uitext::Tr("vr.hset.status.melee_direct_on", "Attention: Direct hit changes the game's own logic - hits go to the server directly; in co-op everyone is affected.");
     if (IsWorldPage(m.page))
         return uitext::Tr("vr.hset.status.world_idle", "Each change applies by itself (F4). They need the arms on the controllers; the rest is in D2R VR Authentic Settings.");
-    if (m.page == kPageMelee)
+    if (IsMeleePage(m.page))
         return m.Get()[kKeyMeleeTouch] > 0.5f ? uitext::Tr("vr.hset.status.melee_idle", "Each change applies by itself. First person (F4) only.")
                                               : uitext::Tr("vr.hset.status.melee_off", "Hit by touch is off: tick it, and the rows below apply.");
     if (m.page == kPageBelt && m.Get()[kKeyBeltOn] > 0.5f && m.Get()[kKeyGrabTrigger] > 0.5f && m.Get()[kKeyDirectOn] < 0.5f)
@@ -416,6 +417,63 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         }
         b.Button(kPartyLeave, uitext::Tr("vr.party.leave", "Leave party"), {Kind::PartyLeave, -1, 0}, false, free && pv.inParty);
         b.Button(kPartyOpen, uitext::Tr("vr.party.open", "Open Party panel (P)"), {Kind::PartyOpen, -1, 0}, false, on && pv.known);
+    }
+    if (m.page == kPageStats) {
+        // -- the strike statistics (vr/hset_stats.h): the hero and the period, four totals, a row a weapon --------------------------------------
+        const stats::View& sv = m.Stats();
+        const int hero = m.StatsHero();
+        const bool all = m.StatsAllTime();
+        const int heroes = (int)sv.heroes.size();
+        b.Button(kStatsPrev, "<", {Kind::Stats, 0, -1}, false, heroes > 1, Role::Text, Part::Less);
+        b.Button(kStatsNext, ">", {Kind::Stats, 0, 1}, false, heroes > 1, Role::Text, Part::More);
+        b.Button(kStatsNow, uitext::Tr("vr.stats.this_game_btn", "This game"), {Kind::Stats, 1, 0}, !all, true, !all ? Role::Accent : Role::Text, Part::Choice);
+        b.Button(kStatsAll, uitext::Tr("vr.stats.all_time_btn", "All time"), {Kind::Stats, 1, 1}, all, true, all ? Role::Accent : Role::Text, Part::Choice);
+        if (hero < 0) {
+            b.Text(uitext::Tr("vr.stats.no_hero", "No blows counted yet"), kStatsName, Face::Bold, Role::Quiet);
+        } else {
+            const strikestats::Hero& h = sv.heroes[(size_t)hero];
+            const strikestats::Agg& g = stats::Of(h, all);
+            b.Text(stats::HeroTitle(h), kStatsName, Face::Bold, Role::Text);
+            b.Text(stats::HeroLine(sv, hero, all), kStatsLine, Face::Small, Role::Quiet);
+            const std::string caps[4] = {uitext::Tr("vr.stats.blows", "Blows"), uitext::Tr("vr.stats.speed", "Speed"), uitext::Tr("vr.stats.force", "Force"),
+                                         uitext::Tr("vr.stats.landed", "Landed")};
+            const std::string vals[4] = {stats::Count(g.blows), g.speedN ? stats::Num1(g.SpeedAvg()) + " m/s" : std::string("-"),
+                                         g.forceN ? stats::Num1(g.ForceAvg()) + " N s" : std::string("-"), stats::Landed(g)};
+            const std::string subs[4] = {
+                uitext::TrF("vr.stats.missed_sub", "and {n} swings that missed", {{"n", stats::Count(g.Misses())}}),
+                g.speedN ? uitext::TrF("vr.stats.best_sub", "best {v}", {{"v", stats::Num1(g.speedBest)}}) : std::string(),
+                g.forceN ? uitext::TrF("vr.stats.best_sub", "best {v}", {{"v", stats::Num1(g.forceBest)}}) : std::string(uitext::Tr("vr.stats.no_force", "a weapon with weight")),
+                uitext::Tr("vr.stats.landed_sub", "of the swings that touched")};
+            for (int i = 0; i < 4; ++i) {
+                b.Fill(kStatsTile(i), Role::RowB, Part::Row);
+                b.Text(caps[i], kStatsTileCap(i), Face::Small, Role::Quiet, Align::Center);
+                b.Text(vals[i], kStatsTileVal(i), Face::Bold, i < 3 ? Role::Accent : Role::Text, Align::Center);
+                if (!subs[i].empty()) b.Text(subs[i], kStatsTileSub(i), Face::Small, Role::Quiet, Align::Center);
+            }
+            const char* const heads[5] = {uitext::Tr("vr.stats.col.weapon", "Weapon"), uitext::Tr("vr.stats.col.blows", "Blows"), uitext::Tr("vr.stats.col.speed", "Speed m/s"),
+                                          uitext::Tr("vr.stats.col.force", "Force N s"), uitext::Tr("vr.stats.col.missed", "Missed")};
+            const int more = stats::RowsLeftOut(h, all);   // (the weapon's head says how many the rows leave out: "Weapon - 4 of 6")
+            const std::string head0 = more > 0 ? uitext::TrF("vr.stats.col.weapon_of", "Weapon - {n} of {all}", {{"n", std::to_string(stats::kRows)}, {"all", std::to_string(stats::kRows + more)}})
+                                               : std::string(heads[0]);
+            for (int c = 0; c < 5; ++c) b.Text(c ? std::string(heads[c]) : head0, kStatsCol(c, kStatsHeadY, 26), Face::Small, Role::Accent, c ? Align::Right : Align::Left);
+            const std::vector<const strikestats::Weapon*> rows = stats::Rows(h, all);
+            if (rows.empty())
+                b.Text(all ? uitext::Tr("vr.stats.none_ever", "No blows by touch yet.") : uitext::Tr("vr.stats.none_game", "No blows by touch in this game yet."),
+                       kStatsCol(0, kStatsRowY0, 30), Face::Small, Role::Quiet);
+            for (int i = 0; i < (int)rows.size(); ++i) {
+                const strikestats::Weapon& w = *rows[(size_t)i];
+                const strikestats::Agg& a = stats::Of(w, all);
+                const Rect row = kStatsRow(i);
+                b.Fill(row, i % 2 ? Role::RowB : Role::RowA, Part::Row);
+                b.Text(stats::WeaponName(w), kStatsCol(0, row.y - 1, 32), Face::Bold, Role::Text);
+                b.Text(stats::KindText(w.kind), kStatsCol(0, row.y + 28, 26), Face::Small, Role::Quiet);
+                const int ny = row.y + 10, nh = 34;
+                b.Text(stats::Count(a.blows), kStatsCol(1, ny, nh), Face::Bold, Role::Text, Align::Right);
+                b.Text(stats::AvgBest(a.SpeedAvg(), a.speedBest, a.speedN), kStatsCol(2, ny, nh), Face::Normal, Role::Text, Align::Right);
+                b.Text(stats::AvgBest(a.ForceAvg(), a.forceBest, a.forceN), kStatsCol(3, ny, nh), Face::Normal, Role::Text, Align::Right);
+                b.Text(stats::Count(a.Misses()), kStatsCol(4, ny, nh), Face::Normal, Role::Quiet, Align::Right);
+            }
+        }
     }
     if (m.page == kPageGuide) {
         // -- the first-start guide (vr/first_start.h): a page of its words, Back and Next under it -----------------------------------------

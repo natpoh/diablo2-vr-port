@@ -85,8 +85,26 @@ void TestHold() {
     CHECK(Resume(1000, 1000 + kResumeMs));
 }
 
+// The process's exit (ntdll!RtlExitUserProcess, 2026-11-06): the quits no message shows - the title screen's confirm box, a game left straight to Windows
+void TestProcessExit() {
+    CHECK(AtProcessExit(false, true, 0) == AtExit::Off);      // the key 0: left to the DLLs' detach, as before
+    CHECK(AtProcessExit(false, true, 1) == AtExit::Off);
+    CHECK(AtProcessExit(false, false, 0) == AtExit::Off);
+    CHECK(AtProcessExit(true, true, 0) == AtExit::End);       // Serg's two exits of 2026-11-06: a session and its swapchains alive at the exit
+    CHECK(AtProcessExit(true, false, 1) == AtExit::End);      // a quit's end still destroying on its own thread: waited for, not cut by the exit
+    CHECK(AtProcessExit(true, false, 0) == AtExit::Nothing);  // flat, FlatVR, or a quit already ended it all: nothing to do
+    CHECK(AtProcessExit(true, false, -1) == AtExit::Nothing);
+    // the wait: an end under way given its time, then the destroy (the 0.203.2 end took 69 ms); never forever
+    CHECK(kExitStopMs > kBudgetMs);
+    CHECK(kExitStopMs <= 10000.0);
+    CHECK(Name(Trigger::ProcessExit) && std::strcmp(Name(Trigger::ProcessExit), "none") != 0);
+    // the process's exit is no window message and no UI message
+    CHECK(FromWindow(0x0002, 0) != Trigger::ProcessExit);
+    CHECK(FromUi("PanelManager", "ClosePanel") == Trigger::None);   // the confirm box's close: also a cancel, not a quit by itself
+}
+
 void TestNames() {
-    for (Trigger t : {Trigger::WindowClose, Trigger::WindowsEnd, Trigger::TitleExit}) CHECK(Name(t) && Name(t)[0] && std::strcmp(Name(t), "none") != 0);
+    for (Trigger t : {Trigger::WindowClose, Trigger::WindowsEnd, Trigger::TitleExit, Trigger::ProcessExit}) CHECK(Name(t) && Name(t)[0] && std::strcmp(Name(t), "none") != 0);
     CHECK(std::strcmp(Name(Trigger::None), "none") == 0);
 }
 
@@ -97,6 +115,7 @@ int main() {
     TestDecide();
     TestWait();
     TestHold();
+    TestProcessExit();
     TestNames();
     std::printf("%d of %d checks passed\n", g_checks - g_fails, g_checks);
     return g_fails ? 1 : 0;

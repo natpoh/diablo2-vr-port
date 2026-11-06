@@ -18,6 +18,7 @@
 // W A S D on / off, F10 skeleton dump. Middle mouse drag turns the view too.
 
 #include "vrcam_headers.h"   // the headers and the other files' declarations (docs/plan_modules.md M2)
+#include "game_version.h"    // the game data's version from D2RLoader's own log: older than 3.x said loudly (crash group K)
 
 #pragma intrinsic(_ReturnAddress)
 
@@ -751,9 +752,16 @@ constexpr uint64_t RVA_CLIENT_SIZE = 0x6545D0;
 const uint8_t kSigClientSize[16] = {0x48,0x83,0xEC,0x38,0xE8,0x97,0xD1,0x2A,0x00,0x48,0x8D,0x54,0x24,0x20,0x48,0x8B};
 constexpr uint64_t kClientSizeUiRets[7] = {0x843ED5, 0x844195, 0x8453A9, 0x846239, 0x14D7E4, 0x14F31D, 0x14F943};
 constexpr uint64_t RVA_CURSOR_HEIGHT_RET = 0x7F4B2, RVA_CURSOR_WIDTH_RET = 0x14FB2A;
+// The hover label panel's GetWidth calls (return addresses; vr_resolution.h HoverLabelPartMaxWidth): interface callers too, so the
+// label's width comes from the same picture as its margin (ClientSizeUiRet4) and its height (GetHeight: CursorHeightRet). Answered
+// the window's width, a big square picture in a small window gave the label's parts a negative max width and the game's text wrap
+// never ended (crash reports 230, 247, 259, 260, 269). Checked to be calls of GetWidth before they count; not found: the label keeps
+// the window's width (and the SetMaxSize net below keeps it from hanging).
+constexpr uint64_t kLabelWidthRets[13] = {0x88008F, 0x88020E, 0x880275, 0x880372, 0x8803F2, 0x880DD8, 0x880EE9,
+                                          0x880F9C, 0x881033, 0x8810DD, 0x881792, 0x88188A, 0x881F2B};
 using ClientSizeFn = uint64_t (*)();
 ClientSizeFn OrigClientSize = nullptr;
-uintptr_t g_clientSizeUiRet[7] = {}, g_clientSizeCursorRet[2] = {};
+uintptr_t g_clientSizeUiRet[7] = {}, g_clientSizeCursorRet[2] = {}, g_labelWidthRet[13] = {};   // (filled before the hook goes in)
 std::atomic<bool> g_clientSizeOn{true};
 
 uint64_t HookClientSize() {
@@ -761,7 +769,10 @@ uint64_t HookClientSize() {
     const uint64_t native = OrigClientSize();
     vrres::Asker asker = vrres::Asker::Other;
     if (from == g_clientSizeCursorRet[0] || from == g_clientSizeCursorRet[1]) asker = vrres::Asker::Cursor;
-    else for (uintptr_t r : g_clientSizeUiRet) if (from == r) { asker = vrres::Asker::Ui; break; }
+    else {
+        for (uintptr_t r : g_clientSizeUiRet) if (from == r) { asker = vrres::Asker::Ui; break; }
+        if (asker == vrres::Asker::Other) for (uintptr_t r : g_labelWidthRet) if (r && from == r) { asker = vrres::Asker::Ui; break; }
+    }
     return asker == vrres::Asker::Other ? native : vrres::ClientSizeAnswer(asker, native, g_clientSizeOn.load());
 }
 // The target of a relative CALL (E8) or JMP (E9) at `site` when it is one (0 otherwise).
@@ -788,8 +799,9 @@ void InstallClientSize(bool on) {
     g_clientSizeCursorRet[1] = d2rsig::Addr(RVA_CURSOR_WIDTH_RET);
     if (!failed && (!g_clientSizeCursorRet[0] || !g_clientSizeCursorRet[1])) return;
     if (!failed && BranchTarget(g_clientSizeCursorRet[0] - 5, 0xE8) != fn) failed = true;
+    uintptr_t getWidth = 0;
     if (!failed) {   // SetCursorPosition's call of GetWidth, and GetWidth's tail jump (17 bytes in, 3.3.93787) to the query
-        const uintptr_t getWidth = BranchTarget(g_clientSizeCursorRet[1] - 5, 0xE8);
+        getWidth = BranchTarget(g_clientSizeCursorRet[1] - 5, 0xE8);
         if (!getWidth || BranchTarget(getWidth + 0x11, 0xE9) != fn) failed = true;
     }
     if (failed) {
@@ -797,14 +809,71 @@ void InstallClientSize(bool on) {
             "([render] vr_resolution_ui does nothing)");
         return;
     }
+    // The hover label's GetWidth calls (kLabelWidthRets): all of them or none, each a call of GetWidth. One still in an encrypted
+    // page: asked again; one not in this build or not such a call: the label keeps the window's width (the SetMaxSize net stays).
+    static int labels = 0;   // 0 not yet, 1 in, -1 left out
+    if (labels == 0) {
+        uintptr_t got[13] = {};
+        int state = 1;
+        for (int i = 0; i < 13 && state == 1; ++i) {
+            got[i] = d2rsig::Addr(kLabelWidthRets[i]);
+            if (!got[i]) state = d2rsig::NotInBuild(kLabelWidthRets[i]) ? -1 : 0;
+            else if (BranchTarget(got[i] - 5, 0xE8) != getWidth) state = -1;
+        }
+        if (state == 0) return;   // (its code may still be encrypted: asked again)
+        labels = state;
+        if (labels == 1) memcpy(g_labelWidthRet, got, sizeof g_labelWidthRet);
+        else Log("vrcam: render size - the hover label's width calls are not what 3.3.93787 has: hover labels keep the window's width "
+                 "(a label too wide for it is laid out on one line instead)");
+    }
     in = d2rsig::Hook(RVA_CLIENT_SIZE, kSigClientSize, sizeof kSigClientSize, (void*)&HookClientSize, (void**)&OrigClientSize);
     if (!in) {
         failed = true;
         Log("vrcam: render size - the game's client-size query could not be hooked: its interface and mouse keep the window's size");
         return;
     }
-    Log("vrcam: render size - the game's client-size query is in: with a render size its interface and mouse follow the picture ([render] vr_resolution_ui)");
+    LogF("vrcam: render size - the game's client-size query is in: with a render size its interface and mouse follow the picture "
+        "([render] vr_resolution_ui; hover labels %s)", labels == 1 ? "too" : "not");
     vrres::ClientSizeReflow();   // a size already in force: laid out once more
+}
+
+// -- the hover label's SetMaxSize: the safety net (vr_resolution.h LabelMaxWidth) ------------------------------------------------------
+// 3.3.93787: 0x8DACE0 SetMaxSize(part, const int32_t size[2]) stores {max width, max height} at +0x2DC and re-measures the part's
+// text (jmp 0x8DAD00); its one caller is the hover label's layout (0x881010). The game's text wrap never ends with a max width
+// below 0 - a hung game - so such a width becomes "none" (0x7FFFFFFF, the part constructor's own value): the label on one line.
+// View only: the label's own layout, nothing else. Not tied to [render] vr_resolution_ui: it is a hang whatever made the width.
+constexpr uint64_t RVA_LABEL_SET_MAX_SIZE = 0x8DACE0;
+const uint8_t kSigLabelSetMaxSize[10] = {0x48,0x8B,0x02,0x48,0x89,0x81,0xDC,0x02,0x00,0x00};   // mov rax,[rdx]; mov [rcx+2DCh],rax
+using LabelSetMaxSizeFn = uint64_t (*)(void*, const int32_t*);
+LabelSetMaxSizeFn OrigLabelSetMaxSize = nullptr;
+std::atomic<uint32_t> g_labelWidthsMended{0};
+
+uint64_t HookLabelSetMaxSize(void* part, const int32_t* size) {
+    int32_t s[2] = {size[0], size[1]};   // (the caller's own local: {width, 0x7FFFFFFF})
+    const int32_t w = vrres::LabelMaxWidth(s[0]);
+    if (w != s[0]) {
+        if (g_labelWidthsMended.fetch_add(1) == 0)   // once: the draw thread, a log line costs a millisecond
+            LogF("vrcam: hover label - the game gave a label part a max width of %d (no end to its text wrap: a hung game) - laid out "
+                "on one line instead", s[0]);
+        s[0] = w;
+    }
+    return OrigLabelSetMaxSize(part, s);
+}
+void InstallLabelWidthGuard() {
+    static bool in = false, failed = false;
+    if (in || failed) return;
+    if (!d2rsig::Addr(RVA_LABEL_SET_MAX_SIZE)) {
+        if (d2rsig::NotInBuild(RVA_LABEL_SET_MAX_SIZE)) {
+            failed = true;
+            Log("vrcam: hover label - its SetMaxSize is not in this build: no net under a negative label width");
+        }
+        return;   // (its code may still be encrypted: asked again)
+    }
+    in = d2rsig::Hook(RVA_LABEL_SET_MAX_SIZE, kSigLabelSetMaxSize, sizeof kSigLabelSetMaxSize, (void*)&HookLabelSetMaxSize,
+                      (void**)&OrigLabelSetMaxSize);
+    if (!in) failed = true;
+    Log(in ? "vrcam: hover label - SetMaxSize is watched: a negative label width is laid out on one line, not a hung game"
+           : "vrcam: hover label - SetMaxSize could not be hooked: no net under a negative label width");
 }
 
 void InstallHooks() {
@@ -919,7 +988,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.205.0";
+static const char g_info_version[] = "0.206.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1012,6 +1081,40 @@ static void ReportIdentity(const PluginContext* ctx) {
     CloseHandle(f);
 }
 
+// Crash group K (rows 272, 275; shared/game_version.h): D2RLoader's own log names the game data's version in its first lines. Older than 3.x with a 3.x exe, the
+// game dies before its title screen on a 3.x file the old data lacks (D2RLoader+0xF9F680) - that read is the game's, not ours: the plugin only says it loudly.
+void CheckGameVersion() {
+    wchar_t exe[MAX_PATH];
+    DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    while (n > 0 && exe[n - 1] != L'\\') --n;
+    exe[n] = 0;
+    std::wstring path = std::wstring(exe) + L"d2rloader\\logs\\d2rloader.log";
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { Log("vrcam: game version - D2RLoader's log (d2rloader\\logs\\d2rloader.log) not readable: not checked"); return; }
+    static char head[65536];
+    DWORD got = 0;
+    const BOOL ok = ReadFile(f, head, sizeof head, &got, nullptr);
+    CloseHandle(f);
+    const gamever::Version v = ok ? gamever::FindInLog(head, got) : gamever::Version{};
+    switch (gamever::Judge(v)) {
+        case gamever::Support::Unknown:
+            Log("vrcam: game version - D2RLoader's log names none: not checked");
+            break;
+        case gamever::Support::Supported:
+            LogF("vrcam: game version - the game data is %d.%d (D2RLoader's log): supported", v.major, v.minor);
+            break;
+        case gamever::Support::Newer:
+            LogF("vrcam: game version - the game data is %d.%d (D2RLoader's log): newer than D2R VR knows - parts may not work until D2R VR is updated", v.major, v.minor);
+            break;
+        case gamever::Support::TooOld:
+            for (int i = 0; i < 3; ++i)
+                LogF("vrcam: WARNING - THE GAME DATA IS %d.%d.%d, OLDER THAN 3.x (D2RLoader's log), with a newer game program: a broken or old install. The game "
+                     "will likely crash before its title screen. Repair it: Battle.net - Diablo II: Resurrected - the gear by Play - Scan and Repair (Steam: "
+                     "Properties - Installed Files - Verify integrity), then start again. D2R VR needs the game's 3.x.", v.major, v.minor, v.patch < 0 ? 0 : v.patch);
+            break;
+    }
+}
+
 D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     if (ctx == nullptr) return true;
     g_ctx = ctx;
@@ -1027,9 +1130,11 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     sessionlogs::Start();   // [support] session_logs: this game's logs into logs\sessions\<its start>, kept 30 days
     crashwatch::Start(g_info_version);   // [support] crash_reports: D2R VR Crash Reporter watches this game from outside (off: nothing, as before)
     rtsswatch::Start();   // [support] rtss_warning: RivaTuner Statistics Server's hook found with the game - one log line with the advice (only reads)
+    CheckGameVersion();   // the game data older than 3.x (a broken install): said loudly before the game dies on it (shared/game_version.h)
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
     gpufault::EnableDred(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0);   // [debug] dred, on unless the ini says 0
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
+    strikestatswire::Start();   // [stats] strike_stats: the player's strike statistics read from Saved Games\...\D2R VR Stats (the touch counts into them)
     savebackups::Start();   // [support] save_backups: the saves copied before the game opens them, then whenever one changes (power cuts zero them)
     viewgate::Set(&FullBody);   // before any module that asks: the new behaviours (direct input, gestures, panels, pulses, hooks) act in F4 only
     viewgate::SetFlat(&FlatViews);   // ... except the left stick's walk in VR F1-F3 ([direct] walk_flat_views, vr/walk_flat.h): movement only
@@ -1058,6 +1163,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     moveattack::SetFlatViewFn([] { return g_set.platform.load() == 0 ? (int)g_set.flatView.load() : 0; });   // the per-attack log's view
     straywalk::SetLogger(&Log);
     shottrace::SetLogger(&Log);
+    hitoutcome::SetLogger(&Log);
     straywalk::SetAttackFn(&standstill::AttackActive);
     calib::RegisterInput();   // the T-pose measurement takes both triggers from the input layer while it runs
     firststart::RegisterInput();   // the first-start guide reads the right stick's up and down (it takes nothing)
@@ -1226,7 +1332,12 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     merctint::Init(ctx);   // [hud] merc_tint reads the merc's life on the UI thread
     handvitals::Init(ctx);   // [hud] hand_vitals reads the hero's life and mana on the UI thread; listens to direct_input's frames
     thrustdebugwire::Init(ctx);   // [debug] thrust_debug: the thrust's readout over the weapon hand; listens to direct_input's frames
+    swingtimer::Init(ctx);   // [hud] swing_timer: the attack's ring before the eyes; listens to direct_input's frames
+    ownlabels::SetLog(&Log);   // [hud] labels_own: the item names' painter says what it did
+    ownlabels::SetFaceSource(&gameui::TextFaceAlone);
+    ownlabels::SetTitleFaceSource(&gameui::TitleFaceAlone);   // (a text whose game style is Exocet: in Exocet)   // ... in the game's Formal436 when D2R VR Settings made the game-art cache
     wriststatus::Init(ctx);   // [hud] wrist_status reads the hero's pets and states on the game's thread; listens to direct_input's frames
+    allyportraits::Init(ctx);   // [hud] ally_portraits reads the party roster and the client's pet list on the UI thread
     panelinput::Init(ctx);
     bowdrawwire::Init(ctx, &AimHand, &FullBody);   // the bow draw listens to direct_input's frames, in F4 only
     bowpitchwire::Init(ctx);   // [bow] pitch_aim
@@ -1268,7 +1379,9 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
     thrustdebugwire::Shutdown();   // [debug] thrust_debug: its listener out, its painter joined
+    swingtimer::Shutdown();   // [hud] swing_timer: the same
     wriststatus::Shutdown();   // [hud] wrist_status: its listener out, its painter joined
+    allyportraits::Shutdown();   // [hud] ally_portraits: its painter joined
     xr::Shutdown();   // the session before anything it runs on goes; FlatVR started again
     g_enabled.store(false);
     d2rcam::SetEnabled(false);
@@ -1276,6 +1389,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
     rtsswatch::Stop();     // [support] rtss_warning: its thread (it ends by itself after the first minute), before the log goes)
     crash::Uninstall();
+    strikestatswire::Stop();   // [stats] strike_stats: the last numbers written, the thread joined
     savebackups::Stop();   // [support] save_backups: what the game wrote at its exit backed up, the thread joined
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back
     attackpath::ShutdownNet();   // [gameplay] flat_attack_path: its channel given back

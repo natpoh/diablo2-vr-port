@@ -444,32 +444,48 @@ void DescribeBreadcrumbs(const D3D12_AUTO_BREADCRUMB_NODE* head) {
     CollectEnd();
 }
 
+// The ask itself, under SEH: an adapter whose wrapper (an OpenXR runtime's or an API layer's DXGI hook) went away reads its vtable from freed memory - the
+// call fails, the plugin and the game go on.
+namespace {
+bool AskVideoMemory(IDXGIAdapter3* a, DXGI_QUERY_VIDEO_MEMORY_INFO* info) {
+    __try {
+        return SUCCEEDED(a->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, info));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+void ReleaseQuietly(IUnknown* u) {
+    __try {
+        u->Release();
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+}  // namespace
+
+// Group I of the 2026-11-06 crash batch (row 261, an Oculus PC with ReShade's XR layer): an adapter kept in a static from the first call was wrapped by a module
+// that left with the OpenXR instance (no headset: the instance went 2 s later) - the next call, 10 s on, read its vtable from unmapped memory, the game died
+// (0xD2). Now nothing is kept: each call (every 10 s, and the stall watchdog's line) makes its own factory, takes the adapter by the device's LUID, asks and
+// lets both go. A fault in the ask is caught.
 bool VideoMemory(uint64_t* usage, uint64_t* budget) {
     if (!g_haveLuid.load()) return false;
-    static SRWLOCK lock = SRWLOCK_INIT;
-    static IDXGIAdapter3* a3 = nullptr;
-    static LUID forLuid{};
+    typedef HRESULT(WINAPI * Fn)(REFIID, void**);
+    HMODULE m = GetModuleHandleW(L"dxgi.dll");   // (the game has it loaded; no import of ours)
+    Fn fn = m ? (Fn)GetProcAddress(m, "CreateDXGIFactory1") : nullptr;
+    if (!fn) return false;
+    IDXGIFactory4* f = nullptr;
+    if (FAILED(fn(__uuidof(IDXGIFactory4), (void**)&f)) || !f) return false;
+    IDXGIAdapter3* a3 = nullptr;
+    const LUID luid = g_luid;
+    if (FAILED(f->EnumAdapterByLuid(luid, __uuidof(IDXGIAdapter3), (void**)&a3))) a3 = nullptr;
     bool ok = false;
-    AcquireSRWLockExclusive(&lock);
-    if (a3 && (forLuid.LowPart != g_luid.LowPart || forLuid.HighPart != g_luid.HighPart)) { a3->Release(); a3 = nullptr; }
-    if (!a3) {
-        typedef HRESULT(WINAPI * Fn)(REFIID, void**);
-        HMODULE m = GetModuleHandleW(L"dxgi.dll");   // (the game has it loaded; no import of ours)
-        Fn fn = m ? (Fn)GetProcAddress(m, "CreateDXGIFactory1") : nullptr;
-        IDXGIFactory4* f = nullptr;
-        if (fn && SUCCEEDED(fn(__uuidof(IDXGIFactory4), (void**)&f)) && f) {
-            IDXGIAdapter3* a = nullptr;
-            if (SUCCEEDED(f->EnumAdapterByLuid(g_luid, __uuidof(IDXGIAdapter3), (void**)&a)) && a) { a3 = a; forLuid = g_luid; }
-            f->Release();
-        }
-    }
     DXGI_QUERY_VIDEO_MEMORY_INFO info{};
-    if (a3 && SUCCEEDED(a3->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info))) {
+    if (a3 && AskVideoMemory(a3, &info)) {
         *usage = info.CurrentUsage;
         *budget = info.Budget;
         ok = true;
     }
-    ReleaseSRWLockExclusive(&lock);
+    if (a3) ReleaseQuietly(a3);
+    ReleaseQuietly(f);
     return ok;
 }
 

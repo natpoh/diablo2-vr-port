@@ -114,6 +114,7 @@ group.draw_distance.help = 用一个滑块控制你周围的世界绘制多远�
 group.the_game_and_the_mod = 游戏与模组
 group.the_game_and_the_mod.help = 检查并安装模组所需的内容：D2RLoader（模组只能在它之下运行）以及模组自己的效果（天空、雾和洞穴顶部 - D2R VR 自己绘制，无需 ReShade）。你自己的 ReShade 保持原样。还有生成秘法庇护所天空的按钮。
 @status.rtss_warn.label = RivaTuner Statistics Server 或 MSI Afterburner 正在运行。它的屏幕显示会挂接游戏画面，可能让游戏在 VR 中卡在第一帧画面。请关闭 RivaTuner / MSI Afterburner，或在 RivaTuner 中为 D2R.exe 和 D2RLoader.exe 把 Application detection level 设为 None（或关闭它的 On-Screen Display）。
+@status.game_old.label = 游戏数据早于 3.x（D2RLoader 的日志），而游戏程序更新：安装已损坏或过旧，游戏很可能在标题画面之前崩溃。请修复：Battle.net - Diablo II: Resurrected - “开始游戏”旁的齿轮 - 扫描和修复（Steam：属性 - 已安装文件 - 验证完整性），然后重新启动。
 @status.d2rloader.label = D2RLoader
 @run.d2rloader_get.label = 下载并安装 D2RLoader 1.3.1
 @run.d2rloader_get.tip = 从 d2rloader.net 下载 D2RLoader 1.3.1，按该网站公布的 SHA-256 校验，并解压到游戏文件夹中 D2R.exe 旁边。模组只能在 D2RLoader 之下运行。
@@ -810,6 +811,20 @@ gameplay.quick_blow_faster.tip = 突破游戏的攻击速度。开启快速打�
 gameplay.quick_blow_min_ms.label = 快速打击：两次打击之间的最短等待，毫秒
 gameplay.quick_blow_min_ms.tip = 比动画更快出手：下一击不早于上一击之后的这段时间（服务器的帧为 40 ms，所以等待按整帧计算）。0：触碰多快就多快。TCP/IP 游戏：使用主机的值。实时生效。
 
+# --- Swing timer ---
+group.swing_timer = 挥击计时器
+group.swing_timer.help = 每次攻击之后，游戏还要多久才接受下一次攻击，以及这一击造成了什么。仅作显示：游戏的攻击速度和判定保持不变。
+hud.swing_timer.label = 挥击计时器：下一次攻击何时有效
+hud.swing_timer.tip = VR 第一人称（F4）以及显示器上的 F2 / F3。在你攻击之前不显示任何东西：没有圆环就表示可以出手。游戏一开始攻击，画面中央就会出现一个圆环逐渐充满，直到游戏允许下一次攻击。红色：游戏现在拒绝新的攻击——此时的触碰会丢失并提示“too soon”。琥珀色：动画的最后阶段——此时的攻击会被保留，并在动画结束时生效。绿色：可以出手。之后圆环逐渐消失。圆环内显示这一击的结果：夺走的生命值（暴击为金色且更大；一次挥击穿过多个怪物时累加，并带有 x2、x3 ...），或 miss、blocked、dodged、avoided。这里的任何内容都不会改变游戏：它的攻击速度、判定和伤害都是它自己的——圆环只显示它的时机，让你顺着它挥击，而不是撞上它。单人游戏或你主持的游戏：精确。加入他人的 TCP/IP 游戏：圆环依据你英雄自己的动画（接近但不精确），且没有数字。显示器上需要在 ReShade 中开启 D2R_DepthFog.fx。取消勾选：不显示任何内容。即时生效。
+hud.swing_timer_style.label = 挥击计时器：位置
+hud.swing_timer_style.tip = 中央圆环：画面中央周围的一个小圆环（VR 中在眼前，显示器上在准星周围），数字显示在其中。顶部条：画面顶部横跨一条从左向右充满的条，数字在其上方升起并淡出。即时生效。
+hud.swing_timer_style.choice0 = 中央圆环
+hud.swing_timer_style.choice1 = 顶部条
+gameplay.swing_pace_joined.label = 加入游戏：在主机接受时才发送触碰（VR）
+gameplay.swing_pace_joined.tip = 加入他人的 TCP/IP 游戏，VR 第一人称（F4）。主机的游戏决定你的英雄何时可以再次攻击，被它拒绝的触碰会丢失。勾选：你的电脑像挥击计时器一样计算你英雄的攻击（依据你英雄自己的动画），只在主机会接受时才发送触碰——主机会拒绝时的触碰不发送（“too soon”），攻击最后阶段的触碰会被保留并在攻击结束时发送，因此不会白白丢掉。攻击、它的速度和它的判定仍由主机的游戏决定。从你的第二次攻击开始生效（第一次用于测量）。单人游戏或你主持的游戏：没有变化（你自己的游戏立即决定）。取消勾选：每次触碰都立即发送。即时生效。
+hud.swing_timer_numbers.label = 挥击计时器：显示这一击造成了什么
+hud.swing_timer_numbers.tip = 这一击夺走的生命值，或 miss / blocked / dodged / avoided，显示在圆环内或条的上方。取消勾选：仅显示计时器（“too soon”仍会显示）。仅限单人游戏或你主持的游戏：加入者的攻击在主机的电脑上判定。即时生效。
+
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = 游戏内设置与主机规则
 group.in_game_settings_and_the_host_s_rules.help = 游戏暂停菜单中的 D2R VR 设置按钮（显示器上的 2D 模式），以及合作模式下上方的主机规则列表。
@@ -1082,7 +1097,7 @@ group.toolbar_and_map_from_behind.help = 第三人称（F2）中的工具栏和�
 hud.map_direction.label = 地图上的箭头：你注视的方向
 hud.map_direction.tip = 在你自己的摄像机视角（平面 F2 和 F3，VR 的 F2 和 F4）中，游戏的地图仍像它自己的俯视摄像机那样转向，所以不显示你朝哪个方向看。勾选：在游戏小地图（以及全屏地图）中央你的英雄标记旁，一个小小的金色箭头指向摄像机所看的方向 - 画面中以及手上的地图都有。只画在游戏的地图之上；地图及其上的内容是游戏自己的。F1 和地板（VR 的 F3）与以前一样。取消勾选：地图与以前一样。即时生效。
 hud.map_rotate_flat.label = 地图随摄像机转动
-hud.map_rotate_flat.tip = 在你自己的摄像机视角（平面 F2 和 F3，画面中带地图的 VR F2 和 F3）下，屏幕上游戏的角落地图：绘制在英雄周围，从正上方俯视，并旋转到摄像机所看的方向朝上——转动鼠标，地图随你转动。VR F3（游戏铺在你的地面上）：你的头部沿地面所看的方向朝上——绕着游戏走动，地图随之旋转。此时金色箭头（Arrow on the map）指向上方。只有角落地图可以旋转：当游戏地图在屏幕中央（全屏地图）时，旋转期间它会移到右上角（Corner map is: left 会放到左上角），不旋转时再回到全屏——仅限本次游戏，游戏选项会保留你的选择。F1 不适用（那里游戏的摄像机和窗口从不旋转），VR F4 也不适用（手中的地图有自己的 Turns with you）。需要开启 D2R_DepthFog.fx（它负责把地图画回去）。不勾选：地图保持游戏自己的绘制方式。即时生效。
+hud.map_rotate_flat.tip = 在你自己的摄像机视角（平面 F2 和 F3，画面中带地图的 VR F2 和 F3）下，屏幕上游戏的角落地图：绘制在英雄周围，从正上方俯视，并旋转到摄像机所看的方向朝上——转动鼠标，地图随你转动。VR F3（游戏在你的地板上）：你的头朝地板方向看的那一边朝上——绕着游戏走动，地图随之转动。此时金色箭头（Arrow on the map）指向上方。只有角落地图才能转动：游戏的地图位于屏幕中央时（它的全屏地图），转动期间会被放到右上角（Corner map is: left 会放到左边），不转动时则回到全屏——仅限本次会话，游戏的选项会保留你的选择（Map on the screen 由你自己选择左、中或右）。F1 不适用（游戏摄像机及其窗口在那里从不转动），VR F4 也不适用（它手中的地图有自己的 Turns with you）。需要开启 D2R_DepthFog.fx（它负责把地图画回来）。取消勾选：地图按游戏的绘制方式显示。即时生效。
 hud.map_compass_flat.label = 旋转地图上方的罗盘
 hud.map_compass_flat.tip = 开启“地图随摄像机转动”时：屏幕上圆形地图之上显示 VR 地图的罗盘条（N、NE、E ……），其中间为摄像机所看的方向，N 为游戏地图的上方。当地图太靠近屏幕顶部时，显示在地图下方。取消勾选：没有罗盘条。即时生效。
 hud_third.bar_near.tip = 仅限真立体：+ 把工具栏拉向眼睛，- 把它推到屏幕后面；0 = 游戏放置的位置。
@@ -1182,6 +1197,10 @@ body.flat_weapon_adjust.tip = 第一人称（F3）：每条手臂连同手和所
 # --- Toolbar and map (F2, F3) ---
 group.toolbar_and_map_f2_f3 = 工具栏与地图（F2、F3）
 group.toolbar_and_map_f2_f3.help = 你自己的摄像机视角（F2 和 F3）中的工具栏和地图：勾选箭头，可以在地图上看到你朝哪个方向看。
+hud.flat_map_place.label = 屏幕上的地图
+hud.flat_map_place.tip = 平面游戏（显示器上）：游戏地图的位置。Left 或 Right：那一侧的角落地图——如果勾选了 Map turns with the camera，则是圆形且会旋转。Centre：游戏的全屏地图覆盖在画面中央，和以前一样（它没有自己的框，所以不转动；上面的箭头仍然显示你看的方向）。模组在你游戏期间用游戏自己的设置函数把地图放到那里，仅限本次会话——游戏的选项保留它们自己的选择。与游戏选项相同：地图放在游戏选项设定的位置（开启 Map turns with the camera 时，全屏地图在转动期间放到右上角）。即时生效。
+hud.flat_map_place.choice0 = 与游戏选项相同
+hud.flat_map_place.choice2 = 居中
 hud.flat_map_zoom.label = 用 - 缩小地图，用 + 放大回来
 hud.flat_map_zoom.tip = 平面游戏（显示器上，任何视角），游戏地图打开时：- 会把圆形地图（地图随摄像机转动）从圆圈中取出，显示地图的整个方框，仍保持转动；之后每按一次 - 让游戏把它画得更小，最小到原大小的四分之一，使整层都能容纳；+ 按相同的步数返回，最后回到圆圈中。Ctrl + 鼠标滚轮效果相同。这是游戏自己的地图缩放，所以由游戏自己把地图画小 - 墙壁和标记保持清晰。所选步数会保存到下一次游戏。聊天栏或面板打开、或地图关闭时，这些键归游戏使用。取消勾选：这些键归游戏使用，地图和以前一样。即时生效。
 hud.flat_map_zoom_level.label = 地图缩放步数
@@ -1251,6 +1270,14 @@ openxr.headset_map_party.label = 在头显中设置地图上的队伍
 openxr.headset_map_party.tip = 头显设置的合作页新增一行“游戏的地图显示”，有两个开关：队伍和名称，对应游戏自己的选项 > 自动地图 > 显示队伍和显示队伍名称，状态与游戏当前一致。关闭“显示队伍”后，游戏不会在任何地图上绘制盟友 - 包括你手中的地图、大地图和平面地图。按下开关相当于发出游戏自己的按键命令，所以由游戏切换并保存在它自己的设置中，就像从它的菜单操作一样。关闭：没有这一行。即时生效。
 openxr.headset_players.label = 从头显设置玩家数
 openxr.headset_players.tip = 头显设置的“选项”页面获得一个可用的“玩家数（难度）”行：游戏自己的玩家数，1 - 8，与聊天命令 /players N 的设置相同（游戏的“选项 > 游戏玩法”中的“离线难度调整”）。- 和 + 会把这行命令发给游戏，无需键盘；游戏会检查、保留并给出提示，该行显示从游戏读回的数值。游戏只在你自己的游戏中接受：单人游戏，或作为 TCP/IP 游戏的主机。关闭：该行只显示游戏的数值，不发送任何东西。即时生效。
+openxr.hands_kept.label = 手柄消失时手仍保留（F4）
+openxr.hands_kept.tip = VR 第一人称（F4），原生 OpenXR。当头显不再提供手柄时（Quest 切换到手部追踪，Virtual Desktop 停止发送手柄），手就没有位置，挂在手上的一切都会消失：手腕徽章、带有盟友头像的手中地图、激光。勾选：这样的手会在你头部附近保留一个位置——它最后所在的位置（从未见过则在你的前下方静止）——并随你的转身缓慢跟随（最快 0.5 m/s，因此它不会击打、投掷或挥动任何东西）；它不会按下任何东西。手柄一回来，手立即回到手柄所在的位置。关闭：和以前一样。即时生效。
+openxr.game_front.label = 没有手柄时让游戏保留键盘（Esc、Save and Exit）
+openxr.game_front.tip = 原生 OpenXR。两只手中都没有手柄（放下了，或头显切换到了手部追踪）而你在头显中游玩时，键盘是进入游戏暂停菜单的途径——但在游戏之外点击（或在桌面上做手部追踪捏合）会把键盘交给另一个程序，Esc 也会发到那里：游戏就无法退出。勾选：该程序会在 2 秒后把键盘还给游戏窗口（绝不会是 D2R VR Authentic Settings），其间按下的 Esc 会发送到游戏窗口，这样暂停菜单（Save and Exit）就会出现在你面前。关闭：键盘留在 Windows 放置的地方，和以前一样。即时生效。
+openxr.bare_hand_poses.label = 手部追踪：空手来摆放手臂（F4）
+openxr.bare_hand_poses.tip = VR 第一人称（F4），原生 OpenXR，带手部追踪的头显。空手（手里没有手柄）会把它的手臂以及挂在上面的东西——徽章、地图——摆放到你真实的手所在的位置（头显给出的姿态，否则取手掌），并且仍然不会在游戏中按下任何东西：没有攻击，没有按键。它的捏合只在头显设置或技能面板打开时对它们起作用（激光手的捏合是它们的扳机）。关闭：空手不摆放任何东西，和以前一样。即时生效。
+openxr.panels_key.label = 打开技能面板 / 头显设置的按键
+openxr.panels_key.tip = 游戏窗口在最前面时，这个键盘按键会像长按右摇杆一样打开和关闭技能面板（没有技能面板时则是头显中的设置面板）——用于头显不提供手柄的情况。即时生效。
 
 # --- Belt potions ---
 group.belt_potions = 腰带药水
@@ -1366,6 +1393,18 @@ hands.belt_merc_reach_cm.tip = 扔向雇佣兵的药水如果落在离他脚边�
 
 # --- Item labels on the ground ---
 group.item_labels_on_the_ground.help#4 = 第一人称（F4）中地上物品的名称：框的不透明度、大小、远处缩小，以及它们的立体深度，这样每个标签都位于它自己的物品上，而不是漂在远处。怪物头顶的名称在“怪物血条”中设置。
+hud.labels_own.label = 物品标签：模组自绘，清晰（测试）
+hud.labels_own.tip = 地面物品的名称由模组绘制，而不是用游戏的副本：任何渲染尺寸下都清晰，使用物品的颜色，每个都位于其物品自己的深度。布局仍由游戏完成，所以指向、鼠标、Show Items 和拾取都和以前一样。下面的不透明度同样适用于它们；它们随距离的大小是自己的（下面的“我们的标签”滑块）。第一人称（F4）。需要同一版本的 D2R_DepthFog.fx。即时生效。取消勾选：使用游戏的标签，和以前一样。
+hud.labels_own_near_pct.label = 我们的标签：近处大小，%
+hud.labels_own_near_pct.tip = 我们自己的清晰标签（物品名称，以及开启“怪物头顶名称：模组自绘”时怪物头顶的名称）在下面的近距离及更近处，占游戏大小的百分比。在近距离和远距离之间它们平滑缩小——按距离一条均匀的曲线，没有台阶——直至远处的大小。对我们的标签来说，这些取代大小和远处大小的滑块（在名称仍为我们自己的时候，怪物名牌也一样）；游戏的标签仍使用那些滑块。即时生效。
+hud.labels_own_far_pct.label = 我们的标签：远处大小，%
+hud.labels_own_far_pct.tip = 我们自己的标签在下面的远距离及更远处，占游戏大小的百分比。即时生效。
+hud.labels_own_near_m.label = 我们的标签：近距离，m
+hud.labels_own_near_m.tip = 在距你这个距离以内，我们的标签保持近处的大小。即时生效。
+hud.labels_own_far_m.label = 我们的标签：远距离，m
+hud.labels_own_far_m.tip = 从这个距离起，我们的标签保持远处的大小；两者之间均匀缩小。即时生效。
+hud.labels_own_min_px.label = 我们的标签：最小高度，px
+hud.labels_own_min_px.tip = 我们自己的物品标签绝不会画得比这个眼睛画面像素数更小，无论游戏会让它们离得多远或多小，所以在 5-10 m 处仍然可读。0 = 不限制。即时生效。
 hud.labels_alpha.tip = 第一人称（F4）中，地上物品名称背后的深色框绘制多少：1 = 与游戏绘制的相同，0 = 没有框，只有名称。名称保持明亮。通过游戏的标签代码实现（vrcam 的日志会写出“item-label hook in”）；在其他版本的游戏上这里不起作用。
 hud.labels_size.tip = 第一人称（F4）中地上物品的名称及其框，更小或更大，各自围绕其下方的点缩放。100 = 游戏自己的。物品提示和所有其他文字保持原大小。
 hud.labels_far.label = 物品标签：远处的大小，占上方大小的 %
@@ -1381,6 +1420,16 @@ input.point_pickup_label_pct.tip = 你的手所指物品的名称（操控：指
 
 # --- Monster plates ---
 group.monster_plates.help#3 = 你所瞄准的怪物头顶的名称和血条：不透明度、大小、远处缩小、高度和立体深度，这样在 F4 中它就位于它的怪物上。“怪物头顶的血条”让它在任何距离都保持在头顶之上固定的间隔处。
+hud.monster_names_own.label = 怪物头顶名称：模组自绘，清晰（测试）
+hud.monster_names_own.tip = 你所瞄准怪物头顶名牌中的名称由模组绘制，而不是用游戏的副本：任何渲染尺寸下都清晰，使用游戏的颜色（暗金色为金色，精英为蓝色）。血条、它的边框和瞄准仍由游戏负责。它有自己的大小、远处大小和底板（下面的“我们的名称”），并位于其怪物自己的深度；名牌的滑块仍属于游戏名牌。第一人称（F4）；名牌悬挂在房间中时不适用。需要同一版本的 D2R_DepthFog.fx。即时生效。取消勾选：使用游戏的名称，和以前一样。
+hud.npc_names_own.label = NPC 和物体头顶名称：模组自绘，清晰（测试）
+hud.npc_names_own.tip = 游戏在你所指的 NPC（Warriv、Kashya、Akara……）、物体、传送门和出口头顶显示的名称，由模组绘制，而不是用游戏的副本：任何渲染尺寸下都清晰，位于游戏放置的位置，使用游戏自己的深色框，大小和底板取自下面的“我们的名称”。第一人称（F4）。需要同一版本的 D2R_DepthFog.fx。即时生效。取消勾选：使用游戏的名称，和以前一样。
+hud.names_own_size_pct.label = 我们的名称：大小，%
+hud.names_own_size_pct.tip = 我们自己在怪物和 NPC 头顶的名称（上面两个勾选项），占游戏文字大小的百分比。我们的名称不使用下面名牌的任何滑块（那些属于游戏名牌）；这三个才是它们的。即时生效。
+hud.names_own_far_pct.label = 我们的名称：远处大小，占大小的百分比
+hud.names_own_far_pct.tip = 远处怪物头顶我们的名称取上面大小的这一比例：在“我们的标签”（物品标签组）的近距离及更近处为上面的大小，在其远距离及更远处为它的这一比例，两者之间是一条平滑曲线。100 = 任何距离大小相同。即时生效。
+hud.names_own_alpha.label = 我们的名称：底板不透明度
+hud.names_own_alpha.tip = 我们名称后面的深色框：0 = 没有（字母周围显示游戏的条），1 = 实心。字母保持完整。即时生效。
 hud.monster_alpha.tip#2 = 游戏为你所瞄准的怪物显示的名称牌（框、边框和名称一并包括）：1 = 与游戏绘制的相同，0 = 消失。所有视角。需要在 ReShade 中开启 D2R_DepthFog.fx。
 hud.monster_size.label = 怪物头顶名称：大小，%
 hud.monster_size.tip = 该名称牌围绕其中心缩小或放大。100 = 游戏自己的。所有视角。
@@ -1543,6 +1592,17 @@ hud.map_big_follow.label = 面前的大地图：留在房间里，缓慢跟随
 hud.map_big_follow.tip = 你面前的大地图，VR F4：你转头时它留在房间里原来的位置；只有当你看向很远的地方（超过 35 度）时，它才缓慢地跟上你的视线，从不跳动。它的高度保持在放置时的位置。取消勾选：它停在你点击时注视的地方，和以前一样。实时。
 hud.map_big_grab.label = 面前的大地图：抓取并移动（激光 + 握把）
 hud.map_big_grab.tip = 你面前的大地图，VR F4：用右手激光指向它，按住右握把即可拿起 - 移动手就能搬动它，右摇杆前 / 后可将它拉近 / 推远。松开后它就留在那里，以后也在那里打开（保存在 ini 中）；如果保存的位置在视野之外（在你身后、远在一侧），则改为在面前打开。取消勾选：不能用手移动，和以前一样。实时。
+hud.allies_place.label = 盟友显示位置（F4）
+hud.allies_place.tip = VR 第一人称（F4），原生 OpenXR。你的雇佣兵、你的召唤物和你的队伍显示在哪里——只在一处显示。游戏的顶部一行：游戏自己的头像，按它的绘制方式（在头显中位于视野最边缘）。手中地图下方：在你手持的地图下方，以及大地图打开时在其下方（那里更大），排成一个磁贴网格。右手腕：当你把右手腕背面转向眼睛时，同样的磁贴显示在右手腕上方（手腕状态面板的位置和大小）。每个磁贴：游戏自己的头像、名称、生命条（绿、黄、红）、一组的数量和玩家的等级。从游戏自己的列表读取，单人游戏和合作一样；游戏中没有任何东西被改变。头像从你的游戏复制到插件旁的 d2r_vr_game_ui（没有它们：显示首字母）。即时生效。
+hud.allies_place.choice0 = 游戏的顶部一行
+hud.allies_place.choice1 = 手中地图下方
+hud.allies_place.choice2 = 右手腕
+hud.allies_map_cols.label = 地图下方的盟友：每行磁贴数
+hud.allies_map_cols.tip = 地图下方并排放多少个磁贴；行数按你的盟友需要而定。即时生效。
+hud.ally_portraits_size.label = 地图下方的盟友：宽度，占地图的百分比
+hud.ally_portraits_size.tip = 四个磁贴有多宽，占地图宽度的百分比（手中的球：它的球体）；每行更多或更少时，磁贴保持这个大小。125：比球体稍宽。手中地图下方最多 40 cm，大地图下方最多 60 cm。即时生效。
+hud.allies_wrist_cols.label = 手腕上的盟友：每行磁贴数
+hud.allies_wrist_cols.tip = 右手腕上方并排放多少个磁贴（每个是手腕状态面板宽度的 2.5 分之一）；行数按你的盟友需要而定，最下面一行位于面板的位置。即时生效。
 hud.hide.label = 隐藏游戏界面
 hud.hide.tip = 游戏把它的整个界面绘制到一个独立的层中。“工具栏”只清空工具栏的条带（根据屏幕大小和游戏的界面大小找到）；怪物头顶的标签、提示和商店保留。“全部”：只剩世界。上方的“工具栏类型”会同时设置它和“位置”。
 hud.hide.choice1 = 工具栏
@@ -1734,15 +1794,13 @@ hud.hand_vitals_pulse_eq.label = 球随暗角一起跳动
 hud.hand_vitals_pulse_eq.tip = 红色生命低暗角出现时，生命球随它的节拍发光并膨胀——同一时刻、同一节奏；蓝色法力低暗角出现时，法力球随蓝色一起跳动（UI: F4 body）。暗角关闭或未出现时：生命球如上，法力球不动。关闭：球和以前完全一样。即时生效。
 hud.wrist_status.label = 手腕状态：召唤物、雇佣兵、增益、光环、诅咒（F4）
 hud.wrist_status.tip = 当手腕的背面转向你的眼睛时（VR 第一人称，F4，原生 OpenXR），在徽章旁边出现的小图标和计数。默认情况下，左手腕显示你身上有什么——你拥有的光环和增益（力量、神圣之盾、冰冻装甲、战斗命令、一瓶药水、一座神龛……），以及伤害你的诅咒和异常状态（伤害加深、衰老、冰冷、中毒……），带红色边框——右手腕显示你指挥着什么：你有多少骷髅、法师、魔像、狼、乌鸦、藤蔓、哨兵、多头火蛇、恶魔，以及你的雇佣兵（死亡时显示红色 0）。数据读取自游戏自己的列表，不会改动任何东西。技能图标来自本地图标缓存（见技能轮盘）；没有缓存时，图标处显示首字母。需要此版本的插件和效果；手腕本身即上方的徽章。即时生效。
-hud.wrist_status_companions.label = 显示召唤物和雇佣兵
-hud.wrist_status_companions.tip = 骷髅、法师、魔像、复活怪物、女武神、诱饵、乌鸦、狼、灰熊、灵魂、藤蔓、暗影、哨兵、陷阱、多头火蛇、恶魔以及雇佣兵的计数。即时生效。
 hud.wrist_status_effects.label = 显示增益、光环和诅咒
 hud.wrist_status_effects.tip = 你身上的每个效果各有一个图标：有益的（光环、增益、药水、神龛）带绿色边框，有害的（诅咒、异常状态）排在前面带红色边框，形态或有得有失的效果带金色边框。超出面板容纳量时，最后一个图标会告诉你还剩多少。即时生效。
 hud.wrist_status_sides.label = 哪只手腕显示什么
-hud.wrist_status_sides.tip = 两类图标在哪里出现。没有内容可显示的手腕根本不会出现。即时生效。
-hud.wrist_status_sides.choice0 = 效果在左，召唤物在右
-hud.wrist_status_sides.choice1 = 召唤物在左，效果在右
-hud.wrist_status_sides.choice2 = 两只手腕都显示两者
+hud.wrist_status_sides.tip = 哪只手腕显示效果图标（右手腕上的盟友，Map > Allies shown，位于它们上方）。即时生效。
+hud.wrist_status_sides.choice0 = 效果在左手腕
+hud.wrist_status_sides.choice1 = 效果在右手腕
+hud.wrist_status_sides.choice2 = 效果在两只手腕
 hud.wrist_status_size_cm.label = 面板宽度，cm
 hud.wrist_status_size_cm.tip = 面板有多宽；图标是它的六分之一。即时生效。
 hud.wrist_status_height_cm.label = 面板高出手腕的高度，cm
@@ -2971,9 +3029,10 @@ group.attention_these_change_the_game_s_own_logic = 注意：这些选项会改�
 group.attention_these_change_the_game_s_own_logic.help = 此区块中的选项有意超出 Diablo II 自身的规则：它们让游戏的服务器去做它自己的攻击和移动规则不会做的事。模组默认开启直接命中（按规则）和移动你携带与扔出的东西；关闭（不勾选）就是游戏自身的逻辑，与不装模组时的玩法相同。直接命中：你的武器一次触碰立即成为服务器的攻击 - 没有动画、没有攻击速度、不用走过去。由游戏移动你携带和扔出的东西，以及你打倒的东西：你携带、扔出或打倒的怪物，由游戏自己的击退放到另一个格子上。在单人游戏中和作为主机时，游戏会为其中的所有人改变。模组中的其他一切 - 接触命中、武器重量、布娃娃、不带这种移动的抓取怪物 - 都只是向游戏提供输入的另一种方式：仍由游戏决定。
 @status.game_logic.label = 这些选项让游戏去做它自己的规则不会做的事：攻击和位置直接发送到游戏服务器。它们会改变游戏的玩法，在合作中会影响所有人。关闭它们即可按游戏自身的规则来玩。（模组中的其他一切都是另一种输入方式：由游戏决定。）
 @directhit.mode.label = 直接命中
-@directhit.mode.tip = 关闭：接触按下游戏自己的攻击（它的动画、攻击速度、攻击距离）。按规则：对一个怪物的第一次接触是直接命中。之后，在你的英雄完成一次攻击所需的时间之内再次接触同一个怪物（按他自己的攻击动画计时，因此会跟随他的攻击速度），则是游戏自己的攻击 - 快速戳刺没有好处。在此之后，只有真正的挥击才能再次对它直接命中：需达到下方的最低速度、力道和挥动长度（你手柄自身的轨迹）。换一个怪物永远不算太早。双手武器需要双手都握在上面（双手握持）：只用一只手时，它的接触是游戏自己的攻击。不满足规则的接触照样会攻击：是游戏自己的攻击，绝不会什么都不发生。双手横扫只有勾选下方它自己的选框才生效。完全开启（不推荐）：每次被接受的接触都是直接命中，和旧的实验选框一样。直接命中是什么：在单人游戏和作为主机时，插件自己调用游戏的服务器攻击（命中判定、伤害和耐久损耗都由游戏计算；没有动画，不等待攻击速度，也不走到怪物跟前）。作为加入他人 TCP/IP 游戏的玩家，它发送游戏自己的“攻击这个怪物”命令 - 就是点击怪物时发送的那条 - 由主机的服务器完成整个攻击（主机无需为此做任何设置）。仅当你攻击栏位上的技能就是英雄手中的那个，且没有预备近战技能时生效。写入 [gameplay] melee_direct 和 melee_direct_client。实时。仅限 F4，和接触命中一样。
-@directhit.mode.choice1 = 按规则
-@directhit.mode.choice2 = 完全开启（不推荐）
+@directhit.mode.tip = 关闭：接触按下游戏自己的攻击（它的动画、攻击速度、攻击距离）。双手附加：双手持握的双手武器——一次挥击穿过的第 2 个及之后的怪物按下面的规则获得直接命中（游戏没有“一次挥击打多个怪物”；需要下面的劈砍框）；第一个怪物和其他所有触碰都是游戏自己的攻击（配合快速打击：第一帧就出手）。按规则：对一个怪物的第一次触碰也是直接命中。之后，在你的英雄完成一次攻击所需的时间之内（按他自己的攻击动画计量，因此跟随他的攻击速度）再次触碰同一个怪物，是游戏自己的攻击——快速戳刺毫无收益。再之后，对它的触碰只有在真正挥击时才再次成为直接命中：下面的最低速度、力道和挥动长度（你手柄自己的轨迹）。另一个怪物永远不算太早。双手武器需要双手都握住（双手握持）：单手持握时它的触碰是游戏自己的攻击。未通过规则的触碰仍然会攻击：游戏自己的攻击，绝不会什么都不发生。双手劈砍只配合下面它自己的框。始终（不推荐）：每一次被接受的触碰都是直接命中，如旧的实验框那样，无论是否快速打击。什么是直接命中：在单人游戏和作为主机时，插件自己调用游戏的服务器攻击（命中判定、伤害和耐久损耗由游戏负责；没有动画，不等待攻击速度，不走近）。作为加入他人 TCP/IP 游戏的玩家，它发送游戏自己的命令“攻击这个怪物”——点击它时发送的那条——由主机的服务器完成整个攻击（主机无需为此做任何事）。仅当你攻击栏上的技能就是英雄手中的那个，且没有预备任何近战技能时。写入 [gameplay] melee_direct、melee_direct_client 和 melee_direct_scope。即时生效。仅限 F4，和接触命中一样。
+@directhit.mode.choice1 = 双手附加
+@directhit.mode.choice2 = 按规则
+@directhit.mode.choice3 = 始终（不推荐）
 gameplay.melee_direct_min_ms.label = 直接命中（完全开启）：两次命中的最小间隔，毫秒
 gameplay.melee_direct_min_ms.tip = 单人游戏和主机，完全开启时：0 = 除“每次挥击对一个怪物只命中一次”外不设限制。更大：一次直接命中之后，这段时间内的接触不起作用 - 在命中过快时让频率接近游戏自己的攻击频率。实时。
 gameplay.melee_direct_by_hand.label = 直接命中：每只手用自己的武器攻击（双武器）
@@ -2993,6 +3052,12 @@ weight.knock_down_moves_unit.tip = 需要 Weapon Weight > Monsters' bodies > “
 group.monsters_round_your_leap_s_landing_weapon_weight_monsters_bo = 跳跃落地点周围的怪物（武器重量 > 怪物的躯体）
 weight.leap_landing_scatter.label = 跳跃落地处的怪物四散飞开（测试）
 weight.leap_landing_scatter.tip = 需要 武器重量 > 怪物的躯体 和带有击倒功能的重量库。即时生效。勾选：你的野蛮人从跳跃或跳跃攻击落地时，落点约 3 m 内的人形怪物（以及游戏自身跳跃击退打到的稍远一些的怪物）会被抛离你的落点一格 - 游戏自身的击退把每个单位放到那一格上，它的身体也落在那里，所以你看到它的位置和游戏中它的位置一致；站得越近飞得越高，但不会更远。你正好落在其身上的那个也会被推开一格（正中心时：沿你跳跃的方向），无论它多重，免得你落进它体内；其他重的（首领、大型怪物）只会踉跄。游戏的击退拒绝的留在原地。移动仅在单人游戏中或由你托管游戏时发生（加入的玩家那里只是绘制）。伤害、命中判定和眩晕仍由游戏决定。F4。不勾选：落地不抛开任何怪物，与以前一样。
+
+# --- Strike statistics ---
+group.strike_statistics = 打击统计
+group.strike_statistics.help = 你通过接触命中打出了多少次攻击，本局游戏和历史累计，按英雄和按武器统计，包含你打击的速度和力道。
+stats.strike_stats.label = 统计我的打击（统计数据）
+stats.strike_stats.tip = VR 第一人称（F4），接触命中：你的刃交给游戏的每一次攻击都会被统计——本局游戏和历史累计，按每个英雄和每种武器（基础物品：Long Sword、Axe……）：数量、刃接触处的速度（m/s，平均值和最佳值）、打击的力道（N s，武器有重量时），以及接触到怪物却没有造成任何结果的挥击（太慢，或不符合规则：刃柄、方向不对……）。命中还是未命中仍由游戏的判定决定：这些是你打出的攻击。保存在 Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt（你英雄的名字只留在这台电脑上，绝不会进入日志或报告）；删除该文件即可重新开始。仅计数——游戏和接触都不会改变。取消勾选：不计数，文件保持原样。即时生效。
 
 # --- Skills to BodyWalk ---
 group.skills_to_bodywalk = 技能发送到 BodyWalk
@@ -3620,6 +3685,8 @@ debug.game_sky_test.choice1 = 我们的天穹，亮洋红色
 debug.game_sky_test.choice2 = 游戏自带的亚瑞特山顶天空模型
 debug.game_sky_test.choice3 = 亚瑞特山顶的单位名称指向我们的洋红色模型
 debug.game_sky_test.choice4 = 我们的洋红色模型放在亚瑞特山顶自己的路径上
+debug.own_labels_dump.label = 写出一次我们的标签和名称的图像（d2r_vr_own_labels.bmp）
+debug.own_labels_dump.tip = 开启我们自己的物品标签或怪物头顶名称后，它们显示出来时，绘制它们所用的图像（迄今画过的每个名称）会被写入 d2rloader\logs\d2r_vr_own_labels.bmp，用来与游戏自己的文字对照。它只写出文件；对游玩没有任何改变。
 debug.frame_log.label = 记录每一帧
 debug.frame_log.tip = 每一对、视角、英雄姿态和显示，写入 ini 旁边的 d2r_vr_frames.csv，FlatVR 则写入它逐帧的姿态追踪。
 debug.frame_trace.label = 记录较长的帧以及插件在其中花费的时间
@@ -3744,6 +3811,38 @@ debug.arrow_flight_trace.tip = 开启“弓：由我们自己绘制射出的箭�
 debug.arrow_flight_fx_off.label = 弓：由我们绘制的箭不带特效（测试）
 debug.arrow_flight_fx_off.tip = 开启“弓：由我们自己绘制射出的箭”时：我们绘制箭期间，元素箭自己的特效（火焰、冰霜、火花）被游戏自己的开关关闭——以防游戏的特效留在游戏的路径上，而不是跟随我们的。命中的爆炸不受影响。即时生效。
 
+# ===== Tab: Stats =====
+tab.stats = 统计
+
+# --- Strike statistics ---
+group.strike_statistics.help#2 = 你在 VR 第一人称（F4）中通过接触命中打出了多少次攻击，上一局游戏和历史累计，按英雄和按武器统计：刃接触处的速度和打击的力道（平均值和最佳值），以及接触到怪物却没有造成任何结果的挥击。
+stats.strike_stats.tip#2 = 与 打击 > 打击统计 是同一个勾选项。勾选：在 F4 中，接触命中交给游戏的每一次攻击都会被统计（本局游戏和历史累计，按英雄和按武器），写入 Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt。你英雄的名字只留在这台电脑上。仅计数——游戏和接触都不会改变。取消勾选：不计数，文件保持原样。即时生效。
+@status.ss_file.label = 正在读取打击统计……
+
+# --- Your last game ---
+group.your_last_game = 你的上一局游戏
+group.your_last_game.help = 插件最后一次统计的那局游戏：你在其中玩过的每个英雄，按武器统计的攻击（最多的在前）。
+@status.ss_g_h0.tip = 刃所属的基础物品（游戏自己的名称：暗金或套装物品归在其基础物品下）、空手，或德鲁伊的爪。
+@status.ss_g_h1.tip = 你通过接触打出的攻击：接触交给游戏作为它自己攻击的每一次（命中还是未命中仍由游戏判定）。
+@status.ss_g_h2.tip = 刃接触怪物处的平均速度，m/s（按力道判定的打击：它到达时有多快）。
+@status.ss_g_h3.label = 最佳
+@status.ss_g_h3.tip = 最快一击的速度，m/s。
+@status.ss_g_h4.label = 力道
+@status.ss_g_h4.tip = 一次打击的平均力道，N s，按重量模型的计量（有重量的武器；空手和没有重量的武器没有：显示破折号）。
+@status.ss_g_h5.tip = 最强一击的力道，N s。
+@status.ss_g_h6.label = 落空
+@status.ss_g_h6.tip = 接触到怪物却没有造成任何结果的挥击：太慢，或不符合规则（刃柄或柄尾、方向不对、太小、太弱）。
+
+# --- All time: each hero ---
+group.all_time_each_hero = 历史累计：每个英雄
+group.all_time_each_hero.help = 统计所知的每个英雄，攻击最多的在前。名字无法读取的英雄显示为“你的英雄”。
+@status.ss_h_h0.label = 英雄
+@status.ss_h_h0.tip = 英雄（他的名字和职业，按游戏中的记录）。
+
+# --- All time: each weapon (every hero) ---
+group.all_time_each_weapon_every_hero = 历史累计：每种武器（所有英雄）
+group.all_time_each_weapon_every_hero.help = 你用过的每种武器，所有英雄合计，攻击最多的在前。
+
 # ===== Tab: Status =====
 
 # --- The game's code ---
@@ -3804,15 +3903,18 @@ vr.hset.page.life = 生命
 vr.hset.page.look = 外观
 vr.hset.page.body = 身体
 vr.hset.page.belt = 腰带
-vr.hset.page.melee = 近战
+vr.hset.page.touch = 接触
+vr.hset.page.attack = 攻击
 vr.hset.page.contact = 接触
 vr.hset.page.monsters_react = 怪物反应
 vr.hset.page.grab = 抓取
 vr.hset.page.more = 更多
 vr.hset.page.co_op = 合作
 vr.hset.page.party = 队伍
+vr.hset.page.stats = 统计
 vr.hset.page.guide = 指南
 vr.hset.page.controls = 操控
+vr.hset.page.melee = 近战
 vr.hset.page.world = 世界
 vr.hset.screen.menu_distance_m.label = 面板距离
 vr.hset.screen.menu_distance_m.detail = 游戏中打开的面板：物品栏、储物箱、商人
@@ -3892,10 +3994,16 @@ vr.hset.gameplay.melee_skill_armed_icon.label = 法力中的预备技能
 vr.hset.gameplay.melee_skill_armed_icon.detail = 它的图标显示在法力徽章中
 vr.hset.gameplay.quick_blow.label = 快速打击
 vr.hset.gameplay.quick_blow.detail = 打击立即命中，挥击不会让你停下（F4）
+vr.hset.gameplay.quick_blow_faster.label = 更快攻击
+vr.hset.gameplay.quick_blow_faster.detail = 配合快速打击：下一击超出游戏速度（F4）
 vr.hset.gameplay.melee_direct.label = 按规则直接命中
 vr.hset.gameplay.melee_direct.detail = 改变游戏自身的逻辑：命中发送到服务器（F4）
-vr.hset.gameplay.melee_direct_client.label = 按文件设置直接命中
-vr.hset.gameplay.melee_direct_client.detail = 0 关闭，1 按规则，2 完全开启
+vr.hset.gameplay.melee_direct_client.label = 直接命中
+vr.hset.gameplay.melee_direct_client.detail = 双手附加：双手挥击的其余怪物
+vr.hset.gameplay.melee_direct_scope.label = 直接命中的范围
+vr.hset.gameplay.melee_direct_scope.detail = 0 双手附加，1 每次接触按规则
+vr.hset.hud.swing_timer.label = 挥击计时器
+vr.hset.hud.swing_timer.detail = 圆环显示下一次攻击何时有效（F4）
 vr.hset.direct.left_trigger.label = 左扳机
 vr.hset.direct.left_x.label = 左 X
 vr.hset.direct.left_y.label = 左 Y
@@ -4002,6 +4110,14 @@ vr.hset.hud.ordinary_mob_bars.label = 名称牌：普通怪物
 vr.hset.hud.ordinary_mob_bars.detail = 显示：所有名称牌。隐藏：只有精英、首领、NPC
 vr.hset.value.shown = 显示
 vr.hset.value.hidden = 隐藏
+vr.hset.hud.allies_place.label = 盟友显示位置
+vr.hset.hud.allies_place.detail = 雇佣兵、召唤物、队伍：三处选一（F4）
+vr.hset.hud.names_own_size_pct.label = 我们的名称：大小
+vr.hset.hud.names_own_size_pct.detail = 怪物和 NPC 头顶清晰的名称，占游戏的百分比
+vr.hset.hud.names_own_far_pct.label = 我们的名称：远处大小
+vr.hset.hud.names_own_far_pct.detail = 远处怪物的大小百分比
+vr.hset.hud.names_own_alpha.label = 我们的名称：底板
+vr.hset.hud.names_own_alpha.detail = 它们后面的深色框：0 无，1 实心
 vr.hset.hud.hide.label = 界面移出画面
 vr.hset.hud.hide.detail = 0 无，1 工具栏，2 全部
 vr.toolbar.wrists = 手腕
@@ -4295,6 +4411,20 @@ thrusts.tip.on = 勾选：此类武器会刺击（沿刃的戳刺也算）。即
 thrusts.tip.min_speed = 刺击的最低速度，m/s。0（或低于 0.3）= 沿用通用值。即时生效。
 thrusts.tip.cm = 尖端沿刃向前多远，cm。0（或低于 1）= 沿用通用值。即时生效。
 thrusts.tip.min_accel = 刺击的最小峰值加速度，m/s²（戳刺，而非推）。0 = 沿用通用值。即时生效。
+stats.bare_fists = 空手
+stats.paws = 爪（变形状态）
+stats.hero_unnamed = 你的英雄
+stats.file.none = 还没有统计数据：在 VR 第一人称（F4）中开启接触命中，向怪物挥击；游戏每分钟写入一次。
+stats.file.bad = 无法读取 strike_stats.txt（游戏在它旁边保留了上一个完好文件的 .bak）。
+stats.file.read = Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt，写入于 {time}
+stats.all_weapons = 所有武器
+stats.game.none = 上一局游戏中没有接触打击。
+stats.game.line = 开始于 {time}：{who}
+stats.all_heroes = 所有英雄
+stats.heroes.line = {n} 个英雄
+stats.weapons.line = {n} 种武器
+stats.units = - 速度单位 m/s，力道单位 N s
+stats.more = - 显示使用最多的 {n} 项，文件中还有 {more} 项
 status.sig.not_scanned = 尚未扫描 - 请启动游戏：模组每次启动时都会查找其所需地址
 status.sig.scanning = 正在扫描...
 status.sig.start_game = 请启动游戏 - 模组在启动时扫描
@@ -4504,6 +4634,12 @@ menu_art.no_archives = 无法打开游戏的存档包（错误 {error}）；将�
 menu_art.not_written = 无法写入 {file}（错误 {error}）
 menu_art.missing = 此游戏中没有：{files} - 技能面板保持自身外观
 menu_art.made = 已从您的游戏生成：技能面板所用的游戏自带边框、按钮和滑块（d2r_vr_game_ui）
+portrait_art.off = 关闭（[hud] ally_portraits）
+portrait_art.no_plugin_dir = 未找到插件的文件夹：盟友磁贴显示首字母
+portrait_art.ready = 就绪：游戏自己的头像位于插件旁（d2r_vr_game_ui）
+portrait_art.no_archives = 无法打开游戏的存档（错误 {error}）；下次启动时会再次尝试
+portrait_art.not_written = 无法写入 {file}（错误 {error}）
+portrait_art.made = 已从你的游戏复制游戏的 {all} 个头像中的 {n} 个，用于盟友磁贴（d2r_vr_game_ui）
 data_mods.no_mod = 只在 D2R VR 自己的模组（mods\D2R-VR\D2R-VR.mpq）中生效，而它不在这里
 data_mods.off_removed = 关——其他模组的文件已从 D2R VR 的模组中移除
 data_mods.off = 关
@@ -4579,6 +4715,11 @@ vr.flatmenu.flat_no_pad = 对游戏隐藏游戏手柄（鼠标和键盘）
 vr.flatmenu.flat_portal_no_oval = 城镇传送门中没有黑色椭圆
 vr.flatmenu.stick_pitch_flat = 游戏手柄右摇杆上下看
 vr.flatmenu.flat_map_zoom = - 和 + 把地图缩出圆圈并缩回
+vr.flatmenu.flat_map_place = 屏幕上的地图
+vr.flatmenu.flat_map_place.game = 与游戏选项相同
+vr.flatmenu.flat_map_place.left = 左
+vr.flatmenu.flat_map_place.centre = 居中
+vr.flatmenu.flat_map_place.right = 右
 vr.rules.on = 开
 vr.rules.off = 关
 vr.rules.flat_attack_path = 挥击不会让英雄停下（2D）
@@ -4648,6 +4789,13 @@ vr.coop.rooms_none = 列表中没有开放的房间。
 vr.coop.rooms = 开放的房间：{n}
 vr.coop.when = 每次 CREATE GAME 时重新读取：更改从你的下一次开始生效，无需重启。现在开放的房间保持原来的方式。
 vr.keys.custom = 自定义（ini）
+vr.directhit.cleave = 双手附加
+vr.directhit.rules = 按规则
+vr.directhit.always = 始终
+vr.directhit.off = 关闭
+vr.allies.map = 地图下方
+vr.allies.wrist = 手腕上
+vr.allies.game = 顶部
 vr.party.map = 游戏的地图显示
 vr.party.map.off = 你的队伍已隐藏：任何地图上都没有盟友（游戏的“显示队伍”）
 vr.party.map.unknown = 游戏的“显示队伍”/“显示队伍名称”（尚未读取）
@@ -4684,8 +4832,8 @@ vr.hset.status.video_idle = 选择一个尺寸，然后“应用”。你的英�
 vr.hset.status.body_idle = “校准身体”会隐藏此面板；测量完成后它会回来。
 vr.hset.status.keys_idle = 选择按键的功能，然后“应用”。组合键和其他长按：D2R VR Authentic Settings。
 vr.hset.status.keys_off = “无需 BodyWalk 的操控”已关闭：这些按键不起作用（操控由 BodyWalk 的映射负责）。
-vr.hset.status.melee_direct_full2 = 直接命中已完全开启（D2R VR Authentic Settings > Strikes）：每次触碰都发送到服务器。
-vr.hset.status.melee_quick_cleave = 快速攻击已开启。双手武器双手握持：一次挥砍中的其余怪物受到 Direct hit。
+vr.hset.status.melee_direct_always = 直接命中 始终（不推荐）：每次接触都发往服务器，绕过游戏的规则。
+vr.hset.status.melee_cleave = 直接命中 双手附加：双手持握双手武器——一次挥击的其余怪物获得直接命中。
 vr.hset.status.melee_direct_on = 注意：直接命中会改变游戏自身的逻辑 - 命中直接发送到服务器；在合作中会影响所有人。
 vr.hset.status.world_idle = 每次更改自动生效（F4）。它们需要手臂在手柄上；其余的在 D2R VR Authentic Settings 中。
 vr.hset.status.melee_idle = 每项改动都会自行生效。仅限第一人称（F4）。
@@ -4725,6 +4873,25 @@ vr.party.you_alone = 你不在任何队伍中
 vr.party.nobody = 本游戏中还没有其他人。
 vr.party.leave = 离开队伍
 vr.party.open = 打开队伍面板（P）
+vr.stats.this_game_btn = 本局
+vr.stats.all_time_btn = 历史累计
+vr.stats.no_hero = 尚未统计到打击
+vr.stats.blows = 打击
+vr.stats.speed = 速度
+vr.stats.force = 力道
+vr.stats.landed = 命中
+vr.stats.missed_sub = 另有 {n} 次挥击落空
+vr.stats.best_sub = 最佳 {v}
+vr.stats.no_force = 有重量的武器
+vr.stats.landed_sub = 在接触到的挥击中
+vr.stats.col.weapon = 武器
+vr.stats.col.blows = 打击
+vr.stats.col.speed = 速度 m/s
+vr.stats.col.force = 力道 N s
+vr.stats.col.missed = 落空
+vr.stats.col.weapon_of = 武器 - {n} / {all}
+vr.stats.none_ever = 还没有接触打击。
+vr.stats.none_game = 本局游戏中还没有接触打击。
 vr.guide.not_now = 暂不
 vr.guide.back = 上一步
 vr.guide.measure_now = 现在测量
@@ -4738,6 +4905,43 @@ vr.party.back = 中继
 vr.hset.recentre = 重新居中视角
 vr.hset.close = 关闭
 vr.hset.apply = 应用
+vr.stats.class.amazon = 亚马逊
+vr.stats.class.sorceress = 法师
+vr.stats.class.necromancer = 死灵法师
+vr.stats.class.paladin = 圣骑士
+vr.stats.class.barbarian = 野蛮人
+vr.stats.class.druid = 德鲁伊
+vr.stats.class.assassin = 刺客
+vr.stats.class.warlock = 术士
+vr.stats.hero_unnamed = 你的英雄
+vr.stats.bare_fists = 空手
+vr.stats.paws = 爪（变形状态）
+vr.stats.kind.unarmed = 空手
+vr.stats.kind.bow = 弓
+vr.stats.kind.crossbow = 弩
+vr.stats.kind.sword = 剑
+vr.stats.kind.axe = 斧
+vr.stats.kind.mace = 锤
+vr.stats.kind.scepter = 权杖
+vr.stats.kind.wand = 法杖
+vr.stats.kind.staff = 长杖
+vr.stats.kind.polearm = 长柄武器
+vr.stats.kind.spear = 矛
+vr.stats.kind.dagger = 匕首
+vr.stats.kind.throwing = 投掷武器
+vr.stats.kind.javelin = 标枪
+vr.stats.kind.claw = 爪
+vr.stats.kind.orb = 法球
+vr.stats.kind.other = 其他
+vr.stats.hero_of = 英雄 {i} / {n}
+vr.stats.playing = （游玩中）
+vr.stats.since_ever = - 历史累计
+vr.stats.since_game = - 本局，自 {time}
+vr.stats.this_game = - 本局
+vr.stats.status.off = 打击统计已关闭（D2R VR Authentic Settings > 打击）：不再统计新的打击。
+vr.stats.status.reading = 正在读取打击统计……
+vr.stats.status.empty = 还没有打击：在第一人称（F4）中向怪物挥击，接触命中。
+vr.stats.status.idle = 平均 / 最佳。你通过接触打出的攻击（F4）；命中还是未命中仍由游戏判定。
 vr.video.preset_window = 窗口尺寸
 vr.video.preset_headset = 头显自身
 vr.video.not_known = 尚未知晓
@@ -4752,6 +4956,11 @@ vr.video.now = 游戏现在绘制 {size}。
 vr.video.now_unknown = 尚不知道游戏的画面尺寸。
 vr.video.recommended = 你的头显推荐 {size}。
 vr.video.recommended_unknown = 游戏第一次启动会话时会读取你头显的尺寸。
+vr.swing.miss = 未中
+vr.swing.blocked = 格挡
+vr.swing.dodged = 闪避
+vr.swing.avoided = 回避
+vr.swing.too_soon = 太早
 vr.tiles.edit = 编辑技能
 vr.tiles.close = 关闭
 vr.tiles.back = 返回
@@ -4826,6 +5035,10 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+hud.wrist_status_companions.label = 显示召唤物和雇佣兵
+hud.wrist_status_companions.tip = 骷髅、法师、魔像、复活怪物、女武神、诱饵、乌鸦、狼、灰熊、灵魂、藤蔓、暗影、哨兵、陷阱、多头火蛇、恶魔以及雇佣兵的计数。即时生效。
+vr.hset.status.melee_direct_full2 = 直接命中已完全开启（D2R VR Authentic Settings > Strikes）：每次触碰都发送到服务器。
+vr.hset.status.melee_quick_cleave = 快速攻击已开启。双手武器双手握持：一次挥砍中的其余怪物受到 Direct hit。
 vr.hset.status.melee_direct_full = 直接命中已完全开启（D2R VR Authentic Settings > Strikes）；此处的勾选对应“按规则”。
 @skyfog.way.label = 天空与雾由谁绘制
 @skyfog.way.tip = 由谁绘制天空和远处的雾，两者一起决定。由游戏绘制（新）：游戏自己的雾渲染遍使用我们的数值，以及由游戏自己绘制的我们的天空穹顶——不占用我们的帧时间（VR F4；其雾的下列选项需不使用 ReShade）。我们的效果（旧）：雾着色器的天空和雾（ReShade 的，或不使用 ReShade 时 D2R VR 自己的）。同时写入 [sky] game_sky 和 [fog] game_fog。即时生效——游戏天空穹顶的文件由本程序在启动时生成：安装或更新后的第一次，请重启已在运行的游戏。

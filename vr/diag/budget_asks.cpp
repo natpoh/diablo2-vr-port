@@ -36,10 +36,15 @@ void Install() {
     IDXGIAdapter3* a3 = nullptr;
     if (SUCCEEDED(f->EnumAdapters1(0, &a)) && a && SUCCEEDED(a->QueryInterface(__uuidof(IDXGIAdapter3), (void**)&a3)) && a3) {
         void* target = (*(void***)a3)[14];   // IUnknown 3, IDXGIObject 4, IDXGIAdapter 3, Adapter1 1, Adapter2 1, Adapter3: two before it
-        const bool ok = MH_CreateHook(target, (void*)&Hook, (void**)&g_orig) == MH_OK && MH_EnableHook(target) == MH_OK;
+        // only dxgi.dll's own code: an adapter wrapped by another module (an API layer's DXGI hook) would put our hook into a module that may leave (group I)
+        HMODULE owner = nullptr;
+        const bool dxgiOwn = GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)target, &owner) &&
+                             owner == m;
+        const bool ok = dxgiOwn && MH_CreateHook(target, (void*)&Hook, (void**)&g_orig) == MH_OK && MH_EnableHook(target) == MH_OK;
         g_in.store(ok);
         Log(ok ? "vrcam: video memory - the game's asks of its budget (QueryVideoMemoryInfo) counted in the 10 s line, nothing changed"
-               : "vrcam: video memory - QueryVideoMemoryInfo could not be watched");
+               : dxgiOwn ? "vrcam: video memory - QueryVideoMemoryInfo could not be watched"
+                         : "vrcam: video memory - QueryVideoMemoryInfo not watched: the adapter's code is not dxgi.dll's (another module wraps it)");
     }
     if (a3) a3->Release();
     if (a) a->Release();

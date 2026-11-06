@@ -165,6 +165,7 @@ static void Panel() {
     CHECK(ParseValue(fov, L"75") == 75 && ParseValue(fov, L"") == 60 && ParseValue(fov, L"500") == 120 && ParseValue(fov, L"nan") == 60);
     CHECK(ParseValue(box, L"0.7") == 1 && ParseValue(path, L"2") == 2);
     CHECK(Shown(0, 65) == "65" && Shown(1, 7.5f) == "7.5" && Shown(2, 1) == "On" && Shown(kOwnCount, 2) == "Walk or run");
+    CHECK(Def(10).kind == Kind::Choice && Shown(10, 0) == "As in the game's options" && Shown(10, 2) == "Centre" && Shown(10, 3) == "Right");   // [hud] flat_map_place
     // the layout at 1080p and 720p: inside the screen, rows in order, buttons inside their row
     for (const float h : {1080.0f, 720.0f, 2160.0f}) {
         const float w = h * 16.0f / 9.0f;

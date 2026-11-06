@@ -1040,10 +1040,12 @@ static void TestLivePagesOnWindow() {
         w.Run(2);
         w.ClickTab(1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageMelee)));
-        const int qb = hset::KeyAt(hset::kPageMelee, 6);
-        CHECK(w.c.SettingsModel().page == hset::kPageMelee && qb >= 0 && !wcscmp(hset::kDefs[qb].key, L"quick_blow") && hset::kDefs[hset::kKeyMeleeDirect].page == hset::kNoPage);
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee);
+        w.ClickSheet(hset::kSubBtn(1, hset::kMeleePages));   // the Melee tab's Attack page (Serg 2026-11-06)
+        const int qb = hset::KeyAt(hset::kPageMeleeAttack, 0);
+        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && qb >= 0 && !wcscmp(hset::kDefs[qb].key, L"quick_blow") && hset::kDefs[hset::kKeyMeleeDirect].page == hset::kNoPage);
         CHECK(w.c.SettingsModel().Get()[qb] > 0.5f);
-        w.ClickSheet(hset::kToggle(6, hset::kPageMelee));
+        w.ClickSheet(hset::kToggle(0, hset::kPageMeleeAttack));
         CHECK(w.c.SettingsModel().Get()[qb] < 0.5f && w.c.SettingsModel().LiveOnly());
         Step saved;
         bool got = false;
@@ -1195,7 +1197,7 @@ static void TestPaint(const char* dumpDir) {
     bool belowSame = true;
     for (int y = (int)tiles::kPanel.t + 14; y < tiles::kH && belowSame; ++y)
         for (int x = 0; x < tiles::kW; ++x) {
-            const bool hint = (y > 1020 && x > 480 && x < 1120) ||                                                                    // the dots at the foot
+            const bool hint = (y > 1020 && x > 440 && x < 1160) ||                                                                    // the dots at the foot
                               (y >= 470 && y <= 690 && (x < 110 || x > 1490));                                                       // the arrows at the edges
             if (!hint && skills[(size_t)y * tiles::kW + x] != plain[(size_t)y * tiles::kW + x]) { belowSame = false; break; }
         }
@@ -1370,8 +1372,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 20 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(19, 1) == 19 && FlipTo(19, -1) == 18 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 22 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(21, 1) == 21 && FlipTo(21, -1) == 20 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1768,6 +1770,98 @@ static void TestCoopOnWindow(const char* dumpDir) {
 
 // The World tab on the window's Settings tab: the tab opens Contact, its buttons the other three pages, a row's switch is written by itself
 // a moment later (live), alone.
+// [stats] strike_stats: the Stats tab on the skill panel's Settings tab - the plugin's copy of the numbers in, the hero's name and totals and a row a
+// weapon out; < > go round the heroes, This game / All time; nothing of the ini (no Apply, no Save). The picture goes to the dump.
+static hset::stats::View SampleStats() {
+    strikestats::Store s;
+    s.SetHero("Sorc", 1);
+    for (int i = 0; i < 12; ++i) s.Blow(strikestats::kBareHands, D2RVR_TYPE_UNARMED, 1.8f + 0.1f * (float)(i % 5), -1.0f);
+    s.StartSession();   // (an earlier game's numbers: all time only)
+    s.SetHero("Bar", 4);
+    for (int i = 0; i < 80; ++i) s.Blow(strikestats::CodeOf("7gd"), D2RVR_TYPE_SWORD, 2.6f + 0.05f * (float)(i % 30), 1.4f + 0.06f * (float)(i % 70));
+    for (int i = 0; i < 30; ++i) s.Blow(strikestats::CodeOf("7wa"), D2RVR_TYPE_AXE, 2.4f + 0.12f * (float)(i % 30), 1.2f + 0.1f * (float)(i % 30));
+    for (int i = 0; i < 12; ++i) s.Blow(strikestats::CodeOf("7gm"), D2RVR_TYPE_MACE, 2.2f + 0.2f * (float)(i % 12), 2.0f + 0.2f * (float)(i % 12));
+    for (int i = 0; i < 5; ++i) s.Blow(strikestats::kBareHands, D2RVR_TYPE_UNARMED, 2.0f + 0.4f * (float)i, -1.0f);
+    s.Blow(strikestats::CodeOf("7fl"), D2RVR_TYPE_MACE, 3.0f, 2.0f);   // a fifth weapon: the rows leave it out ("Weapon - 4 of 5")
+    for (int i = 0; i < 14; ++i) s.Miss(strikestats::CodeOf("7gd"), D2RVR_TYPE_SWORD, i % 3 == 0);
+    for (int i = 0; i < 6; ++i) s.Miss(strikestats::CodeOf("7wa"), D2RVR_TYPE_AXE, false);
+    hset::stats::View v;
+    v.on = v.known = true;
+    v.revision = 7;
+    v.started = 1762450920;
+    v.heroes = s.Heroes();
+    v.current = s.CurrentIndex();
+    return v;
+}
+
+static void TestStatsOnWindow(const char* dumpDir) {
+    World w;
+    w.host.stats = SampleStats();
+    w.LongPress();
+    w.ClickTab(1);
+    const Step t = w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageStats)));
+    w.Run(2);
+    const hset::Model& m = w.c.SettingsModel();
+    CHECK(t.settings.what == hset::Do::Nothing && m.page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);
+    CHECK(m.Stats().heroes.size() == 2 && m.StatsHero() == 1 && !m.StatsAllTime());   // the hero playing now, this game
+    // the page says it: the hero, the totals, the weapons the most used first, four of five
+    const hset::Scene sc = hset::Compose(m, {}, {});
+    auto has = [&](const std::string& text) {
+        for (const hset::Item& it : sc) if (it.text == text) return true;
+        return false;
+    };
+    CHECK(has("Barbarian  \xC2\xB7  Bar") && has("128") && has("Colossus Blade") && has("Berserker Axe") && has("Thunder Maul") && has("Bare fists") && !has("Scourge"));
+    CHECK(has("Weapon - 4 of 5") && has("80") && has("sword") && has("86 %"));   // 128 blows, 20 misses: 86 %
+    int nameY = -1, axeY = -1;
+    for (const hset::Item& it : sc) {
+        if (it.text == "Colossus Blade") nameY = it.r.y;
+        if (it.text == "Berserker Axe") axeY = it.r.y;
+    }
+    CHECK(nameY >= 0 && axeY > nameY);   // the most blows on top
+    CHECK(!m.Dirty() && hset::StatusText(m) == std::string(hset::stats::StatusText(m.Stats())));
+    const std::vector<uint32_t> page = Paint(w.c.ViewNow());
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_stats.bmp", page, tiles::kW, tiles::kH);
+    // All time, then the other hero (round the list both ways): nothing for the ini
+    Step s = w.ClickSheet(hset::kStatsAll);
+    CHECK(s.settings.what == hset::Do::Nothing && w.c.SettingsModel().StatsAllTime() && !w.c.SettingsModel().Dirty());
+    const std::vector<uint32_t> all = Paint(w.c.ViewNow());
+    CHECK(all != page);
+    if (dumpDir) WriteBmp(std::string(dumpDir) + "/tabs_stats_all.bmp", all, tiles::kW, tiles::kH);
+    s = w.ClickSheet(hset::kStatsNext);
+    CHECK(s.settings.what == hset::Do::Nothing && w.c.SettingsModel().StatsHero() == 0);
+    s = w.ClickSheet(hset::kStatsNext);
+    CHECK(w.c.SettingsModel().StatsHero() == 1);
+    s = w.ClickSheet(hset::kStatsPrev);
+    CHECK(w.c.SettingsModel().StatsHero() == 0);
+    const hset::Scene sorc = hset::Compose(w.c.SettingsModel(), {}, {});
+    bool fists = false;
+    for (const hset::Item& it : sorc) fists = fists || it.text == "Bare fists";
+    CHECK(fists);
+    // her game was an earlier one: this game has no rows for her
+    w.ClickSheet(hset::kStatsNow);
+    CHECK(!w.c.SettingsModel().StatsAllTime());
+    bool none = false;
+    for (const hset::Item& it : hset::Compose(w.c.SettingsModel(), {}, {})) none = none || it.text == "No blows by touch in this game yet.";
+    CHECK(none);
+    // the tick off, nothing counted yet: the line under the page says so
+    hset::stats::View off;
+    off.known = true;
+    CHECK(std::string(hset::stats::StatusText(off)).find("off") != std::string::npos);
+    off.on = true;
+    CHECK(std::string(hset::stats::StatusText(off)).find("No blows yet") != std::string::npos);
+    // the hit test: the four buttons, nothing else on the page
+    float u = 0, v = 0;
+    auto centre = [&](const hset::Rect& r) { u = (r.x + r.w * 0.5f) / hset::kW; v = (r.y + r.h * 0.5f) / hset::kH; };
+    centre(hset::kStatsPrev);
+    CHECK((hset::HitTest(hset::kPageStats, u, v) == hset::Hit{hset::Kind::Stats, 0, -1}));
+    centre(hset::kStatsAll);
+    CHECK((hset::HitTest(hset::kPageStats, u, v) == hset::Hit{hset::Kind::Stats, 1, 1}));
+    centre(hset::kStatsRow(1));
+    CHECK(hset::HitTest(hset::kPageStats, u, v).kind == hset::Kind::None);
+    // VR F1 - F3: the tab is F4's (the touch counts there only)
+    CHECK(!hset::PageShown(hset::kPageStats, 2) && hset::PageShown(hset::kPageStats, 4));
+}
+
 static void TestWorldOnWindow(const char* dumpDir) {
     World w;
     w.LongPress();
@@ -1826,20 +1920,26 @@ static void TestFlipController() {
         CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 11);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 12);
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && w.c.FlipPlace() == 13);   // the Melee tab's second page
         for (int i = 0; i < hset::kWorldPages; ++i) {   // the World tab's four pages, one flick each
             Flick(w, 1.0f);
-            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 13 + i);
+            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 14 + i);
         }
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 17);
+        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 18);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 18);   // the Party page (the Co-op tab's second page): a flick passes it too
+        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 19);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 19 && w.c.SettingsModel().GuideShown());
+        CHECK(w.c.SettingsModel().page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);   // the strike statistics' tab
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 19 && w.c.Open());   // the end: a stop
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.SettingsModel().GuideShown());
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.Open());   // the end: a stop
+        Flick(w, -1.0f);
         Flick(w, -1.0f);
         for (int i = 0; i < hset::kWorldPages; ++i) Flick(w, -1.0f);
+        Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
@@ -2005,12 +2105,14 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 0 && w.c.Open());
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
-        for (int i = 0; i < 18; ++i) w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 19);
+        for (int i = 0; i < 20; ++i) w.ClickPx(CentreX(next), CentreY(next));
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(next), CentreY(next));
-        CHECK(w.c.FlipPlace() == 19);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 18 && w.c.SettingsModel().page == hset::kPageParty);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageStats && w.c.SettingsModel().page == hset::kPageStats);
+        w.ClickPx(CentreX(prev), CentreY(prev));
+        CHECK(w.c.FlipPlace() == 19 && w.c.SettingsModel().page == hset::kPageParty);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
@@ -2089,7 +2191,7 @@ static void TestFlipPaint() {
         for (int y = 0; y < tiles::kH && onlyHints; ++y)
             for (int x = 0; x < tiles::kW; ++x)
                 if (a[(size_t)y * tiles::kW + x] != b[(size_t)y * tiles::kW + x]) {
-                    const bool dot = y > 1020 && x > 480 && x < 1120, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
+                    const bool dot = y > 1020 && x > 440 && x < 1160, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
                     if (!dot && !arrow) { onlyHints = false; break; }
                 }
         CHECK(onlyHints);
@@ -2186,7 +2288,7 @@ static void TestHands() {
 static void TestViews() {
     using namespace hset;
     // the pages: F4 (and 0, not known) every one; F1 - F3 not F4's body
-    const int bodyPages[] = {kPageVibration, kPageLife, kPageLook, kPageBody, kPageBelt, kPageMelee, kPageWorld, kPageWorldReact, kPageWorldGrab, kPageWorldMore};
+    const int bodyPages[] = {kPageVibration, kPageLife, kPageLook, kPageBody, kPageBelt, kPageMelee, kPageWorld, kPageWorldReact, kPageWorldGrab, kPageWorldMore, kPageStats};
     const int allPages[] = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
     for (int view = 0; view <= 4; ++view) {
         const bool flat = view >= 1 && view <= 3;
@@ -2194,7 +2296,7 @@ static void TestViews() {
         for (int p : allPages) CHECK(PageShown(p, view));
         int tabs = 0;
         for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
-        CHECK(tabs == (flat ? 7 : 14));   // View, Options, Video, Controls, HUD, Co-op, Guide - or all fourteen
+        CHECK(tabs == (flat ? 7 : 15));   // View, Options, Video, Controls, HUD, Co-op, Guide - or all fifteen (Stats is F4's: the touch counts there)
         // the strip: the shown tabs inside it and apart, in order; one not shown has no place
         int lastEnd = 0;
         for (int t = 0; t < kTabCount; ++t) {
@@ -2207,7 +2309,7 @@ static void TestViews() {
         }
         // the rows: Options without "Menus as a panel", HUD with the toolbar type alone (the plates are F4's hook), the rest as in F4
         CHECK(RowsOn(kPageOptions, view) == RowsOn(kPageOptions) - (flat ? 1 : 0));
-        CHECK(RowsOn(kPageHud, view) == (flat ? 1 : 3) && KeyAt(kPageHud, 0, view) == kKeyBarPlace);
+        CHECK(RowsOn(kPageHud, view) == (flat ? 1 : 7) && KeyAt(kPageHud, 0, view) == kKeyBarPlace);   // (F4: the plates' two, Allies shown, our names' three)
         CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == 6 && RowsOn(kPageKeysR, view) == 6);
         for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
         // the flips: Skills and the pages shown (Party with it, while it is on)
@@ -2330,6 +2432,7 @@ int main(int argc, char** argv) {
     TestPreviewButton();
     TestCoopOnWindow(dump);
     TestWorldOnWindow(dump);
+    TestStatsOnWindow(dump);
     TestFlipPaint();
     TestViews();
     std::printf("%d checks, %d failed\n", g_checks, g_failures);

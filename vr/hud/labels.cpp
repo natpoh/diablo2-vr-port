@@ -71,6 +71,27 @@ bool LabelItemDistance(void* unit, float* out) {
     *out = sqrtf(dx * dx + dz * dz);
     return std::isfinite(*out);
 }
+// [hud] labels_own_*: our labels' own size by distance (ownlabels::CurveK).
+ownlabels::SizeCurve OwnSizeCurve() {
+    ownlabels::SizeCurve c;
+    c.nearPct = g_set.ownSizeNear.load();
+    c.farPct = g_set.ownSizeFar.load();
+    c.nearM = g_set.ownNearM.load();
+    c.farM = g_set.ownFarM.load();
+    return c;
+}
+// The item's ground distance in metres; false when it cannot be read.
+bool LabelItemMetres(void* unit, float* m) {
+    float d;
+    if (!LabelItemDistance(unit, &d)) return false;
+    *m = d / (std::max(1.0f, ViewHeight()) / UserEyeHeightM());   // world units per metre, as TrueScale
+    return std::isfinite(*m);
+}
+// [hud] labels_own: our labels' size for this item - our curve, in place of labels_size x labels_far (the game's labels keep those).
+float OwnLabelK(void* unit) {
+    float m;
+    return LabelItemMetres(unit, &m) ? ownlabels::CurveK(m, OwnSizeCurve()) : ownlabels::CurveK(0.0f, OwnSizeCurve());
+}
 float LabelDistanceK(void* unit) {
     float d;
     if (!LabelsByDistance() || !LabelItemDistance(unit, &d)) return 1.0f;
@@ -104,15 +125,60 @@ float LabelScaleOf(const void* name, const void* box, float fallback) {
 // in the interface's pixels and their items' distances, for the effect (LabelDepthUniforms).
 // ... and eyes by turns: each label's own depth is what keeps it the same in each eye every frame (D2R_DepthFog.fx LabelTurnH) - read then too, the
 // labels' look as labels_depth_body sets it (0: where the game leaves them)
-bool LabelDepthWanted() { return AfrOn() && g_enabled.load() && FullBody() && (g_set.labelsDepthBody.load() > 0.005f || replay::OverlaysWanted()); }
+// [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): in F4 the item labels drawn by us - the name painted sharp at the size it has in
+// the eye, in the game's own box (its layout, its hover and its pick-up untouched), at its item's depth. The effect needs each label's box for it.
+bool OwnLabelsNow() { return g_set.labelsOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
+bool LabelDepthWanted() {
+    return AfrOn() && g_enabled.load() && FullBody() && (g_set.labelsDepthBody.load() > 0.005f || replay::OverlaysWanted() || OwnLabelsNow());
+}
 SRWLOCK g_labelDepthLock = SRWLOCK_INIT;
 LabelDepth g_labelDepthNew[kLabelDepthMax];
 int g_labelDepthNewN = 0;
-void NoteLabelDepth(void* unit, const int32_t* box) {
+// What our cell of this label shows: the name without the game's colour codes, in the code's colour or the item's rarity (item data +0x10:
+// quality +0x00, flags +0x18 - as point_pickup reads it), the pointed item's look. The game's box colour comes later, from the paint (NoteOwnBox).
+void OwnWantOf(void* unit, const char* name, bool lit, ownlabels::Want* w) {
+    const char code = ownlabels::StripCodes(name, 0x80, w->text, sizeof w->text);
+    float rarity[3] = {1.0f, 1.0f, 1.0f};
+    uintptr_t data = 0;
+    uint32_t quality = 0, flags = 0;
+    if (SafeRead(&data, (const uint8_t*)unit + 0x10, sizeof data) && data >= 0x10000 && SafeRead(&quality, (const void*)data, sizeof quality) &&
+        SafeRead(&flags, (const void*)(data + 0x18), sizeof flags))
+        unleashed::lootaim::RarityColor(quality, flags, rarity);
+    ownlabels::NameColour(code, rarity, w->rgb);
+    w->lit = lit;
+    w->inReach = !lit || pointpickup::LitInReach();
+}
+// sizeK: the label's labels_size x labels_far (x point_pickup_label_pct when pointed); resized: the layout hook made the game's box that size.
+void NoteLabelDepth(void* unit, const int32_t* box, const char* name, bool lit, float sizeK, bool resized) {
     float d;
     if (!LabelDepthWanted() || !LabelItemDistance(unit, &d)) return;
+    LabelDepth l{box[0], box[1], box[2], box[3], d};
+    if (name && OwnLabelsNow()) {
+        OwnWantOf(unit, name, lit, &l.want);
+        int32_t first = -1;   // the label's style (its name's buffer + 0x80, as the game passes it): its font, ours in the same face
+        if (SafeRead(&first, name + 0x80, sizeof first)) l.want.font = ownlabels::FontOfStyle(first);
+        l.own = l.want.text[0] != 0;
+        l.sizeK = sizeK;
+        l.ownK = resized ? 1.0f : sizeK;   // (the box not made again: our cell takes the sliders' size itself, ShownRect)
+    }
     AcquireSRWLockExclusive(&g_labelDepthLock);
-    if (g_labelDepthNewN < kLabelDepthMax) g_labelDepthNew[g_labelDepthNewN++] = {box[0], box[1], box[2], box[3], d};
+    if (g_labelDepthNewN < kLabelDepthMax) g_labelDepthNew[g_labelDepthNewN++] = l;
+    ReleaseSRWLockExclusive(&g_labelDepthLock);
+}
+// The paint of a label we draw: the colour the game gives its box (its own {0, 0, 0, 0.6}, or another if it marks the hovered one) to our cell,
+// its alpha by [hud] labels_alpha as the game's own paint gets it (HookLabelPaint; ownlabels::BackdropRgba).
+void NoteOwnBox(const int32_t* box, const float* colour) {
+    float alpha, size, bg[4];
+    LabelLookNow(&alpha, &size);
+    ownlabels::BackdropRgba(colour, alpha, bg);
+    AcquireSRWLockExclusive(&g_labelDepthLock);
+    for (int i = g_labelDepthNewN - 1; i >= 0; --i) {
+        LabelDepth& l = g_labelDepthNew[i];
+        if (l.own && l.x == box[0] && l.y == box[1] && l.w == box[2] && l.h == box[3]) {
+            memcpy(l.want.bg, bg, sizeof l.want.bg);
+            break;
+        }
+    }
     ReleaseSRWLockExclusive(&g_labelDepthLock);
 }
 
@@ -180,23 +246,23 @@ bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t
         g_labelOwners.Remember(box, name, (uintptr_t)unit);
         ReleaseSRWLockExclusive(&g_labelOwnersLock);
     }
-    float k = item ? LabelSizeNow() * LabelDistanceK(unit) : 1.0f;
+    float k = item ? (OwnLabelsNow() ? OwnLabelK(unit) : LabelSizeNow() * LabelDistanceK(unit)) : 1.0f;   // (labels_own: our curve, the game's box made that size too)
     if (lit && (uintptr_t)unit == lit) {   // [input] point_pickup_label_pct (Serg, 0.199.1: "bigger"): its size, live - in place of Unleashed's 180% (130% out of reach)
         namespace la = unleashed::lootaim;
         const float pct = g_set.pointPickupLabelPct.load() * 0.01f * (pointpickup::LitInReach() ? 1.0f : la::OutOfReachLook.nameScale / la::InReachLook.nameScale);
         k = std::min(4.0f, k * pct);
     }
     if (shown && name) NoteLabelScale(name, box, item ? k : -1.0f);
-    if (shown && box && name && item && std::abs(k - 1.0f) >= 0.005f) ResizeLabelBox(name, box, k);
-    if (shown && box && item) NoteLabelDepth(unit, box);
+    const bool resized = shown && box && name && item && (std::abs(k - 1.0f) < 0.005f || ResizeLabelBox(name, box, k));
+    if (shown && box && item) NoteLabelDepth(unit, box, name, lit && (uintptr_t)unit == lit, k, resized);
     return shown;
 }
-// The box made again round the name at k times its scale, about the same bottom middle.
+// The box made again round the name at k times its scale, about the same bottom middle. False: left as it was (the old graphics, a
+// measure not trusted) - [hud] labels_own then sizes its cell itself.
 bool ResizeLabelBox(char* name, int32_t* box, float k) {
-    const bool shown = true;
-    if (!((IsHdFn)d2rsig::Addr(RVA_IS_HD))()) return shown;   // the old graphics: their text has no scale
+    if (!((IsHdFn)d2rsig::Addr(RVA_IS_HD))()) return false;   // the old graphics: their text has no scale
     const float s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
-    if (!(s > 0.05f && s < 20.0f)) return shown;
+    if (!(s > 0.05f && s < 20.0f)) return false;
     g_uiScaleSeen.store(s);
     const int32_t most[2] = {0x7FFFFFFF, 0x7FFFFFFF};   // as the layout asks: one line, no limit
     int32_t was[2] = {}, now[2] = {};
@@ -206,15 +272,19 @@ bool ResizeLabelBox(char* name, int32_t* box, float k) {
     // the padding the game put round the name, scaled with it; anything else is not the box expected
     const int32_t padW = box[2] - was[0], padH = box[3] - was[1];
     if (was[0] <= 0 || was[1] <= 0 || now[0] <= 0 || now[1] <= 0 || padW < 0 || padH < 0 || padW > 400 || padH > 200)
-        return shown;
+        return false;
     const int32_t w = now[0] + (int32_t)std::ceil((float)padW * k), h = now[1] + (int32_t)std::ceil((float)padH * k);
     const int32_t mid = box[0] + box[2] / 2, bottom = box[1] + box[3];
     box[0] = mid - w / 2; box[1] = bottom - h; box[2] = w; box[3] = h;
-    return shown;
+    return true;
 }
 
 uintptr_t HookLabelPaint(const int32_t* box, const char* name, const float* colour) {
-    if (box && PointHighlightWanted())   // [input] point_pickup: the pointed item's label
+    // [hud] labels_own: we draw this label - its box colour noted for our cell; the pointed item's rim is ours too (the game's strips round the
+    // box would stand in the layer at the wrong depth), the game paints the plain label
+    const bool own = box && OwnLabelsNow() && !LabelIsOtherThanItem(name, box);
+    if (own && colour) NoteOwnBox(box, colour);
+    if (box && PointHighlightWanted() && !own)   // [input] point_pickup: the pointed item's label
         if (const uintptr_t lit = pointpickup::Lit(); lit && LabelOwner(box, name) == lit) return PaintPointed(box, name, colour);
     float alpha, size;
     LabelLookNow(&alpha, &size);
@@ -231,8 +301,255 @@ uintptr_t HookLabelPaint(const int32_t* box, const char* name, const float* colo
     return r;
 }
 
+// [hud] monster_names_own (vr/own_names.h): the texts of the plate over the target. The plate's SetInfo handler (hooked read-only below) says what they are;
+// the effect says whether they are wanted and where the plate stands (NamesSetPlate); the text hook records each of the plate's texts as it is drawn (the
+// game's interface thread) and skips the game's drawing of one only while the effect has shown our cell for it lately (NamesMark) - so a name not painted
+// yet, an older effect, a plate the effect does not draw: the game's text stays.
+std::atomic<bool> g_namesOn{false};
+std::atomic<float> g_namesPlate[4] = {};
+std::atomic<double> g_namesPlateMs{0.0};
+SRWLOCK g_namesLock = SRWLOCK_INIT;
+ownnames::Record g_namesRecord;
+ownnames::Shown g_namesShown;
+ownnames::PlateInfo g_namesInfo;   // (g_namesLock)
+double NamesNowMs() {
+    static const double perMs = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return (double)f.QuadPart / 1000.0; }();
+    LARGE_INTEGER c;
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / perMs;
+}
+bool MonsterNamesOwnNow() { return g_set.monsterNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4() && !plateworld::Active(); }
+// [hud] npc_names_own: the hover tooltip's names (ownnames::kHoverSites) - recorded like the plate's texts, skipped once ours is shown.
+bool NpcNamesOwnNow() { return g_set.npcNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
+std::atomic<bool> g_hoverOn{false};
+uintptr_t g_hoverSites[3] = {};   // the return addresses, once each was checked to be a call of TextDraw (InstallHoverSites)
+ownnames::Record g_hoverRecord;   // (g_namesLock)
+void NamesSetHover(bool on) { g_hoverOn.store(on && g_hoverSites[0] != 0, std::memory_order_relaxed); }
+int HoverTake(ownnames::Text* out, int most) {
+    ownnames::Text t[ownnames::kMax];
+    AcquireSRWLockShared(&g_namesLock);
+    const int n = g_hoverRecord.Take((uint64_t)NamesNowMs(), t);
+    ReleaseSRWLockShared(&g_namesLock);
+    int k = 0;
+    for (int i = 0; i < n && k < most; ++i) {
+        t[i].which = ownnames::kWhichHover;
+        out[k++] = t[i];
+    }
+    return k;
+}
+void NamesSetPlate(bool on, const float* platePx) {
+    g_namesOn.store(on, std::memory_order_relaxed);
+    if (!platePx) return;
+    for (int i = 0; i < 4; ++i) g_namesPlate[i].store(platePx[i], std::memory_order_relaxed);
+    g_namesPlateMs.store(NamesNowMs(), std::memory_order_relaxed);
+}
+int NamesTake(ownnames::Text out[ownnames::kMax]) {
+    AcquireSRWLockShared(&g_namesLock);
+    const int n = g_namesRecord.Take((uint64_t)NamesNowMs(), out);
+    ReleaseSRWLockShared(&g_namesLock);
+    return n;
+}
+void NamesMark(uint64_t key) {
+    AcquireSRWLockExclusive(&g_namesLock);
+    g_namesShown.Mark(key, (uint64_t)NamesNowMs());
+    ReleaseSRWLockExclusive(&g_namesLock);
+}
+// The target the plate is of: the unit the anchor hook last hung it for (plateworld's follow, or the plate's last read), a monster (type 1); its data + 0x1A.
+bool NamesTargetKind(uint8_t* special) {
+    uintptr_t unit = 0;
+    plateworld::Follow f;
+    float px[2];
+    if (plateworld::GetFollow(&f, GetTickCount64())) unit = f.unit;
+    else if (!gamestate::PlateReadAt(&unit, px)) unit = 0;
+    uint32_t type = 0;
+    uintptr_t data = 0;
+    return unit >= 0x10000 && SafeRead(&type, (const void*)unit, sizeof type) && type == 1 && SafeRead(&data, (const uint8_t*)unit + 0x10, sizeof data) &&
+           data >= 0x10000 && SafeRead(special, (const uint8_t*)data + 0x1A, 1);
+}
+// A string of the game's, copied safely (a text it is about to draw, or one its message carries).
+void CopyGameText(const char* src, char* dst, size_t n) {
+    size_t i = 0;
+    for (; src && i + 1 < n; ++i) {
+        char c = 0;
+        if (!SafeRead(&c, src + i, 1) || !c) break;
+        dst[i] = c;
+    }
+    dst[i] = 0;
+}
+// The plate's SetInfo handler 0x1F84E0 (MonsterHealthPanel: rcx the panel's object, rdx the message, r8 the panel, r9b a flag) - read, never changed.
+// mov [rsp+18h],rbx; mov [rsp+20h],r9b; mov [rsp+10h],rdx; mov [rsp+8],rcx (no RIP-relative operand in the first 20 bytes)
+constexpr uint64_t RVA_PLATE_INFO = 0x1F84E0;
+const uint8_t kSigPlateInfo[20] = {0x48,0x89,0x5C,0x24,0x18,0x44,0x88,0x4C,0x24,0x20,0x48,0x89,0x54,0x24,0x10,0x48,0x89,0x4C,0x24,0x08};
+using PlateInfoFn = uintptr_t (*)(void* self, const uint8_t* msg, void* panel, uint8_t flag);
+PlateInfoFn OrigPlateInfo = nullptr;
+std::atomic<bool> g_plateInfoIn{false};
+void NotePlateInfo(const uint8_t* msg) {
+    uint64_t id = 0;
+    uintptr_t data = 0, name = 0, unique = 0, more = 0;
+    if (!msg || !SafeRead(&id, msg + ownnames::kMsgId, sizeof id) || id != ownnames::kSetInfo || !SafeRead(&data, msg + ownnames::kMsgData, sizeof data) ||
+        data < 0x10000 || !SafeRead(&name, (const void*)(data + ownnames::kDataName), sizeof name))
+        return;
+    ownnames::PlateInfo p;
+    CopyGameText((const char*)name, p.text[0], sizeof p.text[0]);
+    if (SafeRead(&unique, (const void*)(data + ownnames::kDataUnique), sizeof unique)) CopyGameText((const char*)unique, p.text[1], sizeof p.text[1]);
+    if (SafeRead(&more, (const void*)(data + ownnames::kDataAdditional), sizeof more)) CopyGameText((const char*)more, p.text[2], sizeof p.text[2]);
+    SafeRead(p.colour, (const void*)(data + ownnames::kDataColour), sizeof p.colour);
+    p.ms = (uint64_t)NamesNowMs();
+    AcquireSRWLockExclusive(&g_namesLock);
+    g_namesInfo = p;
+    ReleaseSRWLockExclusive(&g_namesLock);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 2) {
+        char b[600];
+        snprintf(b, sizeof b, "vrcam: [hud] monster_names_own - the plate told: name \"%.60s\", unique \"%.60s\", additional \"%.60s\"; colour bytes "
+                 "%02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X %02X%02X%02X%02X", p.text[0], p.text[1], p.text[2], p.colour[0], p.colour[1], p.colour[2],
+                 p.colour[3], p.colour[4], p.colour[5], p.colour[6], p.colour[7], p.colour[8], p.colour[9], p.colour[10], p.colour[11], p.colour[12], p.colour[13],
+                 p.colour[14], p.colour[15]);
+        Log(b);
+    }
+}
+uintptr_t HookPlateInfo(void* self, const uint8_t* msg, void* panel, uint8_t flag) {
+    if (g_namesOn.load(std::memory_order_relaxed)) NotePlateInfo(msg);
+    return OrigPlateInfo(self, msg, panel, flag);
+}
+void InstallPlateInfoHook() {
+    static bool failed = false;
+    if (g_plateInfoIn.load() || failed || !MonsterNamesOwnNow()) return;
+    if (!Matches(RVA_PLATE_INFO, kSigPlateInfo, sizeof kSigPlateInfo)) return;   // not decrypted yet, or another build
+    const bool in = d2rsig::Hook(RVA_PLATE_INFO, kSigPlateInfo, sizeof kSigPlateInfo, (void*)&HookPlateInfo, (void**)&OrigPlateInfo);
+    failed = !in;
+    g_plateInfoIn.store(in);
+    Log(in ? "vrcam: [hud] monster_names_own - the plate's SetInfo hook in (read only: what the plate is told)"
+           : "vrcam: [hud] monster_names_own - the plate's SetInfo hook FAILED: the game's names stay");
+}
+// The plate's text boxes give TextDraw a point, not a box (0.205.6, Serg's log: "  Zombie" at 867,956 0x0, the middle of the plate's box
+// 786,914-945,997): the text is laid out about it. Its size is the game's own measure with the same style and scale (TextMeasure 0x909560, as
+// ResizeLabelBox asks it), the box that size about the point (ownnames::BoxAbout). False: the old graphics, or no sane measure.
+bool MeasuredBox(const char* text, const int32_t* box, const void* style, float scale, int32_t out[4]) {
+    if (box[2] > 0 && box[3] > 0) { memcpy(out, box, 4 * sizeof(int32_t)); return true; }
+    if (!style || !(scale > 0.05f && scale < 20.0f) || !((IsHdFn)d2rsig::Addr(RVA_IS_HD))()) return false;
+    const int32_t most[2] = {0x7FFFFFFF, 0x7FFFFFFF};
+    int32_t size[2] = {};
+    ((TextMeasureFn)d2rsig::Addr(RVA_TEXT_MEASURE))(text, style, size, scale, most);
+    return ownnames::BoxAbout(box[0], box[1], size[0], size[1], out);
+}
+// The three calls of TextDraw in the hover tooltip's drawer (0x8DA7E0), each checked: E8 and the distance to TextDraw.
+void InstallHoverSites() {
+    static bool done = false;
+    if (done || !NpcNamesOwnNow()) return;
+    done = true;
+    int ok = 0;
+    for (int i = 0; i < 3; ++i) {
+        const uint64_t call = ownnames::kHoverSites[i] - 5;
+        const int32_t rel = (int32_t)(RVA_TEXT_DRAW - ownnames::kHoverSites[i]);
+        uint8_t want[5] = {0xE8};
+        memcpy(want + 1, &rel, 4);
+        if (Matches(call, want, sizeof want)) { g_hoverSites[i] = (uintptr_t)d2rsig::Addr(ownnames::kHoverSites[i]); ++ok; }
+    }
+    if (ok < 3) memset(g_hoverSites, 0, sizeof g_hoverSites);
+    Log(ok == 3 ? "vrcam: [hud] npc_names_own - the hover names' three TextDraw calls found (0x8DA8F1 / 0x8DA9CD / 0x8DAA0A)"
+                : "vrcam: [hud] npc_names_own - the hover names' TextDraw calls NOT as expected (another game build?): the game's names stay");
+}
+bool MeasuredBox(const char* text, const int32_t* box, const void* style, float scale, int32_t out[4]);
+// A hover name drawn: recorded where it is; true: skipped (ours is on the screen in its place).
+bool NoteHoverText(const char* text, const int32_t* box, const void* style, float scale) {
+    if (const uint32_t icon = ownlabels::IconIn(text, 0x80)) {   // the game's button icon (the (A) under an NPC's name): the game draws it, never our box
+        static std::atomic<int> toldIcon{0};
+        if (toldIcon.fetch_add(1) < 2) {
+            char m[200];
+            snprintf(m, sizeof m, "vrcam: [hud] npc_names_own - a hover line with the game's icon U+%04X (%d bytes): left the game's own", icon, (int)strlen(text));
+            Log(m);
+        }
+        return false;
+    }
+    int32_t b[4];
+    if (!MeasuredBox(text, box, style, scale, b)) return false;
+    const uint64_t now = (uint64_t)NamesNowMs();
+    int32_t first = -1;
+    SafeRead(&first, style, sizeof first);
+    AcquireSRWLockExclusive(&g_namesLock);
+    g_hoverRecord.Add(text, b, now, ownnames::kWhichHover, nullptr, ownlabels::FontOfStyle(first));
+    const bool skip = g_namesShown.Lately(ownnames::KeyOf(text), now);
+    ReleaseSRWLockExclusive(&g_namesLock);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 2) {
+        char m[240];
+        snprintf(m, sizeof m, "vrcam: [hud] npc_names_own - a hover name drawn: \"%.60s\" at %d,%d %dx%d", text, b[0], b[1], b[2], b[3]);
+        Log(m);
+    }
+    return skip;
+}
+// The target's body for our name over its head: its place on the grid (its path) and its MonStats row's footprint and height (monster data + 0x00 the
+// row, its id the unit's class: vr/mob_bars.h), read now.
+int NamesTargetBody(float foot[2], uint8_t row[3]) {
+    uintptr_t unit = 0;
+    plateworld::Follow f;
+    float px[2];
+    if (plateworld::GetFollow(&f, GetTickCount64())) unit = f.unit;
+    else if (!gamestate::PlateReadAt(&unit, px)) unit = 0;
+    uint32_t type = 0, cls = 0;
+    uintptr_t data = 0, r = 0;
+    uint16_t rowId = 0;
+    uint8_t b[16] = {};
+    auto read = [](uintptr_t at, auto& v) { return SafeRead(&v, (const void*)at, sizeof v); };
+    if (unit < 0x10000) return ownnames::kBodyNoUnit;
+    if (!read(unit, type) || type != 1 || !read(unit + 0x04, cls)) return ownnames::kBodyNotMonster;
+    if (!read(unit + 0x10, data) || data < 0x10000) return ownnames::kBodyNoData;
+    if (!plateworld::FootOf(unit, read, &foot[0], &foot[1])) return ownnames::kBodyNoFoot;
+    const bool rowOk = read(data, r) && r >= 0x10000 && read(r, rowId) && rowId == cls && SafeRead(b, (const void*)r, sizeof b) && b[8] >= 1 && b[8] <= 8 && b[9] >= 1 && b[9] <= 8;
+    if (!rowOk) {
+        row[0] = ownnames::kFallbackRow.footprintA; row[1] = ownnames::kFallbackRow.footprintB; row[2] = ownnames::kFallbackRow.height;
+        return ownnames::kBodyRowOff;
+    }
+    row[0] = b[8]; row[1] = b[9]; row[2] = b[13];
+    return ownnames::kBodyOk;
+}
+// True: the game's drawing of this text is skipped (ours is on the screen in its place).
+bool NoteNameText(const char* text, const int32_t* box, const void* style, float scale) {
+    if (ownlabels::IconIn(text, 0x80)) return false;   // (a game icon in it: the game draws it, never our box)
+    const uint64_t now = (uint64_t)NamesNowMs();
+    AcquireSRWLockShared(&g_namesLock);
+    const int which = ownnames::PlateTextOf(g_namesInfo, text, now);
+    float rgb[3];
+    const bool known = which >= 0 && ownnames::InfoColour(g_namesInfo.colour, rgb);
+    ReleaseSRWLockShared(&g_namesLock);
+    if (which < 0) return false;
+    int32_t b[4];
+    if (!MeasuredBox(text, box, style, scale, b)) {   // (measured outside the lock: the game's own text code)
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 2) {
+            char m[200];
+            snprintf(m, sizeof m, "vrcam: [hud] monster_names_own - the plate's text at %d,%d %dx%d could not be measured: left the game's", box[0], box[1], box[2], box[3]);
+            Log(m);
+        }
+        return false;
+    }
+    int32_t first = -1;
+    SafeRead(&first, style, sizeof first);
+    static std::atomic<bool> toldFont{false};
+    if (!toldFont.exchange(true)) {
+        char m[160];
+        snprintf(m, sizeof m, "vrcam: [hud] monster_names_own - the plate's text style's font %d (0 Exocet, 1 Formal): ours in the same face", first);
+        Log(m);
+    }
+    AcquireSRWLockExclusive(&g_namesLock);
+    g_namesRecord.Add(text, b, now, which, known ? rgb : nullptr, ownlabels::FontOfStyle(first));
+    // every copy of a text the plate was told is ours to stand in for, wherever it is drawn: the effect draws ours at each copy (0.205.8, Serg's log: the plate's
+    // box and its texts took turns in two places, the top and over the head - matched against the box, the one over the head was always left the game's)
+    const bool skip = g_namesShown.Lately(ownnames::KeyOf(text), now);
+    ReleaseSRWLockExclusive(&g_namesLock);
+    return skip;
+}
+
 uintptr_t HookTextDraw(const char* text, const int32_t* box, const void* style, float scale) {
     const float k = t_labelScale;
+    if (k <= 0.0f && text && box && text[0] && g_hoverOn.load(std::memory_order_relaxed) &&
+        ownnames::HoverSiteOf(reinterpret_cast<uintptr_t>(_ReturnAddress()), g_hoverSites) >= 0) {   // [hud] npc_names_own: a hover name
+        if (NoteHoverText(text, box, style, scale)) return OrigTextDraw("", box, style, scale);
+        return OrigTextDraw(text, box, style, scale);
+    }
+    if (k <= 0.0f && text && box && text[0] && g_namesOn.load(std::memory_order_relaxed) && NoteNameText(text, box, style, scale))
+        return OrigTextDraw("", box, style, scale);   // [hud] monster_names_own: ours is drawn in its place (an empty text, as LabelPaint's rim strips)
     return OrigTextDraw(text, box, style, k > 0.0f ? scale * k : scale);
 }
 
@@ -250,13 +567,16 @@ void TellLabelHooksOff() {
 // encrypted (D2R decrypts a page the first time it runs: labels shown once).
 void InstallLabelHooks() {
     if (kLabelHooksOff) { TellLabelHooksOff(); return; }
+    if (g_ctx && g_inWorld.load()) InstallPlateInfoHook();   // [hud] monster_names_own: what the plate is told (read only)
+    if (g_ctx && g_inWorld.load()) InstallHoverSites();   // [hud] npc_names_own: where the hover names are drawn from
     static bool paintFailed = false, sizeFailed = false, drawIn = false;
     static int misses = 0;
     if (!g_ctx || !g_inWorld.load() || !g_set.labelsNativeFloor.load()) return;
     float alpha, size;
     LabelLookNow(&alpha, &size);   // the view now: the hooks go in the first time any view wants them
     const bool wantBox = alpha < 0.995f;
-    const bool wantSize = std::abs(size - 1.0f) > 0.005f || LabelsByDistance() || LabelDepthWanted() || PointHighlightWanted();   // (point_pickup: whose label)
+    const bool wantSize = std::abs(size - 1.0f) > 0.005f || LabelsByDistance() || LabelDepthWanted() || PointHighlightWanted() || OwnLabelsNow() ||
+                          MonsterNamesOwnNow() || NpcNamesOwnNow();   // (point_pickup: whose label; monster_names_own, npc_names_own: the text hook)
     if (!wantBox && !wantSize) return;
     if (!g_labelPaintIn.load()) {
         if (paintFailed) return;

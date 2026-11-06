@@ -7,6 +7,7 @@
 // ours passes all six arguments on, takes what the game returned and hands it back untouched. It
 // only looks at bit 0 of the answer (the blow landed - a block clears it) and at whether the
 // attacker is a player unit; then it posts a pulse. No roll, range, target or damage is touched.
+// [debug] hit_outcome reads the whole answer too, for the log (vr/hit_outcome.h): read the same way, never changed.
 
 #include "haptics.h"
 
@@ -16,11 +17,13 @@
 #endif
 #include <windows.h>
 #include <cstdio>
+#include <cstring>
 
 #include "sigscan.h"
 #include "hit_latency.h"
 #include "view_gate.h"
 #include "frame_trace.h"   // [debug] frame_trace: what this observer costs a pair, and when a hit landed
+#include "hit_outcome.h"   // [debug] hit_outcome: every roll of the hero's blow on a monster, into the log's ring
 
 // The gesture code's pulse (directinput::Haptic) is forwarded to Sink below once this branch meets the
 // direct-input one: the header is there, the sink is registered; before that nothing refers to it.
@@ -97,6 +100,16 @@ bool IsPlayerUnit(uintptr_t unit) noexcept {
     return type == 0;
 }
 
+// [debug] hit_outcome: the defender's header {type, class, id}; false when it cannot be read.
+bool ReadUnitHeader(uintptr_t unit, uint32_t* head3) noexcept {
+    __try {
+        memcpy(head3, reinterpret_cast<const void*>(unit), 3 * sizeof(uint32_t));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
 uint16_t HookHitFlags(uintptr_t game, uintptr_t attacker, uintptr_t defender, int accuracy, bool force, int offset) {
     const uint16_t r = OrigHitFlags(game, attacker, defender, accuracy, force, offset);
     frametrace::Scope trace(frametrace::kHitHook);   // [debug] frame_trace: from here on it is ours
@@ -115,6 +128,11 @@ uint16_t HookHitFlags(uintptr_t game, uintptr_t attacker, uintptr_t defender, in
         frametrace::Note(frametrace::kHit);   // [debug] frame_trace: a player's blow landed
         if (timed) hitlatency::Landed();   // the press -> hit times of hit by touch and the shield's Smite (vr/hit_latency.h): a clock read and atomics
     }
+    // [debug] hit_outcome: every roll of the hero's blow on a monster (type 1), landed or not - pushed for the log (vr/hit_outcome.h), nothing changed
+    // ([hud] swing_timer's numbers read the same roll: the attacker's id goes with it, the timer keeps its own hero's)
+    uint32_t head[3], from[3];
+    if (hitoutcome::Wanted() && attacker > 0x10000 && defender > 0x10000 && IsPlayerUnit(attacker) && ReadUnitHeader(defender, head) && head[0] == 1)
+        hitoutcome::PushRoll(head[1], head[2], r, GetTickCount64(), ReadUnitHeader(attacker, from) ? from[2] : 0);
     return r;
 }
 
@@ -333,7 +351,7 @@ void PadPassed(unsigned index, bool ok, bool nonzero) {
 // Quiet: tried twice a second until the page is decrypted, says so once it is in (or never will be).
 void Install() {
     static bool failed = false;
-    if (g_hitIn.load() || failed || !(g_on.load() || hitlatency::Wanted() || frametrace::On())) return;   // haptics, or the press -> hit log of hit by touch / the shield (shared, one hook)
+    if (g_hitIn.load() || failed || !(g_on.load() || hitlatency::Wanted() || frametrace::On() || hitoutcome::Wanted())) return;   // haptics, or the press -> hit log of hit by touch / the shield, or [debug] hit_outcome (shared, one hook)
     if (!d2rsig::Check(RVA_HIT_FLAGS, kSigHitFlags, sizeof kSigHitFlags)) {
         if (d2rsig::NotInBuild(RVA_HIT_FLAGS)) {
             failed = true;

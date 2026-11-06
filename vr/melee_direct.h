@@ -164,6 +164,9 @@ bool Wanted();
 // (melee_direct_min_ms) is Full's only.
 void SetByRules(bool on);
 bool ByRules();
+// [gameplay] melee_direct_scope (shared/direct_hit_mode.h): 0 the two-handed cleave's extras only, 1 every touch by the rules, -1 missing (0.204's way).
+void SetScope(int scope);
+int Scope();
 void SetMinIntervalMs(uint32_t ms);
 // [gameplay] melee_direct_client_cleave on THIS PC as the host: the joined players' extra hits are struck here (the hooks go in for it
 // even with melee_direct off; those requests are struck in any view - the host may be in another one).

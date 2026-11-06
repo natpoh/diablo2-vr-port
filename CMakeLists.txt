@@ -575,6 +575,7 @@ target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp vr/diag/rtss_watch.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
 target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
+target_sources(d2rl-vrcam PRIVATE vr/strike_stats_wire.cpp)   # [stats] strike_stats: the touch's blows per hero and weapon, Saved Games\...\D2R VR Stats\strike_stats.txt
 target_sources(d2rl-vrcam PRIVATE vr/diag/save_backups.cpp)   # [support] save_backups: the game's saves copied into Saved Games\...\D2R VR Backups
 target_sources(d2rl-vrcam PRIVATE vr/world/area.cpp)   # M4 the area
 target_sources(d2rl-vrcam PRIVATE vr/view/view_state.cpp)   # M5 which view
@@ -876,6 +877,9 @@ target_compile_options(stand_still_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(move_attack_test cleanroom/tests/move_attack_test.cpp)
 target_include_directories(move_attack_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(move_attack_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Strike statistics ([stats] strike_stats, vr/strike_stats.h): blows, speeds, forces per hero and weapon, the missed swings, the file's text.
+add_executable(strike_stats_test cleanroom/tests/strike_stats_test.cpp)
+target_compile_options(strike_stats_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Quick blow ([gameplay] quick_blow, vr/quick_blow.h): the AnimData events moved to the first frame, whose attack, the faster gate, the touch's route.
 add_executable(quick_blow_test cleanroom/tests/quick_blow_test.cpp)
 target_compile_options(quick_blow_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -886,6 +890,25 @@ target_compile_options(attack_path_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(shot_trace_test cleanroom/tests/shot_trace_test.cpp)
 target_include_directories(shot_trace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(shot_trace_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# What came of the hero's blow on a monster, told in the log ([debug] hit_outcome, vr/hit_outcome.h): the roll's names, the ring, the lines.
+add_executable(hit_outcome_test cleanroom/tests/hit_outcome_test.cpp)
+target_include_directories(hit_outcome_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(hit_outcome_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] swing_timer (vr/swing_timer.h): the attack's zones as the game's gate answers them, the client's clock, one swing's outcomes, the fade.
+add_executable(swing_timer_test cleanroom/tests/swing_timer_test.cpp)
+target_include_directories(swing_timer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(swing_timer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] labels_own (vr/own_labels.h): the names' colour codes and colours, the size steps, the atlas's shelves, where a cell stands, the painter and the
+# worker's atlas (--dump <prefix> writes the painted cells and the atlas as .bmp to look at).
+add_executable(own_labels_test cleanroom/tests/own_labels_test.cpp vr/own_labels_paint.cpp vr/own_labels_wire.cpp vr/game_ui.cpp vr/wheel_icons.cpp)
+target_include_directories(own_labels_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
+target_link_libraries(own_labels_test PRIVATE gdi32 user32 ole32 uuid)
+target_compile_options(own_labels_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] swing_timer: its picture (vr/swing_timer_paint.cpp) - the ring and the bar in the gate's colours, the number; --dump <prefix> to look at them.
+add_executable(swing_timer_paint_test cleanroom/tests/swing_timer_paint_test.cpp vr/swing_timer_paint.cpp vr/wheel_icons.cpp)
+target_include_directories(swing_timer_paint_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
+target_link_libraries(swing_timer_paint_test PRIVATE gdi32 user32 ole32 uuid)
+target_compile_options(swing_timer_paint_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # No stray walk, no stray mouse button in the F4 world ([gameplay] block_stray_walk / block_stray_clicks, vr/stray_walk.h): the decisions.
 add_executable(stray_walk_test cleanroom/tests/stray_walk_test.cpp)
 target_include_directories(stray_walk_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1117,6 +1140,16 @@ target_compile_options(hset_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SE
 add_executable(session_logs_test tools/session_logs_test.cpp)
 target_include_directories(session_logs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(session_logs_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# The game data's version from D2RLoader's own log; older than 3.x said loudly (shared/game_version.h; crash group K, rows 272 / 275)
+add_executable(game_version_test tools/game_version_test.cpp)
+target_include_directories(game_version_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(game_version_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# No window move and no mouse message to the game before its menus exist (vr/menu_ready.h; crash group J, rows 270 / 271)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/menu_ready_test.cpp")
+    add_executable(menu_ready_test cleanroom/tests/menu_ready_test.cpp)
+    target_include_directories(menu_ready_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(menu_ready_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # [support] rtss_warning (shared/rtss_detect.h): RivaTuner's hook DLLs and programs by name, the one line and when it is written.
 add_executable(rtss_detect_test tools/rtss_detect_test.cpp)
 target_include_directories(rtss_detect_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -1142,6 +1175,8 @@ target_sources(d2rl-vrcam PRIVATE vr/calibration.cpp vr/calibration_panel.cpp vr
 target_sources(d2rl-vrcam PRIVATE vr/first_start.cpp)
 # Controller haptics ([openxr] haptics): the mailbox, the hit observer and the flush; the logic is vr/haptics_pattern.h, tested without a headset.
 target_sources(d2rl-vrcam PRIVATE vr/haptics.cpp)
+# [debug] hit_outcome: the damage observer and the log's drain (the ring and the lines are vr/hit_outcome.h, hit_outcome_test below; the roll is haptics.cpp's hook)
+target_sources(d2rl-vrcam PRIVATE vr/hit_outcome_wire.cpp)
 # [hands] shield_stow_no_block: the hook on the game's block check (the rule is vr/stowed_block.h, stowed_block_test above)
 target_sources(d2rl-vrcam PRIVATE vr/stowed_block.cpp)
 # [audio] head_follow: the game's 3D sounds turn with the view - the two FMOD hooks (the rule is vr/spatial_audio.h, spatial_audio_test above)
@@ -1287,6 +1322,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/hand_trackers_test.cpp")
     add_executable(hand_trackers_test cleanroom/tests/hand_trackers_test.cpp)
     target_include_directories(hand_trackers_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(hand_trackers_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# [openxr] hands_kept / bare_hand_poses / panels_key (vr/hand_keep.h): the hands and the panels when the runtime gives no controllers.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/hand_keep_test.cpp")
+    add_executable(hand_keep_test cleanroom/tests/hand_keep_test.cpp)
+    target_include_directories(hand_keep_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(hand_keep_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # [openxr] hand_space (vr/hand_space.h): a grip with no whole pose in the room taken from LOCAL / the aim (Quest 2 over Link: P--r, the arms at the belt).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/hand_space_test.cpp")
@@ -1570,6 +1611,10 @@ target_compile_options(low_mp_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/hand_vitals_wire.cpp vr/hand_vitals_game.cpp vr/hand_vitals_paint.cpp)
 # [debug] thrust_debug: the thrust's readout over the weapon hand (vr/thrust_debug.h, its layer vr/xr_thrust_debug.h)
 target_sources(d2rl-vrcam PRIVATE vr/thrust_debug_wire.cpp vr/thrust_debug_paint.cpp)
+# [hud] swing_timer: the timer's wiring and its picture (the logic is vr/swing_timer.h, swing_timer_test above; the headset's layer vr/xr_swing_timer.h)
+target_sources(d2rl-vrcam PRIVATE vr/swing_timer_wire.cpp vr/swing_timer_paint.cpp)
+# [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): the item labels painted by us in the game's places, F4 - the atlas, its worker, the painter
+target_sources(d2rl-vrcam PRIVATE vr/own_labels_wire.cpp vr/own_labels_paint.cpp)
 # [hud] wrist_status (vr/wrist_status.h): the hero's companions (its pet lists) and the effects on it (its states) as small icons and counters over a wrist turned to the
 # eyes. The tables, the reads of the game's lists (against a made-up heap), the cells, the settings and the hang are pure and tested (wrist_status_test, which also draws the panels:
 # wrist_status_test.exe [<folder for the pictures>]); the wiring - the frames from direct_input, the painter thread, the layers asked for - is tested against stand-ins for
@@ -1587,6 +1632,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/wrist_status_wire_test.cp
     target_include_directories(wrist_status_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_link_libraries(wrist_status_wire_test PRIVATE D2RLPlugin::D2RLPlugin gdi32 user32 ole32 uuid)
     target_compile_options(wrist_status_wire_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# [hud] ally_portraits (vr/ally_portraits.h): the allies' portraits (the party's players, the mercenary, the summons) as a grid of tiles under the map held in the
+# hand, or under the big map, VR F4 only. Where the game keeps them (the guards, compared with dump_loader/D2R_image.bin when it is there), the reads against a
+# made-up memory, the tiles, the grid, the life bar and the size are pure and tested (ally_portraits_test, which also draws the pictures:
+# ally_portraits_test.exe [<folder for the pictures> [<portraits folder>]]). docs/notes/ally_portraits.md.
+target_sources(d2rl-vrcam PRIVATE vr/ally_portraits_wire.cpp vr/ally_portraits_game.cpp vr/ally_portraits_paint.cpp)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/ally_portraits_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(ally_portraits_test cleanroom/tests/ally_portraits_test.cpp vr/ally_portraits_paint.cpp vr/wheel_icons.cpp)
+    target_include_directories(ally_portraits_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_definitions(ally_portraits_test PRIVATE ALLYPORTRAITS_SRC_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vr" D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}" _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(ally_portraits_test PRIVATE gdi32 user32 ole32 uuid)
+    target_compile_options(ally_portraits_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/hand_vitals_test.cpp")   # (not in the public tree's allow-list)
     add_executable(hand_vitals_test cleanroom/tests/hand_vitals_test.cpp vr/hand_vitals_paint.cpp)
@@ -2234,6 +2291,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/typed_keys_test.cpp")
     add_executable(typed_keys_test cleanroom/tests/typed_keys_test.cpp)
     target_include_directories(typed_keys_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(typed_keys_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/finite_hold_test.cpp")
+    # nothing non-finite to FlatVR (vr/finite_hold.h): a NaN / inf pose -> the last good one (or a neutral one), the log paced
+    add_executable(finite_hold_test cleanroom/tests/finite_hold_test.cpp)
+    target_include_directories(finite_hold_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(finite_hold_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/turn_math_test.cpp")
     # [stereo] turn_warp (vr/turn_math.h): eyes by turns - a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut

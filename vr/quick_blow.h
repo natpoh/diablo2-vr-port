@@ -167,7 +167,15 @@ private:
     uint64_t clock_ = 0;
 };
 
-// The touch's route with the tick on (vr/melee_touch.cpp Approve): the game's key, but a By the rules extra blow (a cleave's further monster) direct.
-inline bool TouchDirect(bool quick, bool byRules, bool extra) { return !quick || (byRules && extra); }
+// A touch Direct hit planned: does it go direct (vr/melee_touch.cpp Approve)? `scope`: [gameplay] melee_direct_scope (shared/direct_hit_mode.h,
+// Serg 2026-11-06) - 0 "Two-handed extras": only By the rules' extra blow of a two-handed cleave, quick blow or not; 1 "By the rules": every touch
+// the rules pass, quick blow or not; -1 (missing, an ini of before): what 0.204 did - with quick blow the game's key but the cleave's extras.
+// Always (byRules false): every touch.
+inline bool TouchDirect(bool quick, bool byRules, bool extra, int scope = -1) {
+    if (!byRules) return true;
+    if (scope == 0) return extra;
+    if (scope == 1) return true;
+    return !quick || extra;
+}
 
 }  // namespace quickblow

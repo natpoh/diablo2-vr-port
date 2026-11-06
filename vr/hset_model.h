@@ -17,6 +17,7 @@
 #include "hset_defs.h"
 #include "hset_keys.h"
 #include "hset_party.h"     // the Party page: the players in the game, the game's own party buttons
+#include "hset_stats.h"     // the Stats page: the strike statistics ([stats] strike_stats)
 #include "hset_video.h"
 #include "first_start.h"    // the Guide page: how many pages the first-start guide has
 #include "toolbar_type.h"   // the HUD page's toolbar type: a step over bar_place and hide (shared/)
@@ -189,6 +190,24 @@ constexpr Rect kPartyState(int i) { return {640, 188 + i * 44, 160, 40}; }
 constexpr Rect kPartyBtn(int i) { return {808, 190 + i * 44, 184, 36}; }
 constexpr Rect kPartyLeave = {32, 504, 300, 52};
 constexpr Rect kPartyOpen = {344, 504, 400, 52};
+// The Stats page (hset_stats.h): < the hero > with the line under his name, This game / All time; four totals; a row a weapon (two lines: its name and
+// kind; the numbers beside them) under the columns' heads.
+constexpr Rect kStatsPrev = {32, 146, 56, 56};
+constexpr Rect kStatsName = {100, 144, 440, 32};
+constexpr Rect kStatsLine = {100, 176, 440, 26};
+constexpr Rect kStatsNext = {548, 146, 56, 56};
+constexpr Rect kStatsNow = {616, 146, 182, 56};
+constexpr Rect kStatsAll = {810, 146, 182, 56};
+constexpr Rect kStatsTile(int i) { return {32 + i * 244, 210, 228, 78}; }
+constexpr Rect kStatsTileCap(int i) { return {32 + i * 244, 211, 228, 24}; }
+constexpr Rect kStatsTileVal(int i) { return {32 + i * 244, 233, 228, 32}; }
+constexpr Rect kStatsTileSub(int i) { return {32 + i * 244, 263, 228, 24}; }
+constexpr int kStatsHeadY = 294, kStatsRowY0 = 322, kStatsRowStep = 60;
+constexpr Rect kStatsRow(int i) { return {32, kStatsRowY0 + i * kStatsRowStep, 960, kStatsRowStep - 4}; }
+// the columns: the weapon (name over kind), blows, speed, force, missed (the numbers right-aligned in theirs)
+constexpr Rect kStatsCol(int c, int y, int h) {
+    return c == 0 ? Rect{48, y, 380, h} : c == 1 ? Rect{430, y, 110, h} : c == 2 ? Rect{550, y, 160, h} : c == 3 ? Rect{720, y, 160, h} : Rect{884, y, 100, h};
+}
 constexpr Rect kRecentre = {32, 620, 280, 68};
 // The two low-life pages' own button, between Recentre and Close: the vignette and the beat in the controllers for five seconds, with the rows as they stand.
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
@@ -217,11 +236,12 @@ constexpr float kWidthM = 1.2f, kHeightM = kWidthM * kH / kW;
 constexpr float kAheadM = 1.0f, kBelowM = 0.05f;
 
 enum class Kind { None, Tab, Change, Apply, Close, Recentre, Preset, Slider, Calibrate, Forget, View, Preview, Guide, GuideBack, GuideNext, Span, Coop,
-                  Party, PartyLeave, PartyOpen, Auto, MapShow };
+                  Party, PartyLeave, PartyOpen, Auto, MapShow, Stats };
 struct Hit {
     Kind kind = Kind::None;
     int index = -1;   // a tab's page, a Change's key, a Preset's number, a Slider's side along the track (-1: a stepper at its end), a View's number (1 = F1 ... 4 = F4),
-                      // a Coop row's choice (coop::What), a Party row's player (0 .. party::kMaxOthers - 1), a MapShow's switch (party::MapWhat)
+                      // a Coop row's choice (coop::What), a Party row's player (0 .. party::kMaxOthers - 1), a MapShow's switch (party::MapWhat),
+                      // a Stats button (0: the hero, delta -1 / +1; 1: the period, delta 0 this game / 1 all time)
     int delta = 0;    // -1 / +1 (a toggle: 1; a Slider's stepper)
                       // (an Auto's index: 0 the Auto button, 1 Keep, 2 Undo / Stop)
     bool operator==(const Hit& o) const { return kind == o.kind && index == o.index && delta == o.delta; }
@@ -290,6 +310,13 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
         }
         return {};
     }
+    if (page == kPageStats) {   // the hero round the list, the period (the page only shows: nothing else to press)
+        if (kStatsPrev.Contains(x, y)) return {Kind::Stats, 0, -1};
+        if (kStatsNext.Contains(x, y)) return {Kind::Stats, 0, 1};
+        if (kStatsNow.Contains(x, y)) return {Kind::Stats, 1, 0};
+        if (kStatsAll.Contains(x, y)) return {Kind::Stats, 1, 1};
+        return {};
+    }
     if (page == kPageGuide) {   // what Back and Next do depends on the guide's page (the model's): the offer's Not now / Measure now, the last page's Done
         if (kGuideBack.Contains(x, y)) return {Kind::GuideBack, -1, -1};
         if (kGuideNext.Contains(x, y)) return {Kind::GuideNext, -1, 1};
@@ -350,6 +377,9 @@ class Model {
     double askedAt_ = 0, clock_ = 0;    // when it was asked; the last clock SetPlayers was given (ms)
     int answer_ = 0;                    // the last ask's answer: 1 the game took it, -1 it did not (in time), 0 none since the panel opened
     party::View party_;                 // the Party page: the game's roster as the plugin read it
+    stats::View stats_;                 // the Stats page: the strike statistics as the plugin copied them
+    int statsHero_ = -1;                // ... the hero shown (an index into them; -1: the one playing)
+    bool statsAll_ = false;             // ... all time (else this game)
     AutoTune auto_;                     // the Video page's Auto: the plugin's run
     party::Request partyAsked_;         // a press on its way to the game (what None: none)
     party::MapShow map_;                // the Co-op page's map row: the game's Show Party / Show Party Names as the plugin read them
@@ -490,6 +520,22 @@ public:
         if (partyAsked_.what != party::Ask::None && ms - partyAskedAt_ > party::kWaitMs) { partyAsked_ = {}; ++revision; }
     }
     const party::View& Party() const { return party_; }
+    // The Stats page: the strike statistics as the plugin copied them (while the page is up, when they change).
+    void SetStats(const stats::View& v) {
+        if (v == stats_) return;
+        stats_ = v;
+        if (statsHero_ >= (int)stats_.heroes.size()) statsHero_ = -1;
+        ++revision;
+    }
+    const stats::View& Stats() const { return stats_; }
+    // the hero the page shows: the one picked with < >, else the one playing, else the first; -1 none
+    int StatsHero() const {
+        const int n = (int)stats_.heroes.size();
+        if (!n) return -1;
+        if (statsHero_ >= 0 && statsHero_ < n) return statsHero_;
+        return stats_.current >= 0 && stats_.current < n ? stats_.current : 0;
+    }
+    bool StatsAllTime() const { return statsAll_; }
     // The Co-op page's map row ([openxr] headset_map_party): the game's two settings as read now (the plugin's, every frame the page is up) and a
     // clock (ms). A press waits for the game to show it flipped, or party::kWaitMs, before the switches take another.
     void SetMapShow(const party::MapShow& v, double ms) {
@@ -666,6 +712,18 @@ public:
                     ++revision;
                 }
                 return a;
+            case Kind::Stats: {   // the Stats page: the next / the last hero (round the list), this game / all time - nothing of the ini
+                if (page != kPageStats) return a;
+                if (hit.index == 1) {
+                    if (statsAll_ != (hit.delta > 0)) { statsAll_ = hit.delta > 0; ++revision; }
+                    return a;
+                }
+                const int n = (int)stats_.heroes.size();
+                if (n < 2 || hit.delta == 0) return a;
+                statsHero_ = ((StatsHero() + (hit.delta > 0 ? 1 : -1)) % n + n) % n;
+                ++revision;
+                return a;
+            }
             case Kind::Party: {   // a player's button: what the game's Party panel's button does by the state the game keeps for him
                 if (page != kPageParty || !PartyOn() || !party_.known || PartyBusy() || hit.index < 0 || hit.index >= (int)party_.others.size()) return a;
                 const party::Member& p = party_.others[(size_t)hit.index];

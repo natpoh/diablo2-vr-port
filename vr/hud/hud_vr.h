@@ -12,6 +12,8 @@
 
 #include "../durability_figure.h"   // durab::Look
 #include "../plate_look.h"         // platelook::DepthByDistance
+#include "../own_labels.h"         // ownlabels::Want ([hud] labels_own)
+#include "../own_names.h"          // ownnames::Text ([hud] monster_names_own)
 
 namespace vrc {
 
@@ -34,6 +36,7 @@ bool LayerOwnEye();
 bool PlateTurnsWanted();
 bool PlateFaded();
 bool AlliesMoved();
+bool AlliesHidden(float* units);   // [hud] allies_game_hide: the game's own portraits hidden (VR F4); units: their corner's width (layout units)
 durab::Look DurabilityLook();
 bool DurabilityMoved();
 bool LabelsWanted();
@@ -55,7 +58,30 @@ extern std::atomic<float> g_uiScaleSeen;   // the game's interface scale, as the
 float GameUiScaleNow() noexcept;
 void InstallLabelHooks();
 void InstallLabelArea();   // [hud] labels_whole_eye
-struct LabelDepth { int32_t x, y, w, h; float dist; };
+struct LabelDepth {
+    int32_t x, y, w, h;
+    float dist;
+    bool own = false;          // [hud] labels_own: drawn by us (want: the name, its colour, the box's colour, the pointed look)
+    ownlabels::Want want{};
+    float sizeK = 1.0f;        // ... labels_size x labels_far for this label (ownlabels::SizeK; the pointed one's point_pickup_label_pct too)
+    float ownK = 1.0f;         // ... what of it our cell still needs: 1 when the layout hook made the game's box that size (ResizeLabelBox)
+};
+bool OwnLabelsNow();   // [hud] labels_own, F4 now (vr/hud/labels.cpp)
+// [hud] monster_names_own (vr/own_names.h), vr/hud/labels.cpp: F4 now (not while the plate is hung in the room, monster_bar_room); the effect tells the text hook
+// whether it is wanted and where the plate stands (the interface layer's pixels; nullptr: no plate), takes the plate's texts the game drew, marks the ones it
+// drew ours for (only those the game then skips), and asks the target's kind (monster data + 0x1A) for a name with no colour code.
+bool MonsterNamesOwnNow();
+ownlabels::SizeCurve OwnSizeCurve();   // [hud] labels_own_near_pct / _far_pct / _near_m / _far_m
+void NamesSetPlate(bool on, const float* platePx);
+int NamesTake(ownnames::Text out[ownnames::kMax]);
+void NamesMark(uint64_t key);
+bool NamesTargetKind(uint8_t* special);
+// the target's place on the grid and its MonStats bytes 8, 9, 13 (its body: ownnames::HeadAnchor): 0 read; else why not (ownnames::BodyWhy)
+int NamesTargetBody(float foot[2], uint8_t row[3]);
+// [hud] npc_names_own (vr/own_names.h): the names over NPCs, objects, portals (the game's hover tooltip) - F4 now; the effect tells the text hook, takes them.
+bool NpcNamesOwnNow();
+void NamesSetHover(bool on);
+int HoverTake(ownnames::Text* out, int most);
 constexpr int kLabelDepthMax = 32;   // as D2R_DepthFog.fx's LabelBoxes
 extern SRWLOCK g_labelDepthLock;
 extern LabelDepth g_labelDepthNew[kLabelDepthMax];

@@ -65,6 +65,7 @@
 #include <algorithm>
 #include <cmath>
 #include <atomic>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -76,6 +77,7 @@
 #include "game_device_only.h"
 
 #include "game_hud_shared.h"
+#include "finite_hold.h"  // nothing non-finite to FlatVR (the pointer's depth, the forearm)
 #include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
 #include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
 #include "notice_card.h"  // [hud] notice_card: the box of the game's quest / level-up notice in that layer
@@ -94,6 +96,14 @@ using namespace reshade::api;
 
 void (*g_log)(const char*) = nullptr;
 void Log(const char* s) { if (g_log) g_log(s); }
+void LogF(const char* fmt, ...) {
+    char b[512];
+    va_list a;
+    va_start(a, fmt);
+    vsnprintf(b, sizeof b, fmt, a);
+    va_end(a);
+    Log(b);
+}
 
 std::atomic<int> g_hide{0};   // 0 nothing, 1 the toolbar, 2 everything
 std::atomic<float> g_uiScale{1.0f};
@@ -767,7 +777,10 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     // From above and behind: back into the picture, grown from the toolbar's
     // bottom middle and from the map's own corner (left or right, by its middle).
     g_pic.on[kBar] = classic && bar && g_share[kBar].srv.handle;
-    g_pic.on[kMap] = classic && map && g_share[kMap].srv.handle;
+    // the map not with a menu up (trade, inventory, the game's menu...): drawn back after the game's interface it lay over the panels; taken
+    // out of the picture it is not there at all then - only in the game itself (Serg, 2026-11-05: "Карта должна быть активна только там,
+    // где она используется - в игре")
+    g_pic.on[kMap] = classic && map && !menu && g_share[kMap].srv.handle;
     g_pic.at = GetTickCount64();
     if (g_pic.on[kBar]) {
         ZoomedUv(barBox, 0.5f * (float)(barBox.left + barBox.right), (float)barBox.bottom, g_barZoom.load(), w, h, g_pic.box[kBar]);
@@ -1151,8 +1164,18 @@ void SetPointer(uint32_t mode) {
 }
 
 // The pointer's depth in FlatVR's stereo pair (FlatVRGameHud::pointer_depth): per eye base + tilt * v of an eye's width.
+// Never a NaN to FlatVR (vr/finite_hold.h): one not finite (a camera not there to make it from) keeps the last good depth.
 void SetPointerDepth(float base, float tilt, float curve, float topScale) {
     std::lock_guard<std::mutex> g(g_lock);
+    static finitehold::Hold<4> hold;
+    float v[4] = {base, tilt, curve, topScale};
+    static const float kOnScreen[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    if (!hold.Take(v, kOnScreen)) {
+        base = v[0]; tilt = v[1]; curve = v[2]; topScale = v[3];
+        if (hold.Due(GetTickCount64()))
+            LogF("vrcam: hud - the pointer's depth for FlatVR came NOT finite %llu time(s): %s (log at most every 10 s)",
+                 (unsigned long long)hold.TakeCount(), hold.HadGood() ? "the last good one kept" : "on the screen");
+    }
     if (g_block) {
         g_block->pointer_depth.base = base; g_block->pointer_depth.tilt = tilt; g_block->pointer_depth.curve = curve;
         g_block->pointer_depth.top_scale = topScale;
@@ -1169,6 +1192,15 @@ void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3
     if (panel < 0 || panel >= kShares) return;
     std::lock_guard<std::mutex> g(g_lock);
     FlatVRGameHudPose& p = g_pose[panel];
+    // not finite (the game's rig or the camera not there): not valid - FlatVR places the panel from the controllers, never at a NaN
+    if (valid && !(finitehold::Finite(elbow, 3) && finitehold::Finite(wrist, 3) && finitehold::Finite(across, 3))) {
+        valid = false;
+        static finitehold::Hold<1> missed;   // (its counter and once-a-while line only)
+        float z = NAN; missed.Take(&z);
+        if (missed.Due(GetTickCount64()))
+            LogF("vrcam: hud - the forearm for FlatVR's panel came NOT finite %llu time(s): sent as not valid (log at most every 10 s)",
+                 (unsigned long long)missed.TakeCount());
+    }
     p.valid = valid ? 1u : 0u;
     if (!valid) return;
     for (int i = 0; i < 3; ++i) { p.elbow[i] = elbow[i]; p.wrist[i] = wrist[i]; p.across[i] = across[i]; }

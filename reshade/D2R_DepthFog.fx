@@ -2173,8 +2173,56 @@ uniform int LabelCount < hidden = true; > = 0;
 uniform float4 LabelBoxes[32] < hidden = true; >;
 uniform float LabelShifts[32] < hidden = true; >;
 uniform float LabelTurnH[32] < hidden = true; >;   // eyes by turns: each item label's half-disparity at its item's depth (as PlateTurnH)
+// vrcam [hud] labels_own (vr/own_labels.h): in an item label's place OUR cell instead of the game's pixels - the name painted sharp at the size it
+// has in this eye. LabelCells[i]: its texels in OwnLabelTex (uv l t r b; empty = not painted yet: the game's pixels); LabelOwnRects[i]: where it
+// stands against the label's box (uv, before the label's shift: as tall as the box, its own width, the box's middle and bottom). The rest of the
+// game's box is left empty. Premultiplied, alpha = cover.
+uniform bool OwnLabelsOn < hidden = true; > = false;
+uniform float4 LabelCells[32] < hidden = true; >;
+uniform float4 LabelOwnRects[32] < hidden = true; >;
+texture2D OwnLabelTex { Width = 1024; Height = 1024; Format = RGBA8; };
+sampler2D OwnLabelSmp { Texture = OwnLabelTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };
+// vrcam [hud] monster_names_own / npc_names_own (vr/own_names.h): the texts of the plate over the target, and the hover names over NPCs and
+// objects, painted by us, from the same atlas. PlateNameCells[i]: the
+// cell's texels (uv l t r b); PlateNameRects[i]: where it stands in the layer (uv l t r b; the game's drawing of that text is skipped). Drawn over the
+// bar in the plate's own branch - its depth, its size (monster_size x monster_far) and its opacity (monster_alpha) are the names' too.
+uniform bool PlateNamesOn < hidden = true; > = false;
+uniform int PlateNameCount < hidden = true; > = 0;
+uniform float4 PlateNameCells[8] < hidden = true; >;
+uniform float4 PlateNameRects[8] < hidden = true; >;
+// Each name stands at its own depth, apart from the plate's (Serg, 0.205.9: "why beside the monsters, not over them" - the plate's own stereo depth put
+// it nearer than its monster): PlateNameShift[i] its shift per eye (uv, + nearer; the target's depth for the plate's texts, as each item label at its
+// item's - vr/plate_look.h DepthShift), PlateNameTurnH[i] its half-disparity eyes by turns, PlateNameAlpha[i] its opacity (monster_alpha for the plate's).
+uniform float PlateNameShift[8] < hidden = true; >;
+uniform float PlateNameTurnH[8] < hidden = true; >;
+uniform float PlateNameAlpha[8] < hidden = true; >;
+// ... and a name of the plate's over its monster's head in the world (vr/own_names.h HeadAnchor; Serg, 0.205.10: "not over the head, and it doubles"):
+// PlateNameAt[i].xyz the point over the head relative to where the hands hang (world units - each eye projects it with its own camera, PhantomPixel,
+// so both eyes meet at the monster), .w the line's height in pixels of the eye (0: not in the world - drawn where the game drew it, above);
+// PlateNameLift[i] how far above that point the line's bottom stands (the name on top of its other lines).
+uniform float4 PlateNameAt[8] < hidden = true; >;
+uniform float PlateNameLift[8] < hidden = true; >;
 
 bool InBox(float2 uv, float4 box) { return uv.x >= box.x && uv.y >= box.y && uv.x < box.z && uv.y < box.w; }
+// The interface's pixel l (premultiplied, a = how much of the world shows) with our names over it, each at its own depth (ownnames::Over).
+// uv: this eye's pixel in the layer's frame (GameLabels' own, before any shift).
+float4 PlateNamesOver(float4 l, float2 uv, float eyeSign, float layerEye)
+{
+    [loop] for (int i = 0; i < PlateNameCount; ++i)
+    {
+        if (PlateNameAt[i].w > 0.0) continue;   // (over its monster's head in the world: PlateNamesInWorld)
+        const float2 s = uv - float2(eyeSign * PlateNameShift[i] - layerEye * PlateNameTurnH[i], 0.0);
+        const float4 r = PlateNameRects[i];
+        if (InBox(s, r))
+        {
+            const float2 t = (s - r.xy) / max(r.zw - r.xy, 1e-6);
+            const float4 c = tex2Dlod(OwnLabelSmp, float4(lerp(PlateNameCells[i].xy, PlateNameCells[i].zw, t), 0, 0)) * saturate(PlateNameAlpha[i]);
+            const float k = 1.0 - saturate(c.a);
+            l = float4(c.rgb + l.rgb * k, saturate(l.a) * k);
+        }
+    }
+    return l;
+}
 bool Kept(float2 uv) { return InBox(uv, LabelKeep0) || InBox(uv, LabelKeep1); }
 // an item label drawn at its own depth: the layer's pixel there is not drawn again with the rest
 bool InItemLabel(float2 src)
@@ -2196,7 +2244,7 @@ float4 FadedLabel(float4 l)
 }
 
 // layerEye: the eye the layer was laid out for, eyes by turns (+1 the left, -1 the right; the overlays' techniques); 0: the same layer for both
-float4 GameLabels(float2 uvIn, float eyeSign, float layerEye)
+float4 GameLabelsLayer(float2 uvIn, float eyeSign, float layerEye)
 {
     const float2 uv = uvIn - float2(eyeSign < 0.0 ? LabelAxisR : 0.0, 0.0);   // (the right eye, off-centre: the layer laid out for the left eye's projection)
     const float2 flat = uv - float2(eyeSign * HudShift, 0.0);
@@ -2204,6 +2252,20 @@ float4 GameLabels(float2 uvIn, float eyeSign, float layerEye)
     [loop] for (int i = 0; i < LabelCount; ++i)   // the item labels, each at its item's depth
     {
         const float2 s = uv - float2(eyeSign * LabelShifts[i] - layerEye * LabelTurnH[i], 0.0);
+        [branch] if (OwnLabelsOn && LabelCells[i].z > LabelCells[i].x)   // ours in its place (vr/own_labels.h)
+        {
+            const float4 r = LabelOwnRects[i];
+            if (InBox(s, r))
+            {
+                const float2 t = (s - r.xy) / max(r.zw - r.xy, 1e-6);
+                const float4 c = tex2Dlod(OwnLabelSmp, float4(lerp(LabelCells[i].xy, LabelCells[i].zw, t), 0, 0));
+                float4 ol = float4(c.rgb, 1.0 - saturate(c.a));
+                if (LabelAlpha < 0.999) ol = FadedLabel(ol);
+                return ol;
+            }
+            if (InBox(s, LabelBoxes[i])) return float4(0.0, 0.0, 0.0, 1.0);   // the game's own label under ours: not shown
+            continue;
+        }
         if (InBox(s, LabelBoxes[i]))
         {
             float4 il = tex2Dlod(GameLayerSmp, float4(s, 0, 0));
@@ -2256,6 +2318,62 @@ float4 GameLabels(float2 uvIn, float eyeSign, float layerEye)
     if (!PlateOwn && PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
     return l;
 }
+// Those points are relative to where the hands hang (between the eyes); this is each eye's
+// camera from there, taken off before projecting - without it both eyes saw the lines from
+// the middle, with no parallax, and they floated far behind the hand (2026-10-06).
+uniform float3 PhantomEye0 < hidden = true; > = float3(0.0, 0.0, 0.0);
+uniform float3 PhantomEye1 < hidden = true; > = float3(0.0, 0.0, 0.0);
+
+// A point relative to the eye -> its pixel; z < 0 behind the eye.
+float3 PhantomPixel(float3 v, int eye)
+{
+    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
+    const float3 c = float3(dot(v, R), dot(v, U), dot(v, B));
+    const float w = max(-c.z, 1e-4);
+    const float2 ndc = float2(c.x / w * sp.x - sp.z, c.y / w * sp.y - sp.w);
+    return float3((ndc.x * 0.5 + 0.5) * BUFFER_WIDTH, (0.5 - ndc.y * 0.5) * BUFFER_HEIGHT, -c.z);
+}
+// How far ahead of this eye a point is (world units; < 0 behind it).
+float PhantomAhead(float3 v, int eye)
+{
+    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
+    return -dot(v, eye == 0 ? CamBack0 : CamBack1);
+}
+// Our names over their monsters' heads in the world: each eye projects the point (PhantomPixel) and draws the line about it.
+float4 PlateNamesInWorld(float4 l, float2 uv, float eyeSign)
+{
+    const int eye = eyeSign > 0.0 ? 0 : 1;
+    const float2 p = uv * float2(BUFFER_WIDTH, BUFFER_HEIGHT);
+    [loop] for (int i = 0; i < PlateNameCount; ++i)
+    {
+        const float h = PlateNameAt[i].w;
+        if (h <= 0.0) continue;
+        const float3 at = PhantomPixel(PlateNameAt[i].xyz, eye);
+        if (at.z <= 0.05) continue;
+        const float4 cell = PlateNameCells[i];
+        const float w = h * (cell.z - cell.x) / max(cell.w - cell.y, 1e-6);   // (the atlas is square: its texels' shape is the cell's)
+        const float2 lo = float2(at.x - 0.5 * w, at.y - PlateNameLift[i] - h);
+        const float2 t = (p - lo) / float2(w, h);
+        if (t.x < 0.0 || t.y < 0.0 || t.x >= 1.0 || t.y >= 1.0) continue;
+        const float4 c = tex2Dlod(OwnLabelSmp, float4(lerp(cell.xy, cell.zw, t), 0, 0)) * saturate(PlateNameAlpha[i]);
+        const float k = 1.0 - saturate(c.a);
+        l = float4(c.rgb + l.rgb * k, saturate(l.a) * k);
+    }
+    return l;
+}
+// The interface layer as each eye shows it, with our names over monsters and NPCs on top (vr/own_names.h), each at its own depth.
+float4 GameLabels(float2 uvIn, float eyeSign, float layerEye)
+{
+    float4 l = GameLabelsLayer(uvIn, eyeSign, layerEye);
+    [branch] if (PlateNamesOn)
+    {
+        l = PlateNamesOver(l, uvIn - float2(eyeSign < 0.0 ? LabelAxisR : 0.0, 0.0), eyeSign, layerEye);
+        l = PlateNamesInWorld(l, uvIn, eyeSign);
+    }
+    return l;
+}
 
 // The interface's own bright pixels (names, numbers, icons) in this frame's layer -
 // out (LabelsOn) or left in the picture (UiMaskOn) - for the floor's key (TableKey),
@@ -2304,6 +2422,20 @@ float4 GameCompass(float2 uv)
     return float4(s.rgb, 1.0 - s.a);
 }
 
+// [hud] swing_timer (vrcam vr/swing_timer_wire.h Monitor): the attack's ring in the middle of the screen (or its bar at the top) and its outcome, the
+// monitor's F2 / F3 - its picture (vr/swing_timer_paint.cpp, premultiplied; vrcam uploads it when it changes) at SwingBox (uv l, t, r, b).
+uniform bool SwingOn < hidden = true; > = false;
+uniform float4 SwingBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+texture2D SwingTex { Width = 384; Height = 192; Format = RGBA8; };
+sampler2D SwingSmp { Texture = SwingTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };
+float4 SwingTimer(float2 uv)
+{
+    const float2 t = (uv - SwingBox.xy) / (SwingBox.zw - SwingBox.xy);
+    if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    const float4 s = tex2Dlod(SwingSmp, float4(t, 0, 0));
+    return float4(s.rgb, 1.0 - s.a);
+}
+
 // The toolbar and the map drawn back, as one premultiplied layer (alpha = the world through).
 // GameBarBox may be anywhere on the screen: [hud_*] bar_x / bar_y move it.
 float4 GamePieces(float2 uvIn, float eyeSign)
@@ -2322,6 +2454,11 @@ float4 GamePieces(float2 uvIn, float eyeSign)
             const float4 c = GameCompass(at);   // the compass over the map
             p = float4(c.rgb + p.rgb * c.a, p.a * c.a);
         }
+    }
+    [branch] if (SwingOn)
+    {
+        const float4 s = SwingTimer(uvIn);   // the swing timer over the rest, where vrcam put it (the monitor's one picture: no eye's shift)
+        p = float4(s.rgb + p.rgb * s.a, p.a * s.a);
     }
     return p;
 }
@@ -2350,29 +2487,6 @@ uniform float3 BoneO < hidden = true; > = float3(0.0, 0.0, 0.0);
 uniform float3 BoneX < hidden = true; > = float3(1.0, 0.0, 0.0);
 uniform float3 BoneY < hidden = true; > = float3(0.0, 1.0, 0.0);
 uniform float3 BoneZ < hidden = true; > = float3(0.0, 0.0, 1.0);
-// Those points are relative to where the hands hang (between the eyes); this is each eye's
-// camera from there, taken off before projecting - without it both eyes saw the lines from
-// the middle, with no parallax, and they floated far behind the hand (2026-10-06).
-uniform float3 PhantomEye0 < hidden = true; > = float3(0.0, 0.0, 0.0);
-uniform float3 PhantomEye1 < hidden = true; > = float3(0.0, 0.0, 0.0);
-
-// A point relative to the eye -> its pixel; z < 0 behind the eye.
-float3 PhantomPixel(float3 v, int eye)
-{
-    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
-    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
-    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
-    const float3 c = float3(dot(v, R), dot(v, U), dot(v, B));
-    const float w = max(-c.z, 1e-4);
-    const float2 ndc = float2(c.x / w * sp.x - sp.z, c.y / w * sp.y - sp.w);
-    return float3((ndc.x * 0.5 + 0.5) * BUFFER_WIDTH, (0.5 - ndc.y * 0.5) * BUFFER_HEIGHT, -c.z);
-}
-// How far ahead of this eye a point is (world units; < 0 behind it).
-float PhantomAhead(float3 v, int eye)
-{
-    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
-    return -dot(v, eye == 0 ? CamBack0 : CamBack1);
-}
 float3 Segment(float3 c, float2 p, float3 a3, float3 b3, int eye, float3 col)
 {
     // A segment running past the eye is cut where it passes it, not dropped whole: a long

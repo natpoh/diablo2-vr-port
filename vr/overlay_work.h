@@ -7,7 +7,7 @@
 
 namespace overlaywork {
 
-inline constexpr const char* kBools[] = {"GameBarOn", "GameMapOn", "GameMapTurnOn", "GameCompassOn", "LabelsOn", "HitboxOn", "PaOn", "OrbOn", "MercOn", "PhantomOn", "BoneOn", "DbgOn"};
+inline constexpr const char* kBools[] = {"GameBarOn", "GameMapOn", "GameMapTurnOn", "GameCompassOn", "LabelsOn", "HitboxOn", "PaOn", "OrbOn", "MercOn", "PhantomOn", "BoneOn", "DbgOn", "SwingOn"};   // (SwingOn: [hud] swing_timer, vr/swing_timer.h)
 inline constexpr const char* kFloats[] = {"HudShift", "QvN", "AfOn", "LowHpAlpha", "LowMpAlpha"};   // (0 draws nothing)
 
 // readBool(name, &on) / readFloat(name, &v): false when the effect has no such uniform.

@@ -382,19 +382,26 @@ void NoticeCardTick(ULONGLONG nowMs) {
 #endif
 }
 // The allies' portraits' corner as uv of the screen (2026-10-12). The game draws the mercenary's and the party's
-// portraits itself, at the top left - no widget of a layout - and the next thing down that side is the chat
-// (HUDMessagePanelHD.json: 40, 910 in the layout's units, off the interface area's top left). So the corner is
-// from the screen's top left to 420 units right of the area's left and 900 units under its top: the portraits
-// and their names, a few of them under one another. The area: the game's interface scale s (PlateBoxUv) is the
-// screen's height over 2160 times the Safe Screen Percent, and the area stands in the middle of the screen.
-void AlliesBoxUv(uint32_t sw, uint32_t sh, float box[4]) {
+// portraits itself, at the top left (its HireablesPanel, data\global\ui\Layouts\HireablesPanelHD.json) - and the
+// next thing down that side is the chat (HUDMessagePanelHD.json: 40, 910 in the layout's units, off the interface
+// area's top left). The panel: the party's players in a column from 46, 266 (204 units apart), the mercenary and
+// the summons in a ROW ("summonsUseSecondSet": 206 units higher, $SecondSetIconOffset = 175 units apart, 225 with
+// the large font), each portrait 120 units wide with its name under it. So the corner is from the screen's top left
+// to kAlliesRowUnits right of the area's left - the row's eight portraits and their names - and 900 units under its
+// top. It was 420 units wide (2026-11-06, docs/notes/ally_portraits.md): the row's third portrait (46 + 2 x 175 = 396)
+// was cut at 420 and the rest of the row left behind where the game drew it. The area: the game's interface scale s
+// (PlateBoxUv) is the screen's height over 2160 times the Safe Screen Percent, and the area stands in the middle of
+// the screen. At most 0.6 of the screen across: the corner map at the top right stays where it is.
+// [hud] allies_game_hide hides the corner instead (AlliesHidden): `rowUnits` is then the width of what the game draws now, no more.
+constexpr float kAlliesRowUnits = 46.0f + 7.0f * 175.0f + 160.0f;
+void AlliesBoxUv(uint32_t sw, uint32_t sh, float box[4], float rowUnits = kAlliesRowUnits) {
     float s = g_uiScaleSeen.load();
     if (!(s > 0.05f && s < 20.0f) && Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
     if (!(s > 0.05f && s < 20.0f)) s = sh / 2160.0f;
     const float safe = std::clamp(s * 2160.0f / sh, 0.3f, 1.0f);
     const float left = 0.5f * sw * (1.0f - safe), top = 0.5f * sh * (1.0f - safe);
     box[0] = 0.0f; box[1] = 0.0f;
-    box[2] = std::clamp((left + 420.0f * s) / sw, 0.0f, 0.5f); box[3] = std::clamp((top + 900.0f * s) / sh, 0.0f, 0.75f);
+    box[2] = std::clamp((left + rowUnits * s) / sw, 0.0f, 0.6f); box[3] = std::clamp((top + 900.0f * s) / sh, 0.0f, 0.75f);
     static float told = 0.0f;
     if (std::abs(told - s) > 0.001f) {
         told = s;
@@ -441,6 +448,43 @@ template <class RT> void SetInt(RT* rt, const char* name, int v) {
 // eyes' distance to the item (along the ground off the hero's feet, the camera's height above them) - times
 // labels_depth_body, plus labels_near_body for all. The right eye's present (replayed) has no layout of its
 // own: the left's labels stay for it.
+template <class RT> void SetBool(RT* rt, const char* name, bool v);   // (below)
+// [hud] labels_own: the names' atlas into the effect's OwnLabelTex (vr/own_labels_wire.h Resolve).
+template <class RT> struct OwnLabelUp { RT* rt; reshade::api::effect_texture_variable tv; };
+template <class RT> bool OwnLabelUpload(void* ctx, const uint32_t* px, int w, int h) {
+    const OwnLabelUp<RT>* u = (const OwnLabelUp<RT>*)ctx;
+    u->rt->update_texture(u->tv, (uint32_t)w, (uint32_t)h, px);
+    return true;
+}
+// Each eye's overlay camera as the effect last set it (the phantom block below, every frame): for the names' one-time per-eye dump (OwnNamesUniforms).
+struct NamesCam { bool ok = false; float off[3] = {}, axes[9] = {}, proj[4] = {}; };
+NamesCam g_namesCam[2];
+// The atlas's picture the effect's OwnLabelTex holds: one for the item labels and the monsters' names (both from ownlabels::Resolve).
+uint64_t g_ownUpVar = 0;
+uint32_t g_ownUpRev = 0;
+template <class RT> reshade::api::effect_texture_variable OwnLabelTexNow(RT* rt) {
+    const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "OwnLabelTex");
+    if (tv.handle && tv.handle != g_ownUpVar) { g_ownUpVar = tv.handle; g_ownUpRev = 0; }   // (a reloaded effect: its texture is empty again)
+    return tv;
+}
+// The interface layer's size: ReShade's view, or (no ReShade) the stand-in's (vr/native_rsapi.h).
+template <class RT> void LayerSizeOf(RT* rt, uint64_t layerSrv, float* W, float* H) {
+    *W = *H = 0.0f;
+    if (!layerSrv) return;
+    if constexpr (std::is_same_v<RT, reshade::api::effect_runtime>) {
+        reshade::api::device* dev = rt->get_device();
+        const reshade::api::resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(reshade::api::resource_view{layerSrv}));
+        *W = (float)d.texture.width;
+        *H = (float)d.texture.height;
+    } else {
+        uint32_t fmt = 0;
+        if (ID3D12Resource* r = nrs::ResourceOfView(layerSrv, &fmt)) {
+            const D3D12_RESOURCE_DESC d = r->GetDesc();
+            *W = (float)d.Width;
+            *H = (float)d.Height;
+        }
+    }
+}
 template <class RT> void LabelDepthUniforms(RT* rt, uint64_t layerSrv, bool on, float base) {
     static LabelDepth shown[kLabelDepthMax];
     static int shownN = 0;
@@ -464,21 +508,12 @@ template <class RT> void LabelDepthUniforms(RT* rt, uint64_t layerSrv, bool on, 
         // item label on the ground jumped by its whole disparity between the frames each eye was drawn and made (Quest 2 player, 2026-10-26:
         // "item text on ground ... pop up on each eye separately and blink back and forth")
         float W = 0.0f, H = 0.0f;
-        if constexpr (std::is_same_v<RT, reshade::api::effect_runtime>) {
-            reshade::api::device* dev = rt->get_device();
-            const reshade::api::resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(reshade::api::resource_view{layerSrv}));
-            W = (float)d.texture.width;
-            H = (float)d.texture.height;
-        } else {
-            uint32_t fmt = 0;
-            if (ID3D12Resource* r = nrs::ResourceOfView(layerSrv, &fmt)) {
-                const D3D12_RESOURCE_DESC d = r->GetDesc();
-                W = (float)d.Width;
-                H = (float)d.Height;
-            }
-        }
+        LayerSizeOf(rt, layerSrv, &W, &H);
         const float m0 = g_projSx.load(), half = 0.5f * g_stereoIpd.load(), conv = g_stereoConv.load();
-        const float eyeH = std::max(1.0f, ViewHeight()), k = g_set.labelsDepthBody.load();
+        // [hud] labels_own: ours stand at their items' depth - exactly (labels_depth_body 100) unless that is set, and labels_near_body does not move them
+        const bool own = OwnLabelsNow();
+        const float eyeH = std::max(1.0f, ViewHeight()), k = own && g_set.labelsDepthBody.load() <= 0.005f ? 1.0f : g_set.labelsDepthBody.load();
+        if (own) base = 0.0f;
         if (W > 0.0f && H > 0.0f && m0 > 0.0f && half > 0.0f) {
             for (int i = 0; i < shownN; ++i) {
                 const LabelDepth& l = shown[i];
@@ -497,16 +532,263 @@ template <class RT> void LabelDepthUniforms(RT* rt, uint64_t layerSrv, bool on, 
                      W, H, shown[0].dist, shifts[0], m0, 2.0f * half, conv);
         }
     }
+    // [hud] labels_own (vr/own_labels.h): our cell in each item label's place, from the names' atlas; a name not painted yet keeps the game's pixels
+    float cells[kLabelDepthMax * 4] = {}, rects[kLabelDepthMax * 4] = {};
+    bool ownShown = false;
+    if (n > 0 && OwnLabelsNow()) {
+        const reshade::api::effect_texture_variable tv = OwnLabelTexNow(rt);
+        if (!tv.handle) {
+            static bool told = false;
+            if (!told) { told = true; Log("vrcam: [hud] labels_own - D2R_DepthFog.fx has no OwnLabelTex: an older one, copy the new one in (the DLL and the effect together); the game's labels meanwhile"); }
+        } else {
+            uint32_t bw = 0, bh = 0;
+            rt->get_screenshot_width_and_height(&bw, &bh);
+            ownlabels::Want wants[kLabelDepthMax];
+            float cellK[kLabelDepthMax] = {};   // the cell's size against the game's box: ownK, larger to labels_own_min_px
+            int idx[kLabelDepthMax], m = 0;
+            for (int i = 0; i < n; ++i) {
+                if (!shown[i].own) continue;
+                wants[m] = shown[i].want;
+                // (labels_own_min_px: never smaller than that on the eye; the cell then stands larger than the game's box)
+                cellK[i] = shown[i].ownK * ownlabels::MinScale((boxes[i * 4 + 3] - boxes[i * 4 + 1]) * shown[i].ownK * (float)bh, g_set.ownMinPx.load());
+                wants[m].heightPx = ownlabels::HeightFor((boxes[i * 4 + 3] - boxes[i * 4 + 1]) * cellK[i], (float)bh);
+                idx[m++] = i;
+            }
+            ownlabels::Cell got[kLabelDepthMax];
+            OwnLabelUp<RT> up{rt, tv};
+            if (m && bw && bh && ownlabels::Resolve(wants, m, got, &g_ownUpRev, &OwnLabelUpload<RT>, &up) > 0)
+                for (int j = 0; j < m; ++j) {
+                    const int i = idx[j];
+                    if (!got[j].w || !ownlabels::ShownRect(boxes + i * 4, got[j].w, got[j].h, (float)bw, (float)bh, rects + i * 4, cellK[i])) continue;
+                    ownlabels::CellUv(got[j], ownlabels::kAtlasW, ownlabels::kAtlasH, cells + i * 4);
+                    ownShown = true;
+                }
+            static bool toldOn = false;
+            if (ownShown && !toldOn) {
+                toldOn = true;
+                LogF("vrcam: [hud] labels_own - our item labels shown in the game's places (%d of %d labels this frame, eye %ux%u; the first: %.1f units "
+                     "off, size x%.2f by our curve %.0f%% at %.1f m to %.0f%% at %.1f m (box %s), %d px tall, backdrop alpha %.2f)",
+                     m, n, bw, bh, shown[idx[0]].dist, shown[idx[0]].sizeK, g_set.ownSizeNear.load(), g_set.ownNearM.load(), g_set.ownSizeFar.load(), g_set.ownFarM.load(),
+                     shown[idx[0]].ownK == 1.0f ? "made that size by the game" : "left, our cell sized", wants[0].heightPx, shown[idx[0]].want.bg[3]);
+            }
+        }
+    }
     SetInt(rt, "LabelCount", n);
     if (n) {
         SetFloats(rt, "LabelBoxes", boxes, (size_t)n * 4);
         SetFloats(rt, "LabelShifts", shifts, (size_t)n);
         SetFloats(rt, "LabelTurnH", turnH, (size_t)n);
     }
+    SetBool(rt, "OwnLabelsOn", ownShown);
+    if (ownShown) {
+        SetFloats(rt, "LabelCells", cells, (size_t)n * 4);
+        SetFloats(rt, "LabelOwnRects", rects, (size_t)n * 4);
+    }
 }
 template <class RT> void SetBool(RT* rt, const char* name, bool v) {
     const reshade::api::effect_uniform_variable u = rt->find_uniform_variable("D2R_DepthFog.fx", name);
     if (u.handle) rt->set_uniform_value_bool(u, &v, 1);
+}
+
+// [hud] monster_names_own / npc_names_own (vr/own_names.h): our cells for the texts of the plate over the target and the hover names - D2R_DepthFog.fx
+// draws them over the layer where the game drew each copy, each at its own depth (the plate's texts at their monster's), with our names' own size, size by
+// distance and backdrop (names_own_*; none of the game plate's sliders). box: the plate's box (uv; empty: no plate), for the log. The texts come from the text hook (vr/hud/labels.cpp NoteNameText); the game skips only those marked here.
+std::string NameBytes(const char* raw) {   // a text as the log can carry it: bytes past ASCII as \xNN (how the game marks colours)
+    std::string s;
+    char b[8];
+    for (const unsigned char* p = (const unsigned char*)raw; *p && s.size() < 160; ++p) {
+        if (*p >= 0x20 && *p < 0x7F) s += (char)*p;
+        else { snprintf(b, sizeof b, "\\x%02X", *p); s += b; }
+    }
+    return s;
+}
+const float kNoBox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+// target: the plate's monster at its own depth - its shift per eye and its half-disparity eyes by turns (have: its distance known); base: the layer's own shift
+// (the item labels' plane), for a name with no depth of its own (a hover name); plateAlpha: monster_alpha, for the plate's texts.
+struct NameDepth {
+    bool have = false; float shift = 0.0f, turnH = 0.0f, base = 0.0f, groundM = -1.0f; bool head = false; float at[3] = {}; float plateShift = 0.0f;
+    // for the one-time dump: the target's place on the grid (game units), its floor and the point over its head (render metres), the hero's eyes (render metres)
+    int why = -1; float foot[2] = {}, floorM = 0.0f, headM[3] = {}, eyesM[3] = {}, upm = 0.0f; uint8_t row[3] = {};
+};
+template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float box[4], float plateScale, const NameDepth& depth) {
+    const bool on = MonsterNamesOwnNow(), hover = NpcNamesOwnNow();
+    NamesSetHover(hover);
+    float W = 0.0f, H = 0.0f;
+    if (on || hover) LayerSizeOf(rt, layerSrv, &W, &H);
+    const bool plate = on && box[2] > box[0] && box[3] > box[1] && W > 0.0f && H > 0.0f;
+    const float px[4] = {box[0] * W, box[1] * H, box[2] * W, box[3] * H};
+    NamesSetPlate(on, plate ? px : nullptr);
+    float cells[ownnames::kMax * 4] = {}, rects[ownnames::kMax * 4] = {}, nShift[ownnames::kMax] = {}, nTurn[ownnames::kMax] = {}, nAlpha[ownnames::kMax] = {};
+    float nAt[ownnames::kMax * 4] = {}, nLift[ownnames::kMax] = {};   // the plate's lines over their monster's head in the world (w: height, px of the eye; 0 none)
+    int k = 0;
+    static ULONGLONG plateSince = 0;
+    static bool toldNone = false, toldText = false;
+    static int toldK = 0;   // the most texts ours stood in for, as last told (a line each time it grows: the second line coming in too)
+    const ULONGLONG nowMs = GetTickCount64();
+    if (!plate) plateSince = 0;
+    else if (!plateSince) plateSince = nowMs;
+    if ((on || hover) && W > 0.0f && H > 0.0f) {   // (every copy of the plate's texts, in the plate's box or not: 0.205.8, the box and the copies took turns in two places)
+        const reshade::api::effect_texture_variable tv = OwnLabelTexNow(rt);
+        ownnames::Text t[ownnames::kMax];
+        int n = on ? NamesTake(t) : 0;
+        if (depth.head) {   // over the head in the world: one of each of the plate's lines (the copies the game draws in two places are one line there)
+            int kept = 0;
+            for (int i = 0; i < n; ++i) {
+                bool dup = false;
+                for (int j = 0; j < kept; ++j) dup = dup || t[j].which == t[i].which;
+                if (!dup) t[kept++] = t[i];
+            }
+            n = kept;
+        }
+        const int nPlate = n;
+        if (hover) n += HoverTake(t + n, ownnames::kMax - n);   // [hud] npc_names_own: the hover names, drawn where the game drew them
+        if (nPlate && !toldText) {
+            toldText = true;
+            LogF("vrcam: [hud] monster_names_own - the plate's texts as the game draws them: %d, the first \"%s\" in %d,%d %dx%d (plate %.0f,%.0f-%.0f,%.0f px)", n,
+                 NameBytes(t[0].raw).c_str(), t[0].box[0], t[0].box[1], t[0].box[2], t[0].box[3], px[0], px[1], px[2], px[3]);
+        }
+        if (on && !nPlate && !toldNone && plateSince && nowMs - plateSince > 3000) {
+            toldNone = true;
+            Log("vrcam: [hud] monster_names_own - a plate shown for 3 s and no text of it drawn through the game's TextDraw inside its box: the game's names stay");
+        }
+        if (!tv.handle) {
+            static bool told = false;
+            if (!told) { told = true; Log("vrcam: [hud] monster_names_own - D2R_DepthFog.fx has no OwnLabelTex: an older one (the DLL and the effect together); the game's names meanwhile"); }
+        } else if (n) {
+            uint32_t bw = 0, bh = 0;
+            rt->get_screenshot_width_and_height(&bw, &bh);
+            uint8_t special = 0;
+            const bool known = NamesTargetKind(&special);
+            ownlabels::Want wants[ownnames::kMax];
+            int idx[ownnames::kMax], m = 0;
+            static int toldOut = 0;
+            bool in[ownnames::kMax] = {};
+            float grow[ownnames::kMax] = {};   // labels_own_min_px: how much larger than the game's text ours stands (in the plate: on top of its size)
+            for (int i = 0; i < n; ++i) {
+                ownlabels::Want& w = wants[m];
+                w = ownlabels::Want{};
+                const char code = ownlabels::StripCodes(t[i].raw, sizeof t[i].raw, w.text, sizeof w.text);
+                if (!w.text[0]) continue;
+                const bool hoverName = t[i].which == ownnames::kWhichHover;
+                in[m] = !hoverName && plate && ownnames::InPlate(t[i].box, px);   // in the plate's box: drawn with the plate (its depth, size, opacity); else where the game drew it
+                if (!hoverName && !in[m] && toldOut < 3 && ++toldOut)
+                    LogF("vrcam: [hud] monster_names_own - the plate's text \"%s\" drawn at %d,%d %dx%d, outside the plate's box %.0f,%.0f-%.0f,%.0f px: ours drawn where it is",
+                         w.text, t[i].box[0], t[i].box[1], t[i].box[2], t[i].box[3], px[0], px[1], px[2], px[3]);
+                if (!ownlabels::CodeColour(code, w.rgb)) {   // a code in the text, else the colour the plate was given, else the target's kind
+                    if (t[i].rgbKnown) std::copy_n(t[i].rgb, 3, w.rgb);
+                    else if (hoverName) w.rgb[0] = w.rgb[1] = w.rgb[2] = 1.0f;   // (a hover name: white, as the game's, unless it carries a code)
+                    else ownnames::NameColour(0, special, known && t[i].which == 0, w.rgb);
+                }
+                // our names' own three sliders (none of the game plate's): the backdrop's opacity, the size, the size by distance
+                ownnames::NameLook look;
+                look.sizePct = g_set.namesSize.load();
+                look.farPct = g_set.namesFar.load();
+                look.alpha = g_set.namesAlpha.load();
+                ownnames::NameBackdrop(look.alpha, w.bg);
+                w.bold = true;     // larger letters (bold only in our own face)
+                w.font = t[i].font;   // the game's own face for it (its style's font)
+                grow[m] = ownnames::NameK(look, depth.groundM, !hoverName && depth.groundM >= 0.0f, g_set.ownNearM.load(), g_set.ownFarM.load());
+                w.heightPx = ownlabels::StepPx((float)t[i].box[3] / H * (float)bh * grow[m]);
+                idx[m++] = i;
+            }
+            ownlabels::Cell got[ownnames::kMax];
+            OwnLabelUp<RT> up{rt, tv};
+            float lineH[3] = {}, lineLift[3] = {};   // the plate's lines stacked over the head: the name on top
+            if (depth.head)
+                for (int j = 0; j < m; ++j)
+                    if (t[idx[j]].which >= 0 && t[idx[j]].which < 3) lineH[t[idx[j]].which] = (float)t[idx[j]].box[3] / H * (float)bh * grow[j];
+            ownnames::StackLines(lineH, 2.0f, lineLift);
+            if (m && bw && bh && ownlabels::Resolve(wants, m, got, &g_ownUpRev, &OwnLabelUpload<RT>, &up) > 0)
+                for (int j = 0; j < m; ++j) {
+                    const ownnames::Text& tx = t[idx[j]];
+                    const float tb[4] = {tx.box[0] / W, tx.box[1] / H, (tx.box[0] + tx.box[2]) / W, (tx.box[1] + tx.box[3]) / H};
+                    if (!got[j].w || !ownlabels::CentredRect(tb, got[j].w, got[j].h, (float)bw, (float)bh, rects + k * 4, grow[j])) continue;
+                    ownlabels::CellUv(got[j], ownlabels::kAtlasW, ownlabels::kAtlasH, cells + k * 4);
+                    const bool plateText = tx.which != ownnames::kWhichHover;
+                    nShift[k] = plateText && depth.have ? depth.shift : depth.base;   // the plate's: at its monster's depth; a hover name: where the game's stood
+                    nTurn[k] = plateText && depth.have ? depth.turnH : 0.0f;
+                    nAlpha[k] = 1.0f;   // (monster_alpha is the game plate's: our names' backdrop has its own, the letters stay whole)
+                    if (plateText && depth.head && tx.which >= 0 && tx.which < 3) {   // over its monster's head, each eye projecting the one point
+                        for (int c = 0; c < 3; ++c) nAt[k * 4 + c] = depth.at[c];
+                        nAt[k * 4 + 3] = lineH[tx.which];
+                        nLift[k] = lineLift[tx.which];
+                    }
+                    NamesMark(ownnames::KeyOf(tx.raw));
+                    ++k;
+                }
+            {   // [debug] own_labels_dump: once our names are shown, the atlas to d2rloader\logs\d2r_vr_own_labels.bmp (beside the log), to hold against the game's text
+                static bool dumped = false;
+                if (g_set.ownLabelsDump.load() && !dumped) {
+                    dumped = true;
+                    wchar_t path[MAX_PATH] = L"";
+                    HMODULE self = nullptr;
+                    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&OwnLabelTexNow<RT>), &self);
+                    GetModuleFileNameW(self, path, MAX_PATH);
+                    if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
+                    wcscat_s(path, L"..\\logs\\d2r_vr_own_labels.bmp");
+                    const bool ok = ownlabels::DumpAtlas(path);
+                    LogF("vrcam: [debug] own_labels_dump - our labels' atlas %s %ls", ok ? "written to" : "NOT written to", path);
+                }
+            }
+            static bool toldEyes = false;   // once: each eye's x of our name and of the game's plate - the evidence for "left in one eye, right in the other"
+            if (k && !toldEyes && g_namesCam[0].ok && g_namesCam[1].ok) {
+                toldEyes = true;
+                float x[2] = {-1.0f, -1.0f}, y[2] = {-1.0f, -1.0f}, ahead[2] = {};
+                for (int e = 0; e < 2 && depth.head; ++e) {
+                    const NamesCam& c = g_namesCam[e];
+                    const float v[3] = {depth.at[0] - c.off[0], depth.at[1] - c.off[1], depth.at[2] - c.off[2]};
+                    float p[2];
+                    if (ownnames::EyePixel(v, c.axes, c.axes + 3, c.axes + 6, c.proj, (float)bw, (float)bh, p, &ahead[e])) { x[e] = p[0]; y[e] = p[1]; }
+                }
+                const float upmNow = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                const float cx = 0.5f * (box[0] + box[2]) * (float)bw;   // the game's plate: its box's middle, moved by its shift in each eye (+ the left)
+                const float plateL = cx + depth.plateShift * (float)bw, plateR = cx - depth.plateShift * (float)bw;
+                const float nameL2d = 0.5f * (rects[0] + rects[2]) * (float)bw + nShift[0] * (float)bw, nameR2d = 0.5f * (rects[0] + rects[2]) * (float)bw - nShift[0] * (float)bw;
+                LogF("vrcam: [hud] monster_names_own - per eye (px of a %ux%u eye): our name %s: left x %.1f y %.1f, right x %.1f y %.1f (apart %.1f px; the point %.2f / %.2f m "
+                     "ahead of each eye, the target %.1f m off); in 2D it would be left %.1f right %.1f (apart %.1f); the game's plate: left %.1f, right %.1f (apart %.1f px, "
+                     "its shift %.5f uv, the monster's %.5f)",
+                     bw, bh, depth.head ? "over the head (projected by each eye)" : "NOT over the head", x[0], y[0], x[1], y[1], x[0] - x[1], ahead[0] / upmNow,
+                     ahead[1] / upmNow, depth.groundM, nameL2d, nameR2d, nameL2d - nameR2d, plateL, plateR, plateL - plateR, depth.plateShift, depth.shift);
+                // ... and the world it came from: the target's place, its body, the point over its head, the eyes; and where the game's own head point (the plate's
+                // anchor, as its hook last answered it) stands - each eye's camera here is the one the shader projects with (the wrist medallions', the debug capsules')
+                plateworld::Follow fw;
+                const bool fOk = plateworld::GetFollow(&fw, GetTickCount64());
+                stroke::Body body{};
+                const bool bodyOk = meleetouch::BodyFor(meleetouch::MonsterRow{depth.row[0], depth.row[1], depth.row[2]}, depth.foot[0], depth.foot[1], depth.floorM, upmNow, body);
+                LogF("vrcam: [hud] monster_names_own - the world: target on the grid %.1f,%.1f (game units; why %d), floor %.2f m, row %u,%u,%u -> body %s from %.2f,%.2f,%.2f to "
+                     "%.2f,%.2f,%.2f m r %.2f; the name's point %.2f,%.2f,%.2f m (render); the eyes at %.2f,%.2f,%.2f m, %.2f m off; eye cameras: left off %.2f,%.2f,%.2f back "
+                     "%.2f,%.2f,%.2f proj %.3f,%.3f,%.3f,%.3f, right off %.2f,%.2f,%.2f back %.2f,%.2f,%.2f; the game's head point (plate anchor) %s %.0f,%.0f px of a %.0fx%.0f "
+                     "viewport (= %.0f,%.0f of the eye)",
+                     depth.foot[0], depth.foot[1], depth.why, depth.floorM, depth.row[0], depth.row[1], depth.row[2], bodyOk ? "" : "(NOT made)", body.bottom.x, body.bottom.y,
+                     body.bottom.z, body.top.x, body.top.y + body.radius, body.top.z, body.radius, depth.headM[0], depth.headM[1], depth.headM[2], depth.eyesM[0], depth.eyesM[1],
+                     depth.eyesM[2],
+                     std::sqrt((depth.headM[0] - depth.eyesM[0]) * (depth.headM[0] - depth.eyesM[0]) + (depth.headM[1] - depth.eyesM[1]) * (depth.headM[1] - depth.eyesM[1]) +
+                               (depth.headM[2] - depth.eyesM[2]) * (depth.headM[2] - depth.eyesM[2])),
+                     g_namesCam[0].off[0] / upmNow, g_namesCam[0].off[1] / upmNow, g_namesCam[0].off[2] / upmNow, g_namesCam[0].axes[6], g_namesCam[0].axes[7], g_namesCam[0].axes[8],
+                     g_namesCam[0].proj[0], g_namesCam[0].proj[1], g_namesCam[0].proj[2], g_namesCam[0].proj[3], g_namesCam[1].off[0] / upmNow, g_namesCam[1].off[1] / upmNow,
+                     g_namesCam[1].off[2] / upmNow, g_namesCam[1].axes[6], g_namesCam[1].axes[7], g_namesCam[1].axes[8], fOk ? "at" : "NOT known,", fOk ? fw.px[0][0] : 0.0f,
+                     fOk ? fw.px[0][1] : 0.0f, fOk ? fw.view[0] : 0.0f, fOk ? fw.view[1] : 0.0f, fOk && fw.view[0] > 0.0f ? fw.px[0][0] / fw.view[0] * (float)bw : 0.0f,
+                     fOk && fw.view[1] > 0.0f ? fw.px[0][1] / fw.view[1] * (float)bh : 0.0f);
+            }
+            if (k > toldK) {
+                toldK = k;
+                LogF("vrcam: [hud] monster_names_own - our names shown (%d of %d texts; the target's kind %s 0x%02X; %.1f m off: size x%.2f by names_own_size_pct %.0f / "
+                     "names_own_far_pct %.0f, backdrop %.2f; eye %ux%u)", k, n, known ? "read" : "not read", special, depth.groundM, grow[0], g_set.namesSize.load(),
+                     g_set.namesFar.load(), g_set.namesAlpha.load(), bw, bh);
+            }
+        }
+    }
+    SetBool(rt, "PlateNamesOn", k > 0);
+    SetInt(rt, "PlateNameCount", k);
+    if (k) {
+        SetFloats(rt, "PlateNameCells", cells, (size_t)k * 4);
+        SetFloats(rt, "PlateNameRects", rects, (size_t)k * 4);
+        SetFloats(rt, "PlateNameShift", nShift, (size_t)k);
+        SetFloats(rt, "PlateNameTurnH", nTurn, (size_t)k);
+        SetFloats(rt, "PlateNameAlpha", nAlpha, (size_t)k);
+        SetFloats(rt, "PlateNameAt", nAt, (size_t)k * 4);
+        SetFloats(rt, "PlateNameLift", nLift, (size_t)k);
+    }
 }
 // [hud] low_hp_vignette (vr/low_hp.h): this pair's edge tint for D2R_DepthFog.fx, the same in both eyes. Off, or a life
 // that is fine: nothing is sent (and a 0 once after the last tint, so the effect's picture is the game's again).
@@ -2062,12 +2344,14 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             SetFloat(rt, "LabelTilt", lu.tilt);
             // (by turns the boxes too, tilted or not: each label's half-disparity is what keeps it the same in each eye every frame; not tilted,
             // the rest of the layer's shift)
-            LabelDepthUniforms(rt, srv, (tilted || replay::OverlaysWanted() || LayerOwnEye()) && body, tilted ? g_set.labelsNearBody.load() * 0.005f : lu.base);
+            LabelDepthUniforms(rt, srv, (tilted || replay::OverlaysWanted() || LayerOwnEye() || OwnLabelsNow()) && body, tilted ? g_set.labelsNearBody.load() * 0.005f : lu.base);
             SetFloat(rt, "LabelAlpha", lu.alpha);
             float box[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             int32_t r[4];
             const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
-            if ((PlateWanted() || AlliesMoved() || PlateTurnsWanted()) && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
+            float hideUnits = 0.0f;
+            const bool alliesHidden = AlliesHidden(&hideUnits);   // [hud] allies_game_hide: the game's own portraits hidden (VR F4)
+            if ((PlateWanted() || AlliesMoved() || alliesHidden || PlateTurnsWanted() || MonsterNamesOwnNow()) && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
             SetFloats(rt, "PlateBox", box, 4);
             platelook::PlateIn pin;   // the plate's own settings and the monster it hangs on: none of the item labels'
             pin.firstPerson = PlateOwnDepth();
@@ -2093,18 +2377,61 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             }
             pin.m0 = g_projSx.load(); pin.halfGap = 0.5f * g_stereoIpd.load(); pin.conv = g_stereoConv.load(); pin.eyeHeightUnits = std::max(1.0f, ViewHeight());
             pin.stereo = AfrOn() && g_enabled.load() && FullBody() && pin.m0 > 0.0f && pin.halfGap > 0.0f;   // as LabelDepthWanted
-            const platelook::PlateUniforms pu = platelook::Plate(pin);
+            const platelook::PlateUniforms pu = platelook::Plate(pin);   // (the game's plate keeps its own sliders; our names have theirs: OwnNamesUniforms)
             // eyes by turns: the plate's half-disparity at its target's depth - each eye then shows it the same every frame (0: no target, not by turns)
             SetFloat(rt, "PlateTurnH", PlateTurnsWanted() && pin.groundM >= 0.0f
                                            ? platelook::TurnsHalf(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv) : 0.0f);
+            // [hud] monster_names_own / npc_names_own: our names, each at its own depth - the plate's at its monster's (as each item label at its item's)
+            NameDepth nd;
+            {
+                nd.base = lu.base;
+                nd.groundM = pin.groundM;
+                float foot[2];
+                uint8_t row[3];
+                const float upmNow = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+                float head[3];
+                const int why = MonsterNamesOwnNow() ? NamesTargetBody(foot, row) : -1;
+                const bool anchored = (why == ownnames::kBodyOk || why == ownnames::kBodyRowOff) &&
+                                      ownnames::HeadAnchor(meleetouch::MonsterRow{row[0], row[1], row[2]}, foot[0], foot[1], g_heroPosNow[1] / upmNow, upmNow, head);
+                nd.why = why;
+                nd.foot[0] = foot[0]; nd.foot[1] = foot[1];
+                nd.floorM = g_heroPosNow[1] / upmNow;
+                nd.upm = upmNow;
+                for (int c = 0; c < 3; ++c) { nd.row[c] = row[c]; nd.eyesM[c] = g_eyeWorld[c].load() / upmNow; }
+                if (anchored) {
+                    nd.head = true;   // (render metres -> world units from where the hands hang: the frame the effect's cameras project, as the capsules')
+                    for (int c = 0; c < 3; ++c) { nd.at[c] = head[c] * upmNow - g_eyeWorld[c].load(); nd.headM[c] = head[c]; }
+                }
+                static int toldWhy = -2, toldWhyN = 0;   // (each change of the reason, a few lines: why the name is or is not over the head)
+                int32_t plateNow[4];
+                if (why >= 0 && gamestate::PlateRect(plateNow) && (why != toldWhy) && toldWhyN < 6) {
+                    toldWhy = why;
+                    ++toldWhyN;
+                    LogF("vrcam: [hud] monster_names_own - over the head: %s; the target's body %s (row %u,%u,%u, place %.0f,%.0f); %s", anchored ? "yes" : "NO",
+                         ownnames::BodyWhyText(why), row[0], row[1], row[2], foot[0], foot[1],
+                         anchored ? "the name stands at a point over it, each eye projecting it" : "the name drawn where the game drew it");
+                }
+                if (pin.stereo && pin.groundM >= 0.0f) {
+                    nd.have = true;
+                    nd.shift = platelook::DepthShift(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv, 1.0f);
+                    nd.turnH = (replay::OverlaysWanted() || LayerOwnEye()) ? platelook::TurnsHalf(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv) : 0.0f;
+                }
+            }
+            // Our name over its monster's head stands at the monster's depth: the game's plate (its bar) there too, or the two slid against each other from
+            // one eye to the other (Serg, 0.205.11: "in one eye the text is against the plate's left edge, in the other against its right") - its own stereo
+            // keys (monster_near_body, monster_stereo_*) give way while ours is there; its size, opacity and place stay its own.
+            const float plateShift = nd.head && nd.have && pu.own ? nd.shift : pu.shift;
             SetBool(rt, "PlateOwn", pu.own);   // first person: the plate at its own depth, none of the item labels'
-            SetFloat(rt, "PlateShift", pu.shift);
+            SetFloat(rt, "PlateShift", plateShift);
             SetFloat(rt, "PlateAlpha", pu.alpha);
             SetFloat(rt, "PlateScale", pu.scale);
+            nd.plateShift = plateShift;   // (the per-eye dump: where the game's plate stands in each eye)
+            OwnNamesUniforms(rt, srv, pu.own ? box : kNoBox, pu.scale, nd);
             float allies[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            if (AlliesMoved() && sw && sh) AlliesBoxUv(sw, sh, allies);
+            if (alliesHidden && sw && sh) AlliesBoxUv(sw, sh, allies, hideUnits);   // (moved off the picture below: its place left empty)
+            else if (AlliesMoved() && sw && sh) AlliesBoxUv(sw, sh, allies);
             SetFloats(rt, "AlliesBox", allies, 4);
-            const float alliesOff[2] = {g_set.alliesX.load(), g_set.alliesY.load()};
+            const float alliesOff[2] = {alliesHidden ? 4.0f : g_set.alliesX.load(), alliesHidden ? 0.0f : g_set.alliesY.load()};
             SetFloats(rt, "AlliesOff", alliesOff, 2);
             float dbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // the item-condition figure: first person only; its box, where it goes, how large, or gone
             const bool dOn = DurabilityMoved() && sw && sh && DurabilityBoxUv(sw, sh, dbox);
@@ -2174,6 +2501,36 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 SetFloats(rt, "GameMapTurnM", m, 4);
             }
         }
+    }
+    {   // [hud] swing_timer (vr/swing_timer_wire.h): the attack's ring in the middle (or its bar at the top) and its outcome, the monitor's F2 / F3 -
+        // its picture, painted when it changes, uploaded into SwingTex; an older effect has no SwingTex and shows nothing
+        static uint64_t upVar = 0;
+        static uint32_t upRev = 0;
+        static std::vector<uint32_t> swingPx;
+        float sbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        uint32_t need = 0;
+        const int view = g_set.flatView.load();
+        const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
+        bool swing = g_set.platform.load() == 0 && (view == 2 || view == 3) && sw && sh && !gamestate::MenuOpen() &&
+                     swingtimer::Monitor(GetTickCount64(), (float)sw / (float)sh, sbox, &need);
+        if (swing) {
+            const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "SwingTex");
+            if (!tv.handle) {
+                static bool told = false;
+                if (!told) { told = true; Log("vrcam: swing timer - D2R_DepthFog.fx has no SwingTex: an older one, copy the new one in (the DLL and the effect together)"); }
+                swing = false;
+            } else {
+                if (tv.handle != upVar) { upVar = tv.handle; upRev = 0; }   // (a reloaded effect: its texture is empty again)
+                uint32_t rev = 0;
+                if (swingtimer::Picture(&swingPx, &rev, upRev) && swingPx.size() == (size_t)swingtimer::kPicW * swingtimer::kPicH) {
+                    rt->update_texture(tv, swingtimer::kPicW, swingtimer::kPicH, swingPx.data());
+                    upRev = rev;
+                }
+                swing = upRev != 0;   // (the newest picture uploaded; one painted a frame late shows the frame after)
+            }
+        }
+        SetBool(rt, "SwingOn", swing);
+        if (swing) SetFloats(rt, "SwingBox", sbox, 4);
     }
     // the left eye's HUD moves right, the right eye's left: nearer than the screen
     SetFloat(rt, "HudShift", HudWanted() ? g_set.uiShift.load() * 0.005f : 0.0f);
@@ -2249,6 +2606,10 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 snprintf(n, sizeof n, "CamRight%d", e); SetFloats(rt, n, axes, 3);
                 snprintf(n, sizeof n, "CamUp%d", e); SetFloats(rt, n, axes + 3, 3);
                 snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, axes + 6, 3);
+                g_namesCam[e].ok = true;   // (the names' per-eye dump: the same camera the shader projects with)
+                for (int i = 0; i < 3; ++i) g_namesCam[e].off[i] = off[i];
+                for (int i = 0; i < 9; ++i) g_namesCam[e].axes[i] = axes[i];
+                for (int i = 0; i < 4; ++i) g_namesCam[e].proj[i] = s.proj[i];
             }
         }
         float o[3], d[3], ga[3], gb[3];

@@ -15,6 +15,7 @@
 #include <cwchar>
 
 #include "direct_feed.h"
+#include "finite_hold.h"   // nothing non-finite into the head every view is built from
 #include "link.h"
 #include "rune_geom.h"
 #include "view_gate.h"
@@ -126,6 +127,8 @@ std::atomic<const D2RVR_Shared*> g_head{nullptr};
 std::atomic<uint32_t> g_headSeq{0};
 SRWLOCK g_headLock = SRWLOCK_INIT;
 
+void HoldFinite(D2RVR_Shared* o);   // (below: no NaN into the head)
+
 void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     memset(o, 0, sizeof *o);
     o->version = D2RVR_SHARED_VERSION;
@@ -157,6 +160,55 @@ void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     o->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     o->userHeightMm = t.userHeightMm;
     o->flatVrStamped = (t.flags & BW_LINK_TRACK_FLATVR_STAMP) ? 1u : 0u;
+    HoldFinite(o);
+}
+
+// A head with a NaN or an infinity in it never reaches the camera (2026-11-06, Serg: "when the camera is not found, inside FlatVR
+// everything spins madly on nan - it must stand still"): PredictHead turned a NaN angle into 0, so a head flickering between NaN and
+// its real angles jumped the camera between straight ahead and the real turn, and the speed made of the jump threw the prediction
+// round - the picture FlatVR shows spun. BodyWalk's Game Link drops such heads itself (game_link.cpp, valid 0) - this is the plugin's
+// own net: the last good head is held (or none: not valid), a hand not finite is let go, a grip read 0; a line every 10 s at most.
+// Only under Head()'s lock (one writer).
+void HoldFinite(D2RVR_Shared* o) {
+    static finitehold::Hold<8> head;
+    static finitehold::Hold<1> missedHands;   // (only its counter and its once-a-while line)
+    float h[8] = {o->headYawDeg, o->headHeightM, o->headPitchDeg, o->headRollDeg, o->headRoom[0], o->headRoom[1], o->headRoom[2],
+                  o->headYawRoomDeg};
+    bool held = false;
+    if (o->headValid) {
+        if (!head.Take(h)) {
+            held = true;
+            if (!head.HadGood()) o->headValid = 0;   // never a good one: no head at all, not a made-up one
+            o->headYawDeg = h[0]; o->headHeightM = h[1]; o->headPitchDeg = h[2]; o->headRollDeg = h[3];
+            o->headRoom[0] = h[4]; o->headRoom[1] = h[5]; o->headRoom[2] = h[6]; o->headYawRoomDeg = h[7];
+        }
+    } else if (!finitehold::Finite(h, 8)) {   // not valid, and not finite either: readers that look anyway find the last good (or 0)
+        if (head.HadGood()) memcpy(h, head.good, sizeof h); else memset(h, 0, sizeof h);
+        o->headYawDeg = h[0]; o->headHeightM = h[1]; o->headPitchDeg = h[2]; o->headRollDeg = h[3];
+        o->headRoom[0] = h[4]; o->headRoom[1] = h[5]; o->headRoom[2] = h[6]; o->headYawRoomDeg = h[7];
+    }
+    bool handLost = false;
+    auto hand = [&](uint32_t bit, float* pos, float* rot, float* grip) {
+        if ((o->handsValid & bit) && !(finitehold::Finite(pos, 3) && finitehold::Finite(rot, 4))) {
+            o->handsValid &= ~bit;
+            memset(pos, 0, 3 * sizeof(float));
+            const float id[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+            memcpy(rot, id, sizeof id);
+            handLost = true;
+        }
+        *grip = finitehold::Or(*grip, 0.0f);   // (std::clamp lets a NaN through)
+    };
+    hand(1u, o->rightHand, o->rightRot, &o->rightGrip);
+    hand(2u, o->leftHand, o->leftRot, &o->leftGrip);
+    if (handLost) { float z = NAN; missedHands.Take(&z); }
+    const unsigned long long now = GetTickCount64();
+    if (held && head.Due(now))
+        LogF("vrcam: Game Link - the head from BodyWalk came NOT finite (NaN / inf) %llu time(s): %s - the camera stands still "
+             "(log at most every 10 s)", (unsigned long long)head.TakeCount(),
+             head.HadGood() ? "the last good head held" : "no good head yet, so none (not valid)");
+    if (missedHands.Due(now))
+        LogF("vrcam: Game Link - a hand from BodyWalk came NOT finite %llu time(s): let go for that sample (log at most every 10 s)",
+             (unsigned long long)missedHands.TakeCount());
 }
 
 // Actions of our Manifest, consistent; false when there are none.
@@ -288,7 +340,7 @@ void PublishState(const D2RVR_State& s) {
     // whole inventory or trade window is in view: from above, behind and on the floor the panel
     // is already far enough away. FlatVR eases there and back, and follows it only while "Screen
     // distance follows the game" is ticked.
-    g.screenDistanceM = flatMenu && s.viewMode == 1 ? MenuDistanceM() : 0.0f;
+    g.screenDistanceM = finitehold::Or(flatMenu && s.viewMode == 1 ? MenuDistanceM() : 0.0f, 0.0f);   // (never a NaN to FlatVR)
 #endif
     // The Mapping tabs, each on top of "main".
     if (menu) strcpy_s(g.categories, "main, D2R Menu");

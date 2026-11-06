@@ -188,7 +188,7 @@ static void TestDefs() {
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 19 && PageCount() <= kMaxPages && kTabCount == 14, "nineteen pages under fourteen tabs (Controls' two, World's four, Party under Co-op)");
+    CHECK(PageCount() == 21 && PageCount() <= kMaxPages && kTabCount == 15, "twenty-one pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op)");
     CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -264,7 +264,7 @@ static void TestHitTest() {
         CHECK(HitTest(p, u, v).kind == Kind::Recentre, "Recentre");
         // a row the page does not have is nothing
         const int rows = p == kPageCoop ? kCoopRows + 1 : RowsOn(p);   // (the Co-op page's rows are its own, hset_coop.h; the fourth its map row)
-        if (rows < kRowsPerPage && !(p == kPageView && rows == kViewRow)) {   // (the first page's last row is the view buttons)
+        if (rows < kRowsPerPage && !(p == kPageView && rows == kViewRow) && p != kPageStats) {   // (the first page's last row is the view buttons; Stats draws its own)
             Centre(kToggle(rows, p), &u, &v);
             CHECK(HitTest(p, u, v).kind == Kind::None, "past the last row is nothing");
         }
@@ -2444,8 +2444,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 48 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee page's (the skill arming's two, quick blow, Direct hit's two too), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) - not the others");
+    CHECK(live == 54 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names - not the others");
     CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
     {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), ab = a | b;
@@ -2673,9 +2673,10 @@ static void TestBelt() {
         CHECK(!DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") == std::string::npos,
               "Direct hit off: no warning");
         on.values[kKeyMeleeDirect] = on.file[kKeyMeleeDirect] = 1.0f;
-        on.values[kKeyQuickBlow] = on.file[kKeyQuickBlow] = 0.0f;   // (quick blow on: By the rules is only the cleave, no warning - TestMelee)
+        on.values[kKeyMeleeDirectClient] = on.file[kKeyMeleeDirectClient] = 2.0f;   // By the rules (Two-handed extras: no warning - TestMelee)
         CHECK(DirectHitWarns(OnPage(on, kPageMelee)) && std::string(StatusText(OnPage(on, kPageMelee))).find("game's own logic") != std::string::npos,
               "Direct hit by the rules: the page warns");
+        CHECK(DirectHitWarns(OnPage(on, kPageMeleeAttack)), "on the Melee tab's Attack page too");
         CHECK(!DirectHitWarns(OnPage(on, kPageBelt)), "only on the Melee page");
         on.values[kKeyMeleeTouch] = on.file[kKeyMeleeTouch] = 0.0f;
         CHECK(!DirectHitWarns(OnPage(on, kPageMelee)), "hit by touch off: Direct hit does nothing, no warning");
@@ -2921,7 +2922,28 @@ static void TestHud() {
     CHECK(place >= 0 && hide >= 0 && height >= 0 && plates >= 0, "the four keys are in the table");
     CHECK(kDefs[place].page == kPageHud && kDefs[height].page == kPageHud && kDefs[plates].page == kPageHud && kDefs[hide].page == kNoPage,
           "three rows on the HUD page, hide has none");
-    CHECK(RowsOn(kPageHud) == 3 && !std::strcmp(kPageNames[kPageHud], "HUD"), "the page");
+    CHECK(RowsOn(kPageHud) == 7 && !std::strcmp(kPageNames[kPageHud], "HUD"), "the page (Allies shown and our names' three too)");
+    // [hud] allies_place (Serg, test 0.205.6: "a selector, one of the 3"): one stepper row with names, F4 only; the three ticks are gone from the table
+    {
+        const int k = kKeyAlliesPlace;
+        CHECK(k >= 0 && kDefs[k].page == kPageHud && !IsToggle(kDefs[k]) && kDefs[k].min == 0.0f && kDefs[k].max == 2.0f && kDefs[k].step == 1.0f && kDefs[k].def == 0.0f,
+              "Allies shown: a stepper 0 - 2 on the HUD page, the game's row by default");
+        CHECK(F4OnlyKey(k) && !KeyShown(k, 1) && KeyShown(k, 4), "Allies shown: F4 only");
+        CHECK(IndexOf(L"hud", L"ally_portraits") < 0 && IndexOf(L"hud", L"allies_game_hide") < 0 && IndexOf(L"hud", L"wrist_status_companions") < 0, "the three old ticks: no row");
+        Values v{};
+        v[k] = 0.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "At the top"), "its names: 0");
+        v[k] = 1.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "Under the map"), "1");
+        v[k] = 2.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "On the wrist"), "2");
+    }
+    {
+        const int ns = IndexOf(L"hud", L"names_own_size_pct"), nf = IndexOf(L"hud", L"names_own_far_pct"), na = IndexOf(L"hud", L"names_own_alpha");
+        CHECK(ns >= 0 && nf >= 0 && na >= 0 && kDefs[ns].live && kDefs[nf].live && kDefs[na].live && kDefs[ns].def == 100.0f && kDefs[nf].def == 60.0f &&
+                  kDefs[na].def == 0.0f && F4OnlyKey(ns) && F4OnlyKey(nf) && F4OnlyKey(na),
+              "our names' three rows: live, D2R VR Settings' defaults (100 %, 60 %, no backdrop), F4 only");
+    }
     // The bar hung in the room is for D2R VR Settings only (Serg, 2026-10-17: it is not wanted in the headset): no row, no key of the panel's at all
     CHECK(IndexOf(L"hud", L"monster_over_head") < 0 && IndexOf(L"hud", L"monster_bar_room") < 0 && IndexOf(L"hud", L"monster_bar_gap_cm") < 0, "the plate over the head's tick and gap (and the room bar's) are not in the headset's table");
     bool barKey = false;
@@ -3089,7 +3111,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 19, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 21, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
@@ -3302,8 +3324,27 @@ static int GdiWidth(const std::string& text, int cell, int weight) {   // the pa
 // -- 14. The Melee page: the "Hit by touch" group of D2R VR Settings > Strikes -----------------------------------------------------------------
 // The tick and its two numbers, the same [gameplay] keys, ranges and defaults as the desktop program (tools/settings/settings.cpp), written live.
 static void TestMelee() {
-    CHECK(RowsOn(kPageMelee) == 7 && CloseRows(kPageMelee) && !strcmp(kPageNames[kPageMelee], "Melee"),
-          "seven rows on the Melee page, closer (the touch's four, the skill arming and its icon, quick blow)");
+    CHECK(RowsOn(kPageMelee) == 6 && HasSubRow(kPageMelee) && !strcmp(kPageNames[kPageMelee], "Touch") && !strcmp(kTabNames[TabOf(kPageMelee)], "Melee"),
+          "the Melee tab's first page, Touch: six rows (the touch's four, the skill arming and its icon)");
+    CHECK(RowsOn(kPageMeleeAttack) == 4 && HasSubRow(kPageMeleeAttack) && TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && !strcmp(kPageNames[kPageMeleeAttack], "Attack"),
+          "its second page, Attack: quick blow, the faster attack, Direct hit, the swing timer (Serg 2026-11-06)");
+    {
+        const char* const attackKeys[4] = {"quick_blow", "quick_blow_faster", "melee_direct_client", "swing_timer"};
+        for (int r = 0; r < 4; ++r) {
+            char name[48];
+            snprintf(name, sizeof name, "%ls", kDefs[KeyAt(kPageMeleeAttack, r)].key);
+            CHECK(!strcmp(name, attackKeys[r]) && kDefs[KeyAt(kPageMeleeAttack, r)].live, "the Attack page's rows in their order, live");
+        }
+        const int fast = KeyAt(kPageMeleeAttack, 1), timer = KeyAt(kPageMeleeAttack, 3);
+        CHECK(IsToggle(kDefs[fast]) && kDefs[fast].def == 0.0f && IsToggle(kDefs[timer]) && kDefs[timer].def == 0.0f && !wcscmp(kDefs[timer].section, L"hud"),
+              "the faster attack and the swing timer: ticks, off as shipped");
+        float u, v;
+        Centre(kSubBtn(1, kMeleePages), &u, &v);
+        CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Tab, kPageMeleeAttack, 0}) && (HitTest(kPageMeleeAttack, u, v) == Hit{Kind::Tab, kPageMeleeAttack, 0}),
+              "the Attack button goes to the Attack page");
+        Centre(kSubBtn(0, kMeleePages), &u, &v);
+        CHECK((HitTest(kPageMeleeAttack, u, v) == Hit{Kind::Tab, kPageMelee, 0}), "the Touch button back to Touch");
+    }
     const int on = KeyAt(kPageMelee, 0), speed = KeyAt(kPageMelee, 1), start = KeyAt(kPageMelee, 2), only = KeyAt(kPageMelee, 3);
     CHECK(!wcscmp(kDefs[only].section, L"gameplay") && !wcscmp(kDefs[only].key, L"melee_touch_only") && IsToggle(kDefs[only]) && kDefs[only].def == 1.0f && kDefs[only].live,
           "the trigger's tick: [gameplay] melee_touch_only, on as shipped, live");
@@ -3381,17 +3422,17 @@ static void TestMelee() {
 
     // Quick blow (Serg, 2026-11-05, 0.204: "хорошая замена директ хит давай поставим его галочкой во внутреннем оверлее по умолчанию"): the seventh row,
     // [gameplay] quick_blow as a tick, on as shipped, live; clicked, that key alone is written.
-    const int qb = KeyAt(kPageMelee, 6);
+    const int qb = KeyAt(kPageMeleeAttack, 0);
     CHECK(qb >= 0 && !wcscmp(kDefs[qb].section, L"gameplay") && !wcscmp(kDefs[qb].key, L"quick_blow") && IsToggle(kDefs[qb]) && kDefs[qb].def == 1.0f &&
               kDefs[qb].live && !strcmp(kDefs[qb].label, "Quick blow"),
-          "the seventh row: [gameplay] quick_blow as a tick, on as shipped, live");
-    auto tick = [&](const char* file, double at) {   // the file, the page opened on it, the seventh tick clicked, its live write
+          "Attack's first row: [gameplay] quick_blow as a tick, on as shipped, live");
+    auto tick = [&](const char* file, double at) {   // the file, the Attack page opened on it, quick blow's tick clicked, its live write
         Spit(path, file);
-        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack);
         float u, v;
-        Centre(kToggle(6, kPageMelee), &u, &v);
-        CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Change, qb, 1}), "the seventh row's tick is hit where it is drawn");
-        dm.Click(HitTest(kPageMelee, u, v));
+        Centre(kToggle(0, kPageMeleeAttack), &u, &v);
+        CHECK((HitTest(kPageMeleeAttack, u, v) == Hit{Kind::Change, qb, 1}), "quick blow's tick is hit where it is drawn");
+        dm.Click(HitTest(kPageMeleeAttack, u, v));
         dm.Live(at);
         return dm.Live(at + Model::kLiveSettleMs + 1.0);
     };
@@ -3407,37 +3448,60 @@ static void TestMelee() {
         CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && text(L"quick_blow") == L"1", "ticked: quick_blow=1");
     }
 
-    // Direct hit (Serg, 2026-10-30, the seventh row until 0.204): no row now (D2R VR Settings > Strikes), the panel still reads its two keys - the
-    // mode they say (shared/direct_hit_mode.h) - for the page's warning line, and writes them only when they change (never from this page).
-    const int dh = kKeyMeleeDirect;
-    CHECK(kDefs[dh].page == kNoPage && !wcscmp(kDefs[dh].key, L"melee_direct") && kDefs[dh].def == 0.0f, "Direct hit: no row any more, off as shipped");
-    CHECK(kDefs[kKeyMeleeDirectClient].page == kNoPage && !wcscmp(kDefs[kKeyMeleeDirectClient].key, L"melee_direct_client") && kDefs[kKeyMeleeDirectClient].max == 2.0f &&
-              kDefs[kKeyMeleeDirectClient].live, "its other key has no row: the mode the two say (0 - 2)");
+    // Direct hit (Serg, 2026-11-06): Attack's third row - the four choices of D2R VR Settings (shared/direct_hit_mode.h) on melee_direct_client's row,
+    // named (vr/hset_names.h); read from the three keys, written to them by the store.
+    const int dh = kKeyMeleeDirect, dc = kKeyMeleeDirectClient;
+    CHECK(kDefs[dh].page == kNoPage && !wcscmp(kDefs[dh].key, L"melee_direct") && kDefs[dh].def == 0.0f, "melee_direct: no row of its own");
+    CHECK(KeyAt(kPageMeleeAttack, 2) == dc && kDefs[dc].min == 0.0f && kDefs[dc].max == 3.0f && kDefs[dc].step == 1.0f && kDefs[dc].def == 1.0f && kDefs[dc].live &&
+              kDefs[kKeyMeleeDirectScope].page == kNoPage, "Direct hit's row: 0 - 3, Two-handed extras as shipped, live; the scope has no row");
+    {
+        Values v{};
+        v[dc] = 0.0f; CHECK(!strcmp(ValueName(v, dc), "Off"), "the row's names: Off");
+        v[dc] = 1.0f; CHECK(!strcmp(ValueName(v, dc), "2H extras"), "... 2H extras");
+        v[dc] = 2.0f; CHECK(!strcmp(ValueName(v, dc), "By the rules"), "... By the rules");
+        v[dc] = 3.0f; CHECK(!strcmp(ValueName(v, dc), "Always"), "... Always");
+    }
     {
         struct Case { const char* file; float tick, mode; };
         const Case cases[] = {
-            {"[gameplay]\r\nmelee_touch=1\r\n", 0.0f, 0.0f},                                           // none: Off
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},   // By the rules (0.203's)
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\n", 1.0f, 1.0f},                          // half of it: By the rules (as Settings reads it)
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},                   // the old client box: By the rules
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 0.0f, 2.0f},   // Fully on
-            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\n", 0.0f, 2.0f},                          // the old experimental box: Fully on
+            {"[gameplay]\r\nmelee_touch=1\r\n", 0.0f, 0.0f},                                                                   // none: Off
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n", 1.0f, 1.0f},                          // 0.204's, quick blow on: 2H extras
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n", 1.0f, 2.0f},          // quick blow off: By the rules
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_scope=1\r\n", 1.0f, 2.0f},  // the scope chosen
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_scope=0\r\nquick_blow=0\r\n", 1.0f, 1.0f},
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n", 0.0f, 3.0f},                          // Always
+            {"[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\n", 0.0f, 3.0f},                                                   // the old experimental box
         };
         for (const Case& c : cases) {
             Spit(path, c.file);
             const Snapshot s = store::LoadSnapshot(path.c_str());
-            CHECK(s.values[dh] == c.tick && s.values[kKeyMeleeDirectClient] == c.mode, "Direct hit read as D2R VR Settings reads it");
+            CHECK(s.values[dh] == c.tick && s.values[dc] == c.mode, "Direct hit read as D2R VR Settings reads it");
         }
     }
+    {   // a step of the row writes the three keys (Off / Always keep the scope as it is)
+        Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_scope=0\r\n");
+        Model dm = OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack);
+        dm.Click({Kind::Change, dc, 1});   // 2H extras -> By the rules
+        dm.Live(70.0);
+        const Action w = dm.Live(70.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(w.what == Do::Save && store::SaveRequest(path.c_str(), w.request) == Result::Saved && text(L"melee_direct") == L"2" && text(L"melee_direct_client") == L"1" &&
+                  text(L"melee_direct_scope") == L"1", "By the rules: 2 / 1, scope 1");
+        Model dm2 = OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack);
+        dm2.Click({Kind::Change, dc, 1});   // -> Always
+        dm2.Live(80.0);
+        const Action w2 = dm2.Live(80.0 + Model::kLiveSettleMs + 1.0);
+        CHECK(w2.what == Do::Save && store::SaveRequest(path.c_str(), w2.request) == Result::Saved && text(L"melee_direct") == L"1" && text(L"melee_direct_client") == L"2" &&
+                  text(L"melee_direct_scope") == L"1", "Always: 1 / 2, the scope kept");
+    }
     Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=1\r\nmelee_direct_client=2\r\n");
-    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("Fully on") != std::string::npos, "Fully on: the page's line says so");
-    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n");
-    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMelee))).find("game's own logic") != std::string::npos, "By the rules, quick blow off: the page's line warns");
-    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\n");   // (0.204's defaults: quick blow on)
+    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack))).find("Always") != std::string::npos, "Always: the page's line says so");
+    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_scope=1\r\n");
+    CHECK(std::string(StatusText(OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack))).find("game's own logic") != std::string::npos, "By the rules: the page's line warns");
+    Spit(path, "[gameplay]\r\nmelee_touch=1\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nmelee_direct_scope=0\r\n");
     {
-        const Model qm = OnPage(store::LoadSnapshot(path.c_str()), kPageMelee);
+        const Model qm = OnPage(store::LoadSnapshot(path.c_str()), kPageMeleeAttack);
         CHECK(!DirectHitWarns(qm) && DirectHitCleaveOnly(qm) && std::string(StatusText(qm)).find("two-handed") != std::string::npos,
-              "By the rules with quick blow on: no warning, the line says a two-handed swing's further monsters get Direct hit");
+              "2H extras: no warning, the line says a two-handed swing's further monsters get Direct hit");
     }
     CHECK(TmpFiles() == 0, "no temp file left");
 }
@@ -4237,7 +4301,7 @@ static void TestWorld() {
         float u, v;
         Centre(kWorldSub(i), &u, &v);
         for (int p = kPageWorld; p < kPageWorld + kWorldPages; ++p) CHECK((HitTest(p, u, v) == Hit{Kind::Tab, kPageWorld + i, 0}), "a World button goes to its page, from any of them");
-        CHECK(HitTest(kPageMelee, u, v).kind != Kind::Tab, "not on another page");
+        CHECK(HitTest(kPageBelt, u, v).kind != Kind::Tab, "not on another page");
     }
     for (int r = 0; r < kRowsMax; ++r) {
         CHECK(Inside(kToggle(r, kPageWorldGrab)) && !Overlap(kToggle(r, kPageWorldGrab), kStatus), "a World row inside, above the status line");

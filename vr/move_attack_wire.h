@@ -51,4 +51,9 @@ bool QuickReady();
 // The server's thread: the attack of this hero that ends at `endFrame` is a quick one (vr/attack_path_wire.cpp: its blow keeps the monster touched).
 bool QuickAttack(uint32_t hero, int32_t endFrame);
 
+// [hud] swing_timer (vr/swing_timer.h), live: our hero's attack starts on our server told to the timer; the hooks go in for it as for the options
+// above, passing everything through. HeroId: our hero's unit id as the controller last saw it (0 not yet) - the timer's numbers keep his blows.
+void SetSwingWanted(bool on);
+uint32_t HeroId();
+
 }  // namespace moveattack

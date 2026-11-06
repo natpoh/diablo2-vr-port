@@ -75,6 +75,20 @@ int main() {
         Check(l.Step(false, -1, 1, 3000) == -1 && l.Moved(), "flat: unknown while going off: wait");
         Check(l.Step(false, 1, 1, 3100) == 0, "flat: then back");
     }
+    // [hud] flat_map_place: left / middle / right, whatever the turn
+    Check(PlaceMode(0) == -1 && PlaceMode(4) == -1 && PlaceMode(-1) == -1, "flat_map_place 0 (or nonsense): the game's own");
+    Check(PlaceMode(1) == 1 && PlaceMode(2) == 0 && PlaceMode(3) == 2, "flat_map_place: left 1, middle 0 (the whole screen), right 2");
+    {
+        PlaceKeeper k;
+        Check(k.Step(0, 2, 1000) == 0, "the middle wanted, the map on the right: the whole screen");
+        Check(k.Step(0, 2, 1500) == -1, "not again within a second");
+        Check(k.Step(0, 0, 1600) == -1, "in the middle now: nothing");
+        Check(k.Step(0, 1, 1700) == 0, "the options put it left: back at once");
+        Check(k.Step(1, 0, 5000) == 1, "left wanted, the map in the middle: left");
+        Check(k.Step(2, 1, 6100) == 2, "right wanted: right");
+        Check(k.Step(2, -1, 7000) == -1, "the mode not read: nothing");
+        Check(k.Step(-1, 0, 8000) == -1, "not wanted (the game's own, a menu, VR): nothing");
+    }
     std::printf(g_fails ? "minimap_side_test: %d failed\n" : "minimap_side_test: all passed\n", g_fails);
     return g_fails ? 1 : 0;
 }

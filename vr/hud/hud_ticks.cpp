@@ -68,8 +68,12 @@ void MapRotateFlatTick() {
     const mapturn::FlatWhy why = mapturn::FlatGate(g_set.mapRotateFlat.load(), g_inWorld.load(), platform, view, g_enabled.load(), ClassicNow());
     hud::SetMapRotateFlat(mapturn::FlatTurns(why));
     hud::SetMapCompassFlat(mapturn::FlatTurns(why) && g_set.mapCompassFlat.load());   // [hud] map_compass_flat: the strip over it, as VR's
-    // only a corner map has a box to turn: the game's whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
-    gamestate::SetMapSideFlat(mapturn::FlatTurns(why) ? g_set.mapCorner.load() : -1);
+    // [hud] flat_map_place: the flat game's map kept left, in the middle or right, turned or not (minimapside::PlaceKeeper; in the middle the
+    // game's whole-screen map, as before - nothing to turn there); 0 the game's own: only a corner map has a box to turn, the game's
+    // whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
+    const int place = platform == 0 && g_inWorld.load() ? minimapside::PlaceMode(g_set.mapPlaceFlat.load()) : -1;
+    gamestate::SetMapPlaceFlat(place);
+    gamestate::SetMapSideFlat(place < 0 && mapturn::FlatTurns(why) ? g_set.mapCorner.load() : -1);
     const char* where = platform == 1 ? "VR" : "flat";
     static int toldKey = -1;
     const int key = (int)why * 100 + platform * 10 + view;

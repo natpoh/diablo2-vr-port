@@ -12,6 +12,7 @@
 #include <string>
 
 #include "CascLib.h"
+#include "ally_portrait_files.h"
 #include "game_ui_files.h"
 
 namespace menuassets {
@@ -117,6 +118,59 @@ Result Prepare(const std::wstring& game, const std::wstring& pluginDir, bool on)
     }
     r.ok = true;
     r.text = lang::TX(L"menu_art.made", L"made from your game: its own frames, buttons and sliders for the skill panel (d2r_vr_game_ui)");
+    return r;
+}
+
+Result PreparePortraits(const std::wstring& game, const std::wstring& pluginDir, bool on) {
+    Result r;
+    if (!on) {
+        r.ok = true;
+        r.text = lang::TX(L"portrait_art.off", L"off ([hud] ally_portraits)");
+        return r;
+    }
+    if (pluginDir.empty() || !IsDir(pluginDir)) {
+        r.text = lang::TX(L"portrait_art.no_plugin_dir", L"the plugin's folder was not found: the allies' tiles show initials");
+        return r;
+    }
+    const std::wstring dir = pluginDir + gameuifiles::kFolder + L"\\";
+    auto leaf = [](int i) {
+        const std::string n = std::string(allyportraitfiles::kPrefix) + allyportraitfiles::kLeaves[i] + ".sprite";
+        return std::wstring(n.begin(), n.end());
+    };
+    bool all = IsDir(dir);
+    for (int i = 0; all && i < allyportraitfiles::kCount; ++i) all = GetFileAttributesW((dir + leaf(i)).c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (all) {
+        r.ok = true;
+        r.text = lang::TX(L"portrait_art.ready", L"ready: the game's own portraits beside the plugin (d2r_vr_game_ui)");
+        return r;
+    }
+    std::wstring root = game;
+    if (!root.empty() && root.back() == L'\\') root.pop_back();
+    HANDLE storage = nullptr;
+    if (!CascOpenStorage(root.c_str(), 0, &storage)) {
+        r.text = lang::TX(L"portrait_art.no_archives", L"the game's archives could not be opened (error {error}); it is tried again at the next start", {{L"error", std::to_wstring(GetLastError())}});
+        return r;
+    }
+    CreateDirectoryW(dir.c_str(), nullptr);
+    int got = 0;
+    for (int i = 0; i < allyportraitfiles::kCount; ++i) {
+        const std::wstring path = dir + leaf(i);
+        const std::string archive = std::string("data\\hd\\global\\ui\\hireables\\") + allyportraitfiles::kLeaves[i] + ".sprite";
+        std::string bytes, old;
+        if (!CascRead(storage, archive.c_str(), &bytes) || bytes.empty()) continue;   // (not in this game: initials for it)
+        ++got;
+        if (ReadFile(path, &old) && old == bytes) continue;
+        if (!WriteFile(path, bytes.data(), bytes.size())) {
+            CascCloseStorage(storage);
+            r.text = lang::TX(L"portrait_art.not_written", L"could not write {file} (error {error})", {{L"file", leaf(i)}, {L"error", std::to_wstring(GetLastError())}});
+            return r;
+        }
+        r.wrote = true;
+    }
+    CascCloseStorage(storage);
+    r.ok = got > 0;
+    r.text = lang::TX(L"portrait_art.made", L"{n} of the game's {all} portraits copied from your game for the allies' tiles (d2r_vr_game_ui)",
+                      {{L"n", std::to_wstring(got)}, {L"all", std::to_wstring(allyportraitfiles::kCount)}});
     return r;
 }
 

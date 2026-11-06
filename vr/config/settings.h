@@ -64,6 +64,7 @@ struct Settings {
     std::atomic<bool>  flatMapZoom{true};   // [hud] flat_map_zoom: + / - (and Ctrl + wheel) zoom the flat game's map, the game's own zoom (FlatMapZoomKey)
     std::atomic<int>   flatMapZoomLevel{0};   // [hud] flat_map_zoom_level: its level, steps of 1/8 on the game's own (vr/flat_map_zoom.h), written back when changed
     std::atomic<int>   mapCorner{0};         // [hud] map_corner: 0 either, 1 left, 2 right - where [hud] map_rotate_flat puts a whole-screen map
+    std::atomic<int>   mapPlaceFlat{0};      // [hud] flat_map_place: 0 the game's own, 1 left, 2 middle, 3 right - the flat game's map kept there (MapRotateFlatTick)
     // Per view since the Home page (2026-10-05): [hud_top], [hud_third], [hud_floor], [hud_inside]
     // - the Interface tab of each view - falling back to [hud] where unset.
     std::atomic<float> barNearTop{0.0f}, barNearThird{0.0f}, barNearInside{0.0f};   // bar_near per view
@@ -107,6 +108,13 @@ struct Settings {
     std::atomic<float> labelsNearBody{0.0f};   // [hud] labels_near_body: the same in first person (F4) - native too
     std::atomic<float> labelsDepthBody{0.0f};  // [hud] labels_depth_body: F4, each item label at its item's depth, 1 = exactly (0 = the game's)
     std::atomic<float> labelsFarBody{1.0f};    // [hud] labels_far: F4, a label 10 m off and farther this much of labels_size (1 = no change)
+    std::atomic<float> ownSizeNear{100.0f}, ownSizeFar{40.0f}, ownNearM{1.5f}, ownFarM{20.0f};
+    std::atomic<float> ownMinPx{24.0f};   // [hud] labels_own_min_px: our labels and names never smaller than this, px of the eye (ownlabels::MinScale)   // [hud] labels_own_*: our labels' size by distance (ownlabels::CurveK)
+    std::atomic<bool>  monsterNamesOwn{false};
+    std::atomic<bool>  npcNamesOwn{false};
+    std::atomic<bool>  ownLabelsDump{false};   // [debug] own_labels_dump: our atlas to d2rloader\logs\d2r_vr_own_labels.bmp once (view only)
+    std::atomic<float> namesSize{100.0f}, namesFar{60.0f}, namesAlpha{0.0f};   // [hud] names_own_size_pct / _far_pct / _alpha: our names' own (ownnames::NameLook)     // [hud] npc_names_own: F4, the hover names over NPCs, objects, portals drawn by us, sharp (vr/own_names.h) // [hud] monster_names_own: F4, the names in the plate over the target drawn by us, sharp (vr/own_names.h)
+    std::atomic<bool>  labelsOwn{false};       // [hud] labels_own: F4, the item labels drawn by us, sharp, in the game's places, at their items' depth (vr/own_labels.h)
     // [hud_top] / [hud_third] pointer_near, pointer_tilt: the mouse pointer FlatVR lays into the stereo pair, F1 / F2,
     // in the labels' units - nearer (+) and how much nearer at the bottom of the screen than at the top
     std::atomic<float> pointerNear[2] = {0.0f, 0.0f}, pointerTilt[2] = {0.0f, 0.0f};

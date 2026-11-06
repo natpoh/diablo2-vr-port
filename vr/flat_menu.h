@@ -34,7 +34,8 @@ struct RowDef {
 };
 
 // The player's own 2D keys (D2R VR Settings has each, the same default): Camera's field of view and F2's distance back, UI: F3 eyes'
-// weapon in hand and the body under the camera, Controls' flat aiming, picking, gamepad, the portal's oval and the pad's look up and down.
+// weapon in hand and the body under the camera, Controls' flat aiming, picking, gamepad, the portal's oval and the pad's look up and down;
+// the map's zoom keys and its place (left, middle, right: vr/minimap_side.h PlaceMode).
 inline constexpr RowDef kOwn[] = {
     {L"camera", L"fov", Kind::Steps, 20.0f, 120.0f, 5.0f, 60.0f},
     {L"third", L"distance", Kind::Steps, 0.0f, 30.0f, 0.5f, 7.0f},
@@ -46,6 +47,7 @@ inline constexpr RowDef kOwn[] = {
     {L"input", L"flat_portal_no_oval", Kind::Toggle, 0.0f, 1.0f, 1.0f, 1.0f},
     {L"camera", L"stick_pitch_flat", Kind::Toggle, 0.0f, 1.0f, 1.0f, 1.0f},
     {L"hud", L"flat_map_zoom", Kind::Toggle, 0.0f, 1.0f, 1.0f, 1.0f},
+    {L"hud", L"flat_map_place", Kind::Choice, 0.0f, 3.0f, 1.0f, 0.0f},
 };
 constexpr int kOwnCount = static_cast<int>(sizeof kOwn / sizeof kOwn[0]);
 constexpr int kRows = kOwnCount + hostrules::kCount;   // the own rows, then the host's rules in kRules' order
@@ -74,8 +76,21 @@ inline const char* Label(int row) {
         case 7: return uitext::Tr("vr.flatmenu.flat_portal_no_oval", "No black oval in the town portal");
         case 8: return uitext::Tr("vr.flatmenu.stick_pitch_flat", "The gamepad's right stick looks up and down");
         case 9: return uitext::Tr("vr.flatmenu.flat_map_zoom", "- and + zoom the map out of its circle and back");
+        case 10: return uitext::Tr("vr.flatmenu.flat_map_place", "Map on the screen");
         default: return "?";
     }
+}
+// An own Choice row's value by name ([hud] flat_map_place); nullptr: shown as a number.
+inline const char* OwnChoiceName(int row, int v) {
+    if (row == 10) {
+        switch (v) {
+            case 0: return uitext::Tr("vr.flatmenu.flat_map_place.game", "As in the game's options");
+            case 1: return uitext::Tr("vr.flatmenu.flat_map_place.left", "Left");
+            case 2: return uitext::Tr("vr.flatmenu.flat_map_place.centre", "Centre");
+            case 3: return uitext::Tr("vr.flatmenu.flat_map_place.right", "Right");
+        }
+    }
+    return nullptr;
 }
 
 // The ini's text as the row's value (a missing or unreadable key: the default), within the row's range.
@@ -113,6 +128,8 @@ inline std::string Shown(int row, float v) {
     const RowDef d = Def(row);
     if (IsRule(row)) return hostrules::ValueName(RuleOf(row), static_cast<int>(std::round(v)));
     if (d.kind == Kind::Toggle) return v >= 0.5f ? uitext::Tr("vr.rules.on", "On") : uitext::Tr("vr.rules.off", "Off");
+    if (d.kind == Kind::Choice)
+        if (const char* name = OwnChoiceName(row, static_cast<int>(std::round(v)))) return name;
     char b[32];
     if (std::fabs(v - std::round(v)) < 1e-4f) snprintf(b, sizeof b, "%d", static_cast<int>(std::round(v)));
     else snprintf(b, sizeof b, "%.1f", v);

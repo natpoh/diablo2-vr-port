@@ -53,8 +53,10 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "focus_gate.h"
 #include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
+#include "hand_keep.h"       // [openxr] hands_kept / bare_hand_poses / panels_key: the hands and the panels when the runtime gives no controllers
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
 #include "exit_end.h"   // [openxr] end_session_on_exit: the session ended before the game closes (exit_end.h)
+#include <MinHook.h>    // ... and the process's own exit (ntdll!RtlExitUserProcess) - every quit to Windows passes it
 #include "bounded_call.h"   // [openxr] busy_guard: xrWaitFrame and xrBeginSession on a thread of their own, waited for with a limit (bounded_call.h)
 #include "flatvr_gate.h"    // ... and no session over a FlatVR that holds the headset and cannot be stopped (flatvr_gate.h)
 #include "pointer_cache.h"   // the mouse pointer's picture known by what it shows (pointer_cache.h Key)
@@ -95,6 +97,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "render_resolution.h"
 #include "hset_ray.h"   // vectors, a ray against a panel, the pad values, the release gate: for any panel hung in the headset
 #include "hset_view.h"   // the settings' view buttons F1 - F4: the controller's own view path
+#include "hset_stats_feed.h"   // the settings' Stats page: the strike statistics ([stats] strike_stats)
 #include "party_cmd.h"     // the settings' Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the settings' Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
@@ -111,7 +114,9 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "map_turn.h"   // [hud] map_top_down / map_rotate / map_compass: the map in the hand from above, turned with the look, a compass over it (pure, tested)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 #include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand (vr/xr_thrust_debug.h is its layer)
+#include "swing_timer_wire.h"   // [hud] swing_timer: the attack's ring (or bar) and its outcome before the eyes (vr/xr_swing_timer.h is its layer)
 #include "wrist_status_wire.h"   // [hud] wrist_status: companions and effects over a wrist turned to the eyes (vr/xr_wrist_status.h is its two layers)
+#include "ally_portraits_wire.h"   // [hud] ally_portraits: the allies' portraits under the map in the hand (vr/xr_ally_portraits.h is its layer)
 #include "headset_shot.h"   // [headset_shot]: the frame's layers as submitted, read back to PNGs (ShotFrame, in CloseFrame)
 #include "headset_clip.h"   // [headset_shot] video: 10 s of the eyes as submitted, to an .mp4 (ClipFrame, in CloseFrame)
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
@@ -177,6 +182,9 @@ struct Cfg {
     int handSpace = 2;        // hand_space: 2 = on Meta's runtime a grip with no whole pose in the room is looked for in LOCAL / by the aim, 1 = on any runtime, 0 = never (vr/hand_space.h); live
     int roomByHead = 2;       // room_by_head: 2 = on Meta's runtime where LOCAL is in the room found by the head, else LOCAL taken as the room when STAGE gives nothing; 1 = any runtime, 0 = never (0.186; vr/hand_space.h PickRoom); live
     float handHoldMs = 1000.0f;   // hand_hold_ms: a controller that loses its place this long is held where it was by the head
+    bool handsKept = false;       // hands_kept: past that, a hand with no controller keeps a place by the head, slowly (vr/hand_keep.h Keeper); F4, live
+    bool gameFront = false;       // game_front: no controllers, the session focused: the game's window gets the keyboard back, Esc reaches it (vr/input/actions.cpp GameFrontTick); live
+    bool bareHandPoses = false;   // bare_hand_poses: a bare hand (hand tracking) places the arm, presses nothing; its pinch only on our panels (vr/hand_keep.h); F4, live
     float brightness = 1.0f;  // brightness: everything in the headset times this (the runtime's colour scale), 1 = as drawn
     bool laser = false;       // laser: a controller pointing at the flat picture's menus is the mouse (docs/plan_laser_menus.md)
     int laserHand = 1;        // laser_hand: 0 left, 1 right; the other hand's trigger and grip are Ctrl and Shift
@@ -463,6 +471,15 @@ maplaser::Quad g_mapQuadRoom;
 ULONGLONG g_mapQuadAt = 0;
 maplaser::Quad g_bigQuad, g_bigButton;
 maplaser::Quad g_bigFrontBtn;   // [hud] map_big_on_hand: the button to the front / back on the hand (the inventory's), as HangBigMap hung it
+// [hud] ally_portraits (vr/xr_ally_portraits.h): the map this frame's portraits hang under - the map in the hand as HangHud hung it, or the big map
+// as HangBigMap did (that one wins); `widthM` its visible width (the orb: its ball), `halfHM` from its middle down to its visible bottom (the big map in
+// front: to its Rotate button's). Used and cleared by HangAllyPortraits.
+struct AllyAnchor {
+    bool ok = false, big = false;
+    XrCompositionLayerQuad map{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    float widthM = 0.0f, halfHM = 0.0f;
+};
+AllyAnchor g_allyAnchor;
 bool g_bigFront = false;        // ... pressed: the big map in front this time (each opening starts on the hand)
 // [hud] map_big_follow / map_big_grab (vr/map_laser.h Spot): the big map's spot in front, in g_space - set at its first frame in front,
 // then kept in the room (followed lazily, dragged); and whether the last frame hung it in front (where the grip may take it)
@@ -1214,7 +1231,10 @@ void ReadProfiles() {
     }
 }
 // This frame's head and hands, at its display time, to Game Link's XrInput.
-bool BareHand(int h) {
+// `palm` (may be null): the palm joint where the runtime gives it whole, in the space the hands are located in (PoseOut's) -
+// [openxr] bare_hand_poses takes it for a bare hand the grip action gives no place for.
+bool BareHand(int h, handkeep::Pose* palm = nullptr, bool* palmOk = nullptr) {
+    if (palmOk) *palmOk = false;
     if (!g_handSourceExt || !g_handTracker[h] || !g_xrLocateHandJoints) return false;
     XrHandJointLocationEXT j[XR_HAND_JOINT_COUNT_EXT];
     XrHandJointLocationsEXT loc{XR_TYPE_HAND_JOINT_LOCATIONS_EXT};
@@ -1223,10 +1243,21 @@ bool BareHand(int h) {
     XrHandTrackingDataSourceStateEXT src{XR_TYPE_HAND_TRACKING_DATA_SOURCE_STATE_EXT};
     loc.next = &src;
     XrHandJointsLocateInfoEXT li{XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT};
-    li.baseSpace = g_space;
+    li.baseSpace = g_roomSpace ? g_roomSpace : g_space;   // (the data source does not depend on it; the palm is wanted where the hands are)
     li.time = g_fs.predictedDisplayTime;
     if (XR_FAILED(g_xrLocateHandJoints(g_handTracker[h], &li, &loc)) || !loc.isActive) return false;
-    return src.isActive && src.dataSource == XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT;
+    const bool bare = src.isActive && src.dataSource == XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT;
+    if (bare && palm && palmOk) {
+        const XrHandJointLocationEXT& p = j[XR_HAND_JOINT_PALM_EXT];
+        const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+        if ((p.locationFlags & need) == need) {
+            handkeep::Pose o;
+            o.p[0] = p.pose.position.x; o.p[1] = p.pose.position.y; o.p[2] = p.pose.position.z;
+            o.q[0] = p.pose.orientation.x; o.q[1] = p.pose.orientation.y; o.q[2] = p.pose.orientation.z; o.q[3] = p.pose.orientation.w;
+            if (std::isfinite(o.p[0]) && std::isfinite(o.p[1]) && std::isfinite(o.p[2]) && handkeep::math::Normalize(o.q)) { *palm = o; *palmOk = true; }
+        }
+    }
+    return bare;
 }
 
 float g_headHeld[3] = {};   // where the head was last located (a frame with its turn alone keeps it there)
@@ -1267,6 +1298,33 @@ void HoldPose(D2RVR_XrPose& p, HandHold& h, const D2RVR_XrPose& head, bool focus
     p.valid = 1;
     if (++g_holdTimes % 500 == 1)
         LogF("vrcam: openxr - a controller lost its place: held by the head (%u frames so far; [openxr] hand_hold_ms %.0f)", g_holdTimes, g_cfg.handHoldMs);
+}
+
+// [openxr] hands_kept / bare_hand_poses (vr/hand_keep.h, docs/notes/no_controllers.md): Quest's hand tracking or Virtual Desktop without
+// the controllers ("controllers: left none, right none", 2026-11-06) left no hand past hand_hold_ms, and with it went everything that
+// hangs off one (the wrist medallions, the map in the hand, the allies' portraits, the laser). F4 only, each its own key.
+handkeep::Keeper g_keep[2];
+std::atomic<ULONGLONG> g_frontWantedAt{0};   // [openxr] game_front: Publish's last frame with the key on, the session focused and no controller in either hand
+handkeep::PinchGate g_pinch[2];
+int g_keptSaid[2] = {-1, -1};
+XrTime g_keepAt = 0;   // the last Publish's display time (the keeper's frame time)
+handkeep::Pose KeepPose(const D2RVR_XrPose& p) {
+    handkeep::Pose o;
+    memcpy(o.p, p.pos, sizeof o.p);
+    memcpy(o.q, p.rot, sizeof o.q);
+    return o;
+}
+D2RVR_XrPose XrPoseOf(const handkeep::Pose& p) {
+    D2RVR_XrPose o{};
+    memcpy(o.pos, p.p, sizeof o.pos);
+    memcpy(o.rot, p.q, sizeof o.rot);
+    o.valid = 1u;
+    return o;
+}
+void KeepTeardown() {
+    for (int h = 0; h < 2; ++h) { g_keep[h].Reset(); g_pinch[h].Reset(); g_keptSaid[h] = -1; }
+    g_keepAt = 0;
+    g_frontWantedAt.store(0);
 }
 
 // What the runtime gives for each controller's grip, logged once per change (PS VR2 on SteamVR:
@@ -1484,7 +1542,9 @@ void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
 void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
 void VitalsTeardown();   // the hand vitals panel's picture, below (xr_hand_vitals.h)
 void ThrustDebugTeardown();   // the thrust debug's readout, below (xr_thrust_debug.h)
+void SwingTimerTeardown();   // the swing timer's picture, below (xr_swing_timer.h)
 void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wrist_status.h)
+void AllyPortraitsTeardown();   // the allies' portraits' picture, below (xr_ally_portraits.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
 void DropCalibration(bool now);   // the T-pose measurement's picture, below
@@ -1648,6 +1708,7 @@ void Publish(bool focused) {
     if (mend) LocalInRoomStep(headSeen, focused, &in.head);   // (and [openxr] room_by_head: the head too, where STAGE gives it nothing)
     else g_localIsRoom = false;
     bool located[2] = {};   // a controller really located this frame (not a place held by the head): the T-pose measurement
+    bool anyController = false;   // [openxr] game_front: a hand with a controller in it this frame (its actions active, not a bare hand)
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         bool act = false;
@@ -1717,11 +1778,60 @@ void Publish(bool focused) {
         }
         o.active = act || o.grip.valid ? 1u : 0u;
         LogHandSeen(h, gripSeen, focused, act);
-        const bool bare = BareHand(h);
+        handkeep::Pose palm;
+        bool palmOk = false;
+        const bool bare = BareHand(h, &palm, &palmOk);
+        const bool f4 = viewgate::F4();
+        anyController = anyController || (act && !bare);
         if (bare && !g_cfg.bareHands) {   // no controller in it: nothing pressed, no hand for BodyWalk
-            o = D2RVR_XrHand{};
+            if (g_cfg.bareHandPoses && f4) {   // [openxr] bare_hand_poses: ... but it places its arm (the grip the runtime gives for it, else its palm joint)
+                const float pinch = o.trigger;
+                D2RVR_XrPose grip = o.grip, aim = o.aim;
+                if (grip.valid != 1 && palmOk && focused) {
+                    grip = XrPoseOf(handkeep::GripFromPalm(palm, h));
+                    aim = XrPoseOf(handkeep::AimFromPalm(palm));
+                }
+                o = D2RVR_XrHand{};
+                o.grip = grip;
+                o.aim = aim;
+                o.active = grip.valid == 1 ? 1u : 0u;   // a hand there: the panels' beam may come from it
+                // its pinch: the laser hand's, only to a panel of ours that is up (they keep it from the game), never one carried over
+                const float t = g_pinch[h].Step(h == g_cfg.laserHand && (g_hsOpen.load() || skillwheel::IsOpen()), pinch);
+                if (t > 0.0f) {
+                    o.trigger = t;
+                    o.buttons = t >= handkeep::kPinchOn ? (uint32_t)BW_LINK_XRB_TRIGGER : 0u;
+                }
+            } else {
+                o = D2RVR_XrHand{};
+                g_pinch[h].Reset();
+            }
             b = 0;
             g_touch[h] = 0;
+        } else {
+            g_pinch[h].Reset();
+        }
+        if (!g_cfg.handsKept) {
+            g_keep[h].Reset();
+        } else if (f4) {   // [openxr] hands_kept: a hand with no place keeps one by the head, slowly (vr/hand_keep.h) - after the bare hand's reset, before the laser
+            if (o.grip.valid == 1) {
+                g_keep[h].Live(KeepPose(o.grip), KeepPose(o.aim.valid == 1 ? o.aim : o.grip), KeepPose(in.head));
+            } else {
+                const float dt = g_keepAt && g_fs.predictedDisplayTime > g_keepAt ? (float)((double)(g_fs.predictedDisplayTime - g_keepAt) * 1e-9) : 0.0f;
+                handkeep::Pose kg, ka;
+                if (g_keep[h].Keep(KeepPose(in.head), in.head.valid != 0, dt, h, &kg, &ka)) {
+                    o.grip = XrPoseOf(kg);
+                    o.aim = XrPoseOf(ka);   // (o.active stays as it was: no controller, nothing pressed, no beam for the panels)
+                }
+            }
+            const int kept = g_keep[h].Kept() ? 1 : 0;
+            if (g_keptSaid[h] != kept) {
+                if (g_keptSaid[h] >= 0 || kept)
+                    LogF("vrcam: openxr - the %s hand: %s", h ? "right" : "left",
+                         kept ? (g_keep[h].Seen() ? "no controller - kept where it was by the head, following it slowly ([openxr] hands_kept)"
+                                                  : "no controller yet - kept at rest below and in front of the head ([openxr] hands_kept)")
+                              : "placed by the runtime again");
+                g_keptSaid[h] = kept;
+            }
         }
         if (g_bareSaid[h] != (int)bare) {
             g_bareSaid[h] = bare;
@@ -1739,6 +1849,8 @@ void Publish(bool focused) {
             held[h] = now;
         }
     }
+    g_keepAt = g_fs.predictedDisplayTime;
+    if (g_cfg.gameFront && focused && !anyController) g_frontWantedAt.store(GetTickCount64());
     HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
     FeedCalibration(in, located, focused);
     MenuZoomPre(in, focused);   // [openxr] menu_zoom: the right stick's Y while the right grip holds a game panel is the zoom's (before the laser parks for it)
@@ -1905,7 +2017,9 @@ void Teardown() {   // under g_lock or before the session exists
     RunesTeardown();   // the gesture runes' atlas
     VitalsTeardown();  // the hand vitals panel's picture gone
     ThrustDebugTeardown();   // the thrust debug's readout gone
+    SwingTimerTeardown();    // the swing timer's picture gone
     WristStatusTeardown();   // the wrist status panels' pictures gone
+    AllyPortraitsTeardown();   // the allies' portraits' picture gone
     g_panelPlace = PanelPlace{};
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
     for (HudOut& o : g_hudOut) { DestroyChain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
@@ -1952,6 +2066,7 @@ void Teardown() {   // under g_lock or before the session exists
     for (XrHandTrackerEXT& t : g_handTracker) { if (t && g_xrDestroyHandTracker) g_xrDestroyHandTracker(t); t = XR_NULL_HANDLE; }
     g_xrCreateHandTracker = nullptr; g_xrDestroyHandTracker = nullptr; g_xrLocateHandJoints = nullptr;
     g_bareSaid[0] = g_bareSaid[1] = -1;
+    KeepTeardown();   // ([openxr] hands_kept: the next session's hands start unseen)
     g_localInRoomOk = false;   // [openxr] hand_space: the next session finds and learns them again
     g_localIsRoom = false;     // ([openxr] room_by_head)
     g_stageDeadSince = 0;
@@ -3347,6 +3462,10 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
             if (++told == 1) Log("vrcam: openxr - the map in the hand beside the inventory on the left hand ([hud] map_beside_inventory)");
         }
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+        if (map && allyportraits::GridWanted()) {   // [hud] allies_place=1: under this map (the orb: under its ball, not its quad)
+            const float vw = orb ? q.size.width / kOrbSpan : q.size.width, vh = orb ? q.size.height / kOrbSpan : q.size.height;
+            g_allyAnchor = AllyAnchor{true, false, q, vw, 0.5f * vh};
+        }
         if (map && mapF4 && g_cfg.mapCompass && headingKnown) nl = HangCompass(layers, nl, max, q, bearing, orb);
         if (map) g_mapQuadInG = beside;
         if (map) {   // [hud] map_click_big: where the laser finds it next frame (its space: the room's - g_space beside the inventory)
@@ -4311,6 +4430,8 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     quad(g_bigLayer[0], o.sc, turned ? XrRect2Di{{0, 0}, {(int32_t)side, (int32_t)side}} : XrRect2Di{{0, 0}, {(int32_t)src.w, (int32_t)rows}}, pl.at, pl.w, pl.h);
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&g_bigLayer[0];
     keep(g_bigQuad, pl.at, pl.w, pl.h);
+    if (allyportraits::GridWanted())   // [hud] allies_place=1: under the big map - in front under its Rotate button too (maplaser::PlaceAt: 4 cm under it), on the hand the button is over it
+        g_allyAnchor = AllyAnchor{true, true, g_bigLayer[0], pl.w, onHand ? 0.5f * pl.h : 0.5f * pl.h + 0.04f + pl.bh};
     if (g_cfg.mapCompass && headingKnown) {   // [hud] map_compass over the big map too, at most half a metre wide; on the hand the Rotate button over it
         XrCompositionLayerQuad cq = g_bigLayer[0];
         cq.size.width = std::min(pl.w, 0.5f);
@@ -4361,7 +4482,9 @@ uint32_t HangMapLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
 #include "xr_runes.h"               // BodyWalk's gesture runes in the headset ([openxr] runes_draw): uses what is above
 #include "xr_hand_vitals.h"        // the hand vitals panel ([hud] hand_vitals): uses what is above
 #include "xr_thrust_debug.h"       // the thrust debug's readout ([debug] thrust_debug): uses what is above
+#include "xr_swing_timer.h"        // the swing timer before the eyes ([hud] swing_timer): uses what is above
 #include "xr_wrist_status.h"       // the wrist status panels ([hud] wrist_status): uses what is above
+#include "xr_ally_portraits.h"     // the allies' portraits under the map ([hud] ally_portraits): uses what is above
 
 // [headset_shot] grid (vr/headset_grid.h): over an eye's picture of a pair through the head's camera, on the list that copied it, before the
 // image is released. g_gridTan: the tangents of that image's edges (CopyEye: the box's with runtime_fov's crop, else the fov it was drawn with).
@@ -5531,6 +5654,10 @@ void FreeIdle() {
             QuadAtlasRetire(g_wsAtlas[side], "wrist status");
             g_wsPxPending[side] = !g_wsPx[side].empty();
         }
+    if (g_apAtlas.sc && idle(g_apAtlas.usedAt)) {   // [hud] ally_portraits
+        QuadAtlasRetire(g_apAtlas, "ally portraits");
+        g_apPxPending = !g_apPx.empty();
+    }
     if (g_chains.Changed()) {   // once when the number changes, not each frame (a log line costs ~1 ms)
         char b[192];
         g_chains.Describe(b, sizeof b);
@@ -5551,7 +5678,7 @@ void CloseFrame() {
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0) + (swingtimer::Wanted() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
     XrCompositionLayerQuad thrustPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [debug] thrust_debug: one layer over the weapon hand
@@ -5631,12 +5758,14 @@ void CloseFrame() {
         nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
         nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
         nl = HangBigMap(layers, nl, most);   // [hud] map_click_big: the game's big map in front, its Rotate button
+        nl = HangAllyPortraits(layers, nl, most);   // [hud] ally_portraits: the allies' portraits under the map (F4)
         nl = HangMapLaser(layers, nl, most);   // ... and the laser on the map / the big map
         nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
         nl = HangNotice(layers, nl, most);  // the game's quest / level-up notice on a card ([hud] notice_card)
         if (laser) nl = HangLaser(layers, nl, most, beam, dot);
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
         nl = HangThrustDebug(layers, nl, most, thrustPanel);   // [debug] thrust_debug: the last thrust's numbers over the weapon hand (F4)
+        nl = HangSwingTimer(layers, nl, most);   // [hud] swing_timer: the attack's ring (or bar) and its outcome before the eyes (F4)
         nl = HangWristStatus(layers, nl, most, wsPanel);   // companions and effects over a wrist turned to the eyes (F4)
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
@@ -5740,6 +5869,8 @@ void CloseFrame() {
             else if (p == n.ptr3d) nm = "ground pointer";
             else if (p == &g_plateOut.layer) nm = "monster bar";
             else if (p == &g_noticeOut.layer) nm = "notice card";
+            else if (p == &g_swingLayer) nm = "swing timer";
+            else if (p == &g_apLayer) nm = "ally portraits";
             else if (p == &g_bigLayer[0] || p == &g_bigLayer[1]) nm = "big map";
             else if (p == &g_compassLayer[0] || p == &g_compassLayer[1]) nm = "compass";
             else if (p == &g_mapBeamLayer[0] || p == &g_mapBeamLayer[1]) nm = "map laser";
@@ -6080,6 +6211,39 @@ void LoadSettings(const wchar_t* ini) {
         }
     }
     g_cfg.bareHands = f(L"bare_hands", 0.0f) != 0.0f;
+    {   // the hands without controllers (vr/hand_keep.h, docs/notes/no_controllers.md): each its own key, off by default, live
+        static int saidKept = -1, saidBare = -1, saidKey = -1;
+        g_cfg.handsKept = f(L"hands_kept", 0.0f) != 0.0f;
+        g_cfg.bareHandPoses = f(L"bare_hand_poses", 0.0f) != 0.0f;
+        static int saidFront = -1;
+        g_cfg.gameFront = f(L"game_front", 0.0f) != 0.0f;
+        if (on && (int)g_cfg.gameFront != saidFront) {
+            saidFront = g_cfg.gameFront;
+            Log(g_cfg.gameFront ? "vrcam: openxr - the game keeps the keyboard without controllers ([openxr] game_front=1): with no controller in either hand and the headset "
+                                  "session focused, another program that took the keyboard for 2 s gives it back to the game's window (not D2R VR Settings), and Esc pressed "
+                                  "meanwhile is posted to the game's window - the pause menu (Save and Exit) can always be had"
+                                : "vrcam: openxr - [openxr] game_front=0: the keyboard stays where Windows puts it, as before");
+        }
+        const int key = std::clamp((int)f(L"panels_key", 0.0f), 0, 3);
+        directinput::SetPanelKey(handkeep::KeyVk(key));
+        if (on && (int)g_cfg.handsKept != saidKept) {
+            saidKept = g_cfg.handsKept;
+            Log(g_cfg.handsKept ? "vrcam: openxr - hands without controllers: kept ([openxr] hands_kept=1, F4) - a hand whose controller is gone keeps its place by the head, "
+                                  "following it at most 0.5 m/s, so the wrist medallions, the map in the hand, the allies' portraits and the laser stay; it presses nothing"
+                                : "vrcam: openxr - hands without controllers: none ([openxr] hands_kept=0) - a hand with no controller is no hand, as before");
+        }
+        if (on && (int)g_cfg.bareHandPoses != saidBare) {
+            saidBare = g_cfg.bareHandPoses;
+            Log(g_cfg.bareHandPoses ? "vrcam: openxr - bare hands place the arms ([openxr] bare_hand_poses=1, F4): a hand the runtime tracks with no controller in it places its arm and "
+                                      "what hangs off it (its pose, or its palm joint), presses nothing in the game; its pinch reaches only the headset settings and the skill panel while one is up"
+                                    : "vrcam: openxr - bare hands place nothing ([openxr] bare_hand_poses=0), as before");
+        }
+        if (on && key != saidKey) {
+            saidKey = key;
+            LogF("vrcam: openxr - the panels' key ([openxr] panels_key): %s%s", handkeep::KeyName(key),
+                 key ? " - with the game in front it asks for the skill panel / the headset settings as the right stick's long press does" : "");
+        }
+    }
     g_cfg.handTrackers = (int)f(L"hand_trackers", 2.0f);   // (taken at the next session start)
     g_cfg.handSpace = (int)f(L"hand_space", 2.0f);   // live
     g_cfg.roomByHead = (int)f(L"room_by_head", 2.0f);   // live
@@ -6354,6 +6518,10 @@ void SetHandInventory(bool up) {
 }
 bool HandInventoryHung() { return g_handInvUp.load() && g_handInvHung.load(); }
 bool HeadsetSettingsOpen() { return g_hsOpen.load(); }
+bool KeepGameInFront() {
+    const ULONGLONG at = g_frontWantedAt.load();
+    return g_cfg.gameFront && at && GetTickCount64() - at < 500;
+}
 bool LaserWanted(int* hand) {
     *hand = g_cfg.laserHand;
     return g_cfg.laser;
@@ -6368,9 +6536,11 @@ void SetPanelOpen(bool open) {
 }
 
 void Stop(bool final);
+void HookProcessExit();
 // The session started on the game's device and queue (a worker thread), once.
 void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_state.load() != kIdle || !dev || !queue) return;
+    if (g_cfg.endOnExit) HookProcessExit();   // [openxr] end_session_on_exit: the process's exit ends what is left of the runtime's (exit_end.h)
     if (const uint64_t at = g_exitAt.load()) {   // [openxr] end_session_on_exit: the game is closing - its presents go on a while, no session over them
         if (exitend::HoldStart(at, GetTickCount64())) {
             static uint64_t told = 0;
@@ -7120,6 +7290,20 @@ DWORD WINAPI ExitEndThread(void* p) {
 }
 }  // namespace
 
+// [openxr] end_session_on_exit: d3d11.dll kept loaded to the process's end once a quit ends the session (exit_end.h: Serg's 0.203.2 exit - the instance's end let the
+// runtime go and d3d11.dll with it, then the game's own DXGI teardown called a module that still read d3d11.dll's data). Pinned: no FreeLibrary unloads it.
+void KeepD3D11(const char* why) {
+    static std::atomic<bool> kept{false};
+    if (kept.load()) return;
+    HMODULE m = nullptr;
+    if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"d3d11.dll", &m)) {
+        if (!kept.exchange(true)) LogF("vrcam: openxr - d3d11.dll kept loaded to the game's end (%s; end_session_on_exit)", why);
+        return;
+    }
+    static std::atomic<bool> told{false};
+    if (!told.exchange(true)) LogF("vrcam: openxr - d3d11.dll not loaded (%s): nothing to keep", why);
+}
+
 void EndOnExit(int trigger) {
     const exitend::Trigger t = (exitend::Trigger)trigger;
     const uint64_t now = GetTickCount64();
@@ -7146,6 +7330,8 @@ void EndOnExit(int trigger) {
     }
     g_exitAt.store(now ? now : 1);   // no new session while the game closes (Start)
     LogF("vrcam: openxr - the game quits (%s): the headset session is ended first ([openxr] end_session_on_exit)", exitend::Name(t));
+    KeepD3D11(exitend::Name(t));   // the instance's end lets the runtime go - d3d11.dll must not go with it while the game's DXGI teardown is to come
+    HookProcessExit();             // (the key turned on after the session started)
     g_stopWanted.store(true);   // the draw thread takes it at its next present, between two frames
     // On the present's own thread (a quit inside a present): it cannot wait for itself - its next present ends the session, or the DLL's detach does.
     if (GetCurrentThreadId() == g_presentTid.load(std::memory_order_relaxed)) return;
@@ -7163,6 +7349,70 @@ void EndOnExit(int trigger) {
         PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);   // (sent messages are handled inside the peek)
     }
     CloseHandle(h);
+}
+
+// [openxr] end_session_on_exit: the process's own exit (exit_end.h, 2026-11-06). Every quit to Windows passes ntdll!RtlExitUserProcess before Windows detaches a
+// DLL - the title screen's confirm box and a game left straight to Windows too, which no message above sees. Virtual Desktop's runtime destroys what is left of
+// ours in its own DLL_PROCESS_DETACH, after its LibOVRRT was detached: a freed D3D11 texture, 0xC0000409. So here - other threads still running, the loader lock
+// free - the session, its swapchains and the instance are destroyed on a thread of ours (Stop(true), as the DLL's detach would have; the instance's end lets the
+// runtime go now, its detach with nothing left to destroy), and the exit waits for it kExitStopMs at most. The key 0: straight on, as before.
+namespace {
+using ExitUserProcessFn = void(NTAPI*)(LONG);
+ExitUserProcessFn g_exitUserProcess = nullptr;
+
+DWORD WINAPI ProcessExitStopThread(void*) {
+    Stop(true);
+    return 0;
+}
+
+void EndOnProcessExit() {
+    static std::atomic<bool> once{false};
+    if (once.exchange(true)) return;
+    const int st = g_state.load();
+    const bool alive = st == kStarting || st == kCreated || g_session != XR_NULL_HANDLE || g_inst != XR_NULL_HANDLE;   // (a hint, read unlocked: Stop takes the lock)
+    const int busy = g_goneBusy.load();
+    switch (exitend::AtProcessExit(g_cfg.endOnExit, alive, busy)) {
+        case exitend::AtExit::Off:
+            if (alive) Log("vrcam: openxr - the game's process exits: the headset session is left to the DLLs' detach, as before ([openxr] end_session_on_exit=0)");
+            return;
+        case exitend::AtExit::Nothing:
+            Log("vrcam: openxr - the game's process exits: nothing of the runtime's left to destroy (end_session_on_exit)");
+            return;
+        case exitend::AtExit::End:
+            break;
+    }
+    const uint64_t now = GetTickCount64();
+    g_exitAt.store(now ? now : 1);   // no new session meanwhile
+    g_stopWanted.store(false);       // ended here, not by a present
+    KeepD3D11(exitend::Name(exitend::Trigger::ProcessExit));
+    LogF("vrcam: openxr - the game's process exits (%s%s): the headset session, its swapchains and the instance destroyed first, before Windows unloads the runtime "
+         "(end_session_on_exit)", alive ? "a session or an instance there" : "no session", busy > 0 ? ", an earlier end still destroying" : "");
+    const double t0 = UsNow();
+    HANDLE h = CreateThread(nullptr, 0, &ProcessExitStopThread, nullptr, 0, nullptr);
+    if (!h) { Log("vrcam: openxr - the game's process exits: no thread for the end - left to the DLLs' detach, as before"); return; }
+    const DWORD r = WaitForSingleObject(h, (DWORD)exitend::kExitStopMs);
+    CloseHandle(h);
+    const double ms = (UsNow() - t0) / 1000.0;
+    if (r == WAIT_OBJECT_0) LogF("vrcam: openxr - the game's process exits: the runtime's handles gone in %.0f ms - the exit goes on", ms);
+    else LogF("vrcam: openxr - the game's process exits: the end not through in %.0f ms - the exit goes on as before", ms);
+}
+
+void NTAPI ExitUserProcessDetour(LONG code) {
+    EndOnProcessExit();
+    g_exitUserProcess(code);
+}
+}  // namespace
+
+// Once, from a session's start with the key on (or a quit that ended a session): the detour reads the key live.
+void HookProcessExit() {
+    static std::atomic<bool> tried{false};
+    if (tried.exchange(true)) return;
+    void* fn = (void*)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlExitUserProcess");
+    const MH_STATUS init = MH_Initialize();
+    const bool ok = fn && (init == MH_OK || init == MH_ERROR_ALREADY_INITIALIZED) &&
+                    MH_CreateHook(fn, (void*)&ExitUserProcessDetour, (void**)&g_exitUserProcess) == MH_OK && MH_EnableHook(fn) == MH_OK;
+    if (ok) Log("vrcam: openxr - the process's exit watched (ntdll!RtlExitUserProcess): what is left of the runtime's is destroyed before its DLL goes (end_session_on_exit)");
+    else LogF("vrcam: openxr - the process's exit NOT watched (%s): a quit no message shows is left to the DLLs' detach, as before", fn ? "the hook failed" : "no RtlExitUserProcess");
 }
 
 void DeviceGone(ID3D12Device* dev) {
