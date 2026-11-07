@@ -865,6 +865,9 @@ through ReShade.
   (or rising over the bar) what the blow did: the life it took, a crit in gold, one swing's monsters
   summed, or miss / blocked / dodged / avoided (`swing_timer_numbers`). Single player or a game you host:
   exact; joined: the timer from your hero's animation, no numbers. The monitor needs D2R_DepthFog.fx.
+  A VR touch that did not become an attack says why in the same place (`swing_timer_reasons`, on): shaft /
+  handle / not the tip (where it met the body), slow / weak / short / push with your swing's number against
+  the one it needs (3.1/5.0), wrong way, shield. Only told: what counts as a hit is the same.
 - **Joined: send a touch when the host takes it** (VR F4, off - `[gameplay] swing_pace_joined`): joined to
   someone's TCP/IP game, your PC counts your hero's attack from his animation and sends a touch only when
   the host's game will take it: not while it would refuse one, held in the attack's last moments and sent

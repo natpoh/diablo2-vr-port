@@ -2,6 +2,7 @@
 // What it gives: vr/render/stereo/stereo.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
 #include "../../fence_wait.h"   // a fence wait that does not end on a wake meant for an older one
+#include "../../resize_drain.h"   // [render] resize_drain: no replay of a pass the game resized in, the GPU drained first
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -1312,6 +1313,52 @@ void Register() {
 replaypause::Settle g_settle;
 std::atomic<uint32_t> g_areaChanges{0};
 std::atomic<uint32_t> g_areaWaits{0};
+
+// [render] resize_drain (on; vr/resize_drain.h): crash group E - the game applied its video options in VR (or resized its swap chain, or released a
+// DLSS feature) right after the left pass, and the replay then ran that pass's lists again: their render-target views named the back buffers the
+// resize had just freed (DRED: a page fault in a freed "Swap Chain" inside the replayed "Post Task", 6 ms after AcceptChanges). DXGI's own wait
+// in ResizeBuffers covers what is already on the queue - not lists we submit after it (tools/resize_drain_test.cpp: the old list run again
+// after a resize removes the device). So each of those events counts here; a pass recorded across one is not replayed (the right eye of that
+// pair is the picture as it stands), the settle starts again (two passes, then 240 settled pairs), and the last replay is waited for first.
+// Only while the replay is on: everything else the game's own waits and DXGI's already cover. Off: as before.
+std::atomic<bool> g_resizeDrain{true};
+std::atomic<uint32_t> g_resizes{0};   // the events so far (counted only with the tick on and the replay on)
+uint32_t g_captureEpoch = 0;          // g_resizes when this pair's left pass began (the draw thread)
+std::atomic<uint32_t> g_resizeDrops{0}, g_resizeDrains{0}, g_resizeLate{0};
+std::atomic<uint32_t> g_resizeWhy[(int)resizedrain::Why::kCount] = {};
+resizedrain::QueueDrain g_resizeQueue;
+// The last replay done on the GPU: our own fence (ours, alive whatever the game has released), an event of this call's own (any thread)
+bool WaitLastReplay(unsigned ms) {
+    const Pt last = g_lastReplay;
+    if (!last.f || last.f->GetCompletedValue() >= last.v) return true;
+    bool done = false;
+    if (HANDLE e = CreateEventW(nullptr, FALSE, FALSE, nullptr)) {
+        if (SUCCEEDED(last.f->SetEventOnCompletion(last.v, e))) WaitForSingleObject(e, ms);
+        CloseHandle(e);
+        done = last.f->GetCompletedValue() >= last.v;
+    }
+    return done;
+}
+void ResizeEvent(resizedrain::Why why) {
+    if (!g_resizeDrain.load() || !g_on.load() || !g_want.load()) return;
+    g_resizes.fetch_add(1);
+    g_resizeWhy[(int)why].fetch_add(1);
+    const double t0 = pairtime::UsNow();
+    // the last replay - what escapes the game's own frame fences - finished first
+    bool done = WaitLastReplay(2000);
+    // and inside the game's ResizeBuffers (its swap chain and queue alive for sure there) the whole queue: DXGI waits for it itself on the plain
+    // runtime, not under every layer (the D3D12 debug layer's did not: tools/resize_drain_test.cpp). Not at a DLSS release or an Apply: the
+    // game may release its features as it quits, its queue already gone - our fence above is ours.
+    if (why == resizedrain::Why::kResize)
+        if (ID3D12CommandQueue* q = natived3d::GameQueue()) done = g_resizeQueue.Drain(q, 2000) && done;
+    const double ms = (pairtime::UsNow() - t0) / 1000.0;
+    g_resizeDrains.fetch_add(1);
+    if (!done) g_resizeLate.fetch_add(1);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 12 || !done)
+        LogF("vrcam: replay - %s ([render] resize_drain): the GPU %s in %.1f ms; the pass now recorded is not replayed, two passes until the "
+             "area settles again", resizedrain::WhyText(why), done ? "done with the last replay" : "NOT done in 2 s (the GPU is likely hung): went on", ms);
+}
 void AreaChanged() {
     g_areaChanges.fetch_add(1);
     // the last replay finished on the GPU: its own event (this may be another thread than the pairs'), 200 ms at most
@@ -1327,16 +1374,22 @@ bool Wanted() {
     if (!g_on.load() || !g_want.load()) return false;
     const bool wasSettled = g_settle.Settled();
     replaypause::Why stopped;
-    const bool settled = g_settle.Step(g_areaChanges.load(), pairtime::UsNow(), g_inWorld.load() && d2rcam::InWorld(), &stopped);
+    const bool settled = g_settle.Step(g_areaChanges.load(), pairtime::UsNow(), g_inWorld.load() && d2rcam::InWorld(), &stopped,
+                                       g_resizeDrain.load() ? g_resizes.load() : 0u);
+    if (stopped == replaypause::Why::kResize) {   // ([render] resize_drain) the last replay done on the GPU before the game's next pass
+        Log("vrcam: replay - paused (the game resized its picture, released a DLSS feature or applied its video options) - two passes until it has settled");
+        if (!WaitMs(g_lastReplay, 2000)) g_resizeLate.fetch_add(1);
+    }
     if (stopped == replaypause::Why::kNoWorld) Log("vrcam: replay - paused (no world: a menu or an area change)");
     else if (stopped == replaypause::Why::kArea) Log("vrcam: replay - paused (the game set a biome: an area loads) - two passes until it has settled");
     else if (stopped == replaypause::Why::kLongFrame) Log("vrcam: replay - paused (a game frame of over 150 ms: a load) - two passes until the area has settled");
     if (!settled) return false;
     if (!wasSettled) {
-        uint32_t noWorld = 0, area = 0, longFrame = 0;
-        g_settle.TakeRestarts(&noWorld, &area, &longFrame);
-        LogF("vrcam: replay - on (the area settled; the settle started again meanwhile: no world %u, another biome %u, a frame over 150 ms %u; "
-             "the same biome set again %u, not counted)", noWorld, area, longFrame, ::g_sameBiomeSets.exchange(0));
+        uint32_t noWorld = 0, area = 0, longFrame = 0, resize = 0;
+        g_settle.TakeRestarts(&noWorld, &area, &longFrame, &resize);
+        LogF("vrcam: replay - on (the area settled; the settle started again meanwhile: no world %u, another biome %u, a frame over 150 ms %u, "
+             "a resize / DLSS release / video options applied %u; the same biome set again %u, not counted)", noWorld, area, longFrame, resize,
+             ::g_sameBiomeSets.exchange(0));
     }
     static int hooked = -1;
     if (hooked < 0) {
@@ -1375,6 +1428,7 @@ void BeginLeft() {
     ReleaseSRWLockExclusive(&g_dsLock);
     g_captureThread.store(GetCurrentThreadId());
     g_pairStartUs.store(pairtime::UsNow());
+    g_captureEpoch = g_resizes.load();   // ([render] resize_drain) a resize while this pass is recorded: its lists are not replayed
     g_capturing.store(1);
     if (g_sigHooked.load() && g_holdSignalsOn.load()) g_holdSignals.store(true);
     if (g_want.load() == 1 || g_want.load() == 4) camfix::BeginLeft(g_want.load() == 1);
@@ -1413,6 +1467,11 @@ bool RightFromLeft() {
     g_leftHeld = false;
     ::CommitRightSky();   // the right eye's sky view and stamp: the left ones moved across, only now (vr/sky_view_eyes.h)
     const int mode = g_want.load();
+    // [render] resize_drain: the game resized its swap chain, released a DLSS feature or applied its video options while this pass was recorded -
+    // its lists name what was freed (the back buffers: a page fault in a freed "Swap Chain"). They are not run again: the right eye of this one
+    // pair is the back buffer as it stands, and the left picture goes back only if it still fits.
+    const bool resized = !resizedrain::ReplayLists(g_resizeDrain.load(), g_captureEpoch, g_resizes.load());
+    if (resized && g_resizeDrops.fetch_add(1) < 6) Log("vrcam: replay - this pass was recorded across a resize: its lists are not replayed");
     camfix::g_capture.store(false);
     if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
     if (mode == 1) {   // the right eye's camera into the slots, on the direct queue before the replay
@@ -1432,7 +1491,7 @@ bool RightFromLeft() {
         camfix::RightEye();
     }
     double t = pairtime::UsNow();
-    if (mode != 3) {   // the lists again, a batch per run of one queue; a fence between queues
+    if (mode != 3 && !resized) {   // the lists again, a batch per run of one queue; a fence between queues
         // (the first batch may be the compute queue's: it must see the right eye's slots too)
         if (mode == 1 && !subs.empty() && subs[0].q != g_direct) { g_why = "replay: first batch not direct"; GpuWait(subs[0].q, SignalOn(g_direct)); }
         ID3D12CommandQueue* prev = nullptr;
@@ -1584,12 +1643,19 @@ bool RightFromLeft() {
         PairLine(true);
         return true;
     }
+    // ([render] resize_drain: after a resize in this pass the held copies may no longer be the buffers' size - a copy between textures of two
+    // sizes is not allowed; left out then, for this one pair)
+    auto fits = [resized](ID3D12Resource* a, ID3D12Resource* b) {
+        if (!resized) return true;
+        const D3D12_RESOURCE_DESC x = a->GetDesc(), y = b->GetDesc();
+        return x.Width == y.Width && x.Height == y.Height && x.Format == y.Format;
+    };
     if (ID3D12Resource* bb = BackBuffer(bbLeft)) {
-        Copy(bb, D3D12_RESOURCE_STATE_PRESENT, g_leftImg, D3D12_RESOURCE_STATE_COMMON);
+        if (fits(bb, g_leftImg)) Copy(bb, D3D12_RESOURCE_STATE_PRESENT, g_leftImg, D3D12_RESOURCE_STATE_COMMON);
         bb->Release();
     }
     Check("copying the left picture in");
-    if (ID3D12Resource* depth = g_depthCopy.load() ? (ID3D12Resource*)g_depthRes.load() : nullptr; depth && g_leftDepth)
+    if (ID3D12Resource* depth = g_depthCopy.load() ? (ID3D12Resource*)g_depthRes.load() : nullptr; depth && g_leftDepth && fits(depth, g_leftDepth))
         Copy(depth, DepthState(), g_leftDepth, D3D12_RESOURCE_STATE_COMMON);
     g_why = "end of pair";
     g_lastReplay = SignalOn(g_direct);
@@ -1612,3 +1678,7 @@ bool RightFromLeft() {
 }  // namespace replay
 
 }  // namespace vrc
+
+// [render] resize_drain's entry for the hooks outside (vr/resize_drain.h): the swap chain's resize (vrcam's no-ReShade sinks), the game's DLSS
+// release (effects.cpp dlsseyes) and its Options panel's AcceptChanges (gamestate.cpp)
+void resizedrain::Event(resizedrain::Why why) { vrc::replay::ResizeEvent(why); }

@@ -11,6 +11,13 @@
 namespace moveattack {
 
 void SetLogger(void (*log)(const char*));
+// [debug] quick_blow_probe (vr/quick_blow_probe.h): one log line per attack of our hero on our server - the frame events it got, our re-arms of
+// its MODECHANGE event (the attack path: ProbeRearmed, who 1 its start, 2 its step; ProbePending read before), the attack gate, the blow's fate.
+// View only. The server's thread (ProbePending / ProbeRearmed).
+void SetProbe(bool on);
+bool ProbeOn();
+int32_t ProbePending(uintptr_t game, uintptr_t unit);
+void ProbeRearmed(uintptr_t game, uintptr_t unit, int who, int32_t to, int32_t before);
 // [gameplay] move_while_attacking, live (vrcam's LoadSettings). Off: the hooks (if they went in) pass everything through, the pad is untouched.
 void SetWanted(bool on);
 bool Wanted();

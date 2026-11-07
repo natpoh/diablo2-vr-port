@@ -14,6 +14,7 @@
 #include <reshade.hpp>
 
 #include "../../fx_native.h"   // fxnative::Runtime
+#include "../../resize_drain.h"   // resizedrain::Why
 
 namespace vrc {
 
@@ -36,6 +37,7 @@ bool OverlaysNow();
 bool OverlaysWanted();
 void Register();
 bool RightFromLeft();
+void ResizeEvent(resizedrain::Why why);   // [render] resize_drain: the game resizes / releases DLSS / applies (resizedrain::Event)
 bool SkipWhileStuck(const char* what);
 void TellOverlays(float upm, float gapCm);
 bool Wanted();
@@ -60,6 +62,7 @@ extern uint32_t g_lateReplays;      // replays not done in 100 ms when the next 
 extern double g_lateReplayMaxMs;
 extern std::atomic<bool> g_fxAtHold;
 extern std::atomic<bool> g_fxFence;
+extern std::atomic<bool> g_resizeDrain;   // [render] resize_drain (vr/resize_drain.h)
 extern std::atomic<bool> g_fxSync;
 extern std::atomic<bool> g_holdSignalsOn;
 extern std::atomic<int> g_marksOn;

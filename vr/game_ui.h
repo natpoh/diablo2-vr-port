@@ -37,6 +37,9 @@ const wchar_t* TitleFaceAlone();
 // A font file's family as GDI names it (its name table's name 1, Windows' platform, US English first); empty when it does not read.
 std::wstring FamilyInFontFile(const std::string& bytes);   // ... and Exocet the same way (our names whose game style is Exocet)
 bool Covers(const wchar_t* face, const std::wstring& text);
+// [hud] monster_names_own: a piece of the game's target plate (gameuifiles::PlatePiece) read from the cache the first time it is asked, nullptr while
+// it is not there (our plate's own frame then). Any thread.
+const Sheet* PlateSprite(int piece);
 
 // Tests: the cache's folder (default: d2r_vr_game_ui beside this DLL); forgets what was read.
 void SetDir(const std::wstring& dir);

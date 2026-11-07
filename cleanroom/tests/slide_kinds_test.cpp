@@ -8,6 +8,7 @@
 // on an unticked one, with the same gate the weight model applies (Settings::slide), for every long kind, in the mod's own way of holding.
 
 #include "../../vr/slide_kinds.h"
+#include "../../vr/grip_zone.h"
 
 #include <cmath>
 #include <cstdio>
@@ -160,6 +161,24 @@ int main() {
 			else CHECK(std::fabs(moved) < 0.01, "%s: its second hand holds where it closed (%.3f m)", k.name, moved);
 			CHECK(std::fabs(heldFast) < 0.01, "%s: unticked, it holds where it closed (%.3f m)", k.name, heldFast);
 		}
+	}
+
+	// The weight model gets arms.cpp's packed grip key, not the kind (vr/weight.cpp): + 0x100 (a sword in both hands), + 0x1000 * (the staff's hand + 1),
+	// + the hands key << 16. Since 663030c4 the packed key reached Allows and no second hand slid; gripzone::KindOf takes the kind back, for either hand.
+	{
+		const uint32_t longKinds[] = {D2RVR_TYPE_STAFF, D2RVR_TYPE_SPEAR, D2RVR_TYPE_POLEARM};
+		for (uint32_t kind : longKinds)
+			for (int hand = 0; hand < 2; ++hand)
+				for (uint32_t hands : {0u, 0x1234u, 0x7FFFu}) {
+					const uint32_t packed = kind + 0x1000u * (uint32_t)(hand + 1) + (hands << 16);
+					CHECK(!slidekinds::Allows(slidekinds::DefaultMask(), packed), "the packed key %#x itself matches no kind (the old bug's input)", packed);
+					CHECK(gripzone::KindOf(packed) == kind, "KindOf(%#x) is the kind %u", packed, kind);
+					CHECK(slidekinds::Allows(slidekinds::DefaultMask(), gripzone::KindOf(packed)), "kind %u held by the %s hand (hands key %#x): its second hand slides", kind,
+					      hand ? "left" : "right", hands);
+				}
+		const uint32_t sword2h = D2RVR_TYPE_SWORD + 0x100u + (0x55u << 16);
+		CHECK(gripzone::KindOf(sword2h) == D2RVR_TYPE_SWORD && gripzone::IndexOf(gripzone::KindOf(sword2h)) == 0, "a sword in both hands keeps its hilt zone");
+		CHECK(!slidekinds::Allows(slidekinds::DefaultMask(), gripzone::KindOf(sword2h)), "... and its second hand holds where it closed");
 	}
 
 	std::printf(g_fails == 0 ? "slide_kinds_test: all passed\n" : "slide_kinds_test: %d failed\n", g_fails);

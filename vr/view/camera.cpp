@@ -393,6 +393,7 @@ void RoomStick(int16_t* lx, int16_t* ly) {
 bool VrView(const d2rcam::WorldView& in, float out[16]) {
     prevscan::Watch();
     const bool ours = VrViewInner(in, out);
+    capture::OnView(in, out, ours, g_eye.load() & 1);   // the capture key: the game's view and ours
     if (ours) {
         prevscan::Record(out);
         memcpy(prevscan::g_lastView, out, sizeof prevscan::g_lastView);
@@ -772,6 +773,7 @@ void FlatShiftLog(const d2rcam::WorldView& in, const float M[16]) {
 bool VrProjInner(const d2rcam::WorldView& in, float M[16]);
 bool VrProj(const d2rcam::WorldView& in, float M[16]) {
     const bool ours = VrProjInner(in, M);
+    capture::OnProj(in, M, ours, g_eye.load() & 1);   // the capture key: the game's projection and ours
     if (ours) {
         memcpy(prevscan::g_lastProj, M, sizeof prevscan::g_lastProj);
         prevscan::g_lastProjOk = true;

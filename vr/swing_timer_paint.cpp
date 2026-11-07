@@ -23,6 +23,16 @@ Col TextCol(const Look& k) {
     case Kind::Dodged:
     case Kind::Avoided: return {140, 188, 238};
     case Kind::TooSoon: return {240, 92, 80};
+    // [hud] swing_timer_reasons, by what to change: where it met the body (the wood's brown-orange), how it moved (yellow), which way (cyan)
+    case Kind::Shaft:
+    case Kind::Handle:
+    case Kind::NotTip: return {232, 146, 66};
+    case Kind::Slow:
+    case Kind::Weak:
+    case Kind::Push:
+    case Kind::Short: return {244, 220, 92};
+    case Kind::Away: return {96, 212, 222};
+    case Kind::Shield: return {140, 188, 238};
     default: return {255, 255, 255};
     }
 }
@@ -34,8 +44,23 @@ std::string Words(const Look& k) {
     case Kind::Dodged: return uitext::Tr("vr.swing.dodged", "dodged");
     case Kind::Avoided: return uitext::Tr("vr.swing.avoided", "avoided");
     case Kind::TooSoon: return uitext::Tr("vr.swing.too_soon", "too soon");
+    case Kind::Shaft: return uitext::Tr("vr.swing.shaft", "shaft");
+    case Kind::Handle: return uitext::Tr("vr.swing.handle", "handle");
+    case Kind::NotTip: return uitext::Tr("vr.swing.not_tip", "not the tip");
+    case Kind::Slow: return uitext::Tr("vr.swing.slow", "slow");
+    case Kind::Weak: return uitext::Tr("vr.swing.weak", "weak");
+    case Kind::Push: return uitext::Tr("vr.swing.push", "push");
+    case Kind::Short: return uitext::Tr("vr.swing.short", "short");
+    case Kind::Away: return uitext::Tr("vr.swing.away", "wrong way");
+    case Kind::Shield: return uitext::Tr("vr.swing.shield", "shield");
     default: return {};
     }
+}
+// A refusal's numbers, the swing's against the gate's ("3.1/5.0"): empty for the rest.
+std::string Under(const Look& k) {
+    char b[32];
+    swingtimer::Numbers(k.text, k.got, k.need, b, sizeof b);
+    return b;
 }
 
 // The text with a dark rim, so it reads over any ground.
@@ -74,15 +99,18 @@ void Render(const Look& k, std::vector<uint32_t>& px) {
     const float timerA = k.timerAlpha / float(swingtimer::kAlphaSteps), textA = k.textAlpha / float(swingtimer::kAlphaSteps);
     const float fill = k.step / float(swingtimer::kSteps);
     std::string words = Words(k);
-    const int size = k.crit ? 54 : k.text == Kind::Damage ? 44 : 36;
+    const std::string under = Under(k);
+    const bool reason = swingtimer::IsReason(k.text);
+    const int size = k.crit ? 54 : k.text == Kind::Damage ? 44 : reason ? 32 : 36;
     if (k.style == swingtimer::Style::Ring) {
         const float cx = kW * 0.5f, cy = kH * 0.5f, outer = 86.0f;
         if (k.timer) Ring(cv, cx, cy, outer, 11.0f, fill, ZoneCol(k.zone), timerA);
         if (k.textAlpha > 0 && !words.empty()) {
             const bool many = k.text == Kind::Damage && k.count > 1;
-            const float lift = many ? 12.0f : 0.0f;
+            const float lift = many || !under.empty() ? 12.0f : 0.0f;
             Outlined(cv, fonts, words, {cx - outer + 14.0f, cy - 36.0f - lift, cx + outer - 14.0f, cy + 36.0f - lift}, size, TextCol(k), textA);
             if (many) Outlined(cv, fonts, "\xC3\x97" + std::to_string(k.count), {cx - 50.0f, cy + 22.0f, cx + 50.0f, cy + 50.0f}, 24, {200, 200, 196}, textA);
+            else if (!under.empty()) Outlined(cv, fonts, under, {cx - 64.0f, cy + 20.0f, cx + 64.0f, cy + 50.0f}, 24, {214, 212, 204}, textA);
         }
     } else {
         const float l = 24.0f, r = kW - 24.0f, t = kH - 28.0f, b = kH - 12.0f;
@@ -93,6 +121,7 @@ void Render(const Look& k, std::vector<uint32_t>& px) {
         }
         if (k.textAlpha > 0 && !words.empty()) {
             if (k.text == Kind::Damage && k.count > 1) words += " \xC3\x97" + std::to_string(k.count);
+            if (!under.empty()) words += " " + under;
             const float top = t - 70.0f - 90.0f * (k.rise / float(swingtimer::kRiseSteps));
             Outlined(cv, fonts, words, {0.0f, top, float(kW), top + 64.0f}, size, TextCol(k), textA);
         }

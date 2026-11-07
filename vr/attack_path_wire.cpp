@@ -322,7 +322,9 @@ bool ServerWalk(uintptr_t game, uintptr_t unit, uint32_t hero, int mode, const f
     Read(&now, game + kGameFrame, sizeof now);
     at->lastAsk = now;
     if (!at->ticking) {
+        const int32_t before = moveattack::ProbeOn() ? moveattack::ProbePending(game, unit) : 0;   // ([debug] quick_blow_probe: what was pending before our re-arm)
         if (!SetEvent(game, unit, now + 1)) { Fault("the event (0x48B720)"); return false; }
+        if (moveattack::ProbeOn()) moveattack::ProbeRearmed(game, unit, 1, now + 1, before);
         at->ticking = true;
     }
     if (g_asked.fetch_add(1) < 6) Say("vrcam: attack path - the server took a walk in the attack (hero %u, mode kept, asked %d, velocity %d, %s, point %.0f %.0f)", hero, mode, velocity, direct ? "by vector" : "by search", point[0], point[1]);
@@ -556,7 +558,9 @@ bool OnTick(uintptr_t game, uintptr_t unit, int code, int* ret) {
         if (at->valid && at->unit == unit && Read(&now, game + kGameFrame, sizeof now) && StepOn(now, at->lastAsk)) {
             if (!ServerStep(game, unit)) { Fault("the server's step (0x491AC0)"); return true; }
             g_steps.fetch_add(1, std::memory_order_relaxed);
+            const int32_t before = moveattack::ProbeOn() ? moveattack::ProbePending(game, unit) : 0;   // ([debug] quick_blow_probe)
             if (!SetEvent(game, unit, now + 1)) { Fault("the event (0x48B720)"); return true; }
+            if (moveattack::ProbeOn()) moveattack::ProbeRearmed(game, unit, 2, now + 1, before);
             if (SyncNow(now, at->lastSync)) {
                 at->lastSync = now;
                 if (const uintptr_t path = PathOf(unit)) TellOthers(game, unit, hero, path);

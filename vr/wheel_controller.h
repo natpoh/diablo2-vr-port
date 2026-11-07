@@ -26,6 +26,13 @@
 // show where it stands. With the tab strip the window takes both thumbsticks while it is up (the hero neither walks nor turns with them) and after it
 // closes until each is back in the middle.
 //
+// The Gestures tab ([openxr] gesture_overlay, F4 only, beside the Settings tab): the player's BodyWalk gestures (vr/gesture_overlay.h) - the list
+// with a picture of each, a new one recorded (type -> hand -> skill), re-recorded, cleared, bound to another skill. Its screens take the beam and
+// the trigger on the window as the Settings pages do; the back key steps back through its screens before the list; while BodyWalk records the
+// trigger is its pen: the window takes no click and the beam is hidden; the window keeps its size and place (Serg, 2026-11-07) and the trail is drawn
+// over it (xr.cpp hangs the runes after the panel while skillwheel::GestureRecording()).
+// Off (or not F4): the strip has its two tabs, as before.
+//
 // VR first person (F4: viewgate::F4(), passed in as `f4`) has all of it. VR F1, F2 and F3 (SetView 1 - 3; Serg, 2026-11-02: "игровой оверлей ... во
 // все режимы ф1 ф2 ф3") have the WINDOW alone, opened and closed the same ways: the Skills tab's slots edited (the game's own assignment), RUN / WALK,
 // and the Settings pages those views have (hset_defs.h PageShown: not F4's body) - no slot is picked for the trigger and nothing of ours casts (the
@@ -44,6 +51,7 @@
 #include <cstdint>
 
 #include "direct_input.h"
+#include "gesture_overlay.h"
 #include "hset_click.h"
 #include "hset_model.h"
 #include "slot_controls.h"
@@ -72,6 +80,7 @@ struct Settings {
     bool runWalk = false;       // [openxr] skill_run_walk (off by default): a RUN / WALK control (a tile in the tiles' look, a button on the wheel): the game's own run / walk switch
     bool slotControls = false;  // [openxr] skill_rt_a (off by default): the right trigger is the game's RT slot and the right A its A slot (vr/slot_controls.h)
     bool editFirst = false;     // [openxr] skill_panel_edit_first (on in the plugin's ini): a tap on a slot opens its skill list; the trigger held on it picks it for the trigger
+    bool gestureTab = false;    // [openxr] gesture_overlay (off by default): the Gestures tab beside Settings (needs the tab strip: TabsOn), F4 only
 };
 
 // The panel's size in metres for these settings: the wheel is square, the tiles' window is wide.
@@ -95,6 +104,19 @@ struct SettingsIn {
     hset::party::MapShow mapShow; // the game's Show Party / Show Party Names (vr/party_cmd.h MapNow), for the Co-op page's map row
     hset::stats::View stats;      // the strike statistics (vr/hset_stats_feed.h), for the Stats page
 };
+
+// What the Gestures tab needs of its host each frame (skill_wheel.cpp fills it): BodyWalk's Gestures block (a consistent copy) and whether the skill
+// link is on - it writes the block only for a game that sends it the skills.
+struct GesturesIn {
+    bool link = false;                     // [gestures] skill_link
+    const BW_LinkGestures* g = nullptr;    // null: no BodyWalk writes it
+    gov::Missing missing = gov::Avail::NotRunning;   // ... and then why (the host's look at BodyWalk's process and Game Link)
+    bool canStart = false;                 // a BodyWalkVR.exe was found (the tab's START BODYWALK)
+};
+
+// The Gestures tab's take: the window swung to the side (about the head as it was when the window came up) until its near edge stands this far off
+// straight ahead (radians), whatever its size and distance.
+constexpr float kAsideClearRad = 0.35f;   // (20 degrees)
 
 constexpr float kBeamM = 1.5f;   // the beam's length where it hits nothing
 
@@ -124,6 +146,12 @@ struct Step {
     bool wantStore = false;               // the ini's thread should be running: the window is up, or comes back, or its chord is arming, or the guide asks for it
     bool guideOpened = false;             // the window came up on the Guide page, as SettingsIn::openGuide asked
     int guideEnd = 0;                     // the window closed with the Guide page having been on show: 1 Done was pressed, 2 it was closed otherwise
+    bool gestureSend = false;             // the Gestures tab asks BodyWalk for `gestureCmd` (vr/link.cpp PushGestureCmd; then GestureSent with its sequence)
+    gesturecmd::Cmd gestureCmd;
+    bool gestureRecording = false;        // BodyWalk records for the Gestures tab (or is about to): its pen is the trigger
+    gov::Fix gestureFix = gov::Fix::None; // the Gestures tab's fix was clicked: enable the skill link / start BodyWalk (the host does it)
+    int gestureTraces = 0;                // [debug] gesture_trace: the tab's model's events this frame
+    char gestureTrace[gov::kTraceMax][gov::kTraceLen];
 };
 
 class Controller {
@@ -154,6 +182,39 @@ class Controller {
     hset::Chord chord_;                // both grips + a thumbstick click
     Flipper flip_;                     // a flick of a stick, a tap of a grip: one place along the window's pages
     bool resume_ = false;              // Calibrate body closed the window: it comes back on the Body page when the measurement is over
+    gov::Model gestures_;              // the Gestures tab's screens (kept through a change of view: a recording it started is stopped from here)
+    uint32_t gesturesSeen_ = ~0u;      // the revision of its view the window's view holds a copy of
+
+    // While the Gestures tab's take runs the window keeps its size and distance but swings to the side away from the drawing hand (to the left
+    // for the right hand, to the right for the left, to the left for both), turned to face the head as it was: the space straight ahead - where the hand
+    // draws, where the trail and the weapon hand are seen - is empty (Serg, 2026-11-07: "I will not even see the glyph, it is under the menu").
+    Pose AsideForTake(uint8_t hand) const {
+        const float below = cfg_.style == Style::Tiles ? cfg_.tilesBelowM : cfg_.belowM;
+        const V3 local{0.0f, -below, -cfg_.distanceM};
+        const V3 pivot = Sub(panel_.p, Rot(panel_.q, local));   // (where the head was when the window came up)
+        const float swing = std::atan2(0.5f * PanelWidthM(cfg_), cfg_.distanceM) + kAsideClearRad;   // (half its width, then the clear angle)
+        const float a = hand == BW_LINK_GH_LEFT ? -swing : swing;   // (+ turns left)
+        Pose p = panel_;
+        p.q = QMul(panel_.q, YawQ(a));
+        p.p = Add(pivot, Rot(p.q, local));
+        return p;
+    }
+
+    // One step of the Gestures tab's model (also with the window away: a recording it started is stopped then).
+    void StepGestures(const gov::In& gi, Step* out) {
+        const gov::Out go = gestures_.Step(gi);
+        if (go.send) {
+            out->gestureSend = true;
+            out->gestureCmd = go.cmd;
+        }
+        if (go.fix != gov::Fix::None) out->gestureFix = go.fix;
+        for (int i = 0; i < go.traces && out->gestureTraces < gov::kTraceMax; ++i)
+            std::memcpy(out->gestureTrace[out->gestureTraces++], go.trace[i], gov::kTraceLen);
+        if (out->feedback == Feedback::None)
+            out->feedback = go.feedback == gov::Feedback::Hover ? Feedback::Hover : go.feedback == gov::Feedback::Chosen ? Feedback::Selected
+                          : go.feedback == gov::Feedback::Refused ? Feedback::Refused : go.feedback == gov::Feedback::Applied ? Feedback::Applied : Feedback::None;
+        out->gestureRecording = gestures_.Recording();
+    }
 
     static constexpr uint32_t kWheelButtons = directinput::kPrimary | directinput::kSecondary | directinput::kStick | directinput::kMenuButton;
     static uint32_t Mask(const Held& h) {
@@ -204,6 +265,9 @@ public:
     void SettingsSubmitFailed(uint64_t sequence) { settings_.SubmitFailed(sequence); }
     // The Co-op page's edit could not be handed to the ini's thread.
     void SettingsCoopFailed(uint64_t sequence) { settings_.CoopSubmitFailed(sequence); }
+    // The Gestures tab's command went into the ring with this sequence (0: it could not be written).
+    void GestureSent(uint32_t sequence, double time) { gestures_.Sent(sequence, time); }
+    const gov::Model& GesturesModel() const { return gestures_; }
 
     void Reset() {
         model_.Reset();
@@ -225,20 +289,29 @@ public:
     // `f4`: the view is VR first person (viewgate::F4()). `toggleRequest`: the long press asked for the panel this frame
     // (directinput::TakeSkillPanelToggle(), taken by the caller every frame; used only in the long-press mode).
     // `host`: the Settings tab's side (null: no tab strip, no settings, the window as it was).
+    // `gestures`: the Gestures tab's side (null: no Gestures tab).
     Step Frame(const directinput::Frame& f, const Snapshot& snap, uint64_t nowMs, const Reply& reply, bool f4 = true, bool toggleRequest = false,
-               const SettingsIn* host = nullptr) {
+               const SettingsIn* host = nullptr, const GesturesIn* gestures = nullptr) {
         using namespace directinput;
         Step out;
         out.layer.widthM = PanelWidthM(cfg_);
         out.layer.heightM = PanelHeightM(cfg_);
         out.layer.style = cfg_.style;
-        if (f.session != session_) { session_ = f.session; Reset(); }
+        if (f.session != session_) { session_ = f.session; Reset(); gestures_.Reset(); gesturesSeen_ = ~0u; }
         const bool flat = !f4 && hset::FlatView(view_);   // VR F1 - F3: the window alone
         const int mode = f4 ? 4 : flat ? 1 : 0;
         if (mode != mode_) { if (mode_ >= 0) Reset(); mode_ = mode; }   // (F4, F1 - F3, another view: each starts fresh)
         if (!f4 && !flat) {   // another view: nothing of ours acts. Whatever was under way ends (the panel closes, the pick is forgotten, the controls
                               // it held are let go, no press, no flag), and F4 starts fresh
             if (!standing_) { Reset(); standing_ = true; }
+            if (gestures_.Recording() && gestures) {   // a recording the Gestures tab started: stopped (the tab is F4's)
+                gov::In gi;
+                gi.time = f.time;
+                gi.link = gestures->link;
+                gi.g = gestures->g;
+                gi.missing = gestures->missing;
+                StepGestures(gi, &out);
+            }
             return out;
         }
         standing_ = false;
@@ -314,6 +387,10 @@ public:
                             ((stickEdge && chordHeld) || request || holdClose || chordToggle || resumeNow || guideNow);
         if (toggle && !wasOpen) panel_ = PanelFor(f.head, cfg_);
 
+        // the Gestures tab ([openxr] gesture_overlay): F4, with the tab strip; while BodyWalk records for it the window is blind (its pen is the trigger)
+        const bool gesturesOn = tabsOn && cfg_.gestureTab && f4 && gestures != nullptr;
+        const bool recording = gestures_.Recording();
+
         // the pointing hand's ray against the panel
         bool pointer = false;
         PanelHit ph;
@@ -355,13 +432,37 @@ public:
             if (settingsAct.what == hset::Do::Nothing) settingsAct = settings_.Live(f.time * 1000.0);   // the belt writes itself a moment after the last change
         }
 
+        // the Gestures tab's screens: the beam and the trigger on them, the back key on the screens before its list (B / Y stop a recording)
+        const bool onGestures = gesturesOn && wasOpen && tabNow == Tab::Gestures && topLevel && !toggle;
+        const bool gestureBack = onGestures && back && gestures_.WantsBack();
+        if (gesturesOn || recording) {
+            gov::In gi;
+            gi.time = f.time;
+            gi.shown = onGestures && allowedUi;
+            gi.pointer = gi.shown && pointer;
+            gi.u = ph.u;
+            gi.v = ph.v;
+            gi.click = gi.shown && click;
+            gi.back = gi.shown && gestureBack;
+            gi.link = gestures ? gestures->link : false;
+            gi.g = gestures ? gestures->g : nullptr;
+            gi.missing = gestures ? gestures->missing : gov::Avail::NotRunning;
+            gi.canStart = gestures && gestures->canStart;
+            gi.triggers = f.hand[0].trigger > kTriggerOff || f.hand[1].trigger > kTriggerOff;   // (a RECORD goes out once both are up)
+            const bool fresh = Fresh(snap, nowMs, f.session);
+            gi.catalog = fresh ? snap.catalog : nullptr;
+            gi.catalogCount = fresh ? (int)std::min<uint32_t>(snap.count, (uint32_t)kCatalogMax) : 0;
+            StepGestures(gi, &out);
+        }
+        const bool blind = recording || out.gestureRecording;   // (the window takes no click and shows no beam)
+
         // a flick or a tap (the window up on the top level, the tab strip there): one place along the pages
         int flick = 0;
         if (tabsOn && wasOpen && allowedUi) {
             const float sx[2] = {f.hand[0].stick[0], f.hand[1].stick[0]}, sy[2] = {f.hand[0].stick[1], f.hand[1].stick[1]};
             const float sq[2] = {f.hand[0].squeeze, f.hand[1].squeeze};
             flick = flip_.Step(f.time, sx, sy, sq);
-            if (!topLevel) flick = 0;   // (the editor's pages have their own buttons)
+            if (!topLevel || tabNow == Tab::Gestures) flick = 0;   // (the editor's pages have their own buttons; the Gestures tab is clicked to: no flips there)
         } else {
             flip_.Reset();
         }
@@ -370,17 +471,18 @@ public:
         in.time = f.time;
         in.allowed = allowedUi;
         in.tabs = tabsOn;
+        in.gestures = gesturesOn;
         in.openTab = settingsChord || resumeNow || guideNow ? int(Tab::Settings) : -1;
         in.setTab = setTab;
         in.close = closeAsked;
         in.session = f.session;
         in.epoch = f.epoch;
         in.toggle = toggle;
-        in.back = back;
-        in.pointer = pointer;
+        in.back = back && !gestureBack;   // (the Gestures tab's own: a step back, not the window's close)
+        in.pointer = pointer && !blind;
         in.u = ph.u;
         in.v = ph.v;
-        in.click = click;
+        in.click = click && !blind;
         in.nowMs = nowMs;
         in.snap = &snap;
         in.reply = reply;
@@ -395,13 +497,13 @@ public:
         in.held = trig;   // (the long press on a slot, editFirst)
         in.noPick = flat;
         const Out mo = model_.Step(in);
-        out.feedback = mo.feedback;
+        if (mo.feedback != Feedback::None) out.feedback = mo.feedback;   // (else the Gestures tab's, if it had one)
         out.request = mo.request;
         out.runWalk = mo.runWalk;
         out.req = mo.req;
         const bool open = model_.Open();
         if (tabsOn) {
-            if (open && wasOpen && model_.Current().page == Page::Wheel && !closeAsked) {   // the flips: a flick, a tap, a click on an arrow
+            if (open && wasOpen && model_.Current().page == Page::Wheel && !closeAsked && model_.Current().tab != Tab::Gestures) {   // the flips: a flick, a tap, a click on an arrow
                 const int step = flick != 0 ? flick : mo.flip;
                 const int here = FlipPlace(), there = FlipTo(here, step, settings_.View(), settings_.PartyOn());
                 if (step != 0 && there != here) {
@@ -436,6 +538,10 @@ public:
                 clicker_.Reset();
             }
             model_.SetSettings(settings_, open && model_.Current().tab == Tab::Settings ? settingsHover : hset::Hit{});
+            if (gesturesOn && gestures_.Current().revision != gesturesSeen_) {   // the Gestures tab's screens, for the painter (a copy when they changed)
+                gesturesSeen_ = gestures_.Current().revision;
+                model_.SetGestures(std::make_shared<const gov::View>(gestures_.Current()), gesturesSeen_);
+            }
             model_.SetPlace(open ? FlipPlace() : 0, settings_.View(), settings_.PartyOn());
             out.settings = settingsAct;
             if ((settingsAct.what == hset::Do::Save || settingsAct.what == hset::Do::Coop) && out.feedback == Feedback::None) out.feedback = Feedback::Applied;
@@ -520,7 +626,8 @@ public:
         // the headset layer
         out.layer.show = open;
         out.layer.panel = panel_;
-        if (open && aimOk && Finite(from)) {
+        if (open && out.gestureRecording) out.layer.panel = AsideForTake(gestures_.Current().recHand);   // (the drawing space before the eyes is free)
+        if (open && aimOk && Finite(from) && !out.gestureRecording) {   // (BodyWalk records for the Gestures tab: no beam - the trigger is its pen)
             out.layer.beam = true;
             out.layer.from = from;
             out.layer.dir = dir;

@@ -28,6 +28,9 @@ void LoadSettings() {
                          "installed and idle. Kept: the picture to the headset, head and hands, input"
                        : "everything back as set in the ini");
     }
+    // [debug] patch_hunt (vr/patch_hunt.h): one suspect of the floor patches off a step - read first, the reads below leave our own parts out by it
+    const int hunt = patchhunt::Clamp((int)IniF(L"debug", L"patch_hunt", 0.0f));
+    patchhunt::Suspects suspects;
     g_set.platform.store(IniF(L"mode", L"platform", 1.0f) != 0.0f ? 1 : 0);
 #if D2RVR_FIRST_PERSON
     g_set.flatView.store(std::clamp((int)IniF(L"mode", L"flat_view", 3.0f), 1, 3));
@@ -336,6 +339,7 @@ void LoadSettings() {
     g_set.ownMinPx.store(std::clamp(IniF(L"hud", L"labels_own_min_px", 24.0f), 0.0f, 80.0f));   // our labels and names never smaller than this (px of the eye), live
     g_set.monsterNamesOwn.store(IniB(L"hud", L"monster_names_own", false));
     g_set.npcNamesOwn.store(IniB(L"hud", L"npc_names_own", false));
+    g_set.ownDropGame.store(IniB(L"hud", L"own_labels_drop_game", false));   // the game's own layer not drawn under ours (labels.cpp DropGameLayer), live
     g_set.ownLabelsDump.store(IniB(L"debug", L"own_labels_dump", false));   // our labels' atlas to a picture once (view only), live
     g_set.namesSize.store(std::clamp(IniF(L"hud", L"names_own_size_pct", 100.0f), 20.0f, 300.0f));   // our names' own size, by distance, backdrop (ownnames::NameLook), live
     g_set.namesFar.store(std::clamp(IniF(L"hud", L"names_own_far_pct", 60.0f), 10.0f, 150.0f));
@@ -452,8 +456,11 @@ void LoadSettings() {
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_squareWin.store(IniB(L"openxr", L"square_window", false));
     {   // the game's light culling at non-16:10 sizes: made whenever the key is on (read at the game's start), bound in VR, and in flat mode with light_bounds_flat
-        const bool fix = IniB(L"render", L"light_bounds_fix", true), flat = g_set.platform.load() == 0;
-        lightbounds::Configure(fix, !flat || IniB(L"render", L"light_bounds_flat", true), IniB(L"debug", L"log_compute_shaders", false), flat);
+        const bool fix = IniB(L"render", L"light_bounds_fix", true), flat = g_set.platform.load() == 0, boundFlat = IniB(L"render", L"light_bounds_flat", true);
+        // ([debug] patch_hunt 6 / 9: made as ever, not bound - the game's own light bins)
+        lightbounds::Configure(fix, !patchhunt::LightBoundsOff(hunt) && (!flat || boundFlat), IniB(L"debug", L"log_compute_shaders", false), flat);
+        suspects.lightBoundsFix = fix;
+        suspects.lightBoundsFlat = boundFlat;
         // the game's reflections in puddles, blood and water by each eye's own position (vr/reflections_eye.h): the copies made when the key
         // is on at the game's start, bound live in VR
         refleye::Configure(IniB(L"render", L"reflections_per_eye", false), !flat);
@@ -487,6 +494,7 @@ void LoadSettings() {
     replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
     replay::g_marksOn.store(std::clamp((int)IniF(L"debug", L"replay_marks", 1.0f), 0, 4));   // how the replayed lists are submitted (replay_groups.h): 0 batched, 1 one by one with a signal after each, 2 one by one, 3 as the game's calls, 4 the same with a signal after each
     replay::g_fxFence.store(IniB(L"render", L"fx_fence", false));   // our effects' constants kept apart by fences (F4)
+    replay::g_resizeDrain.store(IniB(L"render", L"resize_drain", true));   // no replay of a pass the game resized / applied video options in, the GPU drained first (vr/resize_drain.h)
     replay::g_dlssBoth.store(IniB(L"stereo", L"replay_dlss", false));
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
@@ -669,6 +677,7 @@ void LoadSettings() {
         static uint64_t toldSkip = 0;
         const uint64_t skip = wcstoull(sp, nullptr, 16);
         uitrace::SetSkip(skip);
+        pipehunt::SetSkip(skip);   // (without ReShade: the plugin's own hooks, vr/pipe_hunt.h - a pixel / compute shader's hash, as Ctrl+F10's pipe trace prints it)
         if (skip != toldSkip) { toldSkip = skip; LogF("vrcam: [debug] skip_pipeline %llx", (unsigned long long)skip); }
         // [render] skip_shaders: the game's passes left out for good, by their pixel shader (Ctrl+F10's "ps"),
         // space-separated hex. Empty = none; the default is filled in once one is confirmed.
@@ -684,6 +693,7 @@ void LoadSettings() {
             q = end;
         }
         uitrace::SetSkipShaders(hs, nh);
+        pipehunt::SetSkipShaders(hs, nh);   // (without ReShade, vr/pipe_hunt.h)
         static std::wstring toldShaders;
         if (toldShaders != ss) { toldShaders = ss; LogF("vrcam: [render] skip_shaders - %d shader(s) left out", nh); }
         // [render] depth_fix: the game's linear depth (fog, height fog, AO, reflections, water) over 0 .. depth_range
@@ -698,6 +708,8 @@ void LoadSettings() {
         // its own camera's range there. game_fog raised it to 2, so "Sky and fog drawn by" changed the lighting too - Serg on 0.188.5,
         // 2026-10-29, 64 / 65.webp. Mode 2 is the player's choice in Settings: "How that depth is set" > "Once a frame where the game makes it".)
         if (g_set.gameFog.load() && depthMode == 1) depthMode = 2;
+        suspects.depthFixMode = depthMode;
+        if (patchhunt::DepthFixOff(hunt)) depthMode = 0;   // [debug] patch_hunt 5 / 9: the game's own depth range
         {   // the game's lighting left on its own range without ReShade: told once a change
             const bool idle = depthMode == 1 && (g_noReShade || IniB(L"render", L"no_reshade", false));
             static int toldIdle = -1;
@@ -1088,6 +1100,7 @@ void LoadSettings() {
     g_set.teleportCircle.store(IniB(L"gameplay", L"teleport_circle", true));
     g_set.leapArc.store(IniB(L"gameplay", L"leap_arc", false));
     g_set.leapArcHead.store(IniB(L"gameplay", L"leap_arc_head", false));
+    g_set.leapAirAim.store(IniB(L"gameplay", L"leap_air_aim", false));
     g_set.leapHeadGain.store(pointcast::HeadGain(IniF(L"gameplay", L"leap_head_gain", pointcast::kDefaultHeadGain)));
     g_set.pointMaxCells.store(pointcast::CapCells(IniF(L"gameplay", L"point_max_cells", pointcast::kDefaultCapCells)));
     g_set.pointArcHeightPct.store(pointcast::HeightScale(IniF(L"gameplay", L"point_arc_height", pointcast::kDefaultHeightPct)) * 100.0f);
@@ -1162,6 +1175,7 @@ void LoadSettings() {
     }
     g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
     g_pressTraceKey.store(IniB(L"debug", L"melee_press_trace", false));   // [debug] melee_press_trace (the first 12 presses are told whatever it says)
+    moveattack::SetProbe(IniB(L"debug", L"quick_blow_probe", false));   // [debug] quick_blow_probe: one line per attack - what became of its blow (vr/quick_blow_probe.h)
     animcut::Configure(animcut::Kind::Bow, IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));
     g_set.quickThrowPotions.store(IniB(L"hands", L"quick_throw_potions", false));
     g_set.grabNearest.store(IniB(L"belt", L"grab_nearest", true));
@@ -1171,8 +1185,10 @@ void LoadSettings() {
     animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
     // the hero's skills to BodyWalk and a button or a recorded gesture per skill cast back (F4); the spare slot a skill on none is put on first
+    gengine::Configure(IniB(L"gestures", L"engine_in_game", false), (int)std::lround(IniF(L"gestures", L"engine_pen", 3.0f)));   // (before the skill link: SetEngine)
     skilllinkwire::Configure(IniB(L"gestures", L"skill_link", false),
-                             (int)std::lround(IniF(L"gestures", L"skill_link_slot", (float)skilllink::kDefaultSpareSlot)));
+                             (int)std::lround(IniF(L"gestures", L"skill_link_slot", (float)skilllink::kDefaultSpareSlot)),
+                             IniB(L"gestures", L"skill_link_settle", true));
     shieldsmite::SetTuning(IniF(L"gameplay", L"shield_smite_min_speed", 0.8f), IniF(L"gameplay", L"shield_smite_stroke_cm", 8.0f));   // the shield bash's own speed and start distance (vr/shield_smite.h BashParams), live
     skilltriggers::SetWanted(IniB(L"debug", L"skill_triggers", false));   // what casts a skill drawn (vr/skill_triggers.h)
     skilltriggers::SetMarkMs((uint32_t)std::clamp(IniF(L"debug", L"skill_mark_ms", 800.0f), 0.0f, (float)skilltriggers::kMaxMarkMs));   // how long its speed marks and trail stay
@@ -1266,7 +1282,8 @@ void LoadSettings() {
     meleetouch::SetClientVerdict(g_set.meleeTouchClientVerdict.load());
     // [hud] swing_timer (vr/swing_timer.h): the attack's ring (0) or bar (1) after an attack the game started, the outcome in it - only shown
     swingtimer::SetPace(IniB(L"gameplay", L"swing_pace_joined", false));   // joined: a touch sent when the host's gate takes it (vr/swing_timer.h PaceAt)
-    swingtimer::SetWanted(IniB(L"hud", L"swing_timer", false), (int)IniF(L"hud", L"swing_timer_style", 0.0f), IniB(L"hud", L"swing_timer_numbers", true));
+    swingtimer::SetWanted(IniB(L"hud", L"swing_timer", false), (int)IniF(L"hud", L"swing_timer_style", 0.0f), IniB(L"hud", L"swing_timer_numbers", true),
+                          IniB(L"hud", L"swing_timer_reasons", true));   // ... and why a touch was no attack (vr/swing_reason.h)
     thrustdebugwire::SetWanted(IniB(L"debug", L"thrust_debug", false));   // the thrust's readout over the weapon hand, the blade tinted, a log line per thrust (vr/thrust_debug.h)
     thrustdebugwire::SetOnly(IniB(L"debug", L"thrust_debug_only", false));   // ... only the thrusts: the swing's colours, marks and log lines left out of the debug
     g_set.stabDebug.store(IniB(L"debug", L"stab_debug", false));   // [debug] stab_debug: the stab's readout and marks (vr/stab_debug.h)
@@ -1348,6 +1365,7 @@ void LoadSettings() {
     }
     g_set.fist.store(IniB(L"hands", L"fist", true));
     g_set.shieldFist.store(IniB(L"hands", L"shield_fist", true));
+    g_set.leftSlotDrawn.store(IniB(L"hands", L"left_slot_drawn_left", true));
     g_set.forearmTwist.store(IniB(L"hands", L"forearm_twist", true));
     g_set.forearmShare.store(std::clamp(IniF(L"hands", L"forearm_twist_share", 0.5f), 0.0f, 1.0f));
     g_set.shieldForearm.store(IniB(L"shield", L"forearm", true));
@@ -1618,6 +1636,7 @@ void LoadSettings() {
     meleetouch::SetGrabWanted(g_set.weightGrabBodies.load());
     g_set.weightGrabItems.store(IniB(L"weight", L"grab_items", false));   // [weight] grab_items (its own box)
     g_set.weightGrabItemsReachCm.store(std::clamp(IniF(L"weight", L"grab_items_reach_cm", 25.0f), 5.0f, 60.0f));
+    g_set.weightGrabItemsEmptyGrip.store(IniB(L"weight", L"grab_items_empty_grip", true));   // [weight] grab_items_empty_grip (its own box)
     meleetouch::SetItemsWanted(g_set.weightGrabItems.load());
     g_set.weightThrownFlyMs.store(std::clamp(IniF(L"weight", L"thrown_fly_ms", 3000.0f), 100.0f, 5000.0f));
     g_set.weightThrowReachPct.store(std::clamp(IniF(L"weight", L"throw_reach_pct", 800.0f), 50.0f, 1500.0f));
@@ -1670,6 +1689,31 @@ void LoadSettings() {
              g_set.flatRoomCentre.load() ? 1 : 0, g_set.flatEnterCentre.load() ? 1 : 0,
              g_set.platform.load() == 1 ? "" : " (VR only: flat mode leaves them)");
     Log(b);
+    {   // [debug] patch_hunt 7 / 9: our own sky, fog, cave ceiling and distance blur, and the game's dome and ceiling we lay, off (the ini's values told)
+        suspects.fog = g_set.fogOn.load();
+        suspects.sky = g_set.skyOn.load();
+        suspects.gameSky = g_set.gameSky.load();
+        suspects.ceiling = g_set.ceilOn.load();
+        suspects.gameCeiling = g_set.gameCeiling.load();
+        suspects.blur = g_set.distanceBlur.load();
+        if (patchhunt::OwnEffectsOff(hunt)) {
+            g_set.fogOn.store(false);
+            g_set.skyOn.store(false);
+            g_set.gameSky.store(false);
+            g_set.ceilOn.store(false);
+            g_set.gameCeiling.store(false);
+            g_set.distanceBlur.store(false);
+        }
+        suspects.platform = g_set.platform.load();
+        suspects.flatShiftX = g_set.flatShiftX.load();
+        suspects.flatShiftY = g_set.flatShiftY.load();
+        patchhunt::Configure(hunt, std::max(0, (int)IniF(L"debug", L"patch_hunt_pipe", 0.0f)), suspects);
+    }
+    {   // [debug] capture_key (not in Settings: told by hand): the capture's key, empty = Ctrl+Alt+F10, none = off (vr/capture.h)
+        wchar_t k[64];
+        GetPrivateProfileStringW(L"debug", L"capture_key", L"", k, (DWORD)std::size(k), g_iniPath);
+        capture::Configure(k, IniB(L"debug", L"capture_targets", false));   // (the key with the intermediate targets too: ~0.1 - 0.4 GB read back at the press)
+    }
     const std::string language = uilang::Load(g_iniPath);   // ([hud] headset_language; read again only when it, the language or its file changed)
     if (!language.empty()) Log(language.c_str());
 }

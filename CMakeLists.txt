@@ -443,6 +443,12 @@ target_include_directories(shield_arm_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(shield_arm_rig_test PRIVATE d2rcam heft user32)
 target_compile_definitions(shield_arm_rig_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(shield_arm_rig_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
+# [hands] left_slot_drawn_left: the right attach bone carried onto the left slot's pose, the right slot's shield to the right forearm (vr/drawn_hand.h) - the hook itself on the toy rig
+add_executable(drawn_hand_rig_test cleanroom/tests/drawn_hand_rig_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
+target_include_directories(drawn_hand_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_link_libraries(drawn_hand_rig_test PRIVATE d2rcam heft user32)
+target_compile_definitions(drawn_hand_rig_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(drawn_hand_rig_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
 # ... the arm's IK on a toy rig: [arms] full_reach puts the wrist on a target past the arm's reach (the collarbone turned, then the arm lengthened), no pile-up, off as before
 add_executable(full_reach_rig_test cleanroom/tests/full_reach_rig_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
 target_include_directories(full_reach_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -546,7 +552,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -653,6 +659,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/pose_share_test.cpp")   #
     add_executable(weapon_mirror_test cleanroom/tests/weapon_mirror_test.cpp)
     target_include_directories(weapon_mirror_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(weapon_mirror_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    # [hands] left_slot_drawn_left: the bone the game draws a hand slot's weapon on, for every slot combination, and the carried matrix (vr/drawn_hand.h)
+    add_executable(drawn_hand_test cleanroom/tests/drawn_hand_test.cpp)
+    target_include_directories(drawn_hand_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(drawn_hand_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
     add_executable(doll_feet_sim tools/walk_legs/doll_feet_sim.cpp)
     target_include_directories(doll_feet_sim PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(doll_feet_sim PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -882,6 +892,10 @@ add_executable(strike_stats_test cleanroom/tests/strike_stats_test.cpp)
 target_compile_options(strike_stats_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Quick blow ([gameplay] quick_blow, vr/quick_blow.h): the AnimData events moved to the first frame, whose attack, the faster gate, the touch's route.
 add_executable(quick_blow_test cleanroom/tests/quick_blow_test.cpp)
+# [debug] quick_blow_probe: one record per attack, the verdict on its blow, the line (vr/quick_blow_probe.h)
+add_executable(quick_blow_probe_test cleanroom/tests/quick_blow_probe_test.cpp)
+target_include_directories(quick_blow_probe_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(quick_blow_probe_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_compile_options(quick_blow_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The swing does not stop the hero ([gameplay] flat_attack_path, vr/attack_path.h): when it acts, the speed, who a blow is for.
 add_executable(attack_path_test cleanroom/tests/attack_path_test.cpp)
@@ -898,6 +912,10 @@ target_compile_options(hit_outcome_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(swing_timer_test cleanroom/tests/swing_timer_test.cpp)
 target_include_directories(swing_timer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(swing_timer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] swing_timer_reasons (vr/swing_reason.h): melee_touch's refusals as the ring's words and numbers, and how they share the ring with the outcomes.
+add_executable(swing_reason_test cleanroom/tests/swing_reason_test.cpp)
+target_include_directories(swing_reason_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(swing_reason_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hud] labels_own (vr/own_labels.h): the names' colour codes and colours, the size steps, the atlas's shelves, where a cell stands, the painter and the
 # worker's atlas (--dump <prefix> writes the painted cells and the atlas as .bmp to look at).
 add_executable(own_labels_test cleanroom/tests/own_labels_test.cpp vr/own_labels_paint.cpp vr/own_labels_wire.cpp vr/game_ui.cpp vr/wheel_icons.cpp)
@@ -941,6 +959,10 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/item_grab_test.cpp")
     target_include_directories(item_grab_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(item_grab_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [weight] grab_items_empty_grip: who gets an empty hand's grip press (vr/empty_grip.h). Run: empty_grip_test.exe
+add_executable(empty_grip_test cleanroom/tests/empty_grip_test.cpp)
+target_include_directories(empty_grip_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(empty_grip_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # ... and the loader of the weight library's props world (vr/props_lib.h). Run: props_lib_test.exe [<a d2r_vr_weight.dll 1.3 built from the private repository>]
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/props_lib_test.cpp")
     add_executable(props_lib_test cleanroom/tests/props_lib_test.cpp vr/props_lib.cpp)
@@ -1154,6 +1176,11 @@ endif()
 add_executable(rtss_detect_test tools/rtss_detect_test.cpp)
 target_include_directories(rtss_detect_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(rtss_detect_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# [support] hang_advice (shared/hang_advice.h): the last game's graphics card stop read from the plugin's record and D2RLoader's log, the render
+# size's step down, the game's DLSS switched off in its Settings.json.
+add_executable(hang_advice_test tools/hang_advice_test.cpp)
+target_include_directories(hang_advice_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(hang_advice_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # [support] crash_reports / send_logs: the contract with D2R VR Crash Reporter (shared/d2r_vr_crash_watch.h; the reporter itself is private).
 add_executable(crash_watch_test tools/crash_watch_test.cpp)
 target_include_directories(crash_watch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -1162,6 +1189,16 @@ add_executable(players_cmd_test tools/players_cmd_test.cpp)
 target_include_directories(players_cmd_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_definitions(players_cmd_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(players_cmd_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# [debug] patch_hunt (vr/patch_hunt.h): its steps, and the game's graphics settings' accessors and setter checked against the game's image snapshot
+# when there is one (dump_loader/D2R_image.bin). Run: patch_hunt_test.exe [<snapshot>]
+# The capture key's rules (vr/capture_rule.h): the key's spellings, the repeat guard, the folders kept.
+add_executable(capture_test tools/capture_test.cpp)
+target_include_directories(capture_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(capture_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+add_executable(patch_hunt_test tools/patch_hunt_test.cpp)
+target_include_directories(patch_hunt_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_definitions(patch_hunt_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(patch_hunt_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The headset's Party page: the game's party roster and its Party panel's own buttons (vr/party_cmd.cpp; its pure part vr/party_cmd_core.h), checked
 # against the game's image snapshot when there is one (dump_loader/D2R_image.bin). Run: party_cmd_test.exe [<snapshot>]
 add_executable(party_cmd_test tools/party_cmd_test.cpp)
@@ -1685,6 +1722,23 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/skill_wheel_test.cpp")   
     target_compile_options(skill_wheel_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 
+# [openxr] gesture_overlay: the skill panel's Gestures tab (vr/gesture_overlay.h, gesture_picture.h, gesture_cmds.h, gesture_tab_paint.inc): the
+# command ring, the pictures' geometry, the screens against a made-up BodyWalk, the tab in the controller (there only with the key, in F4) and the
+# window's pictures (--dump <folder> writes them as BMP files). Offline. Run: gesture_overlay_test.exe [--dump <folder>]
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/gesture_overlay_test.cpp")   # (not in the public tree's allow-list)
+    # a stand-in for BodyWalk's d2r_vr_gestures.dll with the same interface (never shipped): the loader, the wiring and the tab tested against it
+    add_library(gesture_engine_stub SHARED cleanroom/tests/gesture_engine_stub.cpp)
+    target_include_directories(gesture_engine_stub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
+    target_compile_options(gesture_engine_stub PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    set_target_properties(gesture_engine_stub PROPERTIES OUTPUT_NAME "gesture_engine_stub")
+    add_executable(gesture_overlay_test cleanroom/tests/gesture_overlay_test.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/gesture_engine_lib.cpp)
+    add_dependencies(gesture_overlay_test gesture_engine_stub)
+    target_compile_definitions(gesture_overlay_test PRIVATE GESTURE_ENGINE_STUB="$<TARGET_FILE:gesture_engine_stub>")
+    target_include_directories(gesture_overlay_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
+    target_link_libraries(gesture_overlay_test PRIVATE gdi32 user32 ole32 uuid)
+    target_compile_options(gesture_overlay_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+
 # The skill panel's tab strip and its Settings tab ([openxr] headset_settings with the tiles' look: vr/tiles_geom.h's strip and sheet, vr/wheel_model.h's
 # tabs, vr/wheel_controller.h hosting vr/hset_*.h's pages): the strip and sheet geometry, the tabs, the chord, the long press, the pages' clicks, Apply, the
 # view buttons, Calibrate body and the window's return, the slider's drag, and the window's pictures. Run: headset_tabs_test.exe [--dump <folder>]
@@ -1769,7 +1823,7 @@ else()
     FetchContent_MakeAvailable(CascLib)
 endif()
 unset(CMAKE_POLICY_VERSION_MINIMUM)
-add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/menu_assets.cpp tools/settings/settings.rc)
+add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/menu_assets.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
 add_dependencies(d2r_vr_settings d2r_vr_version_h)
 target_link_libraries(d2r_vr_settings PRIVATE casc_static)
 target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
@@ -2130,6 +2184,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/fence_wait_test.cpp")
     target_include_directories(fence_wait_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(fence_wait_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/resize_drain_test.cpp")
+    # [render] resize_drain (vr/resize_drain.h) on a real D3D12 device with the debug layer: DXGI's resize against a queued list, the left pass's
+    # list replayed after the game's resize (removes the device: crash group E), the pass left out, the drain and its limit; the replay settle's resize
+    add_executable(resize_drain_test tools/resize_drain_test.cpp)
+    target_include_directories(resize_drain_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(resize_drain_test PRIVATE d3d12 dxgi)
+    target_compile_options(resize_drain_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/chain_count_test.cpp")
     # Our swapchains alive, by kind, told once when the number changes - SteamVR gives a session 16 (vr/chain_count.h)
     add_executable(chain_count_test tools/chain_count_test.cpp)
@@ -2205,6 +2267,10 @@ target_compile_options(bow_pitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] leap_by_gaze (vr/leap_gaze.h): Leap and Leap Attack where the head looks - the gaze to the ground, the range clamp, the monster under it: leap_gaze_test
 add_executable(leap_gaze_test cleanroom/tests/leap_gaze_test.cpp)
 target_compile_options(leap_gaze_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] leap_air_aim (vr/leap_air_aim.h): the next leap aimed in the air - the air from the model's lift, which releases are held through the landing,
+# the kept world point seen from the landing spot: leap_air_aim_test
+add_executable(leap_air_aim_test cleanroom/tests/leap_air_aim_test.cpp)
+target_compile_options(leap_air_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [body] under_camera (vr/under_camera.h): the drawn body under the camera while the game's camera trails the hero on its spring - a leap, a knockback: under_camera_test
 add_executable(under_camera_test cleanroom/tests/under_camera_test.cpp)
 target_compile_options(under_camera_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -2228,6 +2294,8 @@ target_compile_options(bow_latency_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/point_cast_wire.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/skill_link_wire.cpp)   # [gestures] skill_link: the skills to BodyWalk, its casts back (vr/skill_link.h)   # [gameplay] teleport_circle: a point skill's press held for an arc and a circle (vr/point_cast.h)
+target_sources(d2rl-vrcam PRIVATE vr/bodywalk_start.cpp)   # [openxr] gesture_overlay: the Gestures tab's Start BodyWalk (the copy D2R VR Setup put in, never a second one)
+target_sources(d2rl-vrcam PRIVATE vr/gesture_engine_lib.cpp vr/gesture_engine_wire.cpp)   # [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll, shared/gesture_engine_abi.h)
 target_sources(d2rl-vrcam PRIVATE vr/bow_pitch_wire.cpp)   # [bow] pitch_aim: the scene a bow's shot is decided in (vr/bow_pitch.h), the heading the aim hooks give it
 target_sources(d2rl-vrcam PRIVATE vr/arrow_flight_wire.cpp)   # [bow] arrow_flight: the hero's shot arrow drawn by us (vr/arrow_flight.h), on the potion hide's renderer hooks
 # [bow] quiver (vr/bow_quiver.h): the bow skill table, the glow and the arrow's element: bow_quiver_test (its old request-machine checks gave way to bow_quiver_armed_test)

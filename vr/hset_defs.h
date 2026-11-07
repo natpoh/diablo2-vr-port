@@ -260,6 +260,9 @@ inline constexpr Def kDefs[] = {
     // [hud] swing_timer (vr/swing_timer.h): the ring after each attack until the game lets the next one in, the blow's outcome inside (style / numbers: Settings)
     {L"hud", L"swing_timer", "Swing timer", "A ring shows when the next attack counts (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
+    // [hud] swing_timer_reasons (vr/swing_reason.h, Serg 2026-11-06): in the same ring, why a touch was no attack - shaft, slow, short, wrong way ...
+    {L"hud", L"swing_timer_reasons", "Swing timer: why not", "Shaft, slow, short, wrong way ... in the ring (F4)",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
     //
     // Left and Right (the Controls tab's two pages): the key bindings, lines of [direct] (the plugin's own controls, vr/direct_layout.h): the value is a pick of the
     // list D2R VR Settings shows (vr/direct_remap.h, named for the box in vr/hset_keys.h), min / max / def are not used (the list's length is

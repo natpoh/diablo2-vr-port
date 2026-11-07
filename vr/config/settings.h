@@ -112,6 +112,7 @@ struct Settings {
     std::atomic<float> ownMinPx{24.0f};   // [hud] labels_own_min_px: our labels and names never smaller than this, px of the eye (ownlabels::MinScale)   // [hud] labels_own_*: our labels' size by distance (ownlabels::CurveK)
     std::atomic<bool>  monsterNamesOwn{false};
     std::atomic<bool>  npcNamesOwn{false};
+    std::atomic<bool>  ownDropGame{false};     // [hud] own_labels_drop_game: with ours on, the game's label / plate / hover layer not drawn at all (vr/hud/labels.cpp DropGameLayer)
     std::atomic<bool>  ownLabelsDump{false};   // [debug] own_labels_dump: our atlas to d2rloader\logs\d2r_vr_own_labels.bmp once (view only)
     std::atomic<float> namesSize{100.0f}, namesFar{60.0f}, namesAlpha{0.0f};   // [hud] names_own_size_pct / _far_pct / _alpha: our names' own (ownnames::NameLook)     // [hud] npc_names_own: F4, the hover names over NPCs, objects, portals drawn by us, sharp (vr/own_names.h) // [hud] monster_names_own: F4, the names in the plate over the target drawn by us, sharp (vr/own_names.h)
     std::atomic<bool>  labelsOwn{false};       // [hud] labels_own: F4, the item labels drawn by us, sharp, in the game's places, at their items' depth (vr/own_labels.h)
@@ -356,6 +357,7 @@ struct Settings {
     std::atomic<bool>  teleportCircle{true};   // [gameplay] teleport_circle: the point skills (Teleport, Fire Wall, Meteor ...) by a tap where the head looks, by a hold to an arc's circle (F4); off = the game's
     std::atomic<bool>  leapArc{false};         // [gameplay] leap_arc: Leap and Leap Attack on the arc too (off: leap_by_gaze alone)
     std::atomic<bool>  leapArcHead{false};     // [gameplay] leap_arc_head: their arc from the drawn hero's belly, aimed by the head (off: from the weapon or the hand)
+    std::atomic<bool>  leapAirAim{false};      // [gameplay] leap_air_aim: with leap_arc, a hold let go in a leap's air aims the NEXT leap - the circle kept in the world, the button held through the landing (vr/leap_air_aim.h)
     std::atomic<float> leapHeadGain{pointcast::kDefaultHeadGain};   // [gameplay] leap_head_gain: the head's tilt times this aims it (0.5 .. 4; 2 = as far with half the tilt)
     std::atomic<float> pointMaxCells{pointcast::kDefaultCapCells};   // [gameplay] point_max_cells: the circle's farthest from the hero (held to 3 .. 48)
     std::atomic<float> pointArcHeightPct{pointcast::kDefaultHeightPct};   // [gameplay] point_arc_height: the arc drawn this % of the throw's own rise (0 .. 100)
@@ -404,6 +406,7 @@ struct Settings {
     std::atomic<float> fistOpen[8] = {20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f};
     std::atomic<bool>  fist{true};          // [hands] fist: a free hand closes with its controller's grip, relaxes when let go
     std::atomic<bool>  shieldFist{true};    // [hands] shield_fist: the hand with a shield on it does the same (F4 only; the fingers only)
+    std::atomic<bool>  leftSlotDrawn{true}; // [hands] left_slot_drawn_left: a weapon alone in the left slot drawn in the hand that holds it, not the game's right (F4 only; vr/drawn_hand.h)
     std::atomic<bool>  forearmTwist{true};  // [hands] forearm_twist: the forearm turns with the wrist (F4 only)
     std::atomic<float> forearmShare{0.5f};  // [hands] forearm_twist_share: how much of the wrist's roll the forearm bone takes, 0..1
     std::atomic<bool>  shieldForearm{true}; // [shield] forearm: the shield strapped to the left forearm, not hung on the hand (F4 only)
@@ -516,6 +519,7 @@ struct Settings {
     std::atomic<bool>  weightGrabWrap{true};        // [weight] grab_wrap: a holding hand laid on the body, its fingers closed round it (the grip library)
     std::atomic<bool>  weightGrabItems{false};      // [weight] grab_items: an empty hand's grip on an item on the ground picks it up through the game's own pick-up (vr/item_grab.h)
     std::atomic<float> weightGrabItemsReachCm{25.0f};   // [weight] grab_items_reach_cm: the palm this near an item's place on the ground
+    std::atomic<bool>  weightGrabItemsEmptyGrip{true};  // [weight] grab_items_empty_grip: an empty hand's grip alone picks up the pointed item (vr/empty_grip.h)
     std::atomic<float> weightThrownFlyMs{3000.0f};  // [weight] thrown_fly_ms: a thrown weapon's model flies at most this long after the release
     std::atomic<float> weightThrowReachPct{800.0f}; // [weight] throw_reach_pct: the horizontal release velocity x this (a real arm throws a few metres)
     std::atomic<float> weightThrowMaxCells{48.0f};  // [weight] throw_max_cells: the landing is held to this many cells from the hero (the game refuses > 50 on an axis)

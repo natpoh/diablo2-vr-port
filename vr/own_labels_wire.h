@@ -34,7 +34,7 @@ void SetFaceSource(const wchar_t* (*fn)());
 void SetTitleFaceSource(const wchar_t* (*fn)());
 
 // [debug] own_labels_dump: the atlas as it is now to a .bmp (32-bit, its alpha kept) - our names and labels as painted, to hold against the game's.
-bool DumpAtlas(const wchar_t* path);
+bool DumpAtlas(const wchar_t* path, int* err = nullptr);   // err: errno of the failed open/write, -1 the atlas empty
 
 // Tests: wait until the worker has painted everything queued (true) or `ms` passed.
 bool Drain(int ms);

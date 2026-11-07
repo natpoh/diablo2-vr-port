@@ -11,6 +11,7 @@
 // The window is kW x kH reference pixels (the picture is painted at exactly that size); a point arrives as u, v in 0..1 (u right,
 // v down) and is turned into pixels here.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 
@@ -90,13 +91,16 @@ constexpr PRect kHintLine{160.0f, 888.0f, 1440.0f, 926.0f};      // and what to 
 // -- the tab strip -------------------------------------------------------------------------------------------------------------------
 // With [openxr] headset_settings on, the title plate of the window's top level holds two tabs - SKILLS and SETTINGS - in place of its
 // title; the editor's pages (choose a slot, choose a skill) keep their titles, and the strip is not there.
-constexpr int kTabCount = 2;
+// [openxr] gesture_overlay (F4) adds a third tab, GESTURES (vr/gesture_overlay.h): `count` 3, the three a little narrower so they fit the plate.
+constexpr int kTabCount = 2, kTabCountMax = 3;
 constexpr float kTabW = 400.0f, kTabGap = 28.0f;
-inline PRect TabRect(int i) {
-    const float l = 0.5f * (kW - (kTabCount * kTabW + (kTabCount - 1) * kTabGap)) + i * (kTabW + kTabGap);
-    return {l, 44.0f, l + kTabW, 100.0f};
+inline float TabWidth(int count) { return count >= 3 ? 380.0f : kTabW; }
+inline PRect TabRect(int i, int count = kTabCount) {
+    const float w = TabWidth(count);
+    const float l = 0.5f * (kW - (count * w + (count - 1) * kTabGap)) + i * (w + kTabGap);
+    return {l, 44.0f, l + w, 100.0f};
 }
-inline Cell TabCell(int i) { return i == 0 ? wheel::kTabSkills : wheel::kTabSettings; }
+inline Cell TabCell(int i) { return i == 0 ? wheel::kTabSkills : i == 1 ? wheel::kTabSettings : wheel::kTabGestures; }
 
 // -- the flip hints ------------------------------------------------------------------------------------------------------------------
 // The window flips like pages (a stick's flick, a grip's tap: vr/wheel_flip.h): an arrow at its left and right edge, where there is a place back /
@@ -199,13 +203,17 @@ inline bool RectOf(Page page, int cell, int options, PRect* out) {
 // is there (the top level only); `settings`: and the Settings tab is the one shown - then only the strip is hit here (the pages are the
 // settings model's: vr/hset_model.h HitTest on SheetPoint). `strip`: the category strip is shown (the editor's grid page); `runWalk`: the RUN / WALK
 // tile is there (the top level's Skills tab); `flipHigh`: the Settings tab's flip arrows stand at its page tabs' row (kFlipHigh, the game look).
+// `tabCount`: 3 with the Gestures tab (vr/tiles_geom.h TabRect); `gestures`: it is the one shown - then only the strip is hit here (the tab's
+// screens are vr/gesture_overlay.h's, hit by its own test), no flip arrow.
 inline int HitTest(Page page, float u, float v, int previous, int options, bool tabs = false, bool settings = false, bool strip = false,
-                   bool runWalk = false, bool flipHigh = false) {
+                   bool runWalk = false, bool flipHigh = false, int tabCount = kTabCount, bool gestures = false) {
     if (!std::isfinite(u) || !std::isfinite(v) || u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return wheel::kNone;
     const float x = u * kW, y = v * kH;
     if (tabs && page == Page::Wheel) {
-        for (int i = 0; i < kTabCount; ++i)
-            if (Has(TabRect(i), x, y)) return TabCell(i);
+        const int n = std::clamp(tabCount, kTabCount, kTabCountMax);
+        for (int i = 0; i < n; ++i)
+            if (Has(TabRect(i, n), x, y)) return TabCell(i);
+        if (gestures) return wheel::kNone;
         for (int i = 0; i < 2; ++i)
             if (Has(FlipRect(i, flipHigh && settings), x, y)) return FlipCell(i);
         if (settings) return wheel::kNone;

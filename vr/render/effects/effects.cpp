@@ -4,6 +4,7 @@
 // into per-feature uniform writers is a change of code, later). What it gives: vr/render/effects/effects.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
 #include "../../flatvr_feed.h"   // [render] flatvr_feed: FlatVR's picture and depth without ReShade
+#include "../../resize_drain.h"   // [render] resize_drain: the GPU drained before the game resizes or releases DLSS, no stale replay
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -142,6 +143,9 @@ int __cdecl HookEval(void* cmdList, const NgxHandle* h, const void* params, void
     return OrigEval(cmdList, h, params, callback);
 }
 int __cdecl HookRelease(NgxHandle* h) {
+    // [render] resize_drain: the game releases a feature (a DLSS mode or render size change in its video options) after waiting for its own
+    // frame - not for our replay of that frame, which evaluates this feature again (and the pass now recorded would): drained first, not replayed
+    resizedrain::Event(resizedrain::Why::kDlssRelease);
     NgxHandle* twin = nullptr;
     AcquireSRWLockExclusive(&g_lock);
     for (size_t i = 0; i < g_twins.size(); ++i)
@@ -456,6 +460,7 @@ template <class RT> bool OwnLabelUpload(void* ctx, const uint32_t* px, int w, in
     u->rt->update_texture(u->tv, (uint32_t)w, (uint32_t)h, px);
     return true;
 }
+bool g_namesFrameOn = false;   // our plate drawn this frame (OwnNamesUniforms): the game's plate is hidden (PlateAt w 2)
 // Each eye's overlay camera as the effect last set it (the phantom block below, every frame): for the names' one-time per-eye dump (OwnNamesUniforms).
 struct NamesCam { bool ok = false; float off[3] = {}, axes[9] = {}, proj[4] = {}; };
 NamesCam g_namesCam[2];
@@ -631,15 +636,7 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
         const reshade::api::effect_texture_variable tv = OwnLabelTexNow(rt);
         ownnames::Text t[ownnames::kMax];
         int n = on ? NamesTake(t) : 0;
-        if (depth.head) {   // over the head in the world: one of each of the plate's lines (the copies the game draws in two places are one line there)
-            int kept = 0;
-            for (int i = 0; i < n; ++i) {
-                bool dup = false;
-                for (int j = 0; j < kept; ++j) dup = dup || t[j].which == t[i].which;
-                if (!dup) t[kept++] = t[i];
-            }
-            n = kept;
-        }
+        if (depth.head) n = ownnames::OneCopyOfEach(t, n, plate ? px : nullptr);   // over the head: one copy of the plate (its lines as the game stands them)
         const int nPlate = n;
         if (hover) n += HoverTake(t + n, ownnames::kMax - n);   // [hud] npc_names_own: the hover names, drawn where the game drew them
         if (nPlate && !toldText) {
@@ -659,9 +656,10 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
             rt->get_screenshot_width_and_height(&bw, &bh);
             uint8_t special = 0;
             const bool known = NamesTargetKind(&special);
-            ownlabels::Want wants[ownnames::kMax];
+            ownlabels::Want wants[ownnames::kMax + 2];   // (+ our plate's frame and its life bar)
             int idx[ownnames::kMax], m = 0;
             static int toldOut = 0;
+            const bool hidden = NamesTargetHidden();   // [hud] ordinary_mob_bars on and an ordinary monster: no plate of ours either, as the game's
             bool in[ownnames::kMax] = {};
             float grow[ownnames::kMax] = {};   // labels_own_min_px: how much larger than the game's text ours stands (in the plate: on top of its size)
             for (int i = 0; i < n; ++i) {
@@ -670,10 +668,17 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
                 const char code = ownlabels::StripCodes(t[i].raw, sizeof t[i].raw, w.text, sizeof w.text);
                 if (!w.text[0]) continue;
                 const bool hoverName = t[i].which == ownnames::kWhichHover;
-                in[m] = !hoverName && plate && ownnames::InPlate(t[i].box, px);   // in the plate's box: drawn with the plate (its depth, size, opacity); else where the game drew it
-                if (!hoverName && !in[m] && toldOut < 3 && ++toldOut)
-                    LogF("vrcam: [hud] monster_names_own - the plate's text \"%s\" drawn at %d,%d %dx%d, outside the plate's box %.0f,%.0f-%.0f,%.0f px: ours drawn where it is",
-                         w.text, t[i].box[0], t[i].box[1], t[i].box[2], t[i].box[3], px[0], px[1], px[2], px[3]);
+                if (hoverName) ownlabels::IconsToKeys(w.text, &w.keys);   // (the NPC's (A): our 'A' in the game's green)
+                if (!hoverName && hidden) continue;
+                in[m] = !hoverName && plate && ownnames::InPlate(t[i].box, px);   // in the plate's box
+                // Not over the head (no target to stand on this frame): only the copy in the plate's box is ours - a copy elsewhere (the game's top place, 793,219:
+                // the game does not show it) drawn by us showed the name high up and to the side (0.205.13, Serg's screenshot "Zombie / Undead" up-left)
+                if (!hoverName && !depth.head && !in[m]) {
+                    if (toldOut < 3 && ++toldOut)
+                        LogF("vrcam: [hud] monster_names_own - the plate's text \"%s\" drawn at %d,%d %dx%d, outside the plate's box %.0f,%.0f-%.0f,%.0f px and not over the head: left the game's",
+                             w.text, t[i].box[0], t[i].box[1], t[i].box[2], t[i].box[3], px[0], px[1], px[2], px[3]);
+                    continue;
+                }
                 if (!ownlabels::CodeColour(code, w.rgb)) {   // a code in the text, else the colour the plate was given, else the target's kind
                     if (t[i].rgbKnown) std::copy_n(t[i].rgb, 3, w.rgb);
                     else if (hoverName) w.rgb[0] = w.rgb[1] = w.rgb[2] = 1.0f;   // (a hover name: white, as the game's, unless it carries a code)
@@ -687,19 +692,101 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
                 ownnames::NameBackdrop(look.alpha, w.bg);
                 w.bold = true;     // larger letters (bold only in our own face)
                 w.font = t[i].font;   // the game's own face for it (its style's font)
+                if (t[i].box[3] > 0) {   // ... and its letter spacing: as wide as the game measured this line (its padding spaces counted)
+                    w.gameWPerH = (float)t[i].box[2] / (float)t[i].box[3];
+                    int pad = 0;
+                    for (const char* c = t[i].raw; *c == ' '; ++c) ++pad;
+                    const size_t len = strlen(t[i].raw);
+                    for (size_t e = len; e > 0 && t[i].raw[e - 1] == ' '; --e) ++pad;
+                    w.padSpaces = (uint8_t)std::min(pad, 16);
+                }
                 grow[m] = ownnames::NameK(look, depth.groundM, !hoverName && depth.groundM >= 0.0f, g_set.ownNearM.load(), g_set.ownFarM.load());
                 w.heightPx = ownlabels::StepPx((float)t[i].box[3] / H * (float)bh * grow[m]);
                 idx[m++] = i;
             }
-            ownlabels::Cell got[ownnames::kMax];
+            ownlabels::Cell got[ownnames::kMax + 2];
             OwnLabelUp<RT> up{rt, tv};
-            float lineH[3] = {}, lineLift[3] = {};   // the plate's lines stacked over the head: the name on top
+            float lineH[3] = {}, lineLift[3] = {};   // the plate's lines over the head: the name in our plate, the others under it
+            float nameW = 0.0f;
             if (depth.head)
                 for (int j = 0; j < m; ++j)
-                    if (t[idx[j]].which >= 0 && t[idx[j]].which < 3) lineH[t[idx[j]].which] = (float)t[idx[j]].box[3] / H * (float)bh * grow[j];
-            ownnames::StackLines(lineH, 2.0f, lineLift);
-            if (m && bw && bh && ownlabels::Resolve(wants, m, got, &g_ownUpRev, &OwnLabelUpload<RT>, &up) > 0)
-                for (int j = 0; j < m; ++j) {
+                    if (t[idx[j]].which >= 0 && t[idx[j]].which < 3) {
+                        const ownnames::Text& tx = t[idx[j]];
+                        lineH[tx.which] = (float)tx.box[3] / H * (float)bh * grow[j];
+                        if (tx.which == 0 && tx.box[3] > 0)   // (the name's width from the game's own measure of it, at our height, and the cell's room)
+                            nameW = lineH[0] * (float)tx.box[2] / (float)tx.box[3] + 2.0f * ownlabels::PadX((int)lineH[0]);
+                    }
+            // Our plate (Serg, 0.205.13: "draw our own life bar, in the game's style"): the game's frame and red bar at our point, the name on the bar, the
+            // other lines under the plate - over the head, with the life the plate was told; the game's plate is hidden while ours is there.
+            float life = -1.0f;
+            bool uniqueFrame = false;
+            const bool plateOurs = depth.head && lineH[0] > 0.0f && NamesTargetPlate(&life, &uniqueFrame);
+            ownnames::PlateLayout lay;
+            int framePiece = -1, lifePiece = -1;
+            {
+                const float under[3] = {0.0f, lineH[1], lineH[2]};   // (the lines under the plate: stacked from the point up)
+                ownnames::StackLines(under, 2.0f, lineLift);
+                const float lowH = (lineH[1] > 0.0f ? lineH[1] + 2.0f : 0.0f) + (lineH[2] > 0.0f ? lineH[2] + 2.0f : 0.0f);
+                if (plateOurs) {
+                    // the game's own proportions: its bar (the plate's rect times the interface scale), its name's height, its lines' offsets from the name
+                    ownnames::GamePlate gp;
+                    int32_t pr[4];
+                    float s = g_uiScaleSeen.load();
+                    if (!(s > 0.05f && s < 20.0f)) s = GameUiScaleNow();
+                    int nameAt = -1;
+                    for (int j = 0; j < m; ++j)
+                        if (t[idx[j]].which == 0) nameAt = idx[j];
+                    if (nameAt >= 0 && s > 0.05f && gamestate::PlateRect(pr) && plateworld::SanePlate(pr)) {
+                        gp.nameBoxH = (float)t[nameAt].box[3];
+                        gp.barW = pr[2] * s;
+                        gp.barH = pr[3] * s;
+                        for (int j = 0; j < m; ++j) {
+                            const ownnames::Text& tx = t[idx[j]];
+                            if (tx.which < 1 || tx.which > 2) continue;
+                            gp.line[tx.which] = true;
+                            gp.lineDy[tx.which] = (tx.box[1] + 0.5f * tx.box[3]) - (t[nameAt].box[1] + 0.5f * t[nameAt].box[3]);
+                        }
+                    }
+                    ownnames::GameLayout gl;
+                    if (ownnames::LayOutGamePlate(lineH[0], gp, lineH, &gl)) {
+                        lay = gl.plate;
+                        for (int i = 0; i < 3; ++i) lineLift[i] = gl.lineLift[i];
+                    } else {   // (no rect or scale this frame: our own stack - the lines under the plate)
+                        lay = ownnames::LayOutPlate(lineH[0], nameW, lowH > 0.0f ? lowH - 2.0f : 0.0f, 2.0f);
+                        lineLift[0] = lay.nameLift;
+                    }
+                    ownlabels::Want& fw = wants[m];
+                    fw = ownlabels::Want{};
+                    fw.piece = uniqueFrame ? ownlabels::kPieceFrameUnique : ownlabels::kPieceFrameNormal;
+                    fw.heightPx = ownlabels::StepPx(lay.frameH);
+                    fw.widthPx = std::max(fw.heightPx, (int)std::lround(lay.frameW * fw.heightPx / std::max(lay.frameH, 1.0f) / 8.0f) * 8);
+                    framePiece = m++;
+                    ownlabels::Want& lw = wants[m];
+                    lw = ownlabels::Want{};
+                    lw.piece = ownlabels::kPieceLife;
+                    lw.heightPx = ownlabels::StepPx(lay.fill[3] - lay.fill[1]);
+                    lw.widthPx = 64;
+                    lifePiece = m++;
+                } else {
+                    float all[3] = {lineH[0], lineH[1], lineH[2]};
+                    ownnames::StackLines(all, 2.0f, lineLift);   // (no plate of ours: the lines stacked over the head, the name on top)
+                }
+            }
+            const int mText = plateOurs ? m - 2 : m;
+            float frameAt[4] = {}, frameRect[4] = {}, frameCell[4] = {}, fillRect[4] = {}, fillCell[4] = {};
+            bool frameOn = false;
+            if (m && bw && bh && ownlabels::Resolve(wants, m, got, &g_ownUpRev, &OwnLabelUpload<RT>, &up) > 0) {
+                if (plateOurs && got[framePiece].w && got[lifePiece].w) {
+                    frameOn = true;
+                    for (int c = 0; c < 3; ++c) frameAt[c] = depth.at[c];
+                    frameAt[3] = 1.0f;
+                    std::copy_n(lay.frame, 4, frameRect);
+                    std::copy_n(lay.fill, 4, fillRect);
+                    fillRect[2] = fillRect[0] + ownnames::FillWidth(lay, 1.0f);
+                    ownlabels::CellUv(got[framePiece], ownlabels::kAtlasW, ownlabels::kAtlasH, frameCell);
+                    ownlabels::CellUv(got[lifePiece], ownlabels::kAtlasW, ownlabels::kAtlasH, fillCell);
+                }
+                for (int j = 0; j < mText; ++j) {
                     const ownnames::Text& tx = t[idx[j]];
                     const float tb[4] = {tx.box[0] / W, tx.box[1] / H, (tx.box[0] + tx.box[2]) / W, (tx.box[1] + tx.box[3]) / H};
                     if (!got[j].w || !ownlabels::CentredRect(tb, got[j].w, got[j].h, (float)bw, (float)bh, rects + k * 4, grow[j])) continue;
@@ -716,18 +803,40 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
                     NamesMark(ownnames::KeyOf(tx.raw));
                     ++k;
                 }
+            }
+            SetFloats(rt, "PlateFrameAt", frameAt, 4);
+            if (frameOn) {
+                SetFloats(rt, "PlateFrameRect", frameRect, 4);
+                SetFloats(rt, "PlateFrameCell", frameCell, 4);
+                SetFloats(rt, "PlateFillRect", fillRect, 4);
+                SetFloats(rt, "PlateFillCell", fillCell, 4);
+                SetFloat(rt, "PlateLife", life);
+            }
+            g_namesFrameOn = frameOn;   // (the game's plate hidden while ours is there: the caller's PlateAt)
+            static bool toldPlate = false;
+            if (frameOn && !toldPlate) {
+                toldPlate = true;
+                LogF("vrcam: [hud] monster_names_own - our plate over the head: %s frame %.0fx%.0f px, life %.0f %%, the name %.0f px tall; the game's plate hidden",
+                     uniqueFrame ? "the unique" : "the normal", lay.frameW, lay.frameH, life * 100.0f, lineH[0]);
+            }
             {   // [debug] own_labels_dump: once our names are shown, the atlas to d2rloader\logs\d2r_vr_own_labels.bmp (beside the log), to hold against the game's text
+                static int dumpTries = 0;   // (a write that fails says why and is tried again, three times)
                 static bool dumped = false;
-                if (g_set.ownLabelsDump.load() && !dumped) {
-                    dumped = true;
+                if (g_set.ownLabelsDump.load() && !dumped && dumpTries < 3) {
+                    ++dumpTries;
                     wchar_t path[MAX_PATH] = L"";
                     HMODULE self = nullptr;
                     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCWSTR>(&OwnLabelTexNow<RT>), &self);
                     GetModuleFileNameW(self, path, MAX_PATH);
                     if (wchar_t* slash = wcsrchr(path, L'\\')) slash[1] = 0;
                     wcscat_s(path, L"..\\logs\\d2r_vr_own_labels.bmp");
-                    const bool ok = ownlabels::DumpAtlas(path);
-                    LogF("vrcam: [debug] own_labels_dump - our labels' atlas %s %ls", ok ? "written to" : "NOT written to", path);
+                    wchar_t full[MAX_PATH] = L"";
+                    GetFullPathNameW(path, MAX_PATH, full, nullptr);
+                    int err = 0;
+                    const bool ok = ownlabels::DumpAtlas(full[0] ? full : path, &err);
+                    dumped = ok;
+                    LogF("vrcam: [debug] own_labels_dump - our labels' atlas %s %ls%s%s", ok ? "written to" : "NOT written to", full[0] ? full : path,
+                         ok ? "" : " - ", ok ? "" : (err == -1 ? "the atlas is empty yet" : strerror(err)));
                 }
             }
             static bool toldEyes = false;   // once: each eye's x of our name and of the game's plate - the evidence for "left in one eye, right in the other"
@@ -1688,6 +1797,7 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     EffectsFinish(g_fx);
 }
 void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
+    pipehunt::OnPresent();   // [debug] patch_hunt 8 / Ctrl+F10: a pipe trace starts or ends at the game's present
     if (!q) return;
     ID3D12Device* dev = nullptr;
     if (FAILED(q->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) || !dev) return;
@@ -1713,6 +1823,7 @@ void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     Effects(dev, q, bb);   // [render] native_effects: the sky and the fog into the back buffer, before it goes to the headset
     g_effUs += UsNow() - t1;
     PresentCommon(nullptr, wnd, dev, q, bb, w, h);
+    capture::OnPresent(dev, q, bb);   // the capture key: the picture as it goes out, and the presents' times
     g_cpuUs += UsNow() - t0;
     ++g_timed;
     Tell();
@@ -1720,6 +1831,8 @@ void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     dev->Release();
 }
 void SwapChainChanged() { scenedepth::g_cache.SwapChainChanged(); }
+// [render] resize_drain: the game's swap chain is about to be resized (its old buffers still alive) - vr/resize_drain.h
+void BeforeResize() { resizedrain::Event(resizedrain::Why::kResize); }
 void BindDepth(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colour) {
     scenedepth::OnBindNative(ds, colour);
     renderscale::OnBindNative(cl, ds);
@@ -1745,16 +1858,19 @@ void GraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d,
     fogheight::OnGraphicsPso(dev, d, pso);
     fogfx::OnGraphicsPso(dev, d, pso);
     refleye::OnGraphicsPso(dev, d, pso);   // [render] reflections_per_eye: the reflections' resolve
+    pipehunt::OnGraphicsPso(d, pso);       // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10's pipe trace: its pixel shader's hash
 }
 void ComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     lightbounds::OnComputePso(dev, d, pso);
     refleye::OnComputePso(dev, d, pso);   // [render] reflections_per_eye: the reflections' projection pass
+    pipehunt::OnComputePso(d, pso);
 }
 void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnStreamPso(dev, d, pso);
     fogfx::OnStreamPso(dev, d, pso);
     lightbounds::OnStreamPso(dev, d, pso);   // [render] light_bounds_fix without ReShade: the light bins' compute pipeline, if made from a stream
     refleye::OnStreamPso(dev, d, pso);       // [render] reflections_per_eye: either reflection pass, if made from a stream
+    pipehunt::OnStreamPso(d, pso);
 }
 // a pipeline the game binds: [render] light_bounds_fix's light bins (compute), then [fog] game_fog_height's fog pass (graphics)
 // and [render] reflections_per_eye's two reflection passes
@@ -1764,6 +1880,7 @@ void Install() {
     natived3d::Sinks k;
     k.present = &Present;
     k.swapChainChanged = &SwapChainChanged;
+    k.beforeResize = &BeforeResize;
     k.bindDepth = &BindDepth;
     k.barrier = &Barrier;
     k.viewport = &Viewport;
@@ -1778,6 +1895,13 @@ void Install() {
     lightbounds::SetLog(&Log);
     refleye::SetLog(&Log);   // [render] reflections_per_eye: the reflections' two passes, copies bound in their place (vr/reflections_eye.h)
     k.computePso = &ComputePso;
+    // [debug] skip_pipeline / patch_hunt 8, [render] skip_shaders, Ctrl+F10's pipe trace: a game pass left out by its pipeline (vr/pipe_hunt.h)
+    pipehunt::SetLog(&Log);
+    k.huntBound = &pipehunt::OnBound;
+    k.huntSkip = &pipehunt::Skip;
+    k.huntTargets = &pipehunt::OnTargets;
+    k.huntViewport = &pipehunt::OnViewport;
+    k.captureBarrier = &capture::OnBarrier;   // the capture's intermediate targets (vrcapture targets)
     // [fog] game_fog_before_fx: the lists' bindings followed and the step recorded before the transparent resolve - its hooks only when the key
     // is on at the start (a list's state is followed from its first Reset); switched on later, from the next start
     fogfx::SetLog(&Log);
@@ -2426,7 +2550,22 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             SetFloat(rt, "PlateAlpha", pu.alpha);
             SetFloat(rt, "PlateScale", pu.scale);
             nd.plateShift = plateShift;   // (the per-eye dump: where the game's plate stands in each eye)
+            NamesSet3d(nd.head);   // (the text hook: over the head, every copy is ours to stand in for; else only the one in the plate's box)
+            {   // the game's plate hidden while our own plate stands over the head (D2R_DepthFog.fx PlateAt w 2; last frame's: ours is made below)
+                // (every frame while our names are on - not only the frames ours is drawn: a new target's first frame, a frame the hook missed showed theirs)
+                const float at[4] = {nd.at[0], nd.at[1], nd.at[2], ownnames::GamePlateHidden(MonsterNamesOwnNow(), pu.own) ? 2.0f : 0.0f};
+                SetFloats(rt, "PlateAt", at, 4);
+                static bool toldFx = false;
+                if (nd.head && !toldFx) {
+                    toldFx = true;
+                    const bool hasAt = rt->find_uniform_variable("D2R_DepthFog.fx", "PlateAt").handle != 0;
+                    LogF("vrcam: [hud] monster_names_own - the effect %s PlateNameAt and %s PlateAt (our name over the head, the game's plate under it)%s",
+                         rt->find_uniform_variable("D2R_DepthFog.fx", "PlateNameAt").handle ? "has" : "has NO", hasAt ? "has" : "has NO",
+                         hasAt ? "" : " - an older D2R_DepthFog.fx: copy the new one in with the DLL");
+                }
+            }
             OwnNamesUniforms(rt, srv, pu.own ? box : kNoBox, pu.scale, nd);
+            if (!MonsterNamesOwnNow()) g_namesFrameOn = false;
             float allies[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             if (alliesHidden && sw && sh) AlliesBoxUv(sw, sh, allies, hideUnits);   // (moved off the picture below: its place left empty)
             else if (AlliesMoved() && sw && sh) AlliesBoxUv(sw, sh, allies);

@@ -3,8 +3,14 @@
 // это важно для вр»). Three parts under one tick:
 //   1. the blow on the animation's first frame: the server's scheduler of a mode's frame events 0x491240 (called by the attack modes' start
 //      0x42A8B0) reads the AnimData record at [unit+0x70] and queues each event of the frames as a MODECHANGE event on its game frame; for a
-//      plain attack (modes 7 / 8) of a hero it is handed, for that call only, a copy of the record whose events are moved to frame 0 by the first
-//      action frame's number (ShiftEvents). The blow then lands on the next server frame (~40 ms) instead of 6-10 frames later. The animation's
+//      plain attack (modes 7 / 8) of a hero it is handed, for that call only, a copy of the record whose events are moved so the first action
+//      lands on the ATTACK'S START FRAME (ShiftEvents) - the first frame the scheduler reads. The scheduler does not start at frame 0: it starts
+//      at 0x34B760(unit), the game's start frame of an attack (modes 7 / 8 / 15 / 16) from its table [weapon class][hero class] at 0x1D00E20:
+//      the Amazon and the Sorceress start at frame 1 bare-handed and at 2 with weapon classes 2 - 6, every other class at 0. It reads the
+//      frames from there on (that frame included, queued for the next server frame); a flag below it is never read. Moved to frame 0
+//      (0.204 - 0.206.6) or 1 (0.206.7) the Amazon's sword blow (AMA11HS / AMA21HS, start frame 2) was below her start and never fired: no
+//      trigger, no roll - [debug] quick_blow_probe 0.206.7: "MODECHANGE pending for 0" = no event queued at all. The Barbarian starts at 0, so
+//      his blows landed. The blow now lands one server frame (~40 ms) after the start for every class. The animation's
 //      length ([unit+0x64], not the record) and its end event stay: the attack rate, IAS and the gates are the game's;
 //   2. the swing does not stop the hero: vr/attack_path.h's walk in the attack (the hero's path goes on in his attack mode, as Whirlwind's) in
 //      F4 too, at a walk or a run as the toggle says; the blow goes to the monster the attack was started on (the one the blade touched);
@@ -28,22 +34,51 @@ constexpr size_t kRecordBytes = 160, kEventsAt = 0x10, kMaxFrames = 144, kFrames
 // The event codes the scheduler queues: 1 the attack, 2 the missile (0x42A940 makes the action for both), 3 and 4 the game's others.
 inline bool ActionEvent(uint8_t code) { return code == 1 || code == 2; }
 
-// The record's events moved to frame 0 by the first action frame's number: out[i] = in[i + shift], the tail emptied. -1: no action event in
-// the first `frames` (nothing to move); 0: the action is on frame 0 already. `out` gets the whole record (name, frames, speed) either way.
-inline int ShiftEvents(const uint8_t* in, uint8_t* out) {
+// ShiftEvents: nothing moved (no action event in the record's frames, or the start frame past them).
+constexpr int kNoAction = -1000;
+// The record's events moved so the first action lands on `start` - the attack's start frame, the game's 0x34B760(unit), the first frame its
+// scheduler reads: out[i] = in[i + shift], shift = the action's frame - start, emptied where nothing comes. The events keep their order and
+// distances (a dual-wield row's second blow too). An action BELOW the start frame (a row another tick cut too early, e.g. quick strike's frame 1
+// for the Amazon's start 2) is moved up to it: below it the game never reads it. Returns the shift (> 0 moved earlier, < 0 moved later, 0
+// already on the start frame) or kNoAction. `out` gets the whole record (name, frames, speed) either way.
+inline int ShiftEvents(const uint8_t* in, uint8_t* out, uint32_t start) {
     std::memcpy(out, in, kRecordBytes);
     uint32_t frames = 0;
     std::memcpy(&frames, in + kFramesAt, sizeof frames);
     const size_t n = frames > 0 && frames <= kMaxFrames ? frames : kMaxFrames;
+    if (start >= n) return kNoAction;
     const uint8_t* ev = in + kEventsAt;
     size_t first = n;
     for (size_t i = 0; i < n; ++i)
         if (ActionEvent(ev[i])) { first = i; break; }
-    if (first == n) return -1;
-    if (first == 0) return 0;
+    if (first == n) return kNoAction;
+    const int shift = static_cast<int>(first) - static_cast<int>(start);
+    if (shift == 0) return 0;
     uint8_t* o = out + kEventsAt;
-    for (size_t i = 0; i < kMaxFrames; ++i) o[i] = i + first < kMaxFrames ? ev[i + first] : 0;
-    return static_cast<int>(first);
+    for (int i = 0; i < static_cast<int>(kMaxFrames); ++i) {
+        const int j = i + shift;
+        o[i] = j >= 0 && j < static_cast<int>(kMaxFrames) ? ev[j] : 0;
+    }
+    return shift;
+}
+
+// The game's scheduler 0x491240 as read in 3.3.93787 (for the tests and the probe's word): from the start frame S (pos = S << 8), each server
+// frame pos += speed and every animation frame pos passed - S itself on the first - is read; an action (1 / 2) is queued for that server frame.
+// It stops before the frame pos + speed reaches the length (frames << 8). Returns the server frame offset (1 = the next) of the first action
+// queued, 0 none.
+inline int FirstActionAt(const uint8_t* record, uint32_t start, int32_t speed) {
+    uint32_t frames = 0;
+    std::memcpy(&frames, record + kFramesAt, sizeof frames);
+    if (speed <= 0) return 0;
+    const int64_t length = static_cast<int64_t>(frames) << 8;
+    int64_t pos = static_cast<int64_t>(start) << 8;
+    int64_t f = start;
+    for (int at = 1; pos + speed < length; ++at) {
+        pos += speed;
+        for (; f <= (pos >> 8); ++f)
+            if (f < static_cast<int64_t>(kMaxFrames) && ActionEvent(record[kEventsAt + f])) return at;
+    }
+    return 0;
 }
 
 // The plain attacks (attack 1 / 2): Bash, Stun, Berserk, Concentrate ... use them too (their action is the skill's). Not the throw, the kick,
@@ -61,8 +96,9 @@ struct Ask {
     bool sequence = false;    // [unit+0x40]: the events come from a sequence, not from the record
     uint32_t weapon = 0;      // his weapon's kind on our server
     bool record = false;      // [unit+0x70] read
+    bool start = false;       // the attack's start frame read (the game's 0x34B760, found through the scheduler's own call)
 };
-enum class Why : uint8_t { Off, NotHero, View, Mode, Sequence, Weapon, NoRecord, Shift };
+enum class Why : uint8_t { Off, NotHero, View, Mode, Sequence, Weapon, NoRecord, NoStart, Shift };
 inline const char* WhyText(Why w) {
     switch (w) {
     case Why::Off: return "off";
@@ -72,7 +108,8 @@ inline const char* WhyText(Why w) {
     case Why::Sequence: return "a sequence (Zeal, Fury ...)";
     case Why::Weapon: return "a bow or crossbow";
     case Why::NoRecord: return "no AnimData record";
-    case Why::Shift: return "the blow moved to the first frame";
+    case Why::NoStart: return "the attack's start frame not known (the scheduler not as read)";
+    case Why::Shift: return "the blow moved to the attack's start frame";
     }
     return "";
 }
@@ -85,6 +122,7 @@ inline Why Judge(const Ask& a) {
     if (a.sequence) return Why::Sequence;
     if (!QuickWeapon(a.weapon)) return Why::Weapon;
     if (!a.record) return Why::NoRecord;
+    if (!a.start) return Why::NoStart;
     return Why::Shift;
 }
 

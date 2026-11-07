@@ -22,6 +22,20 @@ void Init(const D2RL::PluginContext* ctx);
 // that hand's trigger may pick up (false: the hand holds a crossbow - its trigger shoots, A picks up there).
 void Publish(uint32_t id, uintptr_t unit, int hand, bool inReach, const float rgb[3], bool labelHooksIn, bool triggerOk);
 
+// Why nothing is lit, for the log of a grip + trigger that picked up nothing (Serg, 0.206.5: "the trigger does not pick up", no line at all):
+// NoteScan - PointPickupAnswer's last choice: the items its scan found round the hero, each hand's ray (directinput's order 0 left, 1 right: whether
+// it has one, how far the arm is held out from the head, m) and the arm it needs (m); NoteOtherAnswer - the game's interact target was answered
+// by another of ours before PointPickupAnswer was asked (the hand's body pick of an object or NPC, a barrel's press, the grip's pick-up).
+void NoteScan(int items, const bool rayOk[2], const float armOutM[2], float armNeedM);
+void NoteOtherAnswer(const char* who);
+
+// [weight] grab_items_empty_grip (vr/empty_grip.h): an empty hand's grip alone picks up the lit item. SetEmptyGrip - each pose, the hand's verdict
+// (direct_input's order: 0 left, 1 right; vr/body/arms.cpp); SetItemNear / ItemNear - an item within grab_items' reach of that palm (its pick-up goes
+// first; vrcam's ItemGrabStep). The listener presses on the grip's rising edge of a hand whose verdict is Takes and that has the lit item.
+void SetEmptyGrip(int hand, int why);
+void SetItemNear(int hand, bool isNear);
+bool ItemNear(int hand);
+
 // The labels (the game's UI thread): the highlighted item's unit while fresh (0 none), its look, and that the game laid its label out now.
 uintptr_t Lit();
 bool LitInReach();

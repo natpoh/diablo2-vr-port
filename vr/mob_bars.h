@@ -114,5 +114,6 @@ void NoteViewport(float widthPx, float heightPx);
 // the hook goes in as soon as the game's code reads (it waits for its page to be decrypted). Nothing is hooked otherwise.
 void Install(const D2RL::PluginContext* ctx);
 bool Hooked();
+bool Enabled();   // [hud] ordinary_mob_bars on (an ordinary monster's plate taken off): our own plate follows it (vr/own_names.h)
 
 }  // namespace mobbars

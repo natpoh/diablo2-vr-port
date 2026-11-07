@@ -17,16 +17,28 @@ namespace skilllinkwire {
 // Once, from the plugin's start: the log.
 void Init(const D2RL::PluginContext* ctx);
 
-// The settings load: [gestures] skill_link, and the spare slot (wheel numbering 0..11, -1 = only skills already on a slot are cast).
-void Configure(bool on, int spareSlot);
+// The settings load: [gestures] skill_link, the spare slot (wheel numbering 0..11, -1 = only skills already on a slot are cast), and
+// [gestures] skill_link_settle (default on): a skill put on the spare slot is pressed skilllink::kSettleMs after the game's table shows it
+// there (a margin: pressed at once, the game may refuse it), and every such press is watched turning into a cast.
+void Configure(bool on, int spareSlot, bool settle = true);
 bool On();
 
-// vrcam's timer. play = a game area, first person (F4), no menu.
-void Tick(bool play);
+// vrcam's timer. play = a game area, first person (F4), no menu; heroMode = the hero's unit mode now (vrcam's HeroAnimMode, -1 not
+// known): a press on the spare slot is watched turning into a cast (logged; pressed once more when it does not).
+void Tick(bool play, int heroMode = -1);
 
 // A record wish from inside the game (the skill's id; -1 stops a recording): BodyWalk records a gesture for that skill.
 void RequestRecord(int32_t skill);
 // How BodyWalk's recording stands (BW_LINK_REC_*) and for which skill; NONE without one.
 uint32_t RecordState(int32_t* skill);
+
+// [gestures] engine_in_game (vr/gesture_engine_wire.cpp): the gesture engine in the game needs the hero's class and skills and casts through the same
+// caster - so the tick reads the game and keeps its list while the engine is on, whether or not the skills go to BodyWalk (skill_link).
+void SetEngine(bool on);
+// The list as last made (the Skills block's layout: setKey, setName, the skills) and its revision; false while there is none yet. Any thread.
+bool LatestSkills(BW_LinkSkills* out, uint32_t* revision);
+// The engine recognised a gesture for this skill: cast the game's own way (its slot pressed, or put on the spare slot first), F4 / play only, on the
+// next tick - the same rules as BodyWalk's casts. Any thread.
+void CastFromEngine(int32_t skill);
 
 }  // namespace skilllinkwire

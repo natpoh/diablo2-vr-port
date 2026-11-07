@@ -111,18 +111,18 @@ std::vector<apilayers::Found> Scan() {
 }
 
 
-std::vector<apilayers::Found> Apply(bool block, bool ownCrop, const std::string& list, LogFn log) {
+std::vector<apilayers::Found> Apply(bool block, bool ownCrop, const std::string& list, LogFn log, bool blockCrash, const std::string& crashList) {
     // what we set before is taken back first: a variable that was the player's own before ours is not ours (never put into g_ours)
     for (const std::string& v : g_ours) SetEnvironmentVariableW(Wide(v).c_str(), nullptr);
     std::set<std::string> was;
     was.swap(g_ours);
     std::vector<apilayers::Found> layers = Scan();
-    apilayers::Decide(layers, block, ownCrop, list);
+    apilayers::Decide(layers, block, ownCrop, list, blockCrash, crashList);
     for (apilayers::Found& f : layers) {
         if (!f.turnedOff) continue;
         if (EnvSet(f.manifest.disableEnv)) continue;   // switched off already (by the player, for this process or all)
         if (SetEnvironmentVariableW(Wide(f.manifest.disableEnv).c_str(), L"1")) g_ours.insert(f.manifest.disableEnv);
-        else f.turnedOff = false;
+        else f.turnedOff = f.crashOff = false;
     }
     if (!log) return layers;
     char b[1400];
@@ -134,9 +134,19 @@ std::vector<apilayers::Found> Apply(bool block, bool ownCrop, const std::string&
             continue;
         }
         if (f.asleep) continue;
-        const std::string key = f.manifest.name + (f.turnedOff ? "|off" : f.listed ? "|listed" : "|in") + (ownCrop ? "" : "|rt");
+        const std::string key = f.manifest.name + (f.crashOff ? "|crash" : f.crashListed && !f.turnedOff ? "|crashin" : f.turnedOff ? "|off" : f.listed ? "|listed" : "|in") +
+                                (ownCrop ? "" : "|rt");
         if (!g_told.insert(key).second) continue;
-        if (f.turnedOff)
+        if (f.crashOff)
+            std::snprintf(b, sizeof b, "vrcam: openxr - OpenXR layer %s turned off for D2R VR: it is on [openxr] crash_layers, known to crash the game (2026-11-07: "
+                          "ReShade's OpenXR layer died in dxgi 2.5 s into the session); %s set in the game's process only, the registry and other apps "
+                          "untouched, in every stereo mode ([openxr] block_crash_layers=1; 0 lets it load) - %s",
+                          f.manifest.name.c_str(), f.manifest.disableEnv.c_str(), f.path.c_str());
+        else if (f.crashListed && !f.turnedOff)
+            std::snprintf(b, sizeof b, "vrcam: openxr - OpenXR layer %s (on [openxr] crash_layers, known to crash the game) loads with the game: %s - %s",
+                          f.manifest.name.c_str(), !blockCrash ? "[openxr] block_crash_layers=0" : "its manifest names no variable to switch it off",
+                          f.path.c_str());
+        else if (f.turnedOff)
             std::snprintf(b, sizeof b, "vrcam: openxr - OpenXR layer %s turned off for D2R VR: it is on [openxr] blocked_layers, known to distort the picture drawn our "
                           "own way; %s set in the game's process only, the registry and other apps untouched ([openxr] block_listed_layers=1; "
                           "[openxr] runtime_fov=1 draws as other games do and leaves it in) - %s",

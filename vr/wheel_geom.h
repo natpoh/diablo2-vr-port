@@ -41,6 +41,7 @@ enum Cell : int {
     kFlipNext = 41,      // ... and at its right edge (one place on)
     kCategory0 = 42,     // PickSkill: the category strip's tabs, 42..46 (wheel::kCatAll .. kCatGeneral): All, the class's three trees, General / Items
     kRunWalk = 47,       // Wheel: RUN / WALK (the game's own run / walk switch)
+    kTabGestures = 48,   // tiles: ... and GESTURES, with [openxr] gesture_overlay (F4)
 };
 constexpr int CategoryCell(int category) { return kCategory0 + category; }
 

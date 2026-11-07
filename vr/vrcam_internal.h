@@ -321,6 +321,9 @@ extern std::atomic<uint32_t> g_handWalkReads;
 extern bool g_lookOk;
 bool AfrOn();
 bool LookAtNow(float out[3]);
+// [gameplay] leap_air_aim (vr/leap_air_aim.h): the hero is in a leap's air now - his model matrix over the camera's ground, from a pose of the last 250 ms
+// (vr/body/hero_facing.cpp, at every pose UnderCamera measures). Any thread.
+bool HeroInLeapAir();
 bool BodyWalkReport(BWPadMirror* out, bool evenIfOff);
 uintptr_t SewerHero() noexcept;
 int SewerLevel(uintptr_t hero) noexcept;

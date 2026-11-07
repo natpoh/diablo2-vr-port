@@ -17,6 +17,8 @@ struct Result {
 // on: [openxr] skill_panel_game_look. Off: nothing is read or written (a folder made before stays; unticked the panel does not use it).
 // A piece already there as the game has it is not written again.
 Result Prepare(const std::wstring& game, const std::wstring& pluginDir, bool on);
+// [hud] monster_names_own: the game's own target plate's pieces (gameuifiles::kPlateFiles) beside the plugin, whatever the skill panel's look; true: all there.
+bool PreparePlate(const std::wstring& game, const std::wstring& pluginDir);
 
 // [hud] ally_portraits: the game's own portraits of the players, the mercenary and the summons (shared/ally_portrait_files.h) into the same folder, as
 // portrait_<name>.sprite. Off: nothing is read or written. Each portrait on its own: one the game does not have is left out (the plugin draws initials).

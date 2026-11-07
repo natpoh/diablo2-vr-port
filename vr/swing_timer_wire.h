@@ -30,8 +30,8 @@ constexpr float kMonRingH = 0.12f, kMonBarW = 0.32f, kMonBarTop = 0.03f;
 
 // Once, from the plugin's start: the headset's frame listener, the log.
 void Init(const D2RL::PluginContext* ctx);
-// [hud] swing_timer, swing_timer_style (0 ring, 1 bar), swing_timer_numbers - on every read of the ini (live).
-void SetWanted(bool on, int style, bool numbers);
+// [hud] swing_timer, swing_timer_style (0 ring, 1 bar), swing_timer_numbers, swing_timer_reasons - on every read of the ini (live).
+void SetWanted(bool on, int style, bool numbers, bool reasons);
 bool Wanted();
 // [gameplay] swing_pace_joined (live): the joined client's pace for the touches (PaceTouch). The timer's clock runs for it with the picture off too.
 void SetPace(bool on);
@@ -47,6 +47,11 @@ void NoteServerStart(uint64_t nowMs, int32_t frames, int32_t greenFrame);
 void NoteClientMode(bool known, uint32_t mode, uint64_t nowMs);
 // vr/melee_touch.cpp: a touch it asks the game to attack for (VR).
 void NoteTouch(uint64_t nowMs);
+// [hud] swing_timer_reasons: true while a refusal would be shown (the timer and its reasons ticked) - the caller may skip working one out.
+bool ReasonsWanted();
+// vr/melee_touch.cpp: a touch it did not hand to the game, and why (vr/swing_reason.h; the numbers in hundredths, got -1 none). Text::TooSoon
+// shows with the timer alone (as a touch while red), the others with swing_timer_reasons too. A line in the log, rate-limited per reason.
+void NoteRefused(Text why, int32_t got100, int32_t need100, uint64_t nowMs);
 
 // The headset (the draw thread): true while the quad is up; *needRevision the picture it must not be shown before.
 struct Layer {

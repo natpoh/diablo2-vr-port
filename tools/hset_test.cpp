@@ -2444,8 +2444,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 54 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names - not the others");
+    CHECK(live == 55 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names - not the others");
     CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
     {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), ab = a | b;
@@ -3326,11 +3326,11 @@ static int GdiWidth(const std::string& text, int cell, int weight) {   // the pa
 static void TestMelee() {
     CHECK(RowsOn(kPageMelee) == 6 && HasSubRow(kPageMelee) && !strcmp(kPageNames[kPageMelee], "Touch") && !strcmp(kTabNames[TabOf(kPageMelee)], "Melee"),
           "the Melee tab's first page, Touch: six rows (the touch's four, the skill arming and its icon)");
-    CHECK(RowsOn(kPageMeleeAttack) == 4 && HasSubRow(kPageMeleeAttack) && TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && !strcmp(kPageNames[kPageMeleeAttack], "Attack"),
-          "its second page, Attack: quick blow, the faster attack, Direct hit, the swing timer (Serg 2026-11-06)");
+    CHECK(RowsOn(kPageMeleeAttack) == 5 && HasSubRow(kPageMeleeAttack) && TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && !strcmp(kPageNames[kPageMeleeAttack], "Attack"),
+          "its second page, Attack: quick blow, the faster attack, Direct hit, the swing timer and its reasons (Serg 2026-11-06)");
     {
-        const char* const attackKeys[4] = {"quick_blow", "quick_blow_faster", "melee_direct_client", "swing_timer"};
-        for (int r = 0; r < 4; ++r) {
+        const char* const attackKeys[5] = {"quick_blow", "quick_blow_faster", "melee_direct_client", "swing_timer", "swing_timer_reasons"};
+        for (int r = 0; r < 5; ++r) {
             char name[48];
             snprintf(name, sizeof name, "%ls", kDefs[KeyAt(kPageMeleeAttack, r)].key);
             CHECK(!strcmp(name, attackKeys[r]) && kDefs[KeyAt(kPageMeleeAttack, r)].live, "the Attack page's rows in their order, live");
@@ -3338,6 +3338,8 @@ static void TestMelee() {
         const int fast = KeyAt(kPageMeleeAttack, 1), timer = KeyAt(kPageMeleeAttack, 3);
         CHECK(IsToggle(kDefs[fast]) && kDefs[fast].def == 0.0f && IsToggle(kDefs[timer]) && kDefs[timer].def == 0.0f && !wcscmp(kDefs[timer].section, L"hud"),
               "the faster attack and the swing timer: ticks, off as shipped");
+        const int why = KeyAt(kPageMeleeAttack, 4);
+        CHECK(IsToggle(kDefs[why]) && kDefs[why].def == 1.0f && !wcscmp(kDefs[why].section, L"hud"), "the swing timer's reasons: a tick, on as shipped (shown with the timer)");
         float u, v;
         Centre(kSubBtn(1, kMeleePages), &u, &v);
         CHECK((HitTest(kPageMelee, u, v) == Hit{Kind::Tab, kPageMeleeAttack, 0}) && (HitTest(kPageMeleeAttack, u, v) == Hit{Kind::Tab, kPageMeleeAttack, 0}),

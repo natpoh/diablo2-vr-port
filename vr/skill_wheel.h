@@ -49,6 +49,11 @@ bool IsOpen();
 // [openxr] skill_rt_a: this frame the right trigger is the game's RT slot and that slot holds a skill (the panel's slot controls own the trigger). The melee rule
 // (vr/melee_trigger.h) asks, so that only the plain attack on the trigger is withheld. False where the key is off or the panel is not in charge. (Any thread.)
 bool TriggerCastsSkill();
+// [openxr] gesture_overlay: BodyWalk records for the Gestures tab now (its pen is the trigger): xr.cpp hangs BodyWalk's runes (the trail) over the panel
+// then, not under it. Any thread.
+bool GestureRecording();
+// ... and the hand of that take (BW_LINK_GH_*): the gesture engine's pen (vr/gesture_engine.h Pens). Any thread.
+uint8_t GestureRecordHand();
 
 // vrcam's timer, every millisecond or so: cheap when off; queues the UI thread's reads.
 void Tick();

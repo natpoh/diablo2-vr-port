@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 #include "hset_model.h"
 #include "tiles_geom.h"
@@ -21,6 +22,10 @@
 #include "wheel_flip.h"
 #include "wheel_geom.h"
 #include "wheel_types.h"
+
+namespace gov {
+struct View;   // the Gestures tab's screens (vr/gesture_overlay.h): the painter's copy, held by the view as it is handed over
+}
 
 namespace wheel {
 
@@ -49,6 +54,9 @@ struct View {
     // settings model (vr/hset_model.h) as the controller last handed it over, with the button under the beam on them.
     bool tabs = false;
     Tab tab = Tab::Skills;
+    int tabCount = 2;        // 3 with the Gestures tab ([openxr] gesture_overlay, F4)
+    std::shared_ptr<const gov::View> gestures;   // that tab's screens as its model last handed them over (null: never)
+    uint32_t gesturesRevision = 0;
     bool flipHigh = false;   // the Settings tab's flip arrows at its page tabs' row (the game look, vr/tiles_geom.h kFlipHigh)
     int flipPlace = 0;   // where the window stands along its pages (vr/wheel_flip.h: 0 Skills, 1 + the Settings page): the dots, the arrows
     int flipAt = 0, flipCount = kFlipPlaces;   // ... among the places the view shows (VR F1 - F3: not F4's body; Party only while it is on)
@@ -96,6 +104,7 @@ struct In {
     bool click = false;           // its trigger's edge
     Style style = Style::Wheel;   // the look now; a change while the panel is up goes back to its first page
     bool tabs = false;            // tiles: the Settings tab exists ([openxr] headset_settings), so the strip is there
+    bool gestures = false;        // ... and the Gestures tab beside it ([openxr] gesture_overlay, F4)
     int openTab = -1;             // the tab a toggle opens it on (a Tab's value); -1 the one it was last on (the tab is kept while the session runs)
     int setTab = -1;              // the tab to show now while it is up (a Tab's value; the top level only); -1 none
     bool close = false;           // the Settings tab asks for the window to close (its Close button, Calibrate body, a view change)
@@ -225,6 +234,13 @@ public:
         v_.hover = kNone;
         ++v_.revision;
     }
+    // The Gestures tab's screens, for the painter (the controller hands them over when their revision changed).
+    void SetGestures(std::shared_ptr<const gov::View> g, uint32_t revision) {
+        if (revision == v_.gesturesRevision && g == v_.gestures) return;
+        v_.gestures = std::move(g);
+        v_.gesturesRevision = revision;
+        ++v_.revision;
+    }
     // The Settings tab's pages, for the painter (the controller hands them over every frame; the copy is made when they changed).
     void SetSettings(const hset::Model& m, const hset::Hit& hover) {
         if (settingsSeen_ == m.revision && hover == v_.settingsHover) return;
@@ -255,7 +271,9 @@ public:
         epoch_ = in.epoch;
         if (in.hints) v_.hints = *in.hints;
         v_.tabs = in.tabs && in.style == Style::Tiles;   // (the wheel's look has no strip)
+        v_.tabCount = v_.tabs && in.gestures ? 3 : 2;
         if (!v_.tabs) v_.tab = Tab::Skills;
+        if (v_.tab == Tab::Gestures && v_.tabCount < 3) { v_.tab = Tab::Skills; v_.hover = kNone; }   // (the Gestures tab gone: F1 - F3, its key off)
         bool restyled = false;
         if (in.style != v_.style) {   // the other look: the same state, back on the first page (the cells are in other places)
             restyled = true;
@@ -297,7 +315,7 @@ public:
         if (!v_.open) {
             if (in.toggle && in.allowed) {
                 const Tab want = v_.tabs && in.openTab == int(Tab::Settings) ? Tab::Settings : v_.tabs && in.openTab == int(Tab::Skills) ? Tab::Skills : v_.tab;
-                if (fresh || want == Tab::Settings) {   // (the settings need no game state: they open without)
+                if (fresh || want != Tab::Skills) {   // (the settings and the gestures need no game state: they open without)
                     v_.tab = want;
                     v_.open = true;
                     v_.page = Page::Wheel;
@@ -313,7 +331,7 @@ public:
             if (in.toggle || in.back || in.close) {
                 CloseNow();
                 out.feedback = Feedback::Closed;
-            } else if (v_.tabs && in.setTab >= 0 && v_.page == Page::Wheel && Tab(in.setTab) != v_.tab) {
+            } else if (v_.tabs && in.setTab >= 0 && in.setTab < v_.tabCount && v_.page == Page::Wheel && Tab(in.setTab) != v_.tab) {
                 v_.tab = Tab(in.setTab);
                 v_.hover = kNone;
             }
@@ -329,7 +347,8 @@ public:
             const bool strip = catKnown_ && v_.page == Page::PickSkill;
             const bool run = in.runWalk && v_.page == Page::Wheel && (v_.style != Style::Tiles || v_.tab == Tab::Skills);
             const int hover = !in.pointer ? int(kNone)
-                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run, in.flipHigh)
+                              : v_.style == Style::Tiles ? tiles::HitTest(v_.page, in.u, in.v, v_.hover, v_.options, v_.tabs, v_.tab == Tab::Settings, strip, run, in.flipHigh,
+                                                                          v_.tabCount, v_.tab == Tab::Gestures)
                                                          : HitTest(v_.page, in.u, in.v, v_.hover, v_.options, strip, run);
             int shown = hover;
             if ((shown == kFlipPrev && v_.flipAt <= 0) || (shown == kFlipNext && v_.flipAt >= v_.flipCount - 1)) shown = kNone;   // (no arrow there)
@@ -392,7 +411,7 @@ private:
         if (a.open != b.open || a.page != b.page || a.hover != b.hover || a.selected != b.selected || a.editSlot != b.editSlot ||
             a.editPage != b.editPage || a.editPages != b.editPages || a.options != b.options || a.ready != b.ready ||
             a.editable != b.editable || a.bank != b.bank || a.result != b.result || a.style != b.style || !(a.hints == b.hints) ||
-            a.tabs != b.tabs || a.tab != b.tab || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.flipHigh != b.flipHigh || a.run != b.run || a.slotControls != b.slotControls || a.rowOff != b.rowOff || a.editFirst != b.editFirst ||
+            a.tabs != b.tabs || a.tab != b.tab || a.tabCount != b.tabCount || a.gesturesRevision != b.gesturesRevision || a.catStrip != b.catStrip || a.catWanted != b.catWanted || a.category != b.category || a.runWalk != b.runWalk || a.flipHigh != b.flipHigh || a.run != b.run || a.slotControls != b.slotControls || a.rowOff != b.rowOff || a.editFirst != b.editFirst ||
             std::strncmp(a.status, b.status, sizeof a.status) != 0)
             return true;
         for (int c = 0; c < kCategories; ++c) if (a.catCount[c] != b.catCount[c]) return true;
@@ -448,8 +467,8 @@ private:
         case Page::Wheel:
             if (h == kFlipPrev || h == kFlipNext) {
                 out->flip = h == kFlipPrev ? -1 : 1;
-            } else if (h == kTabSkills || h == kTabSettings) {
-                const Tab t = h == kTabSettings ? Tab::Settings : Tab::Skills;
+            } else if (h == kTabSkills || h == kTabSettings || h == kTabGestures) {
+                const Tab t = h == kTabSettings ? Tab::Settings : h == kTabGestures ? Tab::Gestures : Tab::Skills;
                 if (v_.tabs && t != v_.tab) {   // (the strip is where it was: the beam stays on its tab)
                     v_.tab = t;
                     out->feedback = Feedback::Hover;

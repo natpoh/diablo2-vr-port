@@ -268,6 +268,7 @@ void NoteViewport(float widthPx, float heightPx) {
 }
 
 bool Hooked() { return g_in.load(); }
+bool Enabled() { return g_on.load(); }
 
 void Install(const PluginContext* ctx) {
     if (!ctx || !(g_on.load() || g_height.load() != 0.0f || plateworld::Wanted() || plateworld::Tracking() || plateworld::LiftWanted() || plateworld::Following() || plateworld::Steadying()) || g_in.load() || g_failed) return;

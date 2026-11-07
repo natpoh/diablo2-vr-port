@@ -383,6 +383,12 @@ struct Input {
     int carryAxis = 2;
     float carryM = 0.4f;   // [hands] carry_cm / 100   // [hands] carry_axis: the other attach bone goes 40 cm along this axis of the holding one (+-1..3)
     int weaponSide = 0;         // the hand slot the weapon is in (0 right, 1 left), for [debug] bone_axes
+    // [hands] left_slot_drawn_left (vr/drawn_hand.h): a weapon alone in the LEFT slot is drawn by the game on the RIGHT attach bone (the right hand) while ours - the weight model,
+    // Weapon Adjust, the touch's blade - pose the left one: the right bone takes the left one's pose (its own handedness and drawn size kept), so the weapon is drawn where it is
+    // held and hits. leftSlotShieldRight: a shield in the right slot, which the game draws on the left arm, is strapped to the right forearm then (while the weapon is not in the
+    // right hand alone). vrcam: F4 only, the box ticked, drawnhand::Decide says carry; the pose confirms the game shows the right bone (drawnhand::Shown) before it carries.
+    bool leftSlotDrawn = false;
+    bool leftSlotShieldRight = false;
     int weaponType = 0;         // D2RVR_WeaponType in hand (d2r_vr_state.h); a new one takes a new grip
     bool holdGrip = false;      // mode 2: the weapon keeps one grip, not the animation's (vrcam: every weapon, 2026-10-05)
     bool attacking = false;     // a skill button is down: no grip is taken from the animation then

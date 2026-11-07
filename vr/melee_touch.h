@@ -172,6 +172,8 @@ bool GrabBodies(monsterbodies::Snapshot* out, bool swayed = false);   // (swayed
 void SetItemsWanted(bool on);
 void ItemsTick(bool ok, const float heroRender[3], float upm);
 int GroundItems(itemgrab::Item* out, int max, bool* fresh);
+// Why the last ItemsTick did not scan (the grab's log), or nullptr: it scanned.
+const char* GroundItemsSkip();
 // [gameplay] melee_touch_barrels (vr/barrel_touch.h): a counting stroke of the held weapon through a barrel, pot, urn or basket presses the game's own
 // interact on it (the hero breaks it as with A). SetBarrelsWanted: on / off and the swing's least speed, m/s ([gameplay] melee_touch_barrels_min_speed:
 // its own gate, not the monsters' melee_min_speed nor strike_by_force) - vrcam's settings; BarrelsStep: vrcam's timer, after Tick - the press held

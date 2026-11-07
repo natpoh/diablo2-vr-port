@@ -73,7 +73,8 @@ inline char StripCodes(const char* in, size_t inMax, char* out, size_t outN) {
 
 // A game icon in the text: a private-use letter (U+E000..U+F8FF) left once the colour codes are out - the game's text code draws its button
 // sprites for those (0.205.12, Serg: "a box under the NPC's name - in the original the (A) icon"; Deckard Cain's second hover line). Our fonts have no
-// such letter: a text that holds one is left for the game to draw itself (its icon and all). Returns the first such code point, 0 for none.
+// such letter: a plate's text that holds one is left for the game to draw itself (its icon and all); a hover line's icon becomes our green 'A'
+// (IconsToKeys). Returns the first such code point, 0 for none.
 inline uint32_t IconIn(const char* utf8, size_t max) {
     char clean[kTextMax * 2];
     StripCodes(utf8, max, clean, sizeof clean);
@@ -90,6 +91,34 @@ inline uint32_t IconIn(const char* utf8, size_t max) {
         i += n;
     }
     return 0;
+}
+
+// The game's button icon as a letter of ours (Serg, 2026-11-06: "the A key on NPCs in our font too, green"): each private-use letter left in `text`
+// (StripCodes' output) becomes 'A' - the face button the NPC's hover line shows - and its place is marked in `keys` (bit i: the i-th letter as Paint
+// counts them, UTF-16), painted in the game's own green (kKeyCode). In place; returns how many it changed.
+constexpr char kKeyCode = '2';   // the game's colour code 2: its green (CodeColour)
+inline int IconsToKeys(char* text, uint32_t* keys) {
+    int n = 0, letter = 0;
+    size_t o = 0;
+    for (size_t i = 0; text[i];) {
+        const unsigned char c = (unsigned char)text[i];
+        const size_t seq = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+        size_t have = 1;
+        while (have < seq && text[i + have]) ++have;
+        uint32_t cp = 0;
+        if (seq == 3 && have == 3) cp = ((c & 0x0Fu) << 12) | (((unsigned char)text[i + 1] & 0x3Fu) << 6) | ((unsigned char)text[i + 2] & 0x3Fu);
+        if (cp >= 0xE000 && cp <= 0xF8FF) {
+            text[o++] = 'A';
+            if (letter < 32 && keys) *keys |= 1u << letter;
+            ++n;
+        } else {
+            for (size_t k = 0; k < have; ++k) text[o++] = text[i + k];
+        }
+        letter += seq == 4 ? 2 : 1;
+        i += have;
+    }
+    text[o] = 0;
+    return n;
 }
 
 // The game's own colours for the codes, 0..1 - its text code (0x90C1C9) takes the index (code - '0') below 39: 0..12 from the classic
@@ -133,6 +162,15 @@ inline int FontPx(int h) { return std::max(8, (int)std::lround(h * 0.70f)); }
 inline int NameFontPx(int h) { return std::max(8, (int)std::lround(h * 0.82f)); }
 // [hud] labels_own_min_px: our labels and names never smaller than this many pixels of the eye's picture (0.205.9, Serg: the plate's name at x0.51
 // came out some 11 px tall, as small and soft as the game's). The factor a cell of eyePx pixels is made larger by (1: it is tall enough).
+// The letter spacing (px between each two letters) that makes a line of `core` letters, `natural` px wide in our face, as wide as the game made it:
+// `gameTotal` px for the line with `pad` padding spaces (each `space` px in our face) round it - every letter of the game's line, the spaces too,
+// spaced alike. 0 when ours is as wide or wider already; never more than `most`.
+inline int ExtraSpacing(float gameTotal, float natural, int core, int pad, float space, float most) {
+    const int gaps = (core - 1) + pad;
+    if (gameTotal <= 0.0f || gaps <= 0) return 0;
+    const float e = (gameTotal - natural - pad * space) / (float)gaps;
+    return e <= 0.0f ? 0 : (int)std::lround(std::min(e, most));
+}
 inline float MinScale(float eyePx, float minPx) { return eyePx > 0.0f && minPx > eyePx ? minPx / eyePx : 1.0f; }
 inline int PadX(int h) { return std::max(3, (int)std::lround(h * 0.28f)); }
 
@@ -141,6 +179,9 @@ inline int PadX(int h) { return std::max(3, (int)std::lround(h * 0.28f)); }
 // Philosopher 3. Ours is painted in the same face from D2R VR Settings' game-art cache (ExocetBlizzardOT-Medium.otf, Formal436BT.ttf; vr/game_ui.h),
 // never made bold by GDI (Serg, 0.205.11: "the fonts are not the game's").
 constexpr int8_t kFontExocet = 0, kFontFormal = 1;
+// The pieces of our plate painted into the atlas beside the names (vr/own_names.h LayOutPlate): the game's frame strip, normal or unique, and its
+// life bar (vr/own_labels_paint.cpp PaintPiece, from the game's own sprites when D2R VR Settings has copied them).
+constexpr uint8_t kPieceFrameNormal = 1, kPieceFrameUnique = 2, kPieceLife = 3;
 inline int8_t FontOfStyle(int32_t first) { return first == kFontExocet || first == kFontFormal ? (int8_t)first : (int8_t)-1; }
 
 // ---- the cell's key ----------------------------------------------------------------------------------------------------------------
@@ -155,6 +196,13 @@ struct Want {
     bool inReach = true;                       // ... and A takes it from here (else its rim is red)
     bool bold = false;                         // a name over a monster / NPC: larger letters in its cell (bold only in our own face)
     int8_t font = -1;                          // the game's font for this text (its style's first word): kFontExocet, kFontFormal; -1 not known (Formal)
+    uint8_t piece = 0;                         // not a text: a piece of our plate (kPieceFrameNormal, kPieceFrameUnique, kPieceLife), widthPx wide
+    int widthPx = 0;
+    // the game's own width for this line, over its own line height (its TextMeasure: the style's letter spacing in it - "DEFILED WARRIOR" spaced
+    // wide, Serg's reference), and how many padding spaces that measure held ("  Zombie  "): our letters spaced to match. 0: as the face sets them.
+    float gameWPerH = 0.0f;
+    uint8_t padSpaces = 0;
+    uint32_t keys = 0;                         // letters that stand for the game's button icon (IconsToKeys, bit i: the i-th): in its green
 };
 inline uint64_t Fnv(uint64_t h, const void* p, size_t n) {
     const unsigned char* b = (const unsigned char*)p;
@@ -170,6 +218,9 @@ inline uint64_t KeyOf(const Want& w) {
     q[7] = (uint8_t)std::clamp(w.heightPx, 0, 255);
     q[8] = (uint8_t)((w.lit ? 1 : 0) | (w.inReach ? 2 : 0) | (w.bold ? 4 : 0) | (w.font == kFontExocet ? 8 : 0));
     h = Fnv(h, q, sizeof q);
+    const int piece[4] = {w.piece, w.piece ? w.widthPx : 0, (int)std::lround(w.gameWPerH * 64.0f), w.padSpaces};
+    h = Fnv(h, piece, sizeof piece);
+    h = Fnv(h, &w.keys, sizeof w.keys);
     return h ? h : 1;
 }
 

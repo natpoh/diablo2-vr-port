@@ -15,6 +15,7 @@
 
 #include "direct_input.h"
 #include "double_swing_game.h"   // ReadPadSlots: the pad's slots, as double swing reads them
+#include "leap_air_aim.h"      // [gameplay] leap_air_aim: the next leap aimed in the air
 #include "log_async.h"
 #include "point_cast_wire.h"
 #include "shield_smite.h"        // kSlotCount, PulseMs: the controller's ten slots double swing reads, how long a slot's press is held
@@ -58,6 +59,10 @@ struct Release {
     int skill = -1;
     Offset at;
     uint64_t ms = 0;
+    bool air = false;      // [gameplay] leap_air_aim: let go in a leap's air - its point (wx, wz) is the world's, the slot's button held through the landing
+    float wx = 0.0f, wz = 0.0f;
+    bool holding = false;  // ... and that button still held (let go once the game's cast asks: CastPoint)
+    pointcast::SlotPad pad{};
 };
 Release g_release;
 std::atomic<uint32_t> g_drawnFx{0}, g_drawnBoxes{0};   // presents that drew the arc while this hold's was up: by the effect's PaOn, by the capsules
@@ -193,7 +198,10 @@ void FilterPad(uint16_t* buttons, uint8_t lt, uint8_t* rt, const PollIn& in, Arc
     g_up = false;
     g_arc = Arc{};
     const bool cast = !s.cancelled && (s.tap || had);
-    if (cast) g_release = {!s.tap, s.skill, at, nowMs};
+    // [gameplay] leap_air_aim: a leap's hold let go in the air - the game set this leap's landing at its cast and nothing re-aims it, so the circle is the NEXT
+    // leap's: kept in the world, the button held through the landing (the game casts once it can act again, its own recovery)
+    const bool air = cast && leapair::HoldThrough(in.airAim && in.heroOk, s.skill == pointcast::kLeap || s.skill == pointcast::kLeapAttack, in.airborne, !s.tap);
+    if (cast) g_release = {!s.tap, s.skill, at, nowMs, air, in.heroX + at.x, in.heroZ + at.z, air, pointcast::PadOf(s.slot)};
     ReleaseSRWLockExclusive(&g_lock);
     const char* name = SlotName(s.slot);
     if (!cast) {
@@ -203,10 +211,15 @@ void FilterPad(uint16_t* buttons, uint8_t lt, uint8_t* rt, const PollIn& in, Arc
     // the cast: the slot's own control, once, as the shield bash presses Smite's (the game reads it in its own poll; its mana, cooldown, checks) - held
     // longer on the left trigger's row, which the game's pad code prepares first (shield_smite.h PulseMs)
     const pointcast::SlotPad p = pointcast::PadOf(s.slot);
-    const uint32_t ms = p.lt ? shieldsmite::kAltBankPulseMs : shieldsmite::kPulseMs;
+    const uint32_t ms = air ? leapair::kHoldMs : p.lt ? shieldsmite::kAltBankPulseMs : shieldsmite::kPulseMs;
     g_ownControl = pointcast::ControlOf(s.slot);
     g_ownUntil = nowMs + ms + 60;
     directinput::PadPulse({p.buttons, p.lt, p.rt}, ms);
+    if (air) {
+        LogF("leap air aim: %s (skill %d) let go in the leap's air - the next leap to the circle, %.1f cells from here: the slot's button held through the landing "
+             "until the game casts it (at most %u ms); this leap lands where the game set it", name, s.skill, pointcast::Length(at) / pointcast::kUnitsPerCell, ms);
+        return;
+    }
     if (s.tap) LogF("point cast: %s (skill %d) tapped - cast where you look (the slot's button pressed once)", name, s.skill);
     else LogF("point cast: %s (skill %d) let go - cast to the circle, %.1f cells out (the slot's button pressed once); the arc was drawn in %u presents%s", name,
               s.skill, pointcast::Length(at) / pointcast::kUnitsPerCell, g_drawnFx.load() + g_drawnBoxes.load(),
@@ -224,13 +237,30 @@ bool Shown(Arc* out) {
 
 void NoteDrawn(bool byEffect) { (byEffect ? g_drawnFx : g_drawnBoxes).fetch_add(1, std::memory_order_relaxed); }
 
-bool CastPoint(int skill, uint64_t nowMs, Offset* out, uint64_t maxAgeMs) {
+bool CastPoint(int skill, uint64_t nowMs, Offset* out, uint64_t maxAgeMs, const float* heroXZ, float minUnits, float capUnits, bool* air) {
+    if (air) *air = false;
     if (!g_on.load()) return false;
     AcquireSRWLockShared(&g_lock);
     const Release r = g_release;
     ReleaseSRWLockShared(&g_lock);
-    if (!r.circle || !r.ms || r.skill != skill || nowMs - r.ms > maxAgeMs) return false;
-    if (out) *out = r.at;
+    if (!r.circle || !r.ms || r.skill != skill || nowMs - r.ms > (r.air ? leapair::kPointAgeMs : maxAgeMs)) return false;
+    Offset o = r.at;
+    if (r.air) {
+        if (r.holding) {   // [gameplay] leap_air_aim: the game's cast has asked - the button held through the landing is let go (one cast, not a repeat)
+            AcquireSRWLockExclusive(&g_lock);
+            const bool was = g_release.holding && g_release.ms == r.ms;
+            if (was) g_release.holding = false;
+            ReleaseSRWLockExclusive(&g_lock);
+            if (was) {
+                directinput::PadPulseEnd({r.pad.buttons, r.pad.lt, r.pad.rt});
+                g_ownUntil = nowMs + 60;   // (the pad's poll thread reads it; a late stale value only ignores this slot's press a moment longer)
+                LogF("leap air aim: the game cast skill %d %llu ms after the release in the air - the held button let go", skill, (unsigned long long)(nowMs - r.ms));
+            }
+        }
+        if (heroXZ && !leapair::FromHero(r.wx, r.wz, heroXZ[0], heroXZ[1], minUnits, capUnits, &o.x, &o.z)) return false;   // landed on it: the gaze's
+        if (air) *air = true;
+    }
+    if (out) *out = o;
     return true;
 }
 

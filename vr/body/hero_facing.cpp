@@ -655,6 +655,9 @@ void UnderNote(float gap, float lift, bool moved, const char* why) {
          "the floor; %s", (unsigned long long)e.ms, e.lift, e.lift / upm, e.gap, e.gap / upm, did);
 }
 bool UnderCameraView() { return viewgate::F4() && !ThirdPerson(); }
+std::atomic<bool> g_leapAir{false};       // [gameplay] leap_air_aim: the last pose's leapair::Air
+std::atomic<ULONGLONG> g_leapAirAt{0};
+bool HeroInLeapAir() { return g_leapAir.load() && GetTickCount64() - g_leapAirAt.load() < 250; }
 // JumpLift, at a view: the game's own lift of the model the camera rises by - [body] under_camera with leap_camera_up_pct, F4, from a pose of
 // the last quarter second; 0 otherwise. Kept as the view's (g_viewLift): the eye the next pose puts together carries it.
 float UnderLiftForView() {
@@ -684,6 +687,14 @@ bool UnderCamera(bool structural, const float* r, float* m, float out[3]) {
     out[0] = out[1] = out[2] = 0.0f;
     float look[3], gap = 0.0f, lift = 0.0f;
     if (!LookAtNow(look) || !undercam::Measure(r, look, &gap, &lift)) { g_underLift.store(0.0f); return false; }
+    {   // [gameplay] leap_air_aim: in a leap's air or not (vr/leap_air_aim.h), for the pad's release of a held leap
+        static leapair::Air air;   // (under g_underLock: the pose's thread and the far read)
+        AcquireSRWLockExclusive(&g_underLock);
+        const bool up = air.Feed(lift);
+        ReleaseSRWLockExclusive(&g_underLock);
+        g_leapAir.store(up);
+        g_leapAirAt.store(GetTickCount64());
+    }
     {   // [weight] leap_landing_scatter: the model back on the ground after a Leap's arc - the bodies round the spot are thrown (vr/knock_down.cpp)
         static leapscatter::Landing landing;   // (under g_underLock: the pose's thread and the far read)
         AcquireSRWLockExclusive(&g_underLock);

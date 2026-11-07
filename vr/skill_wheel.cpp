@@ -12,7 +12,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdarg>
 #include <mutex>
+#include <string>
+#include <thread>
 
 #include <D2RLPlugin/api.h>
 
@@ -27,6 +30,10 @@
 #include "hset_life.h"
 #include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
 #include "hset_stats_feed.h"   // the Settings tab's Stats page: the strike statistics ([stats] strike_stats)
+#include "bodywalk_start.h"    // [openxr] gesture_overlay: the tab's START BODYWALK
+#include "gesture_engine_wire.h"   // [gestures] engine_in_game: the tab's list and commands from the gesture engine in the game
+#include "link.h"              // [openxr] gesture_overlay: BodyWalk's Gestures block in, the GestureCmds ring out (Game Link)
+#include "skill_link_wire.h"   // ... which BodyWalk writes for a game that sends it the skills ([gestures] skill_link)
 #include "party_cmd.h"     // the Settings tab's Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the Settings tab's Players row: the game's own /players N ([openxr] headset_players)
 #include "skill_wheel.h"
@@ -79,6 +86,66 @@ std::wstring g_iniPath;          // under g_lock
 hset::video::Env g_env;          // under g_lock
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
+
+// The Gestures tab ([openxr] gesture_overlay): BodyWalk's block as read this frame (36 KB: not on the stack; under g_lock).
+BW_LinkGestures g_gestures;
+bool g_gesturesHave = false;
+bool g_gestureRecording = false;   // told to the link (BodyWalk gets the controls while it records for the tab)
+std::atomic<bool> g_gestureRecordingNow{false};   // ... and to xr.cpp's layers (the trail over the panel): GestureRecording
+std::atomic<int> g_gestureHand{BW_LINK_GH_RIGHT};   // ... with this hand (GestureRecordHand: the engine's pen)
+std::atomic<bool> g_gestureTrace{false};   // [debug] gesture_trace: the whole chain in the log (view only)
+
+// [debug] gesture_trace: a line of the chain, "gesture trace" + the time + what.
+void TraceF(const char* fmt, ...) {
+    char what[400];
+    va_list a;
+    va_start(a, fmt);
+    std::vsnprintf(what, sizeof what, fmt, a);
+    va_end(a);
+    char b[460];
+    std::snprintf(b, sizeof b, "vrcam: gesture trace %.3f - %s", (double)GetTickCount64() / 1000.0, what);
+    Log(b);
+}
+// Why there are no gestures, looked at once a second on vrcam's timer (Tick: a process list is not for the headset's frame) while the tab is on.
+std::atomic<int> g_bwRunning{0};          // BodyWalkVR.exe processes
+std::atomic<bool> g_bwHost{false};        // its Game Link Host block moves
+std::atomic<bool> g_bwFound{false};       // a BodyWalkVR.exe to start was found
+std::atomic<uint64_t> g_bwStartedAt{0};   // START BODYWALK's tick (GetTickCount64), 0 none: "starting" until its Game Link is up, 45 s at most
+std::atomic<bool> g_fixBusy{false};       // a fix's worker is on its way
+
+// The tab's facts for the controller: why the Gestures block is missing.
+gov::Missing MissingNow() {
+    const uint64_t at = g_bwStartedAt.load(), now = GetTickCount64();
+    if (at && now - at < 45000 && !g_bwHost.load()) return gov::Avail::Starting;
+    if (g_bwRunning.load() == 0 && !g_bwHost.load()) return gov::Avail::NotRunning;
+    if (!g_bwHost.load()) return gov::Avail::NoGameLink;
+    if (!link::SkillLinkUp()) return gov::Avail::NoSkills;
+    return gov::Avail::NoGestures;
+}
+
+// The tab's fix, off the headset's frame (an ini write, a process start): ENABLE writes [gestures] skill_link=1 (the plugin takes the ini live,
+// as the headset settings' writes); START BODYWALK starts the copy D2R VR Setup put in - never a second one.
+void DoFix(gov::Fix fix, std::wstring ini) {
+    if (g_fixBusy.exchange(true)) return;
+    std::thread([fix, ini] {
+        if (fix == gov::Fix::EnableLink) {
+            const bool ok = !ini.empty() && WritePrivateProfileStringW(L"gestures", L"skill_link", L"1", ini.c_str()) != FALSE;
+            Log(ok ? "vrcam: skill panel, Gestures - Enable: [gestures] skill_link=1 written to d2r_vr.ini (taken live: the skills go to BodyWalk)"
+                   : "vrcam: skill panel, Gestures - Enable: d2r_vr.ini could not be written ([gestures] skill_link stays 0)");
+        } else if (fix == gov::Fix::StartBodyWalk) {
+            const std::wstring dir = ini.substr(0, ini.find_last_of(L'\\') + 1);
+            const std::wstring exe = bwstart::FindExe(dir);
+            const bwstart::Result r = bwstart::Start(exe);
+            if (r == bwstart::Result::Started) g_bwStartedAt.store(GetTickCount64());
+            char b[600];
+            std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Start BodyWalk: %s (%ls)",
+                          r == bwstart::Result::Started ? "started" : r == bwstart::Result::AlreadyRunning ? "one runs already - not a second" :
+                          r == bwstart::Result::NotFound ? "no BodyWalkVR.exe found" : "it could not be started", exe.empty() ? L"-" : exe.c_str());
+            Log(b);
+        }
+        g_fixBusy.store(false);
+    }).detach();
+}
 
 // The tiles' hints say which control of the player's own controllers presses a slot's pad button in direct input's DEFAULT layout:
 // true only while direct input is on and none of the controls involved is rebound in [direct] (then the hint could be false).
@@ -230,7 +297,99 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.openGuide = f4 ? firststart::OpenRequest() : -1;   // the first-start guide asks for the window on its Guide tab (vr/first_start.cpp; F4's)
         host.chordOn = g_twoGripChord.load();         // the author: "no combinations with the two grips" - off unless [debug] settings_two_grip_chord
     }
-    const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr);
+    // the Gestures tab: BodyWalk's block, every frame while the tab is on (a consistent copy; false = no BodyWalk writes it)
+    wheel::GesturesIn gestures;
+    const bool gestureTab = tabs && g_cfg.gestureTab;
+    const bool engine = gengine::On();   // [gestures] engine_in_game: the engine in the game, not BodyWalk over Game Link
+    if (gestureTab || g_ctl.GesturesModel().Recording()) {
+        gestures.link = engine || skilllinkwire::On();
+        if (engine) g_gesturesHave = gengine::List(&g_gestures);
+        else g_gesturesHave = gestures.link && link::Gestures(&g_gestures);   // (the skill link off: BodyWalk writes none - the block is not even opened)
+        gestures.g = g_gesturesHave ? &g_gestures : nullptr;
+        if (g_gesturesHave) {
+            {   // BodyWalk's side in the log too: each answer and each change of its recording's state (rare: a few lines a take)
+                static uint32_t seenDone = 0, seenState = ~0u, seenGesture = ~0u;
+                if (g_gestures.cmdDone != seenDone) {
+                    seenDone = g_gestures.cmdDone;
+                    static const char* const kResult[] = {"ok", "no such gesture", "refused (bad)", "busy", "no list for the class"};
+                    char b[200];
+                    std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - BodyWalk acted on command #%u: %s", g_gestures.cmdDone,
+                                  g_gestures.cmdResult < 5 ? kResult[g_gestures.cmdResult] : "?");
+                    Log(b);
+                }
+                if (g_gestures.recordState != seenState || g_gestures.recordGesture != seenGesture) {
+                    seenState = g_gestures.recordState;
+                    seenGesture = g_gestures.recordGesture;
+                    static const char* const kState[] = {"none", "ready", "drawing", "saved", "failed", "cancelled"};
+                    char b[200];
+                    std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - BodyWalk's recording: %s (gesture %u, hand %u)",
+                                  g_gestures.recordState < 6 ? kState[g_gestures.recordState] : "?", g_gestures.recordGesture, (unsigned)g_gestures.recordHand);
+                    Log(b);
+                }
+            }
+            g_bwStartedAt.store(0);
+            if (!engine && link::PrimeGestureCmds(g_gestures.cmdDone)) {   // (once: BodyWalk's reader primes on an empty ring, not on our first command)
+                static bool told = false;
+                if (!told) {
+                    told = true;
+                    Log("vrcam: skill panel, Gestures - BodyWalk's Gestures are there: the command ring written empty for it to start from");
+                }
+            }
+        }
+        gestures.missing = engine ? gov::Avail::NoEngine : MissingNow();
+        gestures.canStart = !engine && g_bwFound.load();
+    }
+    const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr,
+                                      gestureTab || g_ctl.GesturesModel().Recording() ? &gestures : nullptr);
+    if (g_gestureTrace.load()) {   // [debug] gesture_trace: the tab's model's events, the block's changes, the pen handed to BodyWalk
+        for (int i = 0; i < s.gestureTraces; ++i) TraceF("model: %s", s.gestureTrace[i]);
+        static uint32_t seenCount = ~0u, seenRev = ~0u, beats = 0, lastStamp = 0;
+        static uint64_t beatAt = 0, penAt = 0;
+        static bool seenHave = false;
+        const uint64_t nowMs = GetTickCount64();
+        if (g_gesturesHave != seenHave) {
+            seenHave = g_gesturesHave;
+            TraceF("block: BodyWalk's Gestures %s", g_gesturesHave ? "there" : "GONE (none written for 2 s, or the skill link off)");
+        }
+        if (g_gesturesHave) {
+            if (g_gestures.count != seenCount || g_gestures.revision != seenRev) {
+                seenCount = g_gestures.count;
+                seenRev = g_gestures.revision;
+                TraceF("block: %u gestures, revision %u, set '%.31s'", g_gestures.count, g_gestures.revision, g_gestures.setKey);
+            }
+            if (g_gestures.stamp != lastStamp) { lastStamp = g_gestures.stamp; ++beats; }
+            if (!beatAt) beatAt = nowMs;
+            if (nowMs - beatAt >= 1000) {
+                TraceF("block: BodyWalk's heartbeat %u writes in %.1f s (cmdDone %u, result %u, recording %s, gesture %u)", beats, (nowMs - beatAt) / 1000.0,
+                       g_gestures.cmdDone, g_gestures.cmdResult, gov::StateName(g_gestures.recordState), g_gestures.recordGesture);
+                beats = 0;
+                beatAt = nowMs;
+            }
+        }
+        if (s.gestureRecording && nowMs - penAt >= 100) {   // the pen: what BodyWalk is handed, 10 times a second while it records for the tab
+            penAt = nowMs;
+            TraceF("pen: triggers L %.2f R %.2f, grips L %.2f R %.2f (BodyWalk is given the controls: %s)", f.hand[0].trigger, f.hand[1].trigger,
+                   f.hand[0].squeeze, f.hand[1].squeeze, link::SkillLinkUp() ? "yes" : "NO - its skill link is not up");
+        }
+    }
+    if (s.gestureSend) {   // a command to BodyWalk's gestures: into the ring, its sequence back to the tab (it waits for BodyWalk's cmdDone)
+        const uint32_t seq = engine ? gengine::Push(s.gestureCmd) : link::PushGestureCmd(s.gestureCmd, g_gesturesHave ? g_gestures.cmdDone : 0u);
+        g_ctl.GestureSent(seq, f.time);
+        char b[240];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - %s #%u to %s (gesture %u, skill %d, type %u, hand %u, value %.1f)%s",
+                      gesturecmd::OpName(s.gestureCmd.op), seq, engine ? "the gesture engine" : "BodyWalk", s.gestureCmd.gesture, (int)s.gestureCmd.skill, (unsigned)s.gestureCmd.type,
+                      (unsigned)s.gestureCmd.hand, s.gestureCmd.value, seq ? "" : " - NOT sent: the GestureCmds block could not be had");
+        Log(b);
+    }
+    if (s.gestureFix != gov::Fix::None) DoFix(s.gestureFix, g_iniPath);
+    g_gestureHand.store(g_ctl.GesturesModel().Current().recHand);   // (the engine's pen while the tab's take runs)
+    if (s.gestureRecording != g_gestureRecording) {   // BodyWalk records for the tab: its pen is the trigger, it gets the controls meanwhile
+        g_gestureRecording = s.gestureRecording;
+        g_gestureRecordingNow.store(s.gestureRecording);
+        link::SetGestureRecording(s.gestureRecording && !engine);   // (BodyWalk is given the controls only when it records; the engine gets the frame itself)
+        Log(s.gestureRecording ? "vrcam: skill panel, Gestures - BodyWalk records: the trigger is its pen, the window stands aside (B / Y stop)"
+                               : "vrcam: skill panel, Gestures - the recording is over");
+    }
     StoreFor(tabs && s.wantStore);
     if (tabs) SettingsAct(s);
     if (s.guideOpened) {
@@ -330,6 +489,15 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     // the right trigger and the right A as the game's RT and A slots (off unless the ini says 1: the layout's trigger is the attack and its A interact, as ever);
     // it acts in first person with direct input only (vr/slot_controls.h), and the editor's list then has the basic attack to put a slot back
     cfg.slotControls = on && ini && GetPrivateProfileIntW(L"openxr", L"skill_rt_a", 0, ini) != 0;
+    // [openxr] gesture_overlay (off unless the ini says 1): the Gestures tab beside Settings - the player's BodyWalk gestures, F4 only; it needs the tab strip
+    cfg.gestureTab = cfg.settingsTab && GetPrivateProfileIntW(L"openxr", L"gesture_overlay", 0, ini) != 0;
+    {   // [debug] gesture_trace (view only): the Gestures tab's whole chain in the log
+        const bool trace = on && ini && GetPrivateProfileIntW(L"debug", L"gesture_trace", 0, ini) != 0;
+        if (trace != g_gestureTrace.exchange(trace))
+            Log(trace ? "vrcam: gesture trace on ([debug] gesture_trace=1): the Gestures tab's screens, commands, BodyWalk's answers and states, its heartbeat and "
+                        "the pen in the log"
+                      : "vrcam: gesture trace off");
+    }
     wheelgame::SetOfferAttack(cfg.slotControls);
     const bool hints = on && cfg.style == wheel::Style::Tiles && DefaultLayoutIn(ini);
     {
@@ -350,6 +518,18 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
                     "flip to it with a stick or a grip");
             else if (now == 2)
                 Log("vrcam: openxr - skill panel: no Settings tab - it needs the tiles' look ([openxr] skill_panel_style=1); the settings panel of its own stays");
+        }
+    }
+    {   // (a word when the Gestures tab comes or goes)
+        static int said = -1;
+        const int now = cfg.gestureTab ? 1 : on && ini && GetPrivateProfileIntW(L"openxr", L"gesture_overlay", 0, ini) != 0 ? 2 : 0;
+        if (now != said) {
+            said = now;
+            if (now == 1)
+                Log("vrcam: openxr - skill panel: a Gestures tab beside Settings ([openxr] gesture_overlay=1, F4): your BodyWalk gestures - record, re-record, clear, "
+                    "bind - from inside the game (needs [gestures] skill_link=1 and BodyWalk with Game skills)");
+            else if (now == 2)
+                Log("vrcam: openxr - skill panel: no Gestures tab - it needs the Settings tab ([openxr] headset_settings=1 with skill_panel_style=1)");
         }
     }
     if (on && !g_registered) {
@@ -375,6 +555,8 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
 bool Enabled() { return g_on.load(); }
 bool IsOpen() { return g_on.load() && g_open.load(); }
 bool TriggerCastsSkill() { return g_on.load() && g_triggerSkill.load(); }
+bool GestureRecording() { return g_on.load() && g_gestureRecordingNow.load(); }
+uint8_t GestureRecordHand() { return (uint8_t)g_gestureHand.load(); }
 bool SettingsTabOn() { return g_on.load() && g_settingsTab.load(); }
 void SetTwoGripChord(bool on) { g_twoGripChord.store(on); }
 void SetSettingsHost(const hset::video::Env& env) {
@@ -384,6 +566,26 @@ void SetSettingsHost(const hset::video::Env& env) {
 
 void Tick() {
     if (!g_on.load() || (!viewgate::F4() && !viewgate::Flat())) return;   // (another view than F4 and VR F1 - F3: nothing of ours reads the game)
+    {   // the Gestures tab's look at BodyWalk, once a second while the tab is on and has no gestures (the process list costs a few ms: not the frame's)
+        static uint64_t lastLook = 0, lastFind = 0;
+        const uint64_t now = GetTickCount64();
+        bool tab = false;
+        std::wstring ini;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            tab = g_cfg.gestureTab && !g_gesturesHave;
+            if (tab && (!lastFind || now - lastFind >= 10000)) ini = g_iniPath;
+        }
+        if (tab && (!lastLook || now - lastLook >= 1000)) {
+            lastLook = now;
+            g_bwRunning.store(bwstart::Running());
+            g_bwHost.store(link::HostAlive());
+            if (!ini.empty()) {
+                lastFind = now;
+                g_bwFound.store(!bwstart::FindExe(ini.substr(0, ini.find_last_of(L'\\') + 1)).empty());
+            }
+        }
+    }
     wheelgame::Tick(true, g_open.load());
 }
 
@@ -419,6 +621,10 @@ void Release() {
         g_open.store(false);
         g_triggerSkill.store(false);
         g_lastTake[0] = g_lastTake[1] = 0;
+        if (g_gestureRecording) link::SetGestureRecording(false);
+        g_gestureRecording = false;
+        g_gestureRecordingNow.store(false);
+        g_gesturesHave = false;
         if (g_storeOn) {
             hset::store::Stop();
             g_storeOn = false;

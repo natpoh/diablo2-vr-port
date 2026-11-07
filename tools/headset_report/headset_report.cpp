@@ -1274,15 +1274,25 @@ void Runtime(bool gameRunning, bool wantSession, int seconds, const std::wstring
             GetPrivateProfileStringW(L"openxr", L"blocked_layers", list.c_str(), b, 512, ini.c_str());
             list = b;
         }
+        std::wstring crashList = Wide(apilayers::kDefaultCrashList);   // [openxr] block_crash_layers / crash_layers: the layers known to crash the game
+        if (!ini.empty()) {
+            wchar_t b[512] = L"";
+            GetPrivateProfileStringW(L"openxr", L"crash_layers", crashList.c_str(), b, 512, ini.c_str());
+            crashList = b;
+        }
+        const bool blockCrash = IniInt(ini, L"block_crash_layers", 1) != 0;
         const bool block = IniInt(ini, L"block_listed_layers", 1) != 0;
         const bool ownCrop = IniInt(ini, L"runtime_fov", 1) == 0;
         Head("Implicit layers, as the loader takes them for the game");
-        const std::vector<apilayers::Found> found = apilayerslib::Apply(block, ownCrop, Utf8(list), nullptr);
+        const std::vector<apilayers::Found> found = apilayerslib::Apply(block, ownCrop, Utf8(list), nullptr, blockCrash, Utf8(crashList));
         if (found.empty()) L("none");
         for (const apilayers::Found& f : found)
             L("  %s - %s%s%s", f.manifest.ok ? f.manifest.name.c_str() : "(manifest not readable)", f.path.c_str(),
               f.asleep ? " - asleep (its enable variable is not set)" : "",
-              f.turnedOff ? " - TURNED OFF for the game ([openxr] block_listed_layers; here too)" : f.listed ? " - on blocked_layers, loads with the game" : "");
+              f.crashOff ? " - TURNED OFF for the game, known to crash it ([openxr] block_crash_layers; here too)"
+              : f.turnedOff ? " - TURNED OFF for the game ([openxr] block_listed_layers; here too)"
+              : f.crashListed ? " - on crash_layers, loads with the game (block_crash_layers off)"
+              : f.listed ? " - on blocked_layers, loads with the game" : "");
     }
     if (gameRunning) {   // the game holds the headset: no OpenXR call from here at all (a second instance can upset a runtime mid-game)
         facts.gameRunning = true;

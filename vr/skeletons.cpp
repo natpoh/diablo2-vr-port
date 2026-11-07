@@ -69,6 +69,7 @@
 #include "per_unit_store.h"   // [body] walk_back / legs_rear: one memory per rig, behind one lock
 #include "doll_feet.h"  // [body] doll_feet: the feet the doll's - planted, stepping after the body
 #include "weapon_mirror.h"  // [weapon_<kind>] on the left hand's weapon: the right one's mirror image
+#include "drawn_hand.h"     // [hands] left_slot_drawn_left: a weapon alone in the left slot, drawn by the game on the right bone, carried to the left slot's pose
 #include "shield_arm.h"
 #include "shield_arm_wire.h"
 #include "ranged_hand_wire.h"
@@ -5323,13 +5324,71 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     // the bone it hangs on; else the hand slot it is in, or the other wrist when the game
     // shrank that one's bone (holds nothing there). Model space -> the head's turn-only
     // frame (ToModel undone), from the eye, metres.
+    // [hands] left_slot_drawn_left (vr/drawn_hand.h): a weapon alone in the LEFT slot is drawn by the game on the RIGHT attach bone - in the right hand - while everything
+    // above posed the slot's own bone (the weight model's W, Weapon Adjust, the grip) where the hand holding it is. The right bone takes that pose, its own handedness and
+    // the size the game draws at kept: the weapon is drawn where it is held, and the touch's blade (read below off the slot's bone) is on the drawn weapon. Only when the
+    // game shows the right bone in its own pose (a hidden one - thrown, swapped - stays hidden). Set again at the end of the pose (carriedB) in case a later step moved the
+    // right wrist, which carries its attach bone.
+    int carriedB = -1;
+    Mat carriedW{};
+    if (in.leftSlotDrawn && in.mode == 2 && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+        const int slotB = h.weapon[drawnhand::kLeft], drawnB = h.weapon[drawnhand::kRight];
+        const Mat a = Mul(oldW[drawnB], InvAffine(oldW[h.hand[drawnhand::kRight]]));
+        const float drawnSize = Len({a.m[0], a.m[1], a.m[2]});
+        const char* why = nullptr;
+        int whyKey = 0;   // (for the log: 3 not shown, 4 no axes)
+        if (!drawnhand::Shown(drawnSize)) {
+            why = "the game does not show its right attach bone (the weapon drawn on the left one already, or hidden) - nothing carried";
+            whyKey = 3;
+        } else {
+            Mat out{};
+            if (drawnhand::Carried(newW[slotB].m, newW[drawnB].m, oldW[drawnB].m, out.m)) {
+                newW[drawnB] = out;
+                std::vector<char> fromWeapon(n, 0);
+                fromWeapon[drawnB] = 1;
+                Propagate(h, oldW, newW, fromWeapon, drawnB);
+                carriedB = drawnB;
+                carriedW = out;
+            } else {
+                why = "the left attach bone's pose has no axes (a point) - nothing carried";
+                whyKey = 4;
+            }
+        }
+        if (!in.along) {   // once a change, and the hand it went to
+            const V3 pr = Pos(newW[drawnB]);
+            const float toL = Len(Sub(pr, Pos(newW[h.hand[1]]))), toR = Len(Sub(pr, Pos(newW[h.hand[0]])));
+            const int key = carriedB >= 0 ? (toL <= toR ? 1 : 2) : whyKey;
+            static int told = 0;
+            if (key != told) {
+                told = key;
+                char b[300];
+                if (carriedB >= 0)
+                    snprintf(b, sizeof b, "left slot weapon: the game draws it on the right attach bone (shown %.2f) - moved to the left slot's pose, now in the %s hand%s", drawnSize,
+                             toL <= toR ? "left" : "right", in.leftSlotShieldRight ? "; the right slot's shield goes to the right forearm while the weapon is not in the right hand alone" : "");
+                else
+                    snprintf(b, sizeof b, "left slot weapon: %s (right attach bone %.2f)", why, drawnSize);
+                XbowNote(b);
+            }
+        }
+    }
     int axesSide = freeStaff ? staffSide : in.weaponSide ? 1 : 0;
-    if (!freeStaff && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+    if (carriedB >= 0) axesSide = drawnhand::kLeft;   // (the slot's bone, whatever the game shrank: the drawn weapon is on its pose now)
+    else if (!freeStaff && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
         auto size = [&](int side) { const Mat a = Mul(oldW[h.weapon[side]], InvAffine(oldW[h.hand[side]])); return Len({a.m[0], a.m[1], a.m[2]}); };
         if (size(axesSide) < 0.3f && size(axesSide ^ 1) > 0.7f) axesSide ^= 1;
     }
+    // (carried: the slot's bone at the size the weapon is drawn at - a bone the game shrank because it hangs nothing there gives the blade no size of its own)
+    Mat slotAtDrawnSize{};
+    if (carriedB >= 0) {
+        slotAtDrawnSize = newW[h.weapon[drawnhand::kLeft]];
+        for (int r = 0; r < 3; ++r) {
+            const float have = drawnhand::RowLen(slotAtDrawnSize.m, r), want = drawnhand::RowLen(carriedW.m, r);
+            if (have > 1e-6f)
+                for (int c2 = 0; c2 < 3; ++c2) slotAtDrawnSize.m[r * 4 + c2] *= want / have;
+        }
+    }
     if (h.weapon[axesSide] >= 0) {
-        const Mat& w = newW[h.weapon[axesSide]];
+        const Mat& w = carriedB >= 0 ? slotAtDrawnSize : newW[h.weapon[axesSide]];
         auto back = [&](V3 d) { const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c}; return V3{-m.x, m.y, -m.z}; };
         const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head >= 0 ? h.head : 0]);
         const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
@@ -5796,6 +5855,39 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         if (strapped && in.shieldBlink && (GetTickCount64() % 2000) < 500) hideShield();   // (the shield is the left side's bones' on either arm)
     } else {
         g_shieldStrapped.store(0);
+    }
+    // [hands] left_slot_drawn_left (vr/drawn_hand.h): a shield in the RIGHT slot beside a weapon alone in the left one - the game draws the shield on the left arm, and the
+    // weapon was carried into the left hand above: the shield is strapped to the right forearm (StrapShield's mirrored strap, both of the left side's shield bones) - weapon and
+    // shield on opposite arms - unless the right hand alone holds the weapon now (passed over to it): then strapped to the left forearm, the game's own arm (strapped, not left
+    // to the game's pose: the left attach bone, which some rigs hang the shield on, carries the weapon's pose now). Only the drawing; the slots stay the game's.
+    if (carriedB >= 0 && in.leftSlotShieldRight && !in.shieldForearm && !headHangs) {
+        const bool holdsR = wo.on && wo.holds[0], holdsL = wo.on ? wo.holds[1] : true;   // (without the weight model the slot's hand, the left, holds it)
+        const int arm = drawnhand::ShieldArm(holdsR, holdsL);
+        bool strapped = false;
+        if (in.handsValid & (1u << arm)) {
+            for (const int wb : shieldBones)
+                if (wb >= 0) strapped = StrapShield(h, in, oldW, newW, twistRoll[arm], arm, wb) || strapped;
+            if (strapped) g_shieldStrapped.store(arm == drawnhand::kRight ? 3 : 1);
+        }
+        if (!in.along) {
+            static int told = -1;
+            const int key = arm * 2 + (strapped ? 1 : 0);
+            if (key != told) {
+                told = key;
+                char b[260];
+                snprintf(b, sizeof b, strapped ? "left slot weapon: the right slot's shield strapped to the %s forearm (the weapon in the %s hand)"
+                                               : "left slot weapon: the right slot's shield could not be strapped to the %s forearm (hidden by the game, that hand not tracked, or no bind pose; the weapon in the %s hand) - left where the game draws it",
+                         arm == drawnhand::kRight ? "right" : "left", arm == drawnhand::kRight ? "left hand, or let go" : "right hand alone");
+                XbowNote(b);
+            }
+        }
+    }
+    // ... and the weapon's drawn bone set again where it was carried: a step since (a hand laid on a body it holds) may have moved the right wrist, which carries it
+    if (carriedB >= 0) {
+        newW[carriedB] = carriedW;
+        std::vector<char> fromWeapon(n, 0);
+        fromWeapon[carriedB] = 1;
+        Propagate(h, oldW, newW, fromWeapon, carriedB);
     }
     // [hands] shield_fist: the left hand with a shield on it follows the controller's real grip too - the fingers only. Fist() rebuilds
     // the finger chains below the wrist (not the weapon attach bone the shield hangs on) after the arm is placed, so the shield and the

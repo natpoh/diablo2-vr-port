@@ -118,7 +118,7 @@ NEW_WEIGHT = b"MZ weight library of 0.169 (d2r_vr_libs)\0" + NOISE[12000:19000]
 NEW_GRIP = b"MZ grip library of 0.169 (d2r_vr_libs)\0" + NOISE[19000:24000]
 BEAR_DLL = b"MZ" + b"\0" * 62 + NOISE[:500000] + "d2r_vr_icons".encode("utf-16-le") + b"\0d2r-vr-vrcam\0" + NOISE[500000:]
 DEFAULTS_V1 = ("[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n[hands]\nbow_draw=1\nweight=1\n[render]\nfog=30\n[weight]\ndeath_ragdoll=0\n").replace("\n", "\r\n")
-DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[support]\nraw_tests_off_0201=1\nno_reshade_0203=1\nquick_blow_0204=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark; 0.204: quick blow's)
+DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[support]\nraw_tests_off_0201=1\nno_reshade_0203=1\nquick_blow_0204=1\nexit_end_0206=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark; 0.204: quick blow's; 0.206: the session ended at quit)
 PLAYERS_RESHADE_INI = ("[ADDON]\nDisabledAddons=\nOverlayCollapsed=Effect Runtime Sync,FlatVR Depth Provider v2.19@FlatVR_DepthProvider.addon64\n\n[DEPTH]\nDepthCopyBeforeClears=2\n\n"
                        "[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nIntermediateCachePath=C:\\Temp\\ReShade\nNoDebugInfo=1\nPresetPath=.\\ReShadePreset.ini\n"
                        "TextureSearchPaths=.\\reshade-shaders\\Textures\\**\n\n[OVERLAY]\nDocking=[Docking][Data],DockSpace   ID=0xB0DF600F Pos=8,,8 Size=1008,,1008 Split=X\nShowFPS=2\n"
@@ -1109,7 +1109,7 @@ def main():
     rc, log = run_setup("c5_install1", "v1")
     mp = game / MOD / "d2rloader/plugins"
     # (a) the player changed his settings
-    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77\r\nno_reshade=0\r\nnative_effects=0").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
+    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77\r\nno_reshade=0\r\nnative_effects=0").replace("direct_input=1", "direct_input=1\r\nend_session_on_exit=0").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
              + "[calibration]\r\nheight=1.82\r\n[gameplay]\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n")   # (0.203's Direct hit By the rules, 0.203.2's quick_blow=0; the raw tests on from an older version, as denails75r's 2026-11-04; ReShade on, as before 0.203)
     put(mp / "d2r_vr.ini", tuned)
     put(game / MOD / "D2R-VR.mpq/modinfo.json", '{ "name": "D2R-VR", "savepath": "../", "description": "edited by the player" }')
@@ -1141,6 +1141,9 @@ def main():
     check(cur.get(("gameplay", "melee_direct")) == "2" and cur.get(("gameplay", "melee_direct_client")) == "1" and cur.get(("gameplay", "quick_blow")) == "1"
           and cur.get(("support", "quick_blow_0204")) == "1", "...quick_blow=0 is 1, Direct hit By the rules (2 / 1) as he had it, the mark set (MoveToQuickBlow, 0.204)")
     check("[gameplay] quick_blow=0 from an older version" in log, "...and the Setup log says so")
+    check(cur.get(("openxr", "end_session_on_exit")) == "1" and cur.get(("support", "exit_end_0206")) == "1",
+          "...end_session_on_exit=0 (0.203 - 0.205's default) is 1, the mark set (MoveToExitEnd, the VD exit crash, crash batch 2026-11-07)")
+    check("[openxr] end_session_on_exit=0 from an older version" in log, "...and the Setup log says so")
     check((mp / "d2r_vr.default.ini").read_bytes() == DEFAULTS_V2.encode(), "d2r_vr.default.ini is v2's")
     check("take_new=0 changed=1" in rd(work / "ready.txt"), "the question was asked (a changed ini); a silent run answers Yes = keep")
     check(rd(mp / "d2r_vr_headset.ini") == "[headset]\nipd=0.07\n" and rd(game / MOD / "reshade/ReShade.ini") == "[GENERAL]\nmine=1\n", "the headset ini and the mod's ReShade.ini are the player's")
@@ -1150,12 +1153,13 @@ def main():
     check(rd(game / MOD / "d2rloader/logs/d2r-vr-vrcam.log") == "a log\n", "logs are left")
     check(b'default_mod = "D2R-VR"' in (game / "d2rloader/config/d2rloader.toml").read_bytes(), "default_mod stays")
     # once only: native_effects=0 chosen after the move (the lightest, no effect) stays through the next update
-    put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("native_effects=1", "native_effects=0").replace("quick_blow=1", "quick_blow=0"))
+    put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("native_effects=1", "native_effects=0").replace("quick_blow=1", "quick_blow=0").replace("end_session_on_exit=1", "end_session_on_exit=0"))
     rc, log = run_setup("c5_install2a", "v2")
     cur = ini_keys(rd(mp / "d2r_vr.ini"))
     check(rc == 0 and cur.get(("render", "native_effects")) == "0" and cur.get(("render", "no_reshade")) == "1" and "=0 from an older version" not in log,
           "a later update (the mark there): his native_effects=0 chosen since stays, nothing moved again")
     check(cur.get(("gameplay", "quick_blow")) == "0" and "quick_blow=0 from an older version" not in log, "...and his quick_blow=0 chosen after 0.204's move stays")
+    check(cur.get(("openxr", "end_session_on_exit")) == "0" and "end_session_on_exit=0 from an older version" not in log, "...and his end_session_on_exit=0 chosen after the move stays")
     # a raw test the player ticks again after that stays on at the next update: the mark says it was done
     put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("world_contact=0", "world_contact=1"))
     rc, log = run_setup("c5_install2b", "v2")

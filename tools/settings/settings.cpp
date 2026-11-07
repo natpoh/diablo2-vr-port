@@ -21,6 +21,8 @@
 #include "arcane_assets.h"   // [sky] arcane_sky: the Arcane Sanctuary's sky pictures out of the player's own game (CascLib)
 #include "frame_gen.h"       // [openxr] frame_generation: OFXR Bridge, its pinned release and manifest
 #include "api_layers.h"      // [openxr] block_listed_layers: the Status line of the OpenXR layers the game found (a listed one named as a warning)
+#include "../../vr/api_layers_lib.h"   // [support] layer_warning: the implicit OpenXR layers in the registry, as the loader reads them (read only)
+#include "hang_advice.h"     // [support] hang_advice: the last game's graphics card stop, the render size's step down, the game's DLSS off
 #include "props_assets.h"    // [weight] knock_props: the catalogue of the level's knockable props out of the player's own game (CascLib)
 #include "solids_assets.h"    // [weight] world_contact: the level pieces' solid parts out of their own meshes (CascLib)
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
@@ -190,8 +192,23 @@ apilayers::Words LayersWords() {
     w.listedInRuntimeFov = TR(L"status.xr_layers.listed_in_runtime_fov", w.listedInRuntimeFov);
     w.listedIn = TR(L"status.xr_layers.listed_in", w.listedIn);
     w.in = TR(L"status.xr_layers.in", w.in);
+    w.crashOff = TR(L"status.xr_layers.crash_off", w.crashOff);
+    w.crashIn = TR(L"status.xr_layers.crash_in", w.crashIn);
     return w;
 }
+// [support] layer_warning: the Home row's words (shared/api_layers.h LayerWarning; each troublemaker's who / why / how through LayerTr)
+apilayers::WarnWords LayerWarnWords() {
+    apilayers::WarnWords w;
+    w.head = TR(L"status.layer_warn.head", w.head);
+    w.item = TR(L"status.layer_warn.item", w.item);
+    w.offForGame = TR(L"status.layer_warn.off_for_game", w.offForGame);
+    w.tickCrash = TR(L"status.layer_warn.tick_crash", w.tickCrash);
+    w.tickPicture = TR(L"status.layer_warn.tick_picture", w.tickPicture);
+    w.others = TR(L"status.layer_warn.others", w.others);
+    w.tool = TR(L"status.layer_warn.tool", w.tool);
+    return w;
+}
+std::wstring LayerTr(const std::wstring& key, const wchar_t* en) { return TR(key.c_str(), en); }
 
 Item Tab(const wchar_t* title) { Item i; i.kind = Kind::Tab; i.label = title; return i; }
 Item Group(const wchar_t* title, const wchar_t* help = nullptr) { Item i; i.kind = Kind::Group; i.label = title; i.help = help; return i; }
@@ -660,6 +677,15 @@ std::vector<Item> g_items = {
            L"names for it - nothing is written to the registry, other games keep it. With \"Each eye exactly as the headset gives it\" (Stereo) "
            L"the game draws as other games do and nothing is switched off. Off: every layer loads. The line under it names the layers found. "
            L"Taken when the headset session starts.")),
+    // [openxr] block_crash_layers (on, 2026-11-07): the implicit OpenXR layers on [openxr] crash_layers - known to CRASH the game (ReShade's OpenXR
+    // layer, crash report 278) - kept out of the game's process in every stereo mode, the same way (shared/api_layers.h). The row under names them.
+    Only(kVr, Toggle(L"openxr", L"block_crash_layers", L"Turn off OpenXR layers that crash the game", 1,
+           L"Native OpenXR: a few OpenXR layers other programs put into every VR app are known to crash this game - ReShade's OpenXR layer for now "
+           L"(it loads ReShade into the game, which then crashed inside Windows' graphics code seconds after the headset started; D2R VR needs no "
+           L"ReShade). On (the default): a layer on the list [openxr] crash_layers in d2r_vr.ini (names comma-separated, yours to edit) is "
+           L"switched off for this game only, whatever the stereo settings, through the switch the layer names for it - nothing is written to "
+           L"the registry, other games keep it. Off: it loads, as before. The line under it names the layers found. Taken when the headset "
+           L"session starts.")),
     Only(kVr, Status(L"xr_layers", L"")),
     Only(kVr, Toggle(L"render", L"vr_resolution_ui", L"Menus and the mouse follow the VR render size", 1,
            L"With a VR render size apart from the window, the game still sized its interface and limited its mouse to the WINDOW: on a "
@@ -742,6 +768,22 @@ std::vector<Item> g_items = {
     Hide(Warning(L"rtss_warn", L"RivaTuner Statistics Server or MSI Afterburner is running. Its on-screen display hooks the game's picture and can "
                  L"freeze the game at its first picture in VR. Close RivaTuner / MSI Afterburner, or in RivaTuner set Application detection "
                  L"level None (or turn its On-Screen Display off) for D2R.exe and D2RLoader.exe.")),
+    // [support] layer_warning (UpdateLayerWarning, shared/api_layers.h LayerWarning): the implicit OpenXR layers in the registry when one known to
+    // cause trouble is among them, each with how to turn it off for all games. Only says so: nothing is changed.
+    Only(kVr, Hide(Warning(L"layer_warn", L"OpenXR layers known to cause trouble are on this PC."))),
+    // [support] hang_advice (UpdateHangAdvice, shared/hang_advice.h): the last game's graphics card stopped - said once, with the safe road on
+    // buttons. Nothing is written until one is pressed.
+    Hide(Warning(L"hang_advice", L"The graphics card stopped last time.")),
+    Hide(Button(L"@run", L"hang_dlss_off", L"Turn the game's DLSS off",
+           L"Sets the game's own NVIDIA DLSS to Off in its Settings.json (Options > Video). Only with the game closed: the game writes its options "
+           L"back when it quits.")),
+    Only(kVr, Hide(Button(L"@run", L"hang_framegen_off", L"Turn frame generation off",
+           L"Sets Frame generation (above) to Off. Takes effect at the next game start."))),
+    Only(kVr, Hide(Button(L"@run", L"hang_size_down", L"Render size one step lower",
+           L"Moves Resolution (VR render size, above) one step lower: a smaller picture is less work for the graphics card. Applies while the game "
+           L"runs; drag the slider back up any time."))),
+    Hide(Button(L"@run", L"hang_dismiss", L"Hide this advice",
+           L"Hides this advice for that game. It shows again only after another game whose graphics card stopped.")),
     // The game data older than 3.x (shared/game_version.h, UpdateGameVersionWarning; crash rows 272 / 275): D2RLoader's own log says so - a broken install.
     Hide(Warning(L"game_old", L"The game's data is older than 3.x (D2RLoader's log) while the game program is newer: a broken or old install, and the "
                  L"game will likely crash before its title screen. Repair it: Battle.net - Diablo II: Resurrected - the gear by Play - Scan and Repair "
@@ -914,7 +956,17 @@ std::vector<Item> g_items = {
     Toggle(L"support", L"rtss_warning", L"Warn about RivaTuner / MSI Afterburner", 1,
            L"RivaTuner Statistics Server (MSI Afterburner's on-screen display) hooks the game's picture and can freeze the game at its first "
            L"picture in VR. Ticked: the game looks for it in the first minute and writes one line to its log and crash reports, and Home shows "
-           L"a warning while it runs. Nothing is closed or changed. Unticked: no look, no warning, as before."),
+           L"a warning while it runs, saying also when MSI Afterburner's on-screen display is on. Nothing is closed or changed. Unticked: no look, "
+           L"no warning, as before."),
+    // [support] layer_warning / hang_advice (this program's own: vrcam never reads them) - each its own tick, both only say or offer
+    Only(kVr, Toggle(L"support", L"layer_warning", L"Warn about OpenXR layers known to cause trouble", 1,
+           L"Other programs can put OpenXR layers into every VR game on the PC. Ticked: Home names them when one known to cause trouble here is "
+           L"among them - ReShade's, neurorunner, Quad-Views-Foveated, OpenXR Toolkit - and says how to turn it off for all games. Only reads the "
+           L"registry: nothing is changed. Unticked: no warning, as before.")),
+    Toggle(L"support", L"hang_advice", L"Advice after the graphics card stopped", 1,
+           L"After a game whose graphics card stopped (the driver reset it, or the game lost its graphics device), Home says so the next time this "
+           L"program opens and offers one click each: the game's DLSS off, frame generation off, the render size one step lower - and says to "
+           L"update the graphics driver. Nothing is changed until you press one. Unticked: no advice, as before."),
     Toggle(L"update", L"check", L"Check for updates when this program opens", 1,
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
@@ -1722,6 +1774,14 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_numbers", L"Swing timer: show what the blow did", 1,
            L"The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone (\"too soon\" "
            L"still shows). Single player or a game you host only: a joined player's blows are rolled on the host's machine. Live.")),
+    // [hud] swing_timer_reasons (vr/swing_reason.h, Serg 2026-11-06: the player sees in the headset what went wrong with each swing - the shaft, too
+    // slow, too short ...): melee_touch's own refusals in the same ring
+    Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_reasons", L"Swing timer: say why a touch was no attack", 1,
+           L"A touch with the weapon that did not become an attack says why, in the ring or over the bar (VR first person): shaft or handle - it met the "
+           L"body behind the weapon's head or behind your front hand, a push; not the tip - outside the part of the blade that strikes; slow - your "
+           L"swing against the speed it needs (3.1/5.0, m/s); weak - a strike too weak for the weapon; short - the swing or thrust was too short to "
+           L"count; push - a thrust with too little jab; wrong way - the blade moved away from the monster or backward; shield - its shield or weapon "
+           L"stopped the blow. Nothing here changes the game or what counts as a hit: it only tells you. Live.")),
     // [hud] game_menu_settings (vr/flat_menu.h, vr/host_rules.h): the flat game's settings from the pause menu, the host's rules shown (2026-11-05,
     // Pavel's idea: Counter-Strike's list of a server's rules on a key and in the console)
     Group(L"In-game settings and the host's rules", L"A D2R VR settings button in the game's pause menu (2D on the monitor) and a list of the host's rules above in co-op."),
@@ -2105,6 +2165,12 @@ std::vector<Item> g_items = {
            L"The effects (fog, sky, ceiling) wait until the graphics card has drawn the last eye's effects before the next "
            L"eye's values go in. Both eyes of a pair get the same values anyway; this matters for FlatVR's frame stamps "
            L"with one picture a frame. Costs a little speed. Live. F4 only."),
+    Only(kVr, Toggle(L"render", L"resize_drain", L"No GPU hang when video options are applied in VR", 1,
+           L"With the right eye drawn again from the left eye's frame (Both eyes from one game frame), the graphics card hung a few seconds "
+           L"after Apply in the game's video options, mostly with DLSS on: the game freed its old picture and the right eye was still drawn "
+           L"into it. On: when the game applies its video options, resizes its picture or releases a DLSS feature, that one frame is not "
+           L"drawn again for the right eye, the right eye is drawn on its own until the picture has settled (as after an area change), and "
+           L"the graphics card first finishes what is queued. It only waits. Live. Off: as before.")),
     Toggle(L"stereo", L"swap", L"Swap eyes", 0, L"Tick if the eyes come out swapped (depth looks inside out)."),
     Toggle(L"stereo", L"pace_flatvr_only", L"Hold frames to the headset only while FlatVR runs", 1,
            L"In FlatVR modes the plugin holds the game's pictures to the headset's rate so FlatVR gets them evenly. With FlatVR "
@@ -2696,6 +2762,11 @@ std::vector<Item> g_items = {
            L"the game's copy: sharp at any render size, where the game puts them, on the game's own dark box, with the size and backdrop of \"Our names\" "
            L"below. First person (F4). Needs the "
            L"D2R_DepthFog.fx of the same build. Live. Unticked: the game's names, as before."),
+    // [hud] own_labels_drop_game (vr/hud/labels.cpp DropGameLayer): the game's own layer under ours not drawn at all - its own tick since 0.206.8's crash
+    Toggle(L"hud", L"own_labels_drop_game", L"Our labels and names: the game's not drawn at all (test)", 0,
+           L"With our item labels or names on (the ticks above), the game's own labels, monster plate and hover names under them are not drawn at "
+           L"all instead of hidden by the effect. A test: the builds that had it lost the graphics device a few minutes in. Live. Unticked: the "
+           L"game's are drawn and hidden, as in 0.206.5."),
     // [hud] names_own_* (vr/own_names.h NameLook): our names' own three sliders - none of the game plate's (Serg, 0.205.9)
     Slider(L"hud", L"names_own_size_pct", L"Our names: size, %", 20, 300, 5, 100,
            L"Our own names over monsters and NPCs (the two ticks above), in % of the game's text. Our names take none of the plate's sliders below "
@@ -4442,6 +4513,10 @@ std::vector<Item> g_items = {
            L"First person (F4): the hand with a shield on it closes into a fist as you squeeze the controller's grip and opens when you "
            L"let go, like a free hand. Only the fingers move - the shield stays on the arm exactly as the game draws it, and a shield "
            L"bash (\"Shield bash casts Smite\") works the same with the hand closed. Off: the game's own animation of the hand.")),
+    Needs(L"arms", L"mode", 2, Toggle(L"hands", L"left_slot_drawn_left", L"A weapon in the left slot is drawn in the left hand", 1,
+           L"First person (F4): a weapon alone in the left slot (a sword beside a shield in the right one, or nothing there) is drawn by the "
+           L"game in the right hand, while you hold it and hit with it in the left. On: it is drawn in the hand that holds it, and a shield "
+           L"in the right slot goes to the right forearm. Only the drawing moves - which slot attacks is the game's. Off: drawn where the game draws it.")),
     Needs(L"arms", L"mode", 2, Toggle(L"hands", L"forearm_twist", L"Forearm turns with the wrist", 1,
            L"First person (F4): when you roll the controller (palm up, palm down) the forearm turns with it, as a real one does - "
            L"a little at the elbow, all of it at the wrist - instead of the hand alone screwing round on a still arm. A shield strapped "
@@ -4509,6 +4584,11 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"leap_arc", 1, Needs(L"gameplay", L"leap_arc_head", 1, Slider(L"gameplay", L"leap_head_gain", L"Barbarian: how far a tilt of the head reaches", 0.5f, 4, 0.1f, 1,
            L"The head's tilt is multiplied by this before it aims the leap's arc: 2 lands as far with half the tilt, so a small raise of the head already reaches "
            L"far; 1 = the head's own tilt. The farthest is still the leap's own range. Live."))),
+    Needs(L"gameplay", L"leap_arc", 1, Toggle(L"gameplay", L"leap_air_aim", L"Barbarian: aim the next leap in the air", 0,
+           L"With the leap's arc on: hold Leap or Leap Attack while the hero is in the air and the arc and circle show there too; let go in the air and the NEXT "
+           L"leap goes to that circle - its button is held through the landing until the game casts it. The leap already in the air still lands where the game set "
+           L"it when it was cast: nothing can re-aim a leap under way without changing the game itself. Off: a release in the air is pressed at once, as on the "
+           L"ground. Live.")),
     Group(L"Point skills (arc and circle)", L"Aim skills cast on a spot (Teleport, Fire Wall, Meteor, Blizzard, curses...) with an arc in F4: a tap casts where you look, hold to see an arc and a circle, let go to cast into it. The sliders set how far the circle goes, how high the arc rises, its colour and how strongly it is drawn."),
     Toggle(L"gameplay", L"teleport_circle", L"Point skills (Teleport, Fire Wall, Meteor...): hold for an arc and a circle", 1,
            L"VR first person (F4) only, the skill on one of the pad's skill buttons (B, X, Y, RB, A or RT, with or without the left trigger). A tap casts where you look. "
@@ -5038,6 +5118,29 @@ std::vector<Item> g_items = {
            L"A skill whose gesture or button fires while it sits on none of the game's skill buttons is put on this slot first (the game's own "
            L"setter, as the skill panel's EDIT), then this slot is pressed. Whatever was on the slot is replaced. LT + RB by default - the "
            L"one players use least. Live.")),
+    Needs(L"gestures", L"skill_link", 1, Toggle(L"gestures", L"skill_link_settle", L"Skills to BodyWalk: wait before the first cast from the spare slot", 1,
+           L"A skill just put on the spare slot is pressed 0.05 s after the game's table shows it there - pressed at once, the game may "
+           L"refuse it (\"I can't use that yet\") and the first cast is lost. Every such press is watched: when the hero does not start "
+           L"casting within half a second it is pressed once more, and the log says each time (how long after the set, cast or refused). "
+           L"Only this path waits; skills already on a button cast at once. On by default. Live.")),
+    Toggle(L"gestures", L"engine_in_game", L"In-game gesture engine (prototype)", 0,
+           L"The gestures are recorded and recognised inside the game by BodyWalk's gesture engine (d2r_vr_gestures.dll, which D2R VR Setup puts in "
+           L"the mod's d2r_vr_libs folder) - no BodyWalk window or process is needed for them. The skill panel's Gestures tab records, re-records, binds "
+           L"and clears them; a recognised gesture casts its skill the game's own way (its skill button pressed, or the skill put on the spare slot "
+           L"first). Kept in BodyWalk's settings folder, per class, where BodyWalk shows them too. VR first person (F4) only. Without the DLL the "
+           L"Gestures tab says so. Unticked: the Gestures tab uses BodyWalk over Game Link (Skills to BodyWalk), as before. Live."),
+    Needs(L"gestures", L"engine_in_game", 1, Choice(L"gestures", L"engine_pen", L"In-game gesture engine: the pens in play", 3,
+           {L"None (only the Gestures tab's takes)", L"The left trigger", L"The right trigger", L"Both triggers"},
+           L"Which triggers draw for the gesture engine while you play: a stroke drawn with one held is read, and one that matches a gesture casts "
+           L"its skill. The trigger still does what it does in the game. Live.")),
+    Toggle(L"openxr", L"gesture_overlay", L"Gestures tab in the headset (prototype)", 0,
+           L"A GESTURES tab beside Settings in the skill panel's window (it needs the tiles' look and Settings in the headset), in VR first "
+           L"person (F4): your BodyWalk gestures for the class you play, each with a picture - a glyph's shape, a body motion's path with its "
+           L"start and its end, a stick figure holding a hand pose, a button's name - the skill it casts and its threshold. NEW GESTURE records "
+           L"one: the kind (glyph, hand pose, body motion), the hand, the skill; then you see the take and keep it, record it again or drop it. "
+           L"Re-record, Clear and Bind on each row; a click on a picture changes its colour. While BodyWalk records, the trigger is its pen: the "
+           L"window steps aside and B / Y stop. BodyWalk records, recognises and keeps the gestures; the game only shows them and asks. Needs "
+           L"BodyWalk with Game skills, or the in-game gesture engine above. Unticked: no Gestures tab. Live."),
     Group(L"Debug (the same ticks as on the Debug tab)", L"Drawings and tests for tuning Hit by touch and the shield bash: draw the blade and monster capsules, colour refused contacts, try touches without attacking, and fit the blade's length, butt and thickness to the weapon you see."),
     Toggle(L"debug", L"melee_touch_client_verdict", L"Hit by touch: decide hostile / wall from the client's own units", 0,
            L"What a player who JOINED a TCP/IP game gets (the game's server runs on the host's PC there, so it cannot be asked), tried "
@@ -5402,6 +5505,11 @@ std::vector<Item> g_items = {
            L"Interact on it would: the game's own pick-up, its own reach (it walks you up if it is not in reach) and its own rules (a full inventory keeps it on the "
            L"ground). While you keep the grip squeezed after the game took it, the hand shows the item. Nothing else is changed: the item goes where the game puts it. "
            L"Unticked: items are picked up only with Interact, as before.")),
+    // [weight] grab_items_empty_grip (vr/empty_grip.h): an empty hand's grip alone takes the item its ray points at ([input] point_pickup)
+    Needs(L"arms", L"mode", 2, Toggle(L"weight", L"grab_items_empty_grip", L"An empty hand's grip alone picks up the item it points at", 1,
+           L"Live. Ticked: point an EMPTY hand at an item on the floor (its name lights up, [input] point_pickup) and just squeeze the grip - the game picks it up, "
+           L"its own pick-up. A hand with a weapon, a bottle or a prop in it still needs grip + trigger. The grip stays with the weapon's call back, a belt potion "
+           L"in reach, the shoulder swap, a body or prop under the palm, and an item right at the palm (that one is picked up). Unticked: grip + trigger only.")),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_items", 1, Slider(L"weight", L"grab_items_reach_cm", L"Pick up: how near the item the palm must be, cm", 5, 60, 1, 25,
            L"Live. The palm this close to the middle of the item's place on the ground picks it up when the grip closes. Higher: easier (you need not bend so far); "
            L"lower: only with the hand right on it."))),
@@ -6133,6 +6241,12 @@ std::vector<Item> g_items = {
            L"hooks, the server's lookups, the 100 ms probe of Hit by touch, the haptic call, the log lines), the situation it fell in (standing, walking, "
            L"a swing, a hit landed) and the access violations caught. Every 10 s one line counts how many pairs were long in each situation - send that "
            L"log in. It only measures and writes lines; it changes nothing in play. Costs a clock read or two in each hook while it is on. Live."),
+    // [debug] gesture_trace (vr/skill_wheel.cpp): the Gestures tab's whole chain in the log - view only
+    Toggle(L"debug", L"gesture_trace", L"Gestures tab: trace the whole recording chain in the log", 0,
+           L"The skill panel's Gestures tab writes a \"gesture trace\" line to d2r-vr-vrcam.log for every step: each screen change and why (a click, the "
+           L"back key, an answer, a timeout), each command to BodyWalk with its number, BodyWalk's answers and the changes of its recording state, the "
+           L"list's count, BodyWalk's heartbeat once a second, and the triggers and grips handed to BodyWalk ten times a second while it records. For "
+           L"finding where a recording stops. It only writes lines; it changes nothing in play. Live."),
     Slider(L"debug", L"frame_trace_ms", L"Frame trace: long over, ms", 5, 60, 1, 15,
            L"A pair longer than this is a long one for \"Log the long frames and what the plugin spent in them\". 15 ms is a little over one frame at "
            L"72 Hz (13.9 ms); at 90 Hz (11.1 ms) 15 catches every missed frame. Raise it if the game runs at 40-50 frames a second anyway "
@@ -6212,6 +6326,13 @@ std::vector<Item> g_items = {
     Choice(L"debug", L"fog_in_frame_paint", L"Fog in the frame's edges: paint what it does", 0,
            {L"Off", L"Objects and the void", L"Fire and smoke apart", L"The fogged scene alone", L"The frame's depth edges"},
            L"Paints how the fog in the picture's edges is made, to see where it goes wrong. Live."),
+    Choice(L"debug", L"patch_hunt", L"Floor patches: switch one suspect off (Ctrl+F8 in the game)", 0,
+           {L"All normal", L"The game's Ambient Occlusion off", L"The game's shadows lowest", L"The game's lights lowest",
+            L"The game's TAA / DLSS off, scale 100", L"Depth fix off", L"Light bounds off", L"Our sky / fog / ceiling off",
+            L"One game pipeline skipped (Ctrl+Alt+F8)", L"1 - 7 all at once"},
+           L"For the ground patches that ride with the hero: one suspect off at a time, the rest as you have it; a line at the top of the picture and "
+           L"\"vrcam: patch_hunt\" lines in the log say what is off. The game's own options are put through the game's own setter and given back "
+           L"when you leave the step - leave the game on \"All normal\" or it keeps them in its Settings.json. Live."),
     Toggle(L"debug", L"stall_unstick_game", L"Stall guard: also signal the game's own fences", 0,
            L"With \"Free a GPU queue that stands still\": the game's own fences a queue waits for are signalled too. For a lost wake-up only. Restart the game."),
     Slider(L"debug", L"stall_skip_ms", L"Stall guard: the queue still this long before our work is skipped, ms", 50, 3000, 50, 250, L"Restart the game."),
@@ -6240,6 +6361,10 @@ std::vector<Item> g_items = {
     Toggle(L"debug", L"melee_touch_unchecked", L"Hit by touch: no hostile / wall check (not for play)", 0,
            L"Any live monster the blade meets is attacked - to find out whether that check is what stops a touch. An ally or a monster behind a wall is attacked too. Live."),
     Toggle(L"debug", L"melee_press_trace", L"Log every press of Hit by touch in full", 0, L"Off: only the first 12 presses are told in full. Live."),
+    Toggle(L"debug", L"quick_blow_probe", L"Log what became of each attack's blow", 0,
+           L"One line per attack of your hero (single player or a game you host): whether the game's blow fired, or why it was lost - our attack path re-armed the "
+           L"hero's frame event before it, the mode changed, or the animation ended with no blow - with the frame events the attack got. For a report of "
+           L"\"the touch attacks but deals no damage\". Nothing changes in play. Live."),
     Toggle(L"debug", L"monster_rig_dump", L"Log the next monster model's limbs once", 0, L"Every read of its meshes and bones, for checking the game's mesh layout. Live."),
     Toggle(L"debug", L"doll_trace", L"Log each time the body lets go of the arms", 0, L"The hero's facing or rig that failed, and when it is taken again. Live."),
     Toggle(L"debug", L"shield_blink", L"Blink the strapped shield (a check)", 0, L"As on Weapon Adjust > Shield: the shield's bone hidden half a second in every two. Live."),
@@ -8253,8 +8378,12 @@ void UpdateLayersNote() {
     GetPrivateProfileStringW(L"session", L"layers_off", L"", off, 512, path);
     GetPrivateProfileStringW(L"session", L"layers_listed_in", L"", listedIn, 512, path);
     GetPrivateProfileStringW(L"session", L"layers_in", L"", in, 512, path);
+    wchar_t crashOff[512] = L"", crashIn[512] = L"";   // [openxr] block_crash_layers: on crash_layers, turned off / loading in
+    GetPrivateProfileStringW(L"session", L"layers_crash_off", L"", crashOff, 512, path);
+    GetPrivateProfileStringW(L"session", L"layers_crash_in", L"", crashIn, 512, path);
     int level = 0;
-    const std::wstring line = apilayers::StatusLine(off, listedIn, in, GetPrivateProfileIntW(L"openxr", L"runtime_fov", 1, g_ini) != 0, &level, LayersWords());
+    const std::wstring line = apilayers::StatusLine(off, listedIn, in, GetPrivateProfileIntW(L"openxr", L"runtime_fov", 1, g_ini) != 0, &level, LayersWords(),
+                                                    crashOff, crashIn);
     SetStatus(L"xr_layers", level == 2 ? kWarn : kUnknown, line.c_str());
 }
 
@@ -8341,8 +8470,20 @@ std::wstring NewestPendingReport() {
     FindClose(f);
     return best.empty() ? best : root + best;
 }
+// A Warning row's words changed in place (its control too, when made); true = they changed (the caller lays the page out again: the line count
+// may differ). The text is kept for the items' life (Kept), as a label must be.
+bool SetRowText(Item* row, const std::wstring& text) {
+    if (!row || (row->label && text == row->label)) return false;
+    row->label = Kept(text);
+    if (row->ctl) {
+        SetWindowTextW(row->ctl, row->label);
+        InvalidateRect(row->ctl, nullptr, TRUE);
+    }
+    return true;
+}
 // Home > The game and ReShade: the RivaTuner warning ([support] rtss_warning, shared/rtss_detect.h) - shown while RTSS.exe or
-// MSIAfterburner.exe runs (one process snapshot every 3 s, Home only). Only looks.
+// MSIAfterburner.exe runs (one process snapshot every 3 s, Home only), saying also when MSI Afterburner's on-screen display is on (RTSS's
+// shared memory, read only). Only looks.
 void UpdateRtssWarning() {
     static ULONGLONG at = 0;
     if (at && GetTickCount64() - at < 3000) return;
@@ -8358,12 +8499,222 @@ void UpdateRtssWarning() {
             CloseHandle(snap);
         }
     }
+    // MSI Afterburner's on-screen display (2026-11-07): it draws through RivaTuner - RTSS's shared memory says whether its OSD is on (read only)
+    char other[64] = "";
+    if (found & rtss::kRtssExe)
+        if (HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, rtss::kSharedMemoryName)) {
+            if (const void* view = MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0)) {
+                MEMORY_BASIC_INFORMATION mbi{};
+                if (VirtualQuery(view, &mbi, sizeof mbi)) found |= rtss::ReadSharedMemory(view, mbi.RegionSize, other, sizeof other);
+                UnmapViewOfFile(view);
+            }
+            CloseHandle(map);
+        }
+    static const wchar_t* base = nullptr;   // the row's own words (in the player's language by now), what the OSD sentences go after
+    if (!base) base = row->label ? row->label : L"";
+    std::wstring text = base;
+    if (found & rtss::kOsdAfterburner)
+        text += std::wstring(L" ") + TR(L"status.rtss_warn.afterburner_osd", L"MSI Afterburner's on-screen display is on now (it draws through RivaTuner): turn it off in "
+                                                                             L"MSI Afterburner > Settings > On-Screen Display, or close MSI Afterburner.");
+    if (found & rtss::kOsdOther)
+        text += L" " + TRF(L"status.rtss_warn.other_osd", L"Another program's on-screen display draws through RivaTuner too ({owner}).",
+                           {{L"owner", std::wstring(other, other + strlen(other))}});
     const bool hide = !rtss::Running(found);
-    if (row->hidden != hide) {
+    const bool newText = SetRowText(row, text);
+    if (row->hidden != hide || (newText && !hide)) {
+        if (!hide && (row->hidden || newText))
+            LogLine(std::wstring(L"RivaTuner warning: RTSS.exe or MSIAfterburner.exe is running") + (found & rtss::kOsdAfterburner ? L", Afterburner's OSD on" : L"") +
+                    (found & rtss::kOsdOther ? L", another OSD on" : L"") + L" - shown on Home");
         row->hidden = hide;
-        if (!hide) LogLine(L"RivaTuner warning: RTSS.exe or MSIAfterburner.exe is running - shown on Home");
         LayoutPage();
     }
+}
+
+// Home > The game and the mod: [support] layer_warning (shared/api_layers.h LayerWarning) - the implicit OpenXR layers enabled in the registry
+// (as the loader reads them: HKLM, then HKCU), shown while one known to cause trouble is among them, with how to turn it off for all games and
+// whether D2R VR turns it off for the game itself (the ini's block_crash_layers / block_listed_layers as they are now). Every 10 s on Home. Reads only.
+void UpdateLayerWarning() {
+    static ULONGLONG at = 0;
+    if (at && GetTickCount64() - at < 10000) return;
+    at = GetTickCount64();
+    Item* row = FindItem(L"@status", L"layer_warn");
+    if (!row) return;
+    std::wstring text;
+    if (GetPrivateProfileIntW(L"support", L"layer_warning", 1, g_ini) != 0) {
+        auto list = [](const wchar_t* key, const char* def) {
+            wchar_t d[256] = L"", b[512] = L"";
+            MultiByteToWideChar(CP_UTF8, 0, def, -1, d, 256);
+            GetPrivateProfileStringW(L"openxr", key, d, b, 512, g_ini);
+            char out[1024] = "";
+            WideCharToMultiByte(CP_UTF8, 0, b, -1, out, (int)sizeof out, nullptr, nullptr);
+            return std::string(out);
+        };
+        std::vector<apilayers::Found> layers = apilayerslib::Scan();
+        apilayers::Decide(layers, GetPrivateProfileIntW(L"openxr", L"block_listed_layers", 1, g_ini) != 0,
+                          GetPrivateProfileIntW(L"openxr", L"runtime_fov", 1, g_ini) == 0, list(L"blocked_layers", apilayers::kDefaultList),
+                          GetPrivateProfileIntW(L"openxr", L"block_crash_layers", 1, g_ini) != 0, list(L"crash_layers", apilayers::kDefaultCrashList));
+        text = apilayers::LayerWarning(layers, LayerWarnWords(), &LayerTr);
+    }
+    const bool hide = text.empty();
+    const bool newText = !hide && SetRowText(row, text);
+    if (row->hidden != hide || newText) {
+        if (!hide) LogLine(L"OpenXR layer warning shown on Home: " + text);
+        row->hidden = hide;
+        LayoutPage();
+    }
+}
+
+// Home > The game and the mod: [support] hang_advice (shared/hang_advice.h) - the last game's graphics card stopped: the plugin's record
+// (d2rloader\logs\d2r_vr_gpu_fault.txt, moved aside at the next game start), else the game's dx12 assertion in D2RLoader's log (game closed only).
+// Said with the safe road on buttons - each hidden once it is done (or there is nothing to do); nothing is written until one is pressed.
+// "Hide this advice" keeps that game's stamp in this program's own ini ([hang_advice] hidden in d2r_vr_settings.ini).
+ULONGLONG g_hangAt = 0;        // the last look (0: look at the next refresh - after a button)
+std::wstring g_hangStamp;      // the game the advice is about ("" none shown)
+std::wstring g_hangSizeDone;   // the game whose render size was already stepped down here (one step per advice)
+int g_hangSizeTo = 0;          // the side "Render size one step lower" writes
+std::wstring GameFolder();
+// The side of the square the game draws in VR now (0: not known): the slider's, the headset's recommendation or the window's as a square of the same pixels.
+int HangCurrentSide() {
+    const rendersize::Pick pick = rendersize::FromIni((int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, g_ini),
+                                                      (int)GetPrivateProfileIntW(L"render", L"vr_resolution_px", 0, g_ini));
+    if (pick.kind == rendersize::Kind::Square) return pick.side;
+    if (pick.kind == rendersize::Kind::Headset) {
+        const HeadsetInfo hs = ReadHeadsetInfo();
+        return hs.known() ? hangadvice::SquareOf(hs.recW, hs.recH) : 0;
+    }
+    int mode = 0, w = 0, h = 0;
+    return ReadGameWindow(&mode, &w, &h) ? hangadvice::SquareOf(w, h) : 0;
+}
+void UpdateHangAdvice() {
+    if (g_hangAt && GetTickCount64() - g_hangAt < 10000) return;
+    g_hangAt = GetTickCount64();
+    Item* row = FindItem(L"@status", L"hang_advice");
+    Item* dlss = FindItem(L"@run", L"hang_dlss_off");
+    Item* fg = FindItem(L"@run", L"hang_framegen_off");
+    Item* size = FindItem(L"@run", L"hang_size_down");
+    Item* hideBtn = FindItem(L"@run", L"hang_dismiss");
+    if (!row || !dlss || !fg || !size || !hideBtn) return;
+    hangadvice::Found f;
+    const bool running = ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe");
+    if (GetPrivateProfileIntW(L"support", L"hang_advice", 1, g_ini) != 0 && !LogsFolder().empty()) {
+        std::string text;
+        if (ReadFileText(LogsFolder() + L"\\d2r_vr_gpu_fault.txt", &text)) f = hangadvice::FromGpuFault(text);
+        const std::wstring loader = GameFolder() + L"d2rloader\\logs\\d2rloader.log";
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        if (f.reason == hangadvice::Reason::None && !running && GetFileAttributesExW(loader.c_str(), GetFileExInfoStandard, &fa) &&
+            ReadFileText(loader, &text)) {
+            SYSTEMTIME st{};
+            FileTimeToSystemTime(&fa.ftLastWriteTime, &st);
+            char stamp[48];
+            snprintf(stamp, sizeof stamp, "d2rloader.log %04u-%02u-%02u %02u:%02u:%02u UTC", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+            f = hangadvice::FromLoaderLog(text, stamp);
+        }
+    }
+    const std::wstring stamp(f.stamp.begin(), f.stamp.end());
+    wchar_t hidden[96] = L"";
+    GetPrivateProfileStringW(L"hang_advice", L"hidden", L"", hidden, 96, g_uiIni);
+    const bool show = hangadvice::Advise(f) && stamp != hidden;
+    // what each button would still do
+    std::string json;
+    const int dlssNow = ReadFileText(GameSettingsPath(), &json) ? hangadvice::DlssValue(json) : -1;
+    const bool fgOn = GetPrivateProfileIntW(L"openxr", L"frame_generation", 0, g_ini) != 0;
+    const int side = HangCurrentSide();
+    g_hangSizeTo = g_hangSizeDone == stamp ? 0 : hangadvice::StepDown(side);
+    std::wstring text;
+    if (show) {
+        const wchar_t* why = L"";
+        switch (f.reason) {
+            case hangadvice::Reason::Hung: why = TR(L"status.hang_advice.hung", L"the card stopped answering and its driver reset it"); break;
+            case hangadvice::Reason::Reset: why = TR(L"status.hang_advice.reset", L"its driver reset the card"); break;
+            case hangadvice::Reason::Removed: why = TR(L"status.hang_advice.removed", L"the game lost its graphics device"); break;
+            case hangadvice::Reason::Driver: why = TR(L"status.hang_advice.driver", L"the graphics driver failed"); break;
+            case hangadvice::Reason::Memory: why = TR(L"status.hang_advice.memory", L"the graphics card ran out of memory"); break;
+            default: why = TR(L"status.hang_advice.unknown", L"the game lost its graphics device"); break;
+        }
+        const std::wstring when = f.fromLoaderLog ? TR(L"status.hang_advice.when_loader", L"in the last game") : stamp;
+        text = TRF(L"status.hang_advice.text",
+                   L"The graphics card stopped last time ({when}: {why}). What helps most often: the buttons below - the game's DLSS off, frame "
+                   L"generation off, the render size one step lower - and the newest driver for your graphics card (NVIDIA: nvidia.com/drivers, AMD: "
+                   L"amd.com/support, Intel: intel.com/support). Changing the game's video options in VR can stop the card too: change them outside VR, "
+                   L"or restart the game after Apply. Nothing is changed until you press a button.",
+                   {{L"when", when}, {L"why", why}});
+        if (dlssNow > 0 && running) text += L" " + std::wstring(TR(L"status.hang_advice.dlss_running", L"DLSS: close the game first (it writes its options back when it quits)."));
+    }
+    bool relayout = show && SetRowText(row, text);
+    auto showBtn = [&](Item* b, bool on) {
+        if (b->hidden == !on) return;
+        b->hidden = !on;
+        relayout = true;
+    };
+    if (show && g_hangSizeTo > 0) {
+        const std::wstring label = TRF(L"hang.size_down", L"Render size one step lower ({from} -> {to})",
+                                       {{L"from", std::to_wstring(side)}, {L"to", std::to_wstring(g_hangSizeTo)}});
+        if (SetRowText(size, label)) relayout = true;
+    }
+    showBtn(dlss, show && dlssNow > 0);
+    showBtn(fg, show && fgOn);
+    showBtn(size, show && g_hangSizeTo > 0);
+    showBtn(hideBtn, show);
+    if (row->hidden == show) {
+        row->hidden = !show;
+        relayout = true;
+        if (show)
+            LogLine(L"hang advice shown on Home: the last game's graphics card stopped (" + stamp + L"); DLSS " + std::to_wstring(dlssNow) +
+                    L", frame generation " + (fgOn ? L"on" : L"off") + L", render size " + std::to_wstring(side) + L" -> " + std::to_wstring(g_hangSizeTo));
+    }
+    g_hangStamp = show ? stamp : std::wstring();
+    if (relayout) LayoutPage();
+}
+// The buttons: each writes one thing, says it in the log, and the advice looks again at once.
+void HangDlssOff() {
+    if (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")) {
+        MessageBoxW(g_main, TR(L"msg.hang_dlss_running", L"Close the game first: it writes its own video options back when it quits, and DLSS would come back on."),
+                    L"D2R VR", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const std::wstring path = GameSettingsPath();
+    std::string text;
+    if (!ReadFileText(path, &text)) return;
+    bool ok = false;
+    const std::string out = hangadvice::WithDlssOff(text, &ok);
+    if (ok && out != text) {
+        const DWORD attr = GetFileAttributesW(path.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_READONLY)) SetFileAttributesW(path.c_str(), attr & ~FILE_ATTRIBUTE_READONLY);
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << out;
+        LogLine(f ? L"hang advice: the game's NVIDIA DLSS set to 0 (off) in its Settings.json - on the player's click" : L"hang advice: the game's Settings.json could not be written");
+    }
+    g_hangAt = 0;
+    UpdateHangAdvice();
+}
+void HangFrameGenOff() {
+    WritePrivateProfileStringW(L"openxr", L"frame_generation", L"0", g_ini);
+    LogLine(L"hang advice: [openxr] frame_generation=0 - on the player's click");
+    RefreshControls();
+    g_hangAt = 0;
+    UpdateHangAdvice();
+}
+void HangSizeDown() {
+    if (g_hangSizeTo <= 0) return;
+    const int mode = (int)GetPrivateProfileIntW(L"render", L"vr_resolution", 0, g_ini);
+    wchar_t buf[16];
+    swprintf_s(buf, L"%d", g_hangSizeTo);
+    WritePrivateProfileStringW(L"render", L"vr_resolution_px", buf, g_ini);
+    if (mode != 0) WritePrivateProfileStringW(L"render", L"vr_resolution", L"0", g_ini);   // the headset's box (or an older square mode): the slider's side now
+    LogLine(L"hang advice: [render] vr_resolution_px=" + std::wstring(buf) + (mode != 0 ? L", vr_resolution " + std::to_wstring(mode) + L" -> 0" : std::wstring()) +
+            L" - on the player's click");
+    g_hangSizeDone = g_hangStamp;
+    RefreshControls();
+    UpdateResolutionTexts();
+    g_hangAt = 0;
+    UpdateHangAdvice();
+}
+void HangDismiss() {
+    if (g_hangStamp.empty()) return;
+    WritePrivateProfileStringW(L"hang_advice", L"hidden", g_hangStamp.c_str(), g_uiIni);
+    LogLine(L"hang advice hidden for " + g_hangStamp);
+    g_hangAt = 0;
+    UpdateHangAdvice();
 }
 // Home > The game and the mod: the game data older than 3.x (shared/game_version.h) - D2RLoader's own log, read every 10 s on Home. Only says so.
 void UpdateGameVersionWarning() {
@@ -9257,6 +9608,8 @@ void RefreshStatus() {
     ShowDrawDistance();  // Draw distance: its stop and line (a key may have been changed in the ini meanwhile)
     D2RLoaderStatus();   // The game and ReShade: flat and VR alike
     UpdateRtssWarning();   // ... and the RivaTuner warning while RTSS / Afterburner runs
+    UpdateLayerWarning();  // ... the OpenXR layers known to cause trouble ([support] layer_warning)
+    UpdateHangAdvice();    // ... and the advice after a game whose graphics card stopped ([support] hang_advice)
     UpdateGameVersionWarning();   // ... and the game data older than 3.x (a broken install)
     ReShadeStatus();
     if (g_platform != 1) return;
@@ -10084,6 +10437,24 @@ int WriteLangTemplate(const wchar_t* path) {
     out += L"status.xr_layers.listed_in_runtime_fov = " + lang::Escape(lw.listedInRuntimeFov) + L"\n";
     out += L"status.xr_layers.listed_in = " + lang::Escape(lw.listedIn) + L"\n";
     out += L"status.xr_layers.in = " + lang::Escape(lw.in) + L"\n";
+    out += L"status.xr_layers.crash_off = " + lang::Escape(lw.crashOff) + L"\n";
+    out += L"status.xr_layers.crash_in = " + lang::Escape(lw.crashIn) + L"\n";
+    {   // [support] layer_warning's words (LayerWarnWords) and each troublemaker's (LayerTr: status.layer_warn.<id>.who / why / how)
+        const apilayers::WarnWords ww;
+        out += L"status.layer_warn.head = " + lang::Escape(ww.head) + L"\n";
+        out += L"status.layer_warn.item = " + lang::Escape(ww.item) + L"\n";
+        out += L"status.layer_warn.off_for_game = " + lang::Escape(ww.offForGame) + L"\n";
+        out += L"status.layer_warn.tick_crash = " + lang::Escape(ww.tickCrash) + L"\n";
+        out += L"status.layer_warn.tick_picture = " + lang::Escape(ww.tickPicture) + L"\n";
+        out += L"status.layer_warn.others = " + lang::Escape(ww.others) + L"\n";
+        out += L"status.layer_warn.tool = " + lang::Escape(ww.tool) + L"\n";
+        for (const apilayers::Troublemaker& t : apilayers::kTroublemakers) {
+            const std::wstring id = apilayers::Widen(t.id);
+            out += L"status.layer_warn." + id + L".who = " + lang::Escape(t.who) + L"\n";
+            out += L"status.layer_warn." + id + L".why = " + lang::Escape(t.why) + L"\n";
+            out += L"status.layer_warn." + id + L".how = " + lang::Escape(t.how) + L"\n";
+        }
+    }
     // the plugin's words in the headset ([hud] headset_language) that live in its tables: the settings panel's rows and tabs, the guide, the
     // key bindings' picks, the toolbar types (vr/ui_text_tables.h; the ones its code writes tools/lang_sync.py finds in vr/ itself)
     out += L"\n# ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====\n";
@@ -10629,6 +11000,7 @@ if($mlg){ Get-ChildItem -LiteralPath $mlg -File | Where-Object { ($_.Extension -
 $cs=[int]__SESSIONS__; $sr=Join-Path $(if($mlg){$mlg}else{$lg}) 'sessions'
 if($cs -gt 0){ Get-ChildItem -LiteralPath $sr -Directory | Where-Object { $_.Name -match '^\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d$' } | Sort-Object Name -Descending | Select-Object -First $cs | ForEach-Object { $sd=$_; Get-ChildItem -LiteralPath $sd.FullName -File | Where-Object { ($_.Extension -in '.log','.txt','.csv') -and $_.Length -lt 50MB } | ForEach-Object { C $_.FullName ('sessions\' + $sd.Name) } } }
 foreach($d in @($lg,$mlg)){ if($d){ $s=Get-ChildItem -LiteralPath $d -File -Filter 'headset_shot_*.txt' | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if($s){ Get-ChildItem -LiteralPath $d -File -Filter ($s.BaseName + '_*.png') | Where-Object { $_.Length -lt 50MB } | ForEach-Object { C $_.FullName 'headset_shot' } } } }
+foreach($d in @($lg,$mlg)){ if($d){ Get-ChildItem -LiteralPath $d -Directory -Filter 'capture_*' | Where-Object { $_.Name -match '^capture_\d{8}-\d{6}$' } | Sort-Object Name -Descending | Select-Object -First 2 | ForEach-Object { $cd=$_; Get-ChildItem -LiteralPath $cd.FullName -File | Where-Object { $_.Length -lt 20MB } | ForEach-Object { C $_.FullName ('captures\' + $cd.Name) } } } }
 foreach($d in @($lg,$mlg)){ if($d){ Get-ChildItem -LiteralPath $d -File -Filter 'headset_clip_*.mp4' | Where-Object { $_.Length -lt 50MB } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | ForEach-Object { C $_.FullName 'headset_clip' } } }
 foreach($f in 'd2r_vr_about.json','d2r_vr_start.txt','d2r_vr_crash.txt'){ C (Join-Path $pl $f) 'plugins' }
 foreach($f in 'd2r_vr.ini','d2r_vr.default.ini','d2r_vr_frames.csv','d2r_vr_uitrace.txt'){ C (Join-Path $pl $f) 'plugins' }
@@ -12000,6 +12372,10 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
+                else if (wcscmp(it.key, L"hang_dlss_off") == 0) HangDlssOff();             // [support] hang_advice's buttons
+                else if (wcscmp(it.key, L"hang_framegen_off") == 0) HangFrameGenOff();
+                else if (wcscmp(it.key, L"hang_size_down") == 0) HangSizeDown();
+                else if (wcscmp(it.key, L"hang_dismiss") == 0) HangDismiss();
                 else if (wcscmp(it.key, L"fov_from_headset") == 0) FovFromHeadset();                else if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, wcscmp(it.key, L"flatvr_start") == 0 ? 1 : 0);
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button) {
                 WriteValue(it, (float)(((int)ReadValue(it) + 1) % 1000000));

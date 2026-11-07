@@ -128,6 +128,11 @@ float LabelScaleOf(const void* name, const void* box, float fallback) {
 // [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): in F4 the item labels drawn by us - the name painted sharp at the size it has in
 // the eye, in the game's own box (its layout, its hover and its pick-up untouched), at its item's depth. The effect needs each label's box for it.
 bool OwnLabelsNow() { return g_set.labelsOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
+// [hud] own_labels_drop_game: with our labels / names on, the game's own label, plate and hover layer not drawn at all (3c0ee102: its plate's Draw,
+// LabelPaint, its tooltip drawer skipped). Its own tick since 0.206.8's device-removed crash (DXGI_ERROR_INVALID_CALL): 0.206.6-0.206.8, the builds
+// with it, lost the device 2-3 minutes into every run with plates shown; 0.206.5, without it, ran clean. Unticked: none of those hooks is put in -
+// the game's layer drawn and hidden in our effect (0.206.5's way).
+bool DropGameLayer() { return g_set.ownDropGame.load(std::memory_order_relaxed); }
 bool LabelDepthWanted() {
     return AfrOn() && g_enabled.load() && FullBody() && (g_set.labelsDepthBody.load() > 0.005f || replay::OverlaysWanted() || OwnLabelsNow());
 }
@@ -284,6 +289,7 @@ uintptr_t HookLabelPaint(const int32_t* box, const char* name, const float* colo
     // box would stand in the layer at the wrong depth), the game paints the plain label
     const bool own = box && OwnLabelsNow() && !LabelIsOtherThanItem(name, box);
     if (own && colour) NoteOwnBox(box, colour);
+    if (own && DropGameLayer()) return 0;   // (Serg, 2026-11-07: the old labels' layer removed - the game's box and name not painted at all; its layout, picking and hover stay; the callers take no result)
     if (box && PointHighlightWanted() && !own)   // [input] point_pickup: the pointed item's label
         if (const uintptr_t lit = pointpickup::Lit(); lit && LabelOwner(box, name) == lit) return PaintPointed(box, name, colour);
     float alpha, size;
@@ -322,6 +328,28 @@ bool MonsterNamesOwnNow() { return g_set.monsterNamesOwn.load() && g_enabled.loa
 // [hud] npc_names_own: the hover tooltip's names (ownnames::kHoverSites) - recorded like the plate's texts, skipped once ours is shown.
 bool NpcNamesOwnNow() { return g_set.npcNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
 std::atomic<bool> g_hoverOn{false};
+std::atomic<bool> g_names3d{false};
+void NamesSet3d(bool on) { g_names3d.store(on, std::memory_order_relaxed); }
+bool PlateStillShown() { int32_t r[4]; return gamestate::PlateRect(r); }
+bool NamesTargetPlate(float* life, bool* unique) {
+    AcquireSRWLockShared(&g_namesLock);
+    const ownnames::PlateInfo p = g_namesInfo;
+    ReleaseSRWLockShared(&g_namesLock);
+    const uint64_t now = (uint64_t)NamesNowMs();
+    if (!p.ms || (now > p.ms && now - p.ms > ownnames::kInfoMs)) return false;
+    *life = ownnames::LifeFrac(p.life);
+    *unique = p.unique != 0;
+    return *life >= 0.0f;
+}
+bool NamesTargetHidden() {
+    if (!mobbars::Enabled()) return false;
+    uintptr_t unit = 0;
+    plateworld::Follow f;
+    float px[2];
+    if (plateworld::GetFollow(&f, GetTickCount64())) unit = f.unit;
+    else if (!gamestate::PlateReadAt(&unit, px)) return false;
+    return mobbars::HidesPlate(unit, [](uintptr_t at, auto& v) { return SafeRead(&v, (const void*)at, sizeof v); });
+}
 uintptr_t g_hoverSites[3] = {};   // the return addresses, once each was checked to be a call of TextDraw (InstallHoverSites)
 ownnames::Record g_hoverRecord;   // (g_namesLock)
 void NamesSetHover(bool on) { g_hoverOn.store(on && g_hoverSites[0] != 0, std::memory_order_relaxed); }
@@ -394,6 +422,8 @@ void NotePlateInfo(const uint8_t* msg) {
     if (SafeRead(&unique, (const void*)(data + ownnames::kDataUnique), sizeof unique)) CopyGameText((const char*)unique, p.text[1], sizeof p.text[1]);
     if (SafeRead(&more, (const void*)(data + ownnames::kDataAdditional), sizeof more)) CopyGameText((const char*)more, p.text[2], sizeof p.text[2]);
     SafeRead(p.colour, (const void*)(data + ownnames::kDataColour), sizeof p.colour);
+    SafeRead(&p.life, (const void*)(data + ownnames::kDataLife), sizeof p.life);
+    SafeRead(&p.unique, (const void*)(data + ownnames::kDataUniqueBg), sizeof p.unique);
     p.ms = (uint64_t)NamesNowMs();
     AcquireSRWLockExclusive(&g_namesLock);
     g_namesInfo = p;
@@ -412,7 +442,86 @@ uintptr_t HookPlateInfo(void* self, const uint8_t* msg, void* panel, uint8_t fla
     if (g_namesOn.load(std::memory_order_relaxed)) NotePlateInfo(msg);
     return OrigPlateInfo(self, msg, panel, flag);
 }
+// [hud] monster_names_own: the game's plate never drawn - not hidden, moved or painted over (Serg, 2026-11-07: "the old plates' layer removed fully").
+// MonsterHealthPanel's own Draw is its vtable's slot 3 (0x1CDF3B8 + 3 x 8: the widgets' Draw 0x855B00, which draws its children - the frame
+// pictures, the Health bar, the text boxes; TooltipsPanel's vtable has its own Draw 0x880550 in the same slot). That slot is pointed at ours: while
+// it runs with our names on, the game's picture draw 0x858510 and its fills 0x657AB0 / 0x657B90 draw nothing (t_inPlate) and its texts are skipped
+// at TextDraw - so nothing of the plate reaches the layer, while its texts still pass TextDraw for our plate's measures. Its messages (SetInfo: the
+// name, the life) are the panel's own and keep coming. Off: the slot calls the widgets' Draw as the game does.
+constexpr uint64_t RVA_PLATE_DRAW_SLOT = 0x1CDF3D0, RVA_WIDGET_DRAW = 0x855B00, RVA_PICTURE_DRAW = 0x858510, RVA_FILL7 = 0x657AB0, RVA_FILL6 = 0x657B90;
+const uint8_t kSigPictureDraw[14] = {0x40,0x55,0x53,0x57,0x41,0x56,0x48,0x8D,0x6C,0x24,0xD8,0x48,0x81,0xEC};
+const uint8_t kSigFill7[10] = {0x44,0x3B,0xC1,0x7C,0x65,0x53,0x48,0x83,0xEC,0x50};
+const uint8_t kSigFill6[12] = {0x44,0x3B,0xC1,0x0F,0x8C,0xD3,0x02,0x00,0x00,0x4C,0x8B,0xDC};
+const uint8_t kSigWidgetDraw[15] = {0x40,0x53,0x56,0x57,0x41,0x57,0x48,0x83,0xEC,0x38,0x4C,0x89,0x74,0x24,0x28};
+thread_local bool t_inPlate = false;
+using WidgetDrawFn = uintptr_t (*)(void* self, void* a, void* b, void* c);
+using PictureDrawFn = uintptr_t (*)(void* picture, void* rect, void* style, float scale, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3);
+using Fill7Fn = uintptr_t (*)(int x0, int y0, int x1, int y1, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3);
+using Fill6Fn = uintptr_t (*)(int x0, int y0, int x1, int y1, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3);
+WidgetDrawFn g_widgetDraw = nullptr;
+PictureDrawFn OrigPictureDraw = nullptr;
+Fill7Fn OrigFill7 = nullptr;
+Fill6Fn OrigFill6 = nullptr;
+std::atomic<bool> g_plateDrawIn{false};
+std::atomic<uint32_t> g_plateDrawsSkipped{0};
+uintptr_t HookPlateDraw(void* self, void* a, void* b, void* c) {
+    if (!DropGameLayer() || !ownnames::GamePlateHidden(g_namesOn.load(std::memory_order_relaxed), true)) return g_widgetDraw(self, a, b, c);
+    t_inPlate = true;   // (its pictures and fills draw nothing, its texts are recorded and skipped)
+    const uintptr_t r = g_widgetDraw(self, a, b, c);
+    t_inPlate = false;
+    g_plateDrawsSkipped.fetch_add(1, std::memory_order_relaxed);
+    return r;
+}
+uintptr_t HookPictureDraw(void* picture, void* rect, void* style, float scale, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3) {
+    if (t_inPlate) return 0;
+    return OrigPictureDraw(picture, rect, style, scale, e0, e1, e2, e3);
+}
+uintptr_t HookFill7(int x0, int y0, int x1, int y1, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3) {
+    if (t_inPlate) return 0;
+    return OrigFill7(x0, y0, x1, y1, e0, e1, e2, e3);
+}
+uintptr_t HookFill6(int x0, int y0, int x1, int y1, uintptr_t e0, uintptr_t e1, uintptr_t e2, uintptr_t e3) {
+    if (t_inPlate) return 0;
+    return OrigFill6(x0, y0, x1, y1, e0, e1, e2, e3);
+}
+// The plate panel's Draw slot pointed at ours, and the three draws it makes taken: once, the first time our names are on (each checked first).
+void InstallPlateDraw() {
+    static bool tried = false;
+    if (tried || g_plateDrawIn.load() || !MonsterNamesOwnNow() || !DropGameLayer()) return;
+    if (!Matches(RVA_WIDGET_DRAW, kSigWidgetDraw, sizeof kSigWidgetDraw) || !Matches(RVA_PICTURE_DRAW, kSigPictureDraw, sizeof kSigPictureDraw) ||
+        !Matches(RVA_FILL7, kSigFill7, sizeof kSigFill7) || !Matches(RVA_FILL6, kSigFill6, sizeof kSigFill6))
+        return;   // not decrypted yet, or another build
+    tried = true;
+    const uintptr_t slot = d2rsig::Addr(RVA_PLATE_DRAW_SLOT), draw = d2rsig::Addr(RVA_WIDGET_DRAW);
+    uintptr_t now = 0;
+    if (!slot || !draw || !SafeRead(&now, (const void*)slot, sizeof now) || now != draw) {
+        Log("vrcam: [hud] monster_names_own - the plate panel's Draw slot is not the widgets' Draw (another game build?): the game's plate stays");
+        return;
+    }
+    const bool pic = d2rsig::Hook(RVA_PICTURE_DRAW, kSigPictureDraw, sizeof kSigPictureDraw, (void*)&HookPictureDraw, (void**)&OrigPictureDraw);
+    const bool f7 = d2rsig::Hook(RVA_FILL7, kSigFill7, sizeof kSigFill7, (void*)&HookFill7, (void**)&OrigFill7);
+    const bool f6 = d2rsig::Hook(RVA_FILL6, kSigFill6, sizeof kSigFill6, (void*)&HookFill6, (void**)&OrigFill6);
+    bool patched = false;
+    if (pic && f7 && f6) {
+        g_widgetDraw = (WidgetDrawFn)draw;
+        DWORD old = 0;
+        if (VirtualProtect((void*)slot, sizeof(uintptr_t), PAGE_READWRITE, &old)) {
+            *(volatile uintptr_t*)slot = (uintptr_t)&HookPlateDraw;
+            VirtualProtect((void*)slot, sizeof(uintptr_t), old, &old);
+            FlushInstructionCache(GetCurrentProcess(), (void*)slot, sizeof(uintptr_t));
+            patched = true;
+        }
+    }
+    g_plateDrawIn.store(patched);
+    char m[260];
+    snprintf(m, sizeof m, "vrcam: [hud] monster_names_own - the game's plate %s (its Draw slot %s; picture %s, fills %s / %s)",
+             patched ? "is not drawn while our names are on" : "STAYS (a hook failed)", patched ? "ours" : "the game's", pic ? "in" : "FAILED", f7 ? "in" : "FAILED",
+             f6 ? "in" : "FAILED");
+    Log(m);
+}
+
 void InstallPlateInfoHook() {
+    InstallPlateDraw();
     static bool failed = false;
     if (g_plateInfoIn.load() || failed || !MonsterNamesOwnNow()) return;
     if (!Matches(RVA_PLATE_INFO, kSigPlateInfo, sizeof kSigPlateInfo)) return;   // not decrypted yet, or another build
@@ -451,16 +560,49 @@ void InstallHoverSites() {
                 : "vrcam: [hud] npc_names_own - the hover names' TextDraw calls NOT as expected (another game build?): the game's names stay");
 }
 bool MeasuredBox(const char* text, const int32_t* box, const void* style, float scale, int32_t out[4]);
+bool NoteHoverText(const char* text, const int32_t* box, const void* style, float scale);
+// [hud] npc_names_own: the hover tooltip never drawn (Serg, 2026-11-07: the old names' layer removed). TooltipsPanel::Draw draws each tooltip
+// record with 0x8DA7E0 (its only caller; the result unused): with our hover names on it is not run - its record read instead (+0x00 the text, +0x60
+// its box, +0x80 the style; a second line +0x28 in +0x70 when +0x30 says so) and recorded for ours.
+constexpr uint64_t RVA_TOOLTIP_DRAW = 0x8DA7E0;
+const uint8_t kSigTooltipDraw[9] = {0x40,0x56,0x48,0x81,0xEC,0x10,0x01,0x00,0x00};   // push rsi; sub rsp, 0x110 (then the stack cookie, RIP-relative)
+using TooltipDrawFn = uintptr_t (*)(const uint8_t* record);
+TooltipDrawFn OrigTooltipDraw = nullptr;
+uintptr_t HookTooltipDraw(const uint8_t* rec) {
+    if (!g_hoverOn.load(std::memory_order_relaxed) || !rec || !DropGameLayer()) return OrigTooltipDraw(rec);
+    const float scale = GameUiScaleNow();
+    uintptr_t text = 0, more = 0, moreLen = 0;
+    if (SafeRead(&text, rec + 0x00, sizeof text) && text >= 0x10000) {
+        char buf[0x80];
+        CopyGameText((const char*)text, buf, sizeof buf);
+        if (buf[0]) NoteHoverText(buf, (const int32_t*)(rec + 0x60), rec + 0x80, scale);
+    }
+    if (SafeRead(&moreLen, rec + 0x30, sizeof moreLen) && moreLen && SafeRead(&more, rec + 0x28, sizeof more) && more >= 0x10000) {
+        char buf[0x80];
+        CopyGameText((const char*)more, buf, sizeof buf);
+        if (buf[0]) NoteHoverText(buf, (const int32_t*)(rec + 0x70), rec + 0x80, scale);
+    }
+    return 0;   // (not drawn: ours stands in its place)
+}
+std::atomic<bool> g_tooltipDrawIn{false};
+void InstallTooltipDraw() {
+    static bool tried = false;
+    if (tried || !NpcNamesOwnNow() || !DropGameLayer() || !Matches(RVA_TOOLTIP_DRAW, kSigTooltipDraw, sizeof kSigTooltipDraw)) return;
+    tried = true;
+    const bool in = d2rsig::Hook(RVA_TOOLTIP_DRAW, kSigTooltipDraw, sizeof kSigTooltipDraw, (void*)&HookTooltipDraw, (void**)&OrigTooltipDraw);
+    g_tooltipDrawIn.store(in);
+    Log(in ? "vrcam: [hud] npc_names_own - the game's hover names are not drawn while ours are on (its tooltip drawer read, not run)"
+           : "vrcam: [hud] npc_names_own - the tooltip drawer's hook FAILED: the game's hover names stay");
+}
 // A hover name drawn: recorded where it is; true: skipped (ours is on the screen in its place).
 bool NoteHoverText(const char* text, const int32_t* box, const void* style, float scale) {
-    if (const uint32_t icon = ownlabels::IconIn(text, 0x80)) {   // the game's button icon (the (A) under an NPC's name): the game draws it, never our box
+    if (const uint32_t icon = ownlabels::IconIn(text, 0x80)) {   // the game's button icon (the (A) under an NPC's name): ours draws it as a green 'A' (IconsToKeys)
         static std::atomic<int> toldIcon{0};
         if (toldIcon.fetch_add(1) < 2) {
             char m[200];
-            snprintf(m, sizeof m, "vrcam: [hud] npc_names_own - a hover line with the game's icon U+%04X (%d bytes): left the game's own", icon, (int)strlen(text));
+            snprintf(m, sizeof m, "vrcam: [hud] npc_names_own - a hover line with the game's icon U+%04X (%d bytes): ours draws it as a green A", icon, (int)strlen(text));
             Log(m);
         }
-        return false;
     }
     int32_t b[4];
     if (!MeasuredBox(text, box, style, scale, b)) return false;
@@ -485,8 +627,14 @@ int NamesTargetBody(float foot[2], uint8_t row[3]) {
     uintptr_t unit = 0;
     plateworld::Follow f;
     float px[2];
-    if (plateworld::GetFollow(&f, GetTickCount64())) unit = f.unit;
+    // the plate's hook does not answer every frame (0.205.13: "over the head" took turns with "no target unit"): the last target is kept a little while
+    static uintptr_t lastUnit = 0;
+    static ULONGLONG lastAt = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (plateworld::GetFollow(&f, now)) unit = f.unit;
     else if (!gamestate::PlateReadAt(&unit, px)) unit = 0;
+    if (unit >= 0x10000) { lastUnit = unit; lastAt = now; }
+    else if (lastUnit && now - lastAt <= ownnames::kTargetKeepMs && PlateStillShown()) unit = lastUnit;
     uint32_t type = 0, cls = 0;
     uintptr_t data = 0, r = 0;
     uint16_t rowId = 0;
@@ -519,10 +667,10 @@ bool NoteNameText(const char* text, const int32_t* box, const void* style, float
         static std::atomic<int> told{0};
         if (told.fetch_add(1) < 2) {
             char m[200];
-            snprintf(m, sizeof m, "vrcam: [hud] monster_names_own - the plate's text at %d,%d %dx%d could not be measured: left the game's", box[0], box[1], box[2], box[3]);
+            snprintf(m, sizeof m, "vrcam: [hud] monster_names_own - the plate's text at %d,%d %dx%d could not be measured: not drawn (the game's plate stays hidden)", box[0], box[1], box[2], box[3]);
             Log(m);
         }
-        return false;
+        return ownnames::SkipGameText(true, which, false);   // (ours or nothing: never a flash of the game's)
     }
     int32_t first = -1;
     SafeRead(&first, style, sizeof first);
@@ -534,15 +682,18 @@ bool NoteNameText(const char* text, const int32_t* box, const void* style, float
     }
     AcquireSRWLockExclusive(&g_namesLock);
     g_namesRecord.Add(text, b, now, which, known ? rgb : nullptr, ownlabels::FontOfStyle(first));
-    // every copy of a text the plate was told is ours to stand in for, wherever it is drawn: the effect draws ours at each copy (0.205.8, Serg's log: the plate's
-    // box and its texts took turns in two places, the top and over the head - matched against the box, the one over the head was always left the game's)
-    const bool skip = g_namesShown.Lately(ownnames::KeyOf(text), now);
+    // every copy of a told text, every frame our names are on (0.206.5: the game's text flashed on the frames ours was not marked yet) - ours or nothing
+    const bool skip = ownnames::SkipGameText(g_namesOn.load(std::memory_order_relaxed), which, g_namesShown.Lately(ownnames::KeyOf(text), now));
     ReleaseSRWLockExclusive(&g_namesLock);
     return skip;
 }
 
 uintptr_t HookTextDraw(const char* text, const int32_t* box, const void* style, float scale) {
     const float k = t_labelScale;
+    if (t_inPlate) {   // [hud] monster_names_own: inside the game's plate's Draw - recorded for ours, never drawn
+        if (text && box && text[0]) NoteNameText(text, box, style, scale);
+        return OrigTextDraw("", box, style, scale);
+    }
     if (k <= 0.0f && text && box && text[0] && g_hoverOn.load(std::memory_order_relaxed) &&
         ownnames::HoverSiteOf(reinterpret_cast<uintptr_t>(_ReturnAddress()), g_hoverSites) >= 0) {   // [hud] npc_names_own: a hover name
         if (NoteHoverText(text, box, style, scale)) return OrigTextDraw("", box, style, scale);
@@ -569,6 +720,7 @@ void InstallLabelHooks() {
     if (kLabelHooksOff) { TellLabelHooksOff(); return; }
     if (g_ctx && g_inWorld.load()) InstallPlateInfoHook();   // [hud] monster_names_own: what the plate is told (read only)
     if (g_ctx && g_inWorld.load()) InstallHoverSites();   // [hud] npc_names_own: where the hover names are drawn from
+    if (g_ctx && g_inWorld.load()) InstallTooltipDraw();   // ... and the game's own tooltip not drawn while ours are on
     static bool paintFailed = false, sizeFailed = false, drawIn = false;
     static int misses = 0;
     if (!g_ctx || !g_inWorld.load() || !g_set.labelsNativeFloor.load()) return;

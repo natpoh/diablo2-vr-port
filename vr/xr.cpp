@@ -100,6 +100,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hset_stats_feed.h"   // the settings' Stats page: the strike statistics ([stats] strike_stats)
 #include "party_cmd.h"     // the settings' Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the settings' Players row: the game's own /players N ([openxr] headset_players)
+#include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine's trail for the runes layer (vr/xr_runes.h)
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
@@ -112,6 +113,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "map_zoom.h"   // [hud] map_stick_zoom: the right stick zooms the map the laser is on (pure, tested)
 #include "map_laser.h"   // [hud] map_click_big: the right laser on the map in the hand, a click makes it big (pure, tested)
 #include "map_turn.h"   // [hud] map_top_down / map_rotate / map_compass: the map in the hand from above, turned with the look, a compass over it (pure, tested)
+#include "banner.h"   // a message that must be seen (the capture key's): a panel before the face (vr/xr_banner.h)
 #include "hand_vitals_wire.h"   // [hud] hand_vitals: life and mana on the hand when the palm turns to the face (vr/xr_hand_vitals.h is its layer)
 #include "thrust_debug_wire.h"   // [debug] thrust_debug: the thrust's readout over the weapon hand (vr/xr_thrust_debug.h is its layer)
 #include "swing_timer_wire.h"   // [hud] swing_timer: the attack's ring (or bar) and its outcome before the eyes (vr/xr_swing_timer.h is its layer)
@@ -152,6 +154,7 @@ struct Cfg {
     int runtimeFovMode = 1;   // runtime_fov 0 / 1 / 2 (below); runtimeFov = 1
     bool runtimeFov = true;   // runtime_fov (on): each eye drawn and submitted exactly with the runtime's own fov - symmetric_fov and fov_crop then do nothing (vr/eye_fov.h)
     bool blockLayers = true;  // block_listed_layers: the implicit OpenXR layers on blocked_layers switched off in this process at a session's start, runtime_fov off (shared/api_layers.h)
+    bool blockCrashLayers = true;  // block_crash_layers: the implicit OpenXR layers on crash_layers (known to crash the game) switched off in this process, any stereo mode
     float ipdFallbackM = 0.064f;   // ipd_fallback_mm: the gap given to two views the runtime located in one place (0 = none)
     bool ipdAuto = true;           // ipd_auto: the eye distance from the runtime's view poses (1), or the player's own number (0) - vr/eye_gap.h
     float ipdManualM = 0.063f;     // ipd_mm: the player's eye distance, metres (taken when ipd_auto is 0), live
@@ -256,7 +259,7 @@ void WriteSessionNote(const wchar_t* text) {
 }
 // [openxr] block_listed_layers: the implicit OpenXR layers this session found (names, comma-separated) - the listed ones turned off, the listed ones
 // loading in, and the others - for D2R VR Settings > Status: [session] layers_off / layers_listed_in / layers_in in the same file; empty = deleted.
-void WriteLayersNote(const std::string& off, const std::string& listedIn, const std::string& in) {
+void WriteLayersNote(const std::string& off, const std::string& listedIn, const std::string& in, const std::string& crashOff, const std::string& crashIn) {
     if (!g_headsetPath[0]) return;
     auto put = [](const wchar_t* key, const std::string& v) {
         wchar_t w[512] = L"", had[512] = L"";
@@ -267,6 +270,8 @@ void WriteLayersNote(const std::string& off, const std::string& listedIn, const 
     put(L"layers_off", off);
     put(L"layers_listed_in", listedIn);
     put(L"layers_in", in);
+    put(L"layers_crash_off", crashOff);   // [openxr] block_crash_layers: on crash_layers and turned off / loading in
+    put(L"layers_crash_in", crashIn);
 }
 // The eye distance the runtime measured (how far apart xrLocateViews' two poses are, before anything of ours), kept for D2R VR Settings to show
 // beside the slider: [headset] ipd_mm in d2r_vr_headset.ini, millimetres with one decimal; 0 = the runtime locates both eyes in one place (it
@@ -1545,6 +1550,7 @@ void ThrustDebugTeardown();   // the thrust debug's readout, below (xr_thrust_de
 void SwingTimerTeardown();   // the swing timer's picture, below (xr_swing_timer.h)
 void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wrist_status.h)
 void AllyPortraitsTeardown();   // the allies' portraits' picture, below (xr_ally_portraits.h)
+void BannerTeardown();   // the banner's picture, below (xr_banner.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
 void HsTeardown();
 void DropCalibration(bool now);   // the T-pose measurement's picture, below
@@ -1857,11 +1863,13 @@ void Publish(bool focused) {
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
     MapLaserStep(in, focused);   // [hud] map_click_big: ... nor what the laser on the map takes (the right trigger, while it points at the map)
     MenuZoomPost(in);           // ... and the grip's own press waits until it is let go without a zoom
+    static D2RVR_XrInput raw;   // the controls before the gestures' takes (BodyWalk recording a gesture is given these: link::PublishXr)
+    raw = in;
     directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
-    link::PublishXr(in, false);
+    link::PublishXr(in, false, &raw);
     g_inSent = true;
 }
 
@@ -2020,6 +2028,7 @@ void Teardown() {   // under g_lock or before the session exists
     SwingTimerTeardown();    // the swing timer's picture gone
     WristStatusTeardown();   // the wrist status panels' pictures gone
     AllyPortraitsTeardown();   // the allies' portraits' picture gone
+    BannerTeardown();   // the banner's picture gone
     g_panelPlace = PanelPlace{};
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
     for (HudOut& o : g_hudOut) { DestroyChain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
@@ -2146,9 +2155,18 @@ bool StartSession() {
         GetPrivateProfileStringW(L"openxr", L"blocked_layers", def, list, 512, g_iniPath);
         char list8[1024] = "";
         WideCharToMultiByte(CP_UTF8, 0, list, -1, list8, (int)sizeof list8, nullptr, nullptr);
-        const std::vector<apilayers::Found> found = apilayerslib::Apply(g_cfg.blockLayers, g_cfg.runtimeFovMode == 0, list8, g_log);
+        // [openxr] block_crash_layers: the layers on crash_layers (known to CRASH the game - ReShade's OpenXR layer, crash report 278) off in
+        // every stereo mode, the same way (shared/api_layers.h)
+        wchar_t cdef[256] = L"", clist[512] = L"";
+        MultiByteToWideChar(CP_UTF8, 0, apilayers::kDefaultCrashList, -1, cdef, 256);
+        GetPrivateProfileStringW(L"openxr", L"crash_layers", cdef, clist, 512, g_iniPath);
+        char clist8[1024] = "";
+        WideCharToMultiByte(CP_UTF8, 0, clist, -1, clist8, (int)sizeof clist8, nullptr, nullptr);
+        const std::vector<apilayers::Found> found = apilayerslib::Apply(g_cfg.blockLayers, g_cfg.runtimeFovMode == 0, list8, g_log,
+                                                                        g_cfg.blockCrashLayers, clist8);
         WriteLayersNote(apilayers::Names(found, apilayers::Kind::Off), apilayers::Names(found, apilayers::Kind::ListedIn),
-                        apilayers::Names(found, apilayers::Kind::In));
+                        apilayers::Names(found, apilayers::Kind::In), apilayers::Names(found, apilayers::Kind::CrashOff),
+                        apilayers::Names(found, apilayers::Kind::CrashIn));
     }
     // [openxr] frame_generation: OFXR Bridge named to the loader for this process before it first looks for layers (vr/frame_gen_lib.h)
     const char* frameGenLayer = framegenlib::Offer(g_iniPath);
@@ -4485,6 +4503,7 @@ uint32_t HangMapLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
 #include "xr_swing_timer.h"        // the swing timer before the eyes ([hud] swing_timer): uses what is above
 #include "xr_wrist_status.h"       // the wrist status panels ([hud] wrist_status): uses what is above
 #include "xr_ally_portraits.h"     // the allies' portraits under the map ([hud] ally_portraits): uses what is above
+#include "xr_banner.h"              // the banner before the face (vr/banner.h, the capture key's message): uses what is above
 
 // [headset_shot] grid (vr/headset_grid.h): over an eye's picture of a pair through the head's camera, on the list that copied it, before the
 // image is released. g_gridTan: the tangents of that image's edges (CopyEye: the box's with runtime_fov's crop, else the fov it was drawn with).
@@ -5654,6 +5673,10 @@ void FreeIdle() {
             QuadAtlasRetire(g_wsAtlas[side], "wrist status");
             g_wsPxPending[side] = !g_wsPx[side].empty();
         }
+    if (g_bannerAtlas.sc && idle(g_bannerAtlas.usedAt)) {   // the banner (vr/banner.h): painted again with the next message
+        QuadAtlasRetire(g_bannerAtlas, "banner");
+        g_bannerUp = 0;
+    }
     if (g_apAtlas.sc && idle(g_apAtlas.usedAt)) {   // [hud] ally_portraits
         QuadAtlasRetire(g_apAtlas, "ally portraits");
         g_apPxPending = !g_apPx.empty();
@@ -5678,7 +5701,7 @@ void CloseFrame() {
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
-    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0) + (swingtimer::Wanted() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
+    const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0) + (swingtimer::Wanted() ? 1 : 0) + (banner::g_until.load() > GetTickCount64() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad vitalsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [hud] hand_vitals: one layer over the hand
     XrCompositionLayerQuad thrustPanel{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [debug] thrust_debug: one layer over the weapon hand
@@ -5755,7 +5778,8 @@ void CloseFrame() {
         const bool laser = g_cfg.menu3d && g_flatShown.ok;   // (the beam and the dot only over a menu's panel)
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, (laser ? 4 : 2) + hsRoom);   // room kept for those below
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls
-        nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
+        const bool runesOverPanel = skillwheel::GestureRecording();   // ([openxr] gesture_overlay: a recording from the skill panel - the trail over the panel, below)
+        if (!runesOverPanel) nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
         nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
         nl = HangBigMap(layers, nl, most);   // [hud] map_click_big: the game's big map in front, its Rotate button
         nl = HangAllyPortraits(layers, nl, most);   // [hud] ally_portraits: the allies' portraits under the map (F4)
@@ -5768,8 +5792,10 @@ void CloseFrame() {
         nl = HangSwingTimer(layers, nl, most);   // [hud] swing_timer: the attack's ring (or bar) and its outcome before the eyes (F4)
         nl = HangWristStatus(layers, nl, most, wsPanel);   // companions and effects over a wrist turned to the eyes (F4)
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
+        nl = HangBanner(layers, nl, most);        // a message that must be seen (the capture key's)
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
+        if (runesOverPanel) nl = HangRunes(layers, nl, most);   // ... but the trail drawn for the Gestures tab lies over it (the window keeps its place)
         ++g_st.pairs;
     } else if (g_fs.shouldRender && g_kind == kMono && g_copied[0]) {
         // the picture where the head looked when it came up, level, world-locked
@@ -5790,11 +5816,14 @@ void CloseFrame() {
         nl = HangLaser(layers, nl, most, beam, dot);
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, hsRoom);
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls stay where they are over a panel too
-        nl = HangRunes(layers, nl, zonesMax);   // and the gesture runes
+        const bool runesOverWheel = skillwheel::GestureRecording();
+        if (!runesOverWheel) nl = HangRunes(layers, nl, zonesMax);   // and the gesture runes
         nl = HangCalibration(layers, nl, most);   // the T-pose measurement's prompt
+        nl = HangBanner(layers, nl, most);        // a message that must be seen (the capture key's)
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangZones(layers, nl, most);   // the belt's balls stay where they are over a panel too
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
+        if (runesOverWheel) nl = HangRunes(layers, nl, most);   // (the Gestures tab's recording: the trail over the panel)
         ++g_st.monos;
     }
     // A layer the runtime would refuse (a turn off unit length, a place or size that is not a number)
@@ -6093,6 +6122,7 @@ void LoadSettings(const wchar_t* ini) {
         }
     }
     g_cfg.blockLayers = f(L"block_listed_layers", 1.0f) != 0.0f;   // (taken when a session starts, with runtime_fov as it is then)
+    g_cfg.blockCrashLayers = f(L"block_crash_layers", 1.0f) != 0.0f;   // (taken when a session starts; any stereo mode)
     g_cfg.ipdFallbackM = std::clamp(f(L"ipd_fallback_mm", 64.0f), 0.0f, 80.0f) * 0.001f;   // eyes located in one place: this gap (0 = off)
     g_cfg.ipdAuto = f(L"ipd_auto", 1.0f) != 0.0f;                                          // the eye distance: the runtime's (1) or the player's own (0), live
     g_cfg.ipdManualM = eyegap::ClampGap(f(L"ipd_mm", eyegap::kDefaultM * 1000.0f) * 0.001f);

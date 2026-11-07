@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "d2r_vr_shared.h"
+#include "gesture_cmds.h"
 #include "skill_link_abi.h"
 #include "d2r_vr_state.h"
 
@@ -65,7 +66,9 @@ bool Walk(float* x, float* y);
 
 // Native OpenXR: this headset frame's head and controllers to BodyWalk; ended =
 // the session is over (the last word: BodyWalk's Mapping goes back to FlatVR).
-void PublishXr(const D2RVR_XrInput& in, bool ended);
+// `raw`: the same frame's controls before any gesture of ours took one (null: as `in`) - BodyWalk recording a gesture is given those (its pen is the
+// trigger the skill panel holds for the take).
+void PublishXr(const D2RVR_XrInput& in, bool ended, const D2RVR_XrInput* raw = nullptr);
 // BodyWalk's VR gesture zones to draw now (up to max); 0 when none came for half a second.
 uint32_t VrZones(BW_LinkVrZone* out, uint32_t max);
 // BodyWalk's gesture runes to draw now (up to max): the pictures to hang and the hand's trails (BW_LinkVrRune, the shared block's
@@ -74,12 +77,28 @@ uint32_t VrZones(BW_LinkVrZone* out, uint32_t max);
 uint32_t VrRunes(BW_LinkVrRune* out, uint32_t max);
 
 // [gestures] skill_link (vr/skill_link_wire.cpp): the hero's skills to BodyWalk (the Skills block, whole), and BodyWalk's Casts back - a
-// consistent copy; false when no BodyWalk writes it (none running, its Game skills off, or the block still for 2 s).
+// consistent copy; false when no BodyWalk writes it (none running, one too old for skills, or the block still for 2 s).
 void PublishSkills(const BW_LinkSkills& s);
 // skill_link on: with the plugin as the input ([openxr] direct_input) BodyWalk is still given the head and hands (controls zeroed, as for
-// [openxr] direct_bodywalk_walk) and its runes are drawn - it recognises the gestures by them; recording: the controls too, its trigger
-// starts and ends the take.
+// [openxr] direct_bodywalk_walk, but the triggers' values kept: a trigger held is its glyph pen) and its runes are drawn - it recognises
+// the gestures by them; recording: the controls too, its trigger starts and ends the take.
 void SetSkillLink(bool on, bool recording);
 bool Casts(BW_LinkCasts* out);
+
+// [openxr] gesture_overlay (vr/gesture_overlay.h, the skill panel's Gestures tab): BodyWalk's Gestures block - a consistent copy; false when no
+// BodyWalk writes it (none running, one without the block, or the block still for 2 s). One reader: the skill panel's frame.
+bool Gestures(BW_LinkGestures* out);
+// A command to BodyWalk's gestures into the GestureCmds ring (the whole block written: the entry and lastSequence together). Its sequence, 0 when
+// the block cannot be had. The first one of a game continues after the block's last and BodyWalk's cmdDone (`cmdDone`: the Gestures copy's).
+uint32_t PushGestureCmd(const gesturecmd::Cmd& c, uint32_t cmdDone);
+// The GestureCmds block written once with no command (our ring as it stands, seeded as PushGestureCmd's first push is) - done as soon as BodyWalk's
+// Gestures block is there, before any command: BodyWalk's reader takes what it finds at its first look as old, and a block that first appears
+// holding our first command would lose that command. Once per game (later calls do nothing); false when the block cannot be had.
+bool PrimeGestureCmds(uint32_t cmdDone);
+// BodyWalk records for the Gestures tab (or is about to): with the plugin as the input it is given the controls too (its trigger is the pen), as
+// for a recording it started itself (SetSkillLink's `recording`).
+void SetGestureRecording(bool on);
+// The skill link is up: a BodyWalk writes Casts (it takes the game's skills) - skill_link_wire's last look (SetSkillLink's `on`).
+bool SkillLinkUp();
 
 }  // namespace link

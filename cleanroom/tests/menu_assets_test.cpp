@@ -52,16 +52,27 @@ int wmain(int argc, wchar_t** argv) {
     Expect(CountFiles(scratch) == 0, "the scratch folder is empty");
 
     menuassets::Result r = menuassets::Prepare(game, scratch, false);
-    Expect(r.ok && !r.wrote && CountFiles(scratch) == 0, "off: nothing read, nothing written");
+    Expect(r.ok && !r.wrote && CountFiles(scratch) == gameuifiles::kPlateFileCount, "off: only the target plate's pieces (our names' plate) written");
+    {   // [hud] monster_names_own: the game's own target plate - each piece a sheet (their sizes in the log, for the painter)
+        const std::wstring dir = scratch + gameuifiles::kFolder + L"\\";
+        for (int i = 0; i < gameuifiles::kPlateFileCount; ++i) {
+            const std::string data = ReadAll(dir + gameuifiles::kPlateFiles[i].leaf);
+            gameui::Sheet s;
+            const char* why = "";
+            const bool ok = gameui::Decode(data, &s, &why);
+            printf("  %-44ls %s %d x %d, %d frame(s)%s%s\n", gameuifiles::kPlateFiles[i].leaf, ok ? "a sheet" : "NOT a sheet", s.frameWidth, s.height, s.frames, ok ? "" : ": ", ok ? "" : why);
+            Expect(ok, "a plate piece: a sheet");
+        }
+    }
     r = menuassets::Prepare(game, scratch + L"no such folder\\", true);
-    Expect(!r.ok && !r.wrote && !r.text.empty() && CountFiles(scratch) == 0, "no plugin folder: nothing made, and said so");
+    Expect(!r.ok && !r.wrote && !r.text.empty() && CountFiles(scratch) == gameuifiles::kPlateFileCount, "no plugin folder: nothing made, and said so");
 
     const ULONGLONG t0 = GetTickCount64();
     r = menuassets::Prepare(game, scratch, true);
     printf("made: %ls (%llu ms)\n", r.text.c_str(), GetTickCount64() - t0);
     Expect(r.ok && r.wrote, "on: made");
     const std::wstring dir = scratch + gameuifiles::kFolder + L"\\";
-    Expect(CountFiles(scratch) == gameuifiles::kFileCount, "every piece and nothing else");
+    Expect(CountFiles(scratch) == gameuifiles::kFileCount + gameuifiles::kPlateFileCount, "every piece (and the plate's) and nothing else");
     const int want[gameuifiles::kSpriteCount] = {1, 9, 4, 2, 4, 7, 4, 4, 1, 1, 1, 1, 5, 4};
     size_t bytes = 0;
     for (int i = 0; i < gameuifiles::kFileCount; ++i) {
@@ -83,7 +94,7 @@ int wmain(int argc, wchar_t** argv) {
     Expect(r.ok && !r.wrote, "again: nothing to do");
     DeleteFileW((dir + gameuifiles::kFiles[5].leaf).c_str());
     r = menuassets::Prepare(game, scratch, true);
-    Expect(r.ok && r.wrote && CountFiles(scratch) == gameuifiles::kFileCount, "a piece gone: made again");
+    Expect(r.ok && r.wrote && CountFiles(scratch) == gameuifiles::kFileCount + gameuifiles::kPlateFileCount, "a piece gone: made again");
 
     printf(g_fail ? "%d failed\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;

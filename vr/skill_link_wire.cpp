@@ -26,12 +26,19 @@ namespace {
 
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_engine{false};   // SetEngine
 std::atomic<int> g_spare{skilllink::kDefaultSpareSlot};
+std::atomic<bool> g_settle{true};   // [gestures] skill_link_settle
 std::mutex g_lock;   // the tick's state below and the record wish (RequestRecord: any thread)
 uint32_t g_recordSeq = 0;
 int32_t g_recordSkill = -1;
 uint32_t g_recState = BW_LINK_REC_NONE;
 int32_t g_recStateSkill = -1;
+BW_LinkSkills g_latest;            // LatestSkills (under g_lock)
+uint32_t g_latestRev = 0;
+bool g_haveLatest = false;
+int32_t g_engineCasts[16];         // CastFromEngine's, not yet taken by the tick (under g_lock)
+int g_engineCastCount = 0;
 
 void Log(const char* text) {
     if (g_ctx) logasync::Info(g_ctx, text);
@@ -57,6 +64,11 @@ skilllink::CastReader g_reader;
 skilllink::Caster g_caster;
 uint64_t g_assignSeq = 0;      // our setter request's sequence (wheelgame's channel is shared with the panel's editor)
 uint64_t g_heldAt = 0;         // the held skills' presses renewed last
+skilllink::CastWatch g_watch;  // a press on the spare slot: did the hero's animation turn into a cast? (logged; one retry)
+int g_watchSlot = -1, g_watchTry = 0;
+int32_t g_watchSkill = -1;
+uint64_t g_pressAt = 0;
+int64_t g_watchShownMs = -1;
 bool g_wasOn = false;
 
 const char* SlotName(int slot) { return slot >= 0 && slot < wheel::kSlotCount ? wheel::kSlotDefs[slot].label : "?"; }
@@ -77,7 +89,8 @@ void Reset() {
 
 void Init(const D2RL::PluginContext* ctx) { g_ctx = ctx; }
 
-void Configure(bool on, int spareSlot) {
+void Configure(bool on, int spareSlot, bool settle) {
+    g_settle.store(settle);
     const bool was = g_on.exchange(on);
     g_spare.store(spareSlot >= -1 && spareSlot < wheel::kSlotCount ? spareSlot : skilllink::kDefaultSpareSlot);
     if (on != was)
@@ -93,26 +106,43 @@ void RequestRecord(int32_t skill) {
     ++g_recordSeq;
 }
 
+void SetEngine(bool on) { g_engine.store(on); }
+
+bool LatestSkills(BW_LinkSkills* out, uint32_t* revision) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (!g_haveLatest) return false;
+    if (revision) *revision = g_latestRev;
+    if (out) *out = g_latest;
+    return true;
+}
+
+void CastFromEngine(int32_t skill) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (g_engineCastCount < 16) g_engineCasts[g_engineCastCount++] = skill;
+}
+
 uint32_t RecordState(int32_t* skill) {
     std::lock_guard<std::mutex> lock(g_lock);
     if (skill) *skill = g_recStateSkill;
     return g_recState;
 }
 
-void Tick(bool play) {
-    const bool on = g_on.load();
-    if (!on) {
-        if (g_wasOn) {   // the list emptied for BodyWalk: no set, nothing to bind or cast
-            g_wasOn = false;
-            std::memset((char*)&g_out + sizeof(BW_LinkHeader), 0, sizeof g_out - sizeof(BW_LinkHeader));
-            g_out.revision = ++g_revision;
-            link::PublishSkills(g_out);
-            link::SetSkillLink(false, false);
-            Reset();
-        }
+void Tick(bool play, int heroMode) {
+    const bool on = g_on.load(), engine = g_engine.load();
+    if (!on && g_wasOn) {   // the list emptied for BodyWalk: no set, nothing to bind or cast
+        g_wasOn = false;
+        std::memset((char*)&g_out + sizeof(BW_LinkHeader), 0, sizeof g_out - sizeof(BW_LinkHeader));
+        g_out.revision = ++g_revision;
+        link::PublishSkills(g_out);
+        link::SetSkillLink(false, false);
+        Reset();
+    }
+    if (!on && !engine) {
+        std::lock_guard<std::mutex> lock(g_lock);
+        g_engineCastCount = 0;
         return;
     }
-    g_wasOn = true;
+    g_wasOn = on;
     const uint64_t now = GetTickCount64();
     // the skill panel's reads of the game (its UI thread): kept going while the panel itself is off
     if (!skillwheel::Enabled()) wheelgame::Tick(true, false);
@@ -127,18 +157,45 @@ void Tick(bool play) {
     skilllink::Fill(g_snap, nullptr, &g_out);
     const bool changed = !g_haveSent || !skilllink::SameList(g_out, g_sent);
     if (changed) g_out.revision = ++g_revision;
+    if (changed || !g_haveLatest) {   // the engine's copy (LatestSkills): the class and skills it is told
+        std::lock_guard<std::mutex> lock(g_lock);
+        g_latest = g_out;
+        g_latestRev = g_out.revision;
+        g_haveLatest = true;
+    }
     if (changed || now - g_sentAt >= skilllink::kPublishMs || g_out.recordSequence != g_sent.recordSequence) {
-        link::PublishSkills(g_out);
+        if (on) link::PublishSkills(g_out);   // (to BodyWalk only with skill_link)
         if (changed)
-            LogF("vrcam: skill link - the skills to BodyWalk: %s, %u skills (revision %u)", g_out.setKey[0] ? g_out.setKey : "no hero", g_out.count,
-                 g_out.revision);
+            LogF("vrcam: skill link - the skills %s: %s, %u skills (revision %u)", on ? "to BodyWalk" : "for the gesture engine", g_out.setKey[0] ? g_out.setKey : "no hero",
+                 g_out.count, g_out.revision);
         g_sent = g_out;
         g_haveSent = true;
         g_sentAt = now;
     }
 
+    // the gesture engine's casts (the game's own way, as BodyWalk's below)
+    {
+        int32_t casts[16];
+        int n = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            n = g_engineCastCount;
+            for (int i = 0; i < n; ++i) casts[i] = g_engineCasts[i];
+            g_engineCastCount = 0;
+        }
+        for (int i = 0; i < n; ++i) {
+            if (!play || !g_snap.ready) {
+                LogF("vrcam: skill link - the gesture engine's cast of skill %d dropped: %s", casts[i],
+                     !viewgate::F4() ? "not in VR first person (F4)" : !g_snap.ready ? "the game's skills are not read" : "a menu is open");
+                continue;
+            }
+            LogF("vrcam: skill link - the gesture engine recognised a gesture for skill %d: cast", casts[i]);
+            g_caster.Start(casts[i], now);
+        }
+    }
+
     // BodyWalk's casts
-    const bool haveCasts = link::Casts(&g_casts);
+    const bool haveCasts = on && link::Casts(&g_casts);
     {
         std::lock_guard<std::mutex> lock(g_lock);
         g_recState = haveCasts ? g_casts.recordState : BW_LINK_REC_NONE;
@@ -168,12 +225,22 @@ void Tick(bool play) {
             if (r.sequence == g_assignSeq && r.result != wheel::Result::Pending) g_assignSeq = 0;
         }
         const int32_t skill = g_caster.Skill();
-        const skilllink::Plan p = g_caster.Step(g_snap, now, g_spare.load(), refused);
+        const skilllink::Plan p = g_caster.Step(g_snap, now, g_spare.load(), refused, g_settle.load() ? skilllink::kSettleMs : 0);
         switch (p.what) {
             case skilllink::Plan::Do::Press:
                 if (play) {
                     Press(p.slot, 0);
-                    LogF("vrcam: skill link - skill %d cast: the game's %s pressed", skill, SlotName(p.slot));
+                    if (p.settledMs >= 0) {
+                        LogF("vrcam: skill link - skill %d: the game's %s pressed %lld ms after the game's table showed it there%s", skill, SlotName(p.slot),
+                             (long long)p.settledMs, g_settle.load() ? " ([gestures] skill_link_settle)" : " (no settle)");
+                        g_watch.Start(now, heroMode);   // and watched: did it turn into a cast?
+                        g_watchSlot = p.slot;
+                        g_watchSkill = skill;
+                        g_watchTry = 1;
+                        g_pressAt = now;
+                        g_watchShownMs = p.settledMs;
+                    } else
+                        LogF("vrcam: skill link - skill %d cast: the game's %s pressed", skill, SlotName(p.slot));
                 }
                 break;
             case skilllink::Plan::Do::Assign: {
@@ -190,6 +257,31 @@ void Tick(bool play) {
                 break;
             default: break;
         }
+    }
+
+    // the press on the spare slot watched: a cast, or none (refused - or a skill with no animation of its own, an aura) and once more
+    switch (g_watch.Step(now, heroMode)) {
+        case skilllink::CastWatch::Ev::Cast:
+            LogF("vrcam: skill link - skill %d cast: the hero's animation turned into it %llu ms after press %d (%lld ms after the table showed it)",
+                 g_watchSkill, (unsigned long long)(now - g_pressAt), g_watchTry, (long long)g_watchShownMs);
+            break;
+        case skilllink::CastWatch::Ev::NoCast:
+            if (g_watchTry < skilllink::kPressTries && play) {
+                LogF("vrcam: skill link - skill %d REFUSED? no cast within %llu ms of press %d (pressed %lld ms after the table showed it): pressed again",
+                     g_watchSkill, (unsigned long long)skilllink::kCastSeenMs, g_watchTry, (long long)g_watchShownMs);
+                if (skilllink::SlotOf(g_snap, g_watchSkill) == g_watchSlot) {
+                    Press(g_watchSlot, 0);
+                    ++g_watchTry;
+                    g_watchShownMs += (long long)(now - g_pressAt);
+                    g_pressAt = now;
+                    g_watch.Start(now, heroMode);
+                }
+            } else {
+                LogF("vrcam: skill link - skill %d: no cast after %d presses (refused each time - or a skill with no cast animation, an aura)",
+                     g_watchSkill, g_watchTry);
+            }
+            break;
+        default: break;
     }
 
     // the held ones (a button held in BodyWalk): their slots' presses renewed while held

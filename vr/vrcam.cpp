@@ -988,7 +988,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.206.0";
+static const char g_info_version[] = "0.207.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1271,6 +1271,10 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Step("game commands");
     gamecmd::Init(ctx);
     playerscmd::Init(ctx);
+    patchhunt::Init(ctx, g_iniPath);
+    capture::Init(&Log, g_iniPath, g_info_version);   // the capture key (vr/capture.h); its state text from the update thread's file
+    CaptureSources();
+    capture::InitConsole(ctx);   // "vrcapture [targets | status]" in the game's console   // [debug] patch_hunt: its line on the picture (D2RLoader's overlay - taken at the load only) and the UI thread
     partycmd::Init(ctx);     // the headset's Party page: the game's roster and its Party panel's buttons (vr/party_cmd.cpp)   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
     beltdrop::Init(ctx);   // [hands] belt_drop_ground
     beltglow::Init(ctx);   // [hands] belt_inner_glow
@@ -1343,6 +1347,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     bowpitchwire::Init(ctx);   // [bow] pitch_aim
     pointwire::Init(ctx);   // [gameplay] teleport_circle
     skilllinkwire::Init(ctx);   // [gestures] skill_link: the skills to BodyWalk, its casts back
+    gengine::Init(ctx);         // [gestures] engine_in_game: the gesture engine in the game
     arrowflightwire::Init(ctx);   // [bow] arrow_flight: on the potion hide's two renderer hooks
     arrowflightwire::SetHeroIdSource(&GestureHeroId);   // ... whose arrows are the hero's
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
@@ -1376,6 +1381,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     crashwatch::Quiet();   // [support] crash_reports: this is a clean end (the watcher reads it after the game)
     animcut::Shutdown();   // [bow] quick_release, [hands] quick_throw: a moved action-frame flag goes back before the plugin does
+    gengine::Shutdown();      // [gestures] engine_in_game: its listener out, the engine closed
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
     thrustdebugwire::Shutdown();   // [debug] thrust_debug: its listener out, its painter joined

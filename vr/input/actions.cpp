@@ -218,8 +218,19 @@ void ItemGrabStep(skel::Input* in) {
     if (in->along) return;   // (a second rig posed along: the hero's pose stepped it)
     if (!in->itemsOn || !in->grabWorldOk) {
         if (ig::g_picker.phase() != itemgrab::Phase::Idle) LogF("grab items: the %s hand's pick-up ends - %s", ig::Side(ig::g_picker.side()), !in->itemsOn ? "the grab is off or not F4" : "no world");
+        for (int side = 0; side < 2; ++side) {   // a squeeze meanwhile is said (once in a while): the box ticked, F4, but no view of the world for the palms
+            const bool rising = in->grip[side] >= itemgrab::kGripOn && ig::g_gripWas[side] < itemgrab::kGripOn;
+            ig::g_gripWas[side] = in->grip[side];
+            if (rising && in->itemsOn && ig::g_noneLines < 30 && ig::Now() - ig::g_noneAt[side] >= 1.5) {
+                ig::g_noneAt[side] = ig::Now();
+                ++ig::g_noneLines;
+                LogF("grab items: the %s hand's grip picked up nothing - no view of the world for the palms this pose (the camera's axes or the eye not ready)", ig::Side(side));
+            }
+        }
         ig::g_picker.Reset();
         ig::Publish();
+        pointpickup::SetItemNear(0, false);
+        pointpickup::SetItemNear(1, false);
         return;
     }
     monsterbodies::View view;
@@ -237,6 +248,10 @@ void ItemGrabStep(skel::Input* in) {
     bool fresh = false;
     const int n = meleetouch::GroundItems(items, itemgrab::kMaxItems, &fresh);
     const double now = ig::Now();
+    for (int side = 0; side < 2; ++side) {   // [weight] grab_items_empty_grip: an item at this palm is this pick-up's, not the pointed one's (direct_input's order)
+        float d = 0.0f;
+        pointpickup::SetItemNear(side == 0 ? 1 : 0, hands[side].tracked && itemgrab::Nearest(items, n, hands[side].palm, in->itemsReachM, &d) >= 0);
+    }
     const itemgrab::Phase was = ig::g_picker.phase();
     const unsigned ev = ig::g_picker.Step(now, hands, items, n, fresh, in->itemsReachM);
     const int s = ig::g_picker.side();
@@ -264,16 +279,27 @@ void ItemGrabStep(skel::Input* in) {
     if ((ev & itemgrab::kDropped) && was == itemgrab::Phase::Holding) LogF("grab items: the %s hand opens - our copy of item %u goes (the item is the game's, in the inventory)", ig::Side(s), id);
     // a squeeze that asked nothing: why (throttled, 30 lines a session)
     for (int side = 0; side < 2; ++side) {
-        const bool rising = hands[side].tracked && hands[side].grip >= itemgrab::kGripOn && ig::g_gripWas[side] < itemgrab::kGripOn;
-        ig::g_gripWas[side] = hands[side].tracked ? hands[side].grip : 0.0;
+        const bool rising = in->grip[side] >= itemgrab::kGripOn && ig::g_gripWas[side] < itemgrab::kGripOn;
+        ig::g_gripWas[side] = in->grip[side];
         if (!rising || ((ev & itemgrab::kAsked) && side == s) || was != itemgrab::Phase::Idle || ig::g_noneLines >= 30 || now - ig::g_noneAt[side] < 1.5) continue;
+        if (!hands[side].tracked) {   // (the hand's place not known: not tracked, or its palm not put in the world)
+            ig::g_noneAt[side] = now;
+            ++ig::g_noneLines;
+            LogF("grab items: the %s hand's grip picked up nothing - the hand's place is not known (%s)", ig::Side(side),
+                 !(in->handsValid & (1u << side)) ? "not tracked this pose" : "its palm not put in the world");
+            continue;
+        }
         if (!hands[side].free && (grabwire::Holding() >> side & 1u)) continue;   // (the bodies' grab took it)
         float d = 0.0f;
         const int i = itemgrab::Nearest(items, n, hands[side].palm, 1e9f, &d);
-        if (i < 0 && n == 0) continue;   // no items near: a grip for something else
         ig::g_noneAt[side] = now;
         ++ig::g_noneLines;
-        if (!hands[side].free)
+        if (i < 0) {   // none near (Serg, 0.206.5: "the grip does not pick up" with no line at all - say whether the scan ran and found nothing)
+            const char* skip = meleetouch::GroundItemsSkip();
+            LogF("grab items: the %s hand's grip picked up nothing - no item on the ground within 3 m of the hero (%s)%s", ig::Side(side),
+                 skip ? skip : fresh ? "the scan is fresh: it found none" : "the scan is OLD: it has not run for 200 ms",
+                 ig::g_noneLines == 30 ? " (no more of these lines this session)" : "");
+        } else if (!hands[side].free)
             LogF("grab items: the %s hand's grip picked up nothing - the hand may take nothing now (%s, or over or holding a body or a prop)", ig::Side(side), grabbodies::BusyText(in->grabBusy[side]));
         else
             LogF("grab items: the %s hand's grip picked up nothing - the nearest item (%u) is %.0f cm from the palm, the reach is %.0f cm (%d items within 3 m, the scan %s; "
@@ -403,12 +429,14 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
         inside = false;
     }
     if (const uintptr_t barrel = viewgate::F4() ? meleetouch::BarrelPressTarget() : 0) {   // [gameplay] melee_touch_barrels: the object the swing went through, while its press is in flight
+        pointpickup::NoteOtherAnswer("a barrel's press (melee_touch_barrels)");
         g_interactTarget.store(barrel);
         g_interactTargetAt.store(GetTickCount64());
         return barrel;
     }
     if (itemgrabwire::Pressing()) {   // [weight] grab_items: the item the hand's grip is on is the controller's interact target while the press is in flight
         const uintptr_t ours = itemgrabwire::g_target.load();
+        pointpickup::NoteOtherAnswer("the grip's pick-up (grab_items)");
         itemgrabwire::g_gameTarget.store(t);
         itemgrabwire::g_asks.fetch_add(1);
         g_interactTarget.store(ours);
@@ -425,6 +453,7 @@ uintptr_t HookInteractTarget(uintptr_t mgr, uint32_t player) {
     // [input] vr_body_pick_hand (vr/vr_body_pick.h, F4): the object or NPC the aiming hand points at. Where A only attacks the game is still
     // answered its own (none): only our interact press (ApplyActions) is told there is a target.
     if (const uintptr_t hand = VrHandTarget(vrbody::Ask::Interact)) {
+        pointpickup::NoteOtherAnswer("the object or NPC the hand points at (vr_body_pick_hand)");
         g_interactTarget.store(hand);
         g_interactTargetAt.store(GetTickCount64());
         return f == 0 ? r : hand;

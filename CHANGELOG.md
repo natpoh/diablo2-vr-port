@@ -1,5 +1,34 @@
 # What's new in D2R VR
 
+## 0.207.0
+
+- **Hits land again on every class** (`[gameplay] quick_blow`): quick blow moved the blow to a frame the game never checks, so
+  one-blow attacks - the Amazon's sword, most single weapons - dealt no damage. Now the blow is on the attack's own start frame, read
+  from the game's animation data, for every class and every attack; dual wield keeps its second blow.
+- **Our own monster plate, on** (`[hud] monster_names_own`): over the monster's head, laid out like the game's - the name on the red
+  life bar in the game's Exocet small caps, the type and rank under it, the immunities in their colours, elite and unique colours and
+  frame; the game's plate hidden. With `[hud] ordinary_mob_bars` on, ordinary monsters get no plate. Item labels and NPC names of our
+  own stay off.
+- **Crash fixes:**
+  - no GPU hang after applying video options in VR (`[render] resize_drain`, crash reports 229, 267, 273);
+  - OpenXR layers that crash the game are switched off for the game only (`[openxr] block_crash_layers`, ReShade's layer - report 278);
+  - quitting with Virtual Desktop no longer crashes for updated installs either (an update that kept `end_session_on_exit=0` turns it
+    on once - reports 280-284).
+- **Settings helps when the game freezes:** it warns about troublesome OpenXR layers (ReShade, neurorunner, Quad-Views-Foveated, OpenXR
+  Toolkit) and MSI Afterburner's on-screen display (`[support] layer_warning`); after the graphics card stopped it offers DLSS off,
+  frame generation off, a lower render size and a driver update, each a click (`[support] hang_advice`).
+- **The second hand slides again on a staff, spear or polearm**, held in either hand (broken since 0.170), and a sword, axe or mace is
+  taken by the second hand on its hilt (`[weight] grip_hilt_only`).
+- **A weapon alone in the left slot is drawn in the left hand** that holds and swings it (`[hands] left_slot_drawn_left`).
+- **Floor pick-up:** an empty hand picks up with the grip alone, a hand holding a weapon with grip + trigger
+  (`[weight] grab_items_empty_grip`).
+- **Swing timer says why a touch was no attack** (`[hud] swing_timer_reasons`): too slow, the shaft, the wrong way.
+- **A skill put on the spare slot is pressed once the game shows it there** (`[gestures] skill_link_settle`): body-action skills from
+  BodyWalk (jump -> Leap ...) no longer lose their first cast.
+- **Tried in test builds, off as it comes:** gestures recorded and cast inside the game (the GESTURES tab, `[openxr] gesture_overlay`,
+  `[gestures] engine_in_game` - next build), the air-aimed leap (`[gameplay] leap_air_aim`), the game's old labels layer removed
+  (`[hud] own_labels_drop_game`).
+
 ## 0.206.0
 
 - **Freeze at an item or NPC label fixed** (crash reports 230, 247, 259, 260, 269): with a large VR picture (`vr_resolution_px` 2880 and

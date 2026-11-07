@@ -38,4 +38,20 @@ constexpr File kFiles[] = {
 constexpr int kFileCount = (int)(sizeof kFiles / sizeof kFiles[0]);
 constexpr int kSpriteCount = kFileCount - 2;
 
+// [hud] monster_names_own: the game's own target plate (data\global\ui\Layouts\Controller\HUDMonsterHealthHD.json's pieces; their names read out of a
+// full dump of the running game): our plate over the monster's head is drawn from these, as the game draws its own. Copied with the list above, but
+// apart from it: the skill panel's look does not wait on them, and our plate keeps its own simple frame while they are not there.
+constexpr File kPlateFiles[] = {
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_normal.sprite", L"monster_healthbar_normal.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_normal_left_cap.sprite", L"monster_healthbar_normal_left_cap.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_normal_right_cap.sprite", L"monster_healthbar_normal_right_cap.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_unique.sprite", L"monster_healthbar_unique.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_unique_left_cap.sprite", L"monster_healthbar_unique_left_cap.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_unique_right_cap.sprite", L"monster_healthbar_unique_right_cap.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monster_healthbar_unique_bottom_cap.sprite", L"monster_healthbar_unique_bottom_cap.sprite"},
+    {"data\\hd\\global\\ui\\Controller\\HUD\\MonsterHealth\\monsterhealth_console.sprite", L"monsterhealth_console.sprite"},
+};
+constexpr int kPlateFileCount = (int)(sizeof kPlateFiles / sizeof kPlateFiles[0]);
+enum PlatePiece { kPlateNormal, kPlateNormalLeft, kPlateNormalRight, kPlateUnique, kPlateUniqueLeft, kPlateUniqueRight, kPlateUniqueBottom, kPlateConsole };
+
 }  // namespace gameuifiles

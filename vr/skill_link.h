@@ -17,6 +17,12 @@ namespace skilllink {
 
 constexpr uint32_t kStaleStamp = 5000;        // 0.1 ms units: a cast older than half a second is not acted on (we were not reading)
 constexpr uint64_t kAssignWaitMs = 1500;      // a skill put on the spare slot must show there within this, or the cast is given up
+constexpr uint64_t kSettleMs = 50;            // ... and is pressed this long after it showed. "Showed" is our own read of the controller's
+                                              // skill table - the memory the setter has just written, read back at once - not a sign that the
+                                              // game has taken the skill in: bearstonem/d2r-pcvr v0.3.32 saw presses 22 - 32 ms after the set
+                                              // refused ("I can't use that yet") and waits 150 ms. A margin, checked by CastWatch below.
+constexpr uint64_t kCastSeenMs = 500;         // a press on the spare slot is a cast when the hero's animation turns into one within this
+constexpr int kPressTries = 2;                // a press with no cast after it is pressed once more, then given up (logged either way)
 constexpr uint64_t kPublishMs = 1000;         // the Skills block is written again at least this often (BodyWalk takes 3 s still as gone)
 constexpr uint32_t kTapMs = 65, kAltRowMs = 180;   // a slot's press: the left trigger's row needs the longer one (shield_smite.h PulseMs)
 constexpr uint32_t kHeldMs = 80;              // a held skill's press is renewed every tick, and runs out this long after the last
@@ -152,12 +158,52 @@ struct Plan {
     int slot = -1;
     wheel::Request assign;    // Do::Assign: what to Submit (its sequence is the caller's)
     const char* why = "";     // Do::GiveUp: why
+    int64_t settledMs = -1;   // Do::Press of a skill we put on the slot: how long after the game showed it there (-1: it was there)
+};
+
+// The hero's unit mode is a cast's (Diablo II's modes: 7 / 8 the attacks, 10 cast, 11 throw, 12 kick, 13 - 16 the skills, 18 a
+// sequence - Leap, Whirlwind).
+constexpr bool IsCastMode(int m) { return m == 7 || m == 8 || (m >= 10 && m <= 16) || m == 18; }
+
+// After a press on the spare slot: did the game cast it? The hero's animation turning into a cast (from something else, or into another
+// cast, or back into one after leaving the one it was in) within kCastSeenMs says yes; none says the press was refused - or the skill
+// has no animation of its own (an aura is chosen, not cast).
+class CastWatch {
+    bool on_ = false, left_ = false;
+    int start_ = -1;
+    uint64_t at_ = 0;
+
+public:
+    enum class Ev : uint8_t { None, Cast, NoCast };
+    void Start(uint64_t now, int heroMode) {
+        on_ = true;
+        at_ = now;
+        start_ = heroMode;
+        left_ = !IsCastMode(heroMode);
+    }
+    void Reset() { on_ = false; }
+    bool On() const { return on_; }
+    uint64_t Since(uint64_t now) const { return now - at_; }
+    Ev Step(uint64_t now, int heroMode) {
+        if (!on_) return Ev::None;
+        if (IsCastMode(heroMode) && (left_ || heroMode != start_)) {
+            on_ = false;
+            return Ev::Cast;
+        }
+        if (!IsCastMode(heroMode)) left_ = true;
+        if (now - at_ > kCastSeenMs) {
+            on_ = false;
+            return Ev::NoCast;
+        }
+        return Ev::None;
+    }
 };
 
 class Caster {
     int32_t skill_ = -1;
     bool assigned_ = false;   // the setter was asked; now waiting to see the skill on the spare slot
     uint64_t since_ = 0;
+    uint64_t shownAt_ = 0;    // when the assigned skill first showed on its slot (0: not yet); pressed kSettleMs later
 
 public:
     bool Busy() const { return skill_ >= 0; }
@@ -167,11 +213,13 @@ public:
         skill_ = skill;
         assigned_ = false;
         since_ = now;
+        shownAt_ = 0;
     }
     void Reset() { *this = Caster{}; }
 
     // spareSlot: where a skill on no slot goes (-1: nowhere - only skills on a slot are cast). assignRefused: the setter answered no.
-    Plan Step(const wheel::Snapshot& s, uint64_t now, int spareSlot, bool assignRefused = false) {
+    // settleMs: how long a skill we put on the slot waits after the game shows it there ([gestures] skill_link_settle: kSettleMs; 0 off).
+    Plan Step(const wheel::Snapshot& s, uint64_t now, int spareSlot, bool assignRefused = false, uint64_t settleMs = kSettleMs) {
         Plan p;
         if (skill_ < 0) return p;
         auto giveUp = [&](const char* why) {
@@ -182,6 +230,11 @@ public:
         };
         if (!s.ready) return now - since_ > kAssignWaitMs ? giveUp("the game's skills could not be read") : p;
         const int on = SlotOf(s, skill_);
+        if (on >= 0 && assigned_) {   // just set by us: let the game take it in before the press
+            if (!shownAt_) shownAt_ = now;
+            if (now - shownAt_ < settleMs) return p;
+            p.settledMs = (int64_t)(now - shownAt_);
+        }
         if (on >= 0) {
             p.what = Plan::Do::Press;
             p.slot = on;

@@ -133,6 +133,88 @@ void TestStatus() {
     EXPECT(others.find(L"left as they are): XR_APILAYER_XSOverlay") != std::wstring::npos && lv == 1);
     StatusLine(L"A", L"", L"B", false, &lv);
     EXPECT(lv == 2);
+    // [openxr] block_crash_layers: a crash layer turned off is a warning and said first; one loading in says to tick the box
+    const std::wstring crash = StatusLine(L"", L"", L"XR_APILAYER_XSOverlay", true, &lv, Words(), L"XR_APILAYER_reshade", L"");
+    EXPECT(crash.find(L"OpenXR layer XR_APILAYER_reshade turned off for D2R VR: it is known to crash the game") == 0 && lv == 2);
+    EXPECT(crash.find(L"left as they are): XR_APILAYER_XSOverlay") != std::wstring::npos);
+    const std::wstring crashIn = StatusLine(L"", L"", L"", true, &lv, Words(), L"", L"XR_APILAYER_reshade");
+    EXPECT(crashIn.find(L"loads with the game: it is known to crash it. Tick") != std::wstring::npos && lv == 2);
+}
+
+// ReShade's own OpenXR manifest as its setup writes it (C:\ProgramData\ReShade\ReShade64_XR.json, ReShade 6 - copied from this PC)
+const char* kReShade = "{\n\t\"file_format_version\": \"1.0.0\",\n\t\"api_layer\": {\n\t\t\"name\": \"XR_APILAYER_reshade\",\n"
+                       "\t\t\"library_path\": \".\\\\ReShade64.dll\",\n\t\t\"api_version\": \"1.0\",\n\t\t\"implementation_version\": \"2\",\n"
+                       "\t\t\"description\": \"crosire's ReShade post-processing injector for 64-bit\",\n"
+                       "\t\t\"disable_environment\": \"DISABLE_XR_APILAYER_reshade_1\"\n\t}\n}\n";
+
+void TestCrashList() {
+    const Manifest r = Parse(kReShade);
+    EXPECT(r.ok && r.name == "XR_APILAYER_reshade" && r.disableEnv == "DISABLE_XR_APILAYER_reshade_1");
+    EXPECT(Listed(r.name, kDefaultCrashList));
+    EXPECT(!Listed("XR_APILAYER_MBUCCHIA_quad_views_foveated", kDefaultCrashList) && !Listed("XR_APILAYER_BODYWALK_INPUT", kDefaultCrashList));
+    Found rs;
+    rs.path = "C:\\ProgramData\\ReShade\\ReShade64_XR.json";
+    rs.manifest = r;
+    std::vector<Found> v{rs, Make("XR_APILAYER_MBUCCHIA_quad_views_foveated", "DISABLE_QVF"), Make("XR_APILAYER_BODYWALK_INPUT", "DISABLE_BW"),
+                         Make("XR_APILAYER_reshade_sleepy", "DISABLE_RS2", true), Make("XR_APILAYER_reshade_novar", "")};
+    // on: turned off in EVERY stereo mode - runtime_fov on (ownCrop false) and off, blocking of the picture list on or off
+    for (int ownCrop = 0; ownCrop < 2; ++ownCrop)
+        for (int block = 0; block < 2; ++block) {
+            Decide(v, block != 0, ownCrop != 0, kDefaultList, true, kDefaultCrashList);
+            EXPECT(v[0].crashListed && v[0].crashOff && v[0].turnedOff);
+            EXPECT(!v[2].turnedOff && !v[2].crashListed);   // BodyWalk's own: never
+            EXPECT(!v[3].turnedOff);                        // asleep
+            EXPECT(!v[4].turnedOff && v[4].crashListed);    // no variable: loads, named
+            EXPECT(v[1].turnedOff == (block && ownCrop) && !v[1].crashOff);   // the picture list as before
+            EXPECT(Names(v, Kind::CrashOff) == "XR_APILAYER_reshade");
+            EXPECT(Names(v, Kind::CrashIn) == "XR_APILAYER_reshade_novar");
+            EXPECT(Names(v, Kind::In) == "XR_APILAYER_BODYWALK_INPUT");
+            EXPECT(Names(v, Kind::Off) == (block && ownCrop ? "XR_APILAYER_MBUCCHIA_quad_views_foveated" : ""));
+        }
+    // off: loads as before, named as a crash layer loading in
+    Decide(v, true, true, kDefaultList, false, kDefaultCrashList);
+    EXPECT(!v[0].turnedOff && !v[0].crashOff && v[0].crashListed);
+    EXPECT(Names(v, Kind::CrashOff).empty() && Names(v, Kind::CrashIn) == "XR_APILAYER_reshade, XR_APILAYER_reshade_novar");
+    EXPECT(v[1].turnedOff);
+    // the old call (no crash arguments) = the crash list off and empty: exactly the old behaviour
+    Decide(v, true, true, kDefaultList);
+    EXPECT(!v[0].turnedOff && !v[0].crashListed && v[1].turnedOff && Names(v, Kind::In).find("XR_APILAYER_reshade") != std::string::npos);
+    // on both lists: a crash layer
+    Decide(v, true, true, std::string(kDefaultList) + ",reshade", true, kDefaultCrashList);
+    EXPECT(v[0].crashOff && KindOf(v[0]) == Kind::CrashOff);
+}
+
+// [support] layer_warning: the Home row's words
+std::wstring Fake(const std::wstring& key, const wchar_t* en) { return key == L"status.layer_warn.reshade.who" ? L"<RS>" : std::wstring(en); }
+void TestLayerWarning() {
+    EXPECT(KnownTrouble("XR_APILAYER_reshade") && std::string(KnownTrouble("XR_APILAYER_reshade")->id) == "reshade");
+    EXPECT(KnownTrouble("XR_APILAYER_NOVENDOR_neurorunner") && std::string(KnownTrouble("XR_APILAYER_NOVENDOR_neurorunner")->id) == "neurorunner");
+    EXPECT(KnownTrouble("XR_APILAYER_MBUCCHIA_quad_views_foveated") && KnownTrouble("XR_APILAYER_MBUCCHIA_toolkit"));
+    EXPECT(!KnownTrouble("XR_APILAYER_XSOverlay") && !KnownTrouble("XR_APILAYER_BODYWALK_INPUT") && !KnownTrouble("XR_APILAYER_fredemmott_OpenKneeboard"));
+    // nothing known: no row
+    std::vector<Found> calm{Make("XR_APILAYER_XSOverlay", "D1"), Make("XR_APILAYER_BODYWALK_INPUT", "D2")};
+    EXPECT(LayerWarning(calm).empty());
+    // a sleeping or broken troublemaker: no row either
+    std::vector<Found> asleep{Make("XR_APILAYER_NOVENDOR_neurorunner", "DN", true)};
+    EXPECT(LayerWarning(asleep).empty());
+    // ReShade turned off by the crash list, neurorunner loading, an overlay
+    std::vector<Found> v{Make("XR_APILAYER_reshade", "DR"), Make("XR_APILAYER_NOVENDOR_neurorunner", "DN"), Make("XR_APILAYER_XSOverlay", "DX")};
+    Decide(v, true, false, kDefaultList, true, kDefaultCrashList);
+    const std::wstring s = LayerWarning(v);
+    EXPECT(s.find(L"Known to cause trouble here: ReShade's OpenXR layer (XR_APILAYER_reshade) crashed the game") != std::wstring::npos);
+    EXPECT(s.find(L"uninstall ReShade for OpenXR. D2R VR turns it off for this game itself (\"Turn off OpenXR layers that crash the game\").") !=
+           std::wstring::npos);
+    EXPECT(s.find(L"neurorunner (XR_APILAYER_NOVENDOR_neurorunner) sat in the frame path") != std::wstring::npos);
+    const size_t nr = s.find(L"XR_APILAYER_NOVENDOR_neurorunner");
+    EXPECT(s.find(L"D2R VR turns it off", nr) == std::wstring::npos);   // neurorunner is not turned off: not said of it
+    EXPECT(s.find(L"left as they are: XR_APILAYER_XSOverlay.") != std::wstring::npos);
+    EXPECT(s.find(L"OpenXR API Layers GUI") != std::wstring::npos);
+    // Quad-Views-Foveated turned off by the picture list names that box
+    std::vector<Found> q{Make("XR_APILAYER_MBUCCHIA_quad_views_foveated", "DQ")};
+    Decide(q, true, true, kDefaultList, true, kDefaultCrashList);
+    EXPECT(LayerWarning(q).find(L"(\"Turn off OpenXR layers known to break the picture\")") != std::wstring::npos);
+    // the player's language through tr
+    EXPECT(LayerWarning(v, WarnWords(), &Fake).find(L"<RS> (XR_APILAYER_reshade)") != std::wstring::npos);
 }
 
 std::vector<std::string> LoaderList() {
@@ -190,6 +272,14 @@ void TestLive() {
     apilayerslib::Apply(false, true, any->manifest.name, nullptr);
     EXPECT(Has(LoaderList(), any->manifest.name));
     std::printf("    ... back with runtime_fov on, and with blocking off\n");
+    // [openxr] block_crash_layers: the same layer on the CRASH list is out even with runtime_fov on (ownCrop false), and back when unticked
+    const std::vector<Found> crashed = apilayerslib::Apply(true, false, kDefaultList, nullptr, true, any->manifest.name);
+    for (const Found& f : crashed)
+        if (f.manifest.ok && f.manifest.name == any->manifest.name) EXPECT(f.crashOff && f.turnedOff);
+    EXPECT(!Has(LoaderList(), any->manifest.name));
+    apilayerslib::Apply(true, false, kDefaultList, nullptr, false, any->manifest.name);
+    EXPECT(Has(LoaderList(), any->manifest.name));
+    std::printf("    ... on crash_layers: out with runtime_fov on too, back with block_crash_layers off\n");
 }
 }  // namespace
 
@@ -198,6 +288,8 @@ int main() {
     TestListed();
     TestDecide();
     TestStatus();
+    TestCrashList();
+    TestLayerWarning();
     TestLive();
     std::printf("api_layers_test: %d checks, %d failed\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

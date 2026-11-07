@@ -2,6 +2,8 @@
 #include "../vrcam_headers.h"
 #include "pose_views.h"
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle
+#include "../drawn_hand.h"    // [hands] left_slot_drawn_left: a weapon alone in the left slot, drawn in the hand that holds it
+#include "../skill_wheel.h"   // [weight] grab_items_empty_grip: the skill panel (its gestures tab) keeps the grip
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -518,6 +520,25 @@ void PushArms() {
     }
     in.weaponType = (int)gamestate::WeaponType();
     in.weaponSide = (int)gamestate::WeaponHand();
+    {   // [hands] left_slot_drawn_left (vr/drawn_hand.h): a weapon alone in the left slot is drawn by the game on the right attach bone - the pose carries that bone to the
+        // left slot's (the hand that holds it), and a right-slot shield to the right forearm. F4 only; the pose confirms the game shows the right bone before it carries.
+        drawnhand::Slots slots;
+        for (int side = 0; side < 2; ++side) slots.kind[side] = gamestate::HandKind(side);
+        slots.shield[0] = gamestate::RightShield();
+        slots.shield[1] = gamestate::LeftShield();
+        slots.two = gamestate::TwoHanded();
+        const drawnhand::Plan plan = drawnhand::Decide(slots);
+        const bool on = own && in.mode == 2 && viewgate::F4() && g_set.leftSlotDrawn.load();
+        in.leftSlotDrawn = on && plan.carry;
+        in.leftSlotShieldRight = in.leftSlotDrawn && plan.shieldToRight;
+        static int told = -1;   // what the slots say, once a change (the pose tells whether it carried)
+        const int key = !on ? 0 : 1 + (int)plan.why * 2 + (plan.shieldToRight ? 1 : 0);
+        if (key != told && (told != -1 || key != 0)) {
+            told = key;
+            if (!on) Log("vrcam: left slot weapon - not looked at (not F4, the arms not on the controllers, or [hands] left_slot_drawn_left off)");
+            else LogF("vrcam: left slot weapon - %s%s", drawnhand::WhyText(plan.why), plan.shieldToRight ? "; a shield in the right slot (to the right forearm)" : "");
+        }
+    }
     // The bow's own work - the rig pose, the string's place, the string hand's pose - is F4's alone: the other views keep the game's bow.
     in.bowRig = own && FullBody() && g_set.bowRigPose.load() && gamestate::WeaponType() == D2RVR_TYPE_BOW;   // [bow] rig_pose
     in.bowRigGrip = g_set.bowRigGrip.load();
@@ -918,6 +939,16 @@ void PushArms() {
             in.grabFree[side] = in.grabOn && in.grabBusy[side] == 0;
             // [weight] grab_items: free as for a body, and the bodies' grab not over a body or holding one with it
             in.itemsFree[side] = in.itemsOn && in.grabBusy[side] == 0 && !(((grabwire::OverBody() | grabwire::Holding()) >> side) & 1u);
+            {   // [weight] grab_items_empty_grip (vr/empty_grip.h): an empty hand's grip alone takes the item its ray lit - the verdict, for point_pickup's listener
+                emptygrip::In eg;
+                eg.on = on && in.mode == 2 && viewgate::F4() && g_set.weightGrabItemsEmptyGrip.load() && g_set.pointPickup.load();
+                eg.panel = skillwheel::IsOpen();
+                eg.busy = in.grabBusy[side];
+                eg.recall = !paws && in.weight.on && weight::TakeZone(side, nullptr) == 3;   // the right grip calls a dropped weapon back: the recall's
+                eg.bodyOrProp = (((grabwire::OverBody() | grabwire::Holding()) >> side) & 1u) != 0;
+                eg.nearItem = pointpickup::ItemNear(side == 0 ? 1 : 0);
+                pointpickup::SetEmptyGrip(side == 0 ? 1 : 0, (int)emptygrip::Decide(eg));
+            }
         }
     }
     in.itemsReachM = g_set.weightGrabItemsReachCm.load() * 0.01f;

@@ -17,7 +17,9 @@
 
 namespace replaypause {
 
-enum class Why { kNone, kNoWorld, kArea, kLongFrame };
+// kResize: [render] resize_drain - the game resized its swap chain, released a DLSS feature or applied its video options
+// (vr/resize_drain.h): it makes its targets anew over the next frames, as at an area change.
+enum class Why { kNone, kNoWorld, kArea, kLongFrame, kResize };
 
 // The game's biome set: a new area only when the name is another than the one before (bare names, as vrcam keeps them)
 inline bool BiomeIsNew(const char* before, const char* now) { return !before || !now || strcmp(before, now) != 0; }
@@ -27,20 +29,25 @@ struct Settle {
     static constexpr double kLongFrameMs = 150;  // a gap between two pairs longer than this is a load
 
     uint32_t seenArea = 0;
+    uint32_t seenResize = 0;
     double lastUs = 0.0;
     int pairs = 0;
-    uint32_t restarts[4] = {};   // the settle started again, by Why (for the log: what kept the replay off), till TakeRestarts
+    uint32_t restarts[5] = {};   // the settle started again, by Why (for the log: what kept the replay off), till TakeRestarts
 
-    // Once a pair, at its start. areaChanges: the game's biome sets so far; nowUs: a steady clock; inWorld: the world flags.
+    // Once a pair, at its start. areaChanges: the game's biome sets so far; nowUs: a steady clock; inWorld: the world flags;
+    // resizes: [render] resize_drain's count of resizes / DLSS releases / Applies so far (0 always with the tick off: as before).
     // True: the replay may run this pair. *stopped: why a running (settled) replay stops now, else kNone.
-    bool Step(uint32_t areaChanges, double nowUs, bool inWorld, Why* stopped) {
+    bool Step(uint32_t areaChanges, double nowUs, bool inWorld, Why* stopped, uint32_t resizes = 0) {
         *stopped = Why::kNone;
         const double gapMs = lastUs > 0.0 ? (nowUs - lastUs) / 1000.0 : 0.0;
         lastUs = nowUs;
         const bool newArea = areaChanges != seenArea;
         seenArea = areaChanges;
+        const bool resized = resizes != seenResize;
+        seenResize = resizes;
         Why why = Why::kNone;
         if (!inWorld) why = Why::kNoWorld;
+        else if (resized) why = Why::kResize;
         else if (newArea) why = Why::kArea;
         else if (gapMs > kLongFrameMs) why = Why::kLongFrame;
         if (why != Why::kNone) {
@@ -59,6 +66,10 @@ struct Settle {
         *area = restarts[(int)Why::kArea];
         *longFrame = restarts[(int)Why::kLongFrame];
         for (uint32_t& r : restarts) r = 0;
+    }
+    void TakeRestarts(uint32_t* noWorld, uint32_t* area, uint32_t* longFrame, uint32_t* resize) {
+        *resize = restarts[(int)Why::kResize];
+        TakeRestarts(noWorld, area, longFrame);
     }
 };
 

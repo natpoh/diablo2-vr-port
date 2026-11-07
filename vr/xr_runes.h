@@ -115,7 +115,7 @@ void RunesIdle() { g_runeEase.Reset(); }
 uint32_t HangRunes(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max) {
     if (!g_cfg.runesDraw || !viewgate::F4()) { RunesIdle(); return nl; }   // F4 only: the other views draw nothing, as before
     BW_LinkVrRune got[runes::kMax];
-    const uint32_t n = link::VrRunes(got, runes::kMax);
+    const uint32_t n = gengine::Active() ? gengine::Trail(got, runes::kMax) : link::VrRunes(got, runes::kMax);   // ([gestures] engine_in_game: the engine's trail)
     BW_LinkVrRune show[runes::kMax];
     const uint32_t m = g_runeEase.Step(got, n, GetTickCount64(), show);   // a rune that vanished mid-flash eases out in 0.2 s
     if (!m || nl >= max || !g_inNow.head.valid) return nl;

@@ -140,12 +140,18 @@ LeapAim LeapAimNow(int skill) {
     const float fx = g_gazeFwd[0].load(), fy = g_gazeFwd[1].load(), fz = g_gazeFwd[2].load();
     float down = 0.0f;
     pointcast::Offset circle;
-    if (pointwire::CastPoint(skill, now, &circle)) {   // [gameplay] teleport_circle: a hold let go - the arc's circle
+    // [gameplay] leap_air_aim: a leap's circle let go in the air is a point of the world - seen from where the hero landed (the look-at, as the arc's circle
+    // stood against it), held to the leap's range
+    const float heroXZ[2] = {g_gazeLook[0].load(), g_gazeLook[2].load()};
+    bool air = false;
+    if (pointwire::CastPoint(skill, now, &circle, 800, now - g_gazeAt.load() < 500 ? heroXZ : nullptr, pointcast::kMinUnits,
+                             PointCapCells(skill) * pointcast::kUnitsPerCell, &air)) {   // [gameplay] teleport_circle: a hold let go - the arc's circle
         AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
         aimpoint::GridDir(atan2f(circle.z, circle.x), xr::Running(), c.ok, c.mirror != 0, c.angle, &a.gx, &a.gy);
         a.fixed = true;
         a.cells = pointcast::Length(circle) / leapgaze::kUnitsPerCell;
         a.ok = std::isfinite(a.cells) && a.cells > 0.0f;
+        if (air) LogF("leap air aim: skill %d cast to the point kept in the air, %.1f cells from where the hero landed", skill, a.cells);
     } else if (now - g_gazeAt.load() < 500 && leapgaze::DownPerAcross(fx, fy, fz, &down)) {   // (a gaze straight down has no heading: the game's aim)
         AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
         aimpoint::GridDir(atan2f(fz, fx), xr::Running(), c.ok, c.mirror != 0, c.angle, &a.gx, &a.gy);

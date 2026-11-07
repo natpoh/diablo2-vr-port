@@ -195,6 +195,30 @@ template <class Hand> inline void ZeroControls(Hand& h) {
     h.buttons = 0;
 }
 
+// The controls BodyWalk is given of the two hands this frame (link::PublishXr). `taken`: the frame as the game's input left it - a control a gesture of
+// ours took reads as let go there (directinput HideTaken: the skill panel takes both triggers while it is up); `raw`: the same controls before any take.
+//   - not direct mode: the frame as it is (BodyWalk is the input);
+//   - direct mode, BodyWalk recording a gesture (its own take, or the Gestures tab's): the RAW controls - the trigger is its pen and the panel that is up
+//     for the take has taken it from the game (Serg, 0.206.10: BodyWalk's take stayed READY with the right trigger at 1.00 - it was given 0.00);
+//   - direct mode otherwise: no control (its Mapping presses nothing a second time), except with the skill link the triggers' values as they reach the
+//     game (its glyph pen in play: a trigger another gesture holds is not drawn with).
+template <class Hand> inline void ControlsForBodyWalk(Hand out[2], const Hand taken[2], const Hand raw[2], bool direct, bool skillPoses, bool recording) {
+    for (int h = 0; h < 2; ++h) {
+        out[h] = taken[h];
+        if (!direct) continue;
+        if (recording) {
+            out[h].trigger = raw[h].trigger;
+            out[h].squeeze = raw[h].squeeze;
+            out[h].stickX = raw[h].stickX;
+            out[h].stickY = raw[h].stickY;
+            out[h].buttons = raw[h].buttons;
+            continue;
+        }
+        ZeroControls(out[h]);
+        if (skillPoses) out[h].trigger = taken[h].trigger;
+    }
+}
+
 // -- the log ---------------------------------------------------------------------------------------------------------------
 // A line when the state changes - the first kHead of them at once, then at most one in kEveryMs (and a change swallowed in between is
 // said when its time comes, with how many changes it stands for). Not thread-safe: the caller holds a lock.

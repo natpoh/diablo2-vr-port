@@ -21,5 +21,7 @@ uintptr_t HookDrawGameScreen(int a);
 // the 1 ms update thread (D2RLoaderLoadPlugin starts it)
 extern DWORD g_updateThreadId;
 DWORD WINAPI UpdateThread(void*);
+// the capture key's state text and eye (vr/capture.h SetSources), from D2RLoaderLoadPlugin
+void CaptureSources();
 
 }  // namespace vrc

@@ -2202,6 +2202,19 @@ uniform float PlateNameAlpha[8] < hidden = true; >;
 // PlateNameLift[i] how far above that point the line's bottom stands (the name on top of its other lines).
 uniform float4 PlateNameAt[8] < hidden = true; >;
 uniform float PlateNameLift[8] < hidden = true; >;
+// The game's plate (its bar) under our name over the head (Serg, 0.205.13: "the name moved up, the plate stayed down"): PlateAt.xyz the same point as our
+// name's (relative to where the hands hang; each eye projects it), .w 1 = the plate's box is drawn with its middle that far under the point in each eye
+// (its top margin the gap), its own place left empty; 0 = where the game hangs it, as before.
+uniform float4 PlateAt < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+// ... w 2: the game's plate is not drawn at all - our own plate stands over the head (Serg, 0.205.13: "draw our own life bar"): the game's frame strip
+// (PlateFrameCell, from the atlas) in PlateFrameRect and its red bar (PlateFillCell) in PlateFillRect up to PlateLife of its width - px about the
+// point's pixel in each eye (PlateFrameAt.xyz, each eye projecting it; .w 1 on); the name on the bar and the other lines under it are PlateNameAt's.
+uniform float4 PlateFrameAt < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
+uniform float4 PlateFrameRect < hidden = true; >;
+uniform float4 PlateFrameCell < hidden = true; >;
+uniform float4 PlateFillRect < hidden = true; >;
+uniform float4 PlateFillCell < hidden = true; >;
+uniform float PlateLife < hidden = true; > = 1.0;
 
 bool InBox(float2 uv, float4 box) { return uv.x >= box.x && uv.y >= box.y && uv.x < box.z && uv.y < box.w; }
 // The interface's pixel l (premultiplied, a = how much of the world shows) with our names over it, each at its own depth (ownnames::Over).
@@ -2243,6 +2256,29 @@ float4 FadedLabel(float4 l)
     return float4(l.rgb, 1.0 - cover * k);
 }
 
+// Those points are relative to where the hands hang (between the eyes); this is each eye's
+// camera from there, taken off before projecting - without it both eyes saw the lines from
+// the middle, with no parallax, and they floated far behind the hand (2026-10-06).
+uniform float3 PhantomEye0 < hidden = true; > = float3(0.0, 0.0, 0.0);
+uniform float3 PhantomEye1 < hidden = true; > = float3(0.0, 0.0, 0.0);
+
+// A point relative to the eye -> its pixel; z < 0 behind the eye.
+float3 PhantomPixel(float3 v, int eye)
+{
+    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
+    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
+    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
+    const float3 c = float3(dot(v, R), dot(v, U), dot(v, B));
+    const float w = max(-c.z, 1e-4);
+    const float2 ndc = float2(c.x / w * sp.x - sp.z, c.y / w * sp.y - sp.w);
+    return float3((ndc.x * 0.5 + 0.5) * BUFFER_WIDTH, (0.5 - ndc.y * 0.5) * BUFFER_HEIGHT, -c.z);
+}
+// How far ahead of this eye a point is (world units; < 0 behind it).
+float PhantomAhead(float3 v, int eye)
+{
+    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
+    return -dot(v, eye == 0 ? CamBack0 : CamBack1);
+}
 // layerEye: the eye the layer was laid out for, eyes by turns (+1 the left, -1 the right; the overlays' techniques); 0: the same layer for both
 float4 GameLabelsLayer(float2 uvIn, float eyeSign, float layerEye)
 {
@@ -2283,8 +2319,17 @@ float4 GameLabelsLayer(float2 uvIn, float eyeSign, float layerEye)
     [branch] if (PlateOwn && PlateBox.z > PlateBox.x)   // the plate at its own depth, sized and faded: none of the labels' shift (vr/plate_look.h LayerPixel)
     {
         const float2 c = 0.5 * (PlateBox.xy + PlateBox.zw);
-        const float2 ps = c + ((uv - float2(eyeSign * PlateShift - layerEye * PlateTurnH, 0.0)) - c) / PlateScale;   // the plate's own pixel shown here
-        if (InBox(ps, PlateBox))
+        float2 ps = c + ((uv - float2(eyeSign * PlateShift - layerEye * PlateTurnH, 0.0)) - c) / PlateScale;   // the plate's own pixel shown here
+        [branch] if (PlateAt.w > 0.5)   // under our name over the head: each eye projects the point and hangs the plate's middle under it
+        {
+            const float3 at = PhantomPixel(PlateAt.xyz, eyeSign > 0.0 ? 0 : 1);
+            if (at.z > 0.05)
+            {
+                const float2 target = float2(at.x / BUFFER_WIDTH, at.y / BUFFER_HEIGHT + 0.5 * (PlateBox.w - PlateBox.y) * PlateScale);
+                ps = c + (uvIn - target) / PlateScale;
+            }
+        }
+        if (PlateAt.w < 1.5 && InBox(ps, PlateBox))   // (w 2: our own plate stands over the head - the game's is not drawn)
         {
             const float4 p = tex2Dlod(GameLayerSmp, float4(ps, 0, 0));
             return float4(p.rgb * PlateAlpha, 1.0 - (1.0 - saturate(p.a)) * PlateAlpha);
@@ -2318,34 +2363,36 @@ float4 GameLabelsLayer(float2 uvIn, float eyeSign, float layerEye)
     if (!PlateOwn && PlateAlpha < 0.999 && InBox(src, PlateBox)) l = float4(l.rgb * PlateAlpha, 1.0 - (1.0 - saturate(l.a)) * PlateAlpha);
     return l;
 }
-// Those points are relative to where the hands hang (between the eyes); this is each eye's
-// camera from there, taken off before projecting - without it both eyes saw the lines from
-// the middle, with no parallax, and they floated far behind the hand (2026-10-06).
-uniform float3 PhantomEye0 < hidden = true; > = float3(0.0, 0.0, 0.0);
-uniform float3 PhantomEye1 < hidden = true; > = float3(0.0, 0.0, 0.0);
-
-// A point relative to the eye -> its pixel; z < 0 behind the eye.
-float3 PhantomPixel(float3 v, int eye)
-{
-    const float3 R = eye == 0 ? CamRight0 : CamRight1, U = eye == 0 ? CamUp0 : CamUp1, B = eye == 0 ? CamBack0 : CamBack1;
-    const float4 sp = eye == 0 ? SkyProj0 : SkyProj1;
-    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
-    const float3 c = float3(dot(v, R), dot(v, U), dot(v, B));
-    const float w = max(-c.z, 1e-4);
-    const float2 ndc = float2(c.x / w * sp.x - sp.z, c.y / w * sp.y - sp.w);
-    return float3((ndc.x * 0.5 + 0.5) * BUFFER_WIDTH, (0.5 - ndc.y * 0.5) * BUFFER_HEIGHT, -c.z);
-}
-// How far ahead of this eye a point is (world units; < 0 behind it).
-float PhantomAhead(float3 v, int eye)
-{
-    v -= eye == 0 ? PhantomEye0 : PhantomEye1;
-    return -dot(v, eye == 0 ? CamBack0 : CamBack1);
-}
 // Our names over their monsters' heads in the world: each eye projects the point (PhantomPixel) and draws the line about it.
 float4 PlateNamesInWorld(float4 l, float2 uv, float eyeSign)
 {
     const int eye = eyeSign > 0.0 ? 0 : 1;
     const float2 p = uv * float2(BUFFER_WIDTH, BUFFER_HEIGHT);
+    [branch] if (PlateFrameAt.w > 0.5)   // our plate: the frame, then the red bar as long as the life (the names come over it, below)
+    {
+        const float3 pa = PhantomPixel(PlateFrameAt.xyz, eye);
+        if (pa.z > 0.05)
+        {
+            const float2 q = p - pa.xy;
+            if (InBox(q, PlateFrameRect))
+            {
+                const float2 t = (q - PlateFrameRect.xy) / max(PlateFrameRect.zw - PlateFrameRect.xy, 1e-3);
+                const float4 c = tex2Dlod(OwnLabelSmp, float4(lerp(PlateFrameCell.xy, PlateFrameCell.zw, t), 0, 0));
+                const float k = 1.0 - saturate(c.a);
+                l = float4(c.rgb + l.rgb * k, saturate(l.a) * k);
+            }
+            if (InBox(q, PlateFillRect))
+            {
+                const float2 t = (q - PlateFillRect.xy) / max(PlateFillRect.zw - PlateFillRect.xy, 1e-3);
+                if (t.x < PlateLife)
+                {
+                    const float4 c = tex2Dlod(OwnLabelSmp, float4(lerp(PlateFillCell.xy, PlateFillCell.zw, float2(0.5, t.y)), 0, 0));
+                    const float k = 1.0 - saturate(c.a);
+                    l = float4(c.rgb + l.rgb * k, saturate(l.a) * k);
+                }
+            }
+        }
+    }
     [loop] for (int i = 0; i < PlateNameCount; ++i)
     {
         const float h = PlateNameAt[i].w;

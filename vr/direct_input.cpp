@@ -56,7 +56,9 @@ bool ViewOk() { return viewgate::F4(); }
 // F4, or the overlay's own sources in VR F1 - F3 (direct_input.h kSrcPanel / kSrcPanelView): what may take, tap or hold an action now.
 bool SourceOk(Source src) { return ViewOk() || (PanelSource(src) && viewgate::Flat()); }
 constexpr ULONGLONG kTapMs = 65;          // Tap(): held this long
-constexpr int kMaxListeners = 16;
+// The mod's gestures each listen (17 in 0.206: the bow quiver, the last one, found the table of 16 full - "the quiver does nothing" in every
+// session since 0.205.8, and seven callers never look at the answer); room for twice that, and a refusal said here whoever asked.
+constexpr int kMaxListeners = 32;
 constexpr int kPulses = 8;
 constexpr int kActionBits = 12;
 
@@ -435,6 +437,7 @@ bool Listen(FrameFn fn, void* user) {
     }
     if (!dup && free >= 0) { g_listeners[free] = {fn, user}; ok = true; }
     ReleaseSRWLockExclusive(&g_listenLock);
+    if (!dup && !ok) LogF("vrcam: direct input - the listener table is full (%d): a gesture's frames are refused (listener %p)", kMaxListeners, (void*)fn);
     return ok;
 }
 

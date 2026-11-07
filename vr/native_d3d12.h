@@ -39,6 +39,9 @@ struct Sinks {
     void (*present)(IDXGISwapChain3* sc, ID3D12CommandQueue* q) = nullptr;
     // Its buffers are about to be made again (ResizeBuffers / ResizeBuffers1), or a new swap chain was made.
     void (*swapChainChanged)() = nullptr;
+    // ([render] resize_drain) the game's ResizeBuffers / ResizeBuffers1 on its swap chain, before the real call and before swapChainChanged:
+    // its old buffers are still alive here (the plugin drains the GPU of what still names them, vr/resize_drain.h).
+    void (*beforeResize)() = nullptr;
     // A list of the game's binds render targets: its depth-stencil's resource (nullptr: none, or a view not seen made) and how many colour targets.
     void (*bindDepth)(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colourTargets) = nullptr;
     // A list's barriers (all kinds; the sink looks at the transitions).
@@ -74,6 +77,17 @@ struct Sinks {
     // (a draw's whole arguments: the effects' depth draws it again; `indexed` DrawIndexedInstanced, `base` its base vertex)
     void (*fxDraw)(ID3D12GraphicsCommandList* cl, bool indexed, unsigned vertices, unsigned instances, unsigned first, int base,
                    unsigned firstInstance) = nullptr;
+    // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10's pipe trace (vr/pipe_hunt.h): a pipeline the game binds (SetPipelineState, the one it asked
+    // for - before psoSwap; a Reset's, nullptr none), and each draw / dispatch / indirect call of the game's (kind 0 / 1 / 2): true = not made.
+    // Given: SetPipelineState, DrawInstanced, Dispatch and ExecuteIndirect are hooked as well.
+    void (*huntBound)(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) = nullptr;
+    bool (*huntSkip)(ID3D12GraphicsCommandList* cl, int kind) = nullptr;
+    // ... and, for the trace's columns, what a list binds: its render targets (the RTV handles as given) and depth-stencil (its resource, nullptr
+    // none or not known), its first viewport
+    void (*huntTargets)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds) = nullptr;
+    void (*huntViewport)(ID3D12GraphicsCommandList* cl, float w, float h) = nullptr;
+    // the capture's intermediate targets (vr/capture.h): a list's barriers before they go in - the sink may record on the list first
+    void (*captureBarrier)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) = nullptr;
 };
 // A root argument set on a list (Sinks::fxRoot): the compute root signature and arguments (given back after a dispatch of ours), and the
 // graphics descriptor tables (set again after our heaps were bound)

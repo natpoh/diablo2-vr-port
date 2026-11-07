@@ -205,6 +205,29 @@ const wchar_t* TitleFaceAlone() {
     return g_title;
 }
 
+const Sheet* PlateSprite(int piece) {
+    static Sheet sheets[gameuifiles::kPlateFileCount];
+    static bool tried[gameuifiles::kPlateFileCount] = {};
+    if (piece < 0 || piece >= gameuifiles::kPlateFileCount) return nullptr;
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (!tried[piece]) {
+        tried[piece] = true;
+        if (g_dir.empty()) g_dir = DefaultDir();
+        std::string bytes;
+        const char* why = "not there";
+        const bool ok = ReadAll(std::filesystem::path(g_dir) / gameuifiles::kPlateFiles[piece].leaf, &bytes) && Decode(bytes, &sheets[piece], &why);
+        if (!ok) sheets[piece] = Sheet{};
+        static int told = 0;
+        if (told < 3) {
+            ++told;
+            char line[220];
+            std::snprintf(line, sizeof line, "vrcam: our plate - the game's %ls %s", gameuifiles::kPlateFiles[piece].leaf, ok ? "read" : why);
+            if (LogFn log = g_log.load()) log(line);
+        }
+    }
+    return sheets[piece].Ok() ? &sheets[piece] : nullptr;
+}
+
 bool Covers(const wchar_t* face, const std::wstring& text) {
     if (!face) return false;
     if (text.empty()) return true;

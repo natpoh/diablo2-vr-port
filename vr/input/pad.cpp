@@ -845,6 +845,11 @@ template <int I> DWORD WINAPI XDetour(DWORD idx, XINPUT_STATE* s) {
     if (t_xDepth == 0 && idx == 0 && s && r == ERROR_SUCCESS && pointwire::On() && g_set.platform.load() == 1) {
         pointwire::PollIn in;
         in.allowed = g_set.teleportCircle.load() && viewgate::F4() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen();
+        in.airAim = g_set.leapAirAim.load() && in.allowed;   // [gameplay] leap_air_aim: a leap's hold let go in the air aims the next leap
+        in.airborne = in.airAim && HeroInLeapAir();
+        in.heroOk = GetTickCount64() - g_gazeAt.load() < 500;   // the look-at of a fresh view: the arc's circle stands against it (PointArcFor)
+        in.heroX = g_gazeLook[0].load();
+        in.heroZ = g_gazeLook[2].load();
         pointwire::FilterPad(&s->Gamepad.wButtons, s->Gamepad.bLeftTrigger, &s->Gamepad.bRightTrigger, in, &PointArcFor);
     }
     if (t_xDepth == 0 && idx == 0 && s && g_set.platform.load() == 1) {

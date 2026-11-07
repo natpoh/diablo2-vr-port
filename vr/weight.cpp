@@ -968,11 +968,15 @@ void Apply(skel::Input* in, Out* out) {
     }
     static_assert(gripzone::kCount == 5, "Input::Weight::hiltCm has a place for each of the zone's kinds");
     s.hiltOnly = wt.hiltOnly;   // [weight] grip_hilt_only: the second hand takes a sword (an axe, a mace ...) only on its hilt
+    // in->weaponType is arms.cpp's packed grip key: the kind (D2RVR_TYPE_*, low byte) + 0x100 for a sword in both hands + 0x1000 * (the
+    // staff's hand + 1) + the game's hands key << 16. The zone and slide tables know the kind only: since 663030c4 (2026-10-17) the packed
+    // key matched none of them, so no second hand slid on a staff, spear or polearm, whichever hand held it (zbiromir, 2026-11-05).
+    const uint32_t weaponKind = gripzone::KindOf((uint32_t)in->weaponType);
     {
-        const int zone = gripzone::IndexOf((uint32_t)in->weaponType);
+        const int zone = gripzone::IndexOf(weaponKind);
         s.hiltLen = zone >= 0 && zone < 5 ? std::clamp((double)wt.hiltCm[zone], 0.0, (double)gripzone::kMaxCm) * 0.01 : 0.0;
     }
-    s.slide = wt.slide && slidekinds::Allows(wt.slideKinds, (uint32_t)in->weaponType);   // [weight] slide_second_hand_<kind>: a staff's second hand slides, a sword's holds where it closed
+    s.slide = wt.slide && slidekinds::Allows(wt.slideKinds, weaponKind);   // [weight] slide_second_hand_<kind>: a staff's second hand slides, a sword's holds where it closed
     s.backTake = std::clamp((double)wt.backTakeM, 0.0, 0.8);
     s.floor = weightfloor::RoomFloorY(in->headRoom[1], wt.headAboveGroundM);   // the ground the player sees, not the room's floor
 

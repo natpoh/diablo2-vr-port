@@ -11,6 +11,7 @@ struct PluginContext;
 // F4 ONLY (vr/view_gate.h): the bash, the press and the lookups act in VR first person only; a view change closes the cast window.
 namespace gamestate {
 bool LeftShield();   // a shield in the left hand of the active set (gamestate.cpp)
+bool RightShield();  // ... in the right hand's slot ([hands] left_slot_drawn_left)
 }
 
 namespace shieldsmite {

@@ -11,6 +11,7 @@
 #include "../../vr/own_labels_wire.h"
 #include "../../vr/own_names.h"
 #include "../../vr/game_ui.h"
+#include "../../shared/game_ui_files.h"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -493,6 +494,12 @@ static void TestMonsterNames() {
                "each eye: the name's cell (text and backdrop) centred over the point, its bottom on it");
         const float meet2 = 2.0f * e * proj[0] / ((0.5f * (rl[0] + rl[2]) - 0.5f * (rr[0] + rr[2])) / bufW * 2.0f);
         Expect(std::fabs(meet2 - d) < 1e-3f && std::fabs((rl[2] - rl[0]) - (rr[2] - rr[0])) < 1e-4f, "the two eyes' cells meet at the point's distance, the same width");
+        // the game's plate under our name (PlateAt): in each eye its middle under the point's pixel, its top on the point - so it too meets at the monster
+        float ul[2], ur[2];
+        PlateUnder(pl, 0.04f, 0.8f, bufW, bufH, ul);
+        PlateUnder(pr, 0.04f, 0.8f, bufW, bufH, ur);
+        Expect(std::fabs(ul[0] * bufW - pl[0]) < 1e-3f && std::fabs((ul[1] - 0.016f) * bufH - pl[1]) < 1e-2f, "the plate's middle under the point, its top on it (left eye)");
+        Expect(std::fabs((ul[0] - ur[0]) * bufW - (pl[0] - pr[0])) < 1e-3f, "the plate apart between the eyes as much as the name: the same depth");
         const float behind[3] = {0.0f, 0.0f, 1.0f};
         float pb[2];
         Expect(!EyePixel(behind, R, U, B, proj, bufW, bufH, pb), "behind the eye: not drawn");
@@ -537,6 +544,116 @@ static void TestMonsterNames() {
         std::vector<uint32_t> ipx;
         int iw = 0, ih = 0;
         Expect(!Paint(icon, nullptr, &ipx, &iw, &ih), "a letter the face has not (a game icon): not painted at all - never a box");
+    }
+    {   // 2026-11-06, Serg: "the A key on NPCs in our font too, green": a hover line's icon becomes our 'A', marked to be inked in the game's green
+        char kt[kTextMax] = "\xEE\x80\x81";
+        uint32_t keys = 0;
+        Expect(IconsToKeys(kt, &keys) == 1 && std::strcmp(kt, "A") == 0 && keys == 1u, "the icon alone: 'A', the first letter marked");
+        char t2[kTextMax] = "\xEE\x80\x81 Talk";
+        keys = 0;
+        Expect(IconsToKeys(t2, &keys) == 1 && std::strcmp(t2, "A Talk") == 0 && keys == 1u, "the icon then a word: the word kept, only the 'A' marked");
+        char t3[kTextMax] = "\xD0\x9A\xD0\xB0 \xEF\xA3\xBF";
+        keys = 0;
+        Expect(IconsToKeys(t3, &keys) == 1 && std::strcmp(t3, "\xD0\x9A\xD0\xB0 A") == 0 && keys == (1u << 3), "after Cyrillic: its place counted in letters, not bytes");
+        char t4[kTextMax] = "Deckard Cain";
+        keys = 0;
+        Expect(IconsToKeys(t4, &keys) == 0 && std::strcmp(t4, "Deckard Cain") == 0 && keys == 0, "no icon: the text as it was");
+        float g[3] = {};
+        Expect(CodeColour(kKeyCode, g) && g[0] == 0.0f && g[1] == 1.0f && g[2] == 0.0f, "the key's colour: the game's own green (code 2)");
+
+        Want plain, key;
+        strcpy_s(plain.text, "A Talk");
+        strcpy_s(key.text, "A Talk");
+        plain.heightPx = key.heightPx = 30;
+        key.keys = 1u;
+        Expect(KeyOf(plain) != KeyOf(key), "the line with a green key and without: two cells");
+        std::vector<uint32_t> kp;
+        int kw = 0, kh = 0;
+        bool painted = Paint(key, nullptr, &kp, &kw, &kh);
+        Expect(painted, "the line with the key painted");
+        // green only in the left part (the 'A'), white letters to its right
+        int greenL = 0, greenR = 0, whiteR = 0;
+        for (int y = 0; painted && y < kh; ++y)
+            for (int x = 0; x < kw; ++x) {
+                const uint32_t p = kp[(size_t)y * kw + x];
+                const int r = p & 0xFF, gg = (p >> 8) & 0xFF, b = (p >> 16) & 0xFF, a = p >> 24;
+                if (a < 200) continue;
+                const bool isGreen = gg > 150 && r < 90 && b < 90, isWhite = r > 150 && gg > 150 && b > 150;
+                if (x < kw / 3) greenL += isGreen;
+                else { greenR += isGreen; whiteR += isWhite; }
+            }
+        Expect(greenL > 10 && greenR == 0 && whiteR > 10, "the 'A' green, the word after it white");
+    }
+    {   // our own plate (0.205.13, Serg: "draw our own life bar, in the game's style"): the life the plate is told, the layout, the bar's fill
+        Expect(LifeFrac(-1) < 0.0f && LifeFrac(0) == 0.0f && LifeFrac(37) == 0.37f && LifeFrac(100) == 1.0f && LifeFrac(250) == 1.0f,
+               "the life as the bar's setter takes it: percent, 0..100 (none told: not known)");
+        const PlateLayout p = LayOutPlate(30.0f, 120.0f, 22.0f, 2.0f);   // a name 30 px tall, 120 wide; a line under the plate 22 px
+        Expect(p.frame[3] == -(22.0f + 2.0f) && p.frame[1] < p.frame[3] && std::fabs((p.frame[3] - p.frame[1]) - p.frameH) < 1e-4f,
+               "the plate stands over the line under it (its bottom 24 px over the point)");
+        Expect(std::fabs(p.frame[0] + p.frame[2]) < 1e-4f && p.frameW >= 120.0f + 30.0f * 0.6f, "the plate centred over the point, wider than the name");
+        Expect(p.fill[0] > p.frame[0] && p.fill[2] < p.frame[2] && p.fill[1] > p.frame[1] && p.fill[3] < p.frame[3], "the bar inside the frame");
+        const float nameMid = -(p.nameLift + 15.0f);   // the name's middle (its bottom p.nameLift over the point, 30 px tall)
+        Expect(std::fabs(nameMid - 0.5f * (p.fill[1] + p.fill[3])) < 1e-3f, "the name's middle on the bar's middle, as the game's");
+        Expect(std::fabs((p.fill[3] - p.fill[1]) / p.frameH - 58.0f / 72.0f) < 1e-4f, "the bar 58 of the frame's 72, as the game's sprites");
+        Expect(FillWidth(p, 0.0f) == 0.0f && std::fabs(FillWidth(p, 0.5f) - 0.5f * (p.fill[2] - p.fill[0])) < 1e-4f && FillWidth(p, 3.0f) == p.fill[2] - p.fill[0],
+               "the red as long as the life (none at 0, half at 50 %, all at 100 % and over)");
+        const PlateLayout q = LayOutPlate(30.0f, 10.0f, 0.0f, 2.0f);
+        Expect(q.frame[3] == 0.0f && std::fabs(q.frameW - q.frameH * 3.5f) < 1e-3f, "no line under it: its bottom on the point; a short name: the frame's least width");
+    }
+    {   // Serg's reference (2026-11-07, docs/notes/img/game_plate_reference.png): the game's letter spacing, its bar, its lines - from the game's data
+        Expect(ExtraSpacing(200.0f, 150.0f, 11, 0, 8.0f, 30.0f) == 5, "letters spaced so the line is as wide as the game made it (50 px over 10 gaps)");
+        Expect(ExtraSpacing(200.0f, 150.0f, 6, 4, 8.0f, 30.0f) == 2, "the game's padding spaces counted: 50 - 4 spaces of 8 = 18 px over 5 + 4 gaps");
+        Expect(ExtraSpacing(140.0f, 150.0f, 11, 0, 8.0f, 30.0f) == 0 && ExtraSpacing(0.0f, 150.0f, 11, 0, 8.0f, 30.0f) == 0, "ours wider already, or no measure: as the face sets them");
+        Expect(ExtraSpacing(900.0f, 150.0f, 11, 0, 8.0f, 30.0f) == 30, "never more than the most");
+        GamePlate g;   // a name 26 px tall in the game's pixels, its bar 200 x 40, "Undead - Minion" 30 px under the name's middle, "Immune to Poison" 52
+        g.nameBoxH = 26.0f; g.barW = 200.0f; g.barH = 40.0f;
+        g.line[1] = g.line[2] = true; g.lineDy[1] = 30.0f; g.lineDy[2] = 52.0f;
+        const float lh[3] = {39.0f, 30.0f, 30.0f};   // ours: the name 39 px (x1.5 the game's), the lines 30
+        GameLayout gl;
+        Expect(LayOutGamePlate(39.0f, g, lh, &gl), "the plate laid out from the game's own numbers");
+        const PlateLayout& p = gl.plate;
+        Expect(std::fabs(p.frameW - 300.0f) < 1e-3f && std::fabs(p.frameH - 60.0f) < 1e-3f, "the plate the game's Health rect, at our scale (200 x 40 -> 300 x 60)");
+        Expect(std::fabs((p.fill[1] - p.frame[1]) - 60.0f * 7.0f / 72.0f) < 1e-3f && std::fabs((p.fill[0] - p.frame[0]) - 60.0f * 8.0f / 72.0f) < 1e-3f,
+               "the red inside the frame sprite's own rims and caps");
+        const float nameMid = -(gl.lineLift[0] + 19.5f);
+        Expect(std::fabs(nameMid - 0.5f * (p.frame[1] + p.frame[3])) < 1e-3f, "the name centred on the plate, as the game");
+        const float mid1 = -(gl.lineLift[1] + 15.0f), mid2 = -(gl.lineLift[2] + 15.0f);
+        Expect(std::fabs((mid1 - nameMid) - 45.0f) < 1e-3f && std::fabs((mid2 - nameMid) - 78.0f) < 1e-3f, "the lines where the game stands them under the name, at our scale");
+        Expect(std::fabs(gl.lineLift[2]) < 1e-3f && gl.lineLift[1] > gl.lineLift[2] && p.frame[3] < 0.0f, "the last line's bottom on the point, the rest above it");
+        Expect(p.frame[0] < p.fill[0] && p.frame[2] > p.fill[2] && p.frame[1] < p.fill[1] && p.frame[3] > p.fill[3], "the red inside the frame");
+        GamePlate noGame;
+        Expect(!LayOutGamePlate(39.0f, noGame, lh, &gl), "no game numbers: not laid out this way (our own stack then)");
+    }
+    {   // one copy of the plate: the game draws its lines twice (the top place and over the head) - the name in the plate's box, each line nearest it
+        Text tt[kMax];
+        const int32_t topName[4] = {793, 219, 207, 26}, topLine[4] = {852, 254, 89, 22}, headName[4] = {443, 1321, 169, 22}, headLine[4] = {470, 1348, 80, 20};
+        auto put = [&](int i, const char* s, const int32_t* b, int which) { strcpy_s(tt[i].raw, s); std::copy_n(b, 4, tt[i].box); tt[i].which = which; tt[i].seq = (uint64_t)i + 1; };
+        put(0, "Zombie", topName, 0); put(1, "Undead", topLine, 1); put(2, "Zombie", headName, 0); put(3, "Undead", headLine, 1);
+        const float plateBox[4] = {399.0f, 1293.0f, 607.0f, 1421.0f};
+        const int k = OneCopyOfEach(tt, 4, plateBox);
+        Expect(k == 2 && tt[0].box[1] == 1321 && tt[1].box[1] == 1348, "the copy over the head: its name (in the plate's box) and the line beside it");
+    }
+    {   // 0.206.5, Serg: "now and then the old plates flash in the frame" - the game's plate hidden on EVERY frame our names are on, ours drawn or not
+        struct Frame { const char* what; bool targetKnown, oursDrawn, oursMarked; };
+        const Frame seq[] = {
+            {"no target unit yet (the hook has none)", false, false, false},
+            {"a new target's first frame (our cell not painted yet)", true, false, false},
+            {"our plate drawn", true, true, true},
+            {"the target lost for a frame (the hook missed it)", false, false, true},
+            {"the first eye's pass (ours not marked yet this frame)", true, true, false},
+            {"a plate the game shows before our hook saw its target", false, false, false},
+        };
+        bool everyHidden = true, everySkipped = true;
+        for (const Frame& f : seq) {
+            everyHidden = everyHidden && GamePlateHidden(true, true);
+            for (int which = 0; which < 3; ++which) everySkipped = everySkipped && SkipGameText(true, which, f.oursMarked);
+            (void)f.targetKnown; (void)f.oursDrawn;   // (none of these may let the game's plate through)
+        }
+        Expect(everyHidden, "names on, first person: the game's plate box never drawn, whatever the frame");
+        Expect(everySkipped, "names on: every copy of the plate's told texts skipped, ours shown yet or not");
+        Expect(!GamePlateHidden(false, true) && !GamePlateHidden(true, false), "names off, or not first person: the game's plate as before");
+        Expect(!SkipGameText(false, 0, true), "names off: the game's text drawn");
+        Expect(!SkipGameText(true, kWhichHover, false) && SkipGameText(true, kWhichHover, true), "a hover name: skipped only once ours is shown in its place");
     }
     {   // [hud] npc_names_own: a TextDraw is a hover name (an NPC's, an object's) when it returns into the tooltip drawer's three call sites
         const uintptr_t base = 0x140000000;
@@ -667,6 +784,13 @@ static void TestPaint(const char* dump) {
     cyr.bg[3] = -1.0f;   // the game's "no box"
     Paint(cyr, nullptr, &px, &w, &h);
     Expect(Px(px, w, 1, 1) == 0, "the game draws no box (alpha below 0): none here either");
+
+    Want key;   // the NPC's hover line with its button (IconsToKeys): to look at
+    strcpy_s(key.text, "\xEE\x80\x81 Talk");
+    IconsToKeys(key.text, &key.keys);
+    key.heightPx = 40;
+    key.bold = true;
+    if (Paint(key, nullptr, &px, &w, &h) && dump) WriteBmp(std::string(dump) + "_key.bmp", px, w, h);
 }
 
 struct UpLog { int calls = 0; bool ok = true; std::vector<uint32_t> px; };
@@ -707,6 +831,119 @@ static void TestWire(const char* dump) {
 
 // The game's own font files (D2R VR Settings' game-art cache, d2r_vr_game_ui): with --fonts <that folder>, their families as GDI names them, taken in,
 // GDI knowing each face, and a name painted in each (--dump: the pictures). 0.205.12: Exocet was asked for by its typographic family and never found.
+// Our plate's pieces painted from the game's own sprites (gameuifiles::kPlateFiles in <dir>: menu_assets_test makes them from the game): the frame,
+// normal and unique, and the red bar; their colours as the sprites have them; --dump: the pieces and a whole plate (frame, 60 % red, a name) as .bmp.
+static void TestPlatePieces(const char* dir, const char* dump) {
+    using namespace ownnames;
+    if (!dir) { std::printf("  (no --plate <d2r_vr_game_ui with the plate's pieces>: the game's plate sprites not tried)\n"); return; }
+    const std::string d(dir);
+    gameui::SetDir(std::wstring(d.begin(), d.end()));
+    Expect(gameui::PlateSprite(gameuifiles::kPlateNormal) && gameui::PlateSprite(gameuifiles::kPlateConsole), "the game's plate sprites read");
+    Want fr, un, lf;
+    fr.piece = kPieceFrameNormal; fr.heightPx = 48; fr.widthPx = 240;
+    un.piece = kPieceFrameUnique; un.heightPx = 48; un.widthPx = 240;
+    lf.piece = kPieceLife; lf.heightPx = 38; lf.widthPx = 64;
+    std::vector<uint32_t> a, b, c;
+    int aw = 0, ah = 0, bw = 0, bh = 0, cw = 0, ch = 0;
+    Expect(Paint(fr, nullptr, &a, &aw, &ah) && aw == 240 && ah == 48, "the normal frame painted, as wide as asked");
+    Expect(Paint(un, nullptr, &b, &bw, &bh) && Paint(lf, nullptr, &c, &cw, &ch), "the unique frame and the red bar painted");
+    const uint32_t mid = a[(size_t)24 * aw + 120], top = a[(size_t)1 * aw + 120], utop = b[(size_t)1 * bw + 120], red = c[(size_t)19 * cw + 32];
+    Expect((mid & 255) < 10 && (mid >> 24) > 240, "the frame's middle black and solid (the empty bar), as the game's sprite");
+    Expect((top & 255) > 150 && ((top >> 8) & 255) > 150 && ((top >> 16) & 255) > 150, "the normal frame's rim light grey");
+    Expect((utop & 255) > 200 && ((utop >> 16) & 255) < ((utop >> 8) & 255), "the unique frame's rim gold (red and green over blue)");
+    Expect((red & 255) > 70 && ((red >> 8) & 255) < 20 && ((red >> 16) & 255) < 20, "the bar red, the game's");
+    if (dump) {
+        WriteBmp(std::string(dump) + "_frame_normal.bmp", a, aw, ah);
+        WriteBmp(std::string(dump) + "_frame_unique.bmp", b, bw, bh);
+        WriteBmp(std::string(dump) + "_life.bmp", c, cw, ch);
+        // a whole plate as the shader lays it: the frame, the red to 60 %, the name over it (on black)
+        const PlateLayout p = LayOutPlate(30.0f, 150.0f, 0.0f, 2.0f);
+        const int W = (int)std::ceil(p.frameW), Hh = (int)std::ceil(p.frameH);
+        std::vector<uint32_t> plate((size_t)W * Hh, 0xFF000000u);
+        auto over = [&](int x, int y, uint32_t s) {
+            const uint32_t dpx = plate[(size_t)y * W + x];
+            const float ka = 1.0f - (s >> 24) / 255.0f;
+            uint32_t o = 0xFF000000u;
+            for (int k = 0; k < 3; ++k) o |= (uint32_t)std::min(255.0f, ((s >> (8 * k)) & 255) + ((dpx >> (8 * k)) & 255) * ka) << (8 * k);
+            plate[(size_t)y * W + x] = o;
+        };
+        for (int y = 0; y < Hh; ++y)
+            for (int x = 0; x < W; ++x) {
+                over(x, y, a[(size_t)std::min(ah - 1, y * ah / Hh) * aw + std::min(aw - 1, x * aw / W)]);
+                const float fx = x + p.frame[0], fy = y + p.frame[1];
+                if (fx >= p.fill[0] && fx < p.fill[0] + FillWidth(p, 0.6f) && fy >= p.fill[1] && fy < p.fill[3])
+                    over(x, y, c[(size_t)std::min(ch - 1, (int)((fy - p.fill[1]) / (p.fill[3] - p.fill[1]) * ch)) * cw + cw / 2]);
+            }
+        Want nm;
+        strcpy_s(nm.text, "Bishibosh");
+        nm.heightPx = 30; nm.bold = true; nm.bg[3] = -1.0f; nm.rgb[0] = 199 / 255.0f; nm.rgb[1] = 179 / 255.0f; nm.rgb[2] = 119 / 255.0f;
+        std::vector<uint32_t> n;
+        int nw = 0, nh = 0;
+        if (Paint(nm, nullptr, &n, &nw, &nh)) {
+            const int x0 = (W - nw) / 2, y0 = (int)(0.5f * (p.fill[1] + p.fill[3]) - p.frame[1] - nh / 2.0f);
+            for (int y = 0; y < nh; ++y)
+                for (int x = 0; x < nw; ++x)
+                    if (x0 + x >= 0 && x0 + x < W && y0 + y >= 0 && y0 + y < Hh) over(x0 + x, y0 + y, n[(size_t)y * nw + x]);
+        }
+        WriteBmp(std::string(dump) + "_plate.bmp", plate, W, Hh);
+
+        // Serg's reference plate ("DEFILED WARRIOR" / "Undead - Minion" / "Immune to Poison"), laid out as ours is - the game's numbers read off that
+        // picture (its pixels): the name's line 24 tall and 250 wide as measured, the bar 345 x 38, the lines 45 and 67 under the name's middle
+        GamePlate g;
+        g.nameBoxH = 24.0f; g.barW = 345.0f; g.barH = 38.0f; g.line[1] = g.line[2] = true; g.lineDy[1] = 45.0f; g.lineDy[2] = 67.0f;
+        const float lh[3] = {24.0f, 22.0f, 22.0f};
+        GameLayout gl;
+        if (LayOutGamePlate(24.0f, g, lh, &gl)) {
+            const PlateLayout& q = gl.plate;
+            const float top = std::min(q.frame[1], -(gl.lineLift[0] + lh[0])) - 4.0f;
+            const int RW = (int)std::ceil(q.frameW) + 40, RH = (int)std::ceil(-top) + 4;
+            const float ox = RW * 0.5f, oy = (float)RH - 2.0f;   // the point: the bottom middle
+            std::vector<uint32_t> ref((size_t)RW * RH, 0xFF000000u);
+            auto put = [&](int x, int y, uint32_t s) {
+                if (x < 0 || y < 0 || x >= RW || y >= RH) return;
+                const uint32_t dpx = ref[(size_t)y * RW + x];
+                const float ka = 1.0f - (s >> 24) / 255.0f;
+                uint32_t o = 0xFF000000u;
+                for (int k = 0; k < 3; ++k) o |= (uint32_t)std::min(255.0f, ((s >> (8 * k)) & 255) + ((dpx >> (8 * k)) & 255) * ka) << (8 * k);
+                ref[(size_t)y * RW + x] = o;
+            };
+            Want fw;
+            fw.piece = kPieceFrameNormal; fw.heightPx = StepPx(q.frameH); fw.widthPx = (int)std::lround(q.frameW * fw.heightPx / q.frameH);
+            std::vector<uint32_t> fpx, lpx;
+            int fwW = 0, fwH = 0, lwW = 0, lwH = 0;
+            Want lw;
+            lw.piece = kPieceLife; lw.heightPx = StepPx(q.fill[3] - q.fill[1]); lw.widthPx = 64;
+            if (Paint(fw, nullptr, &fpx, &fwW, &fwH) && Paint(lw, nullptr, &lpx, &lwW, &lwH)) {
+                for (int y = (int)(q.frame[1] + oy); y < (int)(q.frame[3] + oy); ++y)
+                    for (int x = (int)(q.frame[0] + ox); x < (int)(q.frame[2] + ox); ++x) {
+                        const float u = (x - (q.frame[0] + ox)) / q.frameW, v = (y - (q.frame[1] + oy)) / q.frameH;
+                        put(x, y, fpx[(size_t)std::min(fwH - 1, (int)(v * fwH)) * fwW + std::min(fwW - 1, (int)(u * fwW))]);
+                        const float fx = x - ox, fy = y - oy;
+                        if (fx >= q.fill[0] && fx < q.fill[2] && fy >= q.fill[1] && fy < q.fill[3])
+                            put(x, y, lpx[(size_t)std::min(lwH - 1, (int)((fy - q.fill[1]) / (q.fill[3] - q.fill[1]) * lwH)) * lwW + lwW / 2]);
+                    }
+            }
+            const char* text[3] = {"  Defiled Warrior  ", "Undead \xE2\x80\xA2 Minion", "\xEE\x81\xBE" "2Immune to Poison"};
+            const float wph[3] = {250.0f / 24.0f, 0.0f, 0.0f};
+            for (int i = 0; i < 3; ++i) {
+                Want w;
+                const char code = StripCodes(text[i], 0x80, w.text, sizeof w.text);
+                w.heightPx = (int)lh[i]; w.bold = i == 0; w.bg[3] = -1.0f; w.font = i == 0 ? kFontExocet : kFontFormal;
+                w.gameWPerH = wph[i]; w.padSpaces = i == 0 ? 4 : 0;
+                if (!CodeColour(code, w.rgb)) w.rgb[0] = w.rgb[1] = w.rgb[2] = 240.0f / 255.0f;
+                std::vector<uint32_t> tp;
+                int tw = 0, th = 0;
+                const wchar_t* face = i == 0 ? gameui::TitleFaceAlone() : gameui::TextFaceAlone();
+                if (!Paint(w, face, &tp, &tw, &th)) continue;
+                const int x0 = (int)(ox - tw / 2.0f), y0 = (int)(oy - gl.lineLift[i] - th);
+                for (int y = 0; y < th; ++y)
+                    for (int x = 0; x < tw; ++x) put(x0 + x, y0 + y, tp[(size_t)y * tw + x]);
+            }
+            WriteBmp(std::string(dump) + "_reference_plate.bmp", ref, RW, RH);
+        }
+    }
+}
+
 static void TestGameFonts(const char* dir, const char* dump) {
     if (!dir) { std::printf("  (no --fonts <d2r_vr_game_ui>: the game's font files not tried)\n"); return; }
     const std::string base(dir);
@@ -753,11 +990,14 @@ static void TestGameFonts(const char* dir, const char* dump) {
 int main(int argc, char** argv) {
     const char* dump = nullptr;
     const char* fonts = nullptr;
+    const char* plate = nullptr;
     for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "--plate") == 0) plate = argv[i + 1];
         if (std::strcmp(argv[i], "--dump") == 0) dump = argv[i + 1];
         if (std::strcmp(argv[i], "--fonts") == 0) fonts = argv[i + 1];
     }
     TestGameFonts(fonts, dump);
+    TestPlatePieces(plate, dump);
     TestNames();
     TestSizes();
     TestKeys();

@@ -1,6 +1,7 @@
 // vr/diag/rtss_watch.cpp - [support] rtss_warning (shared/rtss_detect.h): RivaTuner Statistics Server found with the game, said once in the log.
 // A thread of its own looks at the start and every 10 s of the first minute: RTSSHooks64.dll / RTSSHooks.dll loaded in this process
-// (GetModuleHandle), RTSS.exe / MSIAfterburner.exe running (a process snapshot). Something new found: one log line with the advice; the
+// (GetModuleHandle), RTSS.exe / MSIAfterburner.exe running (a process snapshot), and in RTSS's shared memory MSI Afterburner's on-screen display
+// (or another program's) on and the game listed as hooked (read only, 2026-11-07). Something new found: one log line with the advice; the
 // hang and crash report files (vr/diag/crash.cpp) carry the same line, so the crash reporter's report text shows it. Only reads: nothing
 // is unhooked, closed or changed. rtss_warning=0: no thread, no line, as before.
 #include "diag.h"
@@ -27,6 +28,15 @@ unsigned Look() {
         PROCESSENTRY32W pe{sizeof pe};
         for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) found |= rtss::ProgramBit(pe.szExeFile);
         CloseHandle(snap);
+    }
+    // RTSS's shared memory, read only: MSI Afterburner's on-screen display on, another program's, the game hooked (rtss::ReadSharedMemory)
+    if (HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, rtss::kSharedMemoryName)) {
+        if (const void* view = MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0)) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (VirtualQuery(view, &mbi, sizeof mbi)) found |= rtss::ReadSharedMemory(view, mbi.RegionSize);
+            UnmapViewOfFile(view);
+        }
+        CloseHandle(map);
     }
     return found;
 }

@@ -48,6 +48,7 @@
 #include "move_attack.h"
 #include "move_attack_wire.h"
 #include "quick_blow.h"
+#include "quick_blow_probe.h"   // [debug] quick_blow_probe: one line per attack of our hero - what became of its blow
 #include "sigscan.h"
 #include "swing_timer_wire.h"
 #include "view_gate.h"
@@ -101,6 +102,7 @@ using CmdFlagsFn = uint16_t (*)();
 using ClientPlayerFn = uintptr_t (*)(uint32_t index);
 using MapClickFn = uint64_t (*)(void* unit, int type, int x, int y, uint64_t flags);
 using FrameEventsFn = uint64_t (*)(uintptr_t game, uintptr_t unit);
+using StartFrameFn = int (*)(uintptr_t unit);
 
 void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{false}, g_faulted{false};
@@ -110,7 +112,20 @@ std::atomic<uint64_t> g_tallyOwn{0}, g_tallyJoined{0}, g_tallyReach{0};   // [ga
 std::atomic<uint32_t> g_quickMinMs{quickblow::kMinMsDefault};   // [gameplay] quick_blow_min_ms
 std::atomic<int> g_quickState{0};          // the scheduler's hook: 0 not tried, 1 in, 2 not possible
 FrameEventsFn g_origFrameEvents = nullptr;
+// [gameplay] quick_blow: the game's start frame of a unit's mode 0x34B760 (attacks: its table [weapon class][hero class]; the Amazon's and the
+// Sorceress' weapon attacks start at frame 2) - the scheduler's own call at +0x1B, resolved from it before the hook and checked by its first bytes
+std::atomic<StartFrameFn> g_startFrame{nullptr};
+constexpr size_t kStartCallAt = 0x1B;
+const uint8_t kSigStartFrame[9] = {0x40, 0x53, 0x57, 0x48, 0x83, 0xEC, 0x38, 0x33, 0xFF};
 quickblow::QuickNotes g_quickNotes;        // the server's thread only (the scheduler notes, the trigger and the gate ask)
+// [debug] quick_blow_probe (vr/quick_blow_probe.h): view only - the hooks below note our hero's attack, nothing they return changes
+std::atomic<bool> g_probe{false};
+SRWLOCK g_probeLock = SRWLOCK_INIT;
+qbprobe::Recorder g_probeRec;              // under g_probeLock (the server's hooks, the client's poll)
+std::atomic<int> g_probeLines{0};
+constexpr int kProbeMax = 400;             // lines a session
+thread_local int t_probeShift = qbprobe::kNotJudged;   // FrameEventsQuick's verdict on the call in flight (the shift, kNoAction, or not judged)
+thread_local int t_probeStart = -1;                     // ... and the attack's start frame it read
 std::atomic<uint8_t> g_flatScope{kScopeNone};   // [gameplay] flat_move_while_attacking (ScopeOfKey)
 std::atomic<int (*)()> g_flatViewFn{nullptr};      // vrcam: the monitor game's view (1 F1, 2 F2, 3 F3; 0 in VR) - for the log
 std::atomic<bool (*)()> g_flatCameraFn{nullptr};   // vrcam: one of the flat key's views (the monitor's F2 / F3, VR F1 / F2 / F3)
@@ -146,10 +161,20 @@ bool Read(void* d, uintptr_t s, size_t n) noexcept {
     if (s < 0x10000) return false;
     __try { memcpy(d, reinterpret_cast<const void*>(s), n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+bool CallEventFrameOf(uintptr_t game, uintptr_t unit, int type, int32_t* out) noexcept {   // [debug] quick_blow_probe: any event type (0 MODECHANGE, 1 ENDANIM)
+    const uintptr_t fn = d2rsig::Addr(RVA_EVENT_FRAME);
+    if (!fn) return false;
+    __try { *out = reinterpret_cast<EventFrameFn>(fn)(game, unit, type, 0); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool CallEventFrame(uintptr_t game, uintptr_t unit, int32_t* out) noexcept {
     const uintptr_t fn = d2rsig::Addr(RVA_EVENT_FRAME);
     if (!fn) return false;
     __try { *out = reinterpret_cast<EventFrameFn>(fn)(game, unit, 1, 0); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool CallStartFrame(uintptr_t unit, int* out) noexcept {   // [gameplay] quick_blow: the game's start frame of the unit's mode (0x34B760)
+    const StartFrameFn fn = g_startFrame.load(std::memory_order_acquire);
+    if (!fn) return false;
+    __try { *out = fn(unit); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool CallUnitWeapon(uintptr_t unit, uintptr_t* out) noexcept {
     const uintptr_t fn = d2rsig::Addr(RVA_UNIT_WEAPON);
@@ -259,7 +284,9 @@ bool QuickAttackOf(uintptr_t game, uintptr_t unit, uint32_t* hero) {
     return g_quickNotes.Is(id, end);
 }
 
+void ProbeTriggered(uintptr_t game, uintptr_t unit, int code);   // [debug] quick_blow_probe (below)
 int HookTrigger(uintptr_t game, uintptr_t unit, int code, int arg) {
+    if (g_probe.load(std::memory_order_relaxed)) ProbeTriggered(game, unit, code);   // [debug] quick_blow_probe: every trigger of our hero's attack (our path's step too)
     int own = 0;
     if (attackpath::OnTick(game, unit, code, &own)) return own;   // [gameplay] flat_attack_path: its step of the path, never the game's handler
     const bool blow = attackpath::BeforeAction(game, unit, code);
@@ -284,6 +311,8 @@ bool WritePtr(uintptr_t at, uintptr_t v) noexcept {
     __try { *reinterpret_cast<uintptr_t*>(at) = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 uint64_t FrameEventsQuick(uintptr_t game, uintptr_t unit) {
+    t_probeShift = qbprobe::kNotJudged;   // ([debug] quick_blow_probe: the game's own frames unless judged below)
+    t_probeStart = -1;
     if (!QuickLive()) return g_origFrameEvents(game, unit);
     quickblow::Ask a;
     a.on = true;
@@ -296,33 +325,89 @@ uint64_t FrameEventsQuick(uintptr_t game, uintptr_t unit) {
     a.weapon = ServerWeaponKind(unit);
     alignas(16) uint8_t record[quickblow::kRecordBytes], moved[quickblow::kRecordBytes];
     a.record = Read(&rec, unit + kUnitAnimData, sizeof rec) && rec && Read(record, rec, sizeof record);
+    // the attack's start frame: the scheduler reads the frames from it on (the same call it makes itself, the unit's mode already the attack's)
+    int start = -1;
+    a.start = CallStartFrame(unit, &start) && start >= 0 && start < (int)quickblow::kMaxFrames;
     const quickblow::Why why = quickblow::Judge(a);
     if (why != quickblow::Why::Shift) {
         static std::atomic<int> told{0};
         if (told.fetch_add(1) < 8) Say("vrcam: quick blow - hero %u, mode %u: the game's own frames (%s)", id, a.mode, quickblow::WhyText(why));
         return g_origFrameEvents(game, unit);
     }
-    const int shift = quickblow::ShiftEvents(record, moved);
+    const int shift = quickblow::ShiftEvents(record, moved, (uint32_t)start);
+    const bool shifted = shift != 0 && shift != quickblow::kNoAction;
+    t_probeShift = shift;
+    t_probeStart = start;
     uint64_t r = 0;
     // the record is the game's shared row: the hero's pointer goes to our copy for this one call, and back
-    if (shift > 0 && WritePtr(unit + kUnitAnimData, reinterpret_cast<uintptr_t>(moved))) {
+    if (shifted && WritePtr(unit + kUnitAnimData, reinterpret_cast<uintptr_t>(moved))) {
         r = g_origFrameEvents(game, unit);
         if (!WritePtr(unit + kUnitAnimData, rec)) Fault("putting the hero's AnimData record back");
     } else {
         r = g_origFrameEvents(game, unit);
     }
     int32_t end = 0;
-    if (shift >= 0 && CallEventFrame(game, unit, &end)) g_quickNotes.Note(id, end);
-    if (shift > 0) (a.own ? g_tallyOwn : g_tallyJoined).fetch_add(1, std::memory_order_relaxed);
+    if (shift != quickblow::kNoAction && CallEventFrame(game, unit, &end)) g_quickNotes.Note(id, end);
+    if (shifted) (a.own ? g_tallyOwn : g_tallyJoined).fetch_add(1, std::memory_order_relaxed);
     static std::atomic<int> told{0};
     if (told.fetch_add(1) < 16) {
-        if (shift > 0)
-            Say("vrcam: quick blow - %s hero %u, mode %u, weapon kind %u: the blow moved from frame %d to the first (the animation's end, server frame %d, is the game's)",
-                a.own ? "our" : "a joined", id, a.mode, a.weapon, shift, end);
+        if (shifted)
+            Say("vrcam: quick blow - %s hero %u, mode %u, weapon kind %u: the blow moved from frame %d to frame %d, the attack's start frame (the game's, the first its scheduler reads; the animation's end, server frame %d, is the game's)",
+                a.own ? "our" : "a joined", id, a.mode, a.weapon, start + shift, start, end);
         else
-            Say("vrcam: quick blow - hero %u, mode %u: %s", id, a.mode, shift == 0 ? "the blow is on the first frame already" : "no blow in this animation's frames - the game's own");
+            Say("vrcam: quick blow - hero %u, mode %u: %s (start frame %d)", id, a.mode,
+                shift == 0 ? "the blow is on the attack's start frame already" : "no blow in this animation's frames - the game's own", start);
     }
     return r;
+}
+
+// [debug] quick_blow_probe: our hero's attack, noted by the hooks (view only). One line per attack, kProbeMax a session, through the async log.
+void ProbeTell(const qbprobe::Attack& a) {
+    if (!g_log || g_probeLines.fetch_add(1) >= kProbeMax) return;
+    char b[1400] = "vrcam: ";
+    qbprobe::Describe(a, b + 7, sizeof b - 7);
+    g_log(b);
+    if (g_probeLines.load() == kProbeMax) g_log("vrcam: quick blow probe - 400 lines said, quiet from here on");
+}
+bool OwnHeroNow(uintptr_t game, uintptr_t unit, uint32_t* mode, int32_t* now) {
+    uint32_t id = 0;
+    bool own = false;
+    if (!ServerPlayer(game, unit, &id, mode, &own) || !own) return false;
+    *now = 0;
+    Read(now, game + kGameFrame, sizeof *now);
+    return true;
+}
+void ProbeScheduled(uintptr_t game, uintptr_t unit) {
+    uint32_t mode = 0;
+    int32_t now = 0, pending = 0, end = 0;
+    if (!OwnHeroNow(game, unit, &mode, &now)) return;
+    CallEventFrameOf(game, unit, 0, &pending);
+    CallEventFrameOf(game, unit, 1, &end);
+    const uint32_t weapon = ServerWeaponKind(unit);
+    qbprobe::Attack done;
+    AcquireSRWLockExclusive(&g_probeLock);
+    const bool tell = g_probeRec.Scheduled(mode, AttackMode(mode), weapon, t_probeShift, t_probeStart, now, pending, end, GetTickCount64(), &done);
+    ReleaseSRWLockExclusive(&g_probeLock);
+    if (tell) ProbeTell(done);
+}
+void ProbeTriggered(uintptr_t game, uintptr_t unit, int code) {
+    uint32_t mode = 0;
+    int32_t now = 0;
+    if (!OwnHeroNow(game, unit, &mode, &now)) return;
+    qbprobe::Attack done;
+    AcquireSRWLockExclusive(&g_probeLock);
+    const bool tell = g_probeRec.DueByFrame(now, &done);
+    if (!tell) g_probeRec.Triggered(code, now, mode, ActionCode(code) && AttackMode(mode));
+    ReleaseSRWLockExclusive(&g_probeLock);
+    if (tell) ProbeTell(done);
+}
+void ProbeGate(uintptr_t game, uintptr_t unit, int asked, int gameAnswer, int ours) {
+    uint32_t mode = 0;
+    int32_t now = 0;
+    if (!OwnHeroNow(game, unit, &mode, &now)) return;
+    AcquireSRWLockExclusive(&g_probeLock);
+    g_probeRec.GateAsked((uint32_t)asked, now, gameAnswer, ours);
+    ReleaseSRWLockExclusive(&g_probeLock);
 }
 
 // [hud] swing_timer: our hero's attack starts now on our server - its frames to the animation's end and the frame the gate lets the next one in
@@ -344,6 +429,7 @@ void NoteSwing(uintptr_t game, uintptr_t unit) {
 uint64_t HookFrameEvents(uintptr_t game, uintptr_t unit) {
     const uint64_t r = FrameEventsQuick(game, unit);
     if (g_swing.load(std::memory_order_relaxed)) NoteSwing(game, unit);
+    if (g_probe.load(std::memory_order_relaxed)) ProbeScheduled(game, unit);   // [debug] quick_blow_probe
     return r;
 }
 
@@ -419,13 +505,18 @@ bool Faster(uintptr_t game, uintptr_t unit, int newMode, uintptr_t target, int o
     return false;
 }
 
-int HookGate(uintptr_t game, uintptr_t unit, int mode, uintptr_t target, int flag) {
-    const int r = g_origGate(game, unit, mode, target, flag);
+int HookGateInner(uintptr_t game, uintptr_t unit, int mode, uintptr_t target, int r) {
     if (target && (r == quickblow::kGateNotYet || r == quickblow::kGateRefused) && QuickLive() && g_faster.load(std::memory_order_relaxed) &&
         Faster(game, unit, mode, target, r))
         return quickblow::kGateIn;
     if (r != kGateNotYet || !Live()) return r;
     return Judge(game, unit, mode, target, r);
+}
+int HookGate(uintptr_t game, uintptr_t unit, int mode, uintptr_t target, int flag) {
+    const int r = g_origGate(game, unit, mode, target, flag);
+    const int ours = HookGateInner(game, unit, mode, target, r);
+    if (g_probe.load(std::memory_order_relaxed)) ProbeGate(game, unit, mode, r, ours);   // [debug] quick_blow_probe: a mode asked in the attack, the game's answer and ours
+    return ours;
 }
 
 // The general mode gate: a joined hero whose attack a walk cut starts his next attack only when that animation would have ended.
@@ -606,6 +697,13 @@ void AfterCtrl(uintptr_t mgr, uint32_t player) {
 
 void HookCtrlUpdate(uintptr_t mgr, uint32_t player, uint32_t dt) {
     g_origCtrl(mgr, player, dt);
+    if (g_probe.load(std::memory_order_relaxed)) {   // [debug] quick_blow_probe: an attack past its end with nothing after it on the server (the hero idle) is told by our clock
+        qbprobe::Attack done;
+        AcquireSRWLockExclusive(&g_probeLock);
+        const bool tell = g_probeRec.DueByClock(GetTickCount64(), 400, &done);
+        ReleaseSRWLockExclusive(&g_probeLock);
+        if (tell) ProbeTell(done);
+    }
     attackpath::AfterCtrl(player, mgr);
     if (Live()) AfterCtrl(mgr, player);
     else if (g_swing.load(std::memory_order_relaxed)) NoteHeroId(player);   // [hud] swing_timer alone: only whose attacks are ours
@@ -614,6 +712,28 @@ void HookCtrlUpdate(uintptr_t mgr, uint32_t player, uint32_t dt) {
 }  // namespace
 
 void SetLogger(void (*log)(const char*)) { g_log = log; }
+
+void SetProbe(bool on) {
+    if (g_probe.exchange(on) != on && g_log)
+        g_log(on ? "vrcam: quick blow probe - [debug] quick_blow_probe=1: one line per attack of our hero on our server - the frame events it got, our re-arms of its event, "
+                   "the gate, and whether the blow fired (read only)"
+                 : "vrcam: quick blow probe - [debug] quick_blow_probe=0");
+}
+bool ProbeOn() { return g_probe.load(std::memory_order_relaxed); }
+int32_t ProbePending(uintptr_t game, uintptr_t unit) {
+    int32_t f = 0;
+    CallEventFrameOf(game, unit, 0, &f);
+    return f;
+}
+void ProbeRearmed(uintptr_t game, uintptr_t unit, int who, int32_t to, int32_t before) {
+    uint32_t mode = 0;
+    int32_t now = 0;
+    if (!g_probe.load(std::memory_order_relaxed) || !OwnHeroNow(game, unit, &mode, &now)) return;
+    const int32_t after = ProbePending(game, unit);
+    AcquireSRWLockExclusive(&g_probeLock);
+    g_probeRec.Rearmed(who == 1 ? qbprobe::Who::PathStart : qbprobe::Who::PathStep, now, before, to, after);
+    ReleaseSRWLockExclusive(&g_probeLock);
+}
 
 void SetFlatCameraFn(bool (*fn)()) { g_flatCameraFn.store(fn, std::memory_order_release); }
 void SetFlatViewFn(int (*fn)()) { g_flatViewFn.store(fn, std::memory_order_release); }
@@ -703,10 +823,25 @@ void InstallQuick() {
         if (++tries == 30 && g_log) g_log("vrcam: quick blow - the server's frame scheduler is not as expected (another build?): the blow lands on the game's frame");
         return;
     }
+    // the scheduler's own call of the start frame (E8 rel32 at +0x1B), read before the hook goes in; a quick blow is moved only with it found
+    {
+        const uintptr_t sched = d2rsig::Addr(RVA_FRAME_EVENTS);
+        uint8_t call[5] = {};
+        uint8_t head[sizeof kSigStartFrame] = {};
+        int32_t rel = 0;
+        if (Read(call, sched + kStartCallAt, sizeof call) && call[0] == 0xE8) {
+            std::memcpy(&rel, call + 1, sizeof rel);
+            const uintptr_t fn = sched + kStartCallAt + 5 + (intptr_t)rel;
+            if (Read(head, fn, sizeof head) && std::memcmp(head, kSigStartFrame, sizeof head) == 0)
+                g_startFrame.store(reinterpret_cast<StartFrameFn>(fn), std::memory_order_release);
+        }
+        if (g_log && !g_startFrame.load())
+            g_log("vrcam: quick blow - the game's start frame of an attack (0x34B760) is not as expected: the blow lands on the game's frame");
+    }
     const bool in = d2rsig::Hook(RVA_FRAME_EVENTS, kSigFrameEvents, sizeof kSigFrameEvents, reinterpret_cast<void*>(&HookFrameEvents), reinterpret_cast<void**>(&g_origFrameEvents));
     g_quickState.store(in ? 1 : 2);
     if (g_log)
-        g_log(in ? "vrcam: quick blow - ready: the server's frame scheduler is hooked (a quick attack's blow on its first frame)"
+        g_log(in ? "vrcam: quick blow - ready: the server's frame scheduler is hooked (a quick attack's blow on the attack's start frame)"
                  : "vrcam: quick blow - the frame scheduler's hook could not go in: the blow lands on the game's frame");
 }
 

@@ -17,6 +17,13 @@
 // program, nothing is written to the registry. Every implicit layer found is logged, and D2R VR Settings names a listed one, switched
 // off or not - never silently.
 //
+// [openxr] block_crash_layers (on, 2026-11-07): a second, separate list - [openxr] crash_layers - of implicit layers known to CRASH the game,
+// switched off the same way in EVERY stereo mode (runtime_fov or not). Crash report 278 (RX 570, Oculus, 0.206.0): ReShade's system-wide OpenXR
+// layer (C:\ProgramData\ReShade\ReShade64_XR.json, XR_APILAYER_reshade) loaded ReShade64.dll into the game, which hooked DXGI for the whole
+// process and died on an int3 in dxgi!CDXGIBaseAdapter::GetUMDDeviceSize 2.5 s after the session started (no frame of ours on the stack). D2R VR
+// draws its own sky and fog since 0.203 and loads no ReShade; a ReShade brought in by the layer only fights the game's D3D12. Unticked: the
+// layer loads, as before (and the start guard turns native OpenXR off after the crash). A layer on both lists counts as a crash layer.
+//
 // Plain data and parsing, shared by the plugin (vr/api_layers_lib.cpp), D2R VR Settings and the test (cleanroom/tests/api_layers_test.cpp).
 #pragma once
 
@@ -145,6 +152,9 @@ inline Manifest Parse(const std::string& text) {
 
 // [openxr] blocked_layers when the key is not in the ini: the layers known to break the picture drawn our own way.
 constexpr char kDefaultList[] = "XR_APILAYER_MBUCCHIA_quad_views_foveated";
+// [openxr] crash_layers when the key is not in the ini: the layers known to crash the game (block_crash_layers). Add neurorunner after a second case
+// (crash report 283 is only one, and a reset, not a crash in the layer).
+constexpr char kDefaultCrashList[] = "XR_APILAYER_reshade";
 
 // Whether a layer is on the list: names (or parts of them) comma-, semicolon- or space-separated, any case; empty parts match nothing.
 inline bool Listed(const std::string& name, const std::string& list) {
@@ -165,15 +175,22 @@ struct Found {
     Manifest manifest;
     bool asleep = false;       // its enable_environment is not set: the loader leaves it out anyway
     bool listed = false;       // on [openxr] blocked_layers
+    bool crashListed = false;  // on [openxr] crash_layers
     bool turnedOff = false;    // its disable_environment set by us for this process
+    bool crashOff = false;     // ... because it is on crash_layers with block_crash_layers on (turnedOff is set too)
 };
 // Decides each one: `block` = [openxr] block_listed_layers, `ownCrop` = the eyes drawn our own way (runtime_fov off), `list` = blocked_layers.
 // A layer is turned off only when blocking, drawing our own way, listed, loadable, and it names its variable (the loader would refuse one
 // that does not). Nothing else is ever turned off.
-inline void Decide(std::vector<Found>& layers, bool block, bool ownCrop, const std::string& list) {
+// `blockCrash` = [openxr] block_crash_layers, `crashList` = crash_layers: a listed one is turned off whatever the stereo mode.
+inline void Decide(std::vector<Found>& layers, bool block, bool ownCrop, const std::string& list, bool blockCrash = false,
+                   const std::string& crashList = std::string()) {
     for (Found& f : layers) {
         f.listed = f.manifest.ok && Listed(f.manifest.name, list);
-        f.turnedOff = block && ownCrop && f.listed && !f.asleep && !f.manifest.disableEnv.empty();
+        f.crashListed = f.manifest.ok && Listed(f.manifest.name, crashList);
+        const bool canOff = !f.asleep && !f.manifest.disableEnv.empty();
+        f.crashOff = blockCrash && f.crashListed && canOff;
+        f.turnedOff = f.crashOff || (block && ownCrop && f.listed && canOff);
     }
 }
 // The names, comma-separated, of the loadable layers of one kind - for the log and D2R VR Settings' Status ([session] in d2r_vr_headset.ini).
@@ -181,12 +198,19 @@ enum class Kind {
     Off,          // listed and turned off (layers_off)
     ListedIn,     // listed but loading with the game: blocking off, runtime_fov on, or no variable to switch it off (layers_listed_in)
     In,           // any other, loading with the game as always (layers_in)
+    CrashOff,     // on crash_layers and turned off (layers_crash_off)
+    CrashIn,      // on crash_layers but loading with the game: block_crash_layers off, or no variable (layers_crash_in)
 };
+inline Kind KindOf(const Found& f) {
+    if (f.crashOff) return Kind::CrashOff;
+    if (f.crashListed && !f.turnedOff) return Kind::CrashIn;
+    return f.turnedOff ? Kind::Off : f.listed ? Kind::ListedIn : Kind::In;
+}
 inline std::string Names(const std::vector<Found>& layers, Kind kind) {
     std::string out;
     for (const Found& f : layers) {
         if (!f.manifest.ok || f.asleep) continue;
-        const Kind k = f.turnedOff ? Kind::Off : f.listed ? Kind::ListedIn : Kind::In;
+        const Kind k = KindOf(f);
         if (k != kind) continue;
         if (!out.empty()) out += ", ";
         out += f.manifest.name;
@@ -204,6 +228,10 @@ struct Words {
     const wchar_t* listedIn = L"OpenXR layer {layers} loads with the game: it is known to distort its picture (cross-eyed, stretched) when the eyes "
                               L"are drawn the mod's own way - tick \"Each eye exactly as the headset gives it\".";
     const wchar_t* in = L"Other OpenXR layers in the game (left as they are): {layers}.";
+    const wchar_t* crashOff = L"OpenXR layer {layers} turned off for D2R VR: it is known to crash the game (in the game's process only - other apps keep "
+                              L"it). Untick \"Turn off OpenXR layers that crash the game\" to let it load.";
+    const wchar_t* crashIn = L"OpenXR layer {layers} loads with the game: it is known to crash it. Tick \"Turn off OpenXR layers that crash the game\", "
+                             L"or remove the layer with its own setup.";
 };
 inline std::wstring WithLayers(const wchar_t* words, const std::wstring& layers) {
     std::wstring s = words;
@@ -213,12 +241,23 @@ inline std::wstring WithLayers(const wchar_t* words, const std::wstring& layers)
 
 // D2R VR Settings' Status line from the three lists and [openxr] runtime_fov, and how loud it is (0 nothing to say, 1 for information,
 // 2 a warning).
+// crashOff / crashIn: [session] layers_crash_off / layers_crash_in (block_crash_layers), said first.
 inline std::wstring StatusLine(const std::wstring& off, const std::wstring& listedIn, const std::wstring& in, bool runtimeFov, int* level,
-                               const Words& w = Words()) {
+                               const Words& w = Words(), const std::wstring& crashOff = std::wstring(), const std::wstring& crashIn = std::wstring()) {
     std::wstring s;
     int lv = 0;
+    if (!crashIn.empty()) {
+        s = WithLayers(w.crashIn, crashIn);
+        lv = 2;
+    }
+    if (!crashOff.empty()) {
+        if (!s.empty()) s += L" ";
+        s += WithLayers(w.crashOff, crashOff);
+        lv = 2;
+    }
     if (!off.empty()) {
-        s = WithLayers(w.off, off);
+        if (!s.empty()) s += L" ";
+        s += WithLayers(w.off, off);
         lv = 2;
     }
     if (!listedIn.empty()) {
@@ -238,6 +277,79 @@ inline std::wstring StatusLine(const std::wstring& off, const std::wstring& list
     }
     if (level) *level = lv;
     return s;
+}
+
+// --- [support] layer_warning (D2R VR Settings > Home): what is in the registry, said; nothing changed ----------------------------------------
+// The implicit layers enabled in the registry (Scan) with the ones known to cause trouble in this game marked, each with how to turn it off for all
+// games. Shown only while such a one is there (2026-11-07: crash report 278 ReShade's layer, 283 neurorunner in the frame path of a reset, the
+// 0.179 Quad-Views-Foveated report; OpenXR Toolkit changes every frame and was never made for this game).
+struct Troublemaker {
+    const char* match;    // a part of the layer's name, any case (Listed's rule)
+    const char* id;       // the words' keys: status.layer_warn.<id>.who / .why / .how
+    const wchar_t* who;   // what players call it
+    const wchar_t* why;   // what it did here
+    const wchar_t* how;   // how to turn it off for all games
+};
+inline constexpr Troublemaker kTroublemakers[] = {
+    {"XR_APILAYER_reshade", "reshade", L"ReShade's OpenXR layer", L"crashed the game (D2R VR needs no ReShade)",
+     L"run ReShade's setup and uninstall ReShade for OpenXR"},
+    {"neurorunner", "neurorunner", L"neurorunner", L"sat in the frame path of a graphics card reset",
+     L"close neurorunner, or uninstall it in Windows Settings > Apps"},
+    {"quad_views_foveated", "qvf", L"Quad-Views-Foveated", L"can make the picture cross-eyed or stretched",
+     L"uninstall Quad-Views-Foveated in Windows Settings > Apps"},
+    {"MBUCCHIA_toolkit", "toolkit", L"OpenXR Toolkit", L"changes every frame the game hands the headset and was not made for this game",
+     L"tick \"Disable OpenXR Toolkit\" in OpenXR Toolkit Companion, or uninstall it"},
+};
+inline const Troublemaker* KnownTrouble(const std::string& name) {
+    for (const Troublemaker& t : kTroublemakers)
+        if (Listed(name, t.match)) return &t;
+    return nullptr;
+}
+
+struct WarnWords {
+    const wchar_t* head = L"Other programs put OpenXR layers into every VR game on this PC, D2R VR too. Known to cause trouble here:";
+    const wchar_t* item = L"{who} ({name}) {why} - to turn it off for all games, {how}.";
+    const wchar_t* offForGame = L"D2R VR turns it off for this game itself (\"{tick}\").";
+    const wchar_t* tickCrash = L"Turn off OpenXR layers that crash the game";
+    const wchar_t* tickPicture = L"Turn off OpenXR layers known to break the picture";
+    const wchar_t* others = L"Other OpenXR layers, left as they are: {layers}.";
+    const wchar_t* tool = L"OpenXR API Layers GUI (free, by Fred Emmott) can switch any layer off for all games.";
+};
+// The words of one troublemaker in the player's language: `tr(key, english)`; null = English.
+using TrFn = std::wstring (*)(const std::wstring& key, const wchar_t* en);
+
+inline std::wstring Widen(const std::string& s) { return std::wstring(s.begin(), s.end()); }   // (layer names are ASCII)
+inline std::wstring Put(std::wstring s, const wchar_t* field, const std::wstring& v) {
+    const std::wstring f = std::wstring(L"{") + field + L"}";
+    for (size_t at = s.find(f); at != std::wstring::npos; at = s.find(f, at + v.size())) s.replace(at, f.size(), v);
+    return s;
+}
+// `layers` as Decide left them (turnedOff / crashOff = D2R VR turns it off for the game). Empty: nothing known to cause trouble is there (no row).
+inline std::wstring LayerWarning(const std::vector<Found>& layers, const WarnWords& w = WarnWords(), TrFn tr = nullptr) {
+    auto T = [&](const char* id, const char* part, const wchar_t* en) {
+        if (!tr) return std::wstring(en);
+        return tr(L"status.layer_warn." + Widen(id) + L"." + Widen(part), en);
+    };
+    std::wstring items, others;
+    for (const Found& f : layers) {
+        if (!f.manifest.ok || f.asleep) continue;
+        const Troublemaker* t = KnownTrouble(f.manifest.name);
+        if (!t) {
+            if (!others.empty()) others += L", ";
+            others += Widen(f.manifest.name);
+            continue;
+        }
+        std::wstring s = Put(Put(Put(Put(w.item, L"who", T(t->id, "who", t->who)), L"name", Widen(f.manifest.name)), L"why", T(t->id, "why", t->why)),
+                             L"how", T(t->id, "how", t->how));
+        if (f.turnedOff) s += L" " + Put(w.offForGame, L"tick", f.crashOff ? w.tickCrash : w.tickPicture);
+        items += L" " + s;
+    }
+    if (items.empty()) return {};
+    std::wstring out = std::wstring(w.head) + items;
+    if (!others.empty()) out += L" " + Put(w.others, L"layers", others);
+    out += L" ";
+    out += w.tool;
+    return out;
 }
 
 }  // namespace apilayers

@@ -141,7 +141,7 @@ int Resolve(const Want* wants, int n, Cell* cells, uint32_t* rev, UploadFn uploa
         }
         for (int i = 0; i < n; ++i) {
             cells[i] = Cell{};
-            if (!wants[i].text[0]) continue;
+            if (!wants[i].text[0] && !wants[i].piece) continue;   // (a piece of our plate has no text)
             const uint64_t key = KeyOf(wants[i]);
             if (const Cell* c = g_atlas.Find(key); c && *rev == g_rev) {
                 cells[i] = *c;
@@ -164,13 +164,17 @@ int Resolve(const Want* wants, int n, Cell* cells, uint32_t* rev, UploadFn uploa
     return got;
 }
 
-bool DumpAtlas(const wchar_t* path) {
+bool DumpAtlas(const wchar_t* path, int* err) {
+    if (err) *err = 0;
     std::vector<uint32_t> px;
     {
         std::lock_guard<std::mutex> lock(g_m);
         px = g_px;
     }
-    if (px.empty() || !path) return false;
+    if (px.empty() || !path) {
+        if (err) *err = -1;
+        return false;
+    }
     const int w = kAtlasW, h = kAtlasH;
     const uint32_t size = 54 + (uint32_t)w * h * 4;
     std::vector<unsigned char> b(size, 0);
@@ -185,8 +189,13 @@ bool DumpAtlas(const wchar_t* path) {
             q[0] = (unsigned char)(p >> 16); q[1] = (unsigned char)(p >> 8); q[2] = (unsigned char)p; q[3] = (unsigned char)(p >> 24);
         }
     FILE* f = nullptr;
-    if (_wfopen_s(&f, path, L"wb") != 0 || !f) return false;
+    const errno_t open = _wfopen_s(&f, path, L"wb");
+    if (open != 0 || !f) {
+        if (err) *err = open ? open : EIO;
+        return false;
+    }
     const bool ok = std::fwrite(b.data(), 1, b.size(), f) == b.size();
+    if (!ok && err) *err = errno ? errno : EIO;
     std::fclose(f);
     return ok;
 }

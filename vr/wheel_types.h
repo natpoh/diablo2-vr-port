@@ -35,7 +35,8 @@ enum class Style : uint8_t { Wheel = 0, Tiles = 1 };
 
 // The tiles' window has two tabs when [openxr] headset_settings is on: Skills (the tiles, as ever) and Settings (the headset's settings
 // pages: the game view F1 - F4, the render size, the T-pose measurement; vr/hset_*.h). Without the key there is no strip and no tab.
-enum class Tab : uint8_t { Skills = 0, Settings = 1 };
+// [openxr] gesture_overlay adds a third, Gestures (the player's BodyWalk gestures: vr/gesture_overlay.h) - F4 only, beside the Settings tab.
+enum class Tab : uint8_t { Skills = 0, Settings = 1, Gestures = 2 };
 
 // A short caption under each slot (which button of the player's controller presses it); empty = none. Set by the controller.
 constexpr int kHintLen = 20;   // "LT + Left Dpad Dn" (Steam Frame) and its NUL

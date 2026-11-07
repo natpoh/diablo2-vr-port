@@ -9,6 +9,10 @@
 // the gate answers "not yet" and its caller keeps the attack for the animation's end; 1 or none - green, in now. Green stands a moment, then the
 // ring melts away. Inside the ring (or rising over the bar) the attack's outcome: the life it took (a crit gold and larger, several monsters of
 // one swing summed, "x3"), or the roll's "miss" / "blocked" / "dodged" / "avoided"; a touch while red says "too soon" - no attack, no roll.
+// [hud] swing_timer_reasons (Serg 2026-11-06: the player sees in the headset what went wrong with each swing - zbiromir's bardiche, nine shaft
+// contacts and no blow): a VR touch the plugin itself did not hand to the game says why in the same place - "shaft" / "handle" / "not the tip"
+// (where it met the body), "slow" / "weak" / "push" / "short" with the swing's number against the gate's (how it moved), "wrong way", "shield"
+// (vr/swing_reason.h maps vr/melee_touch.cpp's refusals). Shown even with no attack running; a blow that landed a moment ago is not covered.
 //
 // Where the times come from. Single player or a game we host: the server's scheduler of a mode's frame events 0x491240 (vr/move_attack_wire.cpp)
 // at our hero's attack start - its length in the server's frames, exact; with [gameplay] quick_blow_faster the green comes once its least wait
@@ -23,12 +27,43 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 
 namespace swingtimer {
 
 enum class Style : uint8_t { Ring = 0, Bar = 1 };   // [hud] swing_timer_style
 enum class Zone : uint8_t { Red = 0, Amber = 1, Green = 2 };
-enum class Text : uint8_t { None = 0, Damage, Miss, Blocked, Dodged, Avoided, TooSoon };
+enum class Text : uint8_t {
+    None = 0, Damage, Miss, Blocked, Dodged, Avoided, TooSoon,
+    // [hud] swing_timer_reasons: a touch the plugin refused (vr/swing_reason.h) - where it met the body, how it moved, which way, what stopped it
+    Shaft, Handle, NotTip, Slow, Weak, Push, Short, Away, Shield
+};
+// A refusal's text (not one of the game's outcomes): Refused takes these.
+inline bool IsReason(Text t) { return t >= Text::Shaft && t <= Text::Shield; }
+// What the refusal's two numbers are, for the picture: Slow m/s, Weak N s, Push m/s^2, Short cm; the others have none.
+enum class Unit : uint8_t { None, Speed, Force, Accel, Cm };
+inline Unit UnitOf(Text t) {
+    switch (t) {
+    case Text::Slow: return Unit::Speed;
+    case Text::Weak: return Unit::Force;
+    case Text::Push: return Unit::Accel;
+    case Text::Short: return Unit::Cm;
+    default: return Unit::None;
+    }
+}
+// The two numbers as the picture writes them under the word: "3.1/5.0" (a speed), "0.62/1.10" (a force), "12/30" (an acceleration, cm).
+// Hundredths in; `out` empty when the text has none or the swing's own number is not known (got < 0).
+inline void Numbers(Text t, int32_t got100, int32_t need100, char* out, size_t size) {
+    if (!out || size == 0) return;
+    out[0] = 0;
+    const Unit u = UnitOf(t);
+    if (u == Unit::None || got100 < 0 || need100 <= 0) return;
+    if (u == Unit::Speed) std::snprintf(out, size, "%.1f/%.1f", got100 / 100.0, need100 / 100.0);
+    else if (u == Unit::Force) std::snprintf(out, size, "%.2f/%.2f", got100 / 100.0, need100 / 100.0);
+    else std::snprintf(out, size, "%d/%d", static_cast<int>((got100 + 50) / 100), static_cast<int>((need100 + 50) / 100));
+}
+// A number in hundredths for Refused; -1 for one not known (negative, not a number).
+inline int32_t Hundredths(float v) { return !(v == v) || v < 0.0f ? -1 : v > 2.0e7f ? 2000000000 : static_cast<int32_t>(v * 100.0f + 0.5f); }
 
 constexpr uint32_t kFrameMs = 40;      // the server's frame
 constexpr int32_t kAmberFrames = 5;    // the gate: 2-5 frames left - "not yet", kept; more - refused; 1 or none - in
@@ -38,6 +73,8 @@ constexpr uint64_t kGreenHoldMs = 400, kFadeMs = 300;   // green stands this lon
 constexpr uint64_t kLabelMinMs = 700;  // the ring's number stays at least this long (a blow with no timer: Direct hit's cleave extras)
 constexpr uint64_t kRiseMs = 1200, kRiseFadeFromMs = 700;   // the bar's number rises for this long, fading from here on
 constexpr uint64_t kTooSoonMs = 600, kTooSoonFadeFromMs = 400;
+constexpr uint64_t kReasonMs = 900, kReasonFadeFromMs = 600;   // a refusal's word (and its numbers) stays longer: there is more to read
+constexpr uint64_t kReasonQuietMs = 250;   // a blow that landed this recently is not covered by a refusal of the same swing (another monster's shaft)
 constexpr uint64_t kMergeMs = 150;     // outcomes this close with no attack of ours around them belong together (one swing through several)
 constexpr int kSteps = 48, kAlphaSteps = 8, kRiseSteps = 24;   // the picture changes in these steps only (each step is a new picture to paint)
 // The joined client's pace: a touch this close to the client's green is held and sent then (the gate's 5 frames of amber and 100 ms more:
@@ -179,11 +216,13 @@ struct Look {
     int32_t value = 0;
     uint8_t count = 0;
     bool crit = false;
+    int32_t got = -1, need = 0;   // a refusal's numbers, hundredths (Numbers): the swing's and the gate's; got -1 none
     int textAlpha = 0;      // 0..kAlphaSteps
     int rise = 0;           // the bar's number, 0..kRiseSteps up
     bool operator==(const Look& o) const {
         return visible == o.visible && style == o.style && timer == o.timer && step == o.step && zone == o.zone && timerAlpha == o.timerAlpha &&
-               text == o.text && value == o.value && count == o.count && crit == o.crit && textAlpha == o.textAlpha && rise == o.rise;
+               text == o.text && value == o.value && count == o.count && crit == o.crit && got == o.got && need == o.need && textAlpha == o.textAlpha &&
+               rise == o.rise;
     }
     bool operator!=(const Look& o) const { return !(*this == o); }
 };
@@ -207,7 +246,16 @@ public:
     // A touch the plugin asked the game to attack for (VR): true when the gate would refuse it now - "too soon".
     bool Touch(uint64_t now) {
         if (!attack_.valid || ZoneAt(attack_, now) != Zone::Red) return false;
-        tooSoonAt_ = now;
+        Refuse(Text::TooSoon, -1, 0, now);
+        return true;
+    }
+    // [hud] swing_timer_reasons: a touch the plugin did not hand to the game, and why (IsReason; the numbers in hundredths, Numbers) - or
+    // "too soon" for one dropped because the hero's attack is not over. The newest wins; told again it stays up while the blade pushes.
+    // False: not shown (a blow of ours landed a moment ago - another monster's shaft in the same swing does not cover it).
+    bool Refused(Text why, int32_t got100, int32_t need100, uint64_t now) {
+        if (!IsReason(why) && why != Text::TooSoon) return false;
+        if (label_.text == Text::Damage && now >= label_.atMs && now - label_.atMs < kReasonQuietMs) return false;
+        Refuse(why, got100, need100, now);
         return true;
     }
     // The roll of a blow of ours (0x44B720's answer).
@@ -243,11 +291,15 @@ public:
                 k.timerAlpha = AlphaStep(a);
             }
         }
-        const bool soon = tooSoonAt_ && now >= tooSoonAt_ && now - tooSoonAt_ < kTooSoonMs && tooSoonAt_ >= label_.atMs;
-        if (soon) {
-            k.text = Text::TooSoon;
-            k.textAlpha = AlphaStep(FadeAlpha(tooSoonAt_ + kTooSoonFadeFromMs, now, kTooSoonMs - kTooSoonFadeFromMs));
-            if (style == Style::Bar) k.rise = Rise(tooSoonAt_, now);
+        const bool soonText = reason_.text == Text::TooSoon;
+        const uint64_t whyMs = soonText ? kTooSoonMs : kReasonMs, whyFade = soonText ? kTooSoonFadeFromMs : kReasonFadeFromMs;
+        const bool why = reason_.at && now >= reason_.at && now - reason_.at < whyMs && reason_.at >= label_.atMs;
+        if (why) {   // a refusal newer than the last outcome: "too soon", or why the touch was no attack
+            k.text = reason_.text;
+            k.got = reason_.got;
+            k.need = reason_.need;
+            k.textAlpha = AlphaStep(FadeAlpha(reason_.at + whyFade, now, whyMs - whyFade));
+            if (style == Style::Bar) k.rise = Rise(reason_.at, now);
         } else if (numbers && label_.text != Text::None && now >= label_.atMs) {
             float a = 0.0f;
             if (style == Style::Ring) {
@@ -271,6 +323,8 @@ public:
             k.value = 0;
             k.count = 0;
             k.crit = false;
+            k.got = -1;
+            k.need = 0;
             k.rise = 0;
         }
         k.visible = k.timer || k.textAlpha > 0;
@@ -289,9 +343,16 @@ public:
 
     const Attack& Current() const { return attack_; }
     const Label& LastLabel() const { return label_; }
+    Text LastRefusal() const { return reason_.text; }
     void Reset() { *this = State{}; }
 
 private:
+    void Refuse(Text why, int32_t got100, int32_t need100, uint64_t now) {
+        reason_.text = why;
+        reason_.got = got100;
+        reason_.need = need100;
+        reason_.at = now ? now : 1;
+    }
     // The label this outcome belongs to: the running attack's, or the last one when it came a moment ago (one swing through several
     // monsters with no attack of ours around it); else a new one.
     Label& Current(uint64_t now) {
@@ -311,7 +372,12 @@ private:
     Attack attack_;
     ClientClock clock_;
     Label label_;
-    uint64_t serverAt_ = 0, tooSoonAt_ = 0;
+    struct Refusal {   // the newest touch refused, and why
+        Text text = Text::None;
+        int32_t got = -1, need = 0;
+        uint64_t at = 0;
+    } reason_;
+    uint64_t serverAt_ = 0;
 };
 
 }  // namespace swingtimer

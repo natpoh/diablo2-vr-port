@@ -67,7 +67,33 @@ bool CascRead(HANDLE storage, const char* name, std::string* out) {
 
 }  // namespace
 
+// [hud] monster_names_own: the game's own target plate's pieces (gameuifiles::kPlateFiles) beside the plugin - whatever the skill panel's look says;
+// a piece the game does not have is left out (our plate then keeps its own frame). True: every piece is there now.
+bool PreparePlate(const std::wstring& game, const std::wstring& pluginDir) {
+    if (pluginDir.empty() || !IsDir(pluginDir)) return false;
+    const std::wstring dir = pluginDir + gameuifiles::kFolder + L"\\";
+    bool all = IsDir(dir);
+    for (int i = 0; all && i < gameuifiles::kPlateFileCount; ++i) all = GetFileAttributesW((dir + gameuifiles::kPlateFiles[i].leaf).c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (all) return true;
+    std::wstring root = game;
+    if (!root.empty() && root.back() == L'\\') root.pop_back();
+    HANDLE storage = nullptr;
+    if (!CascOpenStorage(root.c_str(), 0, &storage)) return false;
+    CreateDirectoryW(dir.c_str(), nullptr);
+    bool every = true;
+    for (int i = 0; i < gameuifiles::kPlateFileCount; ++i) {
+        const std::wstring path = dir + gameuifiles::kPlateFiles[i].leaf;
+        std::string bytes, old;
+        if (!CascRead(storage, gameuifiles::kPlateFiles[i].archive, &bytes) || bytes.empty()) { every = false; continue; }
+        if (ReadFile(path, &old) && old == bytes) continue;
+        every = WriteFile(path, bytes.data(), bytes.size()) && every;
+    }
+    CascCloseStorage(storage);
+    return every;
+}
+
 Result Prepare(const std::wstring& game, const std::wstring& pluginDir, bool on) {
+    PreparePlate(game, pluginDir);   // (our plate over the monster's head: its pieces whatever the skill panel's look says)
     Result r;
     if (!on) {
         r.ok = true;

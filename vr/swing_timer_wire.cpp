@@ -24,6 +24,7 @@
 #include "direct_input.h"
 #include "hit_outcome.h"
 #include "move_attack_wire.h"
+#include "swing_reason.h"   // [hud] swing_timer_reasons: the refusals' log words
 #include "view_gate.h"
 
 namespace swingtimer {
@@ -32,7 +33,7 @@ namespace {
 const D2RL::PluginContext* g_ctx = nullptr;
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 
-std::atomic<bool> g_on{false}, g_numbers{true};
+std::atomic<bool> g_on{false}, g_numbers{true}, g_reasons{true};
 std::atomic<bool> g_pace{false};   // [gameplay] swing_pace_joined
 bool Fed() { return g_on.load(std::memory_order_relaxed) || g_pace.load(std::memory_order_relaxed); }
 std::atomic<int> g_style{0};
@@ -207,21 +208,24 @@ void Init(const D2RL::PluginContext* ctx) {
     directinput::Listen(&OnFrame, nullptr);
 }
 
-void SetWanted(bool on, int style, bool numbers) {
+void SetWanted(bool on, int style, bool numbers, bool reasons) {
     const bool was = g_on.exchange(on);
     const int wasStyle = g_style.exchange(style == 1 ? 1 : 0);
     const bool wasNumbers = g_numbers.exchange(numbers);
+    const bool wasReasons = g_reasons.exchange(reasons);
     hitoutcome::LabelsFlag().store(on && numbers);   // the observers on the game's hit flags and damage go in for the numbers (vrcam's timer)
     moveattack::SetSwingWanted(Fed());               // the server's scheduler for the attack's times
-    if (was != on || (on && (wasStyle != g_style.load() || wasNumbers != numbers))) {
+    if (was != on || (on && (wasStyle != g_style.load() || wasNumbers != numbers || wasReasons != reasons))) {
         if (!on) {
             Log("vrcam: swing timer - [hud] swing_timer=0");
             return;
         }
-        char b[300];
+        char b[420];
         snprintf(b, sizeof b, "vrcam: swing timer - [hud] swing_timer=1: after an attack the game started, a %s fills until the game lets the next one in (red "
-                 "refused, amber kept for the end, green in), then melts away; numbers %s. Only shown (VR first person, the monitor's F2 / F3)",
-                 g_style.load() == 1 ? "bar at the top" : "ring in the middle", numbers ? "on (our server's blows: single player or the host)" : "off");
+                 "refused, amber kept for the end, green in), then melts away; numbers %s; why a touch was no attack (shaft, slow, short, wrong way ...) %s. "
+                 "Only shown (VR first person, the monitor's F2 / F3)",
+                 g_style.load() == 1 ? "bar at the top" : "ring in the middle", numbers ? "on (our server's blows: single player or the host)" : "off",
+                 reasons ? "on" : "off");
         Log(b);
     }
 }
@@ -267,6 +271,30 @@ void NoteTouch(uint64_t nowMs) {
     }
     static std::atomic<int> told{0};
     if (soon && told.fetch_add(1) < 4) Log("vrcam: swing timer - a touch while red: the game refuses an attack now (\"too soon\")");
+}
+
+bool ReasonsWanted() { return g_on.load(std::memory_order_relaxed) && g_reasons.load(std::memory_order_relaxed); }
+
+void NoteRefused(Text why, int32_t got100, int32_t need100, uint64_t nowMs) {
+    if (!g_on.load(std::memory_order_relaxed) || (why != Text::TooSoon && !g_reasons.load(std::memory_order_relaxed))) return;
+    bool shown = false;
+    {
+        std::lock_guard<std::mutex> lock(g_m);
+        TakeNews(nowMs);
+        shown = g_state.Refused(why, got100, need100, nowMs);
+    }
+    // the log: each reason's first three, then one a reason each 10 s (vr/melee_touch.cpp tells the refusal's own numbers on its lines)
+    static std::atomic<uint64_t> at[32] = {};
+    static std::atomic<int> told[32] = {};
+    const size_t i = static_cast<size_t>(why) & 31;
+    if (!shown || (told[i].load() >= 3 && nowMs - at[i].load() < 10000)) return;
+    told[i].fetch_add(1);
+    at[i].store(nowMs);
+    char num[32];
+    Numbers(why, got100, need100, num, sizeof num);
+    char b[220];
+    snprintf(b, sizeof b, "vrcam: swing timer - a touch was no attack: %s%s%s (shown in the timer; [hud] swing_timer_reasons)", swingreason::LogText(why), num[0] ? ", " : "", num);
+    Log(b);
 }
 
 bool Draw(Layer* layer, uint32_t* needRevision) {

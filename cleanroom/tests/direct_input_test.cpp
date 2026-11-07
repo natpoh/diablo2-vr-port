@@ -832,6 +832,15 @@ static void Listener(const Frame& f, void*) {
     if (g_takeBits1) Take(1, g_takeBits1, kSrcBowDraw);
 }
 
+// Every gesture of the mod gets its frames: 17 listen in 0.206 (the table of 16 refused the last, the bow quiver) - room for 24 distinct ones here.
+static void TestManyListeners() {
+    int ok = 0;
+    for (int i = 0; i < 24; ++i) ok += Listen(&Listener, (void*)(uintptr_t)(0x1000 + i)) ? 1 : 0;
+    CHECK(ok == 24);
+    CHECK(!Listen(&Listener, (void*)(uintptr_t)0x1000));   // (the same one twice: no)
+    for (int i = 0; i < 24; ++i) Unlisten(&Listener, (void*)(uintptr_t)(0x1000 + i));
+}
+
 static void TestRuntime() {
     const std::wstring ini = TempIni();
     // direct mode off: the frames and the gestures' calls work, the pad is not ours
@@ -2219,6 +2228,7 @@ int main() {
     TestParse();
     TestQuiverOutputs();
     TestMath();
+    TestManyListeners();
     TestRuntime();
     TestRuntimeHold();
     TestPauseOtherView();

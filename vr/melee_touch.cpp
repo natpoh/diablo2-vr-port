@@ -61,6 +61,7 @@
 #include "move_attack_wire.h"   // [gameplay] quick_blow: the touch is the game's attack (moveattack::QuickWanted)
 #include "quick_blow.h"
 #include "swing_timer_wire.h"   // [hud] swing_timer: a touch while red says "too soon"
+#include "swing_reason.h"       // [hud] swing_timer_reasons: why a touch was no attack, in the same ring
 #include "melee_press.h"
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's two paws strike as one weapon (one shared recovery)
 #include "doll_lib.h"     // [weight] monster_ragdoll: the weight library's monsters' weight (d2r_vr_weight.dll's D2rd* exports) moves the bodies
@@ -1284,7 +1285,10 @@ void Approve(uint32_t id, bool allowDirect, int hand, const meleedirectclient::T
         bool armedReady = false;
         const bool armed = meleearm::Armed(&armedReady) >= 0;
         const meleedirect::Route route = meleedirect::Plan(now, g_serverGame.load() != 0 && g_heroId.load() != 0, armed);
-        if (route == meleedirect::Route::Skip) return;
+        if (route == meleedirect::Route::Skip) {   // inside [gameplay] melee_direct_min_ms: this touch is dropped - "too soon" ([hud] swing_timer)
+            if (viewgate::F4()) swingtimer::NoteRefused(swingtimer::Text::TooSoon, -1, 0, now);
+            return;
+        }
         if (route == meleedirect::Route::Direct && meleedirect::ByRules()) {   // [gameplay] melee_direct 2: the touch by the rules (melee_direct_client.h)
             static unsigned toldRules = 0;
             const bool tell = toldRules < 20 || meleeboxes::Wanted();
@@ -1438,6 +1442,41 @@ bool TellRefusal(int reason, ULONGLONG now, bool always) {
     return true;
 }
 
+// [hud] swing_timer_reasons: why a contact with monster `id` was no attack, shown in the swing timer's ring (vr/swing_reason.h) - only for a
+// monster the server called hostile (a shaft on a townsman says nothing). Only shown: the touch's verdict is the same with it off. "too soon"
+// goes with the timer alone, as its own red.
+void ShowRefusal(uint32_t id, const swingreason::Refusal& r, ULONGLONG now) {
+    if (r.text == swingtimer::Text::None) return;
+    if (!(r.text == swingtimer::Text::TooSoon ? swingtimer::Wanted() : swingtimer::ReasonsWanted()) || Verdicted(id, now) != Know::Yes) return;
+    swingtimer::NoteRefused(r.text, r.got, r.need, now);
+}
+// ... a blade that ENTERED a monster's body while its engine had no stroke on (the touch never judged it: slower than the stroke's speed, or
+// shorter than melee_stroke_start_cm) - "slow" / "short". The monsters of the touch's own scan (g_scan, every 100 ms); told on the entry only, as
+// FeedBoxes' amber ball ([debug] melee_boxes) - not while the blade rests in a body, not for a blade nobody swung.
+void NoStroke(const SideBlade& sb, ULONGLONG now) {
+    static uint32_t inside[2][8] = {};
+    static size_t insideN[2] = {};
+    const int side = sb.side & 1;
+    if (g_engine[side].Counting() || (sb.thrusts && g_thrustEngine[side].Counting()) || now - g_lastScanAt > 150) { insideN[side] = 0; return; }
+    const stroke::Blade& bl = sb.s.blade;
+    uint32_t nowInside[8];
+    size_t nn = 0;
+    for (size_t k = 0; k < g_scan.n && nn < 8; ++k) {
+        const Cand& c = g_scan.c[k];
+        const float reach = c.body.radius + bl.radius;
+        float s = 0.0f;
+        if (stroke::SegmentDistanceSquared(bl.base, bl.tip, c.body.bottom, c.body.top, &s) > reach * reach) continue;
+        nowInside[nn++] = c.id;
+        bool was = false;
+        for (size_t q = 0; q < insideN[side]; ++q) was = was || inside[side][q] == c.id;
+        if (was || g_engine[side].LastSpeed() < 0.3f) continue;   // (in it already, or nobody swung into it)
+        const stroke::Params& p = g_engine[side].GetParams();
+        ShowRefusal(c.id, swingreason::FromNoStroke(g_engine[side].LastSpeed(), p.strokeSpeed, p.onsetExcursion * 100.0f), now);
+    }
+    for (size_t q = 0; q < nn; ++q) inside[side][q] = nowInside[q];
+    insideN[side] = nn;
+}
+
 // [debug] melee_boxes: a contact's marks - a ball on the touching point, an arrow along its velocity, a line to the nearest point of the monster's axis, and for a refusal the monster's capsule
 // tinted - in the verdict's colour (meleeboxes::Colour). Read-only drawing.
 // thrustMark: a thrust's contact ([debug] thrust_debug_only leaves out every other).
@@ -1526,6 +1565,7 @@ bool ShieldStops(const Frame& f, int side, uint32_t id, uint64_t session, uint64
         TellWeaponHit(side, id, speed, thrust);
         return false;
     }
+    if (by) ShowRefusal(id, swingreason::Make(swingtimer::Text::Shield), now);   // [hud] swing_timer_reasons
     if (by && g_blockedBlows[side & 1].Insert(session, strokeId, id)) {
         {
             std::lock_guard<std::mutex> lock(g_blockedMutex);
@@ -2959,6 +2999,7 @@ void Tick(const Frame& f) {
                     const bool tell = told < 12 || meleeboxes::Wanted() || g_forceDebug.load();
                     if (!due) {
                         if (!was && dur[k] >= strikemeasure::kWindowS) StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: too weak, its window over
+                        if (!was && dur[k] >= strikemeasure::kWindowS) ShowRefusal(ks[k].id, swingreason::FromForce(v[k], false, false), now);   // [hud] swing_timer_reasons: "weak"
                         if (!was && dur[k] >= strikemeasure::kWindowS && tell && ForceToldOnce(ks[k].serial)) {
                             ++told;
                             LogF("melee touch: %c hand, strike %u on monster %u NOT counted by force - %s: %.2f N s (%.2f in the first 150 ms%s), needs %.2f (%s, steel %.2f kg)%s", side ? 'L' : 'R',
@@ -2973,6 +3014,7 @@ void Tick(const Frame& f) {
                     const bool butt = rule.notButt && front > 0.0f && ks[k].along >= 0.0f && ks[k].along < front;
                     if (shaft || butt) {
                         StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: a push with the shaft or the butt
+                        ShowRefusal(ks[k].id, swingreason::FromForce(v[k], shaft, butt), now);      // [hud] swing_timer_reasons: "shaft" / "handle"
                         if (tell && ForceToldOnce(ks[k].serial ^ 0x80000000u)) {
                             ++told;
                             LogF("melee touch: %c hand, strike %u on monster %u by force - %s: it met the body at %.0f%% of the weapon's length (%s at %.0f%%) - a push, no hit", side ? 'L' : 'R',
@@ -3001,7 +3043,10 @@ void Tick(const Frame& f) {
             }
             continue;
         }
-        if (!swept && !tswept) continue;
+        if (!swept && !tswept) {
+            if (swingtimer::ReasonsWanted()) NoStroke(sb, now);   // [hud] swing_timer_reasons: a blade into a body with no stroke on - "slow" / "short"
+            continue;
+        }
         frametrace::Note(frametrace::kSweep);   // [debug] frame_trace: the blade moved fast enough to be swept
         if (swept) {
             ++g_n.sweeps;
@@ -3060,6 +3105,7 @@ void Tick(const Frame& f) {
                     DbgTouch(side, thrustdbg::ContactReading(thrustRule, kindIdx, v, at, jd.why, c.id, tsweep.stroke, now), now, false);
                 if (reason >= 0) {
                     (reason == 3 ? g_n.slowPart : reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : v.why == thrust::Why::Weak ? g_n.thrustWeak : g_n.thrustShort)++;
+                    ShowRefusal(c.id, swingreason::FromThrust(at, least, jd, v), now);   // [hud] swing_timer_reasons: slow, shaft, wrong way, short, push ...
                     MarkContact(jd, c.id, c.body, thrustdebugwire::Wanted() ? meleeboxes::kCThrustNo : reason == 0 ? meleeboxes::kCBlue : reason == 1 ? meleeboxes::kCGrey : meleeboxes::kCAmber, true, now,
                                 true);   // [debug] melee_boxes (with thrust_debug: the thrust's own orange)
                     if ((firstOnes || meleeboxes::Wanted()) && ThrustToldOnce(side, tsweep.stroke, c.id)) {
@@ -3131,6 +3177,7 @@ void Tick(const Frame& f) {
             const float at = touch.speed;
             if (at < least) {
                 ++g_n.slowPart;
+                ShowRefusal(c.id, swingreason::FromSwing(at, least, jd), now);   // [hud] swing_timer_reasons: "slow 3.1/5.0"
                 StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, true, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - too slow: %.1f m/s where it touched, the least is %.1f", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, at, least);
@@ -3146,6 +3193,7 @@ void Tick(const Frame& f) {
             if (jd.why != strikedir::Why::Counts) {
                 const int reason = jd.why == strikedir::Why::Away || jd.why == strikedir::Why::Backward ? 0 : jd.why == strikedir::Why::NotHead || jd.why == strikedir::Why::Butt || jd.why == strikedir::Why::Shaft ? 1 : 2;
                 (reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : g_n.small)++;
+                ShowRefusal(c.id, swingreason::FromRule(jd), now);   // [hud] swing_timer_reasons: shaft, handle, not the tip, wrong way, short
                 StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, false, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%.1f m/s where it touched)", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, strikedir::WhyText(jd.why), at);
@@ -3188,6 +3236,7 @@ void Tick(const Frame& f) {
             const uint64_t rec = clawstrike::RecoveryMs(g_clawClock.Ms());
             const clawstrike::Why why = g_claws.Judge(cc, byThrust ? 0.0f : least, rec, &since);
             if (why != clawstrike::Why::Counts) {
+                if (why == clawstrike::Why::Recovering) ShowRefusal(first->id, swingreason::Make(swingtimer::Text::TooSoon), now);   // [hud] swing_timer
                 if (why != clawstrike::Why::Struck && ClawTellOnce(side, strokeId, first->id, why))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%llu ms of %llu, the %s paw's; the hero's attack time %s) at %.1f m/s", side ? 'L' : 'R',
                          static_cast<unsigned long long>(strokeId), first->id, clawstrike::WhyText(why), static_cast<unsigned long long>(since), static_cast<unsigned long long>(rec),
@@ -3641,6 +3690,7 @@ std::mutex g_itemsMutex;
 itemgrab::Item g_items[itemgrab::kMaxItems];
 int g_itemsN = 0;
 ULONGLONG g_itemsAt = 0;
+std::atomic<int> g_itemsSkip{0};   // why the last tick did not scan (GroundItemsSkip): 0 it scanned
 }  // namespace
 void SetItemsWanted(bool on) {
     if (g_itemsWanted.exchange(on) != on)
@@ -3648,7 +3698,9 @@ void SetItemsWanted(bool on) {
                : "melee touch: ground items off");
 }
 void ItemsTick(bool ok, const float heroRender[3], float upm) {
-    if (!g_itemsWanted.load() || !ok || !viewgate::F4() || !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2])) return;
+    const int skip = !g_itemsWanted.load() ? 1 : !ok ? 2 : !viewgate::F4() ? 3 : !heroRender || !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2]) ? 4 : 0;
+    g_itemsSkip.store(skip);
+    if (skip) return;
     const ULONGLONG now = GetTickCount64();
     if (now - g_itemsAt < 50 && now >= g_itemsAt) return;
     upm = std::clamp(upm, 1.0f, 12.0f);
@@ -3726,6 +3778,15 @@ uintptr_t BarrelPressTarget() {
     return g_barrelTarget.load();
 }
 
+const char* GroundItemsSkip() {
+    switch (g_itemsSkip.load()) {
+        case 1: return "the scan is off ([weight] grab_items not read in)";
+        case 2: return "not scanned: not a game area in first person with the arms on the controllers (a menu, third person, overhead)";
+        case 3: return "not scanned: not F4";
+        case 4: return "not scanned: the hero's place is not known";
+        default: return nullptr;
+    }
+}
 int GroundItems(itemgrab::Item* out, int max, bool* fresh) {
     std::lock_guard<std::mutex> lock(g_itemsMutex);
     const ULONGLONG now = GetTickCount64();

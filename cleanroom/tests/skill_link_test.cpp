@@ -34,6 +34,26 @@ static void TestLayout() {
     for (const wheel::SlotDef& d : wheel::kSlotDefs) CHECK(std::strlen(d.label) < 16);
 }
 
+static void TestGestureLayout() {
+    // the gesture overlay's blocks: the offsets BodyWalk's header has (its tests/test_game_skills.cpp checks the same)
+    CHECK(offsetof(BW_LinkGesture, skill) == 8 && offsetof(BW_LinkGesture, rgba) == 12 && offsetof(BW_LinkGesture, threshold) == 20);
+    CHECK(offsetof(BW_LinkGesture, name) == 24 && offsetof(BW_LinkGesture, pts) == 72 && offsetof(BW_LinkGesture, joints) == 456);
+    CHECK(offsetof(BW_LinkGesture, grip) == 516 && offsetof(BW_LinkGesture, jointValid) == 524 && offsetof(BW_LinkGesture, button) == 528);
+    CHECK(sizeof(BW_LinkGesture) == 560);
+    CHECK(offsetof(BW_LinkGestures, setKey) == 32 && offsetof(BW_LinkGestures, count) == 64 && offsetof(BW_LinkGestures, cmdDone) == 68);
+    CHECK(offsetof(BW_LinkGestures, cmdResult) == 72 && offsetof(BW_LinkGestures, recordState) == 76 && offsetof(BW_LinkGestures, recordGesture) == 80);
+    CHECK(offsetof(BW_LinkGestures, recordType) == 84 && offsetof(BW_LinkGestures, recordSkill) == 88 && offsetof(BW_LinkGestures, lastStamp) == 92);
+    CHECK(offsetof(BW_LinkGestures, lastPercent) == 100 && offsetof(BW_LinkGestures, lastMatched) == 108 && offsetof(BW_LinkGestures, g) == 112);
+    CHECK(sizeof(BW_LinkGestures) == 35952 && sizeof(BW_LinkGestures) <= BW_LINK_BLOCK_BYTES);
+    CHECK(offsetof(BW_LinkGestureCmd, op) == 4 && offsetof(BW_LinkGestureCmd, gesture) == 8 && offsetof(BW_LinkGestureCmd, skill) == 12);
+    CHECK(offsetof(BW_LinkGestureCmd, type) == 16 && offsetof(BW_LinkGestureCmd, rgba) == 20 && offsetof(BW_LinkGestureCmd, value) == 24);
+    CHECK(offsetof(BW_LinkGestureCmds, ring) == 32 && sizeof(BW_LinkGestureCmds) == 256);
+    CHECK(std::wcscmp(BW_LINK_GESTURES_NAME, L"Local\\BodyWalk.Link.Gestures") == 0);
+    CHECK(std::wcscmp(BW_LINK_GESTURECMDS_NAME, L"Local\\BodyWalk.Link.GestureCmds") == 0);
+    CHECK(BW_LINK_GT_GLYPH == 1 && BW_LINK_GT_POSE == 2 && BW_LINK_GT_MOTION == 3 && BW_LINK_GT_BUTTON == 4);
+    CHECK(BW_LINK_GC_RECORD == 1 && BW_LINK_GC_THRESHOLD == 8 && BW_LINK_GESTURECMDS_RING == 8);
+}
+
 static wheel::Skill Sk(int32_t id, const char* name, int8_t tree = 1, int32_t owner = -1) {
     wheel::Skill k;
     k.id = id;
@@ -176,8 +196,24 @@ static void TestCaster() {
     CHECK(p.assign.session == 7 && p.assign.prevSkill == 36 && p.assign.prevOwner == 77);
     CHECK(k.Busy() && k.Step(*s, 2500, 7).what == skilllink::Plan::Do::Nothing);   // waiting for the game
     s->slot[7] = Sk(39, "Ice Bolt");
-    p = k.Step(*s, 2600, 7);
+    // shown: not pressed at once - the game refuses a press right after the set; kSettleMs later it is
+    CHECK(k.Step(*s, 2600, 7).what == skilllink::Plan::Do::Nothing && k.Busy());
+    CHECK(k.Step(*s, 2600 + skilllink::kSettleMs - 1, 7).what == skilllink::Plan::Do::Nothing);
+    p = k.Step(*s, 2600 + skilllink::kSettleMs, 7);
     CHECK(p.what == skilllink::Plan::Do::Press && p.slot == 7 && !k.Busy());
+    CHECK(p.settledMs == (int64_t)skilllink::kSettleMs);   // the log says how long it waited
+    // a skill that was on a slot already is pressed at once (no settle: nothing was set)
+    k.Start(39, 2800);
+    p = k.Step(*s, 2800, 7);
+    CHECK(p.what == skilllink::Plan::Do::Press && p.slot == 7 && p.settledMs == -1);
+    // [gestures] skill_link_settle off (settleMs 0): pressed as soon as the game shows it
+    s->slot[7] = Sk(36, "Fire Bolt");
+    s->slot[7].owner = 77;
+    k.Start(39, 2900);
+    CHECK(k.Step(*s, 2900, 7, false, 0).what == skilllink::Plan::Do::Assign);
+    s->slot[7] = Sk(39, "Ice Bolt");
+    p = k.Step(*s, 2920, 7, false, 0);
+    CHECK(p.what == skilllink::Plan::Do::Press && p.slot == 7 && p.settledMs == 0);
     // it never shows: given up after kAssignWaitMs
     s->slot[7] = Sk(36, "Fire Bolt");
     k.Start(39, 3000);
@@ -211,12 +247,42 @@ static void TestCaster() {
     CHECK(p.what == skilllink::Plan::Do::Press && p.slot == 6);
 }
 
+static void TestCastWatch() {
+    using W = skilllink::CastWatch;
+    W w;
+    CHECK(w.Step(0, 1) == W::Ev::None);            // not started: nothing
+    // standing (1), pressed: the hero goes into the cast (10) 120 ms later - a cast
+    w.Start(1000, 1);
+    CHECK(w.Step(1050, 1) == W::Ev::None);
+    CHECK(w.Step(1120, 10) == W::Ev::Cast && !w.On());
+    // standing, nothing happens for kCastSeenMs: no cast (refused, or an aura)
+    w.Start(2000, 1);
+    CHECK(w.Step(2000 + skilllink::kCastSeenMs, 1) == W::Ev::None);
+    CHECK(w.Step(2001 + skilllink::kCastSeenMs, 1) == W::Ev::NoCast);
+    // pressed in the middle of an attack (7): still the attack is no cast of ours; the attack ends, then the cast - a cast
+    w.Start(3000, 7);
+    CHECK(w.Step(3050, 7) == W::Ev::None);
+    CHECK(w.Step(3100, 1) == W::Ev::None);
+    CHECK(w.Step(3140, 10) == W::Ev::Cast);
+    // ... or straight from the attack into another cast mode (a skill's, 13): a cast
+    w.Start(4000, 7);
+    CHECK(w.Step(4060, 13) == W::Ev::Cast);
+    // walking (2) into Leap's sequence (18): a cast; the unit not known (-1) is no cast
+    w.Start(5000, 2);
+    CHECK(w.Step(5010, -1) == W::Ev::None);
+    CHECK(w.Step(5080, 18) == W::Ev::Cast);
+    CHECK(skilllink::IsCastMode(10) && skilllink::IsCastMode(18) && !skilllink::IsCastMode(1) && !skilllink::IsCastMode(4) && !skilllink::IsCastMode(-1));
+    CHECK(skilllink::kSettleMs < 150 && skilllink::kPressTries == 2);
+}
+
 int main() {
     TestLayout();
+    TestGestureLayout();
     TestFill();
     TestSlotOrder();
     TestCastReader();
     TestCaster();
+    TestCastWatch();
     std::printf("%s: %d checks, %d failures\n", g_failures ? "FAILED" : "passed", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

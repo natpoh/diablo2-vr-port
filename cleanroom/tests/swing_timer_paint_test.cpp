@@ -99,6 +99,42 @@ int main(int argc, char** argv) {
     swingtimerpaint::Render(bar, px);
     Expect(Bright(px, 0, 0, kW, 70) > 150 && Bright(px, 0, 100, kW, kH - 30) < 20, "risen: at the top");
 
+    // [hud] swing_timer_reasons: a refusal with no attack running - the word alone in the ring's place, its numbers on a line under it
+    Look why;
+    why.visible = true;
+    why.style = Style::Ring;
+    why.textAlpha = kAlphaSteps;
+    why.text = Text::Slow;
+    why.got = 314;
+    why.need = 500;
+    swingtimerpaint::Render(why, px);
+    int yellow = 0;
+    for (int y = 0; y < cy + 8; ++y)
+        for (int x = 0; x < kW; ++x) {
+            const uint32_t p = At(px, x, y);
+            const int r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
+            if (r > 200 && g > 180 && b < 140) ++yellow;
+        }
+    const int under = Bright(px, cx - 64, cy + 20, cx + 64, cy + 50);
+    Expect(yellow > 100, "slow: the word in yellow", yellow);
+    Expect(under > 60, "its numbers under it", under);
+    Expect((At(px, cx - mid, cy) >> 24) < 20, "no ring with no attack");
+    if (argc > 2 && std::strcmp(argv[1], "--dump") == 0) WriteBmp(std::string(argv[2]) + "_why.bmp", px);
+    why.style = Style::Bar;
+    why.text = Text::Shaft;
+    why.got = -1;
+    why.need = 0;
+    swingtimerpaint::Render(why, px);
+    int orange = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x) {
+            const uint32_t p = At(px, x, y);
+            const int r = p & 255, g = (p >> 8) & 255, b = (p >> 16) & 255;
+            if (r > 180 && g > 100 && g < 180 && b < 100) ++orange;
+        }
+    Expect(orange > 100, "shaft over the bar: orange", orange);
+    if (argc > 2 && std::strcmp(argv[1], "--dump") == 0) WriteBmp(std::string(argv[2]) + "_why_bar.bmp", px);
+
     if (g_failures == 0) std::printf("swing_timer_paint_test: all passed\n");
     return g_failures == 0 ? 0 : 1;
 }

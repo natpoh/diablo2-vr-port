@@ -350,11 +350,15 @@ uintptr_t PointPickupAnswer(uintptr_t game) {
         PointRayDebug dbg;
         uint32_t ids[2] = {};
         float offs[2] = {};
+        bool rayOk[2] = {};      // (for the log of a trigger that lit nothing: pointpickup::NoteScan, direct_input's order)
+        float armOut[2] = {};
         for (int h = 0; h < 2; ++h) {
             la::Ray ray, raw;
             float o[3], d[3], reachM = 0.0f;
             int src = kRayNone;
             if (PointRay(h, o, d, &reachM, &src)) {
+                rayOk[h == 0 ? 1 : 0] = true;
+                armOut[h == 0 ? 1 : 0] = std::isfinite(reachM) ? reachM : 0.0f;
                 hp[h].pointing = std::isfinite(reachM) && reachM >= (hp[h].pointing ? std::max(0.0f, armM - la::ArmReleaseM) : armM);
                 raw = {{o[0], o[1], o[2]}, {d[0], d[1], d[2]}, true};
                 if (hp[h].pointing) ray = raw;
@@ -379,6 +383,7 @@ uintptr_t PointPickupAnswer(uintptr_t game) {
             ids[h] = c.id;
             offs[h] = c.distance;
         }
+        pointpickup::NoteScan(g_flatItems.n, rayOk, armOut, armM);
         owner = pointtrigger::PickOwner(ids, offs, owner);
         const uint32_t was = last.id;
         last.id = owner >= 0 ? ids[owner] : 0;

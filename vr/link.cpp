@@ -70,8 +70,11 @@ Block<BW_LinkVrRunes> g_vrRunes{BW_LINK_VRRUNES_NAME};
 Block<BW_LinkWalk> g_walk{BW_LINK_WALK_NAME};
 Block<BW_LinkSkills> g_skills{BW_LINK_SKILLS_NAME};
 Block<BW_LinkCasts> g_casts{BW_LINK_CASTS_NAME};
+Block<BW_LinkGestures> g_gestures{BW_LINK_GESTURES_NAME};
+Block<BW_LinkGestureCmds> g_gestureCmds{BW_LINK_GESTURECMDS_NAME};
 
 std::atomic<bool> g_skillPoses{false}, g_skillRecording{false};   // SetSkillLink
+std::atomic<bool> g_gestureRecording{false};                       // SetGestureRecording
 
 std::atomic<uint32_t> g_manifestSeq{0};   // our Manifest's sequence: Actions of any other are not ours
 
@@ -386,14 +389,14 @@ bool HostAlive(uint32_t* caps) {
     return alive;
 }
 
-void PublishXr(const D2RVR_XrInput& in, bool ended) {
+void PublishXr(const D2RVR_XrInput& in, bool ended, const D2RVR_XrInput* raw) {
     // The plugin is the input: BodyWalk gets no controllers (and makes no second pad) - unless [openxr] direct_bodywalk_walk lets its walking
     // through: it walks by the body's motion, which it reads from the head and hand poses, so it is given those, and no control (it presses
     // nothing a second time: its pad's buttons, actions and commands are ignored anyway, and the controller's own thumbstick is the plugin's).
     const bool direct = directinput::Active() && !ended;
     // ([gestures] skill_link: BodyWalk recognises the skills' gestures by the hands, so it is given them as for its walking; and while it
     // records one, the controls too - its trigger starts and ends the take)
-    const bool skillPoses = g_skillPoses.load(), skillRecording = skillPoses && g_skillRecording.load();
+    const bool skillPoses = g_skillPoses.load(), skillRecording = skillPoses && (g_skillRecording.load() || g_gestureRecording.load());
     if (direct && !directinput::BodyWalkWalks() && !skillPoses) return;
     BW_LinkXrInput* blk = g_xrInput.Get();
     if (!blk) return;
@@ -402,9 +405,18 @@ void PublishXr(const D2RVR_XrInput& in, bool ended) {
     x.state = (in.focused ? BW_LINK_XR_FOCUSED : 0u) | (ended ? BW_LINK_XR_ENDED : 0u);
     x.displayTime = in.displayTime;
     x.head = in.head;
-    x.hand[0] = in.hand[0];
-    x.hand[1] = in.hand[1];
-    if (direct && !skillRecording) { walkpath::ZeroControls(x.hand[0]); walkpath::ZeroControls(x.hand[1]); }
+    // the controls (vr/walk_path.h ControlsForBodyWalk): recording -> as they were before the skill panel took them (its pen); direct otherwise -> none,
+    // with the skill link the triggers' values as the game has them
+    walkpath::ControlsForBodyWalk(x.hand, in.hand, raw ? raw->hand : in.hand, direct, skillPoses, skillRecording);
+    if (skillRecording && direct) {
+        static ULONGLONG toldAt = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (!toldAt || now - toldAt >= 1000) {   // (once a second while BodyWalk records: what its pen is given)
+            toldAt = now;
+            LogF("vrcam: Game Link - BodyWalk records: its controls given as held (triggers L %.2f R %.2f, grips L %.2f R %.2f)", x.hand[0].trigger,
+                 x.hand[1].trigger, x.hand[0].squeeze, x.hand[1].squeeze);
+        }
+    }
     memcpy(x.profile, in.profile, sizeof x.profile);
     bw::link::Write(blk, x, BW_LINK_XRINPUT_VERSION);
     if (direct) {
@@ -482,5 +494,46 @@ bool Casts(BW_LinkCasts* out) {
     if (!pulse.Alive(&blk->header, 2000)) return false;
     return bw::link::Read(blk, out) && out->header.version >= 1;
 }
+
+bool Gestures(BW_LinkGestures* out) {
+    const BW_LinkGestures* blk = g_gestures.Get();
+    if (!blk || blk->header.magic != BW_LINK_MAGIC) return false;
+    static bw::link::Pulse pulse;   // one reader: the skill panel's frame (vr/skill_wheel.cpp)
+    if (!pulse.Alive(&blk->header, 2000)) return false;
+    return bw::link::Read(blk, out) && out->header.version >= 1;
+}
+
+static BW_LinkGestureCmds g_cmdsLocal{};   // our copy of the ring (one writer: the skill panel's frame)
+static bool g_cmdsSeeded = false, g_cmdsPrimed = false;
+
+static void SeedCmds(BW_LinkGestureCmds* blk, uint32_t cmdDone) {
+    if (g_cmdsSeeded) return;   // a game's first: after what the block and BodyWalk already hold
+    g_cmdsSeeded = true;
+    const uint32_t blockLast = blk->header.magic == BW_LINK_MAGIC ? ((const volatile BW_LinkGestureCmds*)blk)->lastSequence : 0u;
+    gesturecmd::Seed(g_cmdsLocal, blockLast, cmdDone);
+}
+
+bool PrimeGestureCmds(uint32_t cmdDone) {
+    if (g_cmdsPrimed) return true;
+    BW_LinkGestureCmds* blk = g_gestureCmds.Get();
+    if (!blk) return false;
+    SeedCmds(blk, cmdDone);
+    bw::link::Write(blk, g_cmdsLocal, BW_LINK_GESTURECMDS_VERSION);
+    g_cmdsPrimed = true;
+    return true;
+}
+
+uint32_t PushGestureCmd(const gesturecmd::Cmd& c, uint32_t cmdDone) {
+    BW_LinkGestureCmds* blk = g_gestureCmds.Get();
+    if (!blk) return 0;
+    SeedCmds(blk, cmdDone);
+    const uint32_t seq = gesturecmd::Push(g_cmdsLocal, c);
+    bw::link::Write(blk, g_cmdsLocal, BW_LINK_GESTURECMDS_VERSION);
+    g_cmdsPrimed = true;
+    return seq;
+}
+
+void SetGestureRecording(bool on) { g_gestureRecording.store(on); }
+bool SkillLinkUp() { return g_skillPoses.load(); }
 
 }  // namespace link

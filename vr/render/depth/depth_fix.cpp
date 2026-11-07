@@ -779,6 +779,7 @@ float LastFar() { return g_far.load(std::memory_order_relaxed); }
 
 void Hook(void* renderer, void* frame, void* camera, float time) {
     Orig(renderer, frame, camera, time);
+    capture::OnFrameBuilt(renderer, camera);   // the capture key: this frame's camera and frame constants copied (before ours is written)
     if (!g_on.load(std::memory_order_relaxed) || !renderer || !camera) return;
     if (!g_enabled.load(std::memory_order_relaxed) || !g_inWorld.load(std::memory_order_relaxed)) {
         g_notOurs.fetch_add(1, std::memory_order_relaxed);

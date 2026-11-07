@@ -258,6 +258,7 @@ ClearRtvFn g_origClearRtv = nullptr;
 HRESULT STDMETHODCALLTYPE HookReset(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const InList in;
     const HRESULT hr = g_origReset(cl, a, ps);
+    if (in.outer && !t_ours && g_sinks.huntBound && SUCCEEDED(hr)) g_sinks.huntBound(cl, ps);   // (a list starts with its Reset's pipeline)
     if (in.outer && !t_ours && g_sinks.listReset && SUCCEEDED(hr)) g_sinks.listReset(cl);
     if (in.outer && !t_ours && g_sinks.fxReset && SUCCEEDED(hr)) g_sinks.fxReset(cl);
     return hr;
@@ -303,10 +304,21 @@ void STDMETHODCALLTYPE HookOmSet(ID3D12GraphicsCommandList* cl, UINT n, const D3
         if (tell) g_sinks.bindDepth(cl, r, n);
     }
     if (in.outer && !t_ours && g_sinks.targets) g_sinks.targets(cl, n, rts, single != FALSE);
+    if (in.outer && !t_ours && g_sinks.huntTargets) {   // [debug] patch_hunt / capture: the pipe trace's columns (the sink looks only while it records)
+        ID3D12Resource* r = nullptr;
+        if (ds) {
+            AcquireSRWLockShared(&g_viewLock);
+            const auto it = g_views.find(ds->ptr);
+            r = it != g_views.end() ? it->second : nullptr;
+            ReleaseSRWLockShared(&g_viewLock);
+        }
+        g_sinks.huntTargets(cl, n, rts, single != FALSE, r);
+    }
     g_origOmSet(cl, n, rts, single, ds);
 }
 void STDMETHODCALLTYPE HookBarrier(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_RESOURCE_BARRIER* b) {
     const InList in;
+    if (in.outer && !t_ours && g_sinks.captureBarrier && n && b) g_sinks.captureBarrier(cl, n, b);   // (the capture's targets: copied before the game's barrier)
     if (in.outer && !t_ours && g_sinks.barrier && n && b) g_sinks.barrier(cl, n, b);
     if (in.outer && !t_ours && g_sinks.fxBarrier && n && b) g_sinks.fxBarrier(cl, n, b);
     g_origBarrier(cl, n, b);
@@ -324,6 +336,7 @@ void STDMETHODCALLTYPE HookDrawIndexed(ID3D12GraphicsCommandList* cl, UINT n, UI
     }
     {   // [fog] game_fog_before_fx: the resolve may be an indexed draw too (PC1 2026-10-28: never seen through DrawInstanced alone)
         const InList in;
+        if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 0)) return;   // [debug] skip_pipeline / patch_hunt 8
         if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, true, n, inst, first, base, firstInst);
     }
     g_origDrawIndexed(cl, n, inst, first, base, firstInst);
@@ -358,6 +371,7 @@ HRESULT STDMETHODCALLTYPE HookCreatePso(ID3D12Device2* dev, const D3D12_PIPELINE
 }
 void STDMETHODCALLTYPE HookSetPso(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
     const InList in;
+    if (in.outer && !t_ours && g_sinks.huntBound) g_sinks.huntBound(cl, pso);   // (the game's own, before a swap of ours)
     if (pso && !t_ours && g_sinks.psoSwap) pso = g_sinks.psoSwap(pso);
     g_origSetPso(cl, pso);
     if (in.outer && !t_ours && g_sinks.fxBound) g_sinks.fxBound(cl, pso);
@@ -434,15 +448,37 @@ void STDMETHODCALLTYPE HookCUav(ID3D12GraphicsCommandList* cl, UINT i, D3D12_GPU
 void STDMETHODCALLTYPE HookDraw(ID3D12GraphicsCommandList* cl, UINT n, UINT inst, UINT first, UINT firstInst) {
     {
         const InList in;
+        if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 0)) return;   // [debug] skip_pipeline / patch_hunt 8
         if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, false, n, inst, first, 0, firstInst);
     }
     g_origDraw(cl, n, inst, first, firstInst);
+}
+// [debug] skip_pipeline / patch_hunt 8 (vr/pipe_hunt.h): the game's dispatches and indirect calls, left out while their pipeline is skipped
+using DispatchFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT);
+using IndirectFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12CommandSignature*, UINT, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64);
+DispatchFn g_origDispatch = nullptr;
+IndirectFn g_origIndirect = nullptr;
+void STDMETHODCALLTYPE HookDispatch(ID3D12GraphicsCommandList* cl, UINT x, UINT y, UINT z) {
+    {
+        const InList in;
+        if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 1)) return;
+    }
+    g_origDispatch(cl, x, y, z);
+}
+void STDMETHODCALLTYPE HookIndirect(ID3D12GraphicsCommandList* cl, ID3D12CommandSignature* sig, UINT n, ID3D12Resource* args, UINT64 argsAt,
+                                    ID3D12Resource* count, UINT64 countAt) {
+    {
+        const InList in;
+        if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 2)) return;
+    }
+    g_origIndirect(cl, sig, n, args, argsAt, count, countAt);
 }
 
 void STDMETHODCALLTYPE HookViewports(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_VIEWPORT* vp) {
     const InList in;
     if (in.outer && !t_ours && g_sinks.viewport && n && vp) g_sinks.viewport(cl, vp[0].Width, vp[0].Height);
     if (in.outer && !t_ours && g_sinks.viewports && n && vp) g_sinks.viewports(cl, n, vp);
+    if (in.outer && !t_ours && g_sinks.huntViewport && n && vp) g_sinks.huntViewport(cl, vp[0].Width, vp[0].Height);
     g_origViewports(cl, n, vp);
 }
 
@@ -482,7 +518,13 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         // RSSetScissorRects 22, ResourceBarrier 26, ... OMSetRenderTargets 46, ClearDepthStencilView 47, ClearRenderTargetView 48
         ok &= HookOne(lt[10], (void*)&HookReset, (void**)&g_origReset, "ID3D12GraphicsCommandList::Reset");
         ok &= HookOne(lt[13], (void*)&HookDrawIndexed, (void**)&g_origDrawIndexed, "ID3D12GraphicsCommandList::DrawIndexedInstanced");
-        if (g_sinks.psoSwap || g_sinks.fxBound) ok &= HookOne(lt[25], (void*)&HookSetPso, (void**)&g_origSetPso, "ID3D12GraphicsCommandList::SetPipelineState");
+        if (g_sinks.psoSwap || g_sinks.fxBound || g_sinks.huntBound) ok &= HookOne(lt[25], (void*)&HookSetPso, (void**)&g_origSetPso, "ID3D12GraphicsCommandList::SetPipelineState");
+        // [debug] skip_pipeline / patch_hunt 8: DrawInstanced 12, Dispatch 14, ExecuteIndirect 59 (HookDraw is [fog] game_fog_before_fx's too)
+        if (g_sinks.huntSkip) {
+            ok &= HookOne(lt[12], (void*)&HookDraw, (void**)&g_origDraw, "ID3D12GraphicsCommandList::DrawInstanced");
+            ok &= HookOne(lt[14], (void*)&HookDispatch, (void**)&g_origDispatch, "ID3D12GraphicsCommandList::Dispatch");
+            ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
+        }
         // [fog] game_fog_before_fx: DrawInstanced 12, SetDescriptorHeaps 28, SetComputeRootSignature 29, SetComputeRootDescriptorTable 31,
         // SetGraphicsRootSignature 30, SetGraphicsRootDescriptorTable 32, SetComputeRoot32BitConstant 33, ...Constants 35, SetComputeRootConstantBufferView 37,
         // ...ShaderResourceView 39, ...UnorderedAccessView 41
@@ -571,7 +613,9 @@ HRESULT STDMETHODCALLTYPE HookPresent1(IDXGISwapChain1* sc, UINT sync, UINT flag
     return hr;
 }
 void BeforeResize(IDXGISwapChain* sc) {
-    if (sc == g_sc.load() && g_sinks.swapChainChanged) g_sinks.swapChainChanged();
+    if (sc != g_sc.load()) return;
+    if (g_sinks.beforeResize) g_sinks.beforeResize();
+    if (g_sinks.swapChainChanged) g_sinks.swapChainChanged();
 }
 HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags) {
     BeforeResize(sc);

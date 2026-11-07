@@ -80,6 +80,11 @@ bool NamesTargetKind(uint8_t* special);
 int NamesTargetBody(float foot[2], uint8_t row[3]);
 // [hud] npc_names_own (vr/own_names.h): the names over NPCs, objects, portals (the game's hover tooltip) - F4 now; the effect tells the text hook, takes them.
 bool NpcNamesOwnNow();
+void NamesSet3d(bool on);
+// the target's plate as the game was told it: its life (0..1; false: not told lately) and whether its frame is the unique one
+bool NamesTargetPlate(float* life, bool* unique);
+// [hud] ordinary_mob_bars on and the target an ordinary monster (vr/mob_bars.h HidesPlate): our plate is not drawn either
+bool NamesTargetHidden();   // our plate name over the head this frame (every copy ours to stand in for) or not (only the copy in the plate's box)
 void NamesSetHover(bool on);
 int HoverTake(ownnames::Text* out, int most);
 constexpr int kLabelDepthMax = 32;   // as D2R_DepthFog.fx's LabelBoxes

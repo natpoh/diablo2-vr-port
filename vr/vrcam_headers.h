@@ -44,6 +44,10 @@
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "game_device_only.h"
 #include "light_bounds.h"
+#include "patch_hunt.h"        // [debug] patch_hunt: the floor patches' suspects off one at a time (the steps)
+#include "patch_hunt_wire.h"   // ... the game's settings, Ctrl+F8, the overlay line
+#include "capture.h"           // the capture key: one folder with what a picture fault needs to be found later
+#include "pipe_hunt.h"         // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10 without ReShade: a game pass skipped, one frame's pipelines listed
 #include "reflections_eye.h"   // [render] reflections_per_eye: the game's reflections by each eye's own position
 #include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
 #include "effects_layer.h"  // [stereo] turns_keep_own 3, 4: eyes by turns - where the game's effects are in the eye drawn (xr.cpp reads it)
@@ -238,8 +242,10 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "sky/world_light.h"  // M8: the game's light and fog (day and night, its fogs taken out, the cave light, the lights near the hero)
 #include "aim_point.h"
 #include "leap_gaze.h"     // [gameplay] leap_by_gaze: Leap and Leap Attack where the head looks
+#include "leap_air_aim.h"  // [gameplay] leap_air_aim: the next leap aimed in the air
 #include "under_camera.h"  // [body] under_camera: the drawn body under the camera while the game's camera trails the hero
 #include "skill_link.h"        // [gestures] skill_link: kDefaultSpareSlot
+#include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll)
 #include "skill_link_wire.h"   // [gestures] skill_link: the hero's skills to BodyWalk, a button or a recorded gesture per skill cast back
 #include "point_cast_wire.h"   // [gameplay] teleport_circle: the skills cast onto a point aimed with an arc and a circle (vr/point_cast.h)
 #include "weapon_extents.h"    // ... the arc leaves the staff's tip as the game's own model has it
@@ -268,6 +274,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "weight_wire.h"          // [weight]: the grips that hold the weapon are taken from the layout, read as they really are
 #include "point_trigger.h"         // [input] point_pickup: grip + trigger, which hand's pick is lit (pure, tested)
 #include "point_pickup_wire.h"    // [input] point_pickup: the pointed item's highlight, grip + trigger picks it up (F4)
+#include "empty_grip.h"           // [weight] grab_items_empty_grip: an empty hand's grip alone picks up the pointed item (F4)
 #include "belt_trigger_wire.h"    // [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift: the drink must be a plain one)
 #include "bow_draw.h"
 #include "bow_draw_wire.h"   // [hands] bow_draw: a released draw's shot along its line

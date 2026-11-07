@@ -449,6 +449,31 @@ struct Key {
 
 static DWORD UpdateThreadBody();
 
+// The capture key's state.txt (vr/capture.h): the view, the stereo numbers, the area, our camera - read at the press, on the update thread.
+static std::string CaptureState() {
+    char area[96] = {};
+    AcquireSRWLockShared(&g_biomeLock);
+    memcpy(area, g_biome, sizeof area - 1);
+    ReleaseSRWLockShared(&g_biomeLock);
+    float look[3] = {};
+    const bool lookOk = d2rcam::LookAtNow(look);
+    char b[1400];
+    snprintf(b, sizeof b,
+             "view F%d (VR view %d), [mode] platform %d, our camera %s, in a world %d, menu open %d, eye being drawn %d\n"
+             "area (the game's biome name) \"%s\", underground %d\n"
+             "the hero (the game camera's look-at) %s %.3f %.3f %.3f\n"
+             "our projection's scale x %.4f y %.4f, stereo eye distance %.4f, convergence %.4f, eye half %.4f, projection shift %.4f\n"
+             "[camera] flat_shift_x %.3f flat_shift_y %.3f; turn yaw %.2f, mouse yaw %.2f pitch %.2f, camera yaw %.2f\n"
+             "(the stereo route's keys - [openxr] runtime_fov, fov_override, frame generation, [render] symmetric_projection - are in d2r_vr.ini beside this)",
+             ViewNow(), VrViewNow(), g_set.platform.load(), g_enabled.load() ? "on" : "off", g_inWorld.load() ? 1 : 0, gamestate::MenuOpen() ? 1 : 0,
+             g_eye.load() & 1, area, g_underground.load() ? 1 : 0, lookOk ? "" : "(not read)", look[0], look[1], look[2], g_projSx.load(),
+             g_projSy.load(), g_stereoIpd.load(), g_stereoConv.load(), g_eyeHalf.load(), g_projShift.load(), g_set.flatShiftX.load(),
+             g_set.flatShiftY.load(), g_turnYaw.load(), g_mouseYaw.load(), g_mousePitch.load(), g_camYaw.load());
+    return b;
+}
+static int CaptureEye() { return g_eye.load() & 1; }
+void CaptureSources() { capture::SetSources(&CaptureState, &CaptureEye); }
+
 // The update thread inside a guard: an exception nothing in it catches is reported by crash::OwnThreadFilter (d2r_vr_crash.txt, a
 // minidump, the crash watcher told) wherever the top-level filter is, then goes on to the game's / D2RLoader's handler as before.
 DWORD WINAPI UpdateThread(void*) {
@@ -505,16 +530,23 @@ static DWORD UpdateThreadBody() {
         if (f11.Pressed(focus)) Recenter();
         headshot::KeyTick(focus);   // [headset_shot] key: a screenshot of what reaches the headset
         headclip::KeyTick(focus);   // [headset_shot] video_key: 10 s of it
+        capture::KeyTick(focus);    // the capture key (Ctrl+Alt+F10, [debug] capture_key): one folder for a picture fault
+        patchhunt::KeyTick(focus);  // [debug] patch_hunt: Ctrl+F8 the next suspect off, Ctrl+Shift+F8 back, Ctrl+Alt+F8 step 8's next pipeline
         directinput::PanelKeyTick(focus);   // [openxr] panels_key: the skill panel / headset settings without the controller's stick (vr/hand_keep.h)
         FlatVrCentreTick();
-        if (f10.Pressed(focus)) {
+        if (f10.Pressed(focus) && !(GetAsyncKeyState(VK_MENU) & 0x8000)) {   // (Ctrl+Alt+F10: the capture key's, vr/capture.h)
             if (GetAsyncKeyState(VK_CONTROL) & 0x8000) {   // Ctrl + F10: one frame of render targets, to find the interface's
                 std::wstring path = g_iniPath;
                 path.resize(path.find_last_of(L'\\') + 1);
                 path += L"d2r_vr_uitrace.txt";
-                Log(uitrace::Arm(path) ? "vrcam: recording one frame of render targets to d2r_vr_uitrace.txt (Ctrl+F10)"
-                    : uitrace::Busy() ? "vrcam: a frame recording is already under way"
-                                      : "vrcam: Ctrl+F10 frame trace off - [debug] ui_trace=1 (Settings > Debug) and restart the game");
+                if (uitrace::Arm(path)) Log("vrcam: recording one frame of render targets to d2r_vr_uitrace.txt (Ctrl+F10)");
+                else if (uitrace::Busy()) Log("vrcam: a frame recording is already under way");
+                else {   // no ReShade (since 0.203 always): one frame's pipelines through the plugin's own hooks (vr/pipe_hunt.h)
+                    path.resize(path.find_last_of(L'\\') + 1);
+                    path += L"d2r_vr_pipetrace.txt";
+                    Log(pipehunt::Arm(path) ? "vrcam: recording one frame of the game's pipelines to d2r_vr_pipetrace.txt (Ctrl+F10; the list [debug] patch_hunt_pipe counts in)"
+                                            : "vrcam: a pipe trace is already under way");
+                }
             } else if (!flatmenu::TakesKey(VK_F10)) DumpSkeletons();   // ([hud] game_menu_key on F10: the panel's press, vr/flat_menu.h)
         }
         if (f9.Pressed(focus)) {
@@ -602,6 +634,7 @@ static DWORD UpdateThreadBody() {
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
         gamecmd::Tick();   // skills, potions, Alt... held in BodyWalk: pressed on the UI thread
         playerscmd::Tick();   // the headset's Players row: "/players N" on the UI thread
+        patchhunt::Tick();    // [debug] patch_hunt: the game's graphics settings put to the step, on the UI thread
         partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
         GameFrontTick();   // [openxr] game_front: no controllers - the keyboard back to the game, Esc posted to it (before PauseKeyTick sends it)
@@ -609,7 +642,7 @@ static DWORD UpdateThreadBody() {
         {   // [gestures] skill_link: the skills to BodyWalk, its casts back - every ~10 ms, the casts are pad presses (off: the list emptied once, then nothing)
             static ULONGLONG linkAt = 0;
             const ULONGLONG t = GetTickCount64();
-            if (t - linkAt >= 10) { linkAt = t; skilllinkwire::Tick(FullBody() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen()); }
+            if (t - linkAt >= 10) { linkAt = t; skilllinkwire::Tick(FullBody() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen(), HeroAnimMode()); }
         }
         if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)
             uintptr_t hero = (uintptr_t)g_heroUnit.load();

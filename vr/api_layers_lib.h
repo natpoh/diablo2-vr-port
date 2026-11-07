@@ -19,6 +19,8 @@ std::vector<apilayers::Found> Scan();
 // Before the session's xrCreateInstance: Scan, decide (`block` = [openxr] block_listed_layers, `ownCrop` = not [openxr] runtime_fov, `list` =
 // [openxr] blocked_layers), and set the disable_environment variable of each listed one to turn off, in this process only; a variable set by an
 // earlier Apply is cleared again when its layer is no longer to be turned off. Logs every implicit layer found (once per change). Returns them.
-std::vector<apilayers::Found> Apply(bool block, bool ownCrop, const std::string& list, LogFn log);
+// `blockCrash` = [openxr] block_crash_layers, `crashList` = [openxr] crash_layers: those are turned off whatever `ownCrop` is.
+std::vector<apilayers::Found> Apply(bool block, bool ownCrop, const std::string& list, LogFn log, bool blockCrash = false,
+                                    const std::string& crashList = std::string());
 
 }  // namespace apilayerslib

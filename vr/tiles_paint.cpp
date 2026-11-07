@@ -29,6 +29,8 @@
 #include "ui_text.h"   // the window's words in the player's language ([hud] headset_language)
 #include "wheel_icons.h"
 #include "game_ui.h"   // [openxr] skill_panel_game_look: the game's own art, from the player's game
+#include "gesture_overlay.h"   // [openxr] gesture_overlay: the Gestures tab's screens (vr/gesture_tab_paint.inc paints them)
+#include "gesture_picture.h"
 
 namespace tilespaint {
 namespace {
@@ -612,14 +614,16 @@ void DrawButtons(Canvas& cv, Fonts& fonts, const View& v) {
     }
 }
 
-// The two tabs in the title plate: the chosen one gold on a warm plate, the one under the beam lit.
+// The tabs in the title plate (two, three with [openxr] gesture_overlay): the chosen one gold on a warm plate, the one under the beam lit.
 void DrawTabs(Canvas& cv, Fonts& fonts, const View& v) {
-    const char* const names[tiles::kTabCount] = {uitext::Tr("vr.tiles.tab_skills", "Skills"), uitext::Tr("vr.tiles.tab_settings", "Settings")};
-    for (int i = 0; i < tiles::kTabCount; ++i) {
+    const char* const names[tiles::kTabCountMax] = {uitext::Tr("vr.tiles.tab_skills", "Skills"), uitext::Tr("vr.tiles.tab_settings", "Settings"),
+                                                    uitext::Tr("vr.tiles.tab_gestures", "Gestures")};
+    const int count = std::clamp(v.tabCount, tiles::kTabCount, tiles::kTabCountMax);
+    for (int i = 0; i < count; ++i) {
         const Cell c = tiles::TabCell(i);
-        const bool on = (i == 0) == (v.tab == wheel::Tab::Skills);
+        const bool on = i == int(v.tab);
         const bool hot = v.hover == c && !on;
-        const Rect r = tiles::TabRect(i);
+        const Rect r = tiles::TabRect(i, count);
         if (g_game) {
             GameTab(cv, fonts, r, names[i], on, hot, false, 34);
             continue;
@@ -1029,6 +1033,10 @@ void DrawSettings(Canvas& cv, Fonts& fonts, const View& v) {
     }
 }
 
+// -- the Gestures tab ([openxr] gesture_overlay) -------------------------------------------------------------------------------------------------
+
+#include "gesture_tab_paint.inc"
+
 }  // namespace
 
 void Size(int* width, int* height) {
@@ -1043,6 +1051,10 @@ void Render(const View& v, std::vector<uint32_t>& px) {
     Canvas cv{px, tiles::kW, tiles::kH};
     Fonts fonts;
     DrawTitle(cv, fonts, v);
+    if (v.tabs && v.page == Page::Wheel && v.tab == wheel::Tab::Gestures) {   // the Gestures tab: its screens, their own lines and buttons (no flips there)
+        if (v.gestures) DrawGestures(cv, fonts, *v.gestures);
+        return;
+    }
     if (v.tabs && v.page == Page::Wheel) DrawFlipHints(cv, v);
     if (v.tabs && v.tab == wheel::Tab::Settings && v.page == Page::Wheel) {   // the Settings tab: its pages, with their own status line and buttons
         DrawSettings(cv, fonts, v);

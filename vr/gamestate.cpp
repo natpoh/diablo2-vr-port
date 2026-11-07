@@ -46,6 +46,7 @@
 #include "melee_arm_game.h"
 #include "point_cast_wire.h"
 #include "render_resolution.h"
+#include "resize_drain.h"   // [render] resize_drain: the game's video options applied - the replay drained and paused first
 #include "sigscan.h"
 #include "minimap_side.h"
 #include "map_zoom.h"   // [hud] map_stick_zoom: the big map's zoom, the game's own (bigzoom, below)
@@ -119,6 +120,7 @@ int g_typeOffset = -2;                       // -2 not tried yet, -1 failed
 DataTables::Bank g_bank = DataTables::Bank::Lod;
 std::vector<std::pair<uint32_t, uint32_t>> g_typeIndex;   // ItemTypes row index -> D2RVR_WeaponType
 std::atomic<bool> g_leftShield{false};   // [gameplay] shield_smite: a shield in the left hand of the active set
+std::atomic<bool> g_rightShield{false};  // [hands] left_slot_drawn_left: a shield in the RIGHT hand's slot (a weapon alone in the left one: the shield goes to the right forearm)
 std::vector<uint32_t> g_shieldTypes;     // ItemTypes row indexes of the shields: shie, ashd (paladin), head (necromancer)
 std::atomic<int> g_headSide{-1};         // [shield] heads_hang: the hand slot of the active set a Necromancer's head (ItemTypes head) is in - 1 left,
                                          // 0 right (the game takes a shield in either slot: one in the weapon's box is body location 4), -1 none
@@ -829,6 +831,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_weapon.store(D2RVR_WEAPON_UNKNOWN);
         g_type.store(D2RVR_TYPE_UNKNOWN);
         g_leftShield.store(false);
+        g_rightShield.store(false);
         g_headSide.store(-1);
         g_held.store(0);
         g_two.store(0);
@@ -934,6 +937,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
         g_codeSide[side].store(code[side].empty() ? 0u : packed);
     }
     g_leftShield.store(IsShield(code[1]));
+    g_rightShield.store(IsShield(code[0]));
     g_headSide.store(IsHead(code[1]) ? 1 : IsHead(code[0]) ? 0 : -1);
     g_held.store((code[0].empty() ? 0u : 1u) | (code[1].empty() ? 0u : 2u));
     // Two-handed: the weapon's own "2handed"; without the field, a spear, a polearm
@@ -1080,7 +1084,12 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     }
     // [render] vr_resolution: the game's own graphics Apply can reset its render state without a WM_SIZE - the size is asked for
     // again once it has settled (render_resolution.h). Not on "ResolutionChanged": our own WM_SIZE sends that, and we would ask for ever.
-    if (!strcmp(target, "OptionsPanelMessage") && !strcmp(command, "AcceptChanges")) vrres::OptionsApplied();
+    if (!strcmp(target, "OptionsPanelMessage") && !strcmp(command, "AcceptChanges")) {
+        // [render] resize_drain (vr/resize_drain.h): before the game applies them - it frees its targets, swap chain buffers and DLSS features
+        // after waiting for its own frame only, not for our replay of it (crash group E). Nothing with the tick or the replay off.
+        resizedrain::Event(resizedrain::Why::kApply);
+        vrres::OptionsApplied();
+    }
     // [hud] notice_card (vr/notice_card.h): a quest update or a level-up - the notice's panel opening, a message sent to it ('NotificationMessage'
     // 'QuestUpdate', 2026-10-14) - is counted; the card in the room comes from the count. Only read: the panel is the game's.
     if (noticecard::IsPoke(target, command, text)) noticecard::Poke();
@@ -1274,6 +1283,7 @@ bool HandIsThrowPotion(int side) {
 }
 uint32_t HandsKey() { return g_handsKey.load(); }
 bool LeftShield() { return g_leftShield.load(); }
+bool RightShield() { return g_rightShield.load(); }
 int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 bool PauseMenuOpen() { return g_pause.load(); }   // [hud] game_menu_settings: the game's pause menu (Esc) is open

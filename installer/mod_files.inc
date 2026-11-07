@@ -22,6 +22,8 @@ Source: "{#PayloadDir}\lang\*.txt"; DestDir: "{app}\{#ModDir}\lang"; Flags: igno
 Source: "{#PayloadDir}\plugins\d2r_vr_weight.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\plugins\d2r_vr_grip.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\plugins\d2r_vr_gait.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+; BodyWalk's gesture engine in the game ([gestures] engine_in_game; vr\gesture_engine_lib.cpp looks in d2r_vr_libs, then beside the plugin): optional
+Source: "{#PayloadDir}\plugins\d2r_vr_gestures.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; D2R VR Crash Reporter ([support] crash_reports / send_logs, shared\d2r_vr_crash_watch.h; built in the private vjoy repository, a binary only).
 ; Beside the libraries; nothing runs it unless the player ticks one of the two (both off as shipped). Without it the two ticks are greyed out.
 Source: "{#PayloadDir}\plugins\D2R_VR_Crash_Reporter.exe"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist

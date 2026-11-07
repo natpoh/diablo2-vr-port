@@ -33,6 +33,12 @@ bool WantsSlots();
 // What vrcam knows at the game's pad poll.
 struct PollIn {
     bool allowed = false;     // a press may be ours now: VR F4, the box, in the world, no menu or panel
+    // [gameplay] leap_air_aim (vr/leap_air_aim.h): a Leap's or Leap Attack's hold let go in a leap's air aims the next leap - its circle kept as a point of the
+    // world (heroX, heroZ: the hero as drawn, the look-at the arc's circle stands against), the slot's button held through the landing until the game's cast asks
+    bool airAim = false;      // the tick
+    bool airborne = false;    // the hero is in a leap's air now (HeroInLeapAir)
+    bool heroOk = false;
+    float heroX = 0.0f, heroZ = 0.0f;
 };
 // The arc for the press under way (vrcam builds it every poll while one is up, from the staff or the hand): set before FilterPad.
 // arcFor(skill, &arc): false = no arc can be made now (no pose of the hand, a line straight up or down).
@@ -49,7 +55,11 @@ bool Shown(pointcast::Arc* out);
 // for the release's log line, which says how many presents drew the arc while it was held.
 void NoteDrawn(bool byEffect);
 // For the cast's resolver: the circle's point of a release of `skill` made within maxAgeMs - true, *out - or false (a tap, nothing released lately: the gaze's).
-bool CastPoint(int skill, uint64_t nowMs, pointcast::Offset* out, uint64_t maxAgeMs = 800);
+// [gameplay] leap_air_aim: a release in a leap's air answers for leapair::kPointAgeMs, its world point seen from `heroXZ` (the hero as drawn now, the look-at;
+// nullptr: the offset it had at the release), held to [minUnits, capUnits]; *air (when given) says it was one. Asked for it, the button held through the landing
+// is let go: the game has its cast.
+bool CastPoint(int skill, uint64_t nowMs, pointcast::Offset* out, uint64_t maxAgeMs = 800, const float* heroXZ = nullptr, float minUnits = 0.0f,
+               float capUnits = 0.0f, bool* air = nullptr);
 // The game's map click has asked for the cast's target: the release's point is spent.
 void CastDone();
 

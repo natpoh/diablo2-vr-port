@@ -32,6 +32,11 @@ inline constexpr int kCount = (int)(sizeof(kKinds) / sizeof(kKinds[0]));
 // The longest hilt a slider gives, centimetres (a two-handed axe's haft is more than a metre).
 inline constexpr float kMaxCm = 150.0f;
 
+// The weapon kind (D2RVR_TYPE_*) out of vr/body/arms.cpp's packed grip key: + 0x100 for a sword in both hands, + 0x1000 * (the staff's hand + 1)
+// - either hand, left or right -, + the game's hands key << 16, all on top of the kind in the low byte. The zone and slide tables (and slide_kinds.h)
+// know the kind only.
+inline constexpr uint32_t KindOf(uint32_t gripKey) { return gripKey & 0xFFu; }
+
 // The row of a weapon type, -1 for a type with no hilt of its own (the whole shaft is its zone).
 inline int IndexOf(uint32_t type) {
     for (int i = 0; i < kCount; ++i)

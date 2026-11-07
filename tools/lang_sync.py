@@ -120,7 +120,7 @@ def vr_texts():
     """(key, English, where) of each uitext::Tr / TrF / TrW call of vr/ whose key and English are literals (a key made at run time is a
     table's: the program's --lang-template lists those)."""
     found = []
-    for src in sorted(list(VR.glob('*.h')) + list(VR.glob('*.cpp'))):
+    for src in sorted(list(VR.glob('*.h')) + list(VR.glob('*.cpp')) + list(VR.glob('*.inc'))):   # (.inc: vr/gesture_tab_paint.inc, painted inside tiles_paint.cpp)
         text = src.read_text(encoding="utf-8", errors="replace")
         for m in VR_CALL.finditer(text):
             key, i = read_literals(text, m.end() - 1, wide=False)

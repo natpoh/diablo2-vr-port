@@ -118,6 +118,22 @@ begin
   end;
 end;
 
+// Kept settings from 0.203 - 0.205: the headset session ended at quit ([openxr] end_session_on_exit) shipped 0 there and 1 since 0.206 - the
+// Virtual Desktop exit-crash fix acts only with it (Serg 2026-11-06: "вылет на вд тоже включи пусть люди тестят"). A kept ini keeps its 0, so
+// 0.206 never reached the players who had it: crash batch 2026-11-07, rows 280 / 281 on 0.206.0 (and 282 / 284 on 0.205), one VD player, the
+// same exit crash each time after Exit, end_session_on_exit=0 in all four. Once, at the first update that has this (its mark [support]
+// exit_end_0206, one of the shipped defaults, comes in with the other new keys right after this - missing = not done yet): 0 becomes 1. A 0
+// chosen after that stays.
+procedure MoveToExitEnd(Ini: String);
+begin
+  if GetIniString('support', 'exit_end_0206', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('openxr', 'end_session_on_exit', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('openxr', 'end_session_on_exit', '1', Ini);
+    Log('d2r_vr.ini: [openxr] end_session_on_exit=0 from an older version - on by default since 0.206 (the Virtual Desktop exit crash): 1 now');
+  end;
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -190,6 +206,7 @@ begin
     TurnOffRawTests(Ini);   // (before the new keys go in: its own mark is one of them)
     MoveOffReShade(Ini);    // (the same: its mark [support] no_reshade_0203 is one of them)
     MoveToQuickBlow(Ini);   // (the same: its mark [support] quick_blow_0204 is one of them)
+    MoveToExitEnd(Ini);     // (the same: its mark [support] exit_end_0206 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;
