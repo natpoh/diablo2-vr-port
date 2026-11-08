@@ -13,6 +13,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <condition_variable>
 #include <cstdio>
@@ -148,13 +149,15 @@ Painter& P() {
 }
 
 // One step of the timer: the news taken, the look of now, a picture asked for when it changed. *rev: the picture of this look.
-Look Step(uint64_t nowMs, uint32_t* rev) {
+// barPx: the bar's thickness where it will be shown (BarPxHeadset / BarPxMonitor), the picture's pixels.
+Look Step(uint64_t nowMs, uint32_t* rev, float barPx) {
     Look look;
     {
         std::lock_guard<std::mutex> lock(g_m);
         TakeNews(nowMs);
         look = g_state.Frame(nowMs, g_style.load(std::memory_order_relaxed) == 1 ? Style::Bar : Style::Ring, g_numbers.load(std::memory_order_relaxed));
     }
+    if (look.style == Style::Bar && barPx > 0.0f && std::isfinite(barPx)) look.barThick10 = (int)std::lround(barPx * 10.0f);
     *rev = P().Submit(look);
     return look;
 }
@@ -181,7 +184,7 @@ void OnFrame(const directinput::Frame& f, void*) {
     }
     const ULONGLONG nowMs = GetTickCount64();
     uint32_t rev = 0;
-    const Look look = Step(nowMs, &rev);
+    const Look look = Step(nowMs, &rev, BarPxHeadset());
     if (!look.visible) {
         Publish(Published{});
         return;
@@ -313,15 +316,16 @@ bool Draw(Layer* layer, uint32_t* needRevision) {
 bool Monitor(uint64_t nowMs, float aspect, float box[4], uint32_t* needRevision) {
     if (!g_on.load(std::memory_order_relaxed) || aspect <= 0.0f) return false;
     uint32_t rev = 0;
-    const Look look = Step(nowMs, &rev);
+    const Look look = Step(nowMs, &rev, BarPxMonitor(aspect));
     if (!look.visible) return false;
     const float picAspect = (float)kPicW / (float)kPicH;   // the picture's width per height
     if (look.style == Style::Bar) {
         const float w = kMonBarW, h = w * aspect / picAspect;   // (uv: a width share times the screen's aspect is a height share)
+        const float top = kMonBarY - h * (swingtimerpaint::kBarMidPx / (float)kPicH);   // the bar's line at kMonBarY (the box's top may be above the screen)
         box[0] = 0.5f - 0.5f * w;
-        box[1] = kMonBarTop;
+        box[1] = top;
         box[2] = 0.5f + 0.5f * w;
-        box[3] = kMonBarTop + h;
+        box[3] = top + h;
     } else {
         const float h = kMonRingH, w = h * picAspect / aspect;
         box[0] = 0.5f - 0.5f * w;

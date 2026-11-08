@@ -18,13 +18,19 @@ namespace fx {
 bool NoFogUnderground() {
     return g_inWorld.load() && g_underground.load() && !g_set.fogCaves.load() && !(g_arcaneArea.load() && g_set.arcaneFog.load());
 }
-bool OurFogWanted() {
+// A fog here at all, whoever draws it: in the world, first person, not paused, not [fog] caves=0 underground, not the River of Flame
+bool FogHere() {
     // under the Arcane Sanctuary's sky only with [sky] arcane_fog: the shader then takes the fog's colour from that sky
     const bool arcane = g_arcaneSky.load();
-    return (!arcane || g_set.arcaneFog.load()) && g_set.fogOn.load() && g_enabled.load() && !Overhead() && g_inWorld.load() && !EffectsPaused() &&
+    return (!arcane || g_set.arcaneFog.load()) && g_enabled.load() && !Overhead() && g_inWorld.load() && !EffectsPaused() &&
            !NoFogUnderground() &&   // [fog] caves=0: none underground (the Arcane Sanctuary with arcane_fog apart)
            !g_noFogArea.load();     // [fog] no_fog_river: none in the River of Flame (our effect's and the game's fog alike)
 }
+// Our effect's fog: [fog] enabled ("Distance fog") and a fog here
+bool OurFogWanted() { return g_set.fogOn.load() && FogHere(); }
+// The game's fog with our numbers ([fog] game_fog=1): a fog here - whatever [fog] enabled says (Serg 2026-11-08 on Medium: enabled=0 with
+// game_fog=1 left no fog at all, "game fog 0"; our own fog off must never take the game's away)
+bool GameFogWanted() { return g_set.gameFog.load() && FogHere(); }
 // The post pass's fog: ours, unless the game's own pass draws it ([fog] game_fog)
 // ... and only when the game's is not chosen ([fog] game_fog: its pass draws ours, also before it took our numbers - never both; the Arcane
 // Sanctuary's ours whatever the choice - vr/sky_paths.h)
@@ -44,15 +50,15 @@ bool DistanceBlurWanted() {
            !EffectsPaused();
 }
 // Our effect's fixes on what the game draws find the dome and the fogged world by the scene's depth (D2R_DepthFog.fx: d <= SkyDomeDepth):
-// the dome's colours and night ([sky] dome_true_colour, day_night: DomeLook), its low part into the fog ([sky] dome_fog_horizon), the game's
-// fog in the act's colour ([fog] game_fog_match) - as effects.cpp sets them. The flat game copies the depth only for what is placed by it
+// the dome's colours and night ([sky] dome_true_colour, day_night: DomeLook), its low part into the fog ([sky] dome_fog_horizon) - as
+// effects.cpp sets them ([fog] game_fog_match, the game's fog in the act's colour, removed 2026-11-08). The flat game copies the depth only for what is placed by it
 // (fx::DepthEffectsWanted): with the game's sky and no fog of ours none was copied, the effect read "no depth" and gave the picture as it
 // was - Serg on 0.192.6, flat F2, fog off: "цвет купола не меняется", day or night.
 bool GameSkyFixWanted() {
     const bool dome = engitem::DomeShown() && g_skyPalette.load() >= 0 && !g_arcaneSky.load() &&
                       ((g_set.domeTint.load() && (g_set.domeTrueColour.load() || g_set.skyDayNight.load())) ||   // (the tinting: parked)
                        (g_set.domeFogHorizon.load() && (FogWanted() || gamefogvr::Active())));
-    return dome || (g_set.fogMatch.load() && gamefogvr::Active());   // (its make-up of the share with the colour measured or not)
+    return dome;
 }
 
 bool ArcaneOwnFog() { return g_set.arcaneOwnFog.load() && g_arcaneArea.load(); }

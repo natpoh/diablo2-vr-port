@@ -2387,6 +2387,8 @@ static const float4 OrbIcon = float4(0.0, 0.0, 0.70, 0.10);
 static const float OrbIconLift = 0.0;
 static const float OrbIconLiftM = 0.0;
 #define OrbIconSmp 0
+static const float4 OrbIconL = float4(0.0, 0.0, 0.70, 0.10);   // (the life medallion's: a glyph's left-armed skill - off here too)
+#define OrbIconLSmp 0
 #define tex2Dlod(s, c) GlobeTex.SampleLevel(GlobeSS, (c).xy, (c).w)
 float CapsuleHit(float3 ro, float3 rd, float3 pa, float3 pb, float r)
 {

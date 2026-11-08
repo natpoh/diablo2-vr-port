@@ -76,6 +76,34 @@ void SetPointerAt(PointerAtFn fn);
 // and queue null then: the session's own). True: a frame is open and PairEyes has its views.
 bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue);
 bool PairEyes(Eyes* out);   // the mode SetViewsMode asked for (a window or the room's, when views_3d); its `mode` says which
+// [render] foveated (vr/foveation.h): eye `eye`'s frustum as the game draws it (tangents l r u d, left and down negative), where that eye's
+// own straight-ahead lies in it (tangents; 0, 0 unless the displays are canted and the eye is drawn turned), and the part the headset
+// shows (the runtime's own view, or the hand's with fov_override_centred, in the same frame; seenOk false: not known - canted), and the
+// eyes' gaze where the runtime gives it (below). False:
+// no first-person pair open (F4 / F2's head views only). The draw thread, after BeginPair.
+struct EyeLens {
+    float drawn[4];
+    float fwd[2];
+    float seen[4];
+    bool seenOk;
+    bool ok;
+    // [render] foveated + foveated_gaze: the eyes' gaze in the same frame (tangents; gazeOk: this frame's is tracked and fresh) and whether
+    // the runtime gives any (gazeAvail: an eye tracker bound, the masks for a followed gaze are worth making)
+    float gaze[2];
+    bool gazeOk;
+    bool gazeAvail;
+};
+bool PairLens(int eye, EyeLens* out);
+// [render] lens_mask (vr/lens_mask.h): the runtime's hidden-area mesh of eye `eye` (XR_KHR_visibility_mask, its hidden triangle mesh) - xy pairs on
+// the view's z = -1 plane (the tangents right and up, the fov's units) and the triangles' indices; gen moves each time a mesh is fetched or let go
+// (a session made or ended, the runtime's change event). False: no mesh in that eye now (none offered, no session, an empty one). Any thread.
+struct VisMask {
+    std::vector<float> xy;
+    std::vector<uint32_t> idx;
+    uint32_t gen = 0;
+};
+bool VisibilityMask(int eye, VisMask* out);
+const char* RuntimeName();   // the runtime's own name ("" before an instance)
 // The head's yaw (radians, + turned left) in the views of the last stereo pair opened, from the
 // last recentre - what PairEyes turns the eyes by, for the body. False with no session, after a
 // flat frame, or when the last pair is older than 250 ms - 2 s when the pairs since did not open
@@ -119,6 +147,9 @@ void HoldBody();
 // pictures already drawn (vr/turn_warp.h): its own last one moved with its depth to where it is now, and the
 // eye drawn this frame moved across with its own depth over it (bearstonem/d2r-pcvr's eyes by turns).
 bool ByTurns();
+// [stereo] native_replay's hooks went in at the game's start (vrcam replay::NativeSinks says so once): the headset settings' Video page tells the
+// render type "Native one pass" as working now, or after a restart.
+void SetReplayAtStart(bool in);
 // What the eye not drawn is made with. vrcam, at each view it builds for a native first-person pair (F4): both eyes'
 // cameras as the head is now - in the game's world, view axes x right, y up, -z ahead (turn: those into the world) -
 // the hero's place and the body's turn (the room's -z in the world, radians, as vrcam's toWorld), the projection's near
@@ -137,6 +168,10 @@ void SetTurnView(const TurnView& v);
 // resource (an ID3D12Resource in a shader-resource state), its shader view's DXGI format and the part of it the scene is
 // drawn in. nullptr: none this present.
 void SetTurnDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY);
+// [openxr] hands_over_panels (vr/near_overlay.h): the hands and the weapon drawn over the skill panel - wanted now (the key on, F4, the panel up on its Gestures tab):
+// then vrcam copies the scene's depth each present and hands it in here with the camera's near plane and the world's units per metre.
+bool NearOverlayWanted();
+void SetNearDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY, float nearPlane, float upm);
 // The present of a pair by turns with the other eye made ([stereo] turn_warp, F4 / F2's head camera): vrcam's XrPresent, in order -
 // TurnKeep(eye, back buffer) before what has no depth of the scene is drawn over it (D2R_DepthFog.fx's overlays, OverlaysApart:
 // moved with the depth behind them they showed twice in the eye made); then the overlays of this eye on the back buffer; OnPresent

@@ -48,7 +48,12 @@
 #include "patch_hunt_wire.h"   // ... the game's settings, Ctrl+F8, the overlay line
 #include "capture.h"           // the capture key: one folder with what a picture fault needs to be found later
 #include "pipe_hunt.h"         // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10 without ReShade: a game pass skipped, one frame's pipelines listed
+#include "lit_flat.h"          // [render] bench_lit_flat: the lit pass flat, one light colour
+#include "bench_lights.h"      // [render] bench_skip_point_lights: the game's local lights out, the sun alone
 #include "reflections_eye.h"   // [render] reflections_per_eye: the game's reflections by each eye's own position
+#include "shadows_once.h"     // [render] shadows_once_a_pair: the shadow / grass maps drawn once a pair in the replay
+#include "foveation.h"        // [render] foveated: fixed foveated rendering (variable rate shading), from D2R VR Unleashed
+#include "lens_mask.h"        // [render] lens_mask: what the lenses never show left out of the game's depth-tested passes
 #include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
 #include "effects_layer.h"  // [stereo] turns_keep_own 3, 4: eyes by turns - where the game's effects are in the eye drawn (xr.cpp reads it)
 #include "fog_in_frame.h"   // [render] fog_in_frame: our fog drawn in the game's frame, before its transparent resolve
@@ -212,6 +217,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "monitor_eye.h"  // [render] monitor_eye: the window shows one eye (bearstonem/d2r-pcvr's desktop_one_eye)
 #include "monitor_layers.h"  // [render] monitor_panels: the headset's panels over the window's picture too
 #include "native_d3d12.h" // [render] no_reshade: the plugin's own D3D12 / DXGI hooks in place of ReShade's events (docs/plan_no_reshade.md)
+#include "native_replay.h" // [stereo] native_replay: the replay on the plugin's own hooks - which path a pair takes (vr/native_replay.h)
 #include "fog_before_fx.h" // [fog] game_fog_before_fx: the game's fog laid on the scene before its transparent resolve (no_reshade)
 #include "native_rsapi.h"  // [render] no_reshade: vr/hud.cpp on those hooks, through a stand-in for ReShade's command list and device
 #include "replay_pause.h" // when the replay may run: 240 settled pairs in a loaded area (vr/replay_pause.h)
@@ -248,6 +254,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll)
 #include "skill_link_wire.h"   // [gestures] skill_link: the hero's skills to BodyWalk, a button or a recorded gesture per skill cast back
 #include "point_cast_wire.h"   // [gameplay] teleport_circle: the skills cast onto a point aimed with an arc and a circle (vr/point_cast.h)
+#include "trigger_roles_wire.h"   // [gestures] trigger_<hand>: a glyph trigger's aim (the cast's hand, the aim line)
 #include "weapon_extents.h"    // ... the arc leaves the staff's tip as the game's own model has it
 #include "arm_reach.h"
 #include "spell_aim_model.h"
@@ -293,6 +300,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
 #include "aura_view.h"            // [render] aura_centre: the Paladin's aura rings centred under the hero in VR
 #include "head_shadow.h"          // [arms] head_shadow: the hidden head still casts its shadow
+#include "simpler_sun.h"          // [render] sun_shadow_radius_m / sun_shadow_every: the game's sun shadow map filled for less (F4)
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "belt_drop.h"       // [hands] belt_drop_ground: the game's own drop of a belt potion (the belt slot's click, the cursor's drop)
 #include "belt_glow.h"       // [hands] belt_inner_glow: a bottle in reach lit with the game's own highlight

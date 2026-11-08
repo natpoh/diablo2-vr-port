@@ -82,6 +82,7 @@
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
 #include "attack_lean.h"    // [body] attack_lean (flat F2 / F3, VR F2): the swing leans toward where the crosshair looks
+#include "aim_tilt.h"       // [body] flat_aim_tilt (flat F3): the arms tilt with the crosshair, and onto the body under it through a swing
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's paws as the touch's blades
 #include "unleashed_shapeshift_form.h"   // [shapeshift] forms_first_person: the druid's werewolf / werebear grafted under the camera (MPL, from Unleashed)
 #include "sigscan.h"
@@ -506,6 +507,10 @@ struct BellyOut { float at3[3]; ULONGLONG at; };
 BellyOut g_belly{};
 // [weight] grip_fit, for the debug: the grasp point on the axis and the palm's middle as drawn, per hand, the same frame (GripMarks)
 struct GripMarkOut { float grasp[3], palm[3]; ULONGLONG at; };
+// [debug] grip_draw: both weapon attach bones and both hands as the finished pose has them, the head's turn-only frame from the eye (GripDrawNow); [debug] grip_trace's last state
+SRWLOCK g_gripDrawLock = SRWLOCK_INIT;
+GripDraw g_gripDrawOut{};
+GripState g_gripState{};
 SRWLOCK g_gripMarkLock = SRWLOCK_INIT;
 GripMarkOut g_gripMark[2] = {};
 #endif
@@ -3363,6 +3368,87 @@ bool AttackLean(uintptr_t self, const Hero& h, const Input& in, bool turned, flo
     }
     return true;
 }
+
+// [body] flat_aim_tilt (vr/aim_tilt.h): the pose thread's ease and held target, and what an attack did - one line per attack at its end, through the lean's
+// note (vrcam drains it with AttackLeanTakeNote).
+attacklean::Ease g_tiltEase;
+aimtilt::Hold g_tiltHold;
+std::chrono::steady_clock::time_point g_tiltStepAt{};
+struct TiltSeen { bool swinging = false; int mode = -1; unsigned poses = 0, onBody = 0; float look = 0, target = 0, tilt = 0, maxTilt = 0;
+                  int bodyAgeMs = -1;   // the freshest body under the crosshair through the swing, ms before (-1 never)
+                  float twist = 0;      // [body] flat_hold_trunk_twist: the most the arms were turned back by the chest's turn, deg
+                  std::chrono::steady_clock::time_point from{}; };
+TiltSeen g_tiltSeen;
+unsigned g_tiltAttacks = 0;
+float g_armTwistDeg = 0.0f;   // [body] flat_hold_trunk_twist: the chest's turn this pose gave back to the arms (the pose thread; aim tilt's attack line)
+uintptr_t g_tiltRigTold = 0;
+
+// Our hero's pose (model space, after the body's turn and before the head is shrunk): the arms and what they hold turned about the shoulders' line with
+// the crosshair, and onto the body under it while the attack plays. True while it acts (the skinning is then handed the pose, every pose: steady).
+bool AimTilt(uintptr_t self, const Hero& h, const Input& in, bool turned, float c, float s, std::vector<Mat>& newW) {
+    constexpr float kDeg = 57.2957795f;
+    const auto now = std::chrono::steady_clock::now();
+    float dtMs = g_tiltStepAt.time_since_epoch().count() ? std::chrono::duration<float, std::milli>(now - g_tiltStepAt).count() : 0.0f;
+    g_tiltStepAt = now;
+    if (dtMs > 300.0f) { g_tiltEase = {}; g_tiltHold = {}; g_tiltSeen = {}; dtMs = 0.0f; }   // (posed again after a pause: from nothing)
+    const int n = (int)newW.size();
+    const int chest = attacklean::Chest(n, h.parent.data(), h.spine, h.upr[0], h.upr[1]);
+    const int extra[4] = {h.weapon[0], h.weapon[1], h.shield, h.twoHand};
+    const std::vector<char> marks = aimtilt::Marks(n, h.parent.data(), chest, (int)h.inNeck.size() == n ? h.inNeck.data() : nullptr, extra, 4);
+    if (self != g_tiltRigTold) {   // the rig as it tilts, once a rig
+        g_tiltRigTold = self;
+        char b[300];
+        if (marks.empty())
+            snprintf(b, sizeof b, "aim tilt: this hero's rig (%d bones) has no chest above spine_01 that both upper arms hang from - the arms never tilt", n);
+        else
+            snprintf(b, sizeof b, "aim tilt: the hero's rig (%d bones) - %d bones (the arms, hands, what they hold) turn about the shoulders' line (upper arms %d / %d, "
+                     "the chest bone %d stays)", n, (int)std::count(marks.begin(), marks.end(), (char)1), h.upr[0], h.upr[1], chest);
+        NoteLean(b);
+    }
+    const bool swinging = attacklean::IsSwingMode(in.heroAnimMode);
+    const float weight = g_tiltEase.Step(swinging && in.aimTiltTarget, dtMs);
+    TiltSeen& seen = g_tiltSeen;
+    if (!swinging && seen.swinging) {   // the attack just ended: its line
+        if (seen.poses) {
+            ++g_tiltAttacks;
+            char b[480];
+            const std::string none = seen.bodyAgeMs < 0 ? std::string("no monster's body under the crosshair yet ([input] flat_body_pick never met one)")
+                                                         : "no monster's body under the crosshair in the swing (the last one " + std::to_string(seen.bodyAgeMs) + " ms before)";
+            snprintf(b, sizeof b, "aim tilt - attack %u (mode %d, %.0f ms): the look %.0f deg %s, %s -> the arms %.0f deg %s at the most; the chest's turn given "
+                     "back to the arms at most %.0f deg", g_tiltAttacks, seen.mode,
+                     std::chrono::duration<float, std::milli>(now - seen.from).count(), std::fabs(seen.look), seen.look >= 0.0f ? "down" : "up",
+                     seen.onBody ? (std::string("a monster's body under the crosshair ") + std::to_string((int)std::lround(std::fabs(seen.target))) +
+                                    (seen.target >= 0.0f ? " deg down" : " deg up") + " from the shoulders").c_str()
+                                 : in.aimTiltTarget ? none.c_str() : "the target ease off (flat_aim_tilt_target)",
+                     std::fabs(seen.maxTilt), seen.maxTilt >= 0.0f ? "down" : "up", seen.twist);
+            NoteLean(b);
+        }
+        seen = TiltSeen{};
+    }
+    if (marks.empty() || !in.aimFwdOk || h.upr[0] < 0 || h.upr[1] < 0) return false;
+    const V3 ra = Pos(newW[h.upr[0]]), la = Pos(newW[h.upr[1]]);
+    const aimtilt::V3 pivot = aimtilt::Mid({ra.x, ra.y, ra.z}, {la.x, la.y, la.z});
+    const float look = aimtilt::LookRad({in.aimFwd[0], in.aimFwd[1], in.aimFwd[2]}, in.aimTiltPct, in.aimTiltMaxDeg);
+    float fresh = 0.0f;
+    const bool onBody = in.aimTiltTarget && in.aimBodyOk &&
+                        aimtilt::TargetRad(pivot, {in.aimBody[0], in.aimBody[1], in.aimBody[2]}, in.aimTiltMaxDeg, &fresh);
+    g_tiltHold.Step(swinging, onBody, fresh, weight);
+    const float rad = aimtilt::Blend(look, g_tiltHold.have, g_tiltHold.rad, weight);
+    // the way he faces: the game's model faces +z; turned with the look, (s, 0, c) - attack_lean's axis
+    const attacklean::V3 axis = attacklean::Axis(turned ? attacklean::V3{s, 0.0f, c} : attacklean::V3{0.0f, 0.0f, 1.0f});
+    static_assert(sizeof(Mat) == sizeof(float) * 16, "a bone matrix is 16 floats");
+    aimtilt::Turn(reinterpret_cast<float(*)[16]>(newW.data()), n, marks, axis, rad, pivot);
+    if (swinging) {
+        if (!seen.swinging) { seen.swinging = true; seen.from = now; }
+        seen.mode = in.heroAnimMode;
+        ++seen.poses;
+        if (onBody) { ++seen.onBody; seen.target = fresh * kDeg; }
+        if (in.aimBodyAgeMs >= 0 && (seen.bodyAgeMs < 0 || in.aimBodyAgeMs < seen.bodyAgeMs)) seen.bodyAgeMs = in.aimBodyAgeMs;
+        if (std::fabs(g_armTwistDeg) > std::fabs(seen.twist)) seen.twist = g_armTwistDeg;
+        if (std::fabs(rad) >= std::fabs(seen.maxTilt) || seen.poses == 1) { seen.maxTilt = rad * kDeg; seen.look = look * kDeg; }
+    }
+    return true;
+}
 #endif
 
 void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::Out& wo) {
@@ -3456,6 +3542,27 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 case trunkhold::Pose::Anim: newW[i] = Mul(Mul(oldW[i], InvAffine(oldW[p])), newW[p]); break;
                 case trunkhold::Pose::Bind: newW[i] = Mul(Mul(h.bind[i], InvAffine(h.bind[p])), newW[p]); break;
                 case trunkhold::Pose::Game: break;
+            }
+        }
+        // [body] flat_hold_trunk_twist (flat F3, with the hold): the held chest dropped the animation's turn of the chest about the vertical, and the arms
+        // hung on it with their own turn from it lost it too - the barbarian's side swing went out past the camera. The arms, hands and what they hold
+        // (aimtilt::Marks: under the chest, not the neck) turned back by the chest's own turn, about the chest's vertical: the swing crosses in front as the
+        // game has it, the chest and the head still under the camera.
+        if (!in.along) g_armTwistDeg = 0.0f;
+        if (holdTrunk && in.holdTrunkTwist) {
+            const int chest = attacklean::Chest(n, h.parent.data(), h.spine, h.upr[0], h.upr[1]);
+            if (chest >= 0) {
+                const float yaw = trunkhold::TwistYaw(h.bind[chest].m, oldW[chest].m, trunkhold::kTwistMaxRad);
+                if (!in.along) g_armTwistDeg = yaw * 57.2957795f;
+                if (yaw != 0.0f) {
+                    const int extra[4] = {h.weapon[0], h.weapon[1], h.shield, h.twoHand};
+                    const std::vector<char> arms = aimtilt::Marks(n, h.parent.data(), chest, (int)h.inNeck.size() == n ? h.inNeck.data() : nullptr, extra, 4);
+                    Mat T;
+                    const V3 at = Pos(newW[chest]);
+                    trunkhold::YawAbout(yaw, at.x, at.z, T.m);
+                    for (int i = 0; i < n && !arms.empty(); ++i)
+                        if (arms[i]) newW[i] = Mul(newW[i], T);
+                }
             }
         }
         // [shapeshift] a grafted form (Unleashed's): its hips are held at rest under the upright torso - the idle sways, and the player
@@ -3783,11 +3890,38 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         }
         if (grip.ok) { AcquireSRWLockExclusive(&g_gripLock); g_grip = grip; ReleaseSRWLockExclusive(&g_gripLock); }
     }
+    // [hands] left_slot_drawn_left (vr/drawn_hand.h MirrorGrip): a weapon alone in the left slot is animated by the game as a right-hand one - its grip is the right wrist's
+    // (R_weapon_attach, where it draws it); the left fist's attach bone in that animation holds nothing. The left slot's grip - what the weight model places the weapon by in
+    // the left hand, what the grip library measures its base on, what the hand-to-hand pass copies - is the right one mirrored onto the left hand by the rig's own
+    // correspondences. (This pose's copy only: g_grip keeps the game's.)
+    bool gripMirrored = false;   // ([debug] grip_trace: the left slot's grip is the mirrored right one this pose)
+    if (in.leftSlotDrawn && in.mode == 2 && grip.ok && grip.scale[0] > 0.7f && h.bindOk && h.hand[0] >= 0 && h.hand[1] >= 0 && h.weapon[0] >= 0 && h.weapon[1] >= 0) {
+        weaponmirror::K kh, kw;
+        Mat m{};
+        if (weaponmirror::FromMirrorPair(h.bind[h.hand[0]].m, h.bind[h.hand[1]].m, &kh) && weaponmirror::FromMirrorPair(h.bind[h.weapon[0]].m, h.bind[h.weapon[1]].m, &kw) &&
+            drawnhand::MirrorGrip(grip.attach[0].m, kw, kh, m.m)) {
+            static int toldType = -0x7FFFFFFF;
+            if (toldType != in.weaponType) {
+                toldType = in.weaponType;
+                const float headY = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
+                const float unitCm = 100.0f / (std::clamp(headY / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale);   // (model units per metre, as the hold has them)
+                char b[300];
+                snprintf(b, sizeof b, "left slot weapon: the left hand holds it by the game's right-hand grip of it, mirrored (weapon type %d) - the animation's own left attach bone was %.1f deg "
+                         "and %.1f cm off that", in.weaponType, drawnhand::GripTurnDeg(m.m, grip.attach[1].m), drawnhand::GripApart(m.m, grip.attach[1].m) * unitCm);
+                XbowNote(b);
+            }
+            grip.attach[1] = m;
+            grip.scale[1] = grip.scale[0];
+            gripMirrored = true;
+        }
+    }
+    // the hand the game grips the weapon in: the slot's - but a weapon alone in the left slot the game grips in the RIGHT hand, where it draws it ([hands] left_slot_drawn_left)
+    const int gripPoseHand = in.leftSlotDrawn ? drawnhand::kRight : wo.slot & 1;
     // [weight] grip_fit_fingers: the game's weapon-grip pose of the fingers, read off the hand the game holds the weapon in (the slot's) - from the game's own matrices, so whatever
     // the weight model does to that hand (it lets go, the other carries the weapon) does not touch it - while the hero is calm (a swing's hand is not a grip) and the game shows the
     // weapon on that wrist (a hidden attach bone: nothing is held there). Kept for the weapon type; refreshed each calm pose, so it is the base hand's pose as it is drawn.
     if (wo.on && in.mode == 2 && ((in.weight.gripFit && in.weight.gripFingers) || wo.gripLib) && !in.attacking && !in.along && h.bindOk) {
-        const int bs = wo.slot & 1;
+        const int bs = gripPoseHand;   // ([hands] left_slot_drawn_left: the game grips it in the right hand, the left one's fingers hold nothing)
         if (h.weapon[bs] >= 0 && h.hand[bs] >= 0) {
             const Mat a = Mul(oldW[h.weapon[bs]], InvAffine(oldW[h.hand[bs]]));
             GripPoseKept kept;
@@ -5354,17 +5488,18 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 whyKey = 4;
             }
         }
-        if (!in.along) {   // once a change, and the hand it went to
-            const V3 pr = Pos(newW[drawnB]);
-            const float toL = Len(Sub(pr, Pos(newW[h.hand[1]]))), toR = Len(Sub(pr, Pos(newW[h.hand[0]])));
-            const int key = carriedB >= 0 ? (toL <= toR ? 1 : 2) : whyKey;
+        if (!in.along) {   // once a change, and the hand that holds it (the weight model's; without it the slot's)
+            const bool hr = wo.on ? wo.holds[0] : false, hl = wo.on ? wo.holds[1] : true;
+            const int holder = hr && hl ? 3 : hl ? 1 : hr ? 2 : 0;
+            const int key = carriedB >= 0 ? 10 + holder : whyKey;
             static int told = 0;
             if (key != told) {
                 told = key;
                 char b[300];
+                static const char* const held[4] = {"no hand on it (falling, lying or flying back)", "in the left hand", "in the right hand", "in both hands"};
                 if (carriedB >= 0)
-                    snprintf(b, sizeof b, "left slot weapon: the game draws it on the right attach bone (shown %.2f) - moved to the left slot's pose, now in the %s hand%s", drawnSize,
-                             toL <= toR ? "left" : "right", in.leftSlotShieldRight ? "; the right slot's shield goes to the right forearm while the weapon is not in the right hand alone" : "");
+                    snprintf(b, sizeof b, "left slot weapon: the game draws it on the right attach bone (shown %.2f) - moved to the left slot's pose, %s%s", drawnSize,
+                             held[holder], in.leftSlotShieldRight ? "; the right slot's shield goes to the right forearm while the weapon is not in the right hand alone" : "");
                 else
                     snprintf(b, sizeof b, "left slot weapon: %s (right attach bone %.2f)", why, drawnSize);
                 XbowNote(b);
@@ -5768,11 +5903,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         GripPoseKept kept;
         AcquireSRWLockShared(&g_gripPoseLock); kept = g_gripPose; ReleaseSRWLockShared(&g_gripPoseLock);
         static int told[2] = {0, 0};   // 0 nothing said, 1 the pose took, 2 it could not (said once for each change)
+        const int poseBase = gripPoseHand;   // the hand the game grips it in ([hands] left_slot_drawn_left: the right, where it draws it)
         for (int side = 0; side < 2; ++side) {
             const float t = std::clamp(wo.on01[side], 0.0f, 1.0f);
-            if (side == wo.slot || !(t > 0.0f) || (side == 1 && leftOnStaff) || libFingers[side]) continue;   // (the slot's hand has the game's pose; staff_free_left's left keeps the game's grip; the library's hand has the library's)
+            if (side == poseBase || !(t > 0.0f) || (side == 1 && leftOnStaff) || libFingers[side]) continue;   // (the gripping hand has the game's pose; staff_free_left's left keeps the game's grip; the library's hand has the library's)
             const char* why = nullptr;
-            if (!kept.ok || kept.skel != h.skel || kept.type != in.weaponType || kept.side != (wo.slot & 1)) why = "no pose read off the game's hand for this weapon yet";
+            if (!kept.ok || kept.skel != h.skel || kept.type != in.weaponType || kept.side != poseBase) why = "no pose read off the game's hand for this weapon yet";
             else {
                 if (poseW.empty()) poseW = newW;
                 why = GripPoseOnto(h, side, kept, newW, poseW);
@@ -5785,7 +5921,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             poseE[side] = t * t * (3.0f - 2.0f * t);
             if (told[side] != 1) {
                 char b[220];
-                snprintf(b, sizeof b, "grip fingers - the %s hand takes the game's weapon-grip pose of the %s hand (weapon type %d)", side ? "left" : "right", wo.slot ? "left" : "right", in.weaponType);
+                snprintf(b, sizeof b, "grip fingers - the %s hand takes the game's weapon-grip pose of the %s hand (weapon type %d)", side ? "left" : "right", poseBase ? "left" : "right", in.weaponType);
                 weight::Say(b);
             }
             told[side] = 1;
@@ -5888,6 +6024,86 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         std::vector<char> fromWeapon(n, 0);
         fromWeapon[carriedB] = 1;
         Propagate(h, oldW, newW, fromWeapon, carriedB);
+    }
+    // [debug] grip_trace / grip_draw (view only): who holds the weapon against what the pose did with it - the slot, the bone the game draws it on and whether it was carried, the
+    // grip the slot's bone was placed by, the hand the finger pose is read off, the touch's blade bone, and the weapon bone against the holding wrist next to the game's grip of
+    // that hand. A line on each change (the trace); the bones and hands for the drawing each pose (the draw). The table test reads GripStateNow.
+    if (in.mode == 2 && h.weapon[0] >= 0 && h.weapon[1] >= 0 && h.hand[0] >= 0 && h.hand[1] >= 0) {
+        GripState st;
+        st.on = true;
+        st.slot = wo.on ? (wo.slot & 1) : (in.weaponSide & 1);
+        st.holdsR = wo.on ? wo.holds[0] : st.slot == 0;
+        st.holdsL = wo.on ? wo.holds[1] : st.slot == 1;
+        st.main = wo.on ? (wo.main & 1) : st.slot;
+        st.carried = carriedB >= 0;
+        st.drawnBone = carriedB >= 0 ? drawnhand::kRight : in.dualBlades ? st.slot : (in.weaponSide & 1) == 1 && !in.leftSlotDrawn ? drawnhand::kRight : st.slot;
+        st.gripFrom = gripMirrored ? 2 : grip.ok ? 1 : 0;
+        st.poseHand = gripPoseHand;
+        st.bladeBone = axesSide;
+        st.weaponType = in.weaponType;
+        const int holder = (st.holdsR && !st.holdsL) ? 0 : (st.holdsL && !st.holdsR) ? 1 : st.main;
+        st.holder = holder;
+        const Mat against = Mul(newW[h.weapon[st.slot]], InvAffine(newW[h.hand[holder]]));
+        if (grip.ok) {
+            st.offGripDeg = (float)drawnhand::GripTurnDeg(against.m, grip.attach[holder].m);
+            const float headY0 = in.haveEye ? in.eyeModel[1] : Pos(newW[h.head >= 0 ? h.head : 0]).y;
+            const float upm0 = std::clamp(headY0 / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
+            st.offGripCm = (float)drawnhand::GripApart(against.m, grip.attach[holder].m) * 100.0f / upm0;
+        }
+        // the drawn weapon against the holding hand: near it (the drawn bone where the hand that holds it is)
+        const int db = h.weapon[st.drawnBone];
+        st.drawnNear = Len(Sub(Pos(newW[db]), Pos(newW[h.hand[holder]]))) <= Len(Sub(Pos(newW[db]), Pos(newW[h.hand[holder ^ 1]])));
+        st.bladeNear = Len(Sub(Pos(newW[h.weapon[axesSide]]), Pos(newW[h.hand[holder]]))) <= Len(Sub(Pos(newW[h.weapon[axesSide]]), Pos(newW[h.hand[holder ^ 1]])));
+        st.at = GetTickCount64();
+        if (weight::GripTrace() && !in.along) {
+            static uint32_t told = 0xFFFFFFFFu;
+            const uint32_t key = (uint32_t)st.slot | (uint32_t)st.holdsR << 1 | (uint32_t)st.holdsL << 2 | (uint32_t)st.main << 3 | (uint32_t)st.carried << 4 | (uint32_t)st.drawnBone << 5 |
+                                 (uint32_t)st.gripFrom << 6 | (uint32_t)st.poseHand << 8 | (uint32_t)st.bladeBone << 9 | (uint32_t)wo.on << 10 | ((uint32_t)in.weaponType & 0xFFFFu) << 16;
+            if (key != told) {
+                told = key;
+                static const char* const side[2] = {"right", "left"};
+                static const char* const from[3] = {"none taken yet", "the game's animation", "the game's RIGHT-hand grip mirrored (left_slot_drawn_left)"};
+                char b[520];
+                snprintf(b, sizeof b, "grip trace - pose: weapon type %d in the %s slot, held by %s (main %s%s); the game draws it on %s_weapon_attach%s; the slot's bone placed by %s; "
+                         "the fingers' grip pose read off the %s hand; the touch's blade off %s_weapon_attach; the weapon bone against the %s wrist is %.1f deg and %.1f cm from the game's grip "
+                         "of that hand; drawn %s the holding hand, the blade %s it",
+                         in.weaponType, side[st.slot], st.holdsR && st.holdsL ? "both hands" : st.holdsR ? "the right hand" : st.holdsL ? "the left hand" : "no hand", side[st.main],
+                         wo.on ? "" : ", no weight model", st.drawnBone ? "L" : "R", st.carried ? ", carried onto the left slot's pose (left_slot_drawn_left)" : "", from[st.gripFrom],
+                         side[st.poseHand], st.bladeBone ? "L" : "R", side[holder], st.offGripDeg, st.offGripCm, st.drawnNear ? "at" : "AWAY FROM", st.bladeNear ? "at" : "AWAY FROM");
+                XbowNote(b);
+            }
+        }
+        GripDraw gd;
+        if (weight::GripDraw()) {
+            const V3 headP = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head >= 0 ? h.head : 0]);
+            const float upmD = std::clamp(headP.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
+            const auto backD = [&](V3 d) { const V3 m = {d.x * c - d.z * s, d.y, d.x * s + d.z * c}; return V3{-m.x, m.y, -m.z}; };   // (model axes -> the head's frame; GripMarks')
+            const auto toHead = [&](const V3& p) { return backD(Scale(Sub(p, headP), 1.0f / upmD)); };
+            const auto put = [&](const Mat& m, float o[3], float ax[3][3]) {
+                const V3 p = toHead(Pos(m));
+                o[0] = p.x; o[1] = p.y; o[2] = p.z;
+                for (int r = 0; r < 3; ++r) {
+                    const V3 a = backD(Norm(V3{m.m[r * 4], m.m[r * 4 + 1], m.m[r * 4 + 2]}));
+                    ax[r][0] = a.x; ax[r][1] = a.y; ax[r][2] = a.z;
+                }
+            };
+            for (int sd = 0; sd < 2; ++sd) {
+                put(newW[h.weapon[sd]], gd.attach[sd], gd.attachAxes[sd]);
+                const Mat a = Mul(newW[h.weapon[sd]], InvAffine(newW[h.hand[sd]]));
+                gd.attachShown[sd] = Len({a.m[0], a.m[1], a.m[2]}) > 0.3f;
+                put(newW[h.hand[sd]], gd.hand[sd], gd.handAxes[sd]);
+                if (h.mid[sd] >= 0) {
+                    const V3 palm = toHead(Scale(Add(Pos(newW[h.hand[sd]]), Pos(newW[h.mid[sd]])), 0.5f));
+                    gd.hand[sd][0] = palm.x; gd.hand[sd][1] = palm.y; gd.hand[sd][2] = palm.z;
+                }
+            }
+            gd.drawnBone = st.drawnBone;
+            gd.at = st.at;
+        }
+        AcquireSRWLockExclusive(&g_gripDrawLock);
+        g_gripState = st;
+        if (gd.at) g_gripDrawOut = gd;
+        ReleaseSRWLockExclusive(&g_gripDrawLock);
     }
     // [hands] shield_fist: the left hand with a shield on it follows the controller's real grip too - the fingers only. Fist() rebuilds
     // the finger chains below the wrist (not the weapon attach bone the shield hangs on) after the arm is placed, so the shield and the
@@ -6001,7 +6217,10 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     // [body] attack_lean (flat F2 / F3, VR F2): while his attack plays, the spine bent toward where the crosshair looks - the swing comes down onto a small
     // monster or up at a tall one. Last of the body's own moves, before the head is shrunk; the skinning is handed it below (the game's skinning meets
     // its own pose in the pose buffer, not ours: headshadow::PublishOurPose).
-    const bool leaned = in.attackLean && !in.along && AttackLean(self, h, in, turn, c, s, newW);
+    // [body] flat_aim_tilt (flat F3): instead of it there (vrcam leaves attackLean off), the arms tilted with the crosshair, onto the body under it
+    // through a swing - published the same way, every pose while it acts.
+    const bool leaned = (in.attackLean && !in.along && AttackLean(self, h, in, turn, c, s, newW)) ||
+                        (in.aimTilt && !in.attackLean && !in.along && AimTilt(self, h, in, turn, c, s, newW));
 
     // First person: the head and the neck shrink into a point at the neck's
     // base, so a camera at the eyes sees out instead of the inside of the skull,
@@ -9149,12 +9368,12 @@ void Arms(uintptr_t self) {
     Input in;
     AcquireSRWLockShared(&g_inLock); in = g_in; ReleaseSRWLockShared(&g_inLock);
 #if D2RVR_FIRST_PERSON
-    if (!in.attackLean && g_leanPublishing.exchange(false)) headshadow::DropOurPose();   // [body] attack_lean off or not this view mid-lean: its copy not drawn on
+    if (!in.attackLean && !in.aimTilt && g_leanPublishing.exchange(false)) headshadow::DropOurPose();   // [body] attack_lean / flat_aim_tilt off or not this view mid-lean: its copy not drawn on
 #endif
     // The hero is looked for even while nothing is done to him: his SkeletonInstance is what
     // vrcam's facing is found from (HeroTransform), and that is needed before the body can turn.
     // ([body] doll_feet: in every view; [body] attack_lean: its views)
-    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet && !in.attackLean);
+    const bool active = !(in.mode == 0 && !in.hideHead && !in.lockUpper && !(in.bodyTurn > 0 && in.haveYaw) && !in.dollFeet && !in.attackLean && !in.aimTilt);
     if (!active && !g_trackHero.load() && !g_trailWanted.load(std::memory_order_relaxed)) return;   // ([weight] death_ragdoll_flat: the weapon's trail in every view)
     uintptr_t modelInst = 0, skel = 0;
     if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skel)) return;
@@ -9517,6 +9736,16 @@ bool ArmReach(int side, float shoulder[3], float* lengthM) {
     memcpy(shoulder, o.shoulder, sizeof o.shoulder);
     if (lengthM) *lengthM = o.length;
     return true;
+}
+bool GripDrawNow(GripDraw* out) {
+    AcquireSRWLockShared(&g_gripDrawLock); const GripDraw g = g_gripDrawOut; ReleaseSRWLockShared(&g_gripDrawLock);
+    if (!g.at || GetTickCount64() - g.at > 300) return false;
+    *out = g;
+    return true;
+}
+GripState GripStateNow() {
+    AcquireSRWLockShared(&g_gripDrawLock); const GripState g = g_gripState; ReleaseSRWLockShared(&g_gripDrawLock);
+    return g;
 }
 bool GripMarks(int side, float grasp[3], float palm[3]) {
     AcquireSRWLockShared(&g_gripMarkLock); const GripMarkOut g = g_gripMark[side & 1]; ReleaseSRWLockShared(&g_gripMarkLock);

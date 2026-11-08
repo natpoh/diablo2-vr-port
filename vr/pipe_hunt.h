@@ -49,6 +49,19 @@ bool Arm(const std::wstring& path);
 // The last trace's file and whether it was written (vr/capture.cpp waits for its own).
 bool LastWritten(std::wstring* path);
 
+// [render] bench_skip_* (vr/render_bench.h): the game's stages left out (bits of renderbench::Key; 0 none), live. BenchLine: the 10 s line - what
+// was left out a present, each stage's calls, the pipelines recognised - and the counts restart (empty while off and already told so).
+void SetBench(uint32_t mask);
+uint32_t BenchMask();
+std::string BenchLine();
+
+// [render] sun_shadows / sun_shadow_every (vr/simpler_sun.h): the bench's shadow-target tally kept without the bench too (on) - one tally for
+// both; and the sun's shadow map the last present picked (the sun / spot target - the sun and spot shaders', not the point lights' - with the
+// most calls that frame; nullptr none yet): its calls that frame, and every shadow call of that frame. The pick follows the busiest target: on a
+// frame the sun's map was not drawn it may name another - the caller takes it only after a frame that drew it.
+void SetSunWatch(bool on);
+ID3D12Resource* SunMap(uint32_t* calls, uint32_t* shadowCalls);
+
 struct Now {
     bool hunting = false;     // patch_hunt 8 in force
     int index = 0, count = 0; // its K and the list's length (0: no trace yet)

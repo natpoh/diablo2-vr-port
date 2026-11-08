@@ -21,6 +21,8 @@
 #include "hset_video.h"
 #include "first_start.h"    // the Guide page: how many pages the first-start guide has
 #include "toolbar_type.h"   // the HUD page's toolbar type: a step over bar_place and hide (shared/)
+#include "draw_by.h"        // the Video page's Sky / Fog drawn by: none, our effect, the game's - over two keys each
+#include "hset_names.h"     // the Video page's Render type: the five over their keys (RenderTypeKeys, shared/render_type.h)
 
 namespace hset {
 
@@ -118,10 +120,15 @@ constexpr int kRowStepClose = 58, kRowHClose = 50;
 constexpr Rect kSubBtn(int i, int n) { return {32 + i * (960 + 16) / n, 144, (960 + 16) / n - 16, 42}; }
 constexpr Rect kWorldSub(int i) { return kSubBtn(i, kWorldPages); }
 constexpr int kWorldRowY0 = 200, kWorldRowStep = 52, kWorldRowH = 46;
-constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || HasSubRow(page)); }
-constexpr int RowStep(int page) { return HasSubRow(page) ? kWorldRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
-constexpr int RowH(int page) { return HasSubRow(page) ? kWorldRowH : CloseRows(page) ? kRowHClose : kRowH; }
-constexpr int RowY(int row, int page) { return (HasSubRow(page) ? kWorldRowY0 : kRowY0) + row * RowStep(page); }
+// The Video page's rows (3D in the headset, Sky drawn by, Fog drawn by) stand under its render size slider, as close as the Melee page's.
+// The Video page's rows (six since the Quality preset on top, Serg 2026-11-08 - the Potato light's two brightnesses before it): from just under
+// the slider, as close as World's rows (their name in the normal face, hset_scene.h), so one line still fits above the status line - the size
+// limit's warning, the Apply note while a size waits, or the cost
+constexpr int kVidRowY0 = 268, kVidRowStep = 44, kVidRowH = 40;
+constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || HasSubRow(page) || page == kPageVideo); }
+constexpr int RowStep(int page) { return HasSubRow(page) ? kWorldRowStep : page == kPageVideo ? kVidRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
+constexpr int RowH(int page) { return HasSubRow(page) ? kWorldRowH : page == kPageVideo ? kVidRowH : CloseRows(page) ? kRowHClose : kRowH; }
+constexpr int RowY(int row, int page) { return (HasSubRow(page) ? kWorldRowY0 : page == kPageVideo ? kVidRowY0 : kRowY0) + row * RowStep(page); }
 constexpr Rect kDec(int row, int page = -1) { return {584, RowY(row, page), 72, RowH(page)}; }
 constexpr Rect kVal(int row, int page = -1) { return {664, RowY(row, page), 248, RowH(page)}; }
 constexpr Rect kInc(int row, int page = -1) { return {920, RowY(row, page), 72, RowH(page)}; }
@@ -143,19 +150,19 @@ constexpr Rect kGuideAt = {752, 146, 240, 38};
 constexpr int kGuideTop = 190, kGuideBottom = 510;
 constexpr Rect kGuideBack = {32, 516, 230, 46};
 constexpr Rect kGuideNext = {762, 516, 230, 46};
-// The Video page: a title row, a line about the sizes, eight presets in two rows of four, the slider (a stepper at each end),
-// the cost, and two notes. The slider's track is one hit zone; its stops run from kSlX0 to kSlX1 (the thumb's centre).
-constexpr Rect kVidTitle = {32, 148, 960, 36};
-constexpr Rect kVidNow = {32, 184, 960, 30};
-constexpr Rect kPreset(int i) { return {32 + (i % 4) * 244, 224 + (i / 4) * 64, 228, 54}; }
-constexpr Rect kSlDec = {32, 358, 72, 56};
-constexpr Rect kSlInc = {920, 358, 72, 56};
-constexpr Rect kSlTrack = {112, 358, 800, 56};
-constexpr int kSlX0 = 142, kSlX1 = 882;
-constexpr Rect kSlEnds = {112, 416, 800, 26};
-constexpr Rect kVidCost = {32, 450, 960, 30};
-constexpr Rect kVidLimit = {32, 482, 960, 30};
-constexpr Rect kVidNote = {32, 516, 960, 30};
+// The Video page (Serg 2026-11-08: the size buttons gone, "оставить только ползунок"): a title row, a line about the sizes, the slider (a stepper at
+// each end) with Auto beside it ([autotune]: kAutoBtn), then the page's six rows (kVidRowY0) and one line (the limit, the Apply note or the cost) - the slider's
+// ends' numbers (1024, 4096) gave their place to the sixth row: the title shows the size. The slider's track
+// is one hit zone; its stops run from kSlX0 to kSlX1 (the thumb's centre).
+constexpr Rect kVidTitle = {32, 148, 960, 32};
+constexpr Rect kVidNow = {32, 180, 960, 26};
+constexpr Rect kSlDec = {32, 208, 72, 50};
+constexpr Rect kSlInc = {720, 208, 72, 50};
+constexpr Rect kSlTrack = {112, 208, 600, 50};
+constexpr int kSlX0 = 142, kSlX1 = 682;
+constexpr Rect kVidCost = {32, 541, 960, 24};
+constexpr Rect kVidLimit = kVidCost;   // (in its place when there is one: "your headset takes N at most" matters more than the cost)
+constexpr Rect kVidNote = kVidCost;    // (... and the Apply note while a new size waits for it)
 // The Body page: its one table row on top (how you play: standing / seated, row 0 as on every page), what Calibrate is for, the three
 // buttons (the measurement, its Forget, the first-start guide again), what is stored, and the steps.
 constexpr Rect kBodyWhy = {32, 222, 960, 30};
@@ -213,14 +220,15 @@ constexpr Rect kRecentre = {32, 620, 280, 68};
 constexpr Rect kPreviewBtn = {324, 620, 200, 68};
 constexpr Rect kClose = {532, 620, 220, 68};
 constexpr Rect kApply = {772, 620, 220, 68};
-// The Video page's Auto ([autotune] enabled; vr/auto_tune_run.h): its button where the low-life pages' Preview stands. While a run measures or
-// its result waits, the page shows the run's lines instead of the render size, and Keep / Undo (Stop while it runs) under them.
-constexpr Rect kAutoBtn = {324, 620, 200, 68};
+// The Video page's Auto ([autotune] enabled; vr/auto_tune_run.h): its button at the slider's right end (Serg: "рядом с выбором пресетов" - the
+// size buttons are gone, the slider is the page's size choice). While a run measures or its result waits, the page shows the run's lines instead
+// of the render size and the rows, and Keep / Undo (Stop while it runs) under them.
+constexpr Rect kAutoBtn = {808, 208, 184, 50};
 constexpr int kAutoLines = 10;
 constexpr Rect kAutoTitle = {32, 148, 960, 36};
 constexpr Rect kAutoLine(int i) { return {48, 188 + i * 32, 944, 30}; }
 constexpr Rect kAutoKeep = {32, 516, 300, 46};
-constexpr Rect kAutoUndo = {344, 516, 300, 46};
+constexpr Rect kAutoUndo = {344, 516, 228, 46};   // (ends left of the rows' steppers at x 584: the Video page's fifth row lies under it)
 // What the plugin says of the run, every frame the panel is up on the Video page; the words are the plugin's (in the player's language).
 struct AutoTune {
     bool on = false;          // [autotune] enabled: the Auto button is there
@@ -284,15 +292,17 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
     if (IsLifePage(page) && kPreviewBtn.Contains(x, y)) return {Kind::Preview, -1, 0};
     if (page == kPageView)
         for (int i = 0; i < kViews; ++i) if (kViewBtn(i).Contains(x, y)) return {Kind::View, i + 1, 0};
+    // the Video tab's two pages: Render from the Video page (shown in F4 only, as the page is), Video back from the Render page
+    if (((page == kPageVideo && PageShown(kPageRender, view)) || page == kPageRender) && kPreviewBtn.Contains(x, y))
+        return {Kind::Tab, page == kPageVideo ? kPageRender : kPageVideo, 0};
     if (page == kPageVideo) {
         if (kAutoBtn.Contains(x, y)) return {Kind::Auto, 0, 0};   // (the model takes these only as the run's state allows)
         if (kAutoKeep.Contains(x, y)) return {Kind::Auto, 1, 0};
         if (kAutoUndo.Contains(x, y)) return {Kind::Auto, 2, 0};
-        for (int i = 0; i < video::kPresetCount; ++i) if (kPreset(i).Contains(x, y)) return {Kind::Preset, i, 0};
         if (kSlDec.Contains(x, y)) return {Kind::Slider, -1, -1};
         if (kSlInc.Contains(x, y)) return {Kind::Slider, -1, 1};
         if (kSlTrack.Contains(x, y)) return SliderAt(x);
-        return {};
+        // (the size presets' buttons are gone: Kind::Preset stays the model's, no place hits it) - then the page's rows, below
     }
     if ((page == kPageCoop || page == kPageParty) && kPreviewBtn.Contains(x, y)) return {Kind::Tab, page == kPageCoop ? kPageParty : kPageCoop, 0};   // Party / Relay
     if (page == kPageParty) {   // a player's button, Leave party, Open Party panel (the model takes none while the page is off or the game says nothing)
@@ -772,6 +782,62 @@ public:
                     return a;
                 }
                 if (!ready || Busy() || hit.index < 0 || hit.index >= kCount || !KeyShown(hit.index, view_)) return a;
+                if (env_.vrs == 0 && NeedsVrs(hit.index)) return a;   // (no variable rate shading on this card: the row is greyed)
+                if (page == kPageVideo && AutoShown()) return a;   // (the Video page's rows hidden under the Auto run's lines)
+                if (hit.index == kKeyPreset) {   // the Quality preset: every key of the next one into the draft, as D2R VR Settings' list writes them
+                    const int now = PresetOf(draft_);
+                    const int to = qualitypreset::Step(now, hit.delta == 0 ? 1 : hit.delta);
+                    if (to == now) return a;   // (at an end)
+                    const Values was = draft_;
+                    for (const qualitypreset::Key& k : qualitypreset::kKeys) {
+                        if (qualitypreset::IsAsIs(k.v[to])) continue;   // (this preset leaves it as it is)
+                        if (qualitypreset::IsRenderType(k)) {   // the render type: its row's keys (shared/render_type.h)
+                            rendertype::Keys rk = RenderTypeKeys(draft_);
+                            rendertype::ToKeys((int)std::lround(k.v[to]), &rk);
+                            draft_[kKeyOpenXrOn] = (float)rk.openxrOn;
+                            draft_[kKeyAfr] = (float)rk.afr;
+                            draft_[kKeyPairPerTick] = (float)rk.pairPerTick;
+                            draft_[kKeyNativeReplay] = (float)rk.nativeReplay;
+                            draft_[kKeySource] = Normalize(kKeySource, (float)rk.source);
+                            draft_[kKeyReplayRight] = Normalize(kKeyReplayRight, (float)rk.replayRight);
+                            draft_[kKeyReplayAhead] = Normalize(kKeyReplayAhead, (float)rk.replayAhead);
+                            continue;
+                        }
+                        const int i = IndexOf(k.section, k.key);
+                        if (i >= 0) draft_[i] = Normalize(i, k.v[to]);
+                    }
+                    if (Changed(was, draft_)) { result = Result::None; ++revision; }
+                    return a;
+                }
+                if (hit.index == kKeyPairPerTick) {   // Render type: a step over the five, writing what D2R VR Settings' list writes (shared/render_type.h)
+                    rendertype::Keys k = RenderTypeKeys(draft_);
+                    const int type = rendertype::FromKeys(k);
+                    const int to = rendertype::Step(type, hit.delta == 0 ? 1 : hit.delta);
+                    if (to == type) return a;   // (at an end)
+                    rendertype::ToKeys(to, &k);
+                    const Values was = draft_;
+                    draft_[kKeyOpenXrOn] = (float)k.openxrOn;
+                    draft_[kKeyAfr] = (float)k.afr;
+                    draft_[kKeyPairPerTick] = (float)k.pairPerTick;
+                    draft_[kKeyNativeReplay] = (float)k.nativeReplay;
+                    draft_[kKeySource] = Normalize(kKeySource, (float)k.source);
+                    draft_[kKeyReplayRight] = Normalize(kKeyReplayRight, (float)k.replayRight);
+                    draft_[kKeyReplayAhead] = Normalize(kKeyReplayAhead, (float)k.replayAhead);
+                    if (Changed(was, draft_)) { result = Result::None; ++revision; }
+                    return a;
+                }
+                if (hit.index == kKeyGameSky || hit.index == kKeyGameFog) {   // Sky / Fog drawn by: none, our effect, the game's (vr/draw_by.h)
+                    const int onKey = hit.index == kKeyGameSky ? kKeySkyOn : kKeyFogOn;
+                    const bool fog = hit.index == kKeyGameFog;   // (the fog: game_fog alone draws the game's - drawby gameAlone)
+                    const int way = drawby::FromKeys(draft_[onKey] > 0.5f, draft_[hit.index] > 0.5f, fog);
+                    int on = 0, game = 0;
+                    drawby::ToKeys(drawby::Step(way, hit.delta), draft_[hit.index] > 0.5f ? 1 : 0, &on, &game, fog);
+                    const float wasOn = draft_[onKey], wasGame = draft_[hit.index];
+                    draft_[onKey] = (float)on;
+                    draft_[hit.index] = (float)game;
+                    if (Differ(wasOn, draft_[onKey]) || Differ(wasGame, draft_[hit.index])) { result = Result::None; ++revision; }
+                    return a;
+                }
                 if (hit.index == kKeyBarPlace) {   // the HUD page's toolbar type: a step over bar_place and hide together (shared/toolbar_type.h)
                     int h = (int)std::lround(draft_[kKeyHide]), p = (int)std::lround(draft_[kKeyBarPlace]);
                     const float wasHide = draft_[kKeyHide], wasPlace = draft_[kKeyBarPlace];
@@ -818,7 +884,7 @@ public:
                 return a;
             case Kind::Auto:   // start a run (nothing edited on the page: a size not applied would be measured as not there), Keep, Undo / Stop
                 if (page != kPageVideo || !auto_.on) return a;
-                if (hit.index == 0 && auto_.state == 0 && ready && !Busy() && !VideoEdited()) a.autoTune = 0;
+                if (hit.index == 0 && auto_.state == 0 && ready && !Busy() && !Dirty()) a.autoTune = 0;
                 else if (hit.index == 1 && auto_.state == 2) a.autoTune = 1;
                 else if (hit.index == 2 && auto_.state != 0) a.autoTune = 2;
                 else return a;

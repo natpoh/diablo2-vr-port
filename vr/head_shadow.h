@@ -207,6 +207,11 @@ void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t 
 // ... and what runs at ModelDrawCollect for each entity, just before the game's own (vr/knock_down.cpp BeforeDraw: a drawn-away body's bounds grown again
 // there, after anything that made them again this frame; null: none). eyes: an eyes' pass (not the shadows'). The render workers.
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes));
+// ... and, for the shadow passes only (pass 1), whether a model is left out of them (vr/simpler_sun.cpp Filter: true = the game's own early return, no
+// draw for it in this pass): its entity, its TransformComponent (the 5th argument), and the 8th and 9th (the light's culling matrix, the matrix its draws
+// are made with). Null: none. Setting one puts the hooks in for it too ([arms] head_shadow off). The render workers.
+using ShadowFilterFn = bool (*)(uint32_t entity, uintptr_t transform, uintptr_t cullMatrix, uintptr_t drawMatrix);
+void SetShadowFilter(ShadowFilterFn fn);
 void SetDollSkin(DollSkinFn fn);
 bool DollSkinningIn();
 std::string SkinNote();

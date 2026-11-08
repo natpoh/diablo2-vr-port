@@ -25,10 +25,11 @@
 #include <string>
 
 #include "ui_text.h"   // the rows' words in the player's language ([hud] headset_language)
+#include "quality_presets.h"   // the Video page's Quality preset: the keys it writes (shared/quality_presets.h)
 
 namespace hset {
 
-constexpr int kMaxPages = 21;
+constexpr int kMaxPages = 22;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
@@ -42,12 +43,14 @@ constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands
 // Party (Serg, 2026-11-01: invite to a party from the headset, vr/hset_party.h) has no tab either: it is the Co-op tab's second page, reached by
 // the Co-op page's Party button (the bottom bar) and back by its Relay button; a flick passes it between World's pages and the Guide.
 // Stats (Serg, 2026-11-06: the strike statistics, [stats] strike_stats; vr/hset_stats.h) is a tab of its own before the Guide: it only shows.
+// Render (Serg, 2026-11-08: foveated rendering and the other render-cost switches in the headset) has no tab either: it is the Video tab's second page,
+// reached by the Video page's Render button (the bottom bar) and back by its Video button, as Party is Co-op's; F4 only (its features are).
 enum Page : int {
-    kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageKeysL = 3, kPageKeysR = 4, kPageVibration = 5, kPageHud = 6,
-    kPageLife = 7, kPageLook = 8, kPageBody = 9, kPageBelt = 10, kPageMelee = 11, kPageMeleeAttack = 12,
-    kPageWorld = 13, kPageWorldReact = 14, kPageWorldGrab = 15, kPageWorldMore = 16, kPageCoop = 17, kPageParty = 18, kPageStats = 19, kPageGuide = 20
+    kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageRender = 3, kPageKeysL = 4, kPageKeysR = 5, kPageVibration = 6, kPageHud = 7,
+    kPageLife = 8, kPageLook = 9, kPageBody = 10, kPageBelt = 11, kPageMelee = 12, kPageMeleeAttack = 13,
+    kPageWorld = 14, kPageWorldReact = 15, kPageWorldGrab = 16, kPageWorldMore = 17, kPageCoop = 18, kPageParty = 19, kPageStats = 20, kPageGuide = 21
 };
-constexpr int kPageCount = 21;
+constexpr int kPageCount = 22;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 // Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
@@ -62,8 +65,8 @@ constexpr bool IsMeleePage(int page) { return page >= kPageMelee && page < kPage
 constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page) || IsMeleePage(page); }
 constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : IsMeleePage(page) ? kPageMelee : page; }
 constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : IsMeleePage(page) ? kMeleePages : 1; }
-// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, else the page itself.
-constexpr int LeadOf(int page) { return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page; }
+// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, else the page itself.
+constexpr int LeadOf(int page) { return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page; }
 constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
 // The tab a page is under, and the page a tab opens.
 constexpr int TabOf(int page) {
@@ -78,39 +81,46 @@ constexpr int TabPage(int tab) {
 }
 constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
 static_assert(kTabCount == 15 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
-                  TabOf(kPageMeleeAttack) == TabOf(kPageMelee),
-              "fifteen tabs over the twenty-one pages");
+                  TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && TabOf(kPageRender) == TabOf(kPageVideo) && TabPage(TabOf(kPageVideo)) == kPageVideo,
+              "fifteen tabs over the twenty-two pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
-// A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 128 bits: the Vibration page took the
-// table past 64 keys. Used as an integer would be (|, &, ~, ==, a test in an if); 0 is the empty set.
+// A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 256 bits: the Vibration page took the
+// table past 64 keys, the Quality preset's keys (shared/quality_presets.h, 2026-11-08) past 128. Used as an integer would be (|, &, ~, ==, a test
+// in an if); 0 is the empty set.
 struct Mask {
-    uint64_t lo = 0, hi = 0;
+    static constexpr int kWords = 4;
+    uint64_t w[kWords] = {};
     constexpr Mask() = default;
-    constexpr Mask(uint64_t low) : lo(low) {}
-    constexpr Mask(uint64_t low, uint64_t high) : lo(low), hi(high) {}
-    constexpr explicit operator bool() const { return lo || hi; }
-    friend constexpr Mask operator|(Mask a, Mask b) { return {a.lo | b.lo, a.hi | b.hi}; }
-    friend constexpr Mask operator&(Mask a, Mask b) { return {a.lo & b.lo, a.hi & b.hi}; }
-    friend constexpr Mask operator~(Mask a) { return {~a.lo, ~a.hi}; }
-    friend constexpr bool operator==(Mask a, Mask b) { return a.lo == b.lo && a.hi == b.hi; }
+    constexpr Mask(uint64_t low) : w{low, 0, 0, 0} {}
+    constexpr explicit operator bool() const { return w[0] || w[1] || w[2] || w[3]; }
+    friend constexpr Mask operator|(Mask a, Mask b) { for (int i = 0; i < kWords; ++i) a.w[i] |= b.w[i]; return a; }
+    friend constexpr Mask operator&(Mask a, Mask b) { for (int i = 0; i < kWords; ++i) a.w[i] &= b.w[i]; return a; }
+    friend constexpr Mask operator~(Mask a) { for (int i = 0; i < kWords; ++i) a.w[i] = ~a.w[i]; return a; }
+    friend constexpr bool operator==(Mask a, Mask b) { return a.w[0] == b.w[0] && a.w[1] == b.w[1] && a.w[2] == b.w[2] && a.w[3] == b.w[3]; }
     friend constexpr bool operator!=(Mask a, Mask b) { return !(a == b); }
-    constexpr Mask& operator|=(Mask b) { lo |= b.lo; hi |= b.hi; return *this; }
-    constexpr Mask& operator&=(Mask b) { lo &= b.lo; hi &= b.hi; return *this; }
+    constexpr Mask& operator|=(Mask b) { for (int i = 0; i < kWords; ++i) w[i] |= b.w[i]; return *this; }
+    constexpr Mask& operator&=(Mask b) { for (int i = 0; i < kWords; ++i) w[i] &= b.w[i]; return *this; }
     constexpr int Count() const {   // how many keys
         int n = 0;
-        for (uint64_t v = lo; v; v &= v - 1) ++n;
-        for (uint64_t v = hi; v; v &= v - 1) ++n;
+        for (int i = 0; i < kWords; ++i)
+            for (uint64_t v = w[i]; v; v &= v - 1) ++n;
         return n;
     }
 };
-constexpr Mask Bit(int key) { return key < 64 ? Mask(uint64_t(1) << key, 0) : Mask(0, uint64_t(1) << (key - 64)); }
+constexpr Mask Bit(int key) {
+    Mask m;
+    if (key >= 0 && key < 64 * Mask::kWords) m.w[key / 64] = uint64_t(1) << (key % 64);
+    return m;
+}
 
 // What a row's value is: a number or a switch (min / max / step, shown by fmt or off / on), or a pick of the key bindings' list (vr/hset_keys.h: the
 // value is the pick's index, one past the list = a line the list does not name; shown by the pick's name, stepped round the list), or a number of the
 // game's own (Game: not the ini's - the row shows what the game says, Model::Players, its - / + ask the game, Do::Players; the store neither reads
 // nor writes it).
-enum class DefType : uint8_t { Number, Choice, Game };
+// Derived: a row made of other keys (the Quality preset: shared/quality_presets.h) - shown by the preset they match, its < / > write them;
+// the store neither reads nor writes the row's own key ("@preset" is no ini key).
+enum class DefType : uint8_t { Number, Choice, Game, Derived };
 
 struct Def {
     const wchar_t* section;
@@ -370,6 +380,82 @@ inline constexpr Def kDefs[] = {
     {L"hands", L"belt_models", "Potions on the belt", "The game's own potion models on the hero's hips",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     //
+    // Video (Serg 2026-11-08: "добавить туда тип рендера, убрать кнопки с разрешением экрана, оставить только ползунок, добавить селекторы
+    // отрисовки тумана и неба: игрой, или движком, или не рисовать"): three rows under the render size's slider, named as D2R VR Settings names them.
+    // "Render type" (Serg 2026-11-08: five entries, one pass the default; shared/render_type.h): Native two passes, Native one pass, Native eyes by
+    // turns, FlatVR stereo, FlatVR depth - a stepper over [openxr] on, [stereo] afr / pair_per_tick / native_replay / source (the row sits on
+    // pair_per_tick; its value box names the type, vr/hset_names.h); a step writes what D2R VR Settings' "3D in the headset" list writes for it
+    // (hset_model.h). (max 4: a stepper, not a tick; the file's pair_per_tick stays 0 / 1)
+    // the Quality preset on top (Serg 2026-11-08: "и прямо внутрь игры вынести, в оверлей игры"): Potato / Low / Medium as D2R VR Settings has them
+    // (shared/quality_presets.h), shown by the preset the keys match (Custom: none); < / > write every key of the next one into the draft, Apply writes
+    // them. Room rings and the models' radius are read at the game's start: the line says so
+    {L"@preset", L"preset", "Quality preset", "Potato, Low, Medium - room rings and models from the next start",
+     2.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageVideo, false, DefType::Derived},
+    {L"stereo", L"pair_per_tick", "Render type", "Native two passes / one pass / eyes by turns, FlatVR stereo / depth (one pass: from the next game start)",
+     0.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kPageVideo},
+    // "Sky drawn by" / "Fog drawn by": none, our effect, the game's (vr/draw_by.h) - a stepper over [sky] game_sky + [sky] enabled, [fog] game_fog +
+    // [fog] enabled; its value box names the way (vr/hset_names.h). (max 2: a stepper, not a tick; the file's keys stay 0 / 1)
+    {L"sky", L"game_sky", "Sky drawn by", "None, our effect, or the game's own dome (no frame time of ours)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageVideo},
+    {L"fog", L"game_fog", "Fog drawn by", "None, our effect, or the game's own fog pass (no frame time of ours)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageVideo},
+    // [render] potato_light_brightness (Serg 2026-11-08: "для режима потато надо добавить ползунок яркость солнца"): the Potato light's level - with
+    // [render] potato_light on (D2R VR Settings > Performance > Render cost) everything is lit evenly by one light (vr/lit_flat.h); live
+    {L"render", L"potato_light_brightness", "Potato light: brightness", "With Potato light on (Performance > Render cost): its brightness",
+     1.0f, 0.3f, 5.0f, 0.05f, "%.2f", "", "", kPageVideo},
+    // ... and underground ("для пещер отдельный ползунок яркости"): caves, dungeons - the areas the fog counts as underground
+    {L"render", L"potato_light_brightness_caves", "... in caves", "The Potato light's brightness underground (caves, dungeons, crypts)",
+     1.0f, 0.3f, 5.0f, 0.05f, "%.2f", "", "", kPageVideo},
+    // Render (Serg 2026-11-08: "почему в настройках графики я не вижу галочки фоверальный рендеринг, чтобы его выключить"): the Video tab's second page
+    // (its bottom bar's Render button, Video back - as Co-op's Party), the render-cost switches D2R VR Settings has on its Render tab, named as there. All
+    // read live by the plugin; foveated rendering, the shadows once and the grass rate put their hooks in at the game's start when on then - first
+    // switched on, they work from the next start (the rows' lines say so). F4 only, as the features.
+    {L"render", L"foveated", "Foveated rendering", "Less detail at each eye's edges - saves graphics card time (first switched on: from the next start)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
+    {L"render", L"foveated_strength", "... how strong", "How much keeps every pixel, how coarse the rest is",
+     1.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageRender},
+    {L"render", L"foveated_gaze", "... following the eyes", "Eye tracking where the headset gives it to games (PS VR2, Quest Pro, Steam Frame)",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
+    {L"render", L"foveated_fullscreen", "... the heavy passes too", "Grass lighting, reflections, hair: coarse at the edges as well",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageRender},
+    {L"render", L"grass_lighting_coarse", "Grass lighting rate", "The grass lit at 2x1 or 2x2 over the whole picture (with or without foveated)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageRender},
+    {L"render", L"shadows_once_a_pair", "Shadows once a pair", "One pass: the shadow maps drawn once for both eyes (first switched on: from the next start)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
+    {L"render", L"lens_mask", "Lens mask", "Skip the pixels the lenses never show - saves graphics card time",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
+    // -- no row: the Video page's rows' other keys
+    {L"stereo", L"afr", "Stereo: by frames", "1 = native OpenXR's own stereo modes", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"stereo", L"replay_right", "Stereo: right eye replayed", "1 with both eyes a frame", 0.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"stereo", L"replay_ahead", "Stereo: replay ahead", "2 with both eyes a frame", 1.0f, 1.0f, 3.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"stereo", L"native_replay", "Stereo: one pass", "1 = the right eye drawn again from the left pass (the default)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"stereo", L"source", "Stereo: FlatVR's source", "2 the game's pair, 1 the depth, 0 none", 2.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"openxr", L"on", "Native OpenXR", "The game in the headset itself (off: FlatVR)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"sky", L"enabled", "Sky", "The sky drawn at all", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"enabled", "Distance fog", "Our effect's fog drawn at all", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    // -- no row: the Quality preset's other keys (shared/quality_presets.h), each with the plugin's own default for a missing key
+    {L"render", L"native_effects", "Our effect", "A Quality preset key ([render] native_effects)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"render", L"game_stages", "The game's render stages", "A Quality preset key ([render] game_stages)", 0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"game_outline", "The game's hover outline", "A Quality preset key ([render] game_outline)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"render", L"potato_light", "Potato light", "A Quality preset key ([render] potato_light)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"render", L"rings", "Room rings", "A Quality preset key ([render] rings)", 4.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"model_radius", "Model radius", "A Quality preset key ([render] model_radius)", 1000.0f, 150.0f, 1000.0f, 10.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"big_radius", "Big objects' radius", "A Quality preset key ([render] big_radius)", 0.0f, 0.0f, 3000.0f, 10.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"light", "Light fog", "A Quality preset key ([fog] light)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"start", "Fog start", "A Quality preset key ([fog] start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"end", "Full fog", "A Quality preset key ([fog] end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"caves", "Fog in caves", "A Quality preset key ([fog] caves)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"caves_start", "Fog start in caves", "A Quality preset key ([fog] caves_start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"caves_end", "Full fog in caves", "A Quality preset key ([fog] caves_end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"game_fog_mist", "The game's fog over its mist", "A Quality preset key ([fog] game_fog_mist)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_height", "The game's fog thinned with height", "A Quality preset key ([fog] game_fog_height)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_before_fx", "The fog before smoke and fire", "A Quality preset key ([fog] game_fog_before_fx)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_fx_depth", "The effects fogged by their depth", "A Quality preset key ([fog] game_fog_fx_depth)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_our_curve", "The game's fog by our curve", "A Quality preset key ([fog] game_fog_our_curve)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_caves_black", "The game's fog black in caves", "A Quality preset key ([fog] game_fog_caves_black)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"ceiling", L"enabled", "Cave ceiling", "A Quality preset key ([ceiling] enabled)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"ceiling", L"steps", "Cave ceiling relief", "A Quality preset key ([ceiling] steps)", 12.0f, 1.0f, 64.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"stereo", L"headset_rate", "Headset refresh rate", "A Quality preset key ([stereo] headset_rate)", 3.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kNoPage},
     // -- no row: the Video page. [render] vr_resolution_px = a square's side in pixels (0 = not used), vr_resolution = the older
     //    mode (0 the window's own size, 1 the headset's recommendation, 2..6 a square); shared/render_size.h reads the two together.
     {L"render", L"vr_resolution", "VR render size: mode", "0 window, 1 headset, 2-6 an older square",
@@ -414,7 +500,7 @@ inline constexpr Def kDefs[] = {
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
 };
 constexpr int kCount = (int)(sizeof kDefs / sizeof kDefs[0]);
-static_assert(kCount <= 128, "a change mask is 128 bits (hset::Mask)");
+static_assert(kCount <= 64 * Mask::kWords, "a change mask is 256 bits (hset::Mask)");
 constexpr Mask AllKeysMask() {
     Mask m = 0;
     for (int i = 0; i < kCount; ++i) m |= Bit(i);
@@ -441,6 +527,32 @@ constexpr int kKeySmooth = IndexOf(L"turn", L"smooth");   // the turn keys: a le
 constexpr int kKeySnap = IndexOf(L"turn", L"snap");
 constexpr int kKeyBarPlace = IndexOf(L"hud", L"bar_place");   // the toolbar type's two keys
 constexpr int kKeyHide = IndexOf(L"hud", L"hide");
+constexpr int kKeyPairPerTick = IndexOf(L"stereo", L"pair_per_tick"), kKeyAfr = IndexOf(L"stereo", L"afr"), kKeyReplayRight = IndexOf(L"stereo", L"replay_right"),
+              kKeyReplayAhead = IndexOf(L"stereo", L"replay_ahead");
+constexpr int kKeyGameSky = IndexOf(L"sky", L"game_sky"), kKeySkyOn = IndexOf(L"sky", L"enabled"), kKeyGameFog = IndexOf(L"fog", L"game_fog"),
+              kKeyFogOn = IndexOf(L"fog", L"enabled");
+constexpr int kKeyPreset = IndexOf(L"@preset", L"preset");   // the Video page's Quality preset (shared/quality_presets.h)
+constexpr bool PresetKeysIn() {   // every key a preset writes has its place here (the render type: its row's keys)
+    for (const qualitypreset::Key& k : qualitypreset::kKeys)
+        if (!qualitypreset::IsRenderType(k) && IndexOf(k.section, k.key) < 0) return false;
+    return true;
+}
+static_assert(kKeyPreset >= 0 && PresetKeysIn(), "the Quality preset's row and every key it writes are in the table");
+constexpr int kKeyNativeReplay = IndexOf(L"stereo", L"native_replay"), kKeySource = IndexOf(L"stereo", L"source"), kKeyOpenXrOn = IndexOf(L"openxr", L"on");
+// the Render page's steppers named (vr/hset_names.h)
+constexpr int kKeyFoveatedStrength = IndexOf(L"render", L"foveated_strength"), kKeyFoveatedPasses = IndexOf(L"render", L"foveated_fullscreen"),
+              kKeyGrassRate = IndexOf(L"render", L"grass_lighting_coarse");
+static_assert(kKeyFoveatedStrength >= 0 && kKeyFoveatedPasses >= 0 && kKeyGrassRate >= 0, "the Render page's steppers are in the table");
+// The rows that need variable rate shading tier 2: greyed with the reason on a card without it (video::Env::vrs 0)
+constexpr int kKeyFoveated = IndexOf(L"render", L"foveated"), kKeyFoveatedGaze = IndexOf(L"render", L"foveated_gaze");
+constexpr bool NeedsVrs(int key) {
+    return key >= 0 && (key == kKeyFoveated || key == kKeyFoveatedStrength || key == kKeyFoveatedGaze || key == kKeyFoveatedPasses || key == kKeyGrassRate);
+}
+static_assert(kKeyFoveated >= 0 && kKeyFoveatedGaze >= 0, "the foveation rows are in the table");
+static_assert(kKeyNativeReplay >= 0 && kKeySource >= 0 && kKeyOpenXrOn >= 0, "the render type's keys are in the table");
+static_assert(kKeyPairPerTick >= 0 && kKeyAfr >= 0 && kKeyReplayRight >= 0 && kKeyReplayAhead >= 0 && kKeyGameSky >= 0 && kKeySkyOn >= 0 && kKeyGameFog >= 0 &&
+                  kKeyFogOn >= 0,
+              "the Video page's rows and their keys");
 constexpr int kKeyBeltOn = IndexOf(L"hands", L"belt_models");     // the Belt page's note
 constexpr int kKeyBeltUp = IndexOf(L"hands", L"belt_models_up");
 constexpr int kKeyQuickBlow = IndexOf(L"gameplay", L"quick_blow");   // Melee > Attack's first row (0.204)
@@ -472,6 +584,7 @@ constexpr int kKeyBindFirst = IndexOf(L"direct", L"left_trigger");  // the twelv
 constexpr int kBindCount = 12;
 static_assert(kKeyDirectOn >= 0 && kKeyBindFirst >= 0, "the Keys pages' keys are in the table");
 constexpr bool IsChoice(int key) { return key >= 0 && key < kCount && kDefs[key].type == DefType::Choice; }
+constexpr bool IsDerived(int key) { return key >= 0 && key < kCount && kDefs[key].type == DefType::Derived; }   // not the ini's either (the preset)
 constexpr bool IsGame(int key) { return key >= 0 && key < kCount && kDefs[key].type == DefType::Game; }   // not the ini's: the store leaves it alone
 constexpr bool IsBindKey(int key) { return key >= kKeyBindFirst && key < kKeyBindFirst + kBindCount; }
 constexpr int BindSlot(int key) { return key - kKeyBindFirst; }   // 0 .. kBindCount - 1, the index in hset::keys::kSlots
@@ -489,7 +602,7 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
+constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
                                                "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Guide"};
 constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
                                               "World", "Co-op", "Stats", "Guide"};
@@ -529,7 +642,7 @@ constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageL
 constexpr bool FlatView(int view) { return view >= 1 && view <= 3; }
 constexpr bool F4OnlyPage(int page) {
     return page == kPageVibration || page == kPageLife || page == kPageLook || page == kPageBody || page == kPageBelt || IsMeleePage(page) || IsWorldPage(page) ||
-           page == kPageStats;   // (the strike statistics: the touch counts in F4 only)
+           page == kPageStats || page == kPageRender;   // (Render: foveated rendering, the lens mask, the shadows once - F4 only)   // (the strike statistics: the touch counts in F4 only)
 }
 constexpr bool F4OnlyKey(int key) {
     return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||

@@ -695,6 +695,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     const V3 r = right, a = ahead;
     f.camR[0] = r.x; f.camR[1] = r.y; f.camR[2] = r.z;
     f.camF[0] = a.x; f.camF[1] = a.y; f.camF[2] = a.z;
+    f.camLook[0] = fwd.x; f.camLook[1] = fwd.y; f.camLook[2] = fwd.z;   // (the view's own forward: the crosshair's pitch, [body] attack_lean / flat_aim_tilt)
     f.scrR[0] = G[0]; f.scrR[1] = G[4]; f.scrR[2] = G[8];
     f.scrU[0] = G[1]; f.scrU[1] = G[5]; f.scrU[2] = G[9];
     // The game's own projection may mirror an axis; the stick is read on

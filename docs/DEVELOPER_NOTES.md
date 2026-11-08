@@ -131,6 +131,48 @@ as that mad's first source): of the game's 10,847 shader containers exactly thos
 turns the eye made (`turn_warp`) moves the drawn eye's picture with the water's depth, so there the reflection lies on
 the surface every other frame.
 
+## Foveated rendering (`[render] foveated`)
+
+`vr/foveation.cpp`, `shared/unleashed_foveation.h` (both MPL 2.0, from D2R VR Unleashed's `steamvr/foveation.cpp` /
+`foveation_math.h` at 7c642e3). Fixed foveation by D3D12 variable rate shading, tier 2: a shading-rate image (R8_UINT, a texel a
+16-pixel tile on most cards) bound with `RSSetShadingRateImage` and the override combiner. Bear's rule decides which draws take it:
+a pixel shader, depth tested (D2R lays depth in one pass and shades the visible colour in a second, depth-tested pass that writes no
+depth - both count), no blending, one sample, into a full-size colour + depth pair of the eye picture's aspect. Everything else
+(interface, labels, transparency, effects, shadows, our passes, `ExecuteIndirect`) stays whole.
+
+The plugin's own hooks (`vr/native_d3d12.h`, the `vrs*` sinks) follow each game list: the pipeline bound (classified when made, from a
+description or a stream), its targets, its first viewport, Reset; the binding is decided at the next draw (Bear's deferred Apply).
+The hooks go in only when the key is on at the game's start; it is switched live after that.
+
+Each eye its own centre in every stereo mode: one *live* image is bound in the lists; `foveation::BeginEye(eye)` (frame_order.cpp,
+next to `SetEye`) copies that eye's mask into it on the game's queue before the pass is submitted - so the replay of the left
+eye's lists as the right eye would take the right mask too. A new image (another scene size, viewport, strength or fov) is made
+only before a left eye. The masks: `xr::PairLens` gives each eye's frustum as drawn, its straight-ahead in it (canted displays) and
+the part the headset shows; the ellipse is measured in that shown part (with `symmetric_fov` / `runtime_fov` we draw wider than the
+runtime's view, Unleashed draws exactly it), and `foveated_unseen` shades the never-shown part at the coarsest rate.
+
+Eye tracking (`[render] foveated_gaze`, on with the tick): where the runtime offers `XR_EXT_eye_gaze_interaction` and the system says it
+has an eye tracker, xr.cpp enables it at the session start, binds a pose action to `/user/eyes_ext/input/gaze_ext/pose` and locates it
+each frame (tracked, timed, at most 100 ms old - Bear's rule); `PairLens` turns the gaze into each eye's drawn frame. The image is then
+made with Bear's bank too: each eye's 9 x 9 gaze centres (gaze radius plus his grid margin; about 26 ms once at 2160 x 2160), and each
+eye's pass copies the cell under its gaze - whole on the pass after the gaze came back or jumped more than 0.12 of the picture, the
+lens centre while no tracked gaze comes. PS VR2 gives the gaze on SteamVR through PSVR2 Toolkit's driver (`/eyetracking`) with SteamVR's
+"Share eye tracking data" on. The runtime's own foveation (`XR_FB_foveation` and kin) is Vulkan only; quad views would mean two more
+game passes a frame - neither is used. The log lists every extension the runtime offers, the foveation ones, the path taken, the first
+tracked sample and every 10 s how many samples were usable (never a gaze position).
+
+The heavy full-screen passes (`[render] foveated_fullscreen`, `grass_lighting_coarse`; `docs/notes/foveated_fullscreen.md`): the grass
+lighting (no depth test), the reflections and the hair are known by their pixel shader (`vr/fullscreen_passes.h`, size then uitrace's
+FNV-1a 64) and take the rate image too; the grass lighting may also get a base rate (2x1 / 2x2, the MAX combiner with the image). The game
+has one grass-lighting shader: no lighter variant exists for an option to pick. The 10 s line says how many of those passes' pixels were
+shaded coarse.
+
+Tests: `unleashed_foveation_test` (Bear's tile rule against ours over 6 million tiles, lens centres per fov, the unseen part,
+eligibility, the coarse share per strength), `foveation_native_test` (end to end on a VRS tier 2 device: the picture read back is
+shaded 2x2 at the edges, whole round each lens centre, mirrored between the eyes; no D3D12 debug layer error). Proving a gain:
+`[render] foveated_ab=N` switches it on and off every N seconds and logs each window's eye passes a second - frames/s, not our GPU
+timestamps (they under-read). A CPU-bound PC shows no gain: VRS saves pixel shading only.
+
 ## The game's image
 
 - **All addresses are for the image D2RLoader rebuilds** (base 0x140000000),

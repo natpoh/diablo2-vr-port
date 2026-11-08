@@ -173,6 +173,13 @@ std::mutex g_lock;
 // mapRun: the map's scissor is the last one bound - the map is being drawn ([hud] map_direction: its arrow when it is done).
 struct Drawing { resource_view layer{}; bool inMap = false; uint32_t w = 0, h = 0; float vx = 0.0f, vy = 0.0f, vw = 0.0f, vh = 0.0f; bool mapRun = false; };
 std::unordered_map<command_list*, Drawing> g_drawing;
+// g_drawing's size, written under g_lock after each change and read without it: while no list has the interface's layer bound (all of the
+// game's recording but the interface's own few lists) the scissor, viewport, bind and reset sinks return before taking g_lock (docs/notes/
+// vr_cpu_overhead.md - every recording thread took this mutex on every one of those calls). A list's entry is made and erased on the thread
+// that records it, so its own calls always see it.
+std::atomic<int> g_drawingN{0};
+bool NoneDrawing() { return g_drawingN.load(std::memory_order_acquire) == 0; }
+void DrawingChanged() { g_drawingN.store((int)g_drawing.size(), std::memory_order_release); }   // (under g_lock)
 
 // [hud] map_direction (vr/map_direction.h): an arrow beside the hero's marker in the middle of the game's map, the way our camera looks.
 // Painted with clears on the target the map went to, once its draws are done (its scissor left): in the picture, and in our map target
@@ -846,7 +853,7 @@ bool OnClear(command_list* cl, resource_view rtv, const float c[4], uint32_t, co
 // On the interface's list: the map's scissor sends the draws to our target, any other back to the layer.
 void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
     const bool redirect = g_frameMap.load() == 1;   // else only seen: the labels keep the map flat, [hud] map_direction's arrow goes on it
-    if (count == 0 || (!redirect && !g_labels.load() && !g_dirWant.load())) return;
+    if (count == 0 || (!redirect && !g_labels.load() && !g_dirWant.load()) || NoneDrawing()) return;
     std::lock_guard<std::mutex> g(g_lock);
     auto it = g_drawing.find(cl);
     if (it == g_drawing.end()) return;
@@ -881,7 +888,7 @@ void OnScissor(command_list* cl, uint32_t, uint32_t count, const rect* rects) {
 // On the interface's list: the largest viewport it is drawn through - the canvas the map's box is
 // looked for in (vr/minimap_box.h CanvasOf: a viewport that is a piece of the layer is not it).
 void OnViewports(command_list* cl, uint32_t first, uint32_t count, const viewport* vps) {
-    if (first != 0 || count == 0 || !vps || !g_layer.load() || (g_frameMap.load() != 1 && !g_labels.load() && !g_dirWant.load())) return;
+    if (first != 0 || count == 0 || !vps || !g_layer.load() || (g_frameMap.load() != 1 && !g_labels.load() && !g_dirWant.load()) || NoneDrawing()) return;
     std::lock_guard<std::mutex> g(g_lock);
     auto it = g_drawing.find(cl);
     if (it == g_drawing.end()) return;
@@ -897,6 +904,7 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
     resource_view now{};
     for (uint32_t i = 0; i < count; ++i)
         if (rtvs[i].handle && dev->get_resource_from_view(rtvs[i]).handle == layer) now = rtvs[i];
+    if (!now.handle && NoneDrawing()) return;   // (not the layer, and no list has it: nothing below would run)
     std::lock_guard<std::mutex> g(g_lock);
     auto it = g_drawing.find(cl);
     if (it != g_drawing.end() && it->second.layer.handle != now.handle) {
@@ -997,14 +1005,17 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
         const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(now));
         g_drawing[cl] = Drawing{now, false, d.texture.width, d.texture.height};
     }
+    DrawingChanged();
 }
 
 // Reset, and made or let go (2026-10-13): a list let go while it had the interface bound left
 // its entry, and a new list at the same address - D3D12 makes one recording, with no reset -
 // took it for its own: the layer's old view published, cleared, sent to the map.
 void OnReset(command_list* cl) {
+    if (NoneDrawing()) return;
     std::lock_guard<std::mutex> g(g_lock);
     g_drawing.erase(cl);
+    DrawingChanged();
 }
 
 }  // namespace

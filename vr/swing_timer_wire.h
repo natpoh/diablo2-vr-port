@@ -24,9 +24,19 @@ constexpr int kPicW = swingtimerpaint::kW, kPicH = swingtimerpaint::kH;
 constexpr float kDistM = 1.2f;
 constexpr float kRingQuadM = 0.19f;   // the quad's width (the ring is 172 of its 384 pixels)
 constexpr float kBarQuadM = 0.24f;
-constexpr float kBarUpM = 0.28f;      // (1.2 m x tan 13 degrees)
-// On the monitor: the ring's quad this share of the screen's height high, in the middle; the bar's this share of its width, at the top.
-constexpr float kMonRingH = 0.12f, kMonBarW = 0.32f, kMonBarTop = 0.03f;
+constexpr float kBarUpM = 0.34f;      // (1.2 m x tan 16 degrees; 13 until 2026-11-07, Serg: higher)
+// On the monitor: the ring's quad this share of the screen's height high, in the middle; the bar's this share of its width, its line this share of
+// the screen's height down from the top (0.285 at 16:9 until 2026-11-07, Serg: higher; the number's last risen, faded steps may go past the top).
+constexpr float kMonRingH = 0.12f, kMonBarW = 0.32f, kMonBarY = 0.19f;
+// The bar as thick as the ring's band looks (Serg 2026-11-07), in the bar picture's pixels: the band's pixels times the ring picture's scale over the bar's.
+// The headset: both quads' widths are the same 384 pixels. The monitor: the ring's picture is kMonRingH of the screen's height for its kPicH pixels,
+// the bar's kMonBarW of its width - by the screen's aspect (width / height) that much of its height.
+inline float BarPxHeadset() { return swingtimerpaint::kRingWidthPx * kRingQuadM / kBarQuadM; }
+inline float BarPxMonitor(float aspect) {
+    if (!(aspect > 0.0f)) return 0.0f;
+    const float barH = kMonBarW * aspect * (float)kPicH / (float)kPicW;   // the bar picture's height, a share of the screen's height
+    return swingtimerpaint::kRingWidthPx * kMonRingH / barH;
+}
 
 // Once, from the plugin's start: the headset's frame listener, the log.
 void Init(const D2RL::PluginContext* ctx);

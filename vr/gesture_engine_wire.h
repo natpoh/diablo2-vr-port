@@ -29,6 +29,22 @@ bool Missing();
 // The headset frame's thread (the skill panel's frame) - the engine's list made the tab's (answers stamped), and a command done at once: its number.
 bool List(BW_LinkGestures* out);
 uint32_t Push(const gesturecmd::Cmd& c);
+// A pose's zone from the engine (its optional calls; false / BW_LINK_GR_BAD without them). The same thread.
+bool PoseZone(uint32_t gesture, BWGE_PoseZone* out);
+int SetPoseZone(uint32_t gesture, float radiusM);
+// A take's samples from the engine (its optional BWGE_GetTake): how many; 0 none.
+int Take(uint32_t gesture, BWGE_TakeSample* out, int max);
+// Game actions (vr/gesture_actions.h) through the engine's optional calls: whether it has them, bind one ("" none), read one ("" a skill / none).
+bool HasActions();
+int BindAction(uint32_t gesture, const char* action);
+bool ActionOf(uint32_t gesture, char* out, uint32_t cap);
+// A glyph's hand through the engine's optional call (LEFT / RIGHT / BOTH = either).
+bool HasSetHand();
+int SetHand(uint32_t gesture, uint8_t hand);
+// A gesture's mode through the engine's optional calls (0 cast once, 1 select: the skill goes onto the right trigger).
+bool HasModes();
+int SetMode(uint32_t gesture, uint8_t mode);
+uint8_t ModeOf(uint32_t gesture);
 
 // The trail to draw (the last frame's copy). Any thread.
 uint32_t Trail(BW_LinkVrRune* out, uint32_t max);

@@ -257,6 +257,8 @@ public:
 	// the stowed shaft (Back, Recall); 1e9 when there is none. The belt potions ask this (vr/grab_priority.h): a hand in a weapon's zone takes the weapon, not a potion.
 	enum class TakeAt : uint8_t { Nowhere, Shaft, Back, Recall };
 	TakeAt TakeZone(int hand, const HandIn& in, const Settings& s, double* metres) const;
+	// [debug] grip_trace / grip_draw: where `hand`'s fist is against the shaft, by TakeZone's own measure - metres along it from the butt (the pommel; not clamped) and metres off it. False when not placed.
+	bool Probe(int hand, const HandIn& in, const Settings& s, double* alongFromButt, double* offShaft) const;
 	// Where along the shaft (metres, the line's measure) the hilt of a sword, a dagger, a scepter, an axe or a mace ends - the furthest a SECOND hand's grip takes it, less hiltMargin - when
 	// Settings::hiltOnly is on; the tip for every other kind and with hiltOnly off.
 	double HiltEnd(const Settings& s) const;

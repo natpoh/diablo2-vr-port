@@ -3,6 +3,7 @@
 // Run: swing_timer_paint_test.exe [--dump <prefix>] (the pictures on black as <prefix>_ring.bmp, <prefix>_bar.bmp, to look at).
 
 #include "../../vr/swing_timer_paint.h"
+#include "../../vr/swing_timer_wire.h"   // BarPxMonitor / BarPxHeadset: the bar as thick as the ring looks
 
 #include <cstdio>
 #include <cstring>
@@ -95,6 +96,21 @@ int main(int argc, char** argv) {
     Expect(!Greenish(right) && (right & 255) < 60 && (right >> 24) > 60, "its right half: the dark track", right);
     Expect(Bright(px, 0, 60, kW, kH - 30) > 150, "the number over the bar");
     if (argc > 2 && std::strcmp(argv[1], "--dump") == 0) WriteBmp(std::string(argv[2]) + "_bar.bmp", px);
+    // as thick as the ring's band where it is shown (barThick10): 5 px about its line kH - 20, nothing a few pixels further
+    {
+        Look thin = bar;
+        thin.textAlpha = 0;
+        thin.barThick10 = 50;
+        swingtimerpaint::Render(thin, px);
+        const uint32_t on = At(px, 40, kH - 20), above = At(px, 40, kH - 25), below = At(px, 40, kH - 15);
+        Expect((on & 255) > 180 && (above >> 24) < 20 && (below >> 24) < 20, "a 5 px bar: amber on its line, clear 5 px above and below", above);
+        thin.barThick10 = 0;
+        swingtimerpaint::Render(thin, px);
+        Expect((At(px, 40, kH - 26) & 255) > 180, "no thickness said: the old 16 px bar");
+        Expect(swingtimer::BarPxMonitor(16.0f / 9.0f) > 4.0f && swingtimer::BarPxMonitor(16.0f / 9.0f) < 5.5f && swingtimer::BarPxMonitor(0.0f) == 0.0f,
+               "the monitor at 16:9: the ring's 11 px band is ~4.6 of the bar picture's pixels");
+        Expect(swingtimer::BarPxHeadset() > 8.0f && swingtimer::BarPxHeadset() < 9.5f, "the headset: ~8.7 (the ring's quad 0.19 m, the bar's 0.24 m)");
+    }
     bar.rise = kRiseSteps;
     swingtimerpaint::Render(bar, px);
     Expect(Bright(px, 0, 0, kW, 70) > 150 && Bright(px, 0, 100, kW, kH - 30) < 20, "risen: at the top");

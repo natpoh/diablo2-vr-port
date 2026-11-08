@@ -277,6 +277,56 @@ uintptr_t VrHandTarget(vrbody::Ask ask) {
     return unit;
 }
 
+// [input] flat_body_target (vr/vr_body_pick.h): flat, what the crosshair's ray meets first answers the map click's own target lookup - the unit
+// itself, as F4's hand answers the controller's (VrHandTarget), not flat_body_pick's cell, which left the choice to the game's hover boxes made for
+// its view from above (up close: none found, the swing went at the floor behind the monster). The ray: the game's mouse pixel through our camera
+// (d2rcam's last pick, ours and fresh; else the crosshair, the viewport's middle), against the bodies and objects round the hero (FlatBodyScan),
+// before the hero's floor as drawn. One pick every 30 ms at most (the click and its lookup ask in the same moment).
+uintptr_t FlatClickTarget(uintptr_t game) {
+    vrbody::FlatAsk a;
+    a.flat = g_set.platform.load() == 0;
+    a.key = g_set.flatBodyTarget.load() && g_set.flatBodyPick.load();
+    a.on = g_enabled.load() && g_inWorld.load();
+    a.menu = a.flat && a.key && gamestate::MenuOpen();
+    if (!vrbody::FlatWanted(a)) return 0;
+    struct Last { ULONGLONG at = 0; bool met = false; flatbody::Cap cap; int n = 0; };
+    static Last last;   // the game's thread (its map click)
+    const ULONGLONG now = GetTickCount64();
+    if (now - last.at >= 30) {
+        last.at = now;
+        last.met = false;
+        d2rcam::LastPickInfo li{};
+        const bool pickOk = d2rcam::LastPick(&li);
+        float px[2], o[3], d[3];
+        if (vrbody::FlatPixel(pickOk, li.by, pickOk ? now - li.at : ~0ull, li.px, li.py, li.vpW, li.vpH, ShooterActive(), px) &&
+            d2rcam::PickRay(px[0], px[1], o, d)) {
+            AcquireSRWLockExclusive(&g_flatBodiesLock);
+            FlatBodyScan();
+            const int i = vrbody::ClickMet(g_flatBodies.c, g_flatBodies.n, o, d, g_flatBodies.floorY);
+            if (i >= 0) { last.cap = g_flatBodies.c[i]; last.met = true; }
+            last.n = g_flatBodies.n;
+            ReleaseSRWLockExclusive(&g_flatBodiesLock);
+        }
+    }
+    if (!last.met) return 0;
+    const flatbody::Cap& c = last.cap;
+    uint32_t gameType = ~0u;
+    const bool gameIsItem = game && SafeRead(&gameType, (const void*)game, sizeof gameType) && gameType == 4;
+    const int verdict = c.body && !c.npc ? meleetouch::Hostile(c.id) : -1;
+    if (!vrbody::ClickAnswers(c, verdict, gameIsItem)) return 0;
+    const uintptr_t unit = c.body ? meleetouch::MonsterUnit(c.id) : meleetouch::ObjectUnit(c.id);   // (gone since: none - the game's own answer)
+    static ULONGLONG told = 0;
+    if (unit && now - told > 3000) {
+        told = now;
+        uint32_t gameHead[3] = {};
+        const bool gameRead = game && SafeRead(gameHead, (const void*)game, sizeof gameHead);
+        LogF("vrcam: flat: the click goes to the %s the crosshair's ray meets (class %u, id %u; the game's own hover: %s; [input] flat_body_target; %d bodies and objects round the hero)",
+             c.body ? (c.npc ? "NPC" : "monster") : "object", c.cls, c.id,
+             !game ? "none" : !gameRead ? "?" : gameHead[0] == (c.body ? 1u : 2u) && gameHead[2] == c.id ? "the same" : "another unit", last.n);
+    }
+    return unit;
+}
+
 // [input] point_pickup (vr/unleashed_loot_aim.h, MPL 2.0, D2R VR Unleashed's loot pick): F4, the dropped item the aiming hand points at (HandRay, the arm
 // held out from the head) is the one interact takes - the game's own interact lookups are answered with it (InteractTarget and the Interact skill's
 // target), then the game's own pick-up: its walk up, its checks, its command. The items on the floor round the hero: the client's unit hash, type 4, on
@@ -437,6 +487,24 @@ uintptr_t PointPickupAnswer(uintptr_t game) {
     return la::Answer(game, gameIsItem, pick, inReach);
 }
 
+// [body] flat_aim_tilt_target (vr/aim_tilt.h): the point where the crosshair's ray went into a monster's body, and when - written by the mouse's point
+// (the game's thread), read by PushArms (the update thread).
+std::atomic<float> g_aimBodyW[3];
+std::atomic<ULONGLONG> g_aimBodyAt{0};
+void NoteFlatAimBody(const float o[3], const float d[3], float t) {
+    const float p[3] = {o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t};
+    if (!std::isfinite(p[0] + p[1] + p[2])) return;
+    for (int i = 0; i < 3; ++i) g_aimBodyW[i].store(p[i], std::memory_order_relaxed);
+    g_aimBodyAt.store(GetTickCount64(), std::memory_order_release);
+}
+bool FlatAimBody(float world[3], ULONGLONG maxAgeMs, int* ageMs) {
+    const ULONGLONG at = g_aimBodyAt.load(std::memory_order_acquire), now = GetTickCount64();
+    if (ageMs) *ageMs = at ? (int)std::min<ULONGLONG>(now - std::min(now, at), 999999) : -1;
+    if (!at || now - std::min(now, at) > maxAgeMs) return false;
+    for (int i = 0; i < 3; ++i) world[i] = g_aimBodyW[i].load(std::memory_order_relaxed);
+    return true;
+}
+
 bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool gameOk = OrigMouseGround(mgr, x, y, pixel);
     if (g_portalForce.load(std::memory_order_acquire) && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
@@ -467,6 +535,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
             if (BodyCell(o, d, tFloor, &hit, &c, &n)) {
                 *x = hit.cellX;
                 *y = hit.cellZ;
+                if (c.body && !c.npc) NoteFlatAimBody(o, d, hit.t);   // [body] flat_aim_tilt_target: the swing's arms come to this point
                 static bool told = false;
                 if (!told) {
                     told = true;
@@ -676,6 +745,9 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
         if (bareKnown < 0) {
             const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
             bareKnown = idx >= 0 && idx < 8 && !((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) ? 1 : 0;
+            // [input] flat_body_target: the click's own lookup will be answered with what the crosshair's ray meets - not bare then, no shot at the floor
+            // (only while that answer can be given: the lookup's hook in, its return address known)
+            if (bareKnown == 1 && ClickLookupHooked() && FlatClickTarget(0)) bareKnown = 0;
         }
         return bareKnown == 1;
     };

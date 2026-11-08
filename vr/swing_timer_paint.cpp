@@ -103,8 +103,8 @@ void Render(const Look& k, std::vector<uint32_t>& px) {
     const bool reason = swingtimer::IsReason(k.text);
     const int size = k.crit ? 54 : k.text == Kind::Damage ? 44 : reason ? 32 : 36;
     if (k.style == swingtimer::Style::Ring) {
-        const float cx = kW * 0.5f, cy = kH * 0.5f, outer = 86.0f;
-        if (k.timer) Ring(cv, cx, cy, outer, 11.0f, fill, ZoneCol(k.zone), timerA);
+        const float cx = kW * 0.5f, cy = kH * 0.5f, outer = kRingOuterPx;
+        if (k.timer) Ring(cv, cx, cy, outer, kRingWidthPx, fill, ZoneCol(k.zone), timerA);
         if (k.textAlpha > 0 && !words.empty()) {
             const bool many = k.text == Kind::Damage && k.count > 1;
             const float lift = many || !under.empty() ? 12.0f : 0.0f;
@@ -113,11 +113,13 @@ void Render(const Look& k, std::vector<uint32_t>& px) {
             else if (!under.empty()) Outlined(cv, fonts, under, {cx - 64.0f, cy + 20.0f, cx + 64.0f, cy + 50.0f}, 24, {214, 212, 204}, textA);
         }
     } else {
-        const float l = 24.0f, r = kW - 24.0f, t = kH - 28.0f, b = kH - 12.0f;
+        // as thick as the ring's band where it is shown (Serg 2026-11-07: "той же толщины что у кружка в центре"), about its middle line
+        const float th = k.barThick10 > 0 ? std::clamp(k.barThick10 / 10.0f, 2.0f, kBarMaxPx) : kBarDefaultPx;
+        const float l = 24.0f, r = kW - 24.0f, t = kBarMidPx - 0.5f * th, b = kBarMidPx + 0.5f * th, round = 0.5f * th;
         if (k.timer) {
-            RoundRect(cv, {l, t, r, b}, 8.0f, {18, 18, 22}, 0.55f * timerA, {0, 0, 0}, 0.0f, 0.0f);
+            RoundRect(cv, {l, t, r, b}, round, {18, 18, 22}, 0.55f * timerA, {0, 0, 0}, 0.0f, 0.0f);
             const float w = (r - l) * fill;
-            if (w >= 1.0f) RoundRect(cv, {l, t, l + w, b}, std::min(8.0f, 0.5f * w), ZoneCol(k.zone), timerA, {0, 0, 0}, 0.0f, 0.0f);
+            if (w >= 1.0f) RoundRect(cv, {l, t, l + w, b}, std::min(round, 0.5f * w), ZoneCol(k.zone), timerA, {0, 0, 0}, 0.0f, 0.0f);
         }
         if (k.textAlpha > 0 && !words.empty()) {
             if (k.text == Kind::Damage && k.count > 1) words += " \xC3\x97" + std::to_string(k.count);

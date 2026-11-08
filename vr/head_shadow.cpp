@@ -332,6 +332,8 @@ uintptr_t OthersPose(uintptr_t pose) {
 }
 
 std::atomic<void (*)(uint32_t, bool)> g_beforeDraw{nullptr};   // [weight] knock_down (SetBeforeDraw)
+std::atomic<ShadowFilterFn> g_shadowFilter{nullptr};            // [render] sun_shadow_radius_m / sun_shadow_every (SetShadowFilter)
+std::atomic<bool> g_filterWanted{false};                        // ... the hooks put in for it ([arms] head_shadow off too)
 
 // [weight] monster_ragdoll_pose: the turned monsters' poses (DollSkinFn), this thread's copy - made afresh for each skinning (a frame is a few of them)
 std::atomic<bool> g_dollWanted{false};
@@ -408,6 +410,10 @@ __declspec(noinline) uintptr_t HookDraw(uintptr_t a1, uintptr_t a2, uintptr_t a3
                                         uintptr_t a9, uintptr_t a10, uintptr_t a11) {
     const int pass = (int)(uint32_t)a11;
     if (const auto before = g_beforeDraw.load(std::memory_order_relaxed)) before((uint32_t)entity, EyesPass(pass));   // [weight] knock_down: its bounds, last
+    if (pass == kPassShadow) {   // [render] sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): a model left out of the sun's map
+        if (const ShadowFilterFn filter = g_shadowFilter.load(std::memory_order_relaxed); filter && filter((uint32_t)entity, a5, a8, a9))
+            return 0;   // as the game's own early return for a model faded to nothing: no draw call made for this pass
+    }
     if (EyesPass(pass) && g_poseView.load(std::memory_order_relaxed) && g_marked.Live() != 0 && g_cur.load(std::memory_order_relaxed) &&
         g_marked.Has((uint32_t)entity, GetTickCount64())) {
         g_skips.fetch_add(1, std::memory_order_relaxed);
@@ -515,6 +521,11 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
 }
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes)) { g_beforeDraw.store(fn); }
+void SetShadowFilter(ShadowFilterFn fn) {
+    g_shadowFilter.store(fn);
+    if (fn && !g_filterWanted.exchange(true))
+        Log("head shadow: the model draw collector is asked for by the sun's shadow map ([render] sun_shadow_radius_m / sun_shadow_every)");
+}
 
 void WantForOthers(bool on) {
     if (g_othersWanted.exchange(on) != on && on)
@@ -617,7 +628,9 @@ void Install() {
         }
         potionhide::Install();
     }
-    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load()) || g_state.load() != 0 || !g_ctx || now < retryAt) return;
+    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load() || g_filterWanted.load()) || g_state.load() != 0 || !g_ctx ||
+        now < retryAt)
+        return;
     retryAt = now + (tries < 30 ? 2000 : 30000);
     if (!d2rsig::Addr(RVA_DRAW_COLLECT) || !d2rsig::Addr(RVA_COMPOSITE) || !d2rsig::Addr(RVA_ATTACHMENT_OF) || !d2rsig::Addr(RVA_ECS_REGISTRY)) {
         if (++tries == 30) Log("head shadow: the renderer's functions are not found (another build?) - the head is shrunk in the pose as before");

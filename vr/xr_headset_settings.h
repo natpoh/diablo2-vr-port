@@ -41,6 +41,8 @@ hset::video::Env HsEnv() {
     e.now = size(g_outputSize.load());
     e.recommended = size(g_vrRecommended.load());
     e.maximum = size(g_vrMaximum.load());
+    e.replayAtStart = g_replayAtStart.load();   // ([stereo] native_replay's hooks at the start: the render type row's "after a restart")
+    e.vrs = ::foveation::VrsTier2();   // (the Render page's foveation rows greyed on a card without it)
     return e;
 }
 
@@ -78,18 +80,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
         partycmd::Watch();
         f.party = partycmd::Now();
     }   // the Options page's Players row: the game's count (read, cheap)
-    if (on && g_hs.model.open && g_hs.model.page == hset::kPageVideo) {   // [autotune]: the Auto run's words, made again only when the run moved on
-        static hset::AutoTune made;
-        static uint64_t madeRev = 0;
-        static bool madeOn = false;
-        const bool enabled = autotunerun::Enabled();
-        if (autotunerun::Revision() != madeRev || enabled != madeOn) {
-            made = autotunetext::Make(autotunerun::Now(), enabled);
-            madeRev = made.revision;
-            madeOn = enabled;
-        }
-        f.autoTune = made;
-    }
+    if (on && g_hs.model.open && g_hs.model.page == hset::kPageVideo) f.autoTune = autotunetext::Current();   // [autotune]: the Auto run's words
     bool grips = true;
     for (int h = 0; h < 2; ++h) {
         const D2RVR_XrHand& o = in.hand[h];

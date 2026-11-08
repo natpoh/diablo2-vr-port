@@ -31,6 +31,9 @@ struct Input {
     // (as legsUnder), the arms, hands and what they hold keeping the game's animation on that still chest: a swing no longer takes the torso out
     // from under the camera. Drawn bones only.
     bool holdTrunk = false;
+    // [body] flat_hold_trunk_twist (with holdTrunk): the arms and what they hold turned by the animation's own turn of the chest about the vertical, which
+    // the held chest drops - a side swing (the barbarian's attack 2) crosses in front of the camera again, not out past it. Drawn bones only.
+    bool holdTrunkTwist = false;
     // [body] attack_lean (flat F2 / F3, VR F2; vr/attack_lean.h): while the hero's attack mode plays, the spine from spine_01 up to the chest bends
     // toward where the crosshair looks - the point its ray meets (the floor, or the hero's reach about his chest) seen from the chest - so the swing
     // comes down onto a small monster or up at a tall one; at most attackLeanMaxDeg, eased in and out. Drawn bones only (handed to the skinning).
@@ -40,6 +43,19 @@ struct Input {
     bool leanRayOk = false;       // the crosshair's ray in the hero's model space (the camera's eye and forward), whether or not the body turns with the look
     float leanEye[3] = {};
     float leanFwd[3] = {};
+    // [body] flat_aim_tilt (flat F3; vr/aim_tilt.h): the arms and what they hold turn about the shoulders' line with the crosshair's pitch (aimFwd, the
+    // camera's forward in the hero's model), aimTiltPct of it, at most aimTiltMaxDeg either way; with aimTiltTarget, while the attack plays, eased toward
+    // the elevation of aimBody - where the crosshair's ray went into a monster's body ([input] flat_body_pick; model space, aimBodyOk when fresh). Instead
+    // of attack_lean in F3 (vrcam leaves attackLean off there while this is on). Drawn bones only (handed to the skinning).
+    bool aimTilt = false;
+    bool aimFwdOk = false;
+    float aimFwd[3] = {};
+    float aimTiltPct = 100.0f;
+    float aimTiltMaxDeg = 60.0f;
+    bool aimTiltTarget = false;
+    bool aimBodyOk = false;
+    float aimBody[3] = {};
+    int aimBodyAgeMs = -1;        // (its log) how long ago the crosshair's ray last went into a monster's body, -1 never
     // [body] walk_back: turned whole with the look (bodyTurn 2, no gaitLegs) and walking the other way, the game's own walk mirrored front to back - the legs step
     // backward (legik::MirrorAlong, the knees solved again), not forward while he goes back (the 2026-10-27 crossed legs). Visual only.
     bool walkBack = false;
@@ -500,6 +516,33 @@ bool HeroPalm(int side, float palm[3]);
 // [weight] grip_fit, for the debug (vrcam's [debug] phantom_ray): where a fitted hand takes the shaft - the grasp point on its axis - and where its palm's middle really is
 // (after the fit and the arm's reach), both from the eye in the head's turn-only frame, metres (as GrabLine). False when that hand was not fitted in the last 300 ms.
 bool GripMarks(int side, float grasp[3], float palm[3]);
+// [debug] grip_draw: both weapon attach bones (their origins and unit axes) and both hands (the palm's middle and the wrist's unit axes) as the finished pose has them, in GripMarks'
+// frame (the head's turn-only frame, metres from the eye). False when stale (> 300 ms) or the key is off.
+struct GripDraw {
+    float attach[2][3] = {}, attachAxes[2][3][3] = {};
+    bool attachShown[2] = {false, false};   // the game shows that bone (a shrunk one hangs nothing)
+    float hand[2][3] = {}, handAxes[2][3][3] = {};
+    int drawnBone = 0;                      // the bone the game draws the weapon on (0 R_weapon_attach, 1 L_)
+    unsigned long long at = 0;
+};
+bool GripDrawNow(GripDraw* out);
+// [debug] grip_trace (and the grip table test): who holds the weapon against what the pose did with it, the last pose (sides: 0 right, 1 left)
+struct GripState {
+    bool on = false;
+    int slot = 0;            // the weapon's slot (the weight model's, else the game's)
+    bool holdsR = false, holdsL = false;
+    int main = 0, holder = 0;   // the hand that has held it longest; the one measured (the only one, else main)
+    bool carried = false;    // [hands] left_slot_drawn_left carried the drawn bone onto the left slot's pose
+    int drawnBone = 0;       // the attach bone the game draws it on
+    int gripFrom = 0;        // the slot's bone's grip: 0 none, 1 the game's animation, 2 the game's right-hand grip mirrored (left_slot_drawn_left)
+    int poseHand = 0;        // the hand the fingers' grip pose is read off
+    int bladeBone = 0;       // the attach bone the touch's blade is read off
+    int weaponType = 0;
+    float offGripDeg = 0.0f, offGripCm = 0.0f;   // the weapon bone against the holding wrist, from the game's grip of that hand
+    bool drawnNear = false, bladeNear = false;   // the drawn bone / the blade's bone nearer the holding hand than the other
+    unsigned long long at = 0;
+};
+GripState GripStateNow();
 // [bow] aim_distance_by_arm (vr/arm_reach.h): where each shoulder of the drawn hero stands, and how far it is from there to the controller's grip - the arm as drawn, which is the
 // player's own: its bones are fitted to the measured T-pose span ([calibration]), else to the height. `shoulder`: metres from the eye in the head's turn-only frame (x right, y up, z
 // back) - the hands' frame, so a hand's position minus it is the arm. `lengthM`: the shoulder to the grip, straight, metres. side 0 right, 1 left. False when the arms have not been

@@ -16,7 +16,7 @@ namespace {
 struct Forced { const wchar_t* sec; const wchar_t* key; float value; };
 constexpr Forced kBench[] = {
     {L"fog", L"enabled", 0}, {L"fog", L"game_fog", 0}, {L"fog", L"game_fog_height", 0}, {L"fog", L"game_fog_mist", 0},
-    {L"fog", L"game_fog_our_curve", 0}, {L"fog", L"game_fog_before_fx", 0}, {L"fog", L"game_fog_fx_depth", 0}, {L"fog", L"game_fog_match", 0},
+    {L"fog", L"game_fog_our_curve", 0}, {L"fog", L"game_fog_before_fx", 0}, {L"fog", L"game_fog_fx_depth", 0},
     {L"sky", L"enabled", 0}, {L"sky", L"game_sky", 0}, {L"sky", L"dome_true_colour", 0}, {L"sky", L"dome_in_game_colour", 0},
     {L"sky", L"dome_gain_once", 0}, {L"sky", L"dome_fog_horizon", 0}, {L"sky", L"game_dome_caves", 0}, {L"sky", L"arcane_sky", 0},
     {L"sky", L"dome_tint", 0}, {L"fog", L"fog_colour_measured", 0},

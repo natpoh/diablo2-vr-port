@@ -42,6 +42,10 @@ bool VrKeyWalk();
 void InstallKeyMoveHook();
 void InstallStickHook();
 
+// vr/input/flat_click.cpp: [body] flat_aim_tilt_target - where the crosshair's ray last went into a monster's body ([input] flat_body_pick; the render world,
+// the point on the ray), when that was at most maxAgeMs ago; *ageMs (may be null): how long ago it was, -1 never
+bool FlatAimBody(float world[3], ULONGLONG maxAgeMs, int* ageMs);
+
 // vr/input/pad.cpp: the stick turned onto the game's screen, BodyWalk's pad mirror, the flat raw controls, XInput's detours, the input log
 void InputLogF(const char* fmt, ...);
 void HookXInput();
@@ -116,6 +120,11 @@ void InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_b
 // [input] vr_body_pick_hand (vr/vr_body_pick.h): F4, the unit the aiming hand points at that answers the controller's lookup `ask`, 0 none (the game's
 // answer stays). The game's UI thread, inside its lookups.
 uintptr_t VrHandTarget(vrbody::Ask ask);
+// [input] flat_body_target (vr/vr_body_pick.h): flat, the unit the crosshair's ray (the game's mouse pixel through our camera) meets first that
+// answers the map click's target lookup, 0 none (the game's answer stays). game: the game's own answer (an item there keeps it). The game's thread.
+uintptr_t FlatClickTarget(uintptr_t game);
+// vr/input/spell_aim.cpp: the map click's target lookup is hooked (HoverUnit / the spell target, its return address known) - its answer can be ours.
+bool ClickLookupHooked();
 // [input] point_pickup (vr/unleashed_loot_aim.h): F4, the controller's interact answered with the item on the floor the aiming hand points at.
 // game: the game's own answer; returns what the lookup gets (the game's own when no item is pointed at). The game's UI thread, inside its lookups.
 uintptr_t PointPickupAnswer(uintptr_t game);

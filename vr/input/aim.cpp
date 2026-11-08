@@ -1,5 +1,6 @@
 // vr/input/aim.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M10); what it gives: vr/input/input.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../trigger_roles_wire.h"   // a glyph trigger's aim: the cast goes along that hand
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -59,6 +60,9 @@ int RangedHomeHand() { return g_set.rangedLeft.load() ? 1 : gamestate::WeaponSet
 int BowStartHand() { return g_set.bowSwapByGrab.load() && gamestate::WeaponClass() == 3 ? (g_set.bowHandSide.load() & 1) : RangedHomeHand(); }
 
 int AimHand() {
+    // [gestures] trigger_<hand> = glyphs (vr/trigger_roles.h): a glyph trigger held still aims its armed skill - the cast's point goes along THAT hand while it
+    // aims and a moment after its release (its cast lands then); this numbering is the shared block's (0 right, 1 left), the roles' is direct input's (0 left)
+    if (const int g = trigroleswire::CastHand(); g == 0 || g == 1) return g == 1 ? 0 : 1;
     const uint32_t wc = gamestate::WeaponClass();
     const bool ranged = wc == 3 || wc == 4;   // D2RVR_WEAPON_BOW, D2RVR_WEAPON_CROSSBOW
     const uint32_t type = gamestate::WeaponType();

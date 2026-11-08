@@ -29,6 +29,11 @@
 #include "../../vr/wheel_controller.h"
 #include "../../vr/wheel_model.h"
 #include "../../vr/walk_path.h"
+#include "../../vr/rune_flash.h"
+#include "../../vr/near_overlay.h"
+#include "../../vr/gesture_play.h"
+#include "../../vr/trigger_roles.h"
+#include "../../vr/wheel_icons.h"
 
 namespace di = directinput;
 
@@ -305,6 +310,15 @@ struct Rig {
     gov::Missing missing = gov::Avail::NotRunning;
     uint32_t seq = 0;   // the last sequence the "ring" gave
     gov::Out last;
+    std::vector<gov::In::ActionOf> actions;   // the game actions the host says the gestures do
+    bool actionsOk = true;
+    bool handsOk = true;
+    bool modesOk = true;
+    uint8_t trigRole[2] = {0, 0};
+    const char* trigAction[2] = {"", ""};
+    std::vector<gov::In::ModeOf> modes;   // the gestures in select mode, as the host says
+    std::vector<gov::In::ZoneSize> zones;   // the host's zone sizes
+    bool zonesShown = false;
     Rig() {
         catalog[catalogCount++] = Sk(0, "Attack", 0);    // a plain action: never offered
         catalog[catalogCount++] = Sk(36, "Fire Bolt", 1);
@@ -330,6 +344,20 @@ struct Rig {
         in.triggers = triggers;
         in.catalog = catalog;
         in.catalogCount = catalogCount;
+        in.zones = zones.empty() ? nullptr : zones.data();
+        in.zoneCount = (int)zones.size();
+        in.zonesShown = zonesShown;
+        in.actionOf = actions.empty() ? nullptr : actions.data();
+        in.actionOfCount = (int)actions.size();
+        in.actionsOk = actionsOk;
+        in.handsOk = handsOk;
+        in.modesOk = modesOk;
+        in.trigRole[0] = trigRole[0];
+        in.trigRole[1] = trigRole[1];
+        in.trigAction[0] = trigAction[0];
+        in.trigAction[1] = trigAction[1];
+        in.modeOf = modes.empty() ? nullptr : modes.data();
+        in.modeOfCount = (int)modes.size();
         last = m.Step(in);
         if (last.send) m.Sent(++seq, t);
         return last;
@@ -401,11 +429,18 @@ static void TestModelList() {
     {   // a row's parts: colour, threshold, clear (asks again), bind; a button gesture has no re-record and no threshold
         Rig r;
         r.Step();
-        gov::Out o = r.ClickCell(gov::RowCell(0, gov::kPic));
-        CHECK(o.send && o.cmd.op == BW_LINK_GC_COLOR && o.cmd.gesture == 11 && o.cmd.rgba == gov::kPalette[1]);
+        // the chip by the name: the Colour screen, a swatch sets the ray's colour (SetColor) and the list is back
+        gov::Out o = r.ClickCell(gov::RowCell(0, gov::kColour));
+        CHECK(!o.send && r.V().screen == gov::Screen::Colour && r.V().haveColour && r.V().colour.g.id == 11 && r.m.WantsBack());
+        o = r.ClickCell(gov::kSwatch0 + 1);
+        CHECK(o.send && o.cmd.op == BW_LINK_GC_COLOR && o.cmd.gesture == 11 && o.cmd.rgba == gov::kPalette[1] && r.V().screen == gov::Screen::List);
         r.bw.Act(r.seq);
         r.Step();
         CHECK(r.V().note == gov::Note::Coloured && !r.V().waiting);
+        r.ClickCell(gov::RowCell(2, gov::kColour));   // (a motion has a ray too; back steps out, nothing asked)
+        CHECK(r.V().screen == gov::Screen::Colour);
+        o = r.Step(-1, -1, false, true);
+        CHECK(r.V().screen == gov::Screen::List && !o.send);
         o = r.ClickCell(gov::RowCell(0, gov::kThrLess));
         CHECK(o.send && o.cmd.op == BW_LINK_GC_THRESHOLD && Near(o.cmd.value, 75.0f));
         // while BodyWalk has not acted, nothing else is asked
@@ -432,7 +467,8 @@ static void TestModelList() {
         // the button gesture: no re-record, no threshold arrows, no colour
         CHECK(!gov::PartUsable(r.V().row[3].g, gov::kRowRerecord) && !gov::PartUsable(r.V().row[3].g, gov::kThrLess) && !gov::PartUsable(r.V().row[3].g, gov::kPic));
         CHECK(gov::HitTest(r.V(), (gov::PartRect(3, gov::kRowRerecord).l + 5) / gov::kW, (gov::PartRect(3, gov::kRowRerecord).t + 5) / gov::kH, gov::kNone) == gov::kNone);
-        CHECK(!gov::PartUsable(r.V().row[1].g, gov::kPic));   // (a pose has no colour either)
+        CHECK(!gov::PartUsable(r.V().row[1].g, gov::kColour) && !gov::PartUsable(r.V().row[3].g, gov::kColour));   // (a pose, a button: no ray colour)
+        CHECK(gov::PartUsable(r.V().row[1].g, gov::kPic) && gov::PartUsable(r.V().row[0].g, gov::kPic));   // (their pictures play them)
         // Bind: the grid of the class's skills (no plain action, one entry per id, the trees first), the pick binds; No skill unbinds
         r.ClickCell(gov::RowCell(0, gov::kRowBind));
         CHECK(r.V().screen == gov::Screen::BindSkill && r.V().options == 5 && r.V().bindSkill == 36 && r.m.WantsBack());
@@ -455,11 +491,11 @@ static void TestModelList() {
     {   // BodyWalk refuses, or does not answer
         Rig r;
         r.Step();
-        r.ClickCell(gov::RowCell(0, gov::kPic));
+        r.ClickCell(gov::RowCell(0, gov::kThrLess));
         r.bw.Act(r.seq, BW_LINK_GR_BUSY);
         r.Step();
         CHECK(r.V().note == gov::Note::Busy && r.last.feedback == gov::Feedback::Refused && !r.V().waiting);
-        r.ClickCell(gov::RowCell(0, gov::kPic));
+        r.ClickCell(gov::RowCell(0, gov::kThrLess));
         for (int i = 0; i < 600; ++i) r.Step();   // 6.6 s (BodyWalk is given kAnswerS)
         CHECK(r.V().note == gov::Note::NoAnswer && !r.V().waiting);
     }
@@ -539,7 +575,7 @@ static void TestModelRecord() {
         r.ClickCell(gov::kNew);
         CHECK(r.V().screen == gov::Screen::NewType && r.V().choices == 3 && r.m.WantsBack());
         r.ClickCell(gov::kChoice0 + 0);
-        CHECK(r.V().screen == gov::Screen::NewHand && r.V().choices == 2 && r.V().newType == BW_LINK_GT_GLYPH);
+        CHECK(r.V().screen == gov::Screen::NewHand && r.V().choices == 3 && r.V().newType == BW_LINK_GT_GLYPH);   // (Right, Left, Either)
         r.Step(-1, -1, false, true);   // back: the type again
         CHECK(r.V().screen == gov::Screen::NewType);
         r.ClickCell(gov::kChoice0 + 1);   // a hand pose: three hands
@@ -1035,17 +1071,17 @@ static void TestFlowFakeBodyWalk() {
         f.Run(90);
         CHECK(f.V().screen == gov::Screen::List && f.V().note == gov::Note::Discarded && f.V().count == 2);
     }
-    {   // 7. an older command's late answer is not the RECORD's: a colour asked, BodyWalk stalls past kAnswerS, a RECORD, then it acts on both
+    {   // 7. an older command's late answer is not the RECORD's: a threshold asked, BodyWalk stalls past kAnswerS, a RECORD, then it acts on both
         Flow f;
         f.Run(3);
         f.bw.stall = true;
-        f.Click(gov::RowCell(0, gov::kPic));
+        f.Click(gov::RowCell(0, gov::kThrLess));
         f.Run(600);
         CHECK(f.V().note == gov::Note::NoAnswer && !f.V().waiting);
         f.NewGlyph();
         CHECK(f.sent == 2);
         f.bw.stall = false;
-        f.block.cmdDone = 1;   // (an answer for the colour alone first)
+        f.block.cmdDone = 1;   // (an answer for the threshold alone first)
         f.Frame();
         f.Run(2);
         CHECK(f.bw.cmdDone == 2 && f.V().recordState == BW_LINK_REC_READY);
@@ -1082,6 +1118,44 @@ static void TestControlsForBodyWalk() {
     CHECK(Near(out[1].trigger, 0.0f));
     walkpath::ControlsForBodyWalk(out, taken, raw, false, true, true);    // not direct mode: the frame as it is (BodyWalk is the input)
     CHECK(Near(out[1].trigger, 0.0f) && Near(out[1].x, 2.0f));
+}
+
+// The glyph's "done right" flash (vr/rune_flash.h): 100 ms bright in its own colour, thicker, opaque, its glow full; then as it was.
+static void TestRuneFlash() {
+    runeflash::Flash f;
+    BW_LinkVrRune r{};
+    r.trailRgba = 0x803C3CE6u;   // (a red glyph's trail, half opaque)
+    r.litRgba = 0xFF2896F0u;
+    r.runeRgba = 0x40FFFFFFu;
+    r.trailWidth = 0.010f;
+    r.lineWidth = 0.012f;
+    r.glow = 0.2f;
+    r.fade = 0.5f;
+    BW_LinkVrRune a = r;
+    f.Apply(a, 5000);   // never triggered (a stroke not recognised): untouched
+    CHECK(std::memcmp(&a, &r, sizeof r) == 0 && !f.On(5000));
+    f.Trigger(10000);
+    CHECK(f.On(10000) && f.On(10099) && !f.On(10100) && !f.On(9999) && !f.On(20000));
+    a = r;
+    f.Apply(a, 10050);
+    const int r0 = int(a.trailRgba & 0xFF), g0 = int((a.trailRgba >> 8) & 0xFF), b0 = int((a.trailRgba >> 16) & 0xFF);
+    CHECK((a.trailRgba >> 24) == 0xFF && r0 > 0xE6 - 1 && g0 > 0x3C && b0 > 0x3C && r0 >= g0 && r0 >= b0);   // brighter, opaque, still red
+    CHECK(Near(a.trailWidth, 0.014f, 1e-6f) && Near(a.lineWidth, 0.0168f, 1e-6f) && a.glow == 1.0f && a.fade == 1.0f);
+    CHECK((a.litRgba >> 24) == 0xFF && (a.litRgba & 0xFF) >= 0xF0 && ((a.litRgba >> 16) & 0xFF) > 0x28);   // (R in the low byte)
+    a = r;
+    f.Apply(a, 10100);   // 100 ms on: as it was (it fades as it would)
+    CHECK(std::memcmp(&a, &r, sizeof r) == 0);
+    f.Trigger(20000);   // another recognised one: again
+    a = r;
+    f.Apply(a, 20001);
+    CHECK(a.glow == 1.0f);
+    f.Reset();
+    CHECK(!f.On(20002));
+    // the colour brightened in its own hue: a dark blue stays blue, white stays white, black lifts only to a grey
+    const uint32_t blue = runeflash::Brighter(0xFFA02010u);
+    CHECK(((blue >> 16) & 0xFF) > ((blue >> 8) & 0xFF) && ((blue >> 8) & 0xFF) > (blue & 0xFF));
+    CHECK(runeflash::Brighter(0xFFFFFFFFu) == 0xFFFFFFFFu && (runeflash::Brighter(0xFF000000u) & 0xFF) == 64);
+    CHECK(Near(runeflash::Wider(0.01f), 0.014f, 1e-7f) && runeflash::Wider(0.0f) == 0.0f);
 }
 
 static void TestEnginePure() {
@@ -1418,6 +1492,7 @@ static void TestEngineReal() {
     MultiByteToWideChar(CP_UTF8, 0, dll, -1, wdll, MAX_PATH);
     g_engineLog.clear();
     gelib::SetLog(&EngineLog);
+    gelib::SetGameId("d2rtest");   // (not "d2r": a BodyWalk running beside the test would hold back its casts while the engine's mutex is held)
     gelib::SetPath(wdll);
     const bool open = gelib::Ensure(dataDir);
     CHECK(open);
@@ -1505,6 +1580,79 @@ static void TestEngineReal() {
         f.Click(gov::RowCell(0, gov::kThrLess));
         f.Run(3);
         CHECK(Near(f.V().row[0].g.threshold, 75.0f, 0.5f));
+        // 5a. a game action (the engine's optional calls): bound, read back, the skill gone; a skill again takes it away
+        if (gelib::HasActions()) {
+            const uint32_t gid = f.V().row[0].g.id;
+            char a[32] = {};
+            CHECK(gelib::BindAction(gid, "d2r.town_portal") == BW_LINK_GR_OK && gelib::GetAction(gid, a, sizeof a) == BW_LINK_GR_OK && std::strcmp(a, "d2r.town_portal") == 0);
+            f.Run(3);
+            CHECK(f.V().row[0].g.skill == -1);
+            std::printf("  real engine: game action bound and read back (%s), the skill taken away\n", a);
+            CHECK(gelib::Bind(gid, 47) == BW_LINK_GR_OK && gelib::GetAction(gid, a, sizeof a) == BW_LINK_GR_OK && a[0] == 0);
+            f.Run(3);
+            CHECK(f.V().row[0].g.skill == 47);
+        } else {
+            std::printf("  real engine: an older library without game actions\n");
+        }
+        // 5a'. a glyph's hand (the engine's optional call): left, either, right again - kept with the gesture, no take
+        if (gelib::HasSetHand()) {
+            const uint32_t gid = f.V().row[0].g.id;
+            CHECK(gelib::SetHand(gid, BW_LINK_GH_BOTH) == BW_LINK_GR_OK);
+            f.Run(3);
+            CHECK(f.V().row[0].g.hand == BW_LINK_GH_BOTH);
+            CHECK(gelib::SetHand(gid, BW_LINK_GH_RIGHT) == BW_LINK_GR_OK);
+            f.Run(3);
+            CHECK(f.V().row[0].g.hand == BW_LINK_GH_RIGHT);
+            std::printf("  real engine: a glyph's hand set to either and back to the right\n");
+        } else {
+            std::printf("  real engine: an older library without BWGE_SetHand\n");
+        }
+        // 5a''. a gesture's mode (the engine's optional calls): select kept and read back, cast once again
+        if (gelib::HasModes()) {
+            const uint32_t gid = f.V().row[0].g.id;
+            uint8_t m = 9;
+            CHECK(gelib::SetMode(gid, 1) == BW_LINK_GR_OK && gelib::GetMode(gid, &m) == BW_LINK_GR_OK && m == 1);
+            CHECK(gelib::SetMode(gid, 7) != BW_LINK_GR_OK);
+            CHECK(gelib::SetMode(gid, 0) == BW_LINK_GR_OK && gelib::GetMode(gid, &m) == BW_LINK_GR_OK && m == 0);
+            std::printf("  real engine: a gesture's mode set to select and back to cast once\n");
+        } else {
+            std::printf("  real engine: an older library without BWGE_SetMode\n");
+        }
+        // 5b. a pose's zone (the engine's optional calls): a glyph has none; a two-hand pose taken, its zone read, sized, kept; the take dropped
+        if (gelib::HasPoseZones()) {
+            BWGE_PoseZone z{};
+            CHECK(gelib::GetPoseZone(f.V().row[0].g.id, &z) == BW_LINK_GR_BAD);
+            f.Click(gov::kNew);
+            f.Click(gov::kChoice0 + 1);   // Hand pose
+            CHECK(f.V().screen == gov::Screen::NewHand && f.V().choices == 3);
+            f.Click(gov::kChoice0 + 2);   // Both hands
+            f.Click(gov::kGrid0 + 0);
+            f.Run(3);
+            f.Draw(kDraw);
+            f.Run(5);
+            Say(f, "two-hand pose");
+            if (f.V().screen == gov::Screen::Review && f.V().haveReview) {
+                const uint32_t pid = f.V().review.g.id;
+                CHECK(f.V().review.g.type == BW_LINK_GT_POSE && f.V().review.g.hand == BW_LINK_GH_BOTH);
+                CHECK(gelib::GetPoseZone(pid, &z) == BW_LINK_GR_OK && z.handValid == 3u && z.radiusM >= 0.03f && z.radiusM <= 0.5f && z.armM > 0.3f);
+                std::printf("  real engine: pose zone %.0f cm, rotation %.2f, body %.2f m / arm %.2f m, right hand at %.2f %.2f %.2f (joints %.2f %.2f %.2f)\n",
+                            100.0f * z.radiusM, z.rotationMatch, z.heightM, z.armM, z.centre[1][0], z.centre[1][1], z.centre[1][2],
+                            f.V().review.g.joints[BW_LINK_J_RHAND][0], f.V().review.g.joints[BW_LINK_J_RHAND][1], f.V().review.g.joints[BW_LINK_J_RHAND][2]);
+                CHECK(gelib::SetPoseZone(pid, 0.10f) == BW_LINK_GR_OK && gelib::GetPoseZone(pid, &z) == BW_LINK_GR_OK && Near(z.radiusM, 0.10f));
+                gelib::SetPoseZone(pid, 0.9f);
+                CHECK(gelib::GetPoseZone(pid, &z) == BW_LINK_GR_OK && Near(z.radiusM, 0.50f));   // (clamped)
+                std::vector<posezones::Zone> pz(4);
+                const float rr[2] = {z.radiusM, z.radiusM};
+                CHECK(posezones::TargetsOf(f.V().review.g, rr, 1, pz.data(), 4, z.heightM) == 2);   // both hands drawn
+            } else {
+                CHECK(!"the two-hand pose take reached its review");
+            }
+            f.Click(gov::kDiscard);
+            f.Run(3);
+            CHECK(f.V().count == 2);
+        } else {
+            std::printf("  real engine: an older library without pose zones\n");
+        }
         // 6. in play (the panel down): the same circle with the right hand casts the first gesture's skill (now Fire Ball); the panel up: nothing
         f.shown = false;
         f.Run(60);
@@ -1530,10 +1678,11 @@ static void TestEngineReal() {
         CHECK(f.V().count == 2 && f.V().row[0].g.id == firstId);
     }
     char index[MAX_PATH * 2];
-    std::snprintf(index, sizeof index, "%s\\games\\d2r\\gestures.json", dataDir);
+    std::snprintf(index, sizeof index, "%s\\games\\d2rtest\\gestures.json", dataDir);
     CHECK(GetFileAttributesA(index) != INVALID_FILE_ATTRIBUTES);
     gelib::Shutdown();
     gelib::SetPath(nullptr);
+    gelib::SetGameId(nullptr);
     DeleteTree(dataDir);
     CHECK(GetFileAttributesA(dataDir) == INVALID_FILE_ATTRIBUTES);
     std::printf("  real engine: %zu log lines from the library; the scratch data folder removed\n", g_engineLog.size());
@@ -1646,6 +1795,555 @@ struct World {
     wheel::Step Open() { request = true; return Next(); }
 };
 
+// -- a hand pose's zone (vr/pose_zones.h): the sphere where the hand must be, sized on the tab, shown in play or hidden ---------------------------------
+static void TestZones() {
+    {   // the size: bounds, steps, nonsense
+        CHECK(Near(posezones::Clamp(0.01f), posezones::kMinM) && Near(posezones::Clamp(5.0f), posezones::kMaxM));
+        CHECK(Near(posezones::Clamp(std::nanf("")), posezones::kDefaultM));
+        CHECK(Near(posezones::Step(0.12f, 1), 0.13f) && Near(posezones::Step(0.12f, -1), 0.11f));
+        CHECK(Near(posezones::kMinM, 0.03f) && Near(posezones::kMaxM, 0.50f) && Near(posezones::kDefaultM, 0.06f));   // (BWGE_SetPoseZone's bounds, the engine's default)
+        CHECK(Near(posezones::Step(posezones::kMaxM, 1), posezones::kMaxM) && Near(posezones::Step(posezones::kMinM, -1), posezones::kMinM));
+    }
+    {   // a recorded pose's zones: the hand joints from the pelvis (the engine's body frame), per hand of the pose; not a pose: none
+        BW_LinkGesture g = G(12, BW_LINK_GT_POSE, 47, "pose");
+        const float r[2] = {0.08f, 0.20f};
+        posezones::Zone z[4];
+        int n = posezones::TargetsOf(g, r, 0x60FFFFFFu, z, 4);
+        CHECK(n == 1 && z[0].attach == posezones::Attach::Body && Near(z[0].radius, 0.20f) && Near(z[0].heightM, posezones::kDefaultHeightM));
+        CHECK(Near(z[0].off[0], 0.30f) && Near(z[0].off[1], 0.95f) && Near(z[0].off[2], -0.10f));   // the right hand from the pelvis
+        CHECK(posezones::TargetsOf(g, r, 0x60FFFFFFu, z, 4, 1.85f) == 1 && Near(z[0].heightM, 1.85f));
+        g.hand = BW_LINK_GH_BOTH;
+        n = posezones::TargetsOf(g, r, 0x60FFFFFFu, z, 4);
+        CHECK(n == 2 && Near(z[0].off[0], -0.22f) && Near(z[0].radius, 0.08f) && Near(z[1].radius, 0.20f));
+        CHECK(posezones::TargetsOf(g, r, 0x60FFFFFFu, z, 1) == 1);   // (no more than asked)
+        g.jointValid &= ~(1u << BW_LINK_J_LHAND);
+        CHECK(posezones::TargetsOf(g, r, 0x60FFFFFFu, z, 4) == 1);   // (a hand not recorded: no zone for it)
+        BW_LinkGesture glyph = G(11, BW_LINK_GT_GLYPH, 36, "glyph");
+        CHECK(posezones::TargetsOf(glyph, r, 0x60FFFFFFu, z, 4) == 0);
+        BW_LinkGesture wild = G(12, BW_LINK_GT_POSE, 47, "pose");
+        wild.joints[BW_LINK_J_RHAND][0] = 40.0f;   // (a broken joint: no zone off in another room)
+        CHECK(posezones::TargetsOf(wild, r, 0x60FFFFFFu, z, 4) == 0);
+    }
+    {   // a take's zones follow the hands; in the room: a body zone from the pelvis the head gives (the engine's frame), turning with the head; a hand
+        // zone sits on the hand; none when what it hangs on is not tracked
+        posezones::Zone z[4];
+        CHECK(posezones::FollowHands(BW_LINK_GH_LEFT, 0.5f, 1, z, 4) == 1 && z[0].attach == posezones::Attach::LeftHand && Near(z[0].radius, posezones::kMaxM));
+        CHECK(posezones::FollowHands(BW_LINK_GH_BOTH, 0.1f, 1, z, 4) == 2 && z[1].attach == posezones::Attach::RightHand);
+        posezones::Head head;
+        head.pos[0] = 1.0f; head.pos[1] = 1.6f; head.pos[2] = 2.0f;
+        head.ok = true;   // (looking level down -z)
+        const float hands[2][3] = {{0.5f, 1.0f, 1.5f}, {1.4f, 1.1f, 1.6f}};
+        bool ok[2] = {true, false};
+        float c[3], pel[3], yaw = 9;
+        // the pelvis: head - 0.07 H forward - 0.04 H up - 0.11 H up - 0.42 m (H 1.8): 12.6 cm behind the head... (forward -z: +z), 0.69 m under it
+        CHECK(posezones::PelvisOf(head, 1.8f, pel, &yaw) && Near(pel[0], 1.0f) && Near(pel[1], 1.6f - 0.27f - 0.42f) && Near(pel[2], 2.0f + 0.126f) && Near(yaw, 0.0f));
+        posezones::Zone h;
+        h.attach = posezones::Attach::Body;
+        h.heightM = 1.8f;
+        h.off[0] = 0.25f; h.off[1] = 0.19f; h.off[2] = -0.426f;   // (the engine session's check: a 1.8 m player's right hand)
+        CHECK(posezones::CentreOf(h, head, hands, ok, c) && Near(c[0], 1.25f) && Near(c[1], pel[1] + 0.19f) && Near(c[2], pel[2] - 0.426f));
+        posezones::Head left = head;   // turned left a quarter: ahead is -x, the body's right is -z
+        left.fwd[0] = -1.0f; left.fwd[2] = 0.0f;
+        CHECK(posezones::PelvisOf(left, 1.8f, pel, &yaw) && Near(yaw, 1.5707963f) && Near(pel[0], 1.126f) && Near(pel[2], 2.0f));
+        CHECK(posezones::CentreOf(h, left, hands, ok, c) && Near(c[0], pel[0] - 0.426f) && Near(c[2], pel[2] - 0.25f));
+        posezones::Head down = head;   // the head pitched down: the chest stays under it (the head's own forward and up count)
+        down.fwd[0] = 0.0f; down.fwd[1] = -0.7071f; down.fwd[2] = -0.7071f;
+        down.up[0] = 0.0f; down.up[1] = 0.7071f; down.up[2] = -0.7071f;
+        CHECK(posezones::PelvisOf(down, 1.8f, pel, &yaw) && Near(yaw, 0.0f));
+        head.ok = false;
+        CHECK(!posezones::CentreOf(h, head, hands, ok, c));
+        head.ok = true;
+        CHECK(posezones::CentreOf(z[0], head, hands, ok, c) && Near(c[0], 0.5f) && Near(c[2], 1.5f));
+        CHECK(!posezones::CentreOf(z[1], head, hands, ok, c));
+    }
+    {   // the list: a pose's row shows its zone (the host's, else the default); its arrows size the zone (no BodyWalk command), a glyph's the threshold
+        Rig r;
+        r.Step();
+        CHECK(r.V().row[1].g.type == BW_LINK_GT_POSE && Near(r.V().row[1].zone[1], posezones::kDefaultM));
+        r.zones.push_back({12, {0.06f, 0.18f}});
+        r.Step();
+        CHECK(Near(r.V().row[1].zone[0], 0.06f) && Near(r.V().row[1].zone[1], 0.18f) && Near(r.V().row[0].zone[1], posezones::kDefaultM));
+        gov::Out o = r.ClickCell(gov::RowCell(1, gov::kThrMore));
+        CHECK(!o.send && o.zoneSet && o.zoneGesture == 12 && o.zoneHand == BW_LINK_GH_RIGHT && Near(o.zoneM, 0.19f));
+        o = r.ClickCell(gov::RowCell(1, gov::kThrLess));
+        CHECK(!o.send && o.zoneSet && Near(o.zoneM, 0.17f));
+        o = r.ClickCell(gov::RowCell(0, gov::kThrLess));
+        CHECK(o.send && !o.zoneSet && o.cmd.op == BW_LINK_GC_THRESHOLD);
+        r.bw.Act(r.seq);
+        r.Step();
+        // the footer's Zones: always there, flips (the host does it), even with nothing to manage
+        CHECK(gov::FooterEnabled(r.V(), gov::kZonesToggle) && !r.V().zonesShown);
+        o = r.ClickCell(gov::kZonesToggle);
+        CHECK(o.toggleZones && !o.send);
+        r.zonesShown = true;
+        r.Step();
+        CHECK(r.V().zonesShown);
+        r.link = false;
+        r.Step();
+        o = r.ClickCell(gov::kZonesToggle);
+        CHECK(o.toggleZones);
+    }
+    {   // a pose's review: its zone under the line, its arrows size it; a glyph's review has none
+        Rig r;
+        r.Step();
+        gov::Out o = r.ClickCell(gov::RowCell(1, gov::kRowRerecord));
+        CHECK(o.send && o.cmd.op == BW_LINK_GC_RECORD && o.cmd.gesture == 12 && r.V().recTarget == 12);
+        r.bw.Act(r.seq);
+        r.bw.g.recordState = BW_LINK_REC_READY;
+        r.bw.g.recordGesture = 12;
+        r.Step();
+        r.bw.g.recordState = BW_LINK_REC_SAVED;
+        r.bw.g.g[1].flags |= BW_LINK_GF_REVIEW;
+        r.Step();
+        CHECK(r.V().screen == gov::Screen::Review && r.V().review.g.id == 12 && Near(r.V().review.zone[1], posezones::kDefaultM));
+        gov::R zr;
+        CHECK(gov::CellRect(r.V(), gov::kZoneMore, &zr) && gov::CellRect(r.V(), gov::kZoneLess, &zr));
+        o = r.ClickCell(gov::kZoneMore);
+        CHECK(o.zoneSet && o.zoneGesture == 12 && Near(o.zoneM, 0.07f) && r.V().screen == gov::Screen::Review);
+        o = r.ClickCell(gov::kZoneLess);
+        CHECK(o.zoneSet && Near(o.zoneM, 0.05f));
+        CHECK(!Overlap(gov::kZoneLessRect, gov::kZoneMoreRect) && !Overlap(gov::kZoneText, gov::kReviewLine));
+    }
+    {   // the picture: one figure (no second figure in a bubble), the zone a disc round the pose's hand
+        gpic::Box b{0, 0, 200, 200};
+        const BW_LinkGesture g = G(12, BW_LINK_GT_POSE, 47, "pose");
+        const gpic::Figure f = gpic::StickFigure(g.joints, g.jointValid, g.grip, b, 8);
+        CHECK(f.hand[1].x > b.l && f.hand[1].x < b.r && f.hand[1].y > b.t && f.hand[1].y < b.b);
+    }
+}
+
+// -- Play (vr/gesture_play.h; the model's picture): once, from the controllers, back to them ----------------------------------------------------------
+static void TestPlay() {
+    {   // the model: a picture plays its gesture once (asks BodyWalk nothing, even while it is busy); the review's Play; the swatches on a glyph's review
+        Rig r;
+        r.Step();
+        gov::Out o = r.ClickCell(gov::RowCell(1, gov::kPic));   // (the pose)
+        CHECK(o.play == 12 && !o.send && r.V().playId == 12 && r.V().playT >= 0.0f && r.V().playT < 0.2f && r.V().playHand == BW_LINK_GH_RIGHT);
+        for (int i = 0; i < 40; ++i) r.Step();   // 0.44 s of 1.0
+        CHECK(r.V().playId == 12 && r.V().playT > 0.3f && r.V().playT < 0.7f);
+        for (int i = 0; i < 60; ++i) r.Step();
+        CHECK(r.V().playId == 0);   // (once: no loop)
+        r.ClickCell(gov::RowCell(0, gov::kThrLess));   // BodyWalk busy with a threshold: Play still plays
+        CHECK(r.V().waiting);
+        o = r.ClickCell(gov::RowCell(0, gov::kPic));
+        CHECK(o.play == 11 && r.V().playId == 11);
+        CHECK(gov::FooterEnabled(r.V(), gov::kNew) == false);   // (the rest waits for BodyWalk)
+        // the host's duration is taken while it plays
+        Rig q;
+        q.Step();
+        q.ClickCell(gov::RowCell(2, gov::kPic));
+        for (int i = 0; i < 100; ++i) q.Step();   // 1.1 s: past a motion's own 1.4 s? not yet
+        CHECK(q.V().playId == 13);
+        // a glyph's review: swatches, Play in the footer
+        Rig v;
+        v.Step();
+        v.ClickCell(gov::RowCell(0, gov::kRowRerecord));
+        v.bw.Act(v.seq);
+        v.bw.g.recordState = BW_LINK_REC_READY;
+        v.bw.g.recordGesture = 11;
+        v.Step();
+        v.bw.g.recordState = BW_LINK_REC_SAVED;
+        v.bw.g.g[0].flags |= BW_LINK_GF_REVIEW;
+        v.Step();
+        CHECK(v.V().screen == gov::Screen::Review && v.V().review.g.id == 11);
+        gov::R sr;
+        CHECK(gov::CellRect(v.V(), gov::kSwatch0 + 4, &sr) && gov::CellRect(v.V(), gov::kPlay, &sr) && !gov::CellRect(v.V(), gov::kZoneMore, &sr));
+        o = v.ClickCell(gov::kSwatch0 + 4);
+        CHECK(o.send && o.cmd.op == BW_LINK_GC_COLOR && o.cmd.gesture == 11 && o.cmd.rgba == gov::kPalette[4] && v.V().screen == gov::Screen::Review);
+        v.bw.Act(v.seq);
+        v.Step();
+        o = v.ClickCell(gov::kPlay);
+        CHECK(o.play == 11 && v.V().screen == gov::Screen::Review && v.V().playId == 11);
+        for (int i = 0; i < gov::kSwatches; ++i)   // the swatches clear of the review's lines and of each other
+            CHECK(!Overlap(gov::SwatchRect(i, false), gov::kReviewLine) && (i == 0 || !Overlap(gov::SwatchRect(i, false), gov::SwatchRect(i - 1, false))) &&
+                  Inside(gov::SwatchRect(i, true), gov::R{0, 0, gov::kW, gov::kH}) && !Overlap(gov::SwatchRect(i, true), gov::kColourPic));
+        CHECK(!Overlap(gov::PartRect(0, gov::kColour), gov::NameRect(0)) && !Overlap(gov::PartRect(0, gov::kColour), gov::TypeRect(0)));
+    }
+    {   // a pose made up from the list: from the arms hanging to its hands, the grips with it
+        gplay::Take t;
+        BW_LinkGesture g = G(12, BW_LINK_GT_POSE, 47, "pose");
+        CHECK(gplay::FromGesture(g, &t) && t.s.size() == 2 && Near(t.DurationS(), 0.7f));
+        CHECK(t.s[1].handValid == 2u && Near(t.s[1].hand[1][0], 0.30f) && Near(t.s[1].hand[1][1], 0.95f) && Near(t.s[1].grip[1], 0.05f));
+        g.hand = BW_LINK_GH_BOTH;
+        CHECK(gplay::FromGesture(g, &t) && t.s[1].handValid == 3u && Near(t.s[1].hand[0][0], -0.22f) && Near(t.s[1].grip[0], 0.95f));   // both arms
+        const gplay::Sample mid = gplay::At(t, 0.35f);
+        CHECK(Near(mid.hand[1][1], 0.5f * (t.s[0].hand[1][1] + 0.95f)));
+        // a glyph: its path drawn by the right hand on a sheet before the chest, in 1.6 s
+        BW_LinkGesture gl = G(11, BW_LINK_GT_GLYPH, 36, "glyph");
+        CHECK(gplay::FromGesture(gl, &t) && (int)t.s.size() == BW_LINK_GESTURE_POINTS && Near(t.DurationS(), 1.6f) && t.s[5].handValid == 2u);
+        CHECK(Near(t.s[0].hand[1][2], -0.45f) && Near(t.s[0].hand[1][0], 0.12f + 0.5f * gl.pts[0][0]));
+        BW_LinkGesture btn = G(14, BW_LINK_GT_BUTTON, 40, "button");
+        CHECK(!gplay::FromGesture(btn, &t));
+    }
+    {   // the weight: in from the controllers, the take, held, out - and nothing after (once)
+        gplay::Take t;
+        gplay::FromGesture(G(12, BW_LINK_GT_POSE, 47, "pose"), &t);
+        float tt = 0;
+        CHECK(Near(gplay::Weight(t, 0.0f, &tt), 0.0f) && Near(gplay::Weight(t, gplay::kLeadS, &tt), 1.0f) && Near(tt, 0.0f));
+        CHECK(Near(gplay::Weight(t, gplay::kLeadS + 0.5f, &tt), 1.0f) && Near(tt, 0.5f));
+        CHECK(Near(gplay::Weight(t, gplay::kLeadS + 0.7f + gplay::kHoldS - 0.01f, &tt), 1.0f) && Near(tt, 0.7f));
+        CHECK(Near(gplay::Weight(t, t.TotalS(), &tt), 0.0f) && Near(gplay::Weight(t, t.TotalS() + 1.0f, &tt), 0.0f));
+        // the body frame into the drawing's: the pelvis 0.69 m under a 1.8 m player's eyes, 12.6 cm behind them, looking level
+        float o[3];
+        const float p0[3] = {0, 0, 0};
+        gplay::ToHeadFrame(p0, 1.8f, 0.0f, o);
+        CHECK(Near(o[0], 0.0f) && Near(o[1], -0.072f - 0.198f - 0.42f) && Near(o[2], 0.126f));
+        // a frame: the right arm (the drawing's side 0) is the take's right hand; the left keeps its controller
+        const float ctl[2][3] = {{0.3f, -0.4f, -0.3f}, {-0.3f, -0.4f, -0.3f}};
+        const float ctlRot[2][4] = {{0, 0, 0, 1}, {0, 0, 0, 1}};
+        const float grips[2] = {0.0f, 0.0f};
+        gplay::Arms a;
+        CHECK(!gplay::Frame(t, -0.1f, 1.8f, 0.0f, ctl, ctlRot, grips, &a) && !gplay::Frame(t, t.TotalS() + 0.01f, 1.8f, 0.0f, ctl, ctlRot, grips, &a));
+        CHECK(gplay::Frame(t, gplay::kLeadS + 0.7f, 1.8f, 0.0f, ctl, ctlRot, grips, &a) && a.valid == 1u && Near(a.weight, 1.0f));
+        CHECK(Near(a.hand[0][0], 0.30f) && Near(a.hand[0][1], 0.95f - 0.69f) && Near(a.hand[0][2], -0.10f + 0.126f));   // the take's right hand
+        CHECK(Near(a.hand[1][0], -0.3f) && Near(a.hand[1][2], -0.3f));   // the left: its controller, as it is
+        CHECK(gplay::Frame(t, 0.5f * gplay::kLeadS, 1.8f, 0.0f, ctl, ctlRot, grips, &a) && a.weight > 0.3f && a.weight < 0.7f);   // (on its way from the controller)
+    }
+}
+
+// -- Bind: the game's actions beside the skills (vr/gesture_actions.h) ---------------------------------------------------------------------------------
+static void TestBindActions() {
+    {   // the list: the town portal first, the potions, the panels, the pad, every key command of the game - each once, each named
+        const gact::List& l = gact::All();
+        CHECK(l.Count() > 60 && l.Count() <= gact::kMax && std::strcmp(l.At(0).id, "d2r.town_portal") == 0 && l.At(0).kind == gact::Kind::Item);
+        const gact::Def* belt = l.Find("d2r.cmd.17");
+        CHECK(belt && belt->kind == gact::Kind::Command && belt->code == 0x17 && std::strcmp(belt->name, "Potion - belt 1") == 0 && l.IndexOf("d2r.cmd.17") < 8);
+        CHECK(l.Find("d2r.cmd.2C") && l.Find("d2r.cmd.01") && l.Find("d2r.cmd.25") && l.Find("d2r.cmd.23"));   // swap, inventory, Alt, run / walk
+        const gact::Def* lt = l.Find("pad.LT");
+        CHECK(lt && lt->kind == gact::Kind::Pad && lt->code == gact::kPadLT && l.Find("pad.A")->code == 0x1000);
+        for (int i = 0; i < l.Count(); ++i)
+            for (int j = i + 1; j < l.Count(); ++j) CHECK(std::strcmp(l.At(i).id, l.At(j).id) != 0);
+        int commands = 0;
+        for (int i = 0; i < l.Count(); ++i) commands += l.At(i).kind == gact::Kind::Command;
+        CHECK(commands == (int)kD2RVRCommandCount);   // (every key command of the game, once)
+        CHECK(std::strcmp(gact::NameOf("d2r.identify"), "Identify (tome or scroll)") == 0 && std::strcmp(gact::NameOf("x.unknown"), "x.unknown") == 0);
+    }
+    {   // the bind screen: Skills | Game actions; an action binds through the engine's own call (no command), the row says what it does
+        Rig r;
+        r.Step();
+        r.ClickCell(gov::RowCell(0, gov::kRowBind));
+        CHECK(r.V().screen == gov::Screen::BindSkill && r.V().bindTab == 0 && r.V().options > 0);
+        r.ClickCell(gov::kBindTabActions);
+        CHECK(r.V().bindTab == 1 && r.V().actCount == gov::kGridCount && r.V().pickPages >= 3 && r.V().options == 0);
+        r.ClickCell(gov::kNext);
+        CHECK(r.V().pickPage == 1 && r.V().act[0] == gov::kGridCount);
+        r.ClickCell(gov::kPrev);
+        gov::Out o = r.ClickCell(gov::kGrid0 + 0);   // Town Portal
+        CHECK(o.bindAction && !o.send && o.bindGesture == 11 && std::strcmp(o.action, "d2r.town_portal") == 0 && r.V().screen == gov::Screen::List && r.V().note == gov::Note::Bound);
+        r.actions.push_back({11, "d2r.town_portal"});
+        r.Step();
+        CHECK(std::strcmp(r.V().row[0].action, "d2r.town_portal") == 0 && r.V().row[1].action[0] == 0);
+        // opened again it shows the actions, its action framed; Skills back; a skill (BIND) or No skill takes the action away (the engine's rule)
+        r.ClickCell(gov::RowCell(0, gov::kRowBind));
+        CHECK(r.V().bindTab == 1 && std::strcmp(r.V().bindAction, "d2r.town_portal") == 0);
+        r.ClickCell(gov::kBindTabSkills);
+        CHECK(r.V().bindTab == 0);
+        o = r.ClickCell(gov::kGrid0 + 1);
+        CHECK(o.send && o.cmd.op == BW_LINK_GC_BIND && !o.bindAction);
+        r.bw.Act(r.seq);
+        r.Step();
+        // without the engine's call: refused, said why
+        Rig q;
+        q.actionsOk = false;
+        q.Step();
+        q.ClickCell(gov::RowCell(0, gov::kRowBind));
+        q.ClickCell(gov::kBindTabActions);
+        o = q.ClickCell(gov::kGrid0 + 3);
+        CHECK(!o.bindAction && q.V().screen == gov::Screen::BindSkill && q.V().note == gov::Note::NoActions && o.feedback == gov::Feedback::Refused);
+        gov::R tr;
+        CHECK(gov::CellRect(q.V(), gov::kBindTabSkills, &tr) && !Overlap(gov::BindTabRect(0), gov::BindTabRect(1)) && !Overlap(gov::BindTabRect(1), gov::GridRect(0)));
+    }
+}
+
+// -- a glyph's hand: Right / Left / Either (BW_LINK_GH_BOTH), chosen when new, stepped on its row and its review --------------------------------------
+static void TestGlyphHand() {
+    {   // new: the third choice is Either - the RECORD asks for both (either trigger the pen)
+        Rig r;
+        r.Step();
+        r.ClickCell(gov::kNew);
+        r.ClickCell(gov::kChoice0 + 0);
+        r.ClickCell(gov::kChoice0 + 2);
+        CHECK(r.V().screen == gov::Screen::NewSkill && r.V().newHand == BW_LINK_GH_BOTH);
+        const gov::Out o = r.ClickCell(gov::kGrid0 + 0);
+        CHECK(o.send && o.cmd.type == BW_LINK_GT_GLYPH && o.cmd.hand == BW_LINK_GH_BOTH);
+        CHECK(gov::NextGlyphHand(BW_LINK_GH_RIGHT) == BW_LINK_GH_LEFT && gov::NextGlyphHand(BW_LINK_GH_LEFT) == BW_LINK_GH_BOTH && gov::NextGlyphHand(BW_LINK_GH_BOTH) == BW_LINK_GH_RIGHT);
+    }
+    {   // the row: a glyph's type line steps its hand (the engine's own call, no command); not a pose's, not a motion's
+        Rig r;
+        r.Step();
+        CHECK(gov::PartUsable(r.V().row[0].g, gov::kHand) && !gov::PartUsable(r.V().row[1].g, gov::kHand) && !gov::PartUsable(r.V().row[2].g, gov::kHand));
+        gov::Out o = r.ClickCell(gov::RowCell(0, gov::kHand));
+        CHECK(o.handSet && !o.send && o.handGesture == 11 && o.hand == BW_LINK_GH_LEFT && r.V().note == gov::Note::HandSet);
+        r.bw.g.g[0].hand = BW_LINK_GH_BOTH;
+        r.Step();
+        o = r.ClickCell(gov::RowCell(0, gov::kHand));
+        CHECK(o.handSet && o.hand == BW_LINK_GH_RIGHT);
+        // without the engine's call: said to record it again
+        Rig q;
+        q.handsOk = false;
+        q.Step();
+        o = q.ClickCell(gov::RowCell(0, gov::kHand));
+        CHECK(!o.handSet && q.V().note == gov::Note::NoHandSet && o.feedback == gov::Feedback::Refused);
+    }
+    {   // the review: its hand line steps it
+        Rig v;
+        v.Step();
+        v.ClickCell(gov::RowCell(0, gov::kRowRerecord));
+        v.bw.Act(v.seq);
+        v.bw.g.recordState = BW_LINK_REC_READY;
+        v.bw.g.recordGesture = 11;
+        v.Step();
+        v.bw.g.recordState = BW_LINK_REC_SAVED;
+        v.bw.g.g[0].flags |= BW_LINK_GF_REVIEW;
+        v.Step();
+        gov::R hr;
+        CHECK(v.V().screen == gov::Screen::Review && gov::CellRect(v.V(), gov::kRevHand, &hr));
+        const gov::Out o = v.ClickCell(gov::kRevHand);
+        CHECK(o.handSet && o.handGesture == 11 && o.hand == BW_LINK_GH_LEFT && v.V().screen == gov::Screen::Review);
+    }
+}
+
+// -- a gesture's mode: cast once / select (its skill onto the right trigger), on its row's skill line and its review --------------------------------
+static void TestMode() {
+    {
+        Rig r;
+        r.Step();
+        CHECK(r.V().row[0].mode == 0 && gov::PartUsable(r.V().row[0].g, gov::kMode) && !gov::PartUsable(r.V().row[3].g, gov::kMode));   // (a button: none)
+        gov::Out o = r.ClickCell(gov::RowCell(0, gov::kMode));
+        CHECK(o.modeSet && !o.send && o.modeGesture == 11 && o.mode == 1 && r.V().note == gov::Note::ModeSet);
+        r.modes.push_back({11, 1});
+        r.Step();
+        CHECK(r.V().row[0].mode == 1 && r.V().row[1].mode == 0);
+        o = r.ClickCell(gov::RowCell(0, gov::kMode));
+        CHECK(o.modeSet && o.mode == 0);
+        // an action is done once: no mode
+        r.actions.push_back({12, "d2r.cmd.17"});
+        r.bw.g.g[1].skill = -1;
+        r.Step();
+        CHECK(!gov::PartUsable(r.V().row[1].g, gov::kMode));
+        // without the engine's call: refused, said why
+        Rig q;
+        q.modesOk = false;
+        q.Step();
+        o = q.ClickCell(gov::RowCell(2, gov::kMode));
+        CHECK(!o.modeSet && q.V().note == gov::Note::NoModeSet && o.feedback == gov::Feedback::Refused);
+        // the rows' cells: ten a row, under the grids' (the parts fit)
+        CHECK(gov::IsRowCell(gov::RowCell(5, gov::kMode)) && gov::RowOf(gov::RowCell(5, gov::kMode)) == 5 && gov::PartOf(gov::RowCell(5, gov::kMode)) == gov::kMode && !gov::IsRowCell(gov::kGrid0));
+    }
+    {   // the review: the line's right half flips it, its left half a glyph's hand
+        Rig v;
+        v.Step();
+        v.ClickCell(gov::RowCell(0, gov::kRowRerecord));
+        v.bw.Act(v.seq);
+        v.bw.g.recordState = BW_LINK_REC_READY;
+        v.bw.g.recordGesture = 11;
+        v.Step();
+        v.bw.g.recordState = BW_LINK_REC_SAVED;
+        v.bw.g.g[0].flags |= BW_LINK_GF_REVIEW;
+        v.Step();
+        gov::R a, b;
+        CHECK(gov::CellRect(v.V(), gov::kRevMode, &a) && gov::CellRect(v.V(), gov::kRevHand, &b) && !Overlap(a, b));
+        gov::Out o = v.ClickCell(gov::kRevMode);
+        CHECK(o.modeSet && o.modeGesture == 11 && o.mode == 1 && v.V().screen == gov::Screen::Review);
+        o = v.ClickCell(gov::kRevHand);
+        CHECK(o.handSet && !o.modeSet);
+    }
+}
+
+// -- each trigger's role (vr/trigger_roles.h): a glyph trigger tells a cast from a stroke by the hand's motion at the press ---------------------------
+static void TestTriggerRoles() {
+    using namespace trigroles;
+    // (the Hold rule, [gestures] glyph_cast_hold=1: these first checks; the Release rule - the default - after them)
+    auto Run = [](Hand& h, Role role, int hand, double t, float trig, float x, bool armed, bool allowed = true) {
+        In in;
+        in.time = t;
+        in.allowed = allowed;
+        in.trigger = trig;
+        in.pos[0] = x;
+        in.posOk = true;
+        in.armed = armed;
+        in.rule = CastRule::Hold;
+        return h.Step(role, hand, in);
+    };
+    auto Rel = [](Hand& h, int hand, double t, float trig, float x, bool armed, bool point = false, double recognised = -1.0) {
+        In in;
+        in.time = t;
+        in.allowed = true;
+        in.trigger = trig;
+        in.pos[0] = x;
+        in.posOk = true;
+        in.armed = armed;
+        in.armedPoint = point;
+        in.recognisedAt = recognised;
+        return h.Step(Role::Glyphs, hand, in);
+    };
+    {   // Release: drawing (6 cm within 0.12 s) is a stroke - a pen to the let-go, no cast whether or not it matched
+        Hand h;
+        Out o = Rel(h, 1, 0.0, 0.9f, 0.0f, true);
+        CHECK(o.pen && !o.aiming && h.State() == Press::Deciding);
+        o = Rel(h, 1, 0.06, 0.9f, 0.09f, true);
+        CHECK(o.pen && h.State() == Press::Stroke);
+        o = Rel(h, 1, 0.8, 0.9f, 0.09f, true);   // (still now: still drawing - it never turns to an aim)
+        CHECK(o.pen && !o.aiming && !o.castHold);
+        o = Rel(h, 1, 0.9, 0.0f, 0.09f, true);
+        CHECK(!o.castTap && !o.castHold && !o.pen);
+    }
+    {   // Release: held still - an aim (the stroke cut), its line for a flying skill (the host's), the cast once at the let-go along this hand
+        Hand h;
+        Rel(h, 1, 0.0, 0.9f, 0.0f, true);
+        Out o = Rel(h, 1, 0.13, 0.9f, 0.01f, true);
+        CHECK(!o.pen && o.aiming && !o.castHold && !o.castTap);
+        o = Rel(h, 1, 1.5, 0.9f, 0.20f, true);   // (the hand moves now: it aims, it does not start a glyph)
+        CHECK(o.aiming && !o.pen && h.State() == Press::Cast);
+        o = Rel(h, 1, 1.6, 0.0f, 0.20f, true);
+        CHECK(o.castTap && o.rt && !o.lt && o.aimEnd && !o.aiming);
+    }
+    {   // Release: a point skill armed - its slot held while aiming (point_cast's arc and circle), the let-go is point_cast's cast (no tap of ours)
+        Hand h;
+        Rel(h, 0, 0.0, 0.9f, 0.0f, true, true);
+        Out o = Rel(h, 0, 0.13, 0.9f, 0.0f, true, true);
+        CHECK(o.aiming && o.castHold && o.lt && !o.rt);   // (the left: the second layer, LT first)
+        o = Rel(h, 0, 0.17, 0.9f, 0.0f, true, true);
+        CHECK(o.castHold && o.lt && o.rt);
+        o = Rel(h, 0, 0.5, 0.0f, 0.0f, true, true);
+        CHECK(!o.castTap && !o.castHold && o.aimEnd);
+    }
+    {   // Release: a quick still tap - one cast at the let-go; nothing armed - no cast at all (an aim with nothing to aim)
+        Hand h;
+        Rel(h, 1, 0.0, 0.9f, 0.0f, true);
+        Out o = Rel(h, 1, 0.05, 0.0f, 0.0f, true);
+        CHECK(o.castTap && o.rt);
+        Hand n;
+        Rel(n, 1, 0.0, 0.9f, 0.0f, false);
+        o = Rel(n, 1, 0.3, 0.9f, 0.0f, false);
+        CHECK(!o.aiming && !o.pen);
+        o = Rel(n, 1, 0.35, 0.0f, 0.0f, false);
+        CHECK(!o.castTap);
+    }
+    {   // the icon cache's aims field (the game's skills.txt: a server missile, not passive, not an aura); an older cache's lines: not known
+        wheelicons::Entry e;
+        CHECK(wheelicons::ParseLine("s36\t" + std::string(64, 'a') + ".png\tskillname36\t1\t1\t1", &e) && e.aims == 1 && e.page == 1);
+        CHECK(wheelicons::ParseLine("s40\t" + std::string(64, 'b') + ".png\tskillname40\t1\t3\t0", &e) && e.aims == 0);
+        CHECK(wheelicons::ParseLine("s47\t" + std::string(64, 'c') + ".png\tskillname47\t1\t3", &e) && e.aims == -1);
+        CHECK(wheelicons::ParseLine("s359\t" + std::string(64, 'd') + ".png\tkey\t\t\t1", &e) && e.cls == -1 && e.aims == 1);
+    }
+    {   // as before: nothing taken, nothing pressed
+        Hand h;
+        const Out o = Run(h, Role::AsBefore, 1, 0.0, 1.0f, 0.0f, true);
+        CHECK(!o.take && !o.pen && !o.castHold && !o.lt && !o.rt);
+    }
+    {   // a still press, armed: a pen until 0.12 s, then the armed slot held (the right: RT) for as long as the trigger is; let go: nothing more
+        Hand h;
+        Out o = Run(h, Role::Glyphs, 1, 0.0, 0.9f, 0.0f, true);
+        CHECK(o.take && o.pen && !o.castHold && h.State() == Press::Deciding);
+        o = Run(h, Role::Glyphs, 1, 0.08, 0.9f, 0.01f, true);
+        CHECK(o.pen && !o.castHold);
+        o = Run(h, Role::Glyphs, 1, 0.13, 0.9f, 0.01f, true);
+        CHECK(!o.pen && o.castHold && o.rt && !o.lt && h.State() == Press::Cast);
+        o = Run(h, Role::Glyphs, 1, 1.0, 0.9f, 0.02f, true);
+        CHECK(o.castHold && o.rt);   // (held: the game repeats it)
+        o = Run(h, Role::Glyphs, 1, 1.02, 0.0f, 0.02f, true);
+        CHECK(!o.castHold && !o.castTap && o.take && h.State() == Press::None);
+    }
+    {   // the hand moving 6 cm first: a stroke - a pen to the end, never a cast
+        Hand h;
+        Run(h, Role::Glyphs, 1, 0.0, 0.9f, 0.0f, true);
+        Out o = Run(h, Role::Glyphs, 1, 0.05, 0.9f, 0.08f, true);
+        CHECK(o.pen && h.State() == Press::Stroke);
+        o = Run(h, Role::Glyphs, 1, 0.5, 0.9f, 0.08f, true);   // (still now: still a stroke)
+        CHECK(o.pen && !o.castHold);
+        o = Run(h, Role::Glyphs, 1, 0.6, 0.0f, 0.08f, true);
+        CHECK(!o.pen && !o.castTap);
+    }
+    {   // a quick still tap, armed: one cast at its release; not armed: nothing
+        Hand h;
+        Run(h, Role::Glyphs, 1, 0.0, 0.9f, 0.0f, true);
+        Out o = Run(h, Role::Glyphs, 1, 0.06, 0.0f, 0.0f, true);
+        CHECK(o.castTap && o.rt && !o.lt);
+        Hand n;
+        Run(n, Role::Glyphs, 1, 0.0, 0.9f, 0.0f, false);
+        o = Run(n, Role::Glyphs, 1, 0.3, 0.9f, 0.0f, false);
+        CHECK(o.pen && !o.castHold);   // (not armed: a still press stays a pen - nothing to cast)
+        o = Run(n, Role::Glyphs, 1, 0.35, 0.0f, 0.0f, false);
+        CHECK(!o.castTap);
+    }
+    {   // the left: the second layer - LT first, RT a tick later
+        Hand h;
+        Run(h, Role::Glyphs, 0, 0.0, 0.9f, 0.0f, true);
+        Out o = Run(h, Role::Glyphs, 0, 0.13, 0.9f, 0.0f, true);
+        CHECK(o.castHold && o.lt && !o.rt);
+        o = Run(h, Role::Glyphs, 0, 0.17, 0.9f, 0.0f, true);
+        CHECK(o.castHold && o.lt && o.rt);
+        CHECK(ArmSlot(0) == 11 && ArmSlot(1) == 9);
+    }
+    {   // Shift: LT while held; Action: its edges; not allowed (a panel, a menu, not F4): nothing taken, a press under way forgotten
+        Hand s;
+        Out o = Run(s, Role::Shift, 1, 0.0, 0.9f, 0.0f, false);
+        CHECK(o.take && o.lt && !o.rt);
+        Hand a;
+        o = Run(a, Role::Action, 0, 0.0, 0.9f, 0.0f, false);
+        CHECK(o.take && o.actionDown && o.actionHeld);
+        o = Run(a, Role::Action, 0, 0.1, 0.0f, 0.0f, false);
+        CHECK(o.actionUp && !o.actionHeld);
+        Hand g;
+        Run(g, Role::Glyphs, 1, 0.0, 0.9f, 0.0f, true);
+        o = Run(g, Role::Glyphs, 1, 0.05, 0.9f, 0.0f, true, false);
+        CHECK(!o.take && !o.pen && g.State() == Press::None);
+        CHECK(RoleOf(1) == Role::Glyphs && RoleOf(3) == Role::Action && RoleOf(9) == Role::AsBefore);
+    }
+    {   // the engine's pens: with the roles in use, only the glyph triggers' strokes
+        gengine::PenIn pi;
+        pi.play = true;
+        pi.roles = true;
+        pi.rolePen[0] = true;
+        uint8_t pen[2];
+        gengine::Pens(pi, pen);
+        CHECK(pen[0] == 1 && pen[1] == 0);
+        pi.roles = false;
+        gengine::Pens(pi, pen);
+        CHECK(pen[0] == 1 && pen[1] == 1);   // (engine_pen as before: both)
+    }
+    {   // the Triggers screen: the footer's TRIGGERS, a role per trigger, an Action asks for its action (the actions' grid), back to the screen
+        Rig r;
+        r.Step();
+        int cells[5];
+        CHECK(gov::FooterCells(r.V(), cells) == 5 && cells[3] == gov::kTriggers);
+        for (int i = 0; i < 5; ++i) CHECK(Inside(gov::FooterRect(i, 5), gov::R{0, 0, gov::kW, gov::kH}) && (i == 0 || !Overlap(gov::FooterRect(i, 5), gov::FooterRect(i - 1, 5))));
+        r.ClickCell(gov::kTriggers);
+        CHECK(r.V().screen == gov::Screen::Triggers && r.m.WantsBack());
+        gov::Out o = r.ClickCell(gov::kTrigRole0 + 0 * gov::kTrigRoles + 1);   // the right trigger: glyphs
+        CHECK(o.trigSet && o.trigRow == 0 && o.trigRole == 1 && !o.send);
+        o = r.ClickCell(gov::kTrigRole0 + 1 * gov::kTrigRoles + 3);   // the left: an action - none yet: the grid
+        CHECK(!o.trigSet && r.V().screen == gov::Screen::BindSkill && r.V().bindTrigger == 2 && r.V().bindTab == 1);
+        r.ClickCell(gov::kBindTabSkills);
+        CHECK(r.V().bindTab == 1);   // (a trigger's: actions only)
+        o = r.ClickCell(gov::kGrid0 + 2);   // Potion - belt 1
+        CHECK(o.trigSet && o.trigRow == 1 && o.trigRole == 3 && std::strcmp(o.trigAction, "d2r.cmd.17") == 0 && r.V().screen == gov::Screen::Triggers);
+        r.trigRole[1] = 3;
+        r.trigAction[1] = "d2r.cmd.17";
+        r.Step();
+        gov::R ar;
+        CHECK(gov::CellRect(r.V(), gov::kTrigAction0 + 1, &ar) && !gov::CellRect(r.V(), gov::kTrigAction0, &ar));
+        o = r.ClickCell(gov::kTrigRole0 + 1 * gov::kTrigRoles + 3);   // an action again: the one it has, kept
+        CHECK(o.trigSet && std::strcmp(o.trigAction, "d2r.cmd.17") == 0);
+        r.ClickCell(gov::kTrigAction0 + 1);   // another action: the grid on its page, back key: the Triggers screen
+        CHECK(r.V().screen == gov::Screen::BindSkill && std::strcmp(r.V().bindAction, "d2r.cmd.17") == 0);
+        r.Step(-1, -1, false, true);
+        CHECK(r.V().screen == gov::Screen::Triggers);
+        r.Step(-1, -1, false, true);
+        CHECK(r.V().screen == gov::Screen::List);
+        // the screen works with BodyWalk away (it asks it nothing)
+        Rig q;
+        q.have = false;
+        q.Step();
+        q.ClickCell(gov::kTriggers);
+        o = q.ClickCell(gov::kTrigRole0 + 2);
+        CHECK(q.V().screen == gov::Screen::Triggers && o.trigSet && o.trigRole == 2);
+        for (int row = 0; row < 2; ++row)
+            for (int role = 0; role < gov::kTrigRoles; ++role) CHECK(!Overlap(gov::TrigRoleRect(row, role), gov::TrigActionRect(row)) && gov::TrigRoleRect(row, role).b < gov::kNoteLine.t);
+    }
+}
+
 static void TestController() {
     {   // the key off: two tabs, the third's place is nothing; the gestures block is not even asked about
         World w(false);
@@ -1668,7 +2366,7 @@ static void TestController() {
         w.Next();
         CHECK(w.c.ViewNow().tab == wheel::Tab::Gestures);
         // NEW GESTURE, a type: the back key steps back to the list, the window stays up
-        w.ClickRect(gov::FooterRect(1, 3));
+        w.ClickRect(gov::FooterRect(1, 5));   // (the list's footer: < NEW ZONES TRIGGERS >)
         CHECK(w.c.GesturesModel().Shown() == gov::Screen::NewType);
         w.Hand(1, 0, di::kSecondary);
         w.Next();
@@ -1686,6 +2384,7 @@ static void TestController() {
         World w(true);
         w.Open();
         w.ClickTab(2, 3);
+        const wheel::Step onList = w.Next();   // (the Gestures tab's list, the window up)
         const wheel::Step s = w.ClickRect(gov::PartRect(0, gov::kRowRerecord));
         CHECK(s.gestureSend && s.gestureCmd.op == BW_LINK_GC_RECORD && s.gestureCmd.gesture == 11);
         w.bw.Act(w.seq);
@@ -1693,6 +2392,10 @@ static void TestController() {
         w.bw.g.recordGesture = 11;
         const wheel::Step r = w.Next();
         CHECK(r.gestureRecording && r.layer.show && !r.layer.beam);
+        // [openxr] hands_over_panels runs on the Gestures tab - its list and its take alike (vr/near_overlay.h Wanted) - and nowhere else
+        CHECK(r.gesturesTab && nearoverlay::Wanted(nearoverlay::kGesturesTab, true, true, true, r.gesturesTab));
+        CHECK(!onList.gestureRecording && onList.gesturesTab && nearoverlay::Wanted(nearoverlay::kGesturesTab, true, true, true, onList.gesturesTab));
+        CHECK(!nearoverlay::Wanted(nearoverlay::kOff, true, true, true, onList.gesturesTab));
         // the window keeps its size and distance but stands aside - to the left of a right-hand take - and the space straight ahead is free
         CHECK(Near(r.layer.widthM, wheel::PanelWidthM(w.c.Config()), 1e-5f) && Near(r.layer.heightM, wheel::PanelHeightM(w.c.Config()), 1e-5f));
         {
@@ -1863,6 +2566,38 @@ static void TestPaint(const char* dumpDir) {
         const std::vector<uint32_t> px = ShotOf("gestures_picture_button", bv);
         CHECK(Differ(two, px, gov::kReviewPic) > 20000);
     }
+    {   // the Colour screen, a picture half played, a glyph's review with its swatches
+        Rig cr;
+        cr.Step();
+        cr.ClickCell(gov::RowCell(0, gov::kColour));
+        cr.Step(0.5f * (gov::SwatchRect(3, true).l + gov::SwatchRect(3, true).r), 0.5f * (gov::SwatchRect(3, true).t + gov::SwatchRect(3, true).b));
+        const std::vector<uint32_t> px = ShotOf("gestures_colour", cr.V());
+        CHECK(cr.V().screen == gov::Screen::Colour && Differ(two, px, gov::kColourPic) > 5000 && Differ(two, px, gov::SwatchRect(0, true)) > 3000);
+        Rig pr;
+        pr.Step();
+        pr.ClickCell(gov::RowCell(0, gov::kPic));
+        for (int i = 0; i < 70; ++i) pr.Step();
+        const std::vector<uint32_t> half = ShotOf("gestures_playing", pr.V());
+        CHECK(pr.V().playId == 11 && Differ(list, half, gov::PicRect(0)) > 100);
+        Rig gr;
+        gr.Step();
+        gr.ClickCell(gov::RowCell(0, gov::kRowRerecord));
+        gr.bw.Act(gr.seq);
+        gr.bw.g.recordState = BW_LINK_REC_READY;
+        gr.bw.g.recordGesture = 11;
+        gr.Step();
+        gr.bw.g.recordState = BW_LINK_REC_SAVED;
+        gr.bw.g.g[0].flags |= BW_LINK_GF_REVIEW;
+        gr.Step();
+        const std::vector<uint32_t> rg = ShotOf("gestures_review_glyph_swatches", gr.V());
+        Rig br;   // the bind screen's game actions
+        br.Step();
+        br.ClickCell(gov::RowCell(0, gov::kRowBind));
+        br.ClickCell(gov::kBindTabActions);
+        const std::vector<uint32_t> ba = ShotOf("gestures_bind_actions", br.V());
+        CHECK(br.V().bindTab == 1 && Differ(two, ba, gov::GridRect(0)) > 2000 && Differ(two, ba, gov::BindTabRect(1)) > 500);
+        CHECK(gr.V().screen == gov::Screen::Review && Differ(two, rg, gov::SwatchRect(2, false)) > 500);
+    }
     // the missing pieces, each with its words (and its button where there is a fix)
     for (gov::Missing m : {gov::Avail::LinkOff, gov::Avail::NotRunning, gov::Avail::Starting, gov::Avail::NoGameLink, gov::Avail::NoSkills, gov::Avail::NoGestures}) {
         Rig mr;
@@ -1938,9 +2673,16 @@ int main(int argc, char** argv) {
     TestMissing();
     TestFlowFakeBodyWalk();
     TestControlsForBodyWalk();
+    TestRuneFlash();
     TestEnginePure();
     TestEngineStub();
     TestEngineReal();
+    TestZones();
+    TestPlay();
+    TestBindActions();
+    TestGlyphHand();
+    TestMode();
+    TestTriggerRoles();
     TestController();
     TestPaint(dump);
     std::printf("gesture_overlay_test: %d checks, %d failed\n", g_checks, g_failures);

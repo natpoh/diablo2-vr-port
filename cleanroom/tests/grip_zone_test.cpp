@@ -40,39 +40,44 @@ struct Rig {
 	hh::HandOut out[2];
 	hh::Kind kind;
 	bool two;
-	Rig(hh::Kind k, bool twoHanded, bool hiltOnly, double hiltLen = 0.0) : kind(k), two(twoHanded) {
+	int first = 0, second = 1;   // the hand that holds it (the game's slot's) and the one that takes it second
+	double sx = 1.0;             // the first fist's side: +x the right hand, -x the left (the left-hand case is the right one's mirror image)
+	Rig(hh::Kind k, bool twoHanded, bool hiltOnly, double hiltLen = 0.0, int firstHand = 0) : kind(k), two(twoHanded), first(firstHand & 1), second((firstHand & 1) ^ 1), sx(first == 0 ? 1.0 : -1.0) {
 		s.hiltOnly = hiltOnly;
 		s.hiltLen  = hiltLen;
 		in[0].tracked = in[1].tracked = true;
-		in[0].pose = { { 0.20, 1.30, -0.40 }, {} };   // the first fist holds the weapon here; the shaft runs from it along -z (the body's frame IS that fist)
-		in[1].pose = { { -0.20, 1.30, -0.40 }, {} };
+		in[first].pose = { { 0.20 * sx, 1.30, -0.40 }, {} };   // the first fist holds the weapon here; the shaft runs from it along -z (the body's frame IS that fist)
+		in[second].pose = { { -0.20 * sx, 1.30, -0.40 }, {} };
 		in[0].grip = in[1].grip = 0.0f;
-		w.Place(0, k, twoHanded, { {}, { 0, 0, -1 } }, in, s);
+		w.Place(first, k, twoHanded, { {}, { 0, 0, -1 } }, in, s);
 		Step(30);
 	}
 	void Step(int n = 1) {
 		for (int i = 0; i < n; ++i) w.Step(in, kDt, s, out);
 	}
 	// the second fist on the shaft `ahead` metres along it from the first fist (negative: behind it, toward the pommel), 3 cm off the axis
-	void Fist(double ahead) { in[1].pose.pos = { 0.20 - 0.03, 1.30, -0.40 - ahead }; }
+	void Fist(double ahead) { in[second].pose.pos = { (0.20 - 0.03) * sx, 1.30, -0.40 - ahead }; }
 	// does a grip pressed there take the weapon? (a press is a rise: let go first)
 	bool Takes(double ahead) {
-		in[1].grip = 0.0f;
+		in[second].grip = 0.0f;
 		Fist(ahead);
 		Step(3);
-		in[1].grip = 1.0f;
+		in[second].grip = 1.0f;
 		Step(10);
-		const bool holds = out[1].holds;
-		in[1].grip = 0.0f;
+		const bool holds = out[second].holds;
+		in[second].grip = 0.0f;
 		Step(5);
 		return holds;
 	}
-	hh::Hold::TakeAt Zone(double ahead) {
-		in[1].grip = 0.0f;
+	hh::Hold::TakeAt Zone(double ahead, double* metres = nullptr, double* along = nullptr) {
+		in[second].grip = 0.0f;
 		Fist(ahead);
 		Step(3);
 		double m = 0.0;
-		return w.TakeZone(1, in[1], s, &m);
+		const hh::Hold::TakeAt at = w.TakeZone(second, in[second], s, &m);
+		if (metres) *metres = m;
+		if (along) { double d = 0.0; w.Probe(second, in[second], s, along, &d); }
+		return at;
 	}
 };
 
@@ -206,6 +211,33 @@ int main() {
 		r.Step(10);
 		CHECK(r.out[1].holds, "a lying weapon is taken by its tip");
 		std::printf("  a lying weapon is taken anywhere along it, its tip too\n");
+	}
+
+	// ---- both directions (Serg, 0.206.11: «правая рука иногда не может взять за рукоятку сверху левой»): the RIGHT hand taking a weapon the LEFT one holds is the left hand
+	//      taking one the right holds, mirrored - the zone, the distance, the place along the shaft, the take, for every kind, ticked and not, at every place along it ----
+	{
+		struct K { const char* name; Kind kind; bool two; };
+		const K ks[] = { { "sword", Kind::Sword, false }, { "two-handed sword", Kind::Sword, true }, { "axe", Kind::Axe, false }, { "mace", Kind::Mace, false }, { "dagger", Kind::Dagger, false },
+		                 { "staff", Kind::Staff, true },  { "spear", Kind::Spear, true } };
+		int compared = 0;
+		for (const K& k : ks)
+			for (const bool hilt : { false, true }) {
+				Rig r(k.kind, k.two, hilt, 0.0, 0), l(k.kind, k.two, hilt, 0.0, 1);
+				CHECK(r.out[0].holds && !r.out[1].holds && l.out[1].holds && !l.out[0].holds, "%s: placed in the first hand (right %d, left %d)", k.name, (int)r.out[0].holds, (int)l.out[1].holds);
+				for (double ahead = -0.30; ahead <= 0.90; ahead += 0.05) {
+					double mr = 0, ml = 0, ar = 0, al = 0;
+					const hh::Hold::TakeAt zr = r.Zone(ahead, &mr, &ar), zl = l.Zone(ahead, &ml, &al);
+					CHECK(zr == zl && std::fabs(mr - ml) < 1e-6 && std::fabs(ar - al) < 1e-6, "%s%s, %.2f m ahead: the left hand taking from the right (zone %d, %.3f m off, %.3f along) = the right hand taking from the left (zone %d, %.3f, %.3f)",
+					      k.name, hilt ? " (hilt only)" : "", ahead, (int)zr, mr, ar, (int)zl, ml, al);
+					++compared;
+				}
+				for (double ahead : { -0.15, -0.05, 0.05, 0.15, 0.40 }) {
+					Rig r2(k.kind, k.two, hilt, 0.0, 0), l2(k.kind, k.two, hilt, 0.0, 1);
+					const bool tr = r2.Takes(ahead), tl = l2.Takes(ahead);
+					CHECK(tr == tl, "%s%s, %.2f m ahead: the second hand takes it the same either way (left from right %d, right from left %d)", k.name, hilt ? " (hilt only)" : "", ahead, (int)tr, (int)tl);
+				}
+			}
+		std::printf("  both directions: %d places along %d kinds compared - the right hand on a weapon the left holds is the left hand on one the right holds\n", compared, (int)(sizeof ks / sizeof ks[0]));
 	}
 
 	std::printf(g_fails == 0 ? "grip_zone_test: all passed\n" : "grip_zone_test: %d failed\n", g_fails);

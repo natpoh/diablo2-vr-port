@@ -390,6 +390,18 @@ bool Hold::PastHilt(int hand, double along, const Settings& s) const {
 	return s.hiltOnly && free_ == Free::Held && holds_[hand ^ 1] && along > HiltEnd(s) + std::max(0.0, s.hiltMargin);
 }
 
+bool Hold::Probe(int hand, const HandIn& in, const Settings& s, double* alongFromButt, double* offShaft) const {
+	if (!placed_ || hand < 0 || hand > 1) return false;
+	const Pose gp  = BodyPose();
+	const V3   off = FistOffset(hand, s);
+	const V3 fist = Rotate(QConj(gp.rot), Sub(Add(in.pose.pos, Rotate(in.pose.rot, off)), gp.pos));
+	const double raw = Dot(Sub(fist, line_.at), line_.dir);
+	const double t = std::clamp(raw, shape_.butt, shape_.tip);
+	if (alongFromButt) *alongFromButt = raw - shape_.butt;
+	if (offShaft) *offShaft = Len(Sub(fist, Add(line_.at, Mul(line_.dir, t))));
+	return true;
+}
+
 Hold::TakeAt Hold::TakeZone(int hand, const HandIn& in, const Settings& s, double* metres) const {
 	if (metres) *metres = 1e9;
 	if (!placed_ || hand < 0 || hand > 1 || !in.tracked || holds_[hand]) return TakeAt::Nowhere;

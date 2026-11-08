@@ -2,8 +2,10 @@
 #include "../vrcam_headers.h"
 #include "pose_views.h"
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle
+#include "../aim_tilt.h"      // [body] flat_aim_tilt: flat F3, the arms tilt with the crosshair (kFreshMs: how old a body under it may be)
 #include "../drawn_hand.h"    // [hands] left_slot_drawn_left: a weapon alone in the left slot, drawn in the hand that holds it
 #include "../skill_wheel.h"   // [weight] grab_items_empty_grip: the skill panel (its gestures tab) keeps the grip
+#include "../gesture_play_wire.h"   // the Gestures tab's Play: the take moves the drawn arms (F4, visual only)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -102,6 +104,10 @@ void PushArms() {
     if (LookAtNow(hero)) {
         skel::SetHeroPos(hero[0], hero[1], hero[2]);
         memcpy(g_heroPosNow, hero, sizeof hero);
+        if (simplersun::WantsHero()) {   // [render] sun_shadow_radius_m: the point the sun's map is fitted round, and the hero's own model (never left out)
+            skel::HeroXform hx;
+            simplersun::SetHero(hero, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), skel::HeroTransform(&hx) ? (hx.entity & 0xFFFFFu) : simplersun::kNoEntity);
+        }
     }
     // third person, the game on the floor and F1 in perspective: the whole hero as the game
     // animates him, head included (on the floor he stood headless, 2026-10-05)
@@ -776,6 +782,8 @@ void PushArms() {
     // [body] flat_hold_trunk: flat first person (F3), the game's own animation - a swing took the torso out from under the camera. As F4
     // holds the body under the head: the trunk's axis in the bind pose, the hips under it, the arms still the game's (skeletons.cpp PoseBody)
     in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();
+    // [body] flat_hold_trunk_twist: and the arms keep the chest's turn the hold drops (a side swing crosses in front, not past the camera)
+    in.holdTrunkTwist = in.holdTrunk && g_set.flatHoldTrunkTwist.load();
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
     in.dollFeet = g_set.dollFeet.load() && !vrVanilla;   // (in every other view; VR F1 / F3 the game's)
@@ -830,7 +838,39 @@ void PushArms() {
     {   // [body] attack_lean (vr/attack_lean.h): the 2D views - the monitor's F2 and F3 (our camera), VR F2. Not VR F1 / F3 (the game's own hero there,
         // vr/body/pose_views.h) nor F4 (the arms are the controllers'). The crosshair's ray in the hero's model space, read here when the body's turn did not.
         const bool leanView = on && ((platform == 0 && (view == 2 || view == 3)) || (platform == 1 && view == 2)) && !Overhead();
-        in.attackLean = leanView && g_set.attackLean.load();
+        // [body] flat_aim_tilt (vr/aim_tilt.h): the monitor's F3 - the arms tilt with the crosshair all the time, and onto the monster's body under it while
+        // the attack plays; attack_lean steps aside there (both would turn the arms). The camera's forward in the hero's model, read here when the body's turn did not.
+        const bool tiltView = on && platform == 0 && view == 3 && !Overhead();
+        in.aimTilt = tiltView && g_set.flatAimTilt.load();
+        in.aimTiltPct = g_set.flatAimTiltPct.load();
+        in.aimTiltMaxDeg = g_set.flatAimTiltMaxDeg.load();
+        in.aimTiltTarget = g_set.flatAimTiltTarget.load();
+        if (in.aimTilt) {
+            if (!in.haveYaw) {
+                float tiltYaw = 0.0f, tiltEye[3];
+                bool tiltEyeOk = false;
+                CameraYawInModel(&tiltYaw, tiltEye, &tiltEyeOk);   // (refreshes the forward and the model's matrix it is read through)
+            }
+            in.aimFwdOk = CameraForwardInModel(in.aimFwd);
+            float w[3];
+            const bool fresh = FlatAimBody(w, (ULONGLONG)aimtilt::kFreshMs, &in.aimBodyAgeMs);
+            in.aimBodyOk = in.aimTiltTarget && fresh && WorldPointInModel(w, in.aimBody);
+        }
+        {
+            static int toldTilt = -1;   // on / off and why, when it changes
+            const int tiltState = !g_set.flatAimTilt.load() ? 0 : !tiltView ? 1 : !in.aimFwdOk ? 2 : 3;
+            if (tiltState != toldTilt) {
+                toldTilt = tiltState;
+                static const char* const kTiltWhy[4] = {"off ([body] flat_aim_tilt)", "not in this view (the monitor's F3 only)",
+                                                        "the camera's forward in the hero's model is not known yet", "on"};
+                char tail[200] = "";
+                if (tiltState == 3)
+                    snprintf(tail, sizeof tail, ": the arms follow %.0f %% of the crosshair's pitch, at most %.0f deg%s (drawn only; attack_lean steps aside here)",
+                             in.aimTiltPct, in.aimTiltMaxDeg, in.aimTiltTarget ? ", onto the monster's body under it through a swing" : "");
+                LogF("vrcam: aim tilt - %s%s", kTiltWhy[tiltState], tail);
+            }
+        }
+        in.attackLean = leanView && g_set.attackLean.load() && !in.aimTilt;
         in.attackLeanMaxDeg = g_set.attackLeanMaxDeg.load();
         in.leanView = platform * 10 + view;
         if (in.attackLean) {
@@ -841,11 +881,12 @@ void PushArms() {
             in.leanRayOk = leanEyeOk && CameraForwardInModel(in.leanFwd);
         }
         static int toldLean = -1;   // on / off and why, when it changes
-        const int leanState = !g_set.attackLean.load() ? 0 : !leanView ? 1 : !in.leanRayOk ? 2 : 3;
+        const int leanState = !g_set.attackLean.load() ? 0 : !leanView ? 1 : in.aimTilt ? 4 : !in.leanRayOk ? 2 : 3;
         if (leanState != toldLean) {
             toldLean = leanState;
-            static const char* const kLeanWhy[4] = {"off ([body] attack_lean)", "not in this view (the monitor's F2 / F3 and VR F2 only)",
-                                                    "the camera's ray in the hero's model is not known yet", "on"};
+            static const char* const kLeanWhy[5] = {"off ([body] attack_lean)", "not in this view (the monitor's F2 / F3 and VR F2 only)",
+                                                    "the camera's ray in the hero's model is not known yet", "on",
+                                                    "aside in F3 ([body] flat_aim_tilt turns the arms there)"};
             LogF("vrcam: attack lean - %s%s", kLeanWhy[leanState],
                  leanState == 3 ? (std::string(": the swing leans toward where the crosshair looks, at most ") + std::to_string((int)std::lround(in.attackLeanMaxDeg)) +
                                    " deg (drawn only)").c_str() : "");
@@ -968,6 +1009,29 @@ void PushArms() {
     }
     in.grabWrap = in.grabOn && g_set.weightGrabWrap.load();   // [weight] grab_wrap (with grab_bodies or grab_props)
     in.grabMuscle = g_set.weightGrabMusclePct.load() * 0.01f;   // [weight] grab_muscle_pct
+    // The Gestures tab's Play (vr/gesture_play_wire.h): the take moves the drawn arms - from the controllers, once, back to them. F4 only, visual only:
+    // the grab, the items and the walls' hands rest meanwhile (and the touch attacks nothing: meleetouch::SetPaused)
+    if (gplaywire::Playing() && sh && in.mode == 2 && viewgate::F4()) {
+        const float pitch = sh->pitchValid ? sh->headPitchDeg * 0.0174532925f : 0.0f;
+        const float* room = sh->roomMagic == D2RVR_ROOM_MAGIC ? sh->headRoom : nullptr;
+        float ctlGrip[2] = {std::max(0.0f, in.grip[0]), std::max(0.0f, in.grip[1])};
+        gplay::Arms a;
+        if (gplaywire::ArmsNow(pitch, in.hand, in.rot, ctlGrip, room, &a)) {
+            for (int side = 0; side < 2; ++side) {
+                if (!(a.valid & (1u << side))) continue;
+                for (int k = 0; k < 3; ++k) in.hand[side][k] = a.hand[side][k];
+                for (int k = 0; k < 4; ++k) in.rot[side][k] = a.rot[side][k];
+                in.grip[side] = a.grip[side];
+                in.handsValid |= 1u << side;
+                in.grabFree[side] = false;
+                in.itemsFree[side] = false;
+            }
+            in.grabOn = in.grabBodies = in.grabProps = false;
+            in.itemsOn = false;
+            in.wallsOn = false;
+            in.grabWrap = false;
+        }
+    }
 #endif
     skel::Set(in);
 }

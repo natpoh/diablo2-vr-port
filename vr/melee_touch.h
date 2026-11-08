@@ -96,6 +96,8 @@ BladeExtent BladeFor(uint32_t code, uint32_t type, bool twoHandsOn, float unitM 
 void SetUnchecked(bool on);
 // [debug] melee_touch_no_attack: a touch that would attack presses nothing - to try the weapon's stab and the monsters' push without killing them.
 void SetNoAttack(bool on);
+// The Gestures tab's Play moves the hero's arms (vr/gesture_play_wire.cpp): while it plays a touch attacks nothing and presses no barrel. Any thread.
+void SetPaused(bool on);
 // [debug] melee_touch_client_verdict: the client's own units answer "hostile? a wall?" even where the server is in this process
 // (vr/client_verdict.h) - what a TCP/IP client gets, tried offline.
 void SetClientVerdict(bool on);

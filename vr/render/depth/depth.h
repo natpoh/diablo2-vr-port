@@ -29,6 +29,11 @@ void BeginLeft(bool redirect);
 void ScanCopies();
 int RightEye();
 void Restore();
+// [stereo] native_replay: the upload buffers and the lists' hooks without ReShade (depth_fix.cpp)
+void NativeUploadMade(ID3D12Resource* r, uint64_t va, uint64_t size, uint8_t* cpu);
+void NativeUploadGone(ID3D12Resource* r);
+size_t NativeUploadsKnown();
+bool HookNative(ID3D12Device* dev);
 // (RecordSlots has default arguments: declared where it is called)
 }  // namespace camfix
 namespace depthsrc {

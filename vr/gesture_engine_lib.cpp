@@ -18,6 +18,7 @@ namespace {
 SRWLOCK g_lock = SRWLOCK_INIT;   // the status and the module (the calls themselves are one thread's)
 LogFn g_log = nullptr;
 std::wstring g_path;
+std::string g_gameId = "d2r";
 Status g_status = Status::NotLooked;
 HMODULE g_module = nullptr;
 void* g_engine = nullptr;
@@ -40,6 +41,15 @@ struct Fns {
     BWGE_ListFn list = nullptr;
     BWGE_PollCastsFn poll = nullptr;
     BWGE_TrailFn trail = nullptr;
+    BWGE_GetPoseZoneFn getZone = nullptr;   // (optional)
+    BWGE_SetPoseZoneFn setZone = nullptr;
+    BWGE_GetTakeFn getTake = nullptr;       // (optional)
+    BWGE_BindActionFn bindAction = nullptr; // (optional, the three together)
+    BWGE_GetActionFn getAction = nullptr;
+    BWGE_PollCasts2Fn poll2 = nullptr;
+    BWGE_SetHandFn setHand = nullptr;       // (optional)
+    BWGE_SetModeFn setMode = nullptr;       // (optional, the two together)
+    BWGE_GetModeFn getMode = nullptr;
 } g_fn;
 
 void Say(const char* fmt, const char* a = "", const char* b = "") {
@@ -99,6 +109,12 @@ int Refused(int r) {
 }  // namespace
 
 void SetLog(LogFn fn) { g_log = fn; }
+
+void SetGameId(const char* id) {
+    AcquireSRWLockExclusive(&g_lock);
+    g_gameId = id && *id ? id : "d2r";
+    ReleaseSRWLockExclusive(&g_lock);
+}
 
 void SetPath(const wchar_t* path) {
     AcquireSRWLockExclusive(&g_lock);
@@ -179,6 +195,18 @@ bool Ensure(const char* dataDir) {
     f.list = Get<BWGE_ListFn>(mod, "BWGE_List");
     f.poll = Get<BWGE_PollCastsFn>(mod, "BWGE_PollCasts");
     f.trail = Get<BWGE_TrailFn>(mod, "BWGE_Trail");
+    f.getZone = Get<BWGE_GetPoseZoneFn>(mod, "BWGE_GetPoseZone");   // (optional: an older library has no zones)
+    f.setZone = Get<BWGE_SetPoseZoneFn>(mod, "BWGE_SetPoseZone");
+    if (!f.getZone || !f.setZone) f.getZone = nullptr, f.setZone = nullptr;
+    f.getTake = Get<BWGE_GetTakeFn>(mod, "BWGE_GetTake");   // (optional: Play makes its take up from the list without it)
+    f.bindAction = Get<BWGE_BindActionFn>(mod, "BWGE_BindAction");   // (optional: game actions on gestures)
+    f.getAction = Get<BWGE_GetActionFn>(mod, "BWGE_GetAction");
+    f.poll2 = Get<BWGE_PollCasts2Fn>(mod, "BWGE_PollCasts2");
+    if (!f.bindAction || !f.getAction || !f.poll2) f.bindAction = nullptr, f.getAction = nullptr, f.poll2 = nullptr;
+    f.setHand = Get<BWGE_SetHandFn>(mod, "BWGE_SetHand");   // (optional: a glyph's hand changed without a take)
+    f.setMode = Get<BWGE_SetModeFn>(mod, "BWGE_SetMode");   // (optional: cast once / select)
+    f.getMode = Get<BWGE_GetModeFn>(mod, "BWGE_GetMode");
+    if (!f.setMode || !f.getMode) f.setMode = nullptr, f.getMode = nullptr;
     if (!f.abi || !f.open || !f.close || !f.setSet || !f.feed || !f.record || !f.stop || !f.keep || !f.discard || !f.clear || !f.bind || !f.color ||
         !f.threshold || !f.list || !f.poll || !f.trail) {
         Say("vrcam: gesture engine - d2r_vr_gestures.dll lacks some of its BWGE_* exports: not used");
@@ -199,7 +227,7 @@ bool Ensure(const char* dataDir) {
     init.size = sizeof init;
     init.abi = BWGE_ABI;
     init.dataDir = dataDir ? dataDir : "";
-    init.gameId = "d2r";
+    init.gameId = g_gameId.c_str();
     init.log = &EngineLog;
     init.userHeightM = 0.0f;   // (0: the library reads BodyWalk's own height and arm length - the mod's T-pose measures eye height and grip-to-grip span,
     init.armLengthM = 0.0f;    //  not BodyWalk's measures: a take recorded here and one recorded in BodyWalk then compare alike)
@@ -214,7 +242,9 @@ bool Ensure(const char* dataDir) {
     g_engine = e;
     g_status = Status::Loaded;
     g_errorTold = false;
-    Say("vrcam: gesture engine - d2r_vr_gestures.dll loaded and open (the gestures kept in %s\\games\\d2r)", init.dataDir);
+    Say("vrcam: gesture engine - d2r_vr_gestures.dll loaded and open (the gestures kept in %s\\games\\%s)", init.dataDir, init.gameId);
+    Say(f.getZone ? "vrcam: gesture engine - it has pose zones (BWGE_GetPoseZone / BWGE_SetPoseZone)"
+                  : "vrcam: gesture engine - an older library without pose zones: their sizes are kept in the game for the session");
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }
@@ -247,5 +277,28 @@ int SetThreshold(uint32_t gesture, float percent) { return g_engine ? Refused(g_
 uint32_t List(BW_LinkGestures* out) { return g_engine && out ? g_fn.list(g_engine, out) : 0u; }
 int PollCasts(BWGE_Cast* out, int max) { return g_engine && out && max > 0 ? g_fn.poll(g_engine, out, max) : 0; }
 uint32_t Trail(BW_LinkVrRune* out, uint32_t max) { return g_engine && out && max ? g_fn.trail(g_engine, out, max) : 0u; }
+bool HasPoseZones() { return g_engine && g_fn.getZone; }
+int GetPoseZone(uint32_t gesture, BWGE_PoseZone* out) {
+    if (!g_engine || !g_fn.getZone || !out) return BW_LINK_GR_BAD;
+    out->size = sizeof *out;
+    return g_fn.getZone(g_engine, gesture, out);
+}
+bool HasActions() { return g_engine && g_fn.bindAction; }
+bool HasSetHand() { return g_engine && g_fn.setHand; }
+bool HasModes() { return g_engine && g_fn.setMode; }
+int SetMode(uint32_t gesture, uint8_t mode) { return g_engine && g_fn.setMode ? Refused(g_fn.setMode(g_engine, gesture, mode)) : BW_LINK_GR_BAD; }
+int GetMode(uint32_t gesture, uint8_t* out) {
+    if (out) *out = 0;
+    return g_engine && g_fn.getMode && out ? g_fn.getMode(g_engine, gesture, out) : BW_LINK_GR_BAD;
+}
+int SetHand(uint32_t gesture, uint8_t hand) { return g_engine && g_fn.setHand ? Refused(g_fn.setHand(g_engine, gesture, hand)) : BW_LINK_GR_BAD; }
+int BindAction(uint32_t gesture, const char* action) { return g_engine && g_fn.bindAction ? Refused(g_fn.bindAction(g_engine, gesture, action ? action : "")) : BW_LINK_GR_BAD; }
+int GetAction(uint32_t gesture, char* out, uint32_t cap) {
+    if (out && cap) out[0] = 0;
+    return g_engine && g_fn.getAction && out && cap ? g_fn.getAction(g_engine, gesture, out, cap) : BW_LINK_GR_BAD;
+}
+int PollCasts2(BWGE_Cast2* out, int max) { return g_engine && g_fn.poll2 && out && max > 0 ? g_fn.poll2(g_engine, out, max) : 0; }
+int GetTake(uint32_t gesture, BWGE_TakeSample* out, int max) { return g_engine && g_fn.getTake && out && max > 0 ? g_fn.getTake(g_engine, gesture, out, max) : 0; }
+int SetPoseZone(uint32_t gesture, float radiusM) { return g_engine && g_fn.setZone ? Refused(g_fn.setZone(g_engine, gesture, radiusM)) : BW_LINK_GR_BAD; }
 
 }  // namespace gelib

@@ -40,6 +40,8 @@ bool HasTrees();
 // A skill's class (the game's own index: the order of playerclass.txt) and its page on that class's tree (1..3; 0 = on none). False: the
 // manifest has no row for the skill (the game's own commands and the like: they are on no tree).
 bool SkillTree(int32_t skillId, int* cls, int* page);
+// Whether a skill flies to where it is aimed (the manifest's aims, from the game's skills.txt): 1 yes, 0 no, -1 not known (no cache, an older one).
+int Aims(int32_t skillId);
 // The game's string key for the name of a class's tree 1..3 ("" when the cache has none).
 std::string TreeKey(int cls, int tree);
 
@@ -54,12 +56,13 @@ void Shutdown();
 
 // -- pure, for the tests ----------------------------------------------------------------------------------------------------
 
-// One manifest line: "s<id>\t<file>\t<key>[\t<class>\t<page>]" (the key, the class and the page may be missing). False for a line that is not one.
+// One manifest line: "s<id>\t<file>\t<key>[\t<class>\t<page>[\t<aims>]]" (the key, the class, the page and aims may be missing). False for a line that is not one.
 struct Entry {
     int32_t id = -1;
     std::string file, key;
     int cls = -1;    // the class (-1: not told), 0..15
     int page = 0;    // the tree page 1..3, 0 none
+    int aims = -1;   // 1 the skill flies to where it is aimed (a server missile, not passive, not an aura), 0 not, -1 not told (an older cache)
 };
 bool ParseLine(const std::string& line, Entry* out);
 

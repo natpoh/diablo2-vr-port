@@ -1581,10 +1581,10 @@ void TwinTimesTick() {
         natived3d::SetOurs(true);
         tt.list->ResolveQueryData(tt.heap, D3D12_QUERY_TYPE_TIMESTAMP, 0, 2 * tt.pairs, tt.readback, 0);
         tt.list->Close();
-        natived3d::SetOurs(false);
         ID3D12CommandList* lists[1] = {tt.list};
-        q->ExecuteCommandLists(1, lists);
+        q->ExecuteCommandLists(1, lists);   // (still ours: [stereo] native_replay's look at the queue leaves it out)
         q->Signal(tt.fence, ++tt.fenceAt);
+        natived3d::SetOurs(false);
         tt.waited = 0;
         tt.stage = 3;
         return;

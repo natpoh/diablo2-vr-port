@@ -258,8 +258,12 @@ uintptr_t DrawByTurns(int a) {
     eye = native ? eye ^ 1 : 0;
     g_pairNow.store(native);   // its present goes to the runtime as this eye (XrPresent)
     SetEye(eye);
+    foveation::BeginEye(eye, native);   // [render] foveated: this eye's mask into the rate image before its pass
+    lensmask::BeginEye(eye, native, true);   // [render] lens_mask: this eye's hidden area (not with turn_warp)
     d2rcam::Refresh();
     const uintptr_t r = OrigDrawGameScreen(a);
+    foveation::EndWorld();
+    lensmask::EndWorld();
     const double tr = pairtime::UsNow();
     if (native) replay::XrEnd();   // this eye and the other's last to the runtime
     xr::PairOver();
@@ -322,6 +326,7 @@ uintptr_t HookDrawGameScreen(int a) {
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
 
     static double lastEnd = 0.0, sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
+    static double sumBegin = 0.0;   // the XR begin inside "left" (xrWaitFrame's block and the frame's start: waiting, mostly - not the game's pass)
     const double t0 = pairtime::UsNow(), c0 = pairtime::CpuUs();
     pairtime::g_drawThread.store(GetCurrentThreadId());
     frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
@@ -341,7 +346,11 @@ uintptr_t HookDrawGameScreen(int a) {
     // (2026-10-10). Only with the world camera running, as the replay itself.
     const bool native = NativePairBegin();
     const double tb = pairtime::UsNow();   // XR begin is over (the long-pair line)
+    sumBegin += tb - t0;
     if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);   // the game's own head and hands for this pair
+    // [render] foveated: the left eye's mask into the rate image - before the replay starts noting the left pass's lists (ours stays out)
+    foveation::BeginEye(0, native);
+    lensmask::BeginEye(0, native, false);   // [render] lens_mask: the left eye's hidden area (a replay's left pass: both eyes', predicated)
     if (replayRight) replay::BeginLeft();
     SetEye(0);
     d2rcam::Refresh();
@@ -362,8 +371,12 @@ uintptr_t HookDrawGameScreen(int a) {
     const float rightDt = g_set.rightDtMs.load() * 0.001f;
     *dt = rightDt; *rawDt = rightDt;
     SetEye(1);
+    foveation::BeginEye(1, native);   // [render] foveated: the right eye's mask, before its pass or the replay of the left one's lists
+    lensmask::BeginEye(1, native, false);   // [render] lens_mask: the right eye's pass (the replay's lists carry it already)
     d2rcam::Refresh();
     const uintptr_t r = replayRight && replay::RightFromLeft() ? leftR : OrigDrawGameScreen(a);
+    foveation::EndWorld();
+    lensmask::EndWorld();
     const double tr = pairtime::UsNow();   // the right pass is over (the long-pair line)
     if (native) replay::XrEnd();   // both eyes to the runtime, or an empty frame if one went missing
     xr::PairOver();
@@ -394,12 +407,19 @@ uintptr_t HookDrawGameScreen(int a) {
         LogF("vrcam: %.1f pairs/s from one game frame each", pairs * 1000.0 / (double)(now - since));
         if (pairs) {
             const double k = 0.001 / pairs;   // us summed -> ms a pair
-            LogF("vrcam: a pair, ms: game %.2f | left %.2f (effects %.2f, Present %.2f) | right %.2f (effects %.2f, Present %.2f) | longest %.1f",
+            // (left includes the XR begin - xrWaitFrame's block, mostly: said at the end, so that "left" minus it is the game's pass)
+            LogF("vrcam: a pair, ms: game %.2f | left %.2f (effects %.2f, Present %.2f) | right %.2f (effects %.2f, Present %.2f) | longest %.1f | "
+                 "XR begin %.2f of the left (xrWaitFrame and the frame's start; the left pass itself %.2f)",
                  sumGap * k, sumPass[0] * k, sumEff[0] * k, sumPresent[0] * k, sumPass[1] * k, sumEff[1] * k, sumPresent[1] * k,
-                 maxPair * 0.001);
+                 maxPair * 0.001, sumBegin * k, (sumPass[0] - sumBegin) * k);
             LogF("vrcam: the two passes busy the game's thread %.0f%% of their time (%.2f ms CPU a pair; the rest waits - GPU, fences, locks)",
                  sumWall > 0.0 ? 100.0 * sumCpu / sumWall : 0.0, sumCpu * k);
         }
+        // [render] bench_skip_*: which of the game's stages were left out these 10 s, right under the frame lines (vr/render_bench.h)
+        if (const std::string bench = pipehunt::BenchLine(); !bench.empty()) Log(bench.c_str());
+        if (const std::string sun = simplersun::Line(); !sun.empty()) Log(sun.c_str());   // [render] sun_shadow_*: the sun map's models kept / left out
+        if (const std::string lights = benchlights::Line(); !lights.empty()) Log(lights.c_str());   // [render] bench_skip_point_lights
+        if (const std::string flat = litflat::Line(); !flat.empty()) Log(flat.c_str());   // [render] bench_lit_flat
         if (replay::g_stepPairs) {
             const double k2 = 0.001 / replay::g_stepPairs;
             double* u = replay::g_stepUs;
@@ -416,7 +436,7 @@ uintptr_t HookDrawGameScreen(int a) {
             for (int i = 0; i < replay::kSteps; ++i) u[i] = 0.0;
             replay::g_stepPairs = 0;
         }
-        sumGap = 0.0; maxPair = 0.0; sumCpu = 0.0; sumWall = 0.0;
+        sumGap = 0.0; maxPair = 0.0; sumCpu = 0.0; sumWall = 0.0; sumBegin = 0.0;
         for (int e = 0; e < 2; ++e) sumPass[e] = sumPresent[e] = sumEff[e] = 0.0;
         since = now; pairs = 0;
     }

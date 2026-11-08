@@ -61,6 +61,9 @@
 #include "game_sigs.h"       // the game addresses the mod looks for (the Status tab)
 #include "d2r_vr_version.h"  // D2RVR_VERSION: vrcam's g_info_version, made by tools/settings/version.cmake
 #include "render_size.h"     // [render] vr_resolution_px / vr_resolution: the VR render size, read the way the plugin reads it
+#include "render_type.h"     // "3D in the headset": the five render types over [openxr] on / [stereo] afr, pair_per_tick, native_replay, source (shared/render_type.h)
+#include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 (the rows greyed on a card without it)
+#include "quality_presets.h"   // the Quality presets' table, the headset window's too (shared/quality_presets.h)
 #include "draw_distance.h"   // Home's Draw distance: one slider's stops over the room rings, model radius, fog and sky dome (tested)
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
@@ -139,6 +142,7 @@ struct Item {
     bool sub = false;                        // Group: a sub-heading inside the group above it (Sub) - it stays in that group's column
     int across = 0;                          // ... the ticks after it in a grid beside its name, up to this many to a row; 0 = a line of its own
     bool big = false;                        // Button: a large one (the Home page's START)
+    bool beside = false;                     // Button: at the right end of the Choice row just before it (Beside: Auto by the presets), not a row of its own
     bool reversed = false;                   // Toggle: ticked writes 0, unticked 1 - the inverse of its key (Home's Xbox controller over [direct] flat_controller)
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     int band = -1, bands = 0;                // Slider: a band of an equalizer (Band) - a vertical slider, the top its highest; band 0 starts the row of `bands` side by side, its number box and name under it
@@ -290,6 +294,8 @@ Item InColumn(int column, Item i) { i.col = column; return i; }
 Item Sub(const wchar_t* title, int across = 0) { Item i = Group(title); i.sub = true; i.across = across; return i; }
 // A large push button (taller, bigger letters).
 Item Big(Item i) { i.big = true; return i; }
+// A button on the row of the Choice before it, at its right end (the list made narrower); that Choice not shown: a row of its own.
+Item Beside(Item i) { i.beside = true; return i; }
 // A tick box that is the inverse of its key: ticked = 0 (Item::reversed).
 Item Reversed(Item i) { i.reversed = true; return i; }
 // A slider as band k of an equalizer of n (Item::band): the n follow one another, each a vertical slider with its number and its short name under it.
@@ -369,6 +375,35 @@ constexpr const wchar_t* kSkyPicture = L"A bare name is looked for in reshade-sh
 constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves included; the low part of the sky sinks into it. "
                                       L"Empty (x) = the sky's horizon colour, or dark without a sky.";
 // Draw distance (shared/draw_distance.h): the slider on Home and on its own tab
+// The Quality preset, Auto beside it and the Potato light's two brightness sliders under it - on Performance and, the same items and keys, on
+// Home (Serg 2026-11-08: "селектор Low / Potato / Medium надо вынести на главную страницу"). Twins of one key: a change in either shows in
+// the other (ShowPreset sets every @preset box, RefreshControls every slider), and their words are one translation each.
+#define QUALITY_PRESET_ITEMS  \
+    Choice(L"@preset", L"preset", L"Quality preset", 2, {L"Potato", L"Low", L"Medium", L"Custom"},  \
+           L"Sets the settings below at once. All three draw the same picture of the world round you: the game's own sky dome and the "  \
+           L"game's own fog (55 to 140, in caves 65 to 200, none of our fog tweaks), 2 room rings, Native one pass, the pixels the lenses "  \
+           L"never show skipped, the shadows once for both eyes, the cave ceiling, the headset at 90 Hz, the game's hover outline left out. "  \
+           L"Potato (the weakest graphics card): the game's frame without the sun's shadows and the torch lights, everything lit evenly by "  \
+           L"the Potato light (its brightness right below and on Render cost); monsters and objects out to 150 (the game's own), big objects 200. "  \
+           L"Low (a weak graphics card): only the game's lit world, the sun's shadows and the tone map (Render cost: the game's own render "  \
+           L"stages); monsters and objects out to 150, big objects 200. "  \
+           L"Medium: the game's whole frame; monsters and objects out to 210, big objects 600 - the only other difference. "  \
+           L"Room rings and the models' radius take effect at the next game start. Changing any of them by hand shows Custom."),  \
+    Only(kVr, Beside(ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"run", L"Auto",  \
+           L"Auto graphics tuning, in the running game: stand still (in town is best) with the headset on. The game measures its frames a "  \
+           L"second with your settings. Fine at the headset's rate: nothing changes, on any graphics card. Short of it, it steps down in this "  \
+           L"order, measuring each step, and stops at the first that holds: the render size down to 1600 x 1600, then the preset Medium -> Low "  \
+           L"-> Potato, then the size down to 1300, then foveated rendering (Medium, then Maximum), then the size down to 1200, then eyes by "  \
+           L"turns. Still short "  \
+           L"there: it says the PC is below the minimum, and whether the processor or the "  \
+           L"graphics card holds it back. A minute or two; two passes, FlatVR and the headset's rate are never chosen. The steps and the result show on the "  \
+           L"headset panel's Video page (a long press of the right stick click), with Keep and Undo there or below. After Keep the preset "  \
+           L"here shows the one the new settings match, or Custom.")))),  \
+    Only(kVr, Needs(L"render", L"potato_light", 1, Slider(L"render", L"potato_light_brightness", L"... Potato light: brightness", 0.3f, 5.0f, 0.05f, 1.0f,  \
+           L"How bright the Potato preset's one even light is: 1 = each surface's own colour as it is, less is darker, more is brighter. The same slider as on Render cost and the headset's Video page. Live."))),  \
+    Only(kVr, Needs(L"render", L"potato_light", 1, Slider(L"render", L"potato_light_brightness_caves", L"... Potato light: brightness in caves", 0.3f, 5.0f, 0.05f, 1.0f,  \
+           L"The Potato light's brightness underground - caves, dungeons, crypts, the sewers, every area under a roof of rock - where the world has no sun and usually wants more light than in the open. 1 = each surface's own colour. The same slider as on the headset's Video page. Live."))),
+
 constexpr const wchar_t* kDrawDistanceTip = L"Sets five things at once, near (1) to far (8): how many rings of rooms round you the game draws, how far "
                                             L"out it draws monsters and objects (the models' radius: the edge of the drawn world), the game's sky dome "
                                             L"at that edge, and where the fog starts and is full - outdoors full just before the dome (at 0.9 of the "
@@ -415,6 +450,31 @@ constexpr const wchar_t* kFovInnerTip = L"How far each eye's view reaches toward
 constexpr const wchar_t* kFovUpTip = L"How far each eye's view reaches up, in degrees from the middle. Live.";
 constexpr const wchar_t* kFovDownTip = L"How far each eye's view reaches down, in degrees from the middle. Live.";
 constexpr const wchar_t* kFovFromHeadsetTip = L"Copies the angles the headset's runtime gave at the game's last headset session (the line below) into the four sliders.";
+// Render cost (Serg 2026-11-08): the words of the three ticks shown on Performance and again on Home ("и продублировать на главной") - twins, the
+// same key and the same words (one language key; SyncTwins keeps the two boxes in step)
+constexpr const wchar_t* kRenderCostFoveated = L"Foveated rendering: less detail at the edges of each eye (F4)";
+constexpr const wchar_t* kRenderCostFoveatedTip =
+    L"Variable rate shading (graphics cards with VRS tier 2: NVIDIA RTX / GTX 16, AMD RX 6000 and newer, Intel Arc): the game's "
+    L"opaque world is shaded once for every 2 x 2 (or 4 x 4) pixels away from the centre of each lens, every pixel in the "
+    L"middle, as before. The interface, the labels, effects and transparency stay sharp. Saves graphics card time, not processor "
+    L"time: on a PC the processor holds back, the frame rate does not change. Native OpenXR in first person (F4) only, without "
+    L"ReShade. From D2R VR Unleashed (bearstonem, MPL 2.0). Made at the start of the game: switched on, it works from the next "
+    L"start; after that it follows this tick at once. Off: every pixel shaded, as before.";
+constexpr const wchar_t* kRenderCostLensMask = L"Skip what the lenses never show (F4)";
+constexpr const wchar_t* kRenderCostLensMaskTip =
+    L"The headset's lenses never show the corners of each eye's picture (and, with the runtime's own field of view, the strip on "
+    L"the nose side that is not handed to the headset). On: right after the game clears its depth, those pixels are set to the "
+    L"nearest depth, so the game's heavy lighting passes (ground, models, water, glass, hair) skip them - the standard VR "
+    L"hidden-area mask, from the headset's own shape of it (OpenXR visibility mask). Saves graphics card time, not processor time. "
+    L"Native OpenXR in first person (F4) only; not with eyes by turns while their warp is on. The log (d2r_vr.log, 'lens mask') "
+    L"says how much of each eye is hidden. Live. Off: every pixel drawn, as before.";
+constexpr const wchar_t* kRenderCostShadowsOnce = L"Shadows and the grass map drawn once for both eyes (one pass, F4)";
+constexpr const wchar_t* kRenderCostShadowsOnceTip =
+    L"With \"Native one pass\" (3D in the headset; Stereo tab: \"... drawn once\"): the game's work that only draws the shadow maps and the map of where the grass is pressed down is "
+    L"not drawn again for the right eye - it uses the maps the left eye's pass drew, which do not depend on the eye (the light's camera "
+    L"follows the game's own camera, not the head). About a third fewer draws for the right eye on the graphics card; the picture stays the "
+    L"same. Work that mixes them with anything else is drawn again whole. First person (F4) only. Switched on: from the next game start, "
+    L"then live. The log says every 10 s how much was left out. Off: everything drawn again for the right eye, as before.";
 // [ceiling] game_ceiling (shared/game_ceiling.h): on the Ceiling tab and the ReShade page both
 constexpr const wchar_t* kGameCeilingTip = L"Our effect: the vault through the fog shader - ReShade's, or D2R VR's own without ReShade. The game: "
                                            L"a slab of the game's own cave rock, made from your game's files, that the game draws and lights "
@@ -438,6 +498,18 @@ constexpr const wchar_t* kAttackLeanTip =
     L"own. Not F1, VR F3 or F4. Unticked: as before. Live.";
 constexpr const wchar_t* kAttackLeanMaxTip =
     L"The most the swing leans, up or down: the spine bends as far as the point under the crosshair is below or above the chest, up to this. Live.";
+// [body] flat_aim_tilt (vr/aim_tilt.h): flat F3 only (flat UI: F3 eyes)
+constexpr const wchar_t* kFlatAimTiltTip =
+    L"First person: the game swings at its own height, so at a small monster the blade passed over it. Ticked: your hero's arms and weapon tilt "
+    L"up and down with the crosshair, as in a shooter - look down and the swing comes down, look up and it rises. Only the drawn arms: the game's "
+    L"attack, its hit, range and direction are its own. In F3 it takes the place of \"the swing leans where you aim\". Unticked: as before. Live.";
+constexpr const wchar_t* kFlatAimTiltPctTip =
+    L"How much of the crosshair's tilt the arms follow: 100 = all of it (the weapon stays where it is on the screen), 50 = half, 0 = none. Live.";
+constexpr const wchar_t* kFlatAimTiltMaxTip =
+    L"The most the arms tilt, up or down: looking further down they would come up into the camera, further up out of the picture. Live.";
+constexpr const wchar_t* kFlatAimTiltTargetTip =
+    L"While your hero attacks a monster under the crosshair, the arms tilt toward the point on its body where the crosshair is, not only with "
+    L"the look - the blow comes to it whatever height you look from, and stays on it if the crosshair slips off as you swing. Live.";
 // [hud] map_compass_flat (vr/map_turn.h CompassOnScreen): the VR compass strip over the turned map on the screen
 constexpr const wchar_t* kMapCompassFlatTip =
     L"With Map turns with the camera: the compass strip of the VR map (N, NE, E ...) over the round map on the screen, its middle the way "
@@ -584,21 +656,27 @@ std::vector<Item> g_items = {
     // The three ways kept in the list (2026-10-14, the user's decision): 0 native OpenXR (the default), 1 FlatVR stereo, 2 FlatVR 3D
     // from the depth. Stereo - eyes by turns and Mono are left out of the list; their ini keys still work. Native OpenXR - eyes by turns
     // is back as the fourth (2026-10-20, the user's wish: d2r-pcvr's by turns - one eye drawn a frame, the other made from it on the GPU).
-    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
-           {L"Native OpenXR (default)", L"FlatVR stereo", L"FlatVR 3D depth", L"Native OpenXR - eyes by turns"},
-           L"Native OpenXR (the default): the game is an OpenXR app and shows its own stereo pair in the headset, one pass two "
-           L"pictures - each eye's real view and the head's place in the room, paced by the headset, no FlatVR - from the game's "
-           L"first frame. First (F4) and third person (F2) in stereo, F1 and F3 in 3D too (Stereo tab, \"F1 and F3 in real 3D\"); menus and open panels as a flat picture where you look. "
-           L"FlatVR is stopped while the game holds the headset, so BodyWalk's own panels are not in it; buttons and gestures need "
-           L"BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR (or \"Controls without BodyWalk\"). Switches "
-           L"while the game runs. FlatVR stereo: the game draws each frame once and the right eye is drawn again from the same work "
-           L"with its own camera - true 3D at nearly the mono frame rate; it needs a game restart to switch on the first time. "
-           L"FlatVR 3D depth: one picture, FlatVR makes the second eye from ReShade's depth (works with DLSS). The FlatVR choices "
-           L"set the Stereo tab's Real stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later). "
-           L"Native OpenXR - eyes by turns: the game draws one eye a frame, left and right in turn - about half the graphics card's "
-           L"work of the default; the other eye is made on the graphics card from pictures already drawn (the eye drawn this frame "
-           L"moved across with its depth, its own last picture under it), so both eyes show this frame's head, and monsters where "
-           L"they are now. Each eye's own pixels are new at half the rate. The idea is bearstonem/d2r-pcvr's.")),
+    // Five render types (Serg 2026-11-08), this order; one pass the default (shared/render_type.h; old inis read by their keys as before).
+    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 1,
+           {L"Native two passes", L"Native one pass (default)", L"Native eyes by turns", L"FlatVR stereo", L"FlatVR depth"},
+           L"Native (the first three): the game is an OpenXR app and shows its own stereo pair in the headset - each eye's real view "
+           L"and the head's place in the room, paced by the headset, no FlatVR - from the game's first frame. First (F4) and third "
+           L"person (F2) in stereo, F1 and F3 in 3D too (Stereo tab, \"F1 and F3 in real 3D\"); menus and open panels as a flat picture "
+           L"where you look. FlatVR is stopped while the game holds the headset, so BodyWalk's own panels are not in it; buttons and "
+           L"gestures need BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR (or \"Controls without BodyWalk\"). "
+           L"Switches while the game runs. "
+           L"Native one pass (the default): the game draws the frame once and the right eye is drawn again on the graphics card from "
+           L"the same work with its own camera - about half the game's work of two passes, the most frames on a PC held back by its "
+           L"processor. F4 only; after an area change, a load or a change of the video options the frame is two passes until the "
+           L"picture has settled (a few seconds) - never a black eye. Switching to or from it takes effect at the next game start. "
+           L"Native two passes: the game draws the whole frame twice, once for each eye (as every version from 0.203 to 0.207 did). "
+           L"Native eyes by turns: the game draws one eye a frame, left and right in turn - about half the graphics card's work; the "
+           L"other eye is made on the graphics card from pictures already drawn (the eye drawn this frame moved across with its depth, "
+           L"its own last picture under it), so both eyes show this frame's head, and monsters where they are now. Each eye's own "
+           L"pixels are new at half the rate. The idea is bearstonem/d2r-pcvr's. "
+           L"FlatVR stereo: FlatVR shows the game's stereo pair (it needs a game restart to switch on the first time). FlatVR depth: "
+           L"one picture, FlatVR makes the second eye from the depth (works with DLSS). The FlatVR choices set the Stereo tab's Real "
+           L"stereo and, while BodyWalk runs, FlatVR's 3D source (BodyWalk 1.76 or later).")),
     // The 3D choice starts BodyWalk and FlatVR, or stops FlatVR, itself (2026-10-29, Serg's decision; tools/settings/bw_autorun.h): each its own box, off = as before.
     Only(kVr, Toggle(L"mode", L"flatvr_autostart", L"FlatVR: start BodyWalk and FlatVR by themselves", 1,
            L"When \"3D in the headset\" is switched from Native OpenXR to a FlatVR choice, BodyWalk is started (if it is not running; the newest "
@@ -620,6 +698,12 @@ std::vector<Item> g_items = {
            L"VR only: in flat mode (How you play) the game runs at the frame cap you set in its own options - yours is kept before the "
            L"rate writes its own, and comes back when you switch to Flat or start the game in flat mode.")),
     Only(kVr, Status(L"frame_cap", L"")),
+    // Render cost on Home too (Serg 2026-11-08: "и продублировать на главной"): the main ticks only - the strength, eye tracking, the heavy passes
+    // and the grass rate are on Performance > Render cost (twins of the items there: the same keys and words)
+    Only(kVr, Toggle(L"render", L"foveated", kRenderCostFoveated, 0, kRenderCostFoveatedTip)),
+    Only(kVr, Hide(Status(L"vrs", L""))),   // (a card without variable rate shading: why the foveation rows are greyed - shown by UpdateVrsStatus)
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 0, kRenderCostShadowsOnceTip))),
+    Only(kVr, Toggle(L"render", L"lens_mask", kRenderCostLensMask, 0, kRenderCostLensMaskTip)),
     // Start BodyWalk from here, so nobody hunts for its shortcut: shown while a
     // BodyWalk is found and not running (RefreshStatus, BodyWalkExe).
     // (Under the 3D choice and the rate, not at the D2R VR group's foot - Serg 2026-10-31: «эту кнопку сюда подними».)
@@ -708,6 +792,9 @@ std::vector<Item> g_items = {
            L"Measure it with the T-pose on the Body tab if you want it exact.")),
     Only(kVr, Status(L"native_xr", L"Native OpenXR (the first 3D choice above) needs a BodyWalk that takes the game's headset (1.78 or later) or \"Controls without BodyWalk\"")),
 #if D2RVR_FIRST_PERSON
+    // The Quality preset on Home too, at the top of the middle column (Serg 2026-11-08): the same items as on Performance
+    InColumn(1, Group(L"Quality preset", L"How much the game draws against how fast it runs, in one choice - the same as on Performance (a change in either shows in both). Potato and Low for a weak graphics card, Medium the farthest monsters; with Potato, its light's brightness right under it. Auto (with Auto graphics tuning ticked) finds the settings for your PC in the running game.")),
+    QUALITY_PRESET_ITEMS
     Only(kFlat, InColumn(1, Group(L"View (F1 - F3 in the game)", L"The view of flat mode: F1 the game's own camera, F2 third person, F3 first person with mouse look and W A S D. Switch in the game with F1, F2, F3 (F12 goes round) - or with Shift + F1 - F3, or F12 alone, so that F1 - F8 stay the game's skills: View keys below."))),
     Radio(L"mode", L"flat_view", 1, 3,
           {L"F1  The game's own camera", L"F2  Third person", L"F3  First person: mouse look, W A S D"},
@@ -757,9 +844,11 @@ std::vector<Item> g_items = {
     // trade distance for frames). "@distance": its stops are shared/draw_distance.h; nothing of its own is kept - it shows the stop the
     // keys match, else Custom (ReadDrawDistance), and a stop writes them all (WriteDrawDistance). The single sliders stay where they are;
     // all of them together, with the slider again, on the Draw distance tab.
-    InColumn(1, Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. Each single value is on the Draw distance tab (and where it was: Performance, World, Sky); changing one of them shows Custom here.")),
-    Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip),
-    Status(L"draw_distance", L""),
+    // (Serg 2026-11-08, 0.208: "наверно надо будет удалить ползунок draw distance - он нарушает правила игры" - the slider and the single
+    // distance sliders hidden everywhere; the presets alone set rings / model_radius / big_radius; the items kept hidden: the keys read, the presets matched)
+    Hide(InColumn(1, Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. Each single value is on the Draw distance tab (and where it was: Performance, World, Sky); changing one of them shows Custom here."))),
+    Hide(Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip)),
+    Hide(Status(L"draw_distance", L"")),
     // D2RLoader and the mod's effect: both ways to play (flat had no Install ReShade - a player found it in VR only, 2026-10-11 - the whole Status
     // group was VR's). Since 0.203 no ReShade at all (vr/plugin/reshade_load.cpp): no Install ReShade, no buttons for the player's own dxgi.dll ReShade.
     InColumn(2, Group(L"The game and the mod", L"Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and the mod's own effect (the sky, the fog and the ceiling - D2R VR draws them itself, no ReShade needed). A ReShade of your own is left as it is. The button to make the Arcane Sanctuary sky.")),
@@ -1014,38 +1103,113 @@ std::vector<Item> g_items = {
            L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's threads "
            L"are asked to run on the cores with the big L3 cache, and its drawing thread gets a higher priority - D2R's frame is "
            L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
-    Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato to High) sets everything here at once: room rings, model radius, fog, sky, cave ceiling. Room rings, models and the frame cap need a game restart."),
-    Choice(L"@preset", L"preset", L"Quality preset", 3, {L"Light (native, eyes by turns)", L"Potato", L"Low", L"Medium", L"High", L"Custom"},
-           L"Sets the settings below at once. Light (a weak PC): the game in the headset with Native OpenXR, the eyes by "
-           L"turns (one eye drawn a frame, the other made from it with the depth, the cheaper way: no rims, no strip filling, no sharper read, "
-           L"its own picture not kept - Stereo tab), as Potato otherwise; the sky and the fog drawn by D2R VR itself (\"Sky and fog without "
-           L"ReShade\"), the menus as a flat picture. It sets the 3D in the headset to \"Native OpenXR - eyes "
-           L"by turns\"; restart the game. "
-           L"Potato: as Low, but no ceiling, the 3D made from the depth instead of real stereo "
-           L"(one frame a picture, not two) and the headset at 72 Hz, the game capped at it; the others 90 Hz. "
-           L"Low: 1 room ring, models out to 150, near fog (30 to 100; in caves 60 to 100), ceiling on with coarse relief (8 steps). "
-           L"Medium: 2 rings, 200, fog 30 to 200 (in caves 100 to 200), ceiling on. High: 3 rings, 400, fog 30 to 250, finer ceiling relief. "
-           L"Every preset also sets the 3D in the headset: FlatVR stereo (Low, Medium, High) or FlatVR 3D depth "
-           L"(Potato) - it switches Native OpenXR off (set it again on the Home page). With Native OpenXR on this shows Custom. "
-           L"Changing any of them by hand shows Custom."),
-    // [autotune] (vr/auto_tune_run.h, Serg 2026-11-05): "Auto" - the game measures its frames/s at the headset's rate and steps our effects,
-    // the stereo mode and the render size down (then back up while there is room), the player keeps or undoes it. Unticked: no Auto anywhere.
+    // Render cost (Serg 2026-11-08: "из World надо перенести это в Performance"): foveated rendering, the grass lighting's rate, the lens mask and the
+    // shadows once a pair, moved from the World and Stereo tabs - the same keys; the main ticks are on Home too (twins, kRenderCost* words)
+    Group(L"Render cost", L"Graphics card time saved where you do not look closely: foveated rendering (less detail at each eye's edges), the grass lit at a lower rate, the pixels the lenses never show skipped, and the shadows drawn once for both eyes; and processor time: the game's sun shadow map filled for less (or not at all). First person (F4), native OpenXR."),
+    Only(kVr, Toggle(L"render", L"foveated", kRenderCostFoveated, 0, kRenderCostFoveatedTip)),
+    Only(kVr, Hide(Status(L"vrs", L""))),   // (a card without variable rate shading: why the foveation rows are greyed - shown by UpdateVrsStatus)
+    Only(kVr, Needs(L"render", L"foveated", 1, Choice(L"render", L"foveated_strength", L"... how strong", 1,
+           {L"Low (sharp area 0.70, 2x2)", L"Medium (0.55, 2x2)", L"High (0.55, 4x4)", L"Maximum (0.35, 4x4)"},
+           L"How much of each eye keeps every pixel (the sharp ellipse round the lens centre, in halves of the part of the picture "
+           L"the headset shows) and how coarse the rest is: 2 x 2 or 4 x 4 pixels a shade (4 x 4 falls back to 2 x 2 on cards "
+           L"without it). D2R VR Unleashed's levels; in its owner's test Medium was not noticeable and Maximum was at the edges. Live."))),
+    Only(kVr, Needs(L"render", L"foveated", 1, Toggle(L"render", L"foveated_gaze", L"... following the eyes (eye tracking)", 1,
+           L"Where the headset gives the eyes' gaze to games (OpenXR eye gaze: PS VR2 on SteamVR with PSVR2 Toolkit's eye tracking and "
+           L"SteamVR's Share eye tracking data on, Steam Frame, Quest Pro) the sharp area is where you look, everywhere else coarse; while "
+           L"no tracked gaze comes it sits on the lens centre. The log (d2r_vr.log) says what the runtime offers and which way is on. "
+           L"Asked of the headset when the game starts the headset session; live after that. Off: always the lens centre."))),
+    Only(kVr, Needs(L"render", L"foveated", 1, Toggle(L"render", L"foveated_unseen", L"... and the part the headset never shows at 4x4", 1,
+           L"The game draws each eye wider than the headset shows ([openxr] symmetric_fov, runtime_fov: the nose side of each eye is "
+           L"cut off by the lens). On: that part is shaded the coarsest way, whatever the strength - it is never seen. Off: it gets "
+           L"the strength's own rate. Live."))),
+    Only(kVr, Needs(L"render", L"foveated", 1, Slider(L"render", L"foveated_ab", L"... A/B test: on and off by itself every N seconds", 0, 60, 5, 0,
+           L"To measure the gain: foveated rendering switches itself on and off every N seconds and the log (d2r_vr.log) says how many "
+           L"eye pictures a second each window drew ('foveated A/B - ON ... OFF ...'). Stand still in one place while it runs. 0: off "
+           L"(foveated rendering simply on). Live."))),
+    Only(kVr, Needs(L"render", L"foveated", 1, Choice(L"render", L"foveated_fullscreen", L"... the heavy full-screen passes too", 0,
+           {L"No (the opaque world only, as before)", L"Grass lighting and reflections", L"Grass lighting, reflections and hair"},
+           L"The game lights its grass in a full-screen pass of its own, as heavy a pixel as the lit ground (no depth test, so foveated "
+           L"rendering left it whole), and draws the reflections in puddles and blood and the hair in passes of their own. On: they get "
+           L"the same coarse edge and sharp centre as the rest of the world. The log says how many of their pixels were shaded coarsely "
+           L"every 10 s. Live."))),
+    Only(kVr, Choice(L"render", L"grass_lighting_coarse", L"Grass lighting at a lower rate (F4)", 0,
+           {L"As the game", L"Half: 2 x 1 pixels a shade", L"Quarter: 2 x 2 pixels a shade"},
+           L"The game's grass lighting is one shader with no lighter version (lower Environment Detail only draws less grass). This shades "
+           L"it once for every 2 x 1 or 2 x 2 pixels over the whole picture, the centre too - the grass gets slightly softer, every other "
+           L"pass stays as it is. Variable rate shading (VRS tier 2 graphics cards), native OpenXR first person (F4); works without foveated "
+           L"rendering too. Its hooks go in at the game's start when this or foveated rendering is on then. Live after that.")),
+    Only(kVr, Toggle(L"render", L"lens_mask", kRenderCostLensMask, 0, kRenderCostLensMaskTip)),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 0, kRenderCostShadowsOnceTip))),
+    // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h, docs/notes/simpler_sun.md): the game's sun shadow
+    // map filled for less in F4 - processor time
+    Only(kVr, Choice(L"render", L"sun_shadows", L"Sun shadows (F4)", 2,
+           {L"None: the sun lights everything, no sun shadows", L"Near casters only (the radius below)", L"As the game"},
+           L"The game's sun shadow map costs the processor more draws than the lit world itself. None: nothing is drawn into it and it is "
+           L"set to \"nothing in the way\", so the sun still lights the whole world - only its shadows are gone (torch and spot lights keep "
+           L"theirs). The cheapest for a processor that holds the frame rate back. Near casters only: only the models within the radius "
+           L"below cast a sun shadow. As the game: every model, as before. The log (d2r_vr.log, 'simpler sun') says every 10 s how many "
+           L"models were left out. Live.")),
+    Only(kVr, Needs(L"render", L"sun_shadows", 1, Slider(L"render", L"sun_shadow_radius_m", L"... radius in metres (0 = 15)", 0, 60, 1, 0,
+           L"Only the models within this many metres of you (on the ground, from where each model stands) are drawn into the game's sun "
+           L"shadow map; the ones farther out cast no sun shadow. You and what you wear and hold always cast yours. Fewer draws for the "
+           L"processor each frame (the game's map is fitted to the area its own camera above sees; farther models are left out already). "
+           L"Spot and torch lights' shadows are never touched. 4 at the least; 15-25 keeps the shadows round you. Live. 0: 15 metres."))),
+    Only(kVr, Slider(L"render", L"sun_shadow_every", L"Sun shadows drawn every Nth frame while standing (1 = every frame; not with None)", 1, 4, 1, 1,
+           L"The game's sun shadow map is drawn every Nth frame and kept in between - only while you stand: its light follows the "
+           L"game's camera, so while you walk it is drawn every frame as before. A kept frame costs the processor none of the map's "
+           L"draws; its shadows are the last drawn frame's (a monster's or your own swing's shadow moves at a half or a third of the "
+           L"frame rate). Costs one copy of the map on the graphics card each frame and the copy's memory (64 MB or more at Shadow Quality "
+           L"High: the log says how much). The log "
+           L"('simpler sun') says how many frames were kept and why the others were drawn. Live. 1: drawn every frame, as before.")),
+    // [render] game_stages / game_outline (vr/render_bench.h StagesMask; Serg's bench runs 2026-11-08): the game's own render stages left out for the
+    // Low and Potato presets - only leaving out, never a pass of ours (the sky dome and the fog stay whatever draws them); the bench's keys stay on Debug
+    Only(kVr, Choice(L"render", L"game_stages", L"The game's own render stages (F4)", 0,
+           {L"All, as the game draws them", L"Low: the lit world, the sun's shadows and the tone map only",
+            L"Potato: Low without the sun's shadows and the torch lights (with the Potato light)"},
+           L"The game's frame is many passes; on a weak graphics card most of them cost more than they show in a headset. Low keeps the "
+           L"lit world, the sun's shadow map, the scene and the tone map, and leaves out the point lights' shadow maps, the grass and its "
+           L"bending, water, glass and hair, the ambient occlusion, the bloom, the reflections, the colour copies they read, and the game's fog "
+           L"pass unless the game draws the fog (\"Fog drawn by: The game's fog\" keeps it - the game's own fog is the fog) - water shows as a hole, characters lose their hair. Potato also leaves out the sun's shadow maps and the torch lights and "
+           L"lights everything evenly with the Potato light below (it turns on with it). Only the game's own passes are left out - the sky dome "
+           L"and the game's play are not touched. Native OpenXR first person (F4). Live.")),
+    Only(kVr, Toggle(L"render", L"game_outline", L"The game's hover outline (F4)", 1,
+           L"The game's glow round a monster or an item under the mouse pointer: two full-screen passes a frame. D2R VR never shows it in the "
+           L"headset (Serg: no monster outline in any mode), so every preset leaves it out. Native OpenXR first person (F4). Live. Ticked: drawn, "
+           L"as the game does.")),
+    // [render] potato_light / _brightness / _colour (vr/lit_flat.h; Serg 2026-11-08 "для режима потато надо добавить ползунок яркость солнца"): the
+    // game's lit pass in each surface's own colour times one even light - the bench's bench_lit_flat made a player's switch (that key still works)
+    Only(kVr, Toggle(L"render", L"potato_light", L"Potato light: everything lit evenly by one light (F4)", 0,
+           L"The heaviest pixels of the game's frame are its lighting: the sun with its shadows, every torch and fire, the hero's light, each surface's light loops. Ticked: the ground, walls, objects, monsters and the hero are drawn in their own colours under one even light - no sun, no shadows, no torch light, the same brightness everywhere, by day and in caves. With the sun's shadows and the torch lights left out as well it is the cheapest picture of the game that still shows the world: for a weak graphics card. Water, glass, hair and lava keep the game's own look. Native OpenXR first person (F4). Live. Unticked: the game's lighting, as before.")),
+    Only(kVr, Needs(L"render", L"potato_light", 1, Slider(L"render", L"potato_light_brightness", L"... Potato light: brightness", 0.3f, 5.0f, 0.05f, 1.0f,
+           L"How bright the one light is: 1 = each surface's own colour as it is, less is darker, more is brighter. Also on the headset's Video page. Live."))),
+    Only(kVr, Needs(L"render", L"potato_light", 1, Slider(L"render", L"potato_light_brightness_caves", L"... Potato light: brightness in caves", 0.3f, 5.0f, 0.05f, 1.0f,
+           L"The Potato light's brightness underground - caves, dungeons, crypts, the sewers, every area under a roof of rock - where the world has no sun and usually wants more light than in the open. 1 = each surface's own colour. The same slider as on the headset's Video page. Live."))),
+    Only(kVr, Needs(L"render", L"potato_light", 1, Choice(L"render", L"potato_light_colour", L"... Potato light: colour", 0,
+           {L"Neutral (white)", L"Warm", L"Cool", L"The area's own (its sky and fog colour)"},
+           L"The colour of the one light. The area's own: a soft tint of the area's sky and fog colour (its hue only - the brightness is the slider's), followed as you move between areas. Live."))),
+    Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato, Low, Medium) sets everything here at once: the game's render stages, the draw distance, the fog and the sky. Room rings, models and the frame cap need a game restart."),
+    // the preset, Auto beside it and the Potato light's sliders under it (QUALITY_PRESET_ITEMS above: also on Home)
+    QUALITY_PRESET_ITEMS
+    // [autotune] (vr/auto_tune_run.h, Serg 2026-11-05): "Auto" - the game measures its frames/s at the headset's rate; short of it, the ladder
+    // (2026-11-08): the render size to 1600, the presets down, the size to 1300, foveation, the size to 1200, eyes by turns; the player keeps or undoes it.
+    // Unticked: no Auto anywhere.
     Only(kVr, Toggle(L"autotune", L"enabled", L"Auto graphics tuning", 0,
-           L"Adds an Auto button to the headset's settings panel (Video page) and below. Press it standing still in the game (in "
-           L"town is best): the game measures its frames a second with your settings, then tries each of D2R VR's effects one at a time "
-           L"(fog before effects, sky, fog, cave ceiling, distance blur, the fog's height), the 3D mode (full stereo -> eyes by turns) and "
-           L"the render size, turns down the dearest first until the headset's rate is reached (or half of it, if that cannot be), and "
-           L"brings back what still fits. It takes a minute or two; the picture freezes a few seconds when the render size changes. "
+           L"Adds an Auto button to the headset's settings panel (Video page, beside the render size slider) and beside the Quality preset above. Press it standing still in the game (in "
+           L"town is best): the game measures its frames a second with your settings. If they hold the headset's rate, nothing changes - on "
+           L"any graphics card (a size above the headset's own stays: it is sharper). If not, it steps down in a fixed order, measuring each "
+           L"step and stopping at the first that holds: the render size down "
+           L"to 1600 x 1600 (a size you set below that is never raised), then the Quality preset Medium -> Low -> Potato, then the size down "
+           L"to 1300, then foveated rendering (Medium, then Maximum - where the graphics card has variable rate shading and it was on at the "
+           L"game's start), then the size down to 1200, then eyes by turns with the fill (the picture is a little worse than one pass, so it "
+           L"comes last; your choice in \"3D in the headset\" otherwise). Still short there: it tells you the PC is below the minimum for VR here, and whether "
+           L"the processor (CPU) or the graphics card (GPU) holds it back. Never changed: two passes / FlatVR, the headset's rate, the wrist "
+           L"medallions. It takes a minute or two; the picture freezes a few seconds when the render size changes. "
            L"Nothing is written while it measures. Keep writes the result to d2r_vr.ini (the old one is copied to d2r_vr.ini.before_autotune "
            L"first, the steps go to d2r_vr_autotune.txt); Undo, Stop or closing the game puts everything back. Frame generation and the "
            L"game's own graphics options are never changed. Unticked: no Auto button, as before.")),
-    Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"run", L"Auto-tune now (the game must be running)",
-           L"Starts Auto in the running game, as the headset panel's Auto button does. Put the headset on and stand still: the steps and "
-           L"the result show on the headset panel's Video page (open it with a long press of the right stick click), with Keep and Undo "
-           L"there."))),
     Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"keep", L"Keep the Auto result",
            L"Writes the result of the last Auto run to d2r_vr.ini (the old one copied to d2r_vr.ini.before_autotune first), as Keep on the "
-           L"headset panel. Reopen this window afterwards to see the new values. Nothing happens while no result waits."))),
+           L"headset panel. This window shows the new values a moment later (the preset too). Nothing happens while no result waits."))),
     Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"undo", L"Undo / stop Auto",
            L"Stops an Auto run or drops its result: everything as it was (d2r_vr.ini was not touched), as Undo on the headset panel."))),
     // [render] flatvr_feed (on): FlatVR's picture and depth from the plugin, through the blocks FlatVR's ReShade add-on uses (vr/flatvr_feed.h). (No
@@ -1069,8 +1233,8 @@ std::vector<Item> g_items = {
            L"measures and the distance blur - while the medallions, the labels, the toolbar, the phantoms and the interface stay as they are. "
            L"For seeing what the sky and the fog cost (the log's \"native effects, 10 s\" line says each pass's time). The game's own sky and "
            L"fog stay the game's. Live. Ticked: as before."),
-    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
+    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
+    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150.")),
     Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
            L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
            L"ours (VR F4; the flat game too with \"The game draws them in the flat game too\"). Our effect (old): the fog shader paints the sky "
@@ -1078,11 +1242,14 @@ std::vector<Item> g_items = {
            L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
            L"already running."),
     Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
-           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers - no frame time of ours (VR F4; the "
+           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers (Fog start / Full fog below) - no "
+           L"frame time of ours, drawn whether \"Distance fog\" is ticked or not (VR F4; the "
            L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
            L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"A distance fog. Who draws it: \"Fog drawn by\" above (our effect, or the game itself). With the sky on, it fades into the sky."),
+           L"Our effect's distance fog, with \"Fog drawn by: Our effect (old)\". The game's fog is drawn by \"Fog drawn by: The game's fog\" "
+           L"alone - unticking this never takes it away (the presets leave it unticked: the game draws the fog). With the sky on, ours fades "
+           L"into the sky."),
     Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
            L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
     Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
@@ -1107,7 +1274,7 @@ std::vector<Item> g_items = {
 
     // Everything of the draw distance in one place (2026-10-28, the author's wish): Home's slider again and each key it writes, the
     // same items as on Performance, World and Sky (twins: the same keys and words, kept in step by SyncTwins / ShowDrawDistance).
-    Tab(L"Draw distance"),
+    Only(0, Tab(L"Draw distance")),   // (0.208: the tab out of the strip - the slider breaks the game's rules, its fog / sky twins are on World and Sky)
     Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. The single values are below (and where they were: Performance, World, Sky); changing one of them shows Custom on the slider."),
     Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip),
     Status(L"draw_distance", L""),
@@ -1806,8 +1973,8 @@ std::vector<Item> g_items = {
     Group(L"Native OpenXR (the game itself in the headset)", L"Everything for native OpenXR: brightness, the flat picture for menus, F1 and F3 in real 3D, room-scale walking, Controls without BodyWalk, the skill panel, the eyes' angles and distance, the square window and vibration. Most of it changes live."),
     Slider(L"openxr", L"brightness", L"Brightness in the headset", 0.2f, 1.5f, 0.05f, 1.0f,
            L"Everything the game shows in the headset, darker or brighter: the picture, the flat picture, the toolbar and the "
-           L"map. 1 = as the game draws it. The headset's runtime does it (SteamVR, Virtual Desktop...); one without it leaves "
-           L"the picture as it is - vrcam's log says which."),
+           L"map. 1 = as the game draws it. The headset's runtime does it where it has the colour scale (XR_KHR_composition_layer_color_scale_bias); "
+           L"SteamVR has none and leaves the picture as it is - vrcam's log says which."),
     Slider(L"openxr", L"flat_distance_m", L"Flat picture: distance, m", 0.5f, 10.0f, 0.1f, 2.0f,
            L"Menus and loading (F1 and F3 too, when \"F1 and F3 in real 3D\" is off) stand this far ahead, where you looked when they came up. "
            L"F1 in 3D is a window this far away. Farther = smaller in view. An open panel (inventory, trade...) has its own distance, below."),
@@ -2108,6 +2275,13 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"afr", 1, Toggle(L"stereo", L"pair_per_tick", L"Both eyes from one game frame", 0,
            L"The frame is drawn twice (left, then right with the game time held) instead of one eye per frame by turns. "
            L"Same pairs per second; the game itself updates half as often.")),
+    Only(kVr, Needs(L"stereo", L"pair_per_tick", 1, Toggle(L"stereo", L"native_replay", L"... drawn once, the right eye again on the graphics card", 1,
+           L"With Both eyes from one game frame: the game draws the frame once, and the right eye is drawn again on the graphics card from "
+           L"the same work with its own camera, instead of the whole frame drawn twice. The game's thread does about half the work: on a PC "
+           L"held back by its processor, many more frames a second; a PC held back by its graphics card gains little. Native OpenXR, first "
+           L"person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the "
+           L"picture has settled (a few seconds) - two passes then, never a black eye. On by default (\"Native one pass\" in 3D in the "
+           L"headset). Takes effect at the next game start. Off: two passes (\"Native two passes\")."))),
     Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
            L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
            L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
@@ -2437,8 +2611,16 @@ std::vector<Item> g_items = {
            L"First person: the hero's chest, hips and head stay under the camera through a swing, as in VR first person; his arms and "
            L"weapon still swing as the game animates them. Only the drawn body changes - the attack is the game's. Off = as before "
            L"(the torso swings out from under the camera)."),
+    Needs(L"body", L"flat_hold_trunk", 1, Toggle(L"body", L"flat_hold_trunk_twist", L"Arms keep the chest's turn in a side swing", 0,
+           L"With the body kept under the camera: the arms and the weapon keep the turn the game's swing gives the chest, while the chest itself "
+           L"stays put - a side swing (the barbarian's second attack) crosses in front of you instead of going out past the camera. Only the "
+           L"drawn arms. Off = the arms hung on the still chest as before. Live.")),
     Toggle(L"body", L"attack_lean", L"F2 and F3: the swing leans where you aim", 0, kAttackLeanTip),
     Needs(L"body", L"attack_lean", 1, Slider(L"body", L"attack_lean_max_deg", L"Swing lean: at most, °", 5, 80, 1, 40, kAttackLeanMaxTip)),
+    Toggle(L"body", L"flat_aim_tilt", L"F3: the arms and weapon tilt with the crosshair", 0, kFlatAimTiltTip),
+    Needs(L"body", L"flat_aim_tilt", 1, Slider(L"body", L"flat_aim_tilt_pct", L"Arms tilt: share of the look, %", 0, 150, 5, 100, kFlatAimTiltPctTip)),
+    Needs(L"body", L"flat_aim_tilt", 1, Slider(L"body", L"flat_aim_tilt_max_deg", L"Arms tilt: at most, °", 10, 89, 1, 60, kFlatAimTiltMaxTip)),
+    Needs(L"body", L"flat_aim_tilt", 1, Toggle(L"body", L"flat_aim_tilt_target", L"Swing onto the monster under the crosshair", 1, kFlatAimTiltTargetTip)),
     Toggle(L"input", L"portal_look_horizon", L"Look at the horizon after a portal or waypoint", 0,
            L"First person: you look down at a portal to walk into it, and came out still looking down. On: after a portal or a "
            L"waypoint the look goes back to the horizon (up and down only; the way you face stays). From sajmonsoft's flat fork. "
@@ -3393,20 +3575,13 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
            L"In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the "
            L"world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, "
-           L"as it is drawn). Far objects show the sky through them. The game's fog only (with \"The game's fog as thick and as coloured as "
-           L"ours\"); our own effect's fog is not changed. Underground as before. Live. Off: one fog colour, as before.")),
+           L"as it is drawn). Far objects show the sky through them. It worked through \"The game's fog as thick and as coloured as ours\", "
+           L"removed (it broke the fog): for now it changes nothing. Live. Off: one fog colour, as before.")),
     Toggle(L"fog", L"fog_colour_measured", L"The fog's colour: measured from the game", 0,
-           L"Ticked: the fog's colour is measured from what the game shows (with \"The game's fog as thick and as coloured as ours\") - as "
-           L"before. Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
+           L"Ticked: the fog's colour is the act's own colour as set (its measure from the game went with the removed \"The game's fog as "
+           L"thick and as coloured as ours\"). Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
            L"land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the "
            L"effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live."),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_match", L"The game's fog as thick and as coloured as ours", 1,
-           L"The game's fog came out darker than the act's fog colour (the area's colour grading) and thinner than ours (it thins above the "
-           L"eye, and without our curve it is the game's own): in act 4 the far land stood as a dark silhouette and hid nothing. Ticked, the "
-           L"effect makes up the share the game left out to our own fog's - the far land, the world's edge and far planes hidden as by our "
-           L"old fog - in the fog's colour; with \"The fog's colour: measured from the game\" it also measures what the game's fog shows where "
-           L"it is complete and moves each fogged pixel toward the act's colour by the game's share (never past it). Never on the game's sky. "
-           L"Our effect's pass, which runs anyway for the sky. Live. Off: as the game lays it.")),
     Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 0,
            L"The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - "
            L"without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell "
@@ -3575,9 +3750,9 @@ std::vector<Item> g_items = {
            L"value in its own shader changed; no extra work for the graphics card), so each reflection lies in the water. The other "
            L"3D modes and flat mode look the same either way. Made at the start of the game: switched on, it works from the next start; "
            L"after that it follows this tick at once. Off: the game's own.")),
-    Group(L"Render distance", L"How far around the hero the world is drawn: more room rings and a bigger model radius show more of the world and cost more processor time. With fog, 4-6 rings are enough."),
-    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
+    Hide(Group(L"Render distance", L"How far around the hero the world is drawn: more room rings and a bigger model radius show more of the world and cost more processor time. With fog, 4-6 rings are enough.")),
+    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
+    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150.")),
     Group(L"Scenery", L"Fixes to the game's scenery for first person: floors that keep their height when you come back to a room, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes."),
     Toggle(L"render", L"floors_stay", L"Floors stay where they were (no ground that slides on a way back)", 0,
            L"The game gives each room of a level a height when it starts drawing it, matched to the rooms drawn round it at that moment, "
@@ -3615,7 +3790,8 @@ std::vector<Item> g_items = {
            L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
            L"already running."),
     Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
-           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers - no frame time of ours (VR F4; the "
+           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers (Fog start / Full fog below) - no "
+           L"frame time of ours, drawn whether \"Distance fog\" is ticked or not (VR F4; the "
            L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
            L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
     Group(L"Sky", L"A sky in the black void beyond the world, only in the open air. Set the clouds, whether the sky turns slowly, the sky over the dark rim round roofs and trees, and the Arcane Sanctuary's own stars all round and its fog."),
@@ -5123,24 +5299,58 @@ std::vector<Item> g_items = {
            L"refuse it (\"I can't use that yet\") and the first cast is lost. Every such press is watched: when the hero does not start "
            L"casting within half a second it is pressed once more, and the log says each time (how long after the set, cast or refused). "
            L"Only this path waits; skills already on a button cast at once. On by default. Live.")),
-    Toggle(L"gestures", L"engine_in_game", L"In-game gesture engine (prototype)", 0,
+    // The gesture engine and everything built on it (the headset's Gestures tab, the triggers' roles, Select, the hands over the tab, the
+    // zones): not in 0.208 (Serg: no gestures in this release, the DLL not shipped) - the rows left out of the page, their keys at their
+    // defaults (all off) in the shipped ini. Take the Hide() off when they come back.
+    Hide(Toggle(L"gestures", L"engine_in_game", L"In-game gesture engine (prototype)", 0,
            L"The gestures are recorded and recognised inside the game by BodyWalk's gesture engine (d2r_vr_gestures.dll, which D2R VR Setup puts in "
            L"the mod's d2r_vr_libs folder) - no BodyWalk window or process is needed for them. The skill panel's Gestures tab records, re-records, binds "
            L"and clears them; a recognised gesture casts its skill the game's own way (its skill button pressed, or the skill put on the spare slot "
            L"first). Kept in BodyWalk's settings folder, per class, where BodyWalk shows them too. VR first person (F4) only. Without the DLL the "
-           L"Gestures tab says so. Unticked: the Gestures tab uses BodyWalk over Game Link (Skills to BodyWalk), as before. Live."),
-    Needs(L"gestures", L"engine_in_game", 1, Choice(L"gestures", L"engine_pen", L"In-game gesture engine: the pens in play", 3,
+           L"Gestures tab says so. Unticked: the Gestures tab uses BodyWalk over Game Link (Skills to BodyWalk), as before. Live.")),
+    Hide(Needs(L"gestures", L"engine_in_game", 1, Choice(L"gestures", L"engine_pen", L"In-game gesture engine: the pens in play", 3,
            {L"None (only the Gestures tab's takes)", L"The left trigger", L"The right trigger", L"Both triggers"},
            L"Which triggers draw for the gesture engine while you play: a stroke drawn with one held is read, and one that matches a gesture casts "
-           L"its skill. The trigger still does what it does in the game. Live.")),
-    Toggle(L"openxr", L"gesture_overlay", L"Gestures tab in the headset (prototype)", 0,
+           L"its skill. The trigger still does what it does in the game. Live."))),
+    Hide(Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 0,
+           L"In VR first person (F4), while the skill panel is open on its Gestures tab, what is nearer than the window - your hands and arms, the "
+           L"weapon you hold - is drawn over it instead of under it, by the scene's depth, so you see your hands while you record and try gestures. "
+           L"The Gestures tab only: the panel's other tabs, every other menu and play are as before and this costs nothing there. On the tab it "
+           L"costs one small pass a frame and two swapchains (the log says how much). Needs the skill panel. Off: as before. Live.")),
+    Hide(Choice(L"gestures", L"trigger_right", L"Right trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+           L"The right trigger's role in VR first person (F4), in play (the panels' pointer click and the menus are as before). As before: its skill "
+           L"slot / the attack. Glyphs: it draws gesture strokes and casts the skill a Select glyph armed on it - nothing else: every press is a "
+           L"stroke, and at the release one that matched a glyph is that glyph, anything else casts the armed skill once (see the cast rule below). "
+           L"Shift: the game's second layer. Action: the action picked on the "
+           L"headset's Gestures tab (Triggers). With either trigger set, only the glyph triggers draw for the gesture engine. Live.")),
+    Hide(Choice(L"gestures", L"trigger_left", L"Left trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+           L"The left trigger's role in VR first person (F4), in play. As before: the game's Shift. Glyphs: it draws gesture strokes and casts the "
+           L"skill a Select glyph armed on it, on the game's LT + RT slot - nothing else, so Shift is gone from it (give Shift to the right trigger "
+           L"or leave it). Shift: as before. Action: the action picked on the headset's Gestures tab (Triggers). Live.")),
+    Hide(Choice(L"gestures", L"glyph_cast_hold", L"Glyph trigger: when it casts", 0, {L"At the release", L"Still press, hold repeats"},
+           L"A trigger set to Glyphs both draws and casts the skill a Select glyph armed on it. At the release (default): hold it and draw - a glyph, "
+           L"read when you let go, no cast; hold it with the hand still - you aim: a skill that flies shows its aim line from that hand, one cast "
+           L"onto a point shows its arc and circle (Teleport circle on); let go and it is cast there, the game's own way. A plain skill shows nothing "
+           L"and is cast at the release; a quick tap casts too. No hold-to-repeat (tap again). Still press, hold repeats: the hand still for 0.12 s "
+           L"casts and holding repeats as the game does; moving 6 cm first draws - a cast comes up to 0.12 s late. Live.")),
+    Hide(Toggle(L"gestures", L"select_icon", L"Gestures: the armed skill's icon in the medallions", 1,
+           L"A skill a Select glyph armed shows inside the wrist medallions (Hand vitals, the 3D orbs with the medallion shape): the right trigger's "
+           L"in the mana medallion, the left trigger's in the life one - the game's own icon, as the melee armed skill's. Unticked: no icon; the arming "
+           L"works the same. Live.")),
+    Hide(Toggle(L"gestures", L"show_zones", L"Gestures: show the hand poses' zones in play", 0,
+           L"In VR first person (F4), with the skill panel down, every hand pose's zone is shown: a see-through sphere where your hand must be for "
+           L"the pose, as big as its zone. The Gestures tab sizes a zone (zone < 6 cm > on the pose's row and on its review: saved with the gesture, "
+           L"so BodyWalk shows the same) and its Zones button "
+           L"flips this tick. While a pose is being recorded its zone is shown round your hand, and on its review at its spots, whatever this says. "
+           L"Unticked: hidden in play. Live.")),
+    Hide(Toggle(L"openxr", L"gesture_overlay", L"Gestures tab in the headset (prototype)", 0,
            L"A GESTURES tab beside Settings in the skill panel's window (it needs the tiles' look and Settings in the headset), in VR first "
            L"person (F4): your BodyWalk gestures for the class you play, each with a picture - a glyph's shape, a body motion's path with its "
            L"start and its end, a stick figure holding a hand pose, a button's name - the skill it casts and its threshold. NEW GESTURE records "
            L"one: the kind (glyph, hand pose, body motion), the hand, the skill; then you see the take and keep it, record it again or drop it. "
            L"Re-record, Clear and Bind on each row; a click on a picture changes its colour. While BodyWalk records, the trigger is its pen: the "
            L"window steps aside and B / Y stop. BodyWalk records, recognises and keeps the gestures; the game only shows them and asks. Needs "
-           L"BodyWalk with Game skills, or the in-game gesture engine above. Unticked: no Gestures tab. Live."),
+           L"BodyWalk with Game skills, or the in-game gesture engine above. Unticked: no Gestures tab. Live.")),
     Group(L"Debug (the same ticks as on the Debug tab)", L"Drawings and tests for tuning Hit by touch and the shield bash: draw the blade and monster capsules, colour refused contacts, try touches without attacking, and fit the blade's length, butt and thickness to the weapon you see."),
     Toggle(L"debug", L"melee_touch_client_verdict", L"Hit by touch: decide hostile / wall from the client's own units", 0,
            L"What a player who JOINED a TCP/IP game gets (the game's server runs on the host's PC there, so it cannot be asked), tried "
@@ -6313,6 +6523,11 @@ std::vector<Item> g_items = {
            L"One line for each compute shader the game makes (size and hash), to check that the light-bounds fix matches this game build. Restart the game."),
     Toggle(L"debug", L"profile_draw", L"Profile the draw thread for 5 s (turn on for each run)", 0,
            L"Each time this turns on: one 5 s profile of the game's draw thread, in the log. Turn it off and on again for another."),
+    // [debug] call_census (vr/native_d3d12.h): the game's D3D12 calls counted - view only
+    Toggle(L"debug", L"call_census", L"Count the game's draw calls (a log line every 10 s)", 0,
+           L"Every 10 s one line in the log: how many draws, dispatches, pipelines, target binds, barriers, viewports and clears the game records a "
+           L"present, on its draw thread and on its other threads. For comparing views at the same spot (F1 against F4) and setting against setting: "
+           L"more draws cost the processor more. It only counts and writes a line; it changes nothing in play. Live."),
     Toggle(L"debug", L"find_prev_matrix", L"Look for the previous frame's camera matrix", 0, L"A developer's search for the motion vectors' matrix, in the log. Live."),
     Group(L"GPU and stereo replay (developer)", L"Developer switches for the right eye's stereo replay, the stall guard and the fog in the frame's edges: traces, comparisons and timings. Most need a game restart; not for play."),
     Toggle(L"debug", L"replay_proto", L"Stereo replay hooks (needed by Stereo's right-eye replay)", 1,
@@ -6361,6 +6576,13 @@ std::vector<Item> g_items = {
     Toggle(L"debug", L"melee_touch_unchecked", L"Hit by touch: no hostile / wall check (not for play)", 0,
            L"Any live monster the blade meets is attacked - to find out whether that check is what stops a touch. An ally or a monster behind a wall is attacked too. Live."),
     Toggle(L"debug", L"melee_press_trace", L"Log every press of Hit by touch in full", 0, L"Off: only the first 12 presses are told in full. Live."),
+    Toggle(L"debug", L"grip_trace", L"Log every grip in full", 0,
+           L"A line for every grip press - what was in reach, how far from the shaft, where along it - and for every change of who holds the weapon; from the pose, which attach bone "
+           L"the game draws it on, the grip it was placed by and the hand the fingers' pose is read off. For a report of \"the hand cannot take it\" or \"it sits turned\". Nothing "
+           L"changes in play. Live."),
+    Toggle(L"debug", L"grip_draw", L"Draw the grips", 0,
+           L"In VR first person (F4): both weapon attach bones' axes, each hand's palm and axes, the shaft, the second hand's take zone (green) and where each hand holds it (right "
+           L"amber, left blue). Drawn only. Live."),
     Toggle(L"debug", L"quick_blow_probe", L"Log what became of each attack's blow", 0,
            L"One line per attack of your hero (single player or a game you host): whether the game's blow fired, or why it was lost - our attack path re-armed the "
            L"hero's frame event before it, the mode changed, or the animation ended with no blow - with the frame events the attack got. For a report of "
@@ -6406,6 +6628,44 @@ std::vector<Item> g_items = {
            L"With \"Bow: draw the shot arrow ourselves\" on: an elemental arrow's own effect (fire, frost, sparks) is switched off by the game's own switch while we draw "
            L"the arrow - in case the game's effect stays on the game's path instead of following ours. The hits' explosions are not touched. Live."),
 #endif
+    // [render] bench_skip_* (vr/render_bench.h): the game's own render stages left out one by one, live, to measure each one's cost - a diagnostic bench
+    Group(L"Render bench: the game's own stages", L"To measure what each of the game's own render stages costs in the headset: tick one, wait 20 s, read the frame rate in the log (its 10 s lines say what was left out). Only the game's draws are left out - its clears and buffers go on, nothing of the game's play is touched. The picture is wrong while one is ticked: that is expected. VR first person (F4) only. Leave them all off to play."),
+    Toggle(L"render", L"bench_skip_all", L"The game's render: leave out ALL the heavy stages below at once", 0,
+           L"Every stage below at once - the picture is mostly black (the lit pass is out too); what is left is roughly the game's geometry, its interface and ours. The ceiling: how fast the frame could be with none of them. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_shadows_sun", L"The game's render: leave out the sun's shadow map", 0,
+           L"The sun's shadow maps - every map drawn by the game's directional and spot shadow shaders (~1,800 draws a present at 4096 x 4096) - are not drawn: an empty map reads as all in shadow, so the sun goes out too (use the flat light to see the world). VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_shadows_other", L"The game's render: leave out the point lights' shadow maps", 0,
+           L"The point lights' shadow maps (torches, the hero's light: the game's own point-shadow shaders) are not drawn. The sun's maps are never touched by this one. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_grass_force", L"The game's render: leave out the grass bending map", 0,
+           L"The 512 x 512 map of where the hero and monsters press the grass down (~300 draws a pass) is not drawn: the grass stops bending. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_lit", L"The game's render: leave out the lit colour pass (terrain and models)", 0,
+           L"The game's lit colour pass - the ground, walls, objects, monsters, the hero, drawn with its ~2,000-instruction lighting a pixel - is not drawn: the world goes black, its depth stays (fog, reflections, AO still run on it). VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_grass", L"The game's render: leave out the grass", 0,
+           L"The grass: its placement, its visibility and its full-screen lighting pass (~2,000 instructions a grass pixel). VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_water_glass_hair", L"The game's render: leave out water, glass and hair", 0,
+           L"The water, glass and hair passes (each ~1,800-1,900 instructions a pixel) are not drawn. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_assao", L"The game's render: leave out the ambient occlusion (ASSAO)", 0,
+           L"The game's ambient occlusion - depth preparation, four generate and four blur passes at half size, the apply - is not drawn. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_bloom", L"The game's render: leave out the bloom", 0,
+           L"The bloom - its cutoff, six downsamples, six applies - is not drawn: no glow round bright things. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_pyramid", L"The game's render: leave out the colour pyramid", 0,
+           L"The copy of the scene and its seven smaller levels (what glass, water and reflections read) are not made: those read a stale or empty picture. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_ppr", L"The game's render: leave out the reflections (PPR)", 0,
+           L"The game's reflections in water and blood: their search (a compute pass) is not made, so the resolve finds none and draws the scene without them. (The resolve itself stays: it also writes the whole lit scene back.) VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_atmosphere", L"The game's render: leave out the game's fog pass", 0,
+           L"The game's own fog - its volume, sampling and the full-screen apply - is not drawn (with \"The game draws the fog\" there is then no fog; our effect's fog is not touched). VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_tonemap", L"The game's render: leave out tone mapping and anti-aliasing", 0,
+           L"The tone map (with its look-up tables) and FXAA / SMAA are not drawn: the picture goes on in its raw bright colours, unsmoothed. VR first person (F4) only. Live."),
+    Toggle(L"render", L"bench_skip_outline", L"The game's render: leave out the outlines", 0,
+           L"The outline round the monster or item under the pointer (its mask and two full-screen blurs) is not drawn. VR first person (F4) only. Live."),
+    // [render] phantom_rects (vr/phantom_rect.h): our wrist-orb pass in rectangles - off by default in 0.208 (Serg: of today's performance
+    // features only one pass ships on), the tick to try it
+    Toggle(L"render", L"phantom_rects", L"Our wrist orbs' pass only where the orbs are (the same picture, cheaper)", 0,
+           L"Our effect draws the wrist orbs, the quiver's orbs, the arrow's glow and the merc tint in one pass that went over the whole picture (0.93 ms a present at 2880 x 2880). Ticked: only the rectangles they reach are drawn - the picture is the same, pixel for pixel; the whole picture still while the low-life or low-mana vignette, the point skill's arc or a debug draw is on. The log says every 10 s how much of the picture it drew and its time. Live. Unticked: the whole picture, as before (to compare)."),
+    // ([render] bench_lit_flat / _level / _colour: on Performance > Render cost as the Potato light now; the bench keys still work in the ini)
+    // [render] bench_skip_point_lights (vr/bench_lights.h): the game's light bins and volumes given no light - the sun alone
+    Toggle(L"render", L"bench_skip_point_lights", L"The game's render: only the sun - leave out torches, fires and the hero's light", 0,
+           L"The game's local lights - torches, braziers, fire spells, glowing items and the hero's own light circle - are left out of its light bins and light volumes: the sun (its light and its shadow map) and the area's ambient light alone light the world. Underground, with no sun, the world goes dark. Not part of \"all\". VR first person (F4) only. Live."),
 };
 
 wchar_t g_ini[MAX_PATH], g_uiIni[MAX_PATH];
@@ -6675,37 +6935,13 @@ const wchar_t* SectionOf(const Item& it) {
 }
 const wchar_t* FileOf(const Item& it) { return wcscmp(it.section, L"@ui") == 0 ? g_uiIni : g_ini; }
 
-// The Performance tab's presets (2026-10-08): Light (no ReShade, 2026-10-26), Potato (Low with the 3D from the depth), Low, Medium (the shipped
-// defaults), High. Not kept anywhere: the drop-down shows whichever preset the keys match, else Custom.
-constexpr int kPresets = 5;   // Light, Potato, Low, Medium, High; then Custom
-struct PresetKey { const wchar_t* section; const wchar_t* key; float v[kPresets]; };
-const PresetKey kPreset[] = {
-    // (Light set [render] no_reshade=1 until 0.203: no ReShade for any preset now)
-    {L"render", L"native_effects", {1, 1, 1, 1, 1}},
-    // Light, the eye made the cheaper way (docs/plan_no_reshade.md: on a GTX 1050 Ti the eye made took ~4.4 ms of the 13.9 a frame has at
-    // 72 Hz): its rims, the strips beside near things and the sharper read off, its own picture not kept - the drawn eye's grid stays (it
-    // puts this frame's monsters into the eye made). The others: the defaults.
-    {L"stereo", L"turns_rims", {0, 1, 1, 1, 1}},
-    {L"stereo", L"turns_fill", {0, 1, 1, 1, 1}},
-    {L"stereo", L"turns_sharp", {0, 1, 1, 1, 1}},
-    {L"stereo", L"turns_keep_own", {0, 3, 3, 3, 3}},
-    {L"render", L"rings", {1, 1, 1, 2, 3}},
-    {L"render", L"model_radius", {150, 150, 150, 210, 400}},   // Medium 210 (the author after Bear, 2026-10-25: the objects draw better); 300 cost ~2 ms CPU a pair (2026-10-10)
-    {L"fog", L"enabled", {1, 1, 1, 1, 1}},
-    {L"fog", L"light", {1, 0, 0, 0, 0}},   // Light: the fog's short way (D2R_DepthFog.fx LightFog), the sky kept
-    {L"fog", L"start", {30, 30, 30, 30, 30}},
-    {L"fog", L"end", {100, 100, 100, 200, 250}},
-    {L"fog", L"caves", {1, 1, 1, 1, 1}},
-    {L"fog", L"caves_start", {60, 60, 60, 100, 100}},
-    {L"fog", L"caves_end", {100, 100, 100, 200, 200}},
-    {L"sky", L"enabled", {1, 1, 1, 1, 1}},
-    {L"ceiling", L"enabled", {0, 0, 1, 1, 1}},   // Low too (8 relief steps): players on Low had no ceilings at all
-    {L"ceiling", L"steps", {8, 8, 8, 12, 20}},
-    // Light: native OpenXR with the eyes by turns (the only mode without ReShade); Potato: FlatVR 3D depth (ReShade's depth, one frame a picture);
-    // the others FlatVR stereo (as before)
-    {L"@stereo3d", L"source", {3, 2, 1, 1, 1}},
-    {L"stereo", L"headset_rate", {0, 0, 3, 3, 3}},   // Light and Potato 72 Hz, the others 90 (the game's cap follows: ApplyFrameCap)
-};
+// The Performance tab's presets (2026-10-08): Light (no ReShade, 2026-10-26), Potato and Low (the game's own stages left out, 2026-11-08), Medium
+// (the shipped defaults), High. Not kept anywhere: the drop-down shows whichever preset the keys match, else Custom.
+// The Quality presets (Serg 2026-11-08: Potato / Low / Medium, then Custom): one table with the headset window's Video page -
+// shared/quality_presets.h says what each sets and why. Never in a preset: the wrist medallions, the render size.
+constexpr int kPresets = qualitypreset::kCount;   // Potato, Low, Medium; then Custom
+using PresetKey = qualitypreset::Key;
+constexpr const auto& kPreset = qualitypreset::kKeys;
 float ReadValue(const Item& it);
 const Item* PresetItem(const wchar_t* section, const wchar_t* key) {
     for (const Item& it : g_items)
@@ -6717,7 +6953,7 @@ int MatchPreset() {
         bool all = true;
         for (const PresetKey& k : kPreset) {
             const Item* it = PresetItem(k.section, k.key);
-            if (it && fabsf(ReadValue(*it) - k.v[p]) > 0.001f) { all = false; break; }
+            if (it && !qualitypreset::IsAsIs(k.v[p]) && fabsf(ReadValue(*it) - k.v[p]) > 0.001f) { all = false; break; }
         }
         if (all) return p;
     }
@@ -6808,14 +7044,19 @@ bool LinkHost(uint32_t* caps = nullptr);
 // The list shows four of the six modes (index = the list's item): 0 native OpenXR (mode 4), 1 FlatVR stereo (modes 0 and 1;
 // mono, which the list no longer offers, is shown here too), 2 FlatVR 3D depth (mode 2), 3 native OpenXR with the eyes by turns
 // (mode 5). WriteStereo3D takes the list's index.
-float ReadStereo3D() {
-    if (GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0)
-        return GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0 && GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini) == 0 ? 3.0f : 0.0f;
-    const bool afr = GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini) != 0;
-    const int source = GetPrivateProfileIntW(L"stereo", L"source", afr ? 2 : 1, g_ini);
-    if (afr) return 1.0f;
-    return source == 0 ? 1.0f : 2.0f;
+// (2026-11-08: the five render types, shared/render_type.h - the list's item is the type)
+rendertype::Keys RenderTypeKeys() {
+    rendertype::Keys k;
+    k.openxrOn = (int)GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini);
+    k.afr = (int)GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini);
+    k.pairPerTick = (int)GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini);
+    k.nativeReplay = (int)GetPrivateProfileIntW(L"stereo", L"native_replay", 1, g_ini);
+    k.source = (int)GetPrivateProfileIntW(L"stereo", L"source", k.afr ? 2 : 1, g_ini);
+    k.replayRight = (int)GetPrivateProfileIntW(L"stereo", L"replay_right", 0, g_ini);
+    k.replayAhead = (int)GetPrivateProfileIntW(L"stereo", L"replay_ahead", 1, g_ini);
+    return k;
 }
+float ReadStereo3D() { return (float)rendertype::FromKeys(RenderTypeKeys()); }
 int ExeVersion(const std::wstring& exe);
 std::wstring BodyWalkExe();
 void SetStatus(const wchar_t* key, int state, const wchar_t* text);
@@ -6830,9 +7071,8 @@ bool BodyWalkTakesGameHeadset() {
 void ApplyWindowForPlatform();   // (the game's window: VR has the square, flat mode the player's own - below)
 void AutoRun(bwauto::When when);   // BodyWalk and FlatVR started or closed by the switch (below)
 bool WriteStereo3D(float item) {
-    static const float kModeOfItem[4] = {4.0f, 0.0f, 2.0f, 5.0f};   // the list's item -> the mode below (native, FlatVR stereo, FlatVR 3D depth, native by turns)
-    const float v = kModeOfItem[std::clamp((int)std::lround(item), 0, 3)];
-    const bool native = std::lround(v) == 4 || std::lround(v) == 5;   // the one-pass stereo, or the eyes by turns (5)
+    const int type = std::clamp((int)std::lround(item), 0, (int)rendertype::kCount - 1);
+    const bool native = rendertype::Native(type);
     const bool wasNative = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     // (with "Controls without BodyWalk" the controls need no BodyWalk at all)
     if (native && !wasNative && !BodyWalkTakesGameHeadset() && GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) == 0) {
@@ -6848,18 +7088,23 @@ bool WriteStereo3D(float item) {
     if (native != wasNative)
         if (BW_LinkRequests* r = LinkRequests())
             bw::link::Request(r, &r->presenter, native ? BW_LINK_PRESENTER_GAME : BW_LINK_PRESENTER_FLATVR);
-    const int m = native ? (std::lround(v) == 5 ? 1 : 0) : std::clamp((int)std::lround(v), 0, 3);
-    static const int kSource[4] = {2, 2, 1, 0};
-    const int s = kSource[m];
-    wchar_t buf[8];
-    swprintf_s(buf, L"%d", s);
-    WritePrivateProfileStringW(L"stereo", L"source", buf, g_ini);
-    WritePrivateProfileStringW(L"stereo", L"afr", s == 2 ? L"1" : L"0", g_ini);
-    if (m <= 1) {
-        WritePrivateProfileStringW(L"stereo", L"pair_per_tick", m == 0 ? L"1" : L"0", g_ini);
-        WritePrivateProfileStringW(L"stereo", L"replay_right", m == 0 ? L"1" : L"0", g_ini);
-        if (m == 0) WritePrivateProfileStringW(L"stereo", L"replay_ahead", L"2", g_ini);
-    }
+    // the type's keys (shared/render_type.h); only the ones it changes are written
+    const rendertype::Keys was = RenderTypeKeys();
+    rendertype::Keys k = was;
+    rendertype::ToKeys(type, &k);
+    auto put = [](const wchar_t* key, int v, int old, bool always = false) {
+        if (!always && v == old) return;
+        wchar_t b[8];
+        swprintf_s(b, L"%d", v);
+        WritePrivateProfileStringW(L"stereo", key, b, g_ini);
+    };
+    const int s = k.source;
+    put(L"source", k.source, was.source, true);
+    put(L"afr", k.afr, was.afr, true);
+    put(L"pair_per_tick", k.pairPerTick, was.pairPerTick);
+    put(L"replay_right", k.replayRight, was.replayRight);
+    put(L"replay_ahead", k.replayAhead, was.replayAhead);
+    put(L"native_replay", k.nativeReplay, was.nativeReplay, rendertype::Native(type) && type != rendertype::kNativeTurns);
     // BodyWalk's FlatVR follows, through Game Link (s is BW_LINK_STEREO_*; done only while BodyWalk runs)
     if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->stereoSource, s);
     // FlatVR <-> native: BodyWalk and FlatVR started, or FlatVR stopped ([mode] flatvr_autostart / native_close_flatvr, bw_autorun.h)
@@ -7664,6 +7909,29 @@ void CarryBarKeys() {
         }
     }
 }
+// Variable rate shading tier 2 on this PC (shared/vrs_probe.h, asked once): the plugin makes foveation a no-op without it, so the rows that
+// need it are greyed here with the reason (Serg 2026-11-08 on a GTX 1050 Ti: "фоверация забрала fps, а не дала"). Not known: not greyed.
+bool SettingsNoVrs() {
+    static const int vrs = vrsprobe::Ask();
+    return vrs == 0;
+}
+bool VrsKey(const wchar_t* key) {
+    for (const wchar_t* k : {L"foveated", L"foveated_strength", L"foveated_gaze", L"foveated_unseen", L"foveated_ab", L"foveated_fullscreen",
+                             L"grass_lighting_coarse"})
+        if (wcscmp(key, k) == 0) return true;
+    return false;
+}
+void SetStatus(const wchar_t* key, int state, const wchar_t* text);
+void LayoutPage();
+void UpdateVrsStatus() {
+    if (!SettingsNoVrs()) return;   // (a card with it: the line stays hidden - no empty row under the tick)
+    for (Item& it : g_items)
+        if (it.kind == Kind::Status && it.key && wcscmp(it.key, L"vrs") == 0) it.hidden = false;
+    if (g_page) LayoutPage();
+    if (SettingsNoVrs())
+        SetStatus(L"vrs", 2 /* kWarn */, TR(L"status.vrs.none", L"This graphics card has no variable rate shading (tier 2): foveated rendering and the grass "
+                                                    L"lighting rate cannot work on it - D2R VR leaves them off, whatever is ticked."));
+}
 void UpdateEnabled() {
     bool moved = false;   // a ShowFor item came or went: the page laid out again
     for (Item& it : g_items) {
@@ -7674,8 +7942,9 @@ void UpdateEnabled() {
     }
     if (moved && g_page) LayoutPage();
     for (const Item& it : g_items) {
-        if (it.needs.empty()) continue;
-        BOOL on = TRUE;
+        const bool noVrs = it.section && it.key && SettingsNoVrs() && wcscmp(it.section, L"render") == 0 && VrsKey(it.key);
+        if (it.needs.empty() && !noVrs) continue;
+        BOOL on = noVrs ? FALSE : TRUE;
         for (const Item::Need& nd : it.needs)
             if (nd.item >= 0 && std::lround(ReadValue(g_items[nd.item])) != std::lround(nd.value) &&
                 !(nd.orItem >= 0 && std::lround(ReadValue(g_items[nd.orItem])) == std::lround(nd.value))) on = FALSE;
@@ -7748,6 +8017,7 @@ void ShowDrawDistance() {
 void ApplyPreset(int p) {
     if (p < 0 || p >= kPresets) return;
     for (const PresetKey& k : kPreset) {
+        if (qualitypreset::IsAsIs(k.v[p])) continue;   // (this preset leaves it as it is)
         if (const Item* it = PresetItem(k.section, k.key)) { WriteValue(*it, k.v[p]); continue; }
         wchar_t buf[32];
         swprintf_s(buf, L"%g", k.v[p]);
@@ -7857,9 +8127,11 @@ void LayoutPage() {
         places.push_back({head.line, x, y + S(26), colW, 2});
         y += headH;
         int gridX = -1, gridN = 1, gridK = 0;   // a sub-heading's grid of ticks: where its cells start, how many to a row, the next one's place
+        size_t besidePlaced = (size_t)-1;      // the Beside button the Choice before it has placed on its row
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
             if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
+            if (i == besidePlaced) continue;
             if (it.kind == Kind::Group) {   // a sub-heading (Sub): its name on the left of its row, its ticks beside it - or a line of its own
                 const int nameW = it.across > 0 ? std::clamp(colW * 24 / 100, S(90), S(150)) : colW;
                 if (it.line) {   // the classes apart (the author: "proper separators between the classes")
@@ -7930,7 +8202,17 @@ void LayoutPage() {
             case Kind::Choice: {
                 const int more = (LinesAt(it.name, labelW - S(8)) - 1) * lineH, mid = more / 2;
                 places.push_back({it.name, x, y + S(6), labelW - S(8), S(20) + more});
-                places.push_back({it.ctl, x + labelW, y + S(3) + mid, colW - labelW, S(240)});   // the height is the open list's
+                int listW = colW - labelW;
+                if (i + 1 < g.end) {   // a button beside it (Beside): at the row's right end, the list narrower
+                    const Item& nb = g_items[i + 1];
+                    if (nb.kind == Kind::Button && nb.beside && (nb.modes & PlatformBit()) && !nb.hidden && !nb.off) {
+                        const int bw = std::min(S(96), listW / 3);
+                        listW -= bw + S(6);
+                        places.push_back({nb.ctl, x + colW - bw, y + S(2) + mid, bw, S(26)});
+                        besidePlaced = i + 1;
+                    }
+                }
+                places.push_back({it.ctl, x + labelW, y + S(3) + mid, listW, S(240)});   // the height is the open list's
                 y += more;
                 break;
             }
@@ -9260,6 +9542,27 @@ void RefreshSpan() {
     if (Item* use = FindItem(L"calibration", L"use"); use && use->ctl) SendMessageW(use->ctl, BM_SETCHECK, ReadValue(*use) != 0.0f ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
+// [autotune]: a Keep in the game (the headset's, or ours) writes its keys, then d2r_vr_autotune.txt - when that file is new, the controls
+// and the preset are read again, so the preset shows what the kept settings match (or Custom) without reopening the window.
+void FollowAutoTune() {
+    std::wstring p = g_ini;
+    const size_t slash = p.find_last_of(L"\\/");
+    p.resize(slash == std::wstring::npos ? 0 : slash + 1);
+    p += L"d2r_vr_autotune.txt";
+    static FILETIME seen{};
+    static bool first = true;
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    const bool there = GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &fa) != 0;
+    const FILETIME now = there ? fa.ftLastWriteTime : FILETIME{};
+    if (first) { first = false; seen = now; return; }   // (a file from an earlier Keep: nothing new)
+    if (CompareFileTime(&now, &seen) == 0) return;
+    seen = now;
+    if (!there) return;
+    RefreshControls();
+    ShowPreset();
+    UpdateEnabled();
+}
+
 void FollowLaunch() {
     if (!g_flatVrStartBy) return;
     if (GetTickCount64() > g_flatVrStartBy) { g_flatVrStartBy = 0; return; }
@@ -9601,6 +9904,7 @@ void RefreshStatus() {
     UpdateIpdStatus();          // Stereo > Native OpenXR: the eye distance the headset reports and the one in use
     UpdateFovStatus();          // ... and the headset's own angles beside fov_override's sliders
     UpdateWeightLibStatus();   // Weapon weight: the weight-physics library beside the plugin
+    UpdateVrsStatus();         // Render cost: a card without variable rate shading - why foveation is greyed
     UpdateGripLibStatus();     // ... and the grip library
     UpdateCrashRepStatus();    // Home > D2R VR: the crash reporter, a report left unsent
     RefreshRooms();            // Multiplayer: D2R Rooms' bridge (only while its tab is shown)
@@ -12477,6 +12781,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         RefreshGameCode();
         RefreshStats();   // [stats] strike_stats: the Stats tab, while it is shown (read again when the file changed)
         FollowHeadsetShot();
+        FollowAutoTune();
         static int tick = 0;
         if (++tick % 2 == 0) RefreshStatus();
         return 0;

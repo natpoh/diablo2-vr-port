@@ -453,12 +453,17 @@ thread_local bool t_touchAnswer = false;   // [debug] melee_press_trace: the loo
 // The cast flags' look (0x145534) only swaps the target the game found itself: none found, none - the cast stays in place, the hero never runs after what
 // only the hand picked. None of ours: the game's answer.
 void* HandAnswer(uintptr_t ret, int skill, void* game) {
+    if (ret == g_clickTargetRet && g_set.platform.load() == 0) {   // [input] flat_body_target: flat, the map click's lookup - the crosshair's unit
+        const uintptr_t flat = FlatClickTarget((uintptr_t)game);
+        return flat ? (void*)flat : game;
+    }
     if (!g_set.vrBodyPickHand.load() || !viewgate::F4()) return game;
     if (ret != g_spellTargetRet && ret != g_spellHoverRet && ret != g_clickTargetRet && !(ret == g_dispatchTargetRet && game)) return game;
     if (skill < 0 && g_heroUnit.load()) skill = SpellSkill(g_heroUnit.load());
     const uintptr_t hand = VrHandTarget(vrbody::AskOf(skill));
     return hand ? (void*)hand : game;
 }
+bool ClickLookupHooked() { return g_spellAimHook.load() == 1 && g_clickTargetRet != 0; }
 int LookupOf(uintptr_t ret) {
     return ret == g_dispatchTargetRet ? presstrace::kDispatch : ret == g_spellTargetRet ? presstrace::kResolver : ret == g_spellHoverRet ? presstrace::kHover
          : ret == g_clickTargetRet ? presstrace::kClick : -1;
@@ -678,7 +683,7 @@ void InstallSlotSkillHook() {
 }
 
 void InstallSpellAimHooks() {
-    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load()) || !OrigAttackPoint) return;   // the point's hook in first
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (g_set.platform.load() == 0 && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load())) || !OrigAttackPoint) return;   // the point's hook in first ([input] flat_body_target: flat, the map click's lookup answered)
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
         !Matches(RVA_CTRL_HANDLER, kSigCtrlHandler, sizeof kSigCtrlHandler) || !Matches(RVA_CTRL_SKILL, kSigCtrlSkill, sizeof kSigCtrlSkill) ||

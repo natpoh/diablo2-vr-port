@@ -5,6 +5,8 @@
 #include "../../vrcam_headers.h"
 #include "../../flatvr_feed.h"   // [render] flatvr_feed: FlatVR's picture and depth without ReShade
 #include "../../resize_drain.h"   // [render] resize_drain: the GPU drained before the game resizes or releases DLSS, no stale replay
+#include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 at the load (shared/)
+#include "../../phantom_rect.h"   // [render] phantom_rects: the vignette pass only where its carriers are
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -1010,7 +1012,15 @@ bool BoneAxesWanted() { return g_set.boneAxes.load() && g_enabled.load() && g_in
 // [debug] xbow_barrel_line: the crossbow's barrel as drawn and the left palm's place under it, VR first person (F4), the gun's hold
 bool XbowBarrelWanted() { return g_set.xbowBarrelLine.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson() && XbowLikeStaff(); }
 // [debug] spell_aim_ray: the ray a spell is aimed along, VR first person (F4), no bow, crossbow or thrown weapon in hand (vr/spell_aim_model.h)
-bool SpellRayWanted() { return g_set.spellAimRay.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson() && !BowInHand() && !ThrownInHand(); }
+// The Gestures' glyph trigger held still with a skill armed that flies to where it is aimed (the icon cache's aims, from the game's skills.txt): its aim line is drawn
+// as [debug] spell_aim_ray draws one - from that hand (AimHand follows the glyph trigger while it aims) - so the player points where it goes; a point skill shows
+// point_cast's arc and circle instead (its slot held), a plain one nothing.
+bool GlyphAimRayWanted() {
+    int hand = -1;
+    int32_t skill = -1;
+    return trigroleswire::Aiming(&hand, &skill) && skill >= 0 && wheelicons::Aims(skill) == 1 && !(pointwire::On() && pointwire::IsPoint(skill)) && viewgate::F4();
+}
+bool SpellRayWanted() { return (g_set.spellAimRay.load() || GlyphAimRayWanted()) && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson() && !BowInHand() && !ThrownInHand(); }
 // [debug] point_pickup_ray: the ray [input] point_pickup picks along, VR first person (F4)
 bool PointRayWanted() { return g_set.pointPickupRay.load() && g_set.pointPickup.load() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 // [debug] melee_boxes: the capsules hit by touch tests, only in VR first person (F4)
@@ -1052,6 +1062,52 @@ bool SkillTriggersWanted() { return skilltriggers::Wanted() && g_enabled.load() 
 bool HandOrbsWanted() { return handvitals::OrbsOn() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
 // [hud] merc_tint: the wounded merc tinted red, drawn by the effect, only in VR first person (F4)
 bool MercTintWanted() { return merctint::Enabled() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
+// [debug] grip_draw: the grips as capsules in the headset, VR first person (F4) - both weapon attach bones' axes (x red, y green, z blue; a shrunk one hangs nothing: not drawn), each hand's
+// palm (a grey ball) and its wrist's axes (thinner), the shaft (a grey line), the second hand's take zone round it (green glass: the pommel to the hilt's end, as wide as a fist takes it)
+// and where each holding hand sits on it (right amber, left blue). Points in the head's turn-only frame from the eye (skel::GripDrawNow, weight::ZoneDraw), turned onto the view as the
+// red line's: metres * upm along camR / camF.
+bool GripDrawWanted() { return weight::GripDraw() && g_enabled.load() && g_inWorld.load() && FullBody() && !ThirdPerson(); }
+int GripDrawMarks(const StickFrame& f, float upm, float (*a)[4], float (*b)[4], int max) {
+    int n = 0;
+    auto turn = [&](const float* v, float* w) {   // the head frame -> the view, from the eye, metres (as the phantom block's world())
+        for (int i = 0; i < 3; ++i) w[i] = v[0] * f.camR[i] - v[2] * f.camF[i];
+        w[1] += v[1];
+    };
+    auto put = [&](const float* p, const float* q, float radiusM, int colour, int style) {
+        if (n >= max) return;
+        float wp[3], wq[3];
+        turn(p, wp);
+        turn(q, wq);
+        for (int i = 0; i < 3; ++i) { a[n][i] = wp[i] * upm; b[n][i] = wq[i] * upm; }
+        a[n][3] = radiusM * upm;
+        b[n][3] = (float)meleeboxes::TouchKind(colour, style);
+        ++n;
+    };
+    auto axes = [&](const float o[3], const float ax[3][3], float len, float r) {
+        static const int colour[3] = {meleeboxes::kCRed, meleeboxes::kCGreen, meleeboxes::kCBlue};
+        for (int k = 0; k < 3; ++k) {
+            const float e[3] = {o[0] + ax[k][0] * len, o[1] + ax[k][1] * len, o[2] + ax[k][2] * len};
+            put(o, e, r, colour[k], meleeboxes::kTube);
+        }
+    };
+    skel::GripDraw g;
+    if (skel::GripDrawNow(&g)) {
+        for (int sd = 0; sd < 2; ++sd) {
+            if (g.attachShown[sd]) axes(g.attach[sd], g.attachAxes[sd], sd == g.drawnBone ? 0.09f : 0.06f, sd == g.drawnBone ? 0.004f : 0.0025f);
+            put(g.hand[sd], g.hand[sd], 0.012f, meleeboxes::kCGrey, meleeboxes::kBall);
+            axes(g.hand[sd], g.handAxes[sd], 0.04f, 0.0015f);
+        }
+    }
+    weight::GripZoneDraw z;
+    if (weight::ZoneDraw(&z)) {
+        put(z.butt, z.tip, 0.004f, meleeboxes::kCGrey, meleeboxes::kTube);
+        const bool second = z.held && (z.holds[0] != z.holds[1]);   // one hand on it: the zone is the other hand's
+        if (second || !z.held) put(z.butt, z.zoneEnd, std::min(0.06f, z.reach * 0.5f), meleeboxes::kCGreen, meleeboxes::kGlass);
+        for (int sd = 0; sd < 2; ++sd)
+            if (z.holds[sd]) put(z.hand[sd], z.hand[sd], 0.02f, sd == 0 ? meleeboxes::kCAmber : meleeboxes::kCBlue, meleeboxes::kBall);
+    }
+    return n;
+}
 #else
 bool PhantomWanted() { return false; }
 bool BoneAxesWanted() { return false; }
@@ -1067,6 +1123,7 @@ bool MeleeBoxesWanted() { return false; }
 bool SkillTriggersWanted() { return false; }
 bool HandOrbsWanted() { return false; }
 bool MercTintWanted() { return false; }
+bool GripDrawWanted() { return false; }
 #endif
 
 // The frame stamp strip (D2R_DepthFog.fx PS_Stamp): whenever the camera turns
@@ -1155,11 +1212,11 @@ bool TableKeyWanted() { return TableView() && g_inWorld.load() && !gamestate::Me
 // differs is set, since every change recompiles the effect. True if it did.
 // Done here, after the effect pass, like the technique switch below.
 // The colour measures compiled into the effect at all (D2R_DOME_MEASURE, D2R_FOG_MEASURE): the dome's only with the parked tinting ([sky]
-// dome_tint and dome_true_colour), the fog's only with [fog] fog_colour_measured and game_fog_match - off (the defaults) none of their
+// dome_tint and dome_true_colour); the fog's never since [fog] game_fog_match went (2026-11-08) - off none of their
 // textures, passes or readbacks is made. A change builds the effect again (as a picture's does). True if it did.
 template <class RT> bool ApplyMeasures(RT* rt) {
     bool set = false;
-    const bool want[2] = {g_set.domeTint.load() && g_set.domeTrueColour.load(), g_set.fogMatch.load() && g_set.fogMeasured.load()};
+    const bool want[2] = {g_set.domeTint.load() && g_set.domeTrueColour.load(), false};
     static const char* const kNames[2] = {"D2R_DOME_MEASURE", "D2R_FOG_MEASURE"};
     for (int k = 0; k < 2; ++k) {
         const char* v = want[k] ? "1" : "0";
@@ -1261,7 +1318,7 @@ template <class RT> void EffectsFinish(RT* rt) {
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
+    const bool want = GripDrawWanted() || FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -1405,6 +1462,8 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     if (dev) gpufault::Watch(dev);   // the game's device: its loss is told the moment it happens
     g_swapWnd.store(wnd);
     lightbounds::NoteScreen(sw, sh);   // what the game draws at, and the light grid that makes (a line when it changes)
+    foveation::NoteScreen(dev, sw, sh);   // [render] foveated: the eyes' picture's size, and VRS tier 2 looked for once (nothing when not hooked)
+    lensmask::NoteScreen(sw, sh, renderscale::g_last);   // [render] lens_mask: the scene depth's size, and the share an upscaler draws into
     refleye::Tell();                   // [render] reflections_per_eye: a line when its state changes, every 10 s while bound
     // No game area (the title and character screens, loading): the interface stays in the picture. A menu out as
     // a panel when the game was left (Esc, Save and Exit) is not kept there - the draw hook that sets it may not
@@ -1445,6 +1504,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     pairtime::g_presentAt.store(t);
     pairtime::g_presents.fetch_add(1, std::memory_order_relaxed);
     drawprof::Tick();
+    logasync::SetHotThread(GetCurrentThreadId());   // [debug] log_async_auto: this thread's (the game's draw thread) lines go to the log's writer thread
     // the game's window in front at this present (the 10 s line: a player's game ran far better with D2R VR Settings in front of it)
     if (GameFocused()) budgetasks::g_frontPresents.fetch_add(1, std::memory_order_relaxed);
     // Any mode (mono, stereo, menus): the presents a second and the game's busiest
@@ -1505,6 +1565,7 @@ namespace noreshade {
 // EffectsFinish). Off: no effect at all, as no_reshade was first (the lightest).
 fxnative::Runtime* g_fx = nullptr;
 double g_cpuUs = 0.0, g_effUs = 0.0;   // the present hook's own time on the CPU, and the effects' part of it (the 10 s line)
+std::atomic<uint32_t> g_rectWhy[phantomrect::kWhyCount] = {};   // [render] phantom_rects: the full-screen vignette passes by carrier (the 10 s line)
 uint32_t g_timed = 0;
 double UsNow() {
     static const double k = [] { LARGE_INTEGER f; QueryPerformanceFrequency(&f); return 1e6 / (double)f.QuadPart; }();
@@ -1529,6 +1590,9 @@ void Tell() {
         if (!m.vr) LogF("vrcam: no ReShade - the flat game: one picture on the monitor, drawn by the plugin's own hooks; without ReShade: %s",
                         nors::kOffFlat);
         else if (byTurns) Log("vrcam: no ReShade - native OpenXR eyes by turns: one eye drawn a frame, the other made on the GPU with the game's depth");
+        else if (replay::NativeOn() && m.pairPerTick)
+            Log("vrcam: no ReShade - both eyes from one game frame: the right eye drawn again from the left pass's lists ([stereo] native_replay=1, "
+                "F4 on native OpenXR, once an area has settled); otherwise two passes a pair");
         else Log("vrcam: no ReShade - NOT native OpenXR eyes by turns with the eye made ([openxr] on, [stereo] afr=1 pair_per_tick=0 turn_warp=1): "
                  "the plugin's own hooks are made for that mode - one pass two pictures went with ReShade (the pair is drawn in two passes); FlatVR's "
                  "picture and depth come from the plugin itself with [render] flatvr_feed");
@@ -1556,6 +1620,25 @@ void Tell() {
          g_timed ? (g_cpuUs - held) / 1000.0 / g_timed : 0.0, g_timed ? g_effUs / 1000.0 / g_timed : 0.0, g_timed ? held / 1000.0 / g_timed : 0.0,
          st.lists, st.listWaits, st.listWaitMs, st.presents, st.depthBinds, st.unknownViews, st.views,
          scenedepth::g_cache.Counting() ? "not picked yet" : "picked");
+    if (natived3d::CensusOn()) {   // [debug] call_census: the game's calls through our hooks, a present, the draw thread apart (view only)
+        const natived3d::Census c = natived3d::TakeCensus(GetCurrentThreadId());
+        const double k = st.presents ? 1.0 / st.presents : 0.0;
+        char d[700];
+        int at = 0;
+        for (int side = 0; side < 2; ++side) {
+            const uint32_t* n = side ? c.other : c.draw;
+            at += snprintf(d + at, sizeof d - at, "%s%s: draws %.0f (indexed %.0f), dispatches %.0f, indirect %.0f, pipelines %.0f, target binds %.0f, "
+                           "barriers %.0f (%.0f calls), viewports %.0f, scissors %.0f, clears %.0f + %.0f depth, list resets %.1f",
+                           side ? " | " : "", side ? "the other threads" : "the draw thread", (n[natived3d::kCensusDrawIndexed] + n[natived3d::kCensusDraw]) * k,
+                           n[natived3d::kCensusDrawIndexed] * k, n[natived3d::kCensusDispatch] * k, n[natived3d::kCensusIndirect] * k,
+                           n[natived3d::kCensusPso] * k, n[natived3d::kCensusTargets] * k, n[natived3d::kCensusBarriers] * k,
+                           n[natived3d::kCensusBarrierCalls] * k, n[natived3d::kCensusViewports] * k, n[natived3d::kCensusScissors] * k,
+                           n[natived3d::kCensusClearRtv] * k, n[natived3d::kCensusClearDsv] * k, n[natived3d::kCensusReset] * k);
+            if (at >= (int)sizeof d) break;
+        }
+        LogF("vrcam: call census, 10 s ([debug] call_census): the game's calls a present (%u presents, %s now) - %s; %d threads recorded%s", st.presents,
+             viewgate::F4() ? "VR F4" : "not VR F4", d, c.threads, c.lost ? " (more than 64 threads: some not counted)" : "");
+    }
     g_cpuUs = g_effUs = 0.0;
     pace::g_heldUs = 0.0;
     g_timed = 0;
@@ -1584,6 +1667,28 @@ void Tell() {
                       : fs.failed ? "NOT built (above)" : "waiting", on("SkyOn") ? "on" : "off",
              (int)(skyTex + 0.5f), !on("FogOn") ? "off" : on("FogLight") ? "light" : "full", on("CeilOn") && !on("FogLight") ? "on" : "off", blur, fs.gpuMs,
              fs.passes, fs.renders, fs.techniques, fs.skipped, fs.width, fs.height, fs.dearest.empty() ? "-" : fs.dearest.c_str());
+        if (fs.rectPasses) {   // [render] phantom_rects: the vignette pass's pixels and time (vr/phantom_rect.h)
+            const double share = fs.rectPixelsFull ? 100.0 * (double)fs.rectPixels / (double)fs.rectPixelsFull : 100.0;
+            char why[400] = "";   // which carrier sent the full-screen ones (phantomrect::Why), most first
+            {
+                uint32_t nWhy[phantomrect::kWhyCount];
+                for (int i = 0; i < phantomrect::kWhyCount; ++i) nWhy[i] = g_rectWhy[i].exchange(0, std::memory_order_relaxed);
+                int at = 0;
+                for (int pick = 0; pick < phantomrect::kWhyCount && at >= 0 && at < (int)sizeof why - 60; ++pick) {
+                    int best = -1;
+                    for (int i = 0; i < phantomrect::kWhyCount; ++i) if (nWhy[i] && (best < 0 || nWhy[i] > nWhy[best])) best = i;
+                    if (best < 0) break;
+                    at += snprintf(why + at, sizeof why - at, "%s%s %u", at ? ", " : "", phantomrect::WhyName(best), nWhy[best]);
+                    nWhy[best] = 0;
+                }
+                if (!at) snprintf(why, sizeof why, "none");
+            }
+            LogF("vrcam: native effects, 10 s: the vignette pass (wrist orbs, quiver orbs, arrow glow, merc tint, point arc) drew %.1f%% of the pixels a full-screen "
+                 "pass would (%.2f M of %.2f M a pass, %u passes, %u of them full screen - by: %s) - %.2f ms a present "
+                 "([render] phantom_rects %s)", share, fs.rectPasses ? (double)fs.rectPixels / fs.rectPasses / 1e6 : 0.0,
+                 fs.rectPasses ? (double)fs.rectPixelsFull / fs.rectPasses / 1e6 : 0.0, fs.rectPasses, fs.rectFull, why, fs.MsOf("PS_Phantom") + fs.MsOf("PS_OvPhantom") + fs.MsOf("PS_OvMadePhantom"),
+                 g_set.phantomRects.load() ? "1: in rectangles" : "0: full screen, as before");
+        }
     }
 }
 // The effect of this present: its uniforms, then its techniques on our list on the game's queue (after the depth's copy), then the switches
@@ -1798,6 +1903,8 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
 }
 void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     pipehunt::OnPresent();   // [debug] patch_hunt 8 / Ctrl+F10: a pipe trace starts or ends at the game's present
+    simplersun::OnPresent(); // [render] sun_shadow_*: a game frame ends (after pipe_hunt picked the frame's sun map)
+    litflat::Frame();        // [render] bench_lit_flat: its copies made for the light, a few a present
     if (!q) return;
     ID3D12Device* dev = nullptr;
     if (FAILED(q->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) || !dev) return;
@@ -1819,6 +1926,10 @@ void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     // eyes by turns ([stereo] turn_warp): this present's depth, kept with its eye when its picture goes to the headset
     if (xr::ByTurns())
         xr::SetTurnDepth(scenedepth::g_copiedNow ? (void*)scenedepth::g_nCopy : nullptr, (uint32_t)scenedepth::g_nSrv, s[0], s[1]);
+    // [openxr] hands_over_panels: the same depth, with the camera's near plane and the world's units per metre, for the hands over the skill panel
+    if (xr::NearOverlayWanted())
+        xr::SetNearDepth(scenedepth::g_copiedNow ? (void*)scenedepth::g_nCopy : nullptr, (uint32_t)scenedepth::g_nSrv, s[0], s[1], g_lastNear.load(),
+                         std::max(1.0f, ViewHeight()) / UserEyeHeightM());
     const double t1 = UsNow();
     Effects(dev, q, bb);   // [render] native_effects: the sky and the fog into the back buffer, before it goes to the headset
     g_effUs += UsNow() - t1;
@@ -1830,6 +1941,29 @@ void Present(IDXGISwapChain3* sc, ID3D12CommandQueue* q) {
     bb->Release();
     dev->Release();
 }
+// [stereo] native_replay: the replay's hold of the left pass's present (vr/render/stereo/replay.cpp HoldLeft) - the first half of Present for the
+// left eye: the scene's depth copied (the pass just bound it), the effects drawn into the back buffer. Nothing of PresentCommon: the pair's one
+// present comes after the replay, with the right eye (its depth copied again there - the depth pick's frame ends only at a present, so the
+// pick still counts as seen), and the per-present work runs once a pair, as the ReShade path's one present a pair did.
+void HoldEye(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
+    if (!dev || !q || !bb) return;
+    const double t0 = UsNow();
+    const D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    const uint32_t w = (uint32_t)bd.Width, h = bd.Height;
+    g_fxEye = g_eye.load() & 1;
+    float s[2];
+    renderscale::FrameOf(w, h, s);
+    scenedepth::BindNative(dev, q, w, h);
+    scenedepth::g_sinceCopy = nativefxdepth::NextSince(std::min(scenedepth::g_sinceCopy, 1000000u), scenedepth::g_copiedNow);
+    if (xr::NearOverlayWanted())
+        xr::SetNearDepth(scenedepth::g_copiedNow ? (void*)scenedepth::g_nCopy : nullptr, (uint32_t)scenedepth::g_nSrv, s[0], s[1], g_lastNear.load(),
+                         std::max(1.0f, ViewHeight()) / UserEyeHeightM());
+    const double t1 = UsNow();
+    Effects(dev, q, bb);
+    g_effUs += UsNow() - t1;
+    g_cpuUs += UsNow() - t0;
+    ++g_timed;   // (a picture of its own: "ms a present" stays per eye's picture, as with two passes)
+}
 void SwapChainChanged() { scenedepth::g_cache.SwapChainChanged(); }
 // [render] resize_drain: the game's swap chain is about to be resized (its old buffers still alive) - vr/resize_drain.h
 void BeforeResize() { resizedrain::Event(resizedrain::Why::kResize); }
@@ -1837,7 +1971,10 @@ void BindDepth(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colou
     scenedepth::OnBindNative(ds, colour);
     renderscale::OnBindNative(cl, ds);
 }
-void Barrier(ID3D12GraphicsCommandList*, unsigned n, const D3D12_RESOURCE_BARRIER* b) { scenedepth::OnBarrierNative(n, b); }
+void Barrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) {
+    scenedepth::OnBarrierNative(n, b);
+    simplersun::OnBarrier(cl, n, b);   // [render] sun_shadow_every: the sun map copied out / back in where its drawing ends (vr/simpler_sun.h)
+}
 void Viewport(ID3D12GraphicsCommandList* cl, float w, float h) { renderscale::OnViewportNative(cl, w, h); }
 // [stereo] turns_keep_own 3 / 4 without ReShade: the game's effects layer found from these hooks (effectslayer::OnBindNative) - beside
 // [fog] game_fog_before_fx's own sinks for the same calls, when that is on
@@ -1853,15 +1990,24 @@ void FxBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_B
     if (g_fogBarrier) g_fogBarrier(cl, n, b);
     effectslayer::OnBarrierNative(n, b);
 }
+// the game's depth clears: [render] lens_mask's sink first (its hidden area), then [render] sun_shadows 0's (the sun's map to lit)
+void (*g_lensClear)(ID3D12GraphicsCommandList*, uint64_t, ID3D12Resource*, unsigned, float, uint8_t, unsigned, const tagRECT*) = nullptr;
+void ClearDsvChain(ID3D12GraphicsCommandList* cl, uint64_t dsv, ID3D12Resource* ds, unsigned flags, float depth, uint8_t stencil, unsigned n,
+                   const tagRECT* rects) {
+    if (g_lensClear) g_lensClear(cl, dsv, ds, flags, depth, stencil, n, rects);
+    simplersun::OnClearDsv(cl, dsv, ds, flags, depth, stencil, n, rects);
+}
 // the game's pipelines as made: [fog] game_fog_height's fog pass and [fog] game_fog_before_fx's transparent resolve
 void GraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnGraphicsPso(dev, d, pso);
     fogfx::OnGraphicsPso(dev, d, pso);
     refleye::OnGraphicsPso(dev, d, pso);   // [render] reflections_per_eye: the reflections' resolve
     pipehunt::OnGraphicsPso(d, pso);       // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10's pipe trace: its pixel shader's hash
+    litflat::OnGraphicsPso(dev, d, pso);   // [render] bench_lit_flat: the game's lit pipelines kept (vr/lit_flat.h)
 }
 void ComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     lightbounds::OnComputePso(dev, d, pso);
+    benchlights::OnComputePso(dev, d, pso);   // [render] bench_skip_point_lights: the light bins and volumes copied with no local light
     refleye::OnComputePso(dev, d, pso);   // [render] reflections_per_eye: the reflections' projection pass
     pipehunt::OnComputePso(d, pso);
 }
@@ -1869,12 +2015,14 @@ void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3
     fogheight::OnStreamPso(dev, d, pso);
     fogfx::OnStreamPso(dev, d, pso);
     lightbounds::OnStreamPso(dev, d, pso);   // [render] light_bounds_fix without ReShade: the light bins' compute pipeline, if made from a stream
+    benchlights::OnStreamPso(dev, d, pso);   // [render] bench_skip_point_lights
     refleye::OnStreamPso(dev, d, pso);       // [render] reflections_per_eye: either reflection pass, if made from a stream
     pipehunt::OnStreamPso(d, pso);
+    litflat::OnStreamPso(dev, d, pso);   // [render] bench_lit_flat
 }
 // a pipeline the game binds: [render] light_bounds_fix's light bins (compute), then [fog] game_fog_height's fog pass (graphics)
 // and [render] reflections_per_eye's two reflection passes
-ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return refleye::Swap(fogheight::Swap(lightbounds::Swap(pso))); }
+ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return refleye::Swap(fogheight::Swap(lightbounds::Swap(benchlights::Swap(litflat::Swap(pso))))); }
 // At the plugin's load, MinHook initialised, before the game makes its device and swap chain.
 void Install() {
     natived3d::Sinks k;
@@ -1893,10 +2041,15 @@ void Install() {
     k.psoSwap = &PsoSwap;
     // [render] light_bounds_fix without ReShade: the game's light-bin depth bounds (vr/light_bounds.h) - a copy with our shader bound in its place
     lightbounds::SetLog(&Log);
+    benchlights::SetLog(&Log);   // [render] bench_skip_point_lights (vr/bench_lights.h)
+    litflat::SetLog(&Log);       // [render] bench_lit_flat (vr/lit_flat.h)
+    litflat::SetAreaColour(&FogColourNow);   // [render] potato_light_colour 3: the area's own (the sky's horizon / the act's fog colour)
+    litflat::SetUnderground([] { return g_underground.load(std::memory_order_relaxed); });   // [render] potato_light_brightness_caves: the fog's split
     refleye::SetLog(&Log);   // [render] reflections_per_eye: the reflections' two passes, copies bound in their place (vr/reflections_eye.h)
     k.computePso = &ComputePso;
     // [debug] skip_pipeline / patch_hunt 8, [render] skip_shaders, Ctrl+F10's pipe trace: a game pass left out by its pipeline (vr/pipe_hunt.h)
     pipehunt::SetLog(&Log);
+    simplersun::SetLog(&Log);   // [render] sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h)
     k.huntBound = &pipehunt::OnBound;
     k.huntSkip = &pipehunt::Skip;
     k.huntTargets = &pipehunt::OnTargets;
@@ -1915,6 +2068,48 @@ void Install() {
     k.fxBarrier = &FxBarrier;
     effectslayer::SetLogNative(&Log);
     hud::SetLogger(&Log);
+    // [render] foveated (vr/foveation.h, from D2R VR Unleashed): the game's pipelines, binds and draws followed for the rate image - its hooks
+    // only when the key is on at the start; then switched on and off live
+    // On a card without variable rate shading tier 2 (asked of D3D12 here, shared/vrs_probe.h - Serg 2026-11-08 on a GTX 1050 Ti: "фоверация
+    // забрала fps, а не дала": the hooks followed every draw for nothing) none of it goes in: no hooks, no rate images, nothing drawn
+    foveation::SetLog(&Log);
+    if (IniB(L"render", L"foveated", false) || IniF(L"render", L"grass_lighting_coarse", 0.0f) > 0.0f) {
+        const int vrs = vrsprobe::Ask();
+        if (vrs == 0) {
+            foveation::NoteNoVrs();
+            Log("vrcam: foveated - this graphics card has no variable rate shading (tier 2): [render] foveated / grass_lighting_coarse OFF - no hooks, "
+                "no rate images, nothing drawn");
+        } else {
+            foveation::FillSinks(k, &Log);
+            LogF("vrcam: foveated - [render] foveated / grass_lighting_coarse on at the start: the game's pipelines, binds and draws followed (variable "
+                 "rate shading, F4)%s", vrs < 0 ? " - its support not asked yet: the first present decides" : "");
+        }
+    }
+    // [render] lens_mask (vr/lens_mask.h): the game's depth-stencil clears seen (always: off, the clear is only passed on) - switched live
+    lensmask::SetLog(&Log);
+    lensmask::FillSinks(k);
+    // ... and [render] sun_shadows 0 (vr/simpler_sun.h) behind it: the sun's map cleared again to lit right after the game's clear
+    g_lensClear = k.clearDsv;
+    k.clearDsv = &ClearDsvChain;
+    // ... the replay's state when a scene depth clear is recorded: the left pass captured for a replay carries both eyes' clears under the
+    // replay's per-eye predicate (the DLSS twin's: written on the direct queue before the left lists and before the replay; only with the
+    // camera slots' redirect, mode 1 - the native path's); captured any other way: no mask (the right eye would get the left one's)
+    lensmask::SetReplay([](ID3D12Resource** pred) -> int {
+        if (replay::g_capturing.load() != 1) return 0;
+        ID3D12Resource* p = replay::g_predBuf;
+        if (replay::g_want.load() != 1 || !camfix::g_redirect.load() || !p) return 2;
+        *pred = p;
+        return 1;
+    });
+    // [stereo] native_replay: one pass, two pictures on these hooks - the game's upload buffers followed when the key is on at the start
+    replay::NativeSinks(k);
+    // [render] shadows_once_a_pair (vr/shadows_once.h): what the game's lists write followed, so that the replay leaves out the lists that only
+    // draw the shadow / grass maps - its hooks only with the replay's in and the key on at the start; then switched on and off live
+    if (replay::NativeOn() && IniB(L"render", L"shadows_once_a_pair", false)) {
+        shadowsonce::FillSinks(k, &Log);
+        Log("vrcam: shadows once a pair - [render] shadows_once_a_pair on at the start: what the game's lists write is followed; the lists that only "
+            "draw the shadow maps and the grass map are not replayed for the right eye (F4, one pass)");
+    }
     natived3d::Install(k, &Log);
     domeatlas::SetLog(&Log);
     natived3d::SetAtlasStandIn(&domeatlas::StandIn);   // [sky] dome_in_game_colour: the game's view of the domes' picture made on ours
@@ -1956,6 +2151,36 @@ void Install() {
                     if (u.handle) g_fx->get_uniform_value_float(u, v, 1);
                     return u.handle != 0;
                 });
+        };
+        // [render] phantom_rects (vr/phantom_rect.h, Serg 2026-11-08 "давай пофиксим отрисовку амулетов"): the vignette pass - the wrist orbs, the
+        // quiver's, the arrow's glow, the merc tint - drawn only in the rectangles they can reach; full screen while a vignette, the point arc
+        // or a debug draw is on. The picture is the same pixel for pixel (tools/phantom_rect_gpu_test.cpp)
+        o.passRects = [](const char* entry, uint32_t w, uint32_t h, D3D12_RECT* rects, int max) -> int {
+            const int eye = phantomrect::EyeOfEntry(entry);
+            if (eye < 0) return -2;
+            if (!g_set.phantomRects.load(std::memory_order_relaxed)) return -1;
+            phantomrect::Inputs in;
+            phantomrect::Eye eyes[2];
+            phantomrect::Read(
+                [](const char* n, float* v, size_t count) {
+                    const reshade::api::effect_uniform_variable u = g_fx->find_uniform_variable("D2R_DepthFog.fx", n);
+                    if (u.handle) g_fx->get_uniform_value_float(u, v, count);
+                    return u.handle != 0;
+                },
+                [](const char* n, bool* v) {
+                    const reshade::api::effect_uniform_variable u = g_fx->find_uniform_variable("D2R_DepthFog.fx", n);
+                    if (u.handle) g_fx->get_uniform_value_bool(u, v, 1);
+                    return u.handle != 0;
+                },
+                &in, eyes);
+            const phantomrect::Result r = phantomrect::Compute(in, eyes[eye], (int)w, (int)h);
+            if (r.full) {
+                g_rectWhy[r.why >= 0 && r.why < phantomrect::kWhyCount ? r.why : 0].fetch_add(1, std::memory_order_relaxed);
+                return -1;
+            }
+            int n = 0;
+            for (int i = 0; i < r.n && n < max; ++i) rects[n++] = D3D12_RECT{r.r[i].x0, r.r[i].y0, r.r[i].x1, r.r[i].y1};
+            return n;
         };
         // only the act's sky and the cave ceiling's stone on the graphics card (vr/fx_picture_keep.h), as the effect was left last frame; the
         // last slot seen kept (a new build starts at the effect's own 0, a cave has no sky)
@@ -2199,58 +2424,13 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         // [sky] dome_fog_horizon: the game's dome shown - its low part sinks into the same fog colour (Serg: "резкая граница", "цвет не
         // совпадает" against our old sky), while a fog is drawn
         SetBool(rt, "DomeFogHorizon", g_set.domeFogHorizon.load() && engitem::DomeShown() && (FogWanted() || gamefogvr::Active()) && !noreshade::DomeFogBaked());
-        // [fog] game_fog_match: the game's fog comes out through the area's colour grading - act 4 (Serg, 49 / 50.webp): his #5A2712 on the
-        // sky's low part, (57, 29, 9) on the fogged far land under it, a hard silhouette. The effect measures what the game's fog shows where
-        // it is complete and moves the fogged pixels by the game's own share toward the act's colour - the numbers the game's pass has now
-        // ([fog] game_fog_before_fx with our effect's fog: that step's colour goes through the same grading - the same measure and move, its
-        // share our own curve by the view's depth, GameFogByDepth)
-        const bool oursBefore = fogfx::OursDrawn();
-        // ([fog] fog_colour_measured off, the default: no measure at all - the fog's colour is the sky's, FogColourNow; D2R_FOG_MEASURE 0.
-        // The share the game left out is made up all the same - Serg on 0.192.34: the sky-colour fog keeps the game fog's thickness. Our
-        // effect's fog in the step keeps needing the measure, as it was: the old fog not touched)
-        const bool match = g_set.fogMatch.load() && (gamefogvr::Active() || (oursBefore && g_set.fogMeasured.load()));
-        const bool measure = match && g_set.fogMeasured.load();
-        SetBool(rt, "GameFogMatch", match);
-        {   // its measure (D2R_DepthFog.fx FogSeen): a row of 10 points a present over 5 presents, a new one every 2 s (it ran 192 points a
-            // present in one pixel - a small card's critical path, PC2 2026-10-31); at once when the measure comes on
-            static ULONGLONG startedAt = 0;
-            static int step = -1;
-            static bool was = false;
-            const ULONGLONG now = GetTickCount64();
-            if (!measure) step = -1;
-            if (measure && step < 0 && (!was || now - startedAt >= 2000)) { step = 0; startedAt = now; }
-            was = measure;
-            SetInt(rt, "FogSeenStep", measure ? step : -1);
-            SetBool(rt, "FogSeenNow", measure && step >= 0);
-            if (step >= 0) step = step + 1 < 5 ? step + 1 : -1;
-        }
-        SetBool(rt, "GameFogByDepth", match && oursBefore && !gamefogvr::Active());
-        if (match && oursBefore && !gamefogvr::Active()) {
-            const FogNumbers n = FogNumbersNow();
-            SetBool(rt, "GameFogOurCurve", true);
-            const float curve[4] = {n.start, n.end, n.curve, n.strength};
-            SetFloats(rt, "GameFogCurve", curve, 4);
-            const float topSoft[2] = {1.0e9f, 1.0f};   // (no height thinning in our fog)
-            SetFloats(rt, "GameFogTopSoft", topSoft, 2);
-        } else if (match) {
-            const gamefogvr::Fog gf = gamefogvr::Current();
-            const bool under = g_underground.load();
-            SetFloat(rt, "GameFogDensity", gf.density);
-            SetFloat(rt, "GameFogPlane", gf.plane);
-            // (the curve and the height thinning are in the game's pass only while our patched variant of it is bound: no_reshade's hooks)
-            static uint32_t boundBefore = 0;
-            static ULONGLONG boundAt = 0;
-            const uint32_t bound = fogheight::Bound();
-            if (bound != boundBefore) { boundBefore = bound; boundAt = GetTickCount64(); }
-            const bool patched = boundAt && GetTickCount64() < boundAt + 500;
-            SetBool(rt, "GameFogOurCurve", patched && g_set.fogOurCurve.load());
-            const FogNumbers n = GameFogNumbersNow();
-            const float curve[4] = {n.start, n.end, n.curve, n.strength};
-            SetFloats(rt, "GameFogCurve", curve, 4);
-            const bool height = patched && g_set.fogHeight.load() && !under;   // (as PresentCommon hands fogheight::Frame)
-            const float topSoft[2] = {height ? FogTopNow() : 1.0e9f, height ? g_set.fogSoft.load() : 1.0f};
-            SetFloats(rt, "GameFogTopSoft", topSoft, 2);
-        }
+        // ([fog] game_fog_match removed 2026-11-08 - Serg: "она плохо работает и ломает туман". It measured the game's fog through the area's
+        // grading and moved the fogged pixels toward the act's colour in our world pass, kept running for it every present. The effect's
+        // GameFogTrue / FogSeen stay switched off: never a measure, never a pixel moved)
+        SetBool(rt, "GameFogMatch", false);
+        SetInt(rt, "FogSeenStep", -1);
+        SetBool(rt, "FogSeenNow", false);
+        SetBool(rt, "GameFogByDepth", false);
         // [fog] fog_into_sky: in the open air under an act's sky (ours or the game's dome - the same painted pictures), the fog fades the far
         // into the sky straight behind it, as the Arcane Sanctuary's ([sky] arcane_fog). Underground nothing but rock is behind: as before
         SetBool(rt, "FogIntoSky", g_set.fogIntoSky.load() && gamefogvr::Active() && g_skyPalette.load() >= 0 && !g_arcaneSky.load() && !g_underground.load());
@@ -2773,6 +2953,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             if (worldcontact::DrawWanted())   // [debug] world_contact_draw: the walls near the hands, the controllers against the hands and the weapon as drawn
                 nh += worldcontact::Marks(boxesNow, eyeAt, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);
             if (!g_paFxHas) nh += PointCastMarks(eyeAt, ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);   // [gameplay] teleport_circle: an older effect - the arc and circle as capsules
+            if (GripDrawWanted() && f.valid)   // [debug] grip_draw: the attach bones, the hands, the shaft and the second hand's take zone
+                nh += GripDrawMarks(f, std::max(1.0f, ViewHeight()) / UserEyeHeightM(), ha + nh, hb + nh, meleeboxes::kShaderCapsules - nh);
             if (nh > 0 || boxesWere) SetBool(rt, "HitboxOn", nh > 0);
             if (nh > 0) {
                 SetFloats(rt, "HitboxA", &ha[0][0], (size_t)nh * 4);
@@ -3046,8 +3228,10 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 int bowSkill = -1;
                 const int meleeSkill = meleearm::IconOn() && meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
                 bowquiverwire::ChosenIcon(&bowSkill, &bowReady);
-                const armedicon::Source src = armedicon::Pick(meleeSkill, meleeReady, bowSkill, bowReady);
-                ii.on = ii.armedOn = (meleearm::IconOn() && meleearm::On()) || bowSkill >= 0;
+                // the Gestures' Select mode: a skill a glyph armed on the right trigger ([gestures] select_icon) - after the bow's, before the melee armed one
+                const int glyphSkill = skilllinkwire::SelectIcon() ? skilllinkwire::ArmedSkill(1) : -1;
+                const armedicon::Source src = bowSkill < 0 && glyphSkill >= 0 ? armedicon::Source{glyphSkill, true} : armedicon::Pick(meleeSkill, meleeReady, bowSkill, bowReady);
+                ii.on = ii.armedOn = (meleearm::IconOn() && meleearm::On()) || bowSkill >= 0 || glyphSkill >= 0;
                 ii.f4 = viewgate::F4();
                 ii.medallion = ou.on && !ou.picture && hc.style == handvitals::kStyleOrbs && hc.orbShape == handvitals::kShapeMedallion;
                 ii.armed = src.skill;
@@ -3091,6 +3275,45 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                     SetFloats(rt, "OrbIconLiftM", &liftM, 1);
                 }
                 iconWas = io.show;
+                {   // ... and the LIFE medallion: the skill a glyph armed on the left trigger, the same way (OrbIconL / OrbIconLTex)
+                    static armedicon::Fader fadeL;
+                    static bool wasL = false;
+                    static int upSkillL = -1, tryL = -1;
+                    static uint32_t upRevL = 0;
+                    static uint64_t upVarL = 0;
+                    armedicon::In il = ii;
+                    const int leftSkill = skilllinkwire::SelectIcon() ? skilllinkwire::ArmedSkill(0) : -1;
+                    il.on = il.armedOn = leftSkill >= 0;
+                    il.armed = leftSkill;
+                    il.enough = true;
+                    armedicon::Out ol = fadeL.Step(il, dt);
+                    if (ol.show) {
+                        const reshade::api::effect_texture_variable tl = rt->find_texture_variable("D2R_DepthFog.fx", "OrbIconLTex");
+                        const uint32_t rev = wheelicons::Revision();
+                        if (!tl.handle) {
+                            static bool told = false;
+                            if (!told) { told = true; Log("vrcam: gestures - D2R_DepthFog.fx has no OrbIconLTex: an older effect (the life medallion shows no armed icon)"); }
+                            ol.show = false;
+                        } else if ((ol.skill != upSkillL || tl.handle != upVarL) && (ol.skill != tryL || rev != upRevL || tl.handle != upVarL)) {
+                            upSkillL = -1;
+                            tryL = ol.skill;
+                            upRevL = rev;
+                            upVarL = tl.handle;
+                            const std::shared_ptr<const wheelicons::Image> img = wheelicons::Get(ol.skill);
+                            static std::vector<uint8_t> bakedL;
+                            if (img && armedicon::Bake(img->rgba.data(), img->width, img->height, bakedL)) {
+                                rt->update_texture(tl, armedicon::kTex, armedicon::kTex, bakedL.data());
+                                upSkillL = ol.skill;
+                                LogF("vrcam: skill icon - skill %d (armed on the left trigger by a glyph) is in the life medallion", ol.skill);
+                            }
+                        }
+                        if (ol.skill != upSkillL) ol.show = false;
+                    }
+                    float ul[4];
+                    armedicon::Uniform(ol, ul, place);
+                    if (ol.show || wasL) SetFloats(rt, "OrbIconL", ul, 4);
+                    wasL = ol.show;
+                }
             }
             if (ou.on && !orbsWere) Log(ou.picture ? "vrcam: hand vitals - the game's own globes are in the picture (life on the left wrist, mana on the right, by the settings)"
                                                   : "vrcam: hand vitals - the 3D orbs are in the picture (life on the left wrist, mana on the right, by the settings)");

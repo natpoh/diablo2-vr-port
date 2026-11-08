@@ -113,6 +113,7 @@ LookupFn g_origLookup = nullptr;
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_unchecked{false};
+std::atomic<bool> g_paused{false};     // the Gestures tab's Play moves the arms: no attack, no barrel press (SetPaused)
 std::atomic<bool> g_noAttack{false};   // [debug] melee_touch_no_attack: a touch that would attack presses nothing (the weapon's weight, its stab and the monsters' push go on)
 std::atomic<ULONGLONG> g_liveAt{0};   // the last time Tick had a weapon it swings (melee, bare hands, a throwing weapon) posed and striking: GetTickCount64
 std::atomic<uint32_t> g_liveKind{0};  // ... and its D2RVR_WeaponType
@@ -1229,6 +1230,7 @@ float ForceNow(uint32_t id) {
 
 // [debug] melee_touch_no_attack: the touch counted, but the game's attack is not asked for - the drawing says where it struck, the log tells the first few
 bool NoAttack(uint32_t id, ULONGLONG now) {
+    if (g_paused.load()) return true;   // (the Gestures tab's Play: the played arms attack nothing)
     if (!g_noAttack.load()) return false;
     meleeboxes::Struck(id, meleeboxes::kStruckKey, now);   // [debug] melee_boxes: the drawing only
     static unsigned told = 0;
@@ -1821,6 +1823,9 @@ void SetInWorld(bool world) {
     if (!world) ForgetServerGame("no world camera (the title, the character screen or a load)");
 }
 void SetUnchecked(bool on) { g_unchecked.store(on); }
+void SetPaused(bool on) {
+    if (g_paused.exchange(on) != on) Log(on ? "melee touch: paused - the Gestures tab plays a take on the arms (no attack, no barrel press)" : "melee touch: back from the Gestures tab's Play");
+}
 void SetNoAttack(bool on) {
     if (g_noAttack.exchange(on) != on) Log(on ? "melee touch: no attack ([debug] melee_touch_no_attack) - a touch that would attack presses nothing; the weapon's weight, stab and push go on"
                                               : "melee touch: no attack off - a touch presses the game's attack again");
@@ -3774,7 +3779,7 @@ void BarrelsStep() {
 }
 uintptr_t BarrelPressTarget() {
     const ULONGLONG now = GetTickCount64(), at = g_barrelTargetAt.load();
-    if (!g_barrelsWanted.load() || now < at || now - at > 300) return 0;   // (the timer stopped: no press held for ever)
+    if (!g_barrelsWanted.load() || now < at || now - at > 300 || g_paused.load()) return 0;   // (the timer stopped: no press held for ever; Play: none)
     return g_barrelTarget.load();
 }
 

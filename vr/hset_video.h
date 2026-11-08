@@ -30,6 +30,10 @@ struct Size {
 // headset's runtime recommends per eye, and the most it takes (both eyes' limits and the system's swapchain).
 struct Env {
     Size now, recommended, maximum;
+    // [stereo] native_replay's hooks went in at the game's start (vr/native_replay.h): "Native one pass" works now; false - it was off then, so the
+    // render type row says one pass comes after a restart (Serg's 0.207.7 report: a choice that did nothing must say why)
+    bool replayAtStart = true;
+    int vrs = -1;   // variable rate shading tier 2 on this card: 1 yes, 0 no (the foveation rows greyed), -1 not known yet
     bool operator==(const Env&) const = default;
 };
 

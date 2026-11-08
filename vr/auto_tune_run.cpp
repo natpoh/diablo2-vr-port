@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -20,7 +21,11 @@
 
 #include "auto_tune.h"
 #include "auto_tune_run.h"
+#include "foveation.h"   // [render] foveated live: hooked at the start and VRS tier 2 (the ladder's foveation rung)
+#include "hset_defs.h"     // a missing key's default (the headset window's table: the plugin's own defaults)
+#include "quality_presets.h"   // shared/: the Quality presets, the ladder's middle rungs
 #include "render_size.h"   // shared/: [render] vr_resolution / vr_resolution_px read together
+#include "render_type.h"   // shared/: the render type a preset names (Auto never changes it)
 #include "ui_text.h"
 
 namespace autotunerun {
@@ -79,105 +84,164 @@ int FileInt(const wchar_t* sec, const wchar_t* key, int def) {
     return end != b && std::isfinite(v) ? (int)std::lround(v) : def;
 }
 
-KnobDef Toggle(const char* id, const std::string& what, const wchar_t* sec, const wchar_t* key, float worth, float hint) {
-    KnobDef d;
-    d.k.id = id;
-    d.k.levels = 2;
-    d.k.start = 1;
-    d.k.worth = worth;
-    d.k.hintMs = hint;
-    d.levels = {{{sec, key, 0}}, {{sec, key, 1}}};
-    d.names = {uitext::Tr("vr.autotune.off", "off"), uitext::Tr("vr.autotune.on", "on")};
-    d.what = what;
-    return d;
-}
-
 std::string Px(int side) { return std::to_string(side) + " px"; }
 
-// What may be turned down, from the file as it is now. Only what is on is a knob (a thing the player has off stays off).
-std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, bool fogFxHooked, std::string* skipped) {
+// Auto's ladder (Serg 2026-11-08, "если разрешением не спасти, то менять пресет" - vr/auto_tune.h Options::ladder): frames fine - nothing; else
+// the render size down to 1600 (from wherever above it the player had it, 3000 or the headset's own), then the Quality preset Medium -> Low ->
+// Potato, then the size down to 1300, then foveated rendering Medium -> Maximum, then 1200 ("опускаем разрешение до 1600 на 1600", "т.е.
+// опускаем до 1300", "а потом фоверацию", "а потом 1200 на 1200"; autotune::SergLadder). A size the player set below a rung is never raised to
+// it. Foveation only where it works live: its hooks in from the game's start ([render] foveated on then) and VRS tier 2 (foveation::Usable).
+// Then eyes by turns with the fill ("для Auto уменьшаем до 1300, если недостаточно fps, то делаем проход по очереди": the picture is worse than
+// one pass, so late) - from one pass only, live (pair_per_tick; the replay's hooks stay), frame generation off - and the size to 1200 last
+// (kTurnsBefore1200 swaps the two). Never a rung: our effects one by one, a lower headset rate, two passes / FlatVR, the render type a preset
+// names, the wrist medallions ([hud] bar_place / wrist_look / hand_vitals - "оставляем во всех режимах").
+constexpr int kSideFloor = 1600, kSideMid = 1300, kSideLast = 1200;
+constexpr bool kTurnsBefore1200 = false;   // eyes by turns after the last drop to 1200 (Serg 2026-11-08: "после 1200 пусть будет по очереди")
+
+// A key's value in the file, missing: the plugin's own default (the headset window's table has it)
+int FileOrDefault(const wchar_t* sec, const wchar_t* key) {
+    const int i = hset::IndexOf(sec, key);
+    return FileInt(sec, key, i >= 0 ? (int)std::lround(hset::kDefs[i].def) : 0);
+}
+int FileRenderType() {
+    rendertype::Keys k;
+    k.openxrOn = FileInt(L"openxr", L"on", 0);
+    k.afr = FileInt(L"stereo", L"afr", 0);
+    k.pairPerTick = FileInt(L"stereo", L"pair_per_tick", 0);
+    k.nativeReplay = FileInt(L"stereo", L"native_replay", 1);
+    k.source = FileInt(L"stereo", L"source", -1);
+    return rendertype::FromKeys(k);
+}
+// The preset the file matches (qualitypreset::kCount: none - Custom)
+int FilePreset() {
+    return qualitypreset::Match([](const qualitypreset::Key& k) -> float {
+        if (qualitypreset::IsRenderType(k)) return (float)FileRenderType();
+        return (float)FileOrDefault(k.section, k.key);
+    });
+}
+
+std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotune::LadderStep>* ladder, std::string* skipped) {
     std::vector<KnobDef> out;
-    const double depthFog = g_depthFogMs.load(), distBlur = g_distBlurMs.load();
-    const bool frameGen = FileInt(L"openxr", L"frame_generation", 0) != 0;
-
-    // the fog laid before the game's transparent pass: the dearest of ours where it is on (72 -> 41 fps on PC1); live only if hooked at the start
-    if (FileInt(L"fog", L"game_fog_before_fx", 0) && fogFxHooked)
-        out.push_back(Toggle("fog_before_fx", uitext::Tr("vr.autotune.k.fog_before_fx", "Fog before effects"), L"fog", L"game_fog_before_fx", 0.7f, 8.0f));
-    // our sky and our fog share one pass (PS_DepthFog): its time orders both
-    if (FileInt(L"sky", L"enabled", 0))
-        out.push_back(Toggle("sky", uitext::Tr("vr.autotune.k.sky", "Sky"), L"sky", L"enabled", 1.0f, depthFog > 0 ? (float)depthFog * 10.0f : 4.0f));
-    if (FileInt(L"fog", L"enabled", 0)) {   // three levels: off, light, full (a light fog to start: two)
+    ladder->clear();
+    // knob 0: the render size, its levels from 1200 up to the player's own (the start)
+    int sizeKnob = -1, sizeFloorLevel = -1, sizeMidLevel = -1, sizeStart = 0;
+    const int mode = FileInt(L"render", L"vr_resolution", 0), pxKey = FileInt(L"render", L"vr_resolution_px", 0);
+    const rendersize::Pick pick = rendersize::FromIni(mode, pxKey);
+    const int side = pick.kind == rendersize::Kind::Square ? pick.side : pick.kind == rendersize::Kind::Headset ? (int)std::max(recW, recH) : 0;
+    if (side > kSideLast) {
+        std::vector<int> down;   // the sides below the player's, largest first
+        for (int s = side; s > kSideFloor;) {   // above 1600: a tenth less a step, on the slider's grid, the last one 1600 itself
+            s = std::max(kSideFloor, (int)(s * 0.9) / rendersize::kSideStep * rendersize::kSideStep);
+            down.push_back(s);
+        }
+        for (const int s : {kSideMid, kSideLast})   // then 1300 and 1200 (below a player's own smaller size only)
+            if (s < (down.empty() ? side : down.back())) down.push_back(s);
         KnobDef d;
-        d.k.id = "fog";
-        const bool light = FileInt(L"fog", L"light", 0) != 0;
-        d.k.levels = 3;
-        d.k.start = light ? 1 : 2;
-        d.k.worth = 1.2f;
-        d.k.hintMs = depthFog > 0 ? (float)depthFog * 8.0f : 3.0f;
-        d.levels = {{{L"fog", L"enabled", 0}}, {{L"fog", L"enabled", 1}, {L"fog", L"light", 1}}, {{L"fog", L"enabled", 1}, {L"fog", L"light", 0}}};
-        d.names = {uitext::Tr("vr.autotune.off", "off"), uitext::Tr("vr.autotune.fog_light", "light"), uitext::Tr("vr.autotune.fog_full", "full")};
-        d.what = uitext::Tr("vr.autotune.k.fog", "Fog");
+        d.k.id = "scale";
+        d.k.levels = (int)down.size() + 1;
+        d.k.start = (int)down.size();
+        d.k.worth = 2.0f;
+        for (auto it = down.rbegin(); it != down.rend(); ++it) {   // level 0 the smallest
+            d.levels.push_back({{L"render", L"vr_resolution", 0}, {L"render", L"vr_resolution_px", *it}});
+            d.names.push_back(Px(*it));
+            if (*it == kSideFloor) sizeFloorLevel = (int)d.levels.size() - 1;
+            if (*it == kSideMid) sizeMidLevel = (int)d.levels.size() - 1;
+        }
+        d.levels.push_back({{L"render", L"vr_resolution", mode}, {L"render", L"vr_resolution_px", pxKey}});
+        d.names.push_back(pick.kind == rendersize::Kind::Headset ? uitext::Tr("vr.autotune.headset_size", "headset's size") : Px(side));
+        d.what = uitext::Tr("vr.autotune.k.scale", "Render size");
+        d.settleMs = 9000;   // (the game freezes about 7 s while the picture is rebuilt)
+        sizeKnob = (int)out.size();
+        sizeStart = d.k.start;
         out.push_back(d);
+    } else {
+        *skipped += side <= 0 ? " render size (the window's own size)" : " render size (1200 or less already)";
     }
-    if (FileInt(L"ceiling", L"enabled", 0))
-        out.push_back(Toggle("ceiling", uitext::Tr("vr.autotune.k.ceiling", "Cave ceiling (effect)"), L"ceiling", L"enabled", 0.8f, 2.0f));
-    if (FileInt(L"render", L"distance_blur", 0))
-        out.push_back(Toggle("distance_blur", uitext::Tr("vr.autotune.k.distance_blur", "Distance blur"), L"render", L"distance_blur", 0.4f,
-                             distBlur > 0 ? (float)distBlur * 10.0f : 1.5f));
-    if (FileInt(L"fog", L"game_fog", 0) && FileInt(L"fog", L"game_fog_height", 0))
-        out.push_back(Toggle("game_fog_height", uitext::Tr("vr.autotune.k.game_fog_height", "Fog thinned with height"), L"fog", L"game_fog_height", 0.5f, 1.0f));
-
-    // the stereo mode: both eyes a frame -> eyes by turns (D2R VR Settings' "Native OpenXR - eyes by turns" writes these). Left alone with
-    // frame generation on: its settings follow the mode (xr.cpp framegenlib::Configure)
-    const bool pairs = FileInt(L"stereo", L"afr", 0) && FileInt(L"stereo", L"pair_per_tick", 0);
-    if (pairs && frameGen) {
-        *skipped += " stereo (frame generation is on)";
-    } else if (pairs && FileInt(L"openxr", L"on", 0)) {
+    // knob 1: the Quality preset, its levels Potato .. the player's own (a preset he is on, or his own settings: Custom)
+    int presetKnob = -1, presetStart = 0;
+    const int now = FilePreset();
+    if (now > 0) {
+        KnobDef d;
+        d.k.id = "preset";
+        d.k.levels = now + 1;   // (Custom = kCount: Potato, Low, Medium and his own)
+        d.k.start = now;
+        d.k.worth = 3.0f;
+        static const char* const kKeys[] = {"vr.preset.potato", "vr.preset.low", "vr.preset.medium"};
+        static const char* const kEn[] = {"Potato", "Low", "Medium"};
+        for (int p = 0; p < now; ++p) {
+            std::vector<Set> set;
+            for (const qualitypreset::Key& k : qualitypreset::kKeys) {
+                if (qualitypreset::IsRenderType(k) || qualitypreset::Same(k.key, L"headset_rate") || qualitypreset::IsAsIs(k.v[p])) continue;   // (the render type, the rate, an as-is key: kept)
+                set.push_back({k.section, k.key, (int)std::lround(k.v[p])});
+            }
+            d.levels.push_back(set);
+            d.names.push_back(uitext::Tr(kKeys[p], kEn[p]));
+        }
+        d.levels.push_back({});   // his own: the file's
+        d.names.push_back(now < qualitypreset::kCount ? uitext::Tr(kKeys[now], kEn[now]) : uitext::Tr("vr.autotune.own_settings", "your own settings"));
+        d.what = uitext::Tr("vr.autotune.k.preset", "Quality preset");
+        d.settleMs = 4000;   // (the game's stages and the Potato light's pipelines change: a few frames)
+        presetKnob = (int)out.size();
+        presetStart = d.k.start;
+        out.push_back(d);
+    } else {
+        *skipped += " preset (Potato already)";
+    }
+    // knob 2: foveated rendering - Maximum, Medium, the player's own (only the levels coarser than his: off, or a lighter strength)
+    int fovKnob = -1, fovStart = 0;
+    if (foveation::Usable()) {
+        const bool on = FileInt(L"render", L"foveated", 0) != 0;
+        const int strength = std::clamp(FileInt(L"render", L"foveated_strength", 1), 0, 3);
+        std::vector<int> cheaper;   // the strengths to try, the coarsest first: Maximum (3), Medium (1)
+        for (const int st : {3, 1})
+            if (!on || st > strength) cheaper.push_back(st);
+        if (!cheaper.empty()) {
+            KnobDef d;
+            d.k.id = "foveated";
+            d.k.levels = (int)cheaper.size() + 1;
+            d.k.start = (int)cheaper.size();
+            d.k.worth = 1.5f;
+            for (const int st : cheaper) {
+                d.levels.push_back({{L"render", L"foveated", 1}, {L"render", L"foveated_strength", st}});
+                d.names.push_back(st == 3 ? uitext::Tr("vr.render.strength_max", "Maximum") : uitext::Tr("vr.render.strength_medium", "Medium"));
+            }
+            d.levels.push_back({});
+            d.names.push_back(on ? uitext::Tr("vr.autotune.fov_own", "as you set it") : uitext::Tr("vr.autotune.off", "off"));
+            d.what = uitext::Tr("vr.autotune.k.foveated", "Foveated rendering");
+            d.settleMs = 2500;
+            fovKnob = (int)out.size();
+            fovStart = d.k.start;
+            out.push_back(d);
+        } else {
+            *skipped += " foveated rendering (at Maximum already)";
+        }
+    } else {
+        *skipped += foveation::VrsTier2() == 0 ? " foveated rendering (no variable rate shading tier 2 on this graphics card: it cannot work here)"
+                    : !foveation::Hooked()      ? " foveated rendering (off at the game's start: it works from the next start - tick it and run Auto again)"
+                                                : " foveated rendering (not ready yet)";
+    }
+    // knob 3: eyes by turns with the fill - from both eyes a pair (one pass or two) on the native path, frame generation off
+    int turnsKnob = -1, turnsStart = 0;
+    const bool native = FileInt(L"openxr", L"on", 0) != 0, pairs = FileInt(L"stereo", L"afr", 0) != 0 && FileInt(L"stereo", L"pair_per_tick", 0) != 0;
+    if (native && pairs && FileInt(L"openxr", L"frame_generation", 0) == 0) {
         KnobDef d;
         d.k.id = "stereo";
         d.k.levels = 2;
         d.k.start = 1;
-        d.k.worth = 3.0f;
-        d.k.hintMs = 6.0f;
-        const int replay = FileInt(L"stereo", L"replay_right", 0);
-        d.levels = {{{L"stereo", L"pair_per_tick", 0}, {L"stereo", L"replay_right", 0}}, {{L"stereo", L"pair_per_tick", 1}, {L"stereo", L"replay_right", replay}}};
-        d.names = {uitext::Tr("vr.autotune.eyes_by_turns", "eyes by turns"), uitext::Tr("vr.autotune.full_stereo", "full stereo")};
+        d.k.worth = 2.5f;
+        d.levels = {{{L"stereo", L"pair_per_tick", 0}, {L"stereo", L"replay_right", 0}, {L"stereo", L"turn_warp", 1}, {L"stereo", L"turns_fill", 1}}, {}};
+        d.names = {uitext::Tr("vr.autotune.eyes_by_turns", "eyes by turns"), uitext::Tr("vr.autotune.one_pass", "both eyes")};
         d.what = uitext::Tr("vr.autotune.k.stereo", "3D in the headset");
-        d.settleMs = 6000;   // (replay waits for the picture to settle after a change)
+        d.settleMs = 6000;   // (the picture settles after a change of the pair)
+        turnsKnob = (int)out.size();
+        turnsStart = d.k.start;
         out.push_back(d);
-    }
-
-    // the render size, last in the probes (each change rebuilds the picture: a few seconds frozen). A square side, or the headset's
-    // recommendation as its longer side; the window's own size (Desktop) is left as it is
-    const int mode = FileInt(L"render", L"vr_resolution", 0), pxKey = FileInt(L"render", L"vr_resolution_px", 0);
-    const rendersize::Pick pick = rendersize::FromIni(mode, pxKey);
-    int side = pick.kind == rendersize::Kind::Square ? pick.side : pick.kind == rendersize::Kind::Headset ? (int)std::max(recW, recH) : 0;
-    if (side >= rendersize::kSideMin) {
-        std::vector<int> sides;
-        for (const double f : {0.7, 0.8, 0.9}) {
-            const int s = std::max(rendersize::kSideMin, (int)(side * f) / rendersize::kSideStep * rendersize::kSideStep);
-            if (s < side && (sides.empty() || sides.back() != s)) sides.push_back(s);
-        }
-        if (!sides.empty()) {
-            KnobDef d;
-            d.k.id = "scale";
-            d.k.levels = (int)sides.size() + 1;
-            d.k.start = (int)sides.size();
-            d.k.worth = 2.0f;
-            d.k.hintMs = 0.5f;
-            for (const int s : sides) {
-                d.levels.push_back({{L"render", L"vr_resolution", 0}, {L"render", L"vr_resolution_px", s}});
-                d.names.push_back(Px(s));
-            }
-            d.levels.push_back({{L"render", L"vr_resolution", mode}, {L"render", L"vr_resolution_px", pxKey}});
-            d.names.push_back(pick.kind == rendersize::Kind::Headset ? uitext::Tr("vr.autotune.headset_size", "headset's size") : Px(side));
-            d.what = uitext::Tr("vr.autotune.k.scale", "Render size");
-            d.settleMs = 9000;   // (the game freezes about 7 s while the picture is rebuilt)
-            out.push_back(d);
-        }
     } else {
-        *skipped += " render size (the window's own size)";
+        *skipped += !native ? " eyes by turns (not native OpenXR)" : !pairs ? " eyes by turns (already)" : " eyes by turns (frame generation is on)";
     }
+    // the rungs (autotune::SergLadder): the size to 1600, the presets down, the size to 1300, foveation, eyes by turns, the size to 1200
+    *ladder = autotune::SergLadder(sizeKnob, sizeStart, sizeFloorLevel, sizeMidLevel, presetKnob, presetStart, fovKnob, fovStart, turnsKnob, turnsStart,
+                                   kTurnsBefore1200);
     return out;
 }
 
@@ -191,6 +255,8 @@ std::atomic<uint64_t> g_rev{1};
 std::atomic<uint32_t> g_recW{0}, g_recH{0};
 std::atomic<bool> g_fogFxHooked{false};
 std::atomic<bool> g_writing{false};
+bool g_belowMin = false;   // the last run: short at its last rung (under g_mu)
+int g_limit = 0;           // ... and what holds it back: 1 the graphics card, 2 the processor
 
 // the measure (XR thread, under g_mu)
 enum class Step { Settle, Window };
@@ -234,10 +300,12 @@ void Finish();
 
 void Begin() {
     std::string skipped;
-    g_knobs = MakeKnobs(g_recW.load(), g_recH.load(), g_fogFxHooked.load(), &skipped);
+    autotune::Options o;
+    g_knobs = MakeKnobs(g_recW.load(), g_recH.load(), &o.ladder, &skipped);
+    o.halfRate = false;   // (the ladder: short at its last rung is "below the minimum", never half the rate)
     std::vector<autotune::Knob> ks;
     for (const auto& d : g_knobs) ks.push_back(d.k);
-    g_tuner = std::make_unique<autotune::Tuner>(std::move(ks));
+    g_tuner = std::make_unique<autotune::Tuner>(std::move(ks), o);
     g_applied.clear();
     g_state.store((int)State::Running);
     LogF("vrcam: auto tune - started: %s%s%s; frame generation left as it is", LevelsText(g_tuner->Want()).c_str(), skipped.empty() ? "" : "; not tuned:",
@@ -358,6 +426,24 @@ void Finish() {   // (under g_mu)
     }
     const std::vector<Over> o = OverridesOf(t.Result());
     SetOverrides(o);   // the result stays in force while it waits for Keep or Undo
+    g_belowMin = t.BelowMinimum();
+    g_limit = 0;
+    if (g_belowMin) {   // which part holds it back: the render size's rungs won a share of the frame - the graphics card; next to nothing - the processor
+        float resFrom = 0, resTo = 0, allFrom = 0, allTo = 0;
+        for (const auto& r : t.Log()) {
+            if (r.phase != autotune::Phase::Down) continue;
+            if (allFrom <= 0) allFrom = r.busyBefore;
+            allTo = r.busyAfter;
+            if (r.knob >= 0 && r.knob < (int)g_knobs.size() && !std::strcmp(g_knobs[r.knob].k.id, "scale")) {
+                if (resFrom <= 0) resFrom = r.busyBefore;
+                resTo = r.busyAfter;
+            }
+        }
+        const float share = resFrom > 0 ? (resFrom - resTo) / resFrom : allFrom > 0 ? (allFrom - allTo) / allFrom : 0.0f;
+        g_limit = share >= 0.12f ? 1 : 2;
+        LogF("vrcam: auto tune - BELOW THE MINIMUM: down to Potato, 1200 px, foveation (where it works) and eyes by turns it is still short of %.0f frames/s (%.1f now) - the %s is the limit "
+             "(the render size's rungs won %.0f%% of a frame)", t.Target(), t.Last().fps, g_limit == 1 ? "graphics card (GPU)" : "processor (CPU)", share * 100.0f);
+    }
     LogF("vrcam: auto tune - %s %.0f frames/s (headset %.0f Hz): %s - waits for Keep or Undo", t.Reached() ? "reached" : "NOT reached", t.Target(), t.Hz(),
          LevelsText(t.Result()).c_str());
     g_state.store((int)State::Waiting);
@@ -442,6 +528,8 @@ View Now() {
     v.left = t.Remaining();
     v.reached = t.Reached();
     v.aborted = t.Aborted();
+    v.belowMin = v.state == State::Waiting && g_belowMin;
+    v.limit = g_limit;
     v.targetFps = t.Target();
     v.hz = t.Hz();
     v.nowFps = t.Last().fps;

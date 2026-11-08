@@ -55,7 +55,7 @@ Mat Rows(V3 x, V3 y, V3 z, V3 p) {
 Mat At(V3 p) { return Rows({1, 0, 0}, {0, 1, 0}, {0, 0, 1}, p); }
 
 // The animation's world poses; the attach bones' scale per side (1 shown, 0.001 hidden).
-std::vector<Mat> Animation(float scaleRight, float scaleLeft) {
+std::vector<Mat> Animation(float scaleRight, float scaleLeft, float rollRight = 0.0f) {
 	std::vector<Mat> w(kAll);
 	w[kShd] = Rows({-1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0.78f, 1.3f, 0.05f});   // (on the left forearm, a mirror like the left attach bone: det -1)
 	w[0] = At({0, 0, 0});
@@ -77,6 +77,13 @@ std::vector<Mat> Animation(float scaleRight, float scaleLeft) {
 		const float lean = 0.31f, cs = std::cos(lean), sn = std::sin(lean);
 		const V3 y{0, sn, cs}, x{mir, 0, 0}, z{0, -cs, sn};   // (x mirrored, z not: the left bone's det is -1, the right one's +1)
 		w[B(side, kAtt)] = Rows({x.x * s, x.y * s, x.z * s}, {y.x * s, y.y * s, y.z * s}, {z.x * s, z.y * s, z.z * s}, {hp.x - sx * 0.07f, hp.y - 0.15f, hp.z});
+		if (side == 0 && rollRight != 0.0f) {   // the game's grip of the weapon in the RIGHT hand: rolled about the shaft (its y) - the left fist's attach bone keeps the bind's
+			const float t = rollRight * 0.01745329f, c = std::cos(t), sn = std::sin(t);
+			Mat r{};
+			r.m[0] = c; r.m[2] = -sn; r.m[5] = 1; r.m[8] = sn; r.m[10] = c; r.m[15] = 1;
+			const Mat a = w[B(0, kAtt)];
+			w[B(0, kAtt)] = Mul(r, a);
+		}
 	}
 	return w;
 }
@@ -133,8 +140,8 @@ struct Rig {
 	FakeWorld world{};
 	Input in;
 	uint32_t sample = 0;
-	Rig(float scaleRight = 1.0f, float scaleLeft = 1.0f)
-	    : anim(Animation(scaleRight, scaleLeft)), bind(Animation(1.0f, 1.0f)), hero(MakeHero(bind)) {
+	Rig(float scaleRight = 1.0f, float scaleLeft = 1.0f, float rollRight = 0.0f)
+	    : anim(Animation(scaleRight, scaleLeft, rollRight)), bind(Animation(1.0f, 1.0f)), hero(MakeHero(bind)) {
 		mats = anim;
 		world.n = kAll;
 		world.mats = (uintptr_t)mats.data();
@@ -165,6 +172,15 @@ struct Rig {
 		mats = anim;
 		world.mats = (uintptr_t)mats.data();
 		PoseBody((uintptr_t)&self, hero, c, none);
+	}
+	// any hold of the weight model's
+	void PoseOut(const weight::Out& wo) {
+		++sample;
+		in.sample = sample;
+		Input c = in;
+		mats = anim;
+		world.mats = (uintptr_t)mats.data();
+		PoseBody((uintptr_t)&self, hero, c, wo);
 	}
 	// the weight model holding the left slot's weapon: in the left hand (as the game's slot), or passed into the right hand alone
 	void PoseWeight(bool rightHandAlone) {
@@ -277,6 +293,113 @@ int main() {
 		CHECK(!Near(Pos(r.mats[R]), Pos(r.mats[L]), 0.01f));          // ... while the left side's bones wear the shield on the left forearm
 	}
 
+	// ---- the game's grip is the right hand's (rolled 30 deg about the shaft); the left fist's attach bone in that animation holds nothing (the bind's): the left slot's
+	//      bone is the right grip mirrored onto the left hand - not the idle attach bone 30 deg off it - and the drawn bone follows it ----
+	{
+		for (int weight = 0; weight < 2; ++weight) {
+			Rig r(1.0f, 1.0f, 30.0f);
+			r.in.weaponType = 4100 + weight;   // (a weapon type of its own: the grip is taken afresh from this animation)
+			if (weight) r.PoseWeight(false); else r.Pose();
+			const Mat leftLocal = Mul(r.mats[L], InvAffine(r.mats[LH]));
+			const Mat idle = Mul(r.anim[L], InvAffine(r.anim[LH]));
+			weaponmirror::K kh, kw;
+			CHECK(weaponmirror::FromMirrorPair(r.bind[RH].m, r.bind[LH].m, &kh) && weaponmirror::FromMirrorPair(r.bind[R].m, r.bind[L].m, &kw));
+			Mat want{};
+			CHECK(drawnhand::MirrorGrip(Mul(r.anim[R], InvAffine(r.anim[RH])).m, kw, kh, want.m));
+			CHECK(drawnhand::GripTurnDeg(leftLocal.m, want.m) < 0.5);                       // the right grip mirrored
+			CHECK(std::fabs(drawnhand::GripTurnDeg(leftLocal.m, idle.m) - 30.0) < 0.5);    // (the idle attach bone was 30 deg off it)
+			CHECK(drawnhand::GripApart(leftLocal.m, want.m) < 1e-3);
+			CHECK(Det(r.mats[L]) < 0.0 && Det(r.mats[R]) > 0.0);                            // the handedness of each
+			CHECK(Near(Pos(r.mats[R]), Pos(r.mats[L]), 1e-4f) && Near(Row(r.mats[R], 1), Row(r.mats[L], 1), 1e-3f));   // drawn where held, along the same shaft
+			// the mirror image: the left weapon's shaft against the left hand is the right weapon's against the right hand, reflected in x
+			const Mat rightLocal = Mul(r.anim[R], InvAffine(r.anim[RH]));
+			CHECK(std::fabs(leftLocal.m[4] + rightLocal.m[4]) < 1e-3f && std::fabs(leftLocal.m[5] - rightLocal.m[5]) < 1e-3f && std::fabs(leftLocal.m[6] - rightLocal.m[6]) < 1e-3f);
+		}
+		// the box off: the left slot's grip is the animation's own, as before
+		Rig q(1.0f, 1.0f, 30.0f);
+		q.in.weaponType = 4102;
+		q.in.leftSlotDrawn = false;
+		q.Pose();
+		CHECK(drawnhand::GripTurnDeg(Mul(q.mats[L], InvAffine(q.mats[LH])).m, Mul(q.anim[L], InvAffine(q.anim[LH])).m) < 0.5);
+	}
+
+	// ---- the grip table ([debug] grip_trace's state, skel::GripStateNow): a sword, an axe, a staff, a spear in either slot, the first hand the slot's, then the other hand takes it too,
+	//      the weapon passed into the other hand alone, let go, called back into the slot's hand - at every step the bone the game draws it on, the touch's blade bone, the hand the
+	//      fingers' grip pose is read off and the attach bone agree with the hand that holds it ----
+	{
+		struct Kind { const char* name; int type; uint32_t kind; bool two; };
+		const Kind kinds[] = { { "sword", 5001, D2RVR_TYPE_SWORD, false }, { "axe", 5002, D2RVR_TYPE_AXE, false }, { "staff", 5003, D2RVR_TYPE_STAFF, true }, { "spear", 5004, D2RVR_TYPE_SPEAR, true } };
+		int rows = 0;
+		for (const Kind& k : kinds)
+			for (int slot = 0; slot < 2; ++slot) {
+				// the game's slots: a two-handed weapon in either slot is in both hands (left_slot_drawn_left leaves it to [hands] both_attach), a one-handed one is carried from the left
+				drawnhand::Slots sl;
+				sl.kind[slot] = k.kind;
+				if (k.two) sl.two = D2RVR_TWO_HANDED | D2RVR_TWO_HANDED_KNOWN | D2RVR_TWO_HANDS_ON;   // (gamestate: in both hands whenever the other slot is empty, whichever slot)
+				const drawnhand::Plan plan = drawnhand::Decide(sl);
+				if (k.two) CHECK(!plan.carry);   // (a two-handed weapon in both hands: nothing carried, whichever slot)
+				if (k.two && slot == 1) continue;   // (its two-handed drawing is both_attach's, not this table's)
+				Rig r;
+				r.in.weaponType = k.type + slot * 10;
+				r.in.weaponSide = slot;
+				r.in.leftSlotDrawn = plan.carry;
+				const int other = slot ^ 1;
+				const V3 home[2] = { { 0.2f, -0.40f, -0.30f }, { -0.2f, -0.40f, -0.30f } };
+				weight::Out wo;
+				wo.on = true;
+				wo.slot = slot;
+				struct Step { const char* name; bool holds[2]; int main; bool asPlaced, free; V3 at[2]; };
+				const V3 beside = { home[slot].x * 0.6f, home[slot].y + 0.04f, home[slot].z };   // the other hand closed beside the first one on the weapon
+				const V3 away = { home[other].x * 1.4f, home[other].y - 0.10f, home[other].z + 0.10f };
+				Step steps[5] = {};
+				steps[0] = { "placed in the slot's hand", {}, slot, true, false, { home[0], home[1] } };
+				steps[0].holds[slot] = true;
+				steps[1] = { "the other hand takes it too", {}, slot, false, false, { home[0], home[1] } };
+				steps[1].holds[0] = steps[1].holds[1] = true;
+				steps[1].at[other] = beside;
+				steps[2] = { "passed into the other hand alone", {}, other, false, false, { home[0], home[1] } };
+				steps[2].holds[other] = true;
+				steps[2].at[other] = away;
+				steps[3] = { "let go", {}, other, false, true, { home[0], home[1] } };
+				steps[4] = { "called back into the slot's hand", {}, slot, true, false, { home[0], home[1] } };
+				steps[4].holds[slot] = true;
+				for (int st = 0; st < 5; ++st) {
+					const Step& sp = steps[st];
+					wo.main = sp.main;
+					wo.asPlaced = sp.asPlaced;
+					wo.free = sp.free;
+					for (int sd = 0; sd < 2; ++sd) {
+						wo.holds[sd] = sp.holds[sd];
+						wo.on01[sd] = sp.holds[sd] ? 1.0f : 0.0f;
+						r.Hand(sd, sp.at[sd]);
+					}
+					if (st >= 1) wo.grabs[other] = 1;   // (the other hand's take: its relation is the one taken then)
+					if (st == 4) wo.grabs[slot] = 1;
+					r.PoseOut(wo);
+					r.PoseOut(wo);   // (a second pose: the relations taken in the first are used)
+					const GripState g = GripStateNow();
+					const char* where = sp.name;
+					CHECK(g.on && g.slot == slot);
+					CHECK(g.carried == plan.carry);
+					CHECK(g.drawnBone == (plan.carry ? 0 : slot));               // the bone the game draws on: the right one for a lone weapon, whatever its slot
+					CHECK(g.bladeBone == slot);                                  // the touch's blade: the slot's bone (the drawn weapon is on its pose)
+					CHECK(g.poseHand == (plan.carry ? 0 : slot));                // the fingers' grip pose: the hand the game grips it in
+					CHECK(g.gripFrom == (plan.carry ? 2 : 1));                   // the slot's bone's grip: the game's own, or its right-hand grip mirrored
+					CHECK(Finite(r.mats[R]) && Finite(r.mats[L]));
+					if (plan.carry) CHECK(Near(Pos(r.mats[R]), Pos(r.mats[L]), 1e-4f) && Det(r.mats[R]) > 0.0);   // drawn where the slot's bone is, never inside out
+					if (!sp.free) {
+						if (!(g.drawnNear && g.bladeNear)) std::printf("  grip table: %s, slot %s, %s - drawn %s, blade %s the holding (%s) hand\n", k.name, slot ? "left" : "right", where,
+						                                                g.drawnNear ? "at" : "AWAY FROM", g.bladeNear ? "at" : "AWAY FROM", g.holder ? "left" : "right");
+						CHECK(g.drawnNear && g.bladeNear);                       // the drawing and the hitbox in the hand that holds it
+						CHECK(g.holder == (sp.holds[0] && sp.holds[1] ? sp.main : sp.holds[0] ? 0 : 1));
+					}
+					++rows;
+				}
+			}
+		CHECK(rows == 6 * 5);
+		std::printf("  grip table: %d rows (sword, axe in either slot; staff, spear in the right) - drawn bone, blade bone, grip pose hand, attach bone and holding hand agree\n", rows);
+	}
+
 	// ---- no shield to move: the shield bones are the game's ----
 	{
 		Rig r;
@@ -284,7 +407,7 @@ int main() {
 		CHECK(g_shieldStrapped.load() == 0);
 	}
 
-	std::printf(g_fails == 0 ? "drawn_hand_rig_test: the right bone carried onto the left slot's pose (place, axes, handedness, drawn size), the box off / the bone hidden left alone, the weapon bone sized, the right slot's shield on the arm opposite the weapon: all passed\n"
+	std::printf(g_fails == 0 ? "drawn_hand_rig_test: the right bone carried onto the left slot's pose (place, axes, handedness, drawn size), the box off / the bone hidden left alone, the weapon bone sized, the right slot's shield on the arm opposite the weapon, the left slot's grip the game's right grip mirrored, the grip table: all passed\n"
 	                         : "drawn_hand_rig_test: %d failed\n", g_fails);
 	return g_fails == 0 ? 0 : 1;
 }

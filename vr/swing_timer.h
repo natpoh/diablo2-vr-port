@@ -219,10 +219,11 @@ struct Look {
     int32_t got = -1, need = 0;   // a refusal's numbers, hundredths (Numbers): the swing's and the gate's; got -1 none
     int textAlpha = 0;      // 0..kAlphaSteps
     int rise = 0;           // the bar's number, 0..kRiseSteps up
+    int barThick10 = 0;     // the bar's thickness, tenths of the picture's pixels (as thick as the ring's band where it is shown); 0 = the painter's default
     bool operator==(const Look& o) const {
         return visible == o.visible && style == o.style && timer == o.timer && step == o.step && zone == o.zone && timerAlpha == o.timerAlpha &&
                text == o.text && value == o.value && count == o.count && crit == o.crit && got == o.got && need == o.need && textAlpha == o.textAlpha &&
-               rise == o.rise;
+               rise == o.rise && barThick10 == o.barThick10;
     }
     bool operator!=(const Look& o) const { return !(*this == o); }
 };

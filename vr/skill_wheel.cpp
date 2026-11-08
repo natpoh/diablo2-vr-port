@@ -29,9 +29,13 @@
 #include "hset_view.h"
 #include "hset_life.h"
 #include "low_hp_game.h"   // the Settings tab's vignette pages show the vignette as a preview
+#include "auto_tune_text.h"   // [autotune]: the Video page's Auto run - its words, Start / Keep / Undo (vr/auto_tune_run.h)
 #include "hset_stats_feed.h"   // the Settings tab's Stats page: the strike statistics ([stats] strike_stats)
 #include "bodywalk_start.h"    // [openxr] gesture_overlay: the tab's START BODYWALK
-#include "gesture_engine_wire.h"   // [gestures] engine_in_game: the tab's list and commands from the gesture engine in the game
+#include "rune_flash.h"   // the trail's flash when a take is accepted
+#include "gesture_engine_wire.h"
+#include "gesture_play_wire.h"
+#include "trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right: the Gestures tab's Triggers screen   // the Gestures tab's Play: the take on the hero's own arms (F4, visual only)   // [gestures] engine_in_game: the tab's list and commands from the gesture engine in the game
 #include "link.h"              // [openxr] gesture_overlay: BodyWalk's Gestures block in, the GestureCmds ring out (Game Link)
 #include "skill_link_wire.h"   // ... which BodyWalk writes for a game that sends it the skills ([gestures] skill_link)
 #include "party_cmd.h"     // the Settings tab's Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
@@ -91,8 +95,53 @@ void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 BW_LinkGestures g_gestures;
 bool g_gesturesHave = false;
 bool g_gestureRecording = false;   // told to the link (BodyWalk gets the controls while it records for the tab)
+std::atomic<bool> g_gesturesTabNow{false};      // the window up on its Gestures tab: xr.cpp's hands over the window (GesturesTabOpen)
 std::atomic<bool> g_gestureRecordingNow{false};   // ... and to xr.cpp's layers (the trail over the panel): GestureRecording
 std::atomic<int> g_gestureHand{BW_LINK_GH_RIGHT};   // ... with this hand (GestureRecordHand: the engine's pen)
+// The hand poses' zones (vr/pose_zones.h): their sizes as set on the tab (kept here while the engine has no call for them), the ones to draw now
+std::vector<gov::In::ZoneSize> g_zoneSizes;   // (under g_lock) the engine's (BWGE_GetPoseZone), else set here for the session
+float g_bodyH = posezones::kDefaultHeightM;
+std::vector<gov::In::ActionOf> g_actionOf;    // (under g_lock) the game actions the gestures do (the engine's BWGE_GetAction)
+std::vector<gov::In::ModeOf> g_modeOf;        // (under g_lock) the gestures in select mode (the engine's BWGE_GetMode)
+float g_playDurS = 0;
+std::atomic<bool> g_glyphCastHold{false};      // [gestures] glyph_cast_hold (kept for the Triggers screen's live Configure)
+std::atomic<bool> g_slotControls{false};      // [openxr] skill_rt_a (SlotControlsOn: the select gestures' slot)                         // the take Play runs now lasts this long on the tab's picture (0: none)   // the body the engine measures with (its pose zones' heightM)
+uint32_t g_zonesRev = ~0u;                    // the engine's list revision the zones were read at (~0: read again)
+// The engine's zones read again (its optional BWGE_GetPoseZone): every pose's radius and the body's height. False: the engine has none.
+bool ReadEngineZones(const BW_LinkGestures& list) {
+    std::vector<gov::In::ZoneSize> got;
+    bool any = false;
+    for (uint32_t i = 0; i < std::min<uint32_t>(list.count, BW_LINK_GESTURES_MAX); ++i) {
+        if (list.g[i].type != BW_LINK_GT_POSE) continue;
+        BWGE_PoseZone z{};
+        if (!gengine::PoseZone(list.g[i].id, &z)) continue;
+        any = true;
+        got.push_back({list.g[i].id, {z.radiusM, z.radiusM}});
+        if (z.heightM > 0.5f && z.heightM < 2.6f) g_bodyH = z.heightM;
+    }
+    if (any) g_zoneSizes.swap(got);
+    g_modeOf.clear();   // the ones in select mode
+    if (gengine::HasModes())
+        for (uint32_t i = 0; i < std::min<uint32_t>(list.count, BW_LINK_GESTURES_MAX); ++i)
+            if (const uint8_t m = gengine::ModeOf(list.g[i].id)) g_modeOf.push_back({list.g[i].id, m});
+    g_actionOf.clear();   // and the game actions they do instead of a skill
+    if (gengine::HasActions())
+        for (uint32_t i = 0; i < std::min<uint32_t>(list.count, BW_LINK_GESTURES_MAX); ++i) {
+            gov::In::ActionOf a{};
+            a.id = list.g[i].id;
+            if (gengine::ActionOf(a.id, a.action, sizeof a.action) && a.action[0]) g_actionOf.push_back(a);
+        }
+    return any;
+}
+std::atomic<bool> g_showZones{false};         // [gestures] show_zones
+std::mutex g_zonesLock;                       // the ones to draw (PoseZones: xr.cpp's thread)
+posezones::Zone g_zonesNow[posezones::kMaxZones];
+int g_zonesCount = 0;
+float ZoneSizeOf(uint32_t id, int hand) {
+    for (const gov::In::ZoneSize& z : g_zoneSizes)
+        if (z.id == id) return posezones::Clamp(z.radius[hand ? 1 : 0]);
+    return posezones::kDefaultM;
+}
 std::atomic<bool> g_gestureTrace{false};   // [debug] gesture_trace: the whole chain in the log (view only)
 
 // [debug] gesture_trace: a line of the chain, "gesture trace" + the time + what.
@@ -218,6 +267,11 @@ void SettingsAct(const wheel::Step& s) {
     case hset::Do::Players:     // the Options page's Players row: "/players N" into the game's own chat commands, on the UI thread (vr/players_cmd.cpp logs it)
         playerscmd::Ask(s.settings.players);
         break;
+    case hset::Do::AutoTune:    // the Video page's Auto: a run, its Keep, its Undo / Stop (vr/auto_tune_run.cpp logs each)
+        if (s.settings.autoTune == 0) autotunerun::Start();
+        else if (s.settings.autoTune == 1) autotunerun::Keep();
+        else autotunerun::Undo();
+        break;
     case hset::Do::Party:       // the Party page: the game's Party panel's own button (or its P key command; then the window has closed), on the UI thread
         partycmd::Ask(s.settings.party);
         break;
@@ -287,6 +341,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         host.players = playerscmd::Now();       // the Options page's Players row: the game's count (read, cheap)
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageParty) partycmd::Watch();   // the Party page: the roster read on
         host.party = partycmd::Now();
+        if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageVideo) host.autoTune = autotunetext::Current();   // [autotune]: the Auto run's words
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageCoop) host.mapShow = partycmd::MapNow();
         if (g_ctl.SettingsModel().open && g_ctl.SettingsModel().page == hset::kPageStats) {   // [stats] strike_stats: the Stats page (a copy when they changed)
             static hset::stats::View statsView;
@@ -301,9 +356,15 @@ void OnFrame(const directinput::Frame& f, void*) {
     wheel::GesturesIn gestures;
     const bool gestureTab = tabs && g_cfg.gestureTab;
     const bool engine = gengine::On();   // [gestures] engine_in_game: the engine in the game, not BodyWalk over Game Link
-    if (gestureTab || g_ctl.GesturesModel().Recording()) {
+    if (gestureTab || g_ctl.GesturesModel().Recording() || (g_showZones.load() && f4)) {   // (show_zones: the list read for the poses' spots in play too)
         gestures.link = engine || skilllinkwire::On();
-        if (engine) g_gesturesHave = gengine::List(&g_gestures);
+        if (engine) {
+            g_gesturesHave = gengine::List(&g_gestures);
+            if (g_gesturesHave && g_gestures.revision != g_zonesRev) {   // the poses' zones from the engine when its list changed
+                g_zonesRev = g_gestures.revision;
+                ReadEngineZones(g_gestures);
+            }
+        }
         else g_gesturesHave = gestures.link && link::Gestures(&g_gestures);   // (the skill link off: BodyWalk writes none - the block is not even opened)
         gestures.g = g_gesturesHave ? &g_gestures : nullptr;
         if (g_gesturesHave) {
@@ -334,6 +395,26 @@ void OnFrame(const directinput::Frame& f, void*) {
                     told = true;
                     Log("vrcam: skill panel, Gestures - BodyWalk's Gestures are there: the command ring written empty for it to start from");
                 }
+            }
+        }
+        gestures.zones = g_zoneSizes.empty() ? nullptr : g_zoneSizes.data();
+        gestures.zoneCount = (int)g_zoneSizes.size();
+        gestures.zonesShown = g_showZones.load();
+        gestures.playDurationS = g_playDurS;
+        gestures.actionOf = g_actionOf.empty() ? nullptr : g_actionOf.data();
+        gestures.actionOfCount = (int)g_actionOf.size();
+        gestures.actionsOk = engine && gengine::HasActions();
+        gestures.handsOk = engine && gengine::HasSetHand();
+        gestures.modeOf = g_modeOf.empty() ? nullptr : g_modeOf.data();
+        gestures.modeOfCount = (int)g_modeOf.size();
+        gestures.modesOk = engine && gengine::HasModes();
+        {   // the triggers' roles, as configured ([0] the right, [1] the left)
+            static char acts[2][32];
+            for (int row = 0; row < 2; ++row) {
+                const int hand = row == 0 ? 1 : 0;
+                gestures.trigRole[row] = (uint8_t)trigroleswire::RoleOf(hand);
+                std::snprintf(acts[row], sizeof acts[row], "%s", trigroleswire::ActionOf(hand));
+                gestures.trigAction[row] = acts[row];
             }
         }
         gestures.missing = engine ? gov::Avail::NoEngine : MissingNow();
@@ -382,7 +463,150 @@ void OnFrame(const directinput::Frame& f, void*) {
         Log(b);
     }
     if (s.gestureFix != gov::Fix::None) DoFix(s.gestureFix, g_iniPath);
+    if (s.zoneSet && engine && gengine::SetPoseZone(s.zoneGesture, posezones::Clamp(s.zoneM)) == BW_LINK_GR_OK) {   // into the gesture: BodyWalk sees it
+        g_zonesRev = ~0u;
+        if (g_gesturesHave) {
+            g_zonesRev = g_gestures.revision;
+            ReadEngineZones(g_gestures);
+        }
+        char b[160];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - gesture %u's zone %.0f cm, saved in the gesture (the engine's BWGE_SetPoseZone)", s.zoneGesture,
+                      100.0f * posezones::Clamp(s.zoneM));
+        Log(b);
+    } else if (s.zoneSet) {   // no zone call (BodyWalk over Game Link, or an older library): kept here for the session; one radius for both hands
+        gov::In::ZoneSize* z = nullptr;
+        for (gov::In::ZoneSize& e : g_zoneSizes)
+            if (e.id == s.zoneGesture) z = &e;
+        if (!z) {
+            g_zoneSizes.push_back({s.zoneGesture, {posezones::kDefaultM, posezones::kDefaultM}});
+            z = &g_zoneSizes.back();
+        }
+        z->radius[0] = z->radius[1] = posezones::Clamp(s.zoneM);
+        char b[160];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - gesture %u's zone %.0f cm (kept in the game this session: no zone call to store it)", s.zoneGesture,
+                      100.0f * posezones::Clamp(s.zoneM));
+        Log(b);
+    }
+    {   // the Gestures tab's Play: once on the hero's arms (vr/gesture_play_wire.h) - B / Y or leaving F4 stops it
+        static uint32_t heldBefore = 0;
+        const uint32_t held = (f.hand[0].buttons | f.hand[1].buttons) & directinput::kSecondary;
+        if (gplaywire::Playing() && ((held & ~heldBefore) || !f4)) gplaywire::Stop(!f4 ? "stopped: not VR first person (F4)" : "stopped: B / Y");
+        heldBefore = held;
+        gplaywire::Tick();
+        if (!gplaywire::Playing()) g_playDurS = 0;
+    }
+    if (s.gestureTrigSet) {   // a trigger's role / action: applied now, and kept in the ini ([gestures] trigger_<hand>, trigger_<hand>_action)
+        const int hand = s.gestureTrigRow == 0 ? 1 : 0;
+        int roles[2] = {(int)trigroleswire::RoleOf(0), (int)trigroleswire::RoleOf(1)};
+        char acts[2][32];
+        std::snprintf(acts[0], sizeof acts[0], "%s", trigroleswire::ActionOf(0));
+        std::snprintf(acts[1], sizeof acts[1], "%s", trigroleswire::ActionOf(1));
+        roles[hand] = s.gestureTrigRole;
+        if (s.gestureTrigRole == 3) std::snprintf(acts[hand], sizeof acts[hand], "%s", s.gestureTrigAction);
+        trigroleswire::Configure(roles[0], roles[1], acts[0], acts[1], g_glyphCastHold.load());
+        if (!g_iniPath.empty()) {
+            const std::wstring ini = g_iniPath;
+            const wchar_t* key = hand ? L"trigger_right" : L"trigger_left";
+            const wchar_t* akey = hand ? L"trigger_right_action" : L"trigger_left_action";
+            const std::wstring role = std::to_wstring((int)s.gestureTrigRole);
+            std::wstring act;
+            for (const char* p = acts[hand]; *p; ++p) act += (wchar_t)(unsigned char)*p;
+            std::thread([ini, key, akey, role, act] {
+                WritePrivateProfileStringW(L"gestures", key, role.c_str(), ini.c_str());
+                WritePrivateProfileStringW(L"gestures", akey, act.c_str(), ini.c_str());
+            }).detach();
+        }
+        static const char* const kRoles[] = {"as before", "glyphs", "Shift", "an action"};
+        char b[200];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - the %s trigger: %s%s%s", hand ? "right" : "left", kRoles[s.gestureTrigRole & 3],
+                      s.gestureTrigRole == 3 ? " - " : "", s.gestureTrigRole == 3 ? acts[hand] : "");
+        Log(b);
+    }
+    if (s.gestureModeSet) {   // cast once / select (the engine keeps it with the gesture: BodyWalk shows the same)
+        const int r = engine ? gengine::SetMode(s.gestureModeId, s.gestureMode) : BW_LINK_GR_BAD;
+        char b[200];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - gesture %u: %s: %s", s.gestureModeId,
+                      s.gestureMode ? "select (its skill onto the right trigger)" : "cast once", r == BW_LINK_GR_OK ? "kept by the engine" : "REFUSED (no engine call for the mode)");
+        Log(b);
+        g_zonesRev = ~0u;   // (read again: the row says it)
+    }
+    if (s.gestureHandSet) {   // a glyph's hand: Right / Left / Either (the engine keeps it with the gesture: BodyWalk shows the same)
+        const int r = engine ? gengine::SetHand(s.gestureHandId, s.gestureHand) : BW_LINK_GR_BAD;
+        static const char* const kHands[] = {"the left hand", "the right hand", "either hand"};
+        char b[200];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - glyph %u drawn by %s: %s", s.gestureHandId, kHands[s.gestureHand < 3 ? s.gestureHand : 2],
+                      r == BW_LINK_GR_OK ? "kept by the engine" : "REFUSED (no engine call for the hand)");
+        Log(b);
+    }
+    if (s.gestureBindAction) {   // a game action on a gesture (the engine keeps it with the gesture: BodyWalk shows the same)
+        const int r = engine ? gengine::BindAction(s.gestureBindId, s.gestureAction) : BW_LINK_GR_BAD;
+        char b[200];
+        std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - gesture %u now does '%.31s' (%s): %s", s.gestureBindId, s.gestureAction, gact::NameOf(s.gestureAction),
+                      r == BW_LINK_GR_OK ? "kept by the engine" : "REFUSED (no engine call for actions)");
+        Log(b);
+        g_zonesRev = ~0u;   // (read again: the row says what it does)
+    }
+    if (s.gesturePlay && f4) {
+        const BW_LinkGesture* pg = nullptr;
+        for (uint32_t i = 0; g_gesturesHave && i < std::min<uint32_t>(g_gestures.count, BW_LINK_GESTURES_MAX); ++i)
+            if (g_gestures.g[i].id == s.gesturePlay) pg = &g_gestures.g[i];
+        if (pg) {
+            gplay::Take take;
+            const char* from = "made from its picture";
+            if (engine) {   // the engine's own samples (BWGE_GetTake), where it has the call
+                static BWGE_TakeSample buf[512];
+                const int n = gengine::Take(pg->id, buf, 512);
+                for (int i = 0; i < n; ++i) take.s.push_back(buf[i]);
+                if (n > 0) from = "the engine's take";
+            }
+            if (take.s.empty()) gplay::FromGesture(*pg, &take);
+            if (!take.s.empty()) {
+                gplaywire::Start(take, g_bodyH, pg->id, pg->name);
+                g_playDurS = gplay::kLeadS + take.DurationS() + gplay::kHoldS;
+                char b[200];
+                std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Play '%.47s': %zu samples (%s), %.2f s", pg->name, take.s.size(), from, take.DurationS());
+                Log(b);
+            }
+        }
+    }
+    if (s.toggleZones && !g_iniPath.empty()) {   // the tab's "Zones": [gestures] show_zones flipped in the ini (taken live)
+        const bool want = !g_showZones.load();
+        g_showZones.store(want);
+        const std::wstring ini = g_iniPath;
+        std::thread([want, ini] { WritePrivateProfileStringW(L"gestures", L"show_zones", want ? L"1" : L"0", ini.c_str()); }).detach();
+        Log(want ? "vrcam: skill panel, Gestures - the hand poses' zones shown in play ([gestures] show_zones=1)"
+                 : "vrcam: skill panel, Gestures - the hand poses' zones hidden ([gestures] show_zones=0)");
+    }
+    {   // the zones to draw now: a pose being taken (round the hand), a pose's review (its spots), else in play every live pose's with show_zones
+        posezones::Zone z[posezones::kMaxZones];
+        int n = 0;
+        const gov::View& gv = g_ctl.GesturesModel().Current();
+        const uint32_t kTake = 0x80F0C8A0u, kRest = 0x50F0C8A0u;   // (pale gold, a little more opaque while it is being made)
+        if (f4 && g_ctl.GesturesModel().Recording() && gv.recType == BW_LINK_GT_POSE) {
+            const float r = gv.recTarget ? ZoneSizeOf(gv.recTarget, gv.recHand == BW_LINK_GH_LEFT ? 0 : 1) : posezones::kDefaultM;
+            n = posezones::FollowHands(gv.recHand, r, kTake, z, posezones::kMaxZones);
+        } else if (f4 && g_ctl.Open() && gv.screen == gov::Screen::Review && gv.haveReview && gv.review.g.type == BW_LINK_GT_POSE) {
+            n = posezones::TargetsOf(gv.review.g, gv.review.zone, kTake, z, posezones::kMaxZones, g_bodyH);
+        } else if (f4 && !g_ctl.Open() && g_showZones.load() && g_gesturesHave) {
+            for (uint32_t i = 0; i < std::min<uint32_t>(g_gestures.count, BW_LINK_GESTURES_MAX) && n < posezones::kMaxZones; ++i) {
+                const BW_LinkGesture& g = g_gestures.g[i];
+                if (g.type != BW_LINK_GT_POSE || !(g.flags & BW_LINK_GF_LIVE)) continue;
+                const float r[2] = {ZoneSizeOf(g.id, 0), ZoneSizeOf(g.id, 1)};
+                n += posezones::TargetsOf(g, r, kRest, z + n, posezones::kMaxZones - n, g_bodyH);
+            }
+        }
+        std::lock_guard<std::mutex> zl(g_zonesLock);
+        g_zonesCount = n;
+        for (int i = 0; i < n; ++i) g_zonesNow[i] = z[i];
+    }
     g_gestureHand.store(g_ctl.GesturesModel().Current().recHand);   // (the engine's pen while the tab's take runs)
+    g_gesturesTabNow.store(s.gesturesTab);
+    {   // a take accepted (the Gestures tab goes from recording to its review): the trail just drawn flashes (vr/rune_flash.h)
+        static gov::Screen was = gov::Screen::List;
+        const gov::Screen now = g_ctl.GesturesModel().Shown();
+        if (was == gov::Screen::Recording && now == gov::Screen::Review) runeflash::Shared().Trigger(GetTickCount64());
+        was = now;
+    }
     if (s.gestureRecording != g_gestureRecording) {   // BodyWalk records for the tab: its pen is the trigger, it gets the controls meanwhile
         g_gestureRecording = s.gestureRecording;
         g_gestureRecordingNow.store(s.gestureRecording);
@@ -489,8 +713,13 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
     // the right trigger and the right A as the game's RT and A slots (off unless the ini says 1: the layout's trigger is the attack and its A interact, as ever);
     // it acts in first person with direct input only (vr/slot_controls.h), and the editor's list then has the basic attack to put a slot back
     cfg.slotControls = on && ini && GetPrivateProfileIntW(L"openxr", L"skill_rt_a", 0, ini) != 0;
+    g_slotControls.store(cfg.slotControls);
+    g_glyphCastHold.store(on && ini && GetPrivateProfileIntW(L"gestures", L"glyph_cast_hold", 0, ini) != 0);
     // [openxr] gesture_overlay (off unless the ini says 1): the Gestures tab beside Settings - the player's BodyWalk gestures, F4 only; it needs the tab strip
     cfg.gestureTab = cfg.settingsTab && GetPrivateProfileIntW(L"openxr", L"gesture_overlay", 0, ini) != 0;
+    g_showZones.store(on && ini && GetPrivateProfileIntW(L"gestures", L"show_zones", 0, ini) != 0);   // [gestures] show_zones: the hand poses' zones in play
+    gplaywire::SetLog(&Log);   // (the Gestures tab's Play: its lines with ours)
+    if (!on && gplaywire::Playing()) gplaywire::Stop("stopped: the skill panel switched off");
     {   // [debug] gesture_trace (view only): the Gestures tab's whole chain in the log
         const bool trace = on && ini && GetPrivateProfileIntW(L"debug", L"gesture_trace", 0, ini) != 0;
         if (trace != g_gestureTrace.exchange(trace))
@@ -553,10 +782,19 @@ void Configure(bool on, int pointerHand, float distanceM, float widthM, int styl
 }
 
 bool Enabled() { return g_on.load(); }
+bool SlotControlsOn() { return g_slotControls.load(); }
 bool IsOpen() { return g_on.load() && g_open.load(); }
 bool TriggerCastsSkill() { return g_on.load() && g_triggerSkill.load(); }
 bool GestureRecording() { return g_on.load() && g_gestureRecordingNow.load(); }
+bool GesturesTabOpen() { return g_on.load() && g_open.load() && g_gesturesTabNow.load(); }
 uint8_t GestureRecordHand() { return (uint8_t)g_gestureHand.load(); }
+int PoseZones(posezones::Zone* out, int max) {
+    if (!g_on.load() || !out) return 0;
+    std::lock_guard<std::mutex> zl(g_zonesLock);
+    const int n = std::min(max, g_zonesCount);
+    for (int i = 0; i < n; ++i) out[i] = g_zonesNow[i];
+    return n;
+}
 bool SettingsTabOn() { return g_on.load() && g_settingsTab.load(); }
 void SetTwoGripChord(bool on) { g_twoGripChord.store(on); }
 void SetSettingsHost(const hset::video::Env& env) {

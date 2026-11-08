@@ -18,6 +18,9 @@ void SetLog(LogFn fn);
 
 // Where to look for the DLL instead of d2rloader\d2r_vr_libs / beside the module that holds this code (tests). Null: there again.
 void SetPath(const wchar_t* path);
+// The game id the engine is opened with (default "d2r": its gestures under games\d2r, its "Local\BodyWalk.GestureEngine.d2r" mutex). Tests use their own
+// ("d2rtest"), so a BodyWalk running beside them does not hold back its casts. Before Ensure; null: "d2r" again.
+void SetGameId(const char* id);
 
 enum class Status { NotLooked, Missing, BadAbi, BrokenExports, OpenFailed, Loaded };
 Status GetStatus();
@@ -44,5 +47,23 @@ int SetThreshold(uint32_t gesture, float percent);
 uint32_t List(BW_LinkGestures* out);
 int PollCasts(BWGE_Cast* out, int max);
 uint32_t Trail(BW_LinkVrRune* out, uint32_t max);
+// A pose's zone (the optional BWGE_GetPoseZone / BWGE_SetPoseZone: an older library has none - HasPoseZones false, the calls BW_LINK_GR_BAD).
+bool HasPoseZones();
+int GetPoseZone(uint32_t gesture, BWGE_PoseZone* out);
+int SetPoseZone(uint32_t gesture, float radiusM);
+// A take's samples (the optional BWGE_GetTake): how many written; 0 none / no call.
+int GetTake(uint32_t gesture, BWGE_TakeSample* out, int max);
+// Game actions (the optional BWGE_BindAction / BWGE_GetAction / BWGE_PollCasts2): HasActions false without them (then PollCasts as ever).
+bool HasActions();
+int BindAction(uint32_t gesture, const char* action);
+int GetAction(uint32_t gesture, char* out, uint32_t cap);
+int PollCasts2(BWGE_Cast2* out, int max);
+// A glyph's hand (the optional BWGE_SetHand: LEFT / RIGHT / BOTH = either hand); HasSetHand false without it.
+bool HasSetHand();
+int SetHand(uint32_t gesture, uint8_t hand);
+// A gesture's mode (the optional BWGE_SetMode / BWGE_GetMode: 0 cast once, 1 select); HasModes false without them.
+bool HasModes();
+int SetMode(uint32_t gesture, uint8_t mode);
+int GetMode(uint32_t gesture, uint8_t* out);
 
 }  // namespace gelib

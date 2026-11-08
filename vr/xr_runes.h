@@ -117,7 +117,9 @@ uint32_t HangRunes(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     BW_LinkVrRune got[runes::kMax];
     const uint32_t n = gengine::Active() ? gengine::Trail(got, runes::kMax) : link::VrRunes(got, runes::kMax);   // ([gestures] engine_in_game: the engine's trail)
     BW_LinkVrRune show[runes::kMax];
-    const uint32_t m = g_runeEase.Step(got, n, GetTickCount64(), show);   // a rune that vanished mid-flash eases out in 0.2 s
+    const uint64_t nowMs = GetTickCount64();
+    const uint32_t m = g_runeEase.Step(got, n, nowMs, show);   // a rune that vanished mid-flash eases out in 0.2 s
+    for (uint32_t k = 0; k < m; ++k) runeflash::Shared().Apply(show[k], nowMs);   // a gesture just recognised: 100 ms bright and thicker (vr/rune_flash.h)
     if (!m || nl >= max || !g_inNow.head.valid) return nl;
     const runes::V3 head = runes::From3(g_inNow.head.pos);
     const XrVector3f look = Rot(Q4(g_inNow.head.rot), {0.0f, 0.0f, -1.0f});   // the way the head looks (stage space)

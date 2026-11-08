@@ -164,6 +164,71 @@ int main() {
         Check(!HandWanted(h), "vr_body_pick_hand unticked: not");
     }
 
+    // ---- flat: the map click's target ([input] flat_body_target) ------------------------------------------------------------------------
+    {
+        FlatAsk a;
+        a.flat = a.key = a.on = true;
+        Check(FlatWanted(a), "flat, ticked, in a game area, no menu: the click's target is the crosshair's");
+        a.menu = true;
+        Check(!FlatWanted(a), "a menu open: not");
+        a.menu = false;
+        a.flat = false;
+        Check(!FlatWanted(a), "VR: not (its own picks)");
+        a.flat = true;
+        a.key = false;
+        Check(!FlatWanted(a), "flat_body_target unticked: not");
+    }
+    {
+        float px[2];
+        Check(FlatPixel(true, 1, 10, 300.0f, 200.0f, 1920.0f, 1080.0f, true, px) && px[0] == 300.0f && px[1] == 200.0f,
+              "a fresh pick of ours: the game's own pixel");
+        Check(FlatPixel(true, 1, 5000, 300.0f, 200.0f, 1920.0f, 1080.0f, true, px) && px[0] == 960.0f && px[1] == 540.0f,
+              "an old pick, mouse look on: the crosshair, the viewport's middle");
+        Check(!FlatPixel(true, 1, 5000, 300.0f, 200.0f, 1920.0f, 1080.0f, false, px), "an old pick, a free cursor: nothing");
+        Check(!FlatPixel(true, 0, 10, 300.0f, 200.0f, 1920.0f, 1080.0f, true, px), "the game's own camera answered: nothing of ours");
+        Check(!FlatPixel(false, 1, 10, 300.0f, 200.0f, 1920.0f, 1080.0f, true, px), "no pick known: nothing");
+    }
+    {   // the player's case: first person, a monster right in front, the crosshair on its chest
+        const float floorY = 0.0f;
+        Cap m;   // a zombie-sized body 3 world units ahead along +x (a cell and a half)
+        m.x = 3.0f; m.z = 0.0f; m.floorY = floorY; m.height = 7.0f; m.radius = 1.8f; m.body = true; m.id = 7;
+        Cap farther = m;   // and one farther on, on the same line
+        farther.x = 14.0f; farther.id = 8;
+        const Cap two[2] = {farther, m};
+        const float eye[3] = {0.0f, 6.0f, 0.0f};
+        float q[3] = {3.0f, 4.0f, 0.0f}, dir[3];   // its chest
+        RayTo(eye, q, dir);
+        float fl[3];   // where the ray lands on the floor without the body
+        Check(flatground::PlaneHit(eye, dir, floorY, fl) && fl[0] > 8.0f, "up close the chest's ray reaches the floor well behind the monster (the old miss)");
+        Check(ClickMet(two, 2, eye, dir, floorY) == 1, "... but it meets the near monster's body first: that one is the click's target");
+        q[0] = 3.0f; q[1] = 20.0f;   // looking up over it
+        RayTo(eye, q, dir);
+        Check(ClickMet(two, 2, eye, dir, floorY) == -1, "looking up over them: nothing (the game's own answer)");
+        q[0] = 1.0f; q[1] = 0.0f; q[2] = 6.0f;   // the floor beside it
+        RayTo(eye, q, dir);
+        Check(ClickMet(two, 2, eye, dir, floorY) == -1, "the floor beside it: nothing");
+        // the eye inside a big body (a monster pressed against the hero): only while looking towards it
+        Cap big = m;
+        big.x = 1.0f; big.radius = 3.0f; big.height = 12.0f;
+        float toward[3] = {1.0f, -0.2f, 0.0f}, away[3] = {-1.0f, -0.2f, 0.0f};
+        for (float* v : {toward, away}) {
+            const float l = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            for (int i = 0; i < 3; ++i) v[i] /= l;
+        }
+        Check(ClickMet(&big, 1, eye, toward, floorY) == 0, "inside a big body looking at it: that one");
+        Check(ClickMet(&big, 1, eye, away, floorY) == -1, "inside it looking away: not it");
+    }
+    {
+        Cap mon; mon.body = true; mon.npc = false;
+        Cap npc; npc.body = true; npc.npc = true;
+        Cap door; door.body = false;
+        Check(ClickAnswers(mon, -1, false) && ClickAnswers(mon, 1, false), "a monster, verdict unknown or hostile: the click's target");
+        Check(!ClickAnswers(mon, 0, false), "a monster the server calls not hostile (a hireling, a summon) or walled off: the game's own");
+        Check(ClickAnswers(npc, -1, false) && ClickAnswers(npc, 0, false), "an NPC: the click talks to it, as the game's click does");
+        Check(ClickAnswers(door, -1, false), "an object (a door, a chest): the click's target");
+        Check(!ClickAnswers(mon, 1, true) && !ClickAnswers(door, -1, true), "the game's own answer an item: kept (a pick-up stays a pick-up)");
+    }
+
     if (g_fail) { std::printf("vr_body_pick_test: %d FAILED\n", g_fail); return 1; }
     std::printf("vr_body_pick_test: all passed\n");
     return 0;

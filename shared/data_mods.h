@@ -21,6 +21,7 @@
 // it (the canoe on the water, the Arcane Sanctuary without its flat stars), else D2R VR's own stays. D2R VR's own file is then set
 // aside (mods\D2R-VR\data_mods_ours\...) and put back when the other mod's file goes. Every such choice is written to the log.
 // The other mods' save folder (their modinfo.json "savepath") is not taken: D2R VR's characters stay where they are (only said).
+// Files under a folder or with a name that starts with a dot (an editor's .vs, a .git) are not taken either: not game data (ToolPath).
 //
 // Windows file calls here; no game code. tools/data_mods_test.cpp tests it on a scratch folder.
 #include <windows.h>
@@ -191,6 +192,19 @@ inline void Files(const std::wstring& dir, const std::wstring& rel, std::vector<
         }
     } while (FindNextFileW(h, &d));
     FindClose(h);
+}
+// A path (relative, '\' or '/' between the parts) with a part whose name starts with a dot: an editor's or a tool's folder or file (.vs,
+// .git, .vscode, .DS_Store) - never game data. Crash batch 2026-11-08, rows 288 / 289: D2RLoader stopped the game at
+// data/local/lng/strings/.vs/projectsettings.json ("expected a JSON array of string records") - every .json under that folder is read as a
+// string table. The other mods' such files are not merged.
+inline bool ToolPath(const std::wstring& rel) {
+    bool partStart = true;
+    for (wchar_t c : rel) {
+        if (c == L'\\' || c == L'/') { partStart = true; continue; }
+        if (partStart && c == L'.') return true;
+        partStart = false;
+    }
+    return false;
 }
 inline bool AnyFile(const std::wstring& dir) {
     std::vector<std::wstring> f;
@@ -401,9 +415,15 @@ inline Result Sync(const std::wstring& game, const std::wstring& modRoot, bool o
             const std::wstring src = Slash(game) + L"mods\\" + m.name + L"\\" + m.name + L".mpq\\";
             std::vector<std::wstring> f;
             Files(src, L"data\\", &f);
+            int tools = 0;
+            std::wstring firstTool;
             for (const std::wstring& rel : f) {
                 const std::string k = Key(rel);
                 if (k == "data/global/dataversionbuild.txt") continue;   // D2RMM's copy of the game's build stamp: not the mod's content
+                if (ToolPath(rel)) {   // an editor's or a tool's folder (.vs, .git, .vscode ...): never game data
+                    if (!tools++) firstTool = rel;
+                    continue;
+                }
                 auto w = want.find(k);
                 if (w != want.end()) {
                     r.log.push_back(rel + L": in " + w->second.mod + L" and in " + m.name + L" - " + w->second.mod + L"'s taken (first in the order)");
@@ -413,6 +433,9 @@ inline Result Sync(const std::wstring& game, const std::wstring& modRoot, bool o
                 if (!Stat(x.src, &x.size, &x.time)) continue;
                 want[k] = x;
             }
+            if (tools)
+                r.log.push_back(m.name + L": " + std::to_wstring(tools) + L" file(s) under a folder or name starting with a dot left out (" + firstTool +
+                                L"...) - an editor's or a tool's files, not game data; D2RLoader stops the game at a .json under data\\local\\lng\\strings that is not a string table");
         }
     }
 

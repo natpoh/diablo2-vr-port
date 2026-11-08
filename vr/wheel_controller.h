@@ -103,6 +103,7 @@ struct SettingsIn {
     hset::party::View party;      // the game's roster (vr/party_cmd.h), for the Party page
     hset::party::MapShow mapShow; // the game's Show Party / Show Party Names (vr/party_cmd.h MapNow), for the Co-op page's map row
     hset::stats::View stats;      // the strike statistics (vr/hset_stats_feed.h), for the Stats page
+    hset::AutoTune autoTune;      // [autotune]: the Video page's Auto run (vr/auto_tune_run.h, its words vr/auto_tune_text.h)
 };
 
 // What the Gestures tab needs of its host each frame (skill_wheel.cpp fills it): BodyWalk's Gestures block (a consistent copy) and whether the skill
@@ -112,6 +113,19 @@ struct GesturesIn {
     const BW_LinkGestures* g = nullptr;    // null: no BodyWalk writes it
     gov::Missing missing = gov::Avail::NotRunning;   // ... and then why (the host's look at BodyWalk's process and Game Link)
     bool canStart = false;                 // a BodyWalkVR.exe was found (the tab's START BODYWALK)
+    const gov::In::ZoneSize* zones = nullptr;   // the hand poses' zone sizes the host knows (vr/pose_zones.h)
+    int zoneCount = 0;
+    bool zonesShown = false;               // [gestures] show_zones
+    float playDurationS = 0;               // the take playing lasts this long (the host's; 0 = by its type)
+    const gov::In::ActionOf* actionOf = nullptr;   // the game actions the gestures do (the engine's)
+    int actionOfCount = 0;
+    bool actionsOk = false;                // the engine binds game actions
+    bool handsOk = false;                  // the engine changes a glyph's hand
+    const gov::In::ModeOf* modeOf = nullptr;   // the gestures in select mode (the engine's)
+    int modeOfCount = 0;
+    bool modesOk = false;                  // the engine keeps a gesture's mode
+    uint8_t trigRole[2] = {0, 0};          // each trigger's role ([0] the right, [1] the left)
+    const char* trigAction[2] = {nullptr, nullptr};
 };
 
 // The Gestures tab's take: the window swung to the side (about the head as it was when the window came up) until its near edge stands this far off
@@ -149,7 +163,26 @@ struct Step {
     bool gestureSend = false;             // the Gestures tab asks BodyWalk for `gestureCmd` (vr/link.cpp PushGestureCmd; then GestureSent with its sequence)
     gesturecmd::Cmd gestureCmd;
     bool gestureRecording = false;        // BodyWalk records for the Gestures tab (or is about to): its pen is the trigger
+    bool gesturesTab = false;             // the window is up on its Gestures tab (any of its screens, a recording too): [openxr] hands_over_panels runs only then
     gov::Fix gestureFix = gov::Fix::None; // the Gestures tab's fix was clicked: enable the skill link / start BodyWalk (the host does it)
+    bool zoneSet = false;                 // a hand pose's zone resized on the tab: the host keeps it (and hands it to the engine)
+    uint32_t zoneGesture = 0;
+    uint8_t zoneHand = 0;
+    float zoneM = 0;
+    bool toggleZones = false;             // the tab's "Zones" clicked: the host flips [gestures] show_zones
+    uint32_t gesturePlay = 0;             // Play clicked for this gesture: the host plays its take once on the arms (F4)
+    bool gestureTrigSet = false;          // a trigger's role / action set on the Triggers screen (the host writes and applies it)
+    uint8_t gestureTrigRow = 0, gestureTrigRole = 0;
+    char gestureTrigAction[32] = {};
+    bool gestureModeSet = false;          // a gesture's mode flipped: the host asks the engine (BWGE_SetMode)
+    uint32_t gestureModeId = 0;
+    uint8_t gestureMode = 0;
+    bool gestureHandSet = false;          // a glyph's hand stepped: the host asks the engine (BWGE_SetHand)
+    uint32_t gestureHandId = 0;
+    uint8_t gestureHand = 0;
+    bool gestureBindAction = false;       // a game action chosen for gestureBindId (the host: the engine's BWGE_BindAction)
+    uint32_t gestureBindId = 0;
+    char gestureAction[32] = {};
     int gestureTraces = 0;                // [debug] gesture_trace: the tab's model's events this frame
     char gestureTrace[gov::kTraceMax][gov::kTraceLen];
 };
@@ -208,6 +241,35 @@ class Controller {
             out->gestureCmd = go.cmd;
         }
         if (go.fix != gov::Fix::None) out->gestureFix = go.fix;
+        if (go.play) out->gesturePlay = go.play;
+        if (go.trigSet) {
+            out->gestureTrigSet = true;
+            out->gestureTrigRow = go.trigRow;
+            out->gestureTrigRole = go.trigRole;
+            std::memcpy(out->gestureTrigAction, go.trigAction, sizeof out->gestureTrigAction);
+        }
+        if (go.modeSet) {
+            out->gestureModeSet = true;
+            out->gestureModeId = go.modeGesture;
+            out->gestureMode = go.mode;
+        }
+        if (go.handSet) {
+            out->gestureHandSet = true;
+            out->gestureHandId = go.handGesture;
+            out->gestureHand = go.hand;
+        }
+        if (go.bindAction) {
+            out->gestureBindAction = true;
+            out->gestureBindId = go.bindGesture;
+            std::memcpy(out->gestureAction, go.action, sizeof out->gestureAction);
+        }
+        if (go.zoneSet) {
+            out->zoneSet = true;
+            out->zoneGesture = go.zoneGesture;
+            out->zoneHand = go.zoneHand;
+            out->zoneM = go.zoneM;
+        }
+        if (go.toggleZones) out->toggleZones = true;
         for (int i = 0; i < go.traces && out->gestureTraces < gov::kTraceMax; ++i)
             std::memcpy(out->gestureTrace[out->gestureTraces++], go.trace[i], gov::kTraceLen);
         if (out->feedback == Feedback::None)
@@ -416,6 +478,7 @@ public:
             settings_.SetSpanInUse(host->spanInUse);
             settings_.SetPlayers(host->players, f.time * 1000.0);
             settings_.SetParty(host->party, f.time * 1000.0);
+            settings_.SetAuto(host->autoTune);
             settings_.SetMapShow(host->mapShow, f.time * 1000.0);
             if (settings_.page == hset::kPageStats) settings_.SetStats(host->stats);
             settings_.Observe(host->ini);
@@ -449,6 +512,23 @@ public:
             gi.missing = gestures ? gestures->missing : gov::Avail::NotRunning;
             gi.canStart = gestures && gestures->canStart;
             gi.triggers = f.hand[0].trigger > kTriggerOff || f.hand[1].trigger > kTriggerOff;   // (a RECORD goes out once both are up)
+            if (gestures) {
+                gi.zones = gestures->zones;
+                gi.zoneCount = gestures->zoneCount;
+                gi.zonesShown = gestures->zonesShown;
+                gi.playDurationS = gestures->playDurationS;
+                gi.actionOf = gestures->actionOf;
+                gi.actionOfCount = gestures->actionOfCount;
+                gi.actionsOk = gestures->actionsOk;
+                gi.handsOk = gestures->handsOk;
+                gi.modeOf = gestures->modeOf;
+                gi.modeOfCount = gestures->modeOfCount;
+                gi.modesOk = gestures->modesOk;
+                gi.trigRole[0] = gestures->trigRole[0];
+                gi.trigRole[1] = gestures->trigRole[1];
+                gi.trigAction[0] = gestures->trigAction[0];
+                gi.trigAction[1] = gestures->trigAction[1];
+            }
             const bool fresh = Fresh(snap, nowMs, f.session);
             gi.catalog = fresh ? snap.catalog : nullptr;
             gi.catalogCount = fresh ? (int)std::min<uint32_t>(snap.count, (uint32_t)kCatalogMax) : 0;
@@ -529,6 +609,7 @@ public:
                 settings_.SetSpanInUse(host->spanInUse);
                 settings_.SetPlayers(host->players, f.time * 1000.0);
                 settings_.SetParty(host->party, f.time * 1000.0);
+                settings_.SetAuto(host->autoTune);
                 settings_.SetMapShow(host->mapShow, f.time * 1000.0);
                 if (settings_.page == hset::kPageStats) settings_.SetStats(host->stats);
                 clicker_.Reset();
@@ -625,8 +706,10 @@ public:
 
         // the headset layer
         out.layer.show = open;
+        out.gesturesTab = open && (model_.Current().tab == Tab::Gestures || out.gestureRecording);
         out.layer.panel = panel_;
         if (open && out.gestureRecording) out.layer.panel = AsideForTake(gestures_.Current().recHand);   // (the drawing space before the eyes is free)
+        else if (open && gestures_.Current().playId) out.layer.panel = AsideForTake(gestures_.Current().playHand);   // (Play: the arms are seen moving)
         if (open && aimOk && Finite(from) && !out.gestureRecording) {   // (BodyWalk records for the Gestures tab: no beam - the trigger is its pen)
             out.layer.beam = true;
             out.layer.from = from;

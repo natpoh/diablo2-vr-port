@@ -44,6 +44,38 @@ int main() {
     for (int b : {7, 8, 9, 10, 11}) Check(pose(b, false, true) == Pose::Anim, "flat: the jaw, the arms, the hand and the weapon keep the game's swing");
     for (int b : {0, 1, 12}) Check(pose(b, false, true) == Pose::Game, "flat: the root, the pelvis and the legs are the game's");
 
+    // [body] flat_hold_trunk_twist: the chest's turn about the vertical from its bind pose, and the turn that puts it back on the arms
+    {
+        auto yawMat = [](float a, float scale, float out[16]) {   // a model-space chest turned by a about the vertical (row vectors), scaled
+            trunkhold::YawAbout(a, 0.0f, 0.0f, out);
+            for (int i : {0, 2, 5, 8, 10}) out[i] *= scale;
+            out[13] = 5.0f;
+        };
+        float bind[16], anim[16];
+        const float d = 3.14159265f / 180.0f;
+        yawMat(0.0f, 1.0f, bind);
+        yawMat(70.0f * d, 1.0f, anim);
+        Check(std::fabs(trunkhold::TwistYaw(bind, anim, 120.0f * d) - 70.0f * d) < 1e-4f, "twist: a chest turned 70 deg reads 70");
+        yawMat(-30.0f * d, 1.0f, anim);
+        Check(std::fabs(trunkhold::TwistYaw(bind, anim, 120.0f * d) + 30.0f * d) < 1e-4f, "twist: the other way, negative");
+        yawMat(20.0f * d, 1.0f, bind);
+        yawMat(65.0f * d, 2.5f, anim);
+        Check(std::fabs(trunkhold::TwistYaw(bind, anim, 120.0f * d) - 45.0f * d) < 1e-4f, "twist: from a bind turned already, a scale in the anim: the difference");
+        yawMat(0.0f, 1.0f, bind);
+        yawMat(150.0f * d, 1.0f, anim);
+        Check(std::fabs(trunkhold::TwistYaw(bind, anim, 120.0f * d) - 120.0f * d) < 1e-4f, "twist: capped");
+        float zero[16] = {};
+        Check(trunkhold::TwistYaw(bind, zero, 2.0f) == 0.0f, "twist: an empty matrix: none");
+        // the turn: a hand 1 ahead of a chest at (2, *, 3), turned 90 deg, goes to the chest's side (+x: the turn's own sense, model z to +x)
+        float t[16];
+        trunkhold::YawAbout(90.0f * d, 2.0f, 3.0f, t);
+        const float hx = 2.0f, hz = 4.0f;
+        const float x2 = hx * t[0] + hz * t[8] + t[12], z2 = hx * t[2] + hz * t[10] + t[14];
+        Check(std::fabs(x2 - 3.0f) < 1e-4f && std::fabs(z2 - 3.0f) < 1e-4f, "the turn: about the chest's vertical, in TwistYaw's sense");
+        const float cx = 2.0f * t[0] + 3.0f * t[8] + t[12], cz = 2.0f * t[2] + 3.0f * t[10] + t[14];
+        Check(std::fabs(cx - 2.0f) < 1e-4f && std::fabs(cz - 3.0f) < 1e-4f, "the turn: the chest itself stays");
+    }
+
     if (g_fail) { std::printf("trunk_hold_test: %d FAILED\n", g_fail); return 1; }
     std::printf("trunk_hold_test: all passed\n");
     return 0;

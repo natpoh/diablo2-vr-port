@@ -266,6 +266,25 @@ bool Aim(AimInfo* out);
 // [debug] the shaft's two ends in BodyWalk's frame (metres from the head, the head's turn only), where the
 // weight model has them (the hands' offset in, as they are drawn); false when no weapon is held so lately.
 bool ShaftEnds(float butt[3], float tip[3]);
+// [debug] grip_trace (view only): a log line for every grip press - what was in reach (the shaft, the back, a call back, nothing), the fist's distance from the shaft and its place
+// along it against the second hand's hilt rule - and for every change of who holds the weapon (first, main, each hand's place on the shaft). The pose's side (the slot, the drawn bone,
+// the grip pose's hand) is skeletons.cpp's. GripTrace: on.
+void SetGripTrace(bool on);
+bool GripTrace();
+// [debug] grip_draw (view only): the second hand's take zone and the holding hands' places on the shaft, in ShaftEnds' frame (the head's turn-only frame from the eye, metres, beside
+// the controllers as the hands are). False when nothing is held that way or it is stale.
+struct GripZoneDraw {
+    float butt[3] = {}, tip[3] = {};
+    float zoneEnd[3] = {};      // where the second hand's zone ends (the hilt's end and the margin; the tip when the whole shaft takes)
+    float hand[2][3] = {};      // each holding hand's place on the shaft
+    bool holds[2] = {false, false};
+    bool held = false, hiltOnly = false;
+    float reach = 0.12f;        // m: how far from the shaft a fist takes it
+    unsigned long long at = 0;
+};
+void SetGripDraw(bool on);
+bool GripDraw();
+bool ZoneDraw(GripZoneDraw* out);
 using LogFn = void (*)(const char*);
 void SetLog(LogFn fn);
 

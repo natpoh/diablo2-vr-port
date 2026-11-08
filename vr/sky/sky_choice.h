@@ -17,7 +17,9 @@ extern std::atomic<bool> g_gameCeilBiome;  // ... on [ceiling] game_ceiling_biom
 bool GameDrawnView();                      // a view the game's own dome, slab and fog are drawn in (vrcam.cpp)
 
 namespace fx {
-bool OurFogWanted();          // a fog wanted here at all (either path)
+bool FogHere();               // a fog here at all, whoever draws it ([fog] caves, the River of Flame, first person...)
+bool OurFogWanted();          // our effect's fog: [fog] enabled and FogHere
+bool GameFogWanted();         // the game's fog with our numbers: [fog] game_fog and FogHere ([fog] enabled not asked)
 const char* FogCannot();      // the game's fog unable here for good ("" / nullptr: able)
 bool FogWanted();             // our post pass's fog
 // The fog's numbers here: the open air's ([fog] start, end), the caves' (every area off the outdoor list: caves_start, caves_end,

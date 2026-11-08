@@ -365,17 +365,26 @@ private:
 
 SRWLOCK g_listLock = SRWLOCK_INIT;
 std::unordered_map<ID3D12GraphicsCommandList*, List*> g_lists;   // (made once a list, kept: the game's lists live as long as it does)
+// The list this thread looked up last (a thread records one list at a time, call after call): no lock on the way (docs/notes/vr_cpu_overhead.md -
+// the interface's sinks took the shared lock on every bind, viewport, scissor, clear and reset of every recording thread). Safe: a List is never
+// freed, and the same game list always maps to the same one.
+thread_local ID3D12GraphicsCommandList* t_lastList = nullptr;
+thread_local List* t_lastOurs = nullptr;
 command_list* ListOf(ID3D12GraphicsCommandList* l) {
+    if (l == t_lastList && t_lastOurs) return t_lastOurs;
     AcquireSRWLockShared(&g_listLock);
     const auto it = g_lists.find(l);
     List* p = it != g_lists.end() ? it->second : nullptr;
     ReleaseSRWLockShared(&g_listLock);
-    if (p) return p;
-    AcquireSRWLockExclusive(&g_listLock);
-    List*& q = g_lists[l];
-    if (!q) q = new List(l);
-    p = q;
-    ReleaseSRWLockExclusive(&g_listLock);
+    if (!p) {
+        AcquireSRWLockExclusive(&g_listLock);
+        List*& q = g_lists[l];
+        if (!q) q = new List(l);
+        p = q;
+        ReleaseSRWLockExclusive(&g_listLock);
+    }
+    t_lastList = l;
+    t_lastOurs = p;
     return p;
 }
 

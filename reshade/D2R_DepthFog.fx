@@ -2781,6 +2781,11 @@ uniform float OrbIconLift < hidden = true; > = 0.0;
 uniform float OrbIconLiftM < hidden = true; > = 0.0;   // [gameplay] melee_skill_armed_icon_lift_mm: the icon this many metres over where the depth puts it, off the floor's texture
 texture2D OrbIconTex { Width = 128; Height = 128; Format = RGBA8; };
 sampler2D OrbIconSmp { Texture = OrbIconTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };
+// The Gestures' Select mode (vr/skill_link_wire.h ArmedSkill): the skill a glyph armed on the LEFT trigger, in the LIFE medallion the same way (the right trigger's in the mana one,
+// through OrbIcon above). OrbIconL as OrbIcon; x 0 (the default) leaves the life medallion exactly as it was.
+uniform float4 OrbIconL < hidden = true; > = float4(0.0, 0.0, 0.70, 0.10);
+texture2D OrbIconLTex { Width = 128; Height = 128; Format = RGBA8; };
+sampler2D OrbIconLSmp { Texture = OrbIconLTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };
 // ORBS-BEGIN (cleanroom/tests/hand_orbs_test.cpp compiles the text between these marks and renders it on a software D3D11 device)
 float OrbHash(float2 p) { return frac(sin(dot(p, float2(127.1, 311.7))) * 43758.5453); }
 float OrbNoise(float2 p)
@@ -3072,19 +3077,21 @@ float4 OneMedalCore(float3 ro, float3 rd, float3 back, float sceneZ, float4 P, f
         metal = OrbMetalColor(kind, ql, nW, rd);
     }
     float ia = 0.0, ti = -1.0;   // the armed skill's icon here: its strength in, and where along the ray (-1 none)
-    [branch] if (OrbIcon.x > 0.5 && !life && OrbPic.x < 0.5)   // the mana medallion: the icon lies flat in the dome, on its floor or lifted OrbIconLift over it, its up along the hand
+    const float4 iconP = life ? OrbIconL : OrbIcon;   // the life medallion's icon (a skill a glyph armed on the left trigger), else the mana one's
+    [branch] if (iconP.x > 0.5 && OrbPic.x < 0.5)   // a medallion with an icon: it lies flat in the dome, on its floor or lifted OrbIconLift over it, its up along the hand
     {
         const float zi = max(OrbIconLift, 0.0) * Rb + max(OrbIconLiftM, 0.0);
         if (zi <= 1e-4 * Rb) { if (metalOn && kind > 4.5) ti = tm; }                           // on the bottom: the floor's own hit, as it first was
         else if (d.z < -1e-6) { const float t = (zi - o.z) / d.z; if (t > 0.0 && t < tm && t < tScene) ti = t; }   // lifted: the plane z = zi, seen from above, before the floor
         if (ti > 0.0)
         {
-            const float2 pq = (o.xy + d.xy * ti) / (Rb * max(OrbIcon.z, 1e-3));
+            const float2 pq = (o.xy + d.xy * ti) / (Rb * max(iconP.z, 1e-3));
             const float r = length(pq);
             if (r < 1.0)
             {
-                const float4 ic = tex2Dlod(OrbIconSmp, float4(0.5 + 0.5 * pq.x, 0.5 - 0.5 * pq.y, 0.0, 0.0));   // (premultiplied)
-                const float k = (1.0 - smoothstep(1.0 - OrbIcon.w, 1.0, r)) * saturate(OrbIcon.y);           // the circle's soft edge again (vr/armed_icon.h CircleCover), the strength
+                const float4 uvi = float4(0.5 + 0.5 * pq.x, 0.5 - 0.5 * pq.y, 0.0, 0.0);
+                const float4 ic = life ? tex2Dlod(OrbIconLSmp, uvi) : tex2Dlod(OrbIconSmp, uvi);   // (premultiplied)
+                const float k = (1.0 - smoothstep(1.0 - iconP.w, 1.0, r)) * saturate(iconP.y);     // the circle's soft edge again (vr/armed_icon.h CircleCover), the strength
                 const float shade = 0.80 + 0.20 * saturate(dot(Bn, normalize(float3(-0.35, 0.78, 0.52))));     // the medallion's own light, a little (the floor's normal: the plane's)
                 ia = saturate(ic.a * k);
                 if (metalOn) metal = metal * (1.0 - ia) + ic.rgb * (k * shade);

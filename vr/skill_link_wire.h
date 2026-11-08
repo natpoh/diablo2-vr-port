@@ -40,5 +40,16 @@ bool LatestSkills(BW_LinkSkills* out, uint32_t* revision);
 // The engine recognised a gesture for this skill: cast the game's own way (its slot pressed, or put on the spare slot first), F4 / play only, on the
 // next tick - the same rules as BodyWalk's casts. Any thread.
 void CastFromEngine(int32_t skill);
+// A "select" gesture recognised (Serg, 2026-11-08: "draw the glyph, the spell is chosen, and every pull of the trigger strikes with it until another
+// glyph"): the skill is put on the RIGHT TRIGGER's own slot by the game's setter (the skill panel's SKILL EDIT path) - the A slot, or RT with
+// [openxr] skill_rt_a - and nothing is cast: the trigger then casts it the game's normal way, every press or hold. F4 / play only, next tick. Any thread.
+// `hand` (0 left, 1 right) is the hand that drew it (Serg: "the trigger of the hand that drew the glyph"): the right's slot RT ([gestures]
+// trigger_right Glyphs, or [openxr] skill_rt_a) else A; the left's LT + RT (the game's second layer - its Glyphs trigger presses it).
+void ArmFromEngine(int32_t skill, int hand = 1);
+// The skill a select gesture put on this hand's trigger (-1 none) and when (GetTickCount64): the orb's armed icon. Any thread.
+int32_t ArmedSkill(int hand, uint64_t* at = nullptr);
+// [gestures] select_icon: the armed skills' icons in the medallions (the right trigger's in the mana one, the left's in the life one). Default on.
+void SetSelectIcon(bool on);
+bool SelectIcon();
 
 }  // namespace skilllinkwire

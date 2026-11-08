@@ -89,6 +89,8 @@ inline const char* StatusText(const Model& m, bool window = false) {
         return m.page == kPageVideo && m.VideoEdited() ? uitext::Tr("vr.hset.status.video_unapplied", "Not applied yet. Apply asks the game for this size; Close drops it.")
                                                        : uitext::Tr("vr.hset.status.unsaved", "Unsaved changes. Apply saves them, Close drops them.");
     }
+    if (m.page == kPageVideo && m.Auto().on)   // [autotune]: the Auto button beside the presets
+        return uitext::Tr("vr.hset.status.video_idle_auto", "Pick a size, then Apply - or Auto: stand still, the game tunes itself to the headset's rate.");
     if (m.page == kPageVideo) return uitext::Tr("vr.hset.status.video_idle", "Pick a size, then Apply. It takes effect once your hero is in the world.");
     if (m.page == kPageBody) return uitext::Tr("vr.hset.status.body_idle", "Calibrate body hides this panel; it comes back when the measurement is done.");
     if (m.page == kPageKeysL || m.page == kPageKeysR)
@@ -291,10 +293,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Text(uitext::Tr("vr.video.title", "Render size"), kVidTitle, Face::Bold, Role::Text);
         b.Text(video::PickText(pick, env), kVidTitle, Face::Bold, edited ? Role::Warn : Role::Accent, Align::Right);
         b.Text(video::NowText(env), kVidNow, Face::Small, Role::Quiet);
-        for (int i = 0; i < video::kPresetCount; ++i) {
-            const bool on = pick == video::PickOfPreset(i);
-            b.Button(kPreset(i), video::PresetLabel(i), {Kind::Preset, i, 0}, on, canEdit, on ? (edited ? Role::Warn : Role::Accent) : Role::Text, Part::Choice);
-        }
+        // (the size presets' buttons are gone, Serg 2026-11-08: the slider alone; the title's right end names the pick - window's size, headset's own, a side)
         b.Button(kSlDec, "-", {Kind::Slider, -1, -1}, false, canEdit, Role::Text, Part::Less);
         b.Button(kSlInc, "+", {Kind::Slider, -1, 1}, false, canEdit, Role::Text, Part::More);
         const int midY = kSlTrack.y + kSlTrack.h / 2;
@@ -309,14 +308,14 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
             b.Fill({thumbX - 14, midY - 24, 28, 48}, !canEdit ? Role::Off : square ? (hot ? Role::Hot : edited ? Role::Warn : Role::Accent) : Role::Button, Part::Knob);
             if (!square) b.Fill({thumbX - 10, midY - 20, 20, 40}, Role::Back, Part::Knob);   // a hollow thumb: the choice is not a square
         }
-        b.Text("1024", {kSlEnds.x, kSlEnds.y, 200, kSlEnds.h}, Face::Small, Role::Quiet);
-        b.Text("4096", {kSlEnds.x + kSlEnds.w - 200, kSlEnds.y, 200, kSlEnds.h}, Face::Small, Role::Quiet, Align::Right);
-        b.Text(video::CostText(pick, env), kVidCost, Face::Small, Role::Quiet);
+        // one line under the rows (five since the Potato light's two brightnesses): the size limit's warning, else - while a new size waits for
+        // Apply - what Apply will do, else the cost (hset_model.h kVidCost / kVidLimit / kVidNote: one place)
         const std::string limit = video::LimitText(pick, env);
         if (!limit.empty()) b.Text(limit, kVidLimit, Face::Small, Role::Warn);
-        b.Text(uitext::Tr("vr.video.note", "Apply rebuilds the picture: the game freezes a few seconds (about 7)."), kVidNote, Face::Normal, Role::Warn);
+        else if (edited) b.Text(uitext::Tr("vr.video.note", "Apply rebuilds the picture: the game freezes a few seconds (about 7)."), kVidNote, Face::Small, Role::Warn);
+        else b.Text(video::CostText(pick, env), kVidCost, Face::Small, Role::Quiet);
         if (m.Auto().on)   // [autotune]: measures and steps the settings down to the headset's rate (not with a size picked and not applied)
-            b.Button(kAutoBtn, uitext::Tr("vr.autotune.button", "Auto"), {Kind::Auto, 0, 0}, false, canEdit && !edited, Role::Accent);
+            b.Button(kAutoBtn, uitext::Tr("vr.autotune.button", "Auto"), {Kind::Auto, 0, 0}, false, canEdit && !m.Dirty(), Role::Accent);
     } else if (m.page == kPageBody) {
         // -- the T-pose measurement -----------------------------------------------------------------------------
         // (how you play, standing / seated, is the page's table row above: drawn with the other pages' rows below)
@@ -507,17 +506,24 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     }
     const int pg = m.page, step = RowStep(pg);
     const bool close = CloseRows(pg);   // seven rows: the two lines of a row's name a little smaller and closer
-    const bool world = HasSubRow(pg);   // under a tab's page buttons (World, Controls): closer still, the name in the normal face (D2R VR Settings' longer labels fit it)
-    for (int r = 0; r < kRowsMax; ++r) {
+    const bool world = HasSubRow(pg) || pg == kPageVideo;   // under a tab's page buttons (World, Controls), the Video page's six: closer still, the name in the normal face
+    const int rowsMax = pg == kPageVideo && m.AutoShown() ? 0 : kRowsMax;   // (the Video page's rows hidden under the Auto run's lines)
+    for (int r = 0; r < rowsMax; ++r) {
         const int key = KeyAt(pg, r, m.View());   // (the view's rows: VR F1 - F3 leave out F4's, hset_defs.h KeyShown)
         if (key < 0) break;
         const Def& d = kDefs[key];
         const int y = RowY(r, pg);
-        const bool rowEdit = canEdit;
+        const bool noVrs = m.Env().vrs == 0 && NeedsVrs(key);   // (greyed: no variable rate shading on this card)
+        const bool rowEdit = canEdit && !noVrs;
         b.Fill({32, y - 5, 960, step - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
         b.Text(DefLabel(key), world ? Rect{48, y - 5, 530, 27} : close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, world ? Face::Normal : Face::Bold, Role::Text);
-        b.Text(d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
-               world ? Rect{48, y + 21, 530, 24} : close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small, Role::Quiet);
+        // (the render type's line: when the type in the draft takes effect - one pass after a restart when it was off at the start, vr/hset_names.h)
+        const bool onePassWaits = key == kKeyPairPerTick && rendertype::FromKeys(RenderTypeKeys(m.Get())) == rendertype::kNativeOne && !m.Env().replayAtStart;
+        b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
+               : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
+               : d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
+               world ? Rect{48, y + 21, 530, 24} : close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small,
+               onePassWaits ? Role::Warn : Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
             const bool usable = m.PlayersUsable();
@@ -552,6 +558,10 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     // the Co-op tab's two pages: Party from the relay's, Relay back ([openxr] headset_party off: no Party button; the page, reached by a flick, says so)
     if (m.page == kPageCoop && m.PartyOn()) b.Button(kPreviewBtn, uitext::Tr("vr.party.go", "Party"), {Kind::Tab, kPageParty, 0}, false, true, Role::Accent);
     if (m.page == kPageParty) b.Button(kPreviewBtn, uitext::Tr("vr.party.back", "Relay"), {Kind::Tab, kPageCoop, 0});
+    // the Video tab's two pages: Render (foveated rendering and the other render-cost switches; F4 only, as they are) from the Video page, Video back
+    if (m.page == kPageVideo && PageShown(kPageRender, m.View()))
+        b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.go", "Render"), {Kind::Tab, kPageRender, 0}, false, true, Role::Accent);
+    if (m.page == kPageRender) b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.back", "Video"), {Kind::Tab, kPageVideo, 0});
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
     const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)

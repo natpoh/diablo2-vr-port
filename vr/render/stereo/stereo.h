@@ -16,6 +16,8 @@
 #include "../../fx_native.h"   // fxnative::Runtime
 #include "../../resize_drain.h"   // resizedrain::Why
 
+namespace natived3d { struct Sinks; }
+
 namespace vrc {
 
 // vr/render/stereo/replay.cpp: one CPU pass, two GPU frames (the right eye from the left's lists), the overlays, native OpenXR's pair
@@ -30,6 +32,11 @@ struct OverlayTell {
 };
 void BeginLeft();
 bool DlssBoth();
+// [stereo] native_replay (vr/native_replay.h): the sinks at the plugin's load, the keys from the ini, whether it is on
+void NativeSinks(natived3d::Sinks& k);
+void SetWant(int replayRight, int nativeKey);
+bool NativeOn();
+bool NativeAtStart();   // its hooks went in at the game's start (one pass can run this session)
 bool DrawOverlays(reshade::api::effect_runtime* rt, ID3D12Resource* target, int eye, DXGI_FORMAT fmt, bool backBuffer);
 bool FxFence();
 void MonitorPresent(reshade::api::effect_runtime* rt, HWND wnd, ID3D12CommandQueue* q, ID3D12Resource* bb);

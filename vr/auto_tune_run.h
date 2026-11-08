@@ -49,6 +49,8 @@ struct View {
     State state = State::Idle;
     int measured = 0, left = 0;  // measures so far, still to come (rough)
     bool reached = false, aborted = false;
+    bool belowMin = false;       // the ladder's last rung (Potato, 1200 px) still short: the PC is below the minimum here
+    int limit = 0;               // ... held back by: 1 the graphics card (GPU), 2 the processor (CPU)
     float targetFps = 0, hz = 0, startFps = 0, nowFps = 0;
     std::vector<Row> rows;       // the measured steps (probes, down, up, final)
     std::vector<Row> changes;    // the result: what differs from the player's own settings

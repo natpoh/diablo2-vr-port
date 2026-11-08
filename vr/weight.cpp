@@ -87,6 +87,10 @@ std::atomic<bool> g_placed{false};    // a weapon held that way
 std::atomic<float> g_steelKg{0.0f};   // [weight] knock_props: its steel on the last step
 struct EndsOut { float butt[3], tip[3]; ULONGLONG at; };
 EndsOut g_ends{};
+// [debug] grip_trace / grip_draw (view only): a line per grip press and per change of who holds the weapon; the second hand's take zone for the drawing
+std::atomic<bool> g_gripTrace{false}, g_gripDraw{false};
+bool g_traceDown[2] = {false, false};   // the press's hysteresis, the trace's own (the step's thread)
+GripZoneDraw g_zoneDraw{};               // under g_lock
 std::atomic<LogFn> g_log{nullptr};
 ThrowRelease g_throw;                              // a grip release that is a throw (vr/weight_throw.h); under g_lock
 ThrownFly g_thrownFly;                             // a thrown weapon's visit, until it is done
@@ -1580,6 +1584,50 @@ void Apply(skel::Input* in, Out* out) {
             }
         }
         if (g_hold.Held() && g_hold.Main() != mainWas) LogF("vrcam: weight - now in the %s hand", HandName(g_hold.Main()));
+        if (g_gripTrace.load(std::memory_order_relaxed)) {   // [debug] grip_trace: each press with what was in reach, and who holds it after every change
+            const hh::Shape& cur = g_hold.WeaponShape();
+            const double shaftCm = (cur.tip - cur.butt) * 100.0, hiltCm = (g_hold.HiltEnd(s) - cur.butt) * 100.0;
+            const bool hiltRule = s.hiltOnly && hiltCm < shaftCm - 0.05;
+            const Pose bp = g_hold.BodyPose();
+            const auto onShaftCm = [&](int side) {   // where a holding hand is along the shaft, cm from the pommel (the "takes it" line's measure)
+                const Pose on = g_hold.OnWeapon(side);
+                const double along = heft::Dot(heft::Sub(on.pos, heft::Add(bp.pos, heft::Rotate(bp.rot, g_hold.ShaftLine().at))), heft::Rotate(bp.rot, g_hold.ShaftLine().dir));
+                return (along - cur.butt) * 100.0;
+            };
+            const auto state = [&](char* b, size_t n) {
+                const char* where = g_hold.Held() ? "held" : g_hold.Flying() ? "flying back" : g_hold.Stowed() ? "on the back" : g_hold.Away() ? "off the hands (falling or lying)" : "placed";
+                char r[24] = "-", l[24] = "-";
+                if (g_out[0].holds) snprintf(r, sizeof r, "%.1f", onShaftCm(0));
+                if (g_out[1].holds) snprintf(l, sizeof l, "%.1f", onShaftCm(1));
+                snprintf(b, n, "weapon in the %s slot, %s - holds right %d left %d, first %s, main %s; on the shaft (cm from the pommel, of %.1f): right %s, left %s", HandName(slot), where,
+                         (int)g_out[0].holds, (int)g_out[1].holds, g_hold.First() >= 0 ? HandName(g_hold.First()) : "-", g_hold.Main() >= 0 ? HandName(g_hold.Main()) : "-", shaftCm, r, l);
+            };
+            static const char* const zoneName[4] = {"nothing (out of reach)", "the shaft", "the back (behind a shoulder)", "a call back"};
+            for (int side = 0; side < 2; ++side) {
+                const float gv = hi[side].grip;
+                const bool down = gv > 0.6f ? true : gv < 0.4f ? false : g_traceDown[side];
+                if (down && !g_traceDown[side]) {
+                    double along = 0.0, off = 0.0, m = 1e9;
+                    const bool probe = g_hold.Probe(side, hi[side], s, &along, &off);
+                    const hh::Hold::TakeAt at = g_hold.TakeZone(side, hi[side], s, &m);   // (the zone as it stands after this step: the hand may have taken it already)
+                    char st[320], hilt[96] = "";
+                    state(st, sizeof st);
+                    if (hiltRule && g_hold.Held() && !g_out[side].holds)
+                        snprintf(hilt, sizeof hilt, "; a second hand takes it only up to %.1f cm (+ %.1f margin)", hiltCm, s.hiltMargin * 100.0);
+                    LogF("vrcam: grip trace - the %s grip pressed%s%s: %s; the fist %s%.1f cm off the shaft (a grip takes within %.1f), %.1f cm from the pommel%s | %s", HandName(side),
+                         hi[side].busy ? " (the hand is busy)" : "", hi[side].claimed ? " (the grip is claimed)" : "", g_out[side].holds && !was[side].holds ? "took it" : zoneName[(int)at & 3],
+                         probe ? "" : "(not measured) ", off * 100.0, s.grabDistance * 100.0, along * 100.0, hilt, st);
+                }
+                g_traceDown[side] = down;
+            }
+            const bool changed = g_out[0].holds != was[0].holds || g_out[1].holds != was[1].holds || g_hold.Main() != mainWas || g_hold.Held() != heldWas ||
+                                 g_hold.Flying() != flyWas || g_hold.Stowed() != stowWas || g_out[0].grabs != was[0].grabs || g_out[1].grabs != was[1].grabs;
+            if (changed) {
+                char st[320];
+                state(st, sizeof st);
+                LogF("vrcam: grip trace - now: %s", st);
+            }
+        }
         {   // [gameplay] melee_not_butt: where each holding hand is on the shaft - metres ahead (toward the tip) of the weapon bone's origin, the game's own grip
             const Pose b = g_hold.BodyPose();
             const bool measured = g_shaftKey == g_key;
@@ -1606,6 +1654,36 @@ void Apply(skel::Input* in, Out* out) {
         for (int i = 0; i < 3; ++i) { e.butt[i] += in->handOffset[i]; e.tip[i] += in->handOffset[i]; }   // drawn beside the controllers as the hands
         e.at = GetTickCount64();
         g_ends = e;
+        if (g_gripDraw.load(std::memory_order_relaxed)) {   // [debug] grip_draw: the second hand's take zone (the pommel to the hilt's end, or the whole shaft) and each holding hand's place on it
+            const hh::Shape& cur = g_hold.WeaponShape();
+            const double len = cur.tip - cur.butt;
+            GripZoneDraw z{};
+            if (len > 1e-3) {
+                const auto at = [&](double fromButt, float out[3]) {
+                    const double t = std::clamp(fromButt / len, 0.0, 1.0);
+                    const V3 p = heft::Add(butt, heft::Mul(heft::Sub(tip, butt), t));
+                    FromRoom(head, {p, {}}, out, q);
+                    for (int i = 0; i < 3; ++i) out[i] += in->handOffset[i];
+                };
+                const bool hiltRule = s.hiltOnly && g_hold.HiltEnd(s) < cur.tip - 1e-6;
+                at(hiltRule ? g_hold.HiltEnd(s) - cur.butt + std::max(0.0, s.hiltMargin) : len, z.zoneEnd);
+                memcpy(z.butt, e.butt, sizeof z.butt);
+                memcpy(z.tip, e.tip, sizeof z.tip);
+                z.reach = (float)s.grabDistance;
+                z.hiltOnly = hiltRule;
+                z.held = g_hold.Held();
+                const Pose bp = g_hold.BodyPose();
+                for (int side = 0; side < 2; ++side) {
+                    z.holds[side] = g_out[side].holds;
+                    if (!z.holds[side]) continue;
+                    const Pose on = g_hold.OnWeapon(side);
+                    const double along = heft::Dot(heft::Sub(on.pos, heft::Add(bp.pos, heft::Rotate(bp.rot, g_hold.ShaftLine().at))), heft::Rotate(bp.rot, g_hold.ShaftLine().dir));
+                    at(along - cur.butt, z.hand[side]);
+                }
+                z.at = e.at;
+            }
+            g_zoneDraw = z;
+        }
     }
     uint32_t holding = 0;
     for (int side = 0; side < 2; ++side) {
@@ -1930,6 +2008,22 @@ bool Aim(AimInfo* out) {
     return a.hand >= 0 && std::isfinite(a.shaft[0] + a.shaft[1] + a.shaft[2]);
 }
 
+void SetGripTrace(bool on) {
+    if (g_gripTrace.exchange(on) != on) LogF(on ? "vrcam: grip trace - [debug] grip_trace=1: a line for every grip press (what was in reach, how far, where on the shaft) and every change of who holds the weapon"
+                                                : "vrcam: grip trace - [debug] grip_trace=0");
+}
+bool GripTrace() { return g_gripTrace.load(std::memory_order_relaxed); }
+void SetGripDraw(bool on) { g_gripDraw.store(on); }
+bool GripDraw() { return g_gripDraw.load(std::memory_order_relaxed); }
+bool ZoneDraw(GripZoneDraw* out) {
+    AcquireSRWLockShared(&g_lock);
+    const GripZoneDraw z = g_zoneDraw;
+    const bool on = g_hold.Placed();
+    ReleaseSRWLockShared(&g_lock);
+    if (!on || !z.at || GetTickCount64() - z.at > 300) return false;
+    *out = z;
+    return true;
+}
 bool ShaftEnds(float butt[3], float tip[3]) {
     AcquireSRWLockShared(&g_lock);
     const EndsOut e = g_ends;
@@ -1991,6 +2085,11 @@ bool Reached(uint32_t, uint64_t) { return false; }
 void Knock(const float*, float, int) {}
 int TakeZone(int, float* cm) { if (cm) *cm = 1e6f; return 0; }
 bool ShaftEnds(float*, float*) { return false; }
+void SetGripTrace(bool) {}
+bool GripTrace() { return false; }
+void SetGripDraw(bool) {}
+bool GripDraw() { return false; }
+bool ZoneDraw(GripZoneDraw*) { return false; }
 bool Aim(AimInfo* out) { if (out) *out = AimInfo{}; return false; }
 void SetLog(LogFn) {}
 void SetThrowSource(GripIsThrowsFn, LastThrowFn) {}

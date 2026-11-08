@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "hset_model.h"
+#include "pose_zones.h"
 #include "wheel_controller.h"
 
 namespace D2RL {
@@ -44,6 +45,8 @@ void SetSettingsHost(const hset::video::Env& env);
 // xr.cpp ReadProfiles: the interaction profile path each hand runs now ("" / null = none). The tiles name the controller's own buttons by it.
 void SetProfiles(const char* left, const char* right);
 bool Enabled();
+// [openxr] skill_rt_a: the right trigger casts the game's RT slot (else it is pad A: the A slot). Any thread.
+bool SlotControlsOn();
 // The panel is up now (as the last headset frame left it). [openxr] bare_hand_poses: a bare hand's pinch reaches only a panel of ours that is up. Any thread.
 bool IsOpen();
 // [openxr] skill_rt_a: this frame the right trigger is the game's RT slot and that slot holds a skill (the panel's slot controls own the trigger). The melee rule
@@ -52,8 +55,14 @@ bool TriggerCastsSkill();
 // [openxr] gesture_overlay: BodyWalk records for the Gestures tab now (its pen is the trigger): xr.cpp hangs BodyWalk's runes (the trail) over the panel
 // then, not under it. Any thread.
 bool GestureRecording();
+// The panel is up on its Gestures tab now (any of its screens, a recording too): [openxr] hands_over_panels draws the hands over the window only then
+// (vr/near_overlay.h). Any thread.
+bool GesturesTabOpen();
 // ... and the hand of that take (BW_LINK_GH_*): the gesture engine's pen (vr/gesture_engine.h Pens). Any thread.
 uint8_t GestureRecordHand();
+// The hand poses' zones to draw now (vr/pose_zones.h): round the hand while a pose is taken, at the recorded spots on its review, every live pose's in
+// play with [gestures] show_zones. vr/xr.cpp HangZones puts them in the room (F4). Any thread; how many.
+int PoseZones(posezones::Zone* out, int max);
 
 // vrcam's timer, every millisecond or so: cheap when off; queues the UI thread's reads.
 void Tick();

@@ -88,6 +88,41 @@ struct Sinks {
     void (*huntViewport)(ID3D12GraphicsCommandList* cl, float w, float h) = nullptr;
     // the capture's intermediate targets (vr/capture.h): a list's barriers before they go in - the sink may record on the list first
     void (*captureBarrier)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) = nullptr;
+    // [render] foveated (vr/foveation.h), each only from the game (never our own calls): a graphics pipeline it made (from a description, from a
+    // stream; after the real call), one a list binds (the game's own, before a swap of ours); what a list binds as targets - before the real
+    // call: the first colour target's resource and the depth-stencil's (nullptr: none, not known, or the plugin's own), how many colour
+    // targets; its first viewport; a Reset or a list made (a new recording); before each draw (DrawInstanced, DrawIndexedInstanced) and each
+    // ExecuteIndirect. The hooks these need beyond the ones above go in only when they are given.
+    void (*vrsGraphicsPso)(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso) = nullptr;
+    void (*vrsStreamPso)(const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso) = nullptr;
+    void (*vrsBound)(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) = nullptr;
+    void (*vrsTargets)(ID3D12GraphicsCommandList* cl, ID3D12Resource* colour0, ID3D12Resource* depth, unsigned n) = nullptr;
+    void (*vrsViewport)(ID3D12GraphicsCommandList* cl, const D3D12_VIEWPORT* vp) = nullptr;
+    void (*vrsReset)(ID3D12GraphicsCommandList* cl) = nullptr;
+    void (*vrsDraw)(ID3D12GraphicsCommandList* cl) = nullptr;
+    void (*vrsIndirect)(ID3D12GraphicsCommandList* cl) = nullptr;
+    // [stereo] native_replay (vr/native_replay.h): the game's buffers in CPU-visible memory (an upload heap, or a custom heap the CPU writes),
+    // as ReShade's init_resource / destroy_resource gave them to camfix - the camera's constants are read and copied from there. Made: after
+    // the real call (CreateCommittedResource, CreatePlacedResource and their later versions), mapped by us for good (`cpu` = its first byte,
+    // `va` its GPU address, `size` its bytes); gone: when D3D12 destroys it (a private-data object of ours on it is let go) - `r` is then only a
+    // key, never to be called. Given: the device's resource creation is hooked as well. Any thread.
+    void (*uploadMade)(ID3D12Resource* r, uint64_t va, uint64_t size, uint8_t* cpu) = nullptr;
+    void (*uploadGone)(ID3D12Resource* r) = nullptr;
+    // [render] shadows_once_a_pair (vr/shadows_once.h): everything a list of the game's WRITES, every list type, each before the real call (only the
+    // game's, never our own): a new recording (Reset, or a list made - any type); a bind (each colour target's resource and the depth-stencil's,
+    // nullptr none; `unknown`: a view not seen made, or the plugin's own); a clear, copy, resolve or discard into `dst` (a buffer too); a draw
+    // (kind 0), a dispatch (1), an indirect call (2), another kind of write (3: a bundle, CopyTiles, an atomic copy, an immediate buffer write, a
+    // render pass, a meta command, rays, a mesh dispatch, an enhanced barrier); the barriers. Given: those functions are hooked as well.
+    void (*soReset)(ID3D12GraphicsCommandList* cl) = nullptr;
+    void (*soTargets)(ID3D12GraphicsCommandList* cl, unsigned n, ID3D12Resource* const* rts, ID3D12Resource* ds, bool unknown) = nullptr;
+    void (*soWrite)(ID3D12GraphicsCommandList* cl, ID3D12Resource* dst) = nullptr;
+    void (*soWork)(ID3D12GraphicsCommandList* cl, int kind) = nullptr;
+    void (*soBarrier)(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) = nullptr;
+    // [render] lens_mask (vr/lens_mask.h): a list of the game's cleared a depth-stencil - AFTER the real ClearDepthStencilView (the sink may
+    // record on the list right behind it, in the game's order): its view's handle as given, its resource (nullptr: a view not seen made; the
+    // plugin's own are never told), the flags, the values and the rectangles as the game gave them. Given: ClearDepthStencilView is hooked.
+    void (*clearDsv)(ID3D12GraphicsCommandList* cl, uint64_t dsv, ID3D12Resource* ds, unsigned flags, float depth, uint8_t stencil,
+                     unsigned nRects, const tagRECT* rects) = nullptr;
 };
 // A root argument set on a list (Sinks::fxRoot): the compute root signature and arguments (given back after a dispatch of ours), and the
 // graphics descriptor tables (set again after our heaps were bound)
@@ -118,7 +153,8 @@ struct Stats {
 Stats TakeStats();
 
 // Our own list on the game's queue: an open list (nullptr: no allocator free within 100 ms, or none could be made), then Submit closes it and
-// runs it on q. One thread at a time (the present's). What it records does not reach the sinks.
+// runs it on q. One thread at a time (the present's). What it records does not reach the sinks. Ours() stays true through Submit's
+// ExecuteCommandLists, so a look at the queue's submissions ([stereo] native_replay's capture) can leave ours out.
 ID3D12GraphicsCommandList* OpenList(ID3D12Device* dev);
 void Submit(ID3D12CommandQueue* q);
 
@@ -151,5 +187,25 @@ bool Ours();
 // counted (the draw hook then does one compare). TakeWatched: draws and their instances since the last call.
 void WatchIndexCount(uint32_t indexCount);
 void TakeWatched(uint32_t* draws, uint32_t* instances);
+
+// [stereo] native_replay: the CPU-visible buffers told to uploadMade so far, and the ones told gone (the 10 s line; the tests)
+void UploadCounts(uint32_t* made, uint32_t* gone);
+
+// [debug] call_census (docs/notes/vr_cpu_overhead.md): the game's own calls through these hooks, counted per recording thread while on (live;
+// view only). TakeCensus: the calls since the last take, those of `drawThread` (the game's draw / present thread) apart from all the others',
+// and how many threads recorded. Only the functions hooked in this run are counted (DrawInstanced, Dispatch, ExecuteIndirect and
+// SetPipelineState: hooked whenever the pipe hunt's sinks are given - always in the game).
+enum CensusKind : int {
+    kCensusReset = 0, kCensusDrawIndexed, kCensusDraw, kCensusDispatch, kCensusIndirect, kCensusPso, kCensusTargets, kCensusBarrierCalls,
+    kCensusBarriers, kCensusViewports, kCensusScissors, kCensusClearRtv, kCensusClearDsv, kCensusKinds
+};
+struct Census {
+    uint32_t draw[kCensusKinds] = {}, other[kCensusKinds] = {};
+    int threads = 0;
+    bool lost = false;   // more recording threads than slots: some not counted
+};
+void SetCensus(bool on);
+bool CensusOn();
+Census TakeCensus(unsigned long drawThread);
 
 }  // namespace natived3d

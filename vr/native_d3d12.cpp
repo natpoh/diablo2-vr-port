@@ -72,6 +72,74 @@ std::atomic<bool> g_deviceHooked{false};
 std::atomic<uint32_t> g_presents{0}, g_depthBinds{0}, g_unknownViews{0};
 std::atomic<bool> g_swapSeen{false};
 
+// The views' lookups on the lists' calls without a lock (docs/notes/vr_cpu_overhead.md): each recording thread keeps the last views it looked up,
+// thrown away whenever any view of that type is made or copied over (the generation moves - the maps' writers bump it after their write). A
+// lookup that misses takes the map's shared lock as before. Before this, one OMSetRenderTargets took g_viewLock up to five times (one per sink).
+std::atomic<uint32_t> g_dsvGen{1}, g_rtvGen{1};
+struct ViewCache {
+    static constexpr int kN = 32;
+    uint32_t gen = 0;
+    SIZE_T key[kN] = {};
+    ID3D12Resource* res[kN] = {};
+    uint8_t state[kN] = {};   // 0 empty, 1 in the map (res: nullptr = the plugin's own), 2 not in the map
+};
+thread_local ViewCache t_dsvCache, t_rtvCache;
+inline int CacheSlot(SIZE_T h) { return (int)(((uint64_t)h * 0x9E3779B97F4A7C15ull) >> 59); }   // (32 slots)
+template <class Map>
+ID3D12Resource* CachedView(ViewCache& c, const std::atomic<uint32_t>& gen, SRWLOCK* lock, const Map& map, SIZE_T h, bool* known) {
+    const uint32_t g = gen.load(std::memory_order_acquire);
+    if (c.gen != g) {
+        c.gen = g;
+        memset(c.state, 0, sizeof c.state);
+    }
+    const int i = CacheSlot(h);
+    if (c.state[i] && c.key[i] == h) {
+        if (known) *known = c.state[i] == 1;
+        return c.res[i];
+    }
+    AcquireSRWLockShared(lock);
+    const auto it = map.find(h);
+    const bool in = it != map.end();
+    ID3D12Resource* r = in ? it->second : nullptr;
+    ReleaseSRWLockShared(lock);
+    c.key[i] = h;
+    c.res[i] = r;
+    c.state[i] = in ? 1 : 2;
+    if (known) *known = in;
+    return r;
+}
+// A depth-stencil view's resource: nullptr = not known (`*known` false) or the plugin's own (true).
+ID3D12Resource* DsvResource(SIZE_T h, bool* known) { return CachedView(t_dsvCache, g_dsvGen, &g_viewLock, g_views, h, known); }
+
+// [debug] call_census (natived3d::SetCensus): the game's calls through these hooks, counted per recording thread - each thread its own slot
+// (no shared counter on the way: a plain increment of its own), summed by the 10 s line. Off: one relaxed load a call.
+std::atomic<bool> g_census{false};
+#pragma warning(push)
+#pragma warning(disable : 4324)   // (padded to its cache line on purpose: no two threads' slots share one)
+struct alignas(64) CensusSlot {
+    std::atomic<DWORD> tid{0};
+    std::atomic<uint32_t> n[kCensusKinds] = {};
+};
+#pragma warning(pop)
+constexpr int kCensusSlots = 64;
+CensusSlot g_censusSlot[kCensusSlots];
+std::atomic<int> g_censusUsed{0};
+thread_local CensusSlot* t_census = nullptr;
+thread_local bool t_censusFull = false;
+inline void Count(int kind, uint32_t n = 1) {
+    if (!g_census.load(std::memory_order_relaxed)) return;
+    CensusSlot* s = t_census;
+    if (!s) {
+        if (t_censusFull) return;
+        const int i = g_censusUsed.fetch_add(1);
+        if (i >= kCensusSlots) { t_censusFull = true; return; }
+        s = &g_censusSlot[i];
+        s->tid.store(GetCurrentThreadId());
+        t_census = s;
+    }
+    s->n[kind].store(s->n[kind].load(std::memory_order_relaxed) + n, std::memory_order_relaxed);   // (only this thread writes it)
+}
+
 // The plugin's own resources are named "d2rvr ..." (turn_warp's depth tests): their depth-stencil binds are not the game's scene.
 bool Ours(ID3D12Resource* r) {
     static const GUID kName = {0x4cca5fd8, 0x921f, 0x42c8, {0x85, 0x66, 0x70, 0xca, 0xf2, 0xa9, 0xb7, 0x41}};   // WKPDID_D3DDebugObjectNameW
@@ -95,6 +163,7 @@ void STDMETHODCALLTYPE HookCreateRtv(ID3D12Device* d, ID3D12Resource* r, const D
     AcquireSRWLockExclusive(&g_rtvLock);
     g_rtvs[h.ptr] = r;
     ReleaseSRWLockExclusive(&g_rtvLock);
+    g_rtvGen.fetch_add(1, std::memory_order_release);   // (every thread's cached RTV lookups thrown away)
 }
 // [fog] game_fog_before_fx: shader-resource views of R11G11B10 2D textures, by slot (TrackSceneViews). Every view made or copied over a slot
 // takes it out unless it is one of them; the lock shared for the look (most views are not), exclusive only to change.
@@ -198,6 +267,7 @@ void CopiedViews(D3D12_DESCRIPTOR_HEAP_TYPE type, SIZE_T to, SIZE_T from, UINT n
         else map.erase(to + i * inc);
     }
     ReleaseSRWLockExclusive(lock);
+    (rtv ? g_rtvGen : g_dsvGen).fetch_add(1, std::memory_order_release);
 }
 void STDMETHODCALLTYPE HookCopyDesc(ID3D12Device* d, UINT nDst, const D3D12_CPU_DESCRIPTOR_HANDLE* dst, const UINT* dstSizes, UINT nSrc,
                                     const D3D12_CPU_DESCRIPTOR_HANDLE* src, const UINT* srcSizes, D3D12_DESCRIPTOR_HEAP_TYPE type) {
@@ -223,11 +293,19 @@ void STDMETHODCALLTYPE HookCopyDescSimple(ID3D12Device* d, UINT n, D3D12_CPU_DES
 HRESULT STDMETHODCALLTYPE HookCreateList(ID3D12Device* d, UINT mask, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator* a, ID3D12PipelineState* ps,
                                          REFIID riid, void** out) {
     const HRESULT hr = g_origCreateList(d, mask, type, a, ps, riid, out);
-    if (SUCCEEDED(hr) && out && *out && !t_ours && (g_sinks.listReset || g_sinks.fxReset) && type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+    if (SUCCEEDED(hr) && out && *out && !t_ours && (g_sinks.listReset || g_sinks.fxReset || g_sinks.vrsReset) && type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
         ID3D12GraphicsCommandList* l = nullptr;
         if (SUCCEEDED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12GraphicsCommandList), (void**)&l)) && l) {
+            if (g_sinks.vrsReset) g_sinks.vrsReset(l);
             if (g_sinks.listReset) g_sinks.listReset(l);
             if (g_sinks.fxReset) g_sinks.fxReset(l);
+            l->Release();
+        }
+    }
+    if (SUCCEEDED(hr) && out && *out && !t_ours && g_sinks.soReset) {   // [render] shadows_once_a_pair: every type (a copy list may copy into the maps)
+        ID3D12GraphicsCommandList* l = nullptr;
+        if (SUCCEEDED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12GraphicsCommandList), (void**)&l)) && l) {
+            g_sinks.soReset(l);
             l->Release();
         }
     }
@@ -239,6 +317,159 @@ void STDMETHODCALLTYPE HookCreateDsv(ID3D12Device* d, ID3D12Resource* r, const D
     AcquireSRWLockExclusive(&g_viewLock);
     g_views[h.ptr] = keep;
     ReleaseSRWLockExclusive(&g_viewLock);
+    g_dsvGen.fetch_add(1, std::memory_order_release);
+}
+
+// ---- [stereo] native_replay: the game's CPU-visible buffers (Sinks::uploadMade / uploadGone)
+// Every way a resource is made that can land in an upload heap: CreateCommittedResource (27) and CreatePlacedResource (29); Device4's
+// CreateCommittedResource1 (53); Device8's CreateCommittedResource2 (69) and CreatePlacedResource1 (70); Device10's CreateCommittedResource3 (76)
+// and CreatePlacedResource2 (77) - the indices counted in d3d12.h's own vtables (each with the #if twins of GetResourceAllocationInfo,
+// GetCustomHeapProperties and GetAdapterLuid taken once). Only the outermost of nested ones tells (the runtime may make one through another, the
+// debug layer forwards to the runtime's). The descriptions are not read (only the made resource's own GetDesc / GetHeapProperties): the
+// later versions' parameters stay untyped here.
+std::atomic<uint32_t> g_uploadsMade{0}, g_uploadsGone{0};
+thread_local int t_making = 0;
+// Let go by D3D12 when the resource is destroyed (SetPrivateDataInterface keeps a reference): the resource's pointer told gone.
+class GoneWatch final : public IUnknown {
+public:
+    explicit GoneWatch(ID3D12Resource* r) : r_(r) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** out) override {
+        if (!out) return E_POINTER;
+        if (riid == __uuidof(IUnknown)) { *out = this; AddRef(); return S_OK; }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)++refs_; }
+    ULONG STDMETHODCALLTYPE Release() override {
+        const long n = --refs_;
+        if (n == 0) {
+            g_uploadsGone.fetch_add(1, std::memory_order_relaxed);
+            if (g_sinks.uploadGone) g_sinks.uploadGone(r_);
+            delete this;
+        }
+        return (ULONG)n;
+    }
+private:
+    std::atomic<long> refs_{1};
+    ID3D12Resource* r_;
+};
+const GUID kGoneWatch = {0x7d1c3e52, 0x5b0a, 0x4f6e, {0x9a, 0x41, 0x2d, 0x8e, 0x63, 0xb7, 0x0c, 0x19}};   // d2rvr: upload buffer watched
+void MadeResource(REFIID riid, void** out) {
+    if (!g_sinks.uploadMade || !out || !*out) return;
+    ID3D12Resource* r = nullptr;
+    if (FAILED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12Resource), (void**)&r)) || !r) return;
+    (void)riid;
+    const D3D12_RESOURCE_DESC d = r->GetDesc();
+    D3D12_HEAP_PROPERTIES hp{};
+    D3D12_HEAP_FLAGS hf{};
+    bool cpu = false;
+    if (d.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER && SUCCEEDED(r->GetHeapProperties(&hp, &hf)))
+        cpu = hp.Type == D3D12_HEAP_TYPE_UPLOAD ||
+              (hp.Type == D3D12_HEAP_TYPE_CUSTOM && (hp.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_COMBINE ||
+                                                      hp.CPUPageProperty == D3D12_CPU_PAGE_PROPERTY_WRITE_BACK));
+    uint8_t* p = nullptr;
+    const D3D12_RANGE none{0, 0};
+    if (cpu && SUCCEEDED(r->Map(0, &none, (void**)&p)) && p) {
+        GoneWatch* w = new GoneWatch(r);
+        if (SUCCEEDED(r->SetPrivateDataInterface(kGoneWatch, w))) {   // (it holds its own reference now)
+            g_uploadsMade.fetch_add(1, std::memory_order_relaxed);
+            g_sinks.uploadMade(r, r->GetGPUVirtualAddress(), d.Width, p);
+        }
+        w->Release();
+    }
+    r->Release();
+}
+using CreateCommittedFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, const D3D12_HEAP_PROPERTIES*, D3D12_HEAP_FLAGS, const D3D12_RESOURCE_DESC*,
+                                                      D3D12_RESOURCE_STATES, const D3D12_CLEAR_VALUE*, REFIID, void**);
+using CreatePlacedFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Heap*, UINT64, const D3D12_RESOURCE_DESC*, D3D12_RESOURCE_STATES,
+                                                   const D3D12_CLEAR_VALUE*, REFIID, void**);
+// (the later versions, untyped: heap properties / heap, flags or offset, description, state or layout, clear value, then their own extras)
+using CreateCommitted1Fn = HRESULT(STDMETHODCALLTYPE*)(void*, const void*, UINT, const void*, UINT, const void*, void*, REFIID, void**);
+using CreatePlaced1Fn = HRESULT(STDMETHODCALLTYPE*)(void*, void*, UINT64, const void*, UINT, const void*, REFIID, void**);
+using CreateCommitted3Fn = HRESULT(STDMETHODCALLTYPE*)(void*, const void*, UINT, const void*, UINT, const void*, void*, UINT32, const void*, REFIID, void**);
+using CreatePlaced2Fn = HRESULT(STDMETHODCALLTYPE*)(void*, void*, UINT64, const void*, UINT, const void*, UINT32, const void*, REFIID, void**);
+CreateCommittedFn g_origCommitted = nullptr;
+CreatePlacedFn g_origPlaced = nullptr;
+CreateCommitted1Fn g_origCommitted1 = nullptr, g_origCommitted2 = nullptr;
+CreatePlaced1Fn g_origPlaced1 = nullptr;
+CreateCommitted3Fn g_origCommitted3 = nullptr;
+CreatePlaced2Fn g_origPlaced2 = nullptr;
+struct Making { Making() { ++t_making; } ~Making() { --t_making; } bool Outer() const { return t_making == 1; } };
+HRESULT STDMETHODCALLTYPE HookCommitted(ID3D12Device* d, const D3D12_HEAP_PROPERTIES* hp, D3D12_HEAP_FLAGS f, const D3D12_RESOURCE_DESC* desc,
+                                        D3D12_RESOURCE_STATES s, const D3D12_CLEAR_VALUE* c, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origCommitted(d, hp, f, desc, s, c, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookPlaced(ID3D12Device* d, ID3D12Heap* h, UINT64 at, const D3D12_RESOURCE_DESC* desc, D3D12_RESOURCE_STATES s,
+                                     const D3D12_CLEAR_VALUE* c, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origPlaced(d, h, at, desc, s, c, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookCommitted1(void* d, const void* hp, UINT f, const void* desc, UINT s, const void* c, void* ps, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origCommitted1(d, hp, f, desc, s, c, ps, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookCommitted2(void* d, const void* hp, UINT f, const void* desc, UINT s, const void* c, void* ps, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origCommitted2(d, hp, f, desc, s, c, ps, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookPlaced1(void* d, void* h, UINT64 at, const void* desc, UINT s, const void* c, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origPlaced1(d, h, at, desc, s, c, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookCommitted3(void* d, const void* hp, UINT f, const void* desc, UINT layout, const void* c, void* ps, UINT32 nf,
+                                         const void* fmts, REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origCommitted3(d, hp, f, desc, layout, c, ps, nf, fmts, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookPlaced2(void* d, void* h, UINT64 at, const void* desc, UINT layout, const void* c, UINT32 nf, const void* fmts,
+                                      REFIID riid, void** out) {
+    const Making m;
+    const HRESULT hr = g_origPlaced2(d, h, at, desc, layout, c, nf, fmts, riid, out);
+    if (SUCCEEDED(hr) && m.Outer()) MadeResource(riid, out);
+    return hr;
+}
+// The device's resource creation, all versions it has (once, with the device's other hooks)
+bool HookResourceCreation(ID3D12Device* dev) {
+    void** vt = *(void***)dev;
+    bool ok = HookOne(vt[27], (void*)&HookCommitted, (void**)&g_origCommitted, "ID3D12Device::CreateCommittedResource");
+    ok &= HookOne(vt[29], (void*)&HookPlaced, (void**)&g_origPlaced, "ID3D12Device::CreatePlacedResource");
+    int versions = 1;
+    ID3D12Device4* d4 = nullptr;
+    if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12Device4), (void**)&d4)) && d4) {
+        ok &= HookOne((*(void***)d4)[53], (void*)&HookCommitted1, (void**)&g_origCommitted1, "ID3D12Device4::CreateCommittedResource1");
+        d4->Release();
+        versions = 4;
+    }
+    ID3D12Device8* d8 = nullptr;
+    if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12Device8), (void**)&d8)) && d8) {
+        ok &= HookOne((*(void***)d8)[69], (void*)&HookCommitted2, (void**)&g_origCommitted2, "ID3D12Device8::CreateCommittedResource2");
+        ok &= HookOne((*(void***)d8)[70], (void*)&HookPlaced1, (void**)&g_origPlaced1, "ID3D12Device8::CreatePlacedResource1");
+        d8->Release();
+        versions = 8;
+    }
+    ID3D12Device10* d10 = nullptr;
+    if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12Device10), (void**)&d10)) && d10) {
+        ok &= HookOne((*(void***)d10)[76], (void*)&HookCommitted3, (void**)&g_origCommitted3, "ID3D12Device10::CreateCommittedResource3");
+        ok &= HookOne((*(void***)d10)[77], (void*)&HookPlaced2, (void**)&g_origPlaced2, "ID3D12Device10::CreatePlacedResource2");
+        d10->Release();
+        versions = 10;
+    }
+    LogF("vrcam: native replay - the game's CPU-visible buffers followed (resource creation hooked up to ID3D12Device%d)%s", versions,
+         ok ? "" : " - NOT all (above)");
+    return ok;
 }
 
 // ---- the command lists
@@ -258,69 +489,91 @@ ClearRtvFn g_origClearRtv = nullptr;
 HRESULT STDMETHODCALLTYPE HookReset(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const InList in;
     const HRESULT hr = g_origReset(cl, a, ps);
+    if (in.outer && !t_ours) Count(kCensusReset);
     if (in.outer && !t_ours && g_sinks.huntBound && SUCCEEDED(hr)) g_sinks.huntBound(cl, ps);   // (a list starts with its Reset's pipeline)
+    if (in.outer && !t_ours && g_sinks.vrsReset && SUCCEEDED(hr)) g_sinks.vrsReset(cl);   // [render] foveated: a new recording, no rate image
     if (in.outer && !t_ours && g_sinks.listReset && SUCCEEDED(hr)) g_sinks.listReset(cl);
     if (in.outer && !t_ours && g_sinks.fxReset && SUCCEEDED(hr)) g_sinks.fxReset(cl);
+    if (in.outer && !t_ours && g_sinks.soReset && SUCCEEDED(hr)) g_sinks.soReset(cl);
     return hr;
 }
 void STDMETHODCALLTYPE HookScissors(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_RECT* r) {
     const InList in;
+    if (in.outer && !t_ours) Count(kCensusScissors);
     if (in.outer && !t_ours && g_sinks.scissors && n && r) g_sinks.scissors(cl, n, r);
     g_origScissors(cl, n, r);
 }
 // (before the clear, as ReShade's event: the interface's layer is learnt from its frame-start clear)
 void STDMETHODCALLTYPE HookClearRtv(ID3D12GraphicsCommandList* cl, D3D12_CPU_DESCRIPTOR_HANDLE h, const FLOAT* c, UINT n, const D3D12_RECT* r) {
     const InList in;
+    if (in.outer && !t_ours) Count(kCensusClearRtv);
     if (in.outer && !t_ours && g_sinks.clearRtv && c) g_sinks.clearRtv(cl, &h, c, n, r);
+    if (in.outer && !t_ours && g_sinks.soWrite) g_sinks.soWrite(cl, RtvResource((uint64_t)h.ptr));
     g_origClearRtv(cl, h, c, n, r);
+}
+
+// One hook, two users: [render] shadows_once_a_pair is told the write BEFORE the clear (soWrite: into what), [render] lens_mask AFTER it (the sink
+// records the hidden area's clear right behind the game's)
+using ClearDsvFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_CPU_DESCRIPTOR_HANDLE, D3D12_CLEAR_FLAGS, FLOAT, UINT8, UINT, const D3D12_RECT*);
+ClearDsvFn g_origClearDsv = nullptr;
+void STDMETHODCALLTYPE HookClearDsv(ID3D12GraphicsCommandList* cl, D3D12_CPU_DESCRIPTOR_HANDLE h, D3D12_CLEAR_FLAGS f, FLOAT depth, UINT8 stencil, UINT n,
+                                    const D3D12_RECT* r) {
+    const InList in;
+    const bool game = in.outer && !t_ours;
+    bool known = false;
+    ID3D12Resource* ds = game && (g_sinks.soWrite || g_sinks.clearDsv) ? DsvResource(h.ptr, &known) : nullptr;   // (one lookup for both)
+    if (game) Count(kCensusClearDsv);
+    if (game && g_sinks.soWrite) g_sinks.soWrite(cl, ds);
+    g_origClearDsv(cl, h, f, depth, stencil, n, r);
+    if (!game || !g_sinks.clearDsv) return;
+    if (known && !ds) return;   // the plugin's own depth-stencil
+    g_sinks.clearDsv(cl, (uint64_t)h.ptr, ds, (unsigned)f, depth, stencil, n, r);
 }
 
 void STDMETHODCALLTYPE HookOmSet(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, BOOL single,
                                  const D3D12_CPU_DESCRIPTOR_HANDLE* ds) {
     const InList in;
-    if (in.outer && !t_ours && g_sinks.fxTargets) {
-        ID3D12Resource* r = nullptr;
-        if (ds) {
-            AcquireSRWLockShared(&g_viewLock);
-            const auto it = g_views.find(ds->ptr);
-            r = it != g_views.end() ? it->second : nullptr;
-            ReleaseSRWLockShared(&g_viewLock);
-        }
-        g_sinks.fxTargets(cl, n, rts, single != FALSE, r, ds);
-    }
-    if (in.outer && !t_ours && g_sinks.bindDepth) {
-        ID3D12Resource* r = nullptr;
+    if (!in.outer || t_ours) { g_origOmSet(cl, n, rts, single, ds); return; }
+    Count(kCensusTargets);
+    // the depth-stencil's resource looked up once for every sink (nullptr: none bound, a view not seen made, or the plugin's own)
+    bool dsKnown = false;
+    ID3D12Resource* d = ds ? DsvResource(ds->ptr, &dsKnown) : nullptr;
+    if (g_sinks.vrsTargets)   // [render] foveated: first - the rate image taken off before anything else records here
+        g_sinks.vrsTargets(cl, n && rts ? RtvResource((uint64_t)rts[0].ptr) : nullptr, d, n);
+    if (g_sinks.fxTargets) g_sinks.fxTargets(cl, n, rts, single != FALSE, d, ds);
+    if (g_sinks.bindDepth) {
         bool tell = true;
         if (ds) {
-            AcquireSRWLockShared(&g_viewLock);
-            const auto it = g_views.find(ds->ptr);
-            const bool known = it != g_views.end();
-            r = known ? it->second : nullptr;
-            ReleaseSRWLockShared(&g_viewLock);
-            if (known && !r) tell = false;   // the plugin's own depth-stencil
-            else if (!known) g_unknownViews.fetch_add(1, std::memory_order_relaxed);
+            if (dsKnown && !d) tell = false;   // the plugin's own depth-stencil
+            else if (!dsKnown) g_unknownViews.fetch_add(1, std::memory_order_relaxed);
             else g_depthBinds.fetch_add(1, std::memory_order_relaxed);
         }
-        if (tell) g_sinks.bindDepth(cl, r, n);
+        if (tell) g_sinks.bindDepth(cl, d, n);
     }
-    if (in.outer && !t_ours && g_sinks.targets) g_sinks.targets(cl, n, rts, single != FALSE);
-    if (in.outer && !t_ours && g_sinks.huntTargets) {   // [debug] patch_hunt / capture: the pipe trace's columns (the sink looks only while it records)
-        ID3D12Resource* r = nullptr;
-        if (ds) {
-            AcquireSRWLockShared(&g_viewLock);
-            const auto it = g_views.find(ds->ptr);
-            r = it != g_views.end() ? it->second : nullptr;
-            ReleaseSRWLockShared(&g_viewLock);
+    if (g_sinks.targets) g_sinks.targets(cl, n, rts, single != FALSE);
+    if (g_sinks.soTargets) {   // [render] shadows_once_a_pair: each colour target's resource and the depth-stencil's
+        ID3D12Resource* rs[8] = {};
+        bool unknown = n > 8;
+        const unsigned inc = g_rtvInc.load(std::memory_order_relaxed);
+        for (unsigned i = 0; i < n && i < 8; ++i) {
+            const uint64_t h = rts ? (single ? (uint64_t)rts[0].ptr + (uint64_t)i * inc : (uint64_t)rts[i].ptr) : 0;
+            rs[i] = h ? RtvResource(h) : nullptr;
+            if (!rs[i]) unknown = true;
         }
-        g_sinks.huntTargets(cl, n, rts, single != FALSE, r);
+        if (ds && !d) unknown = true;   // (not seen made, or the plugin's own)
+        g_sinks.soTargets(cl, n < 8 ? n : 8, rs, d, unknown);
     }
+    if (g_sinks.huntTargets)   // [debug] patch_hunt / capture: the pipe trace's columns (the sink looks only while it records)
+        g_sinks.huntTargets(cl, n, rts, single != FALSE, d);
     g_origOmSet(cl, n, rts, single, ds);
 }
 void STDMETHODCALLTYPE HookBarrier(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_RESOURCE_BARRIER* b) {
     const InList in;
+    if (in.outer && !t_ours) { Count(kCensusBarrierCalls); Count(kCensusBarriers, n); }
     if (in.outer && !t_ours && g_sinks.captureBarrier && n && b) g_sinks.captureBarrier(cl, n, b);   // (the capture's targets: copied before the game's barrier)
     if (in.outer && !t_ours && g_sinks.barrier && n && b) g_sinks.barrier(cl, n, b);
     if (in.outer && !t_ours && g_sinks.fxBarrier && n && b) g_sinks.fxBarrier(cl, n, b);
+    if (in.outer && !t_ours && g_sinks.soBarrier && n && b) g_sinks.soBarrier(cl, n, b);
     g_origBarrier(cl, n, b);
 }
 // [sky] game_sky: does the game draw the dome at all (PC1 2026-10-27: placed and laid, nothing seen even at 50 units)? Its mesh's index count
@@ -336,8 +589,11 @@ void STDMETHODCALLTYPE HookDrawIndexed(ID3D12GraphicsCommandList* cl, UINT n, UI
     }
     {   // [fog] game_fog_before_fx: the resolve may be an indexed draw too (PC1 2026-10-28: never seen through DrawInstanced alone)
         const InList in;
+        if (in.outer && !t_ours) Count(kCensusDrawIndexed);
         if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 0)) return;   // [debug] skip_pipeline / patch_hunt 8
+        if (in.outer && !t_ours && g_sinks.vrsDraw) g_sinks.vrsDraw(cl);   // [render] foveated (before the fog step: the resolve's own rate)
         if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, true, n, inst, first, base, firstInst);
+        if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 0);
     }
     g_origDrawIndexed(cl, n, inst, first, base, firstInst);
 }
@@ -355,6 +611,8 @@ HRESULT STDMETHODCALLTYPE HookCreateGpso(ID3D12Device* dev, const D3D12_GRAPHICS
     const HRESULT hr = g_origCreateGpso(dev, d, riid, out);
     if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.graphicsPso && riid == __uuidof(ID3D12PipelineState))
         g_sinks.graphicsPso(dev, d, (ID3D12PipelineState*)*out);
+    if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.vrsGraphicsPso && riid == __uuidof(ID3D12PipelineState))
+        g_sinks.vrsGraphicsPso(d, (ID3D12PipelineState*)*out);
     return hr;
 }
 HRESULT STDMETHODCALLTYPE HookCreateCpso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, REFIID riid, void** out) {
@@ -367,11 +625,15 @@ HRESULT STDMETHODCALLTYPE HookCreatePso(ID3D12Device2* dev, const D3D12_PIPELINE
     const HRESULT hr = g_origCreatePso(dev, d, riid, out);
     if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.streamPso && riid == __uuidof(ID3D12PipelineState))
         g_sinks.streamPso(dev, d, (ID3D12PipelineState*)*out);
+    if (SUCCEEDED(hr) && out && *out && d && !t_ours && g_sinks.vrsStreamPso && riid == __uuidof(ID3D12PipelineState))
+        g_sinks.vrsStreamPso(d, (ID3D12PipelineState*)*out);
     return hr;
 }
 void STDMETHODCALLTYPE HookSetPso(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
     const InList in;
+    if (in.outer && !t_ours) Count(kCensusPso);
     if (in.outer && !t_ours && g_sinks.huntBound) g_sinks.huntBound(cl, pso);   // (the game's own, before a swap of ours)
+    if (in.outer && !t_ours && g_sinks.vrsBound) g_sinks.vrsBound(cl, pso);     // [render] foveated: the game's own too
     if (pso && !t_ours && g_sinks.psoSwap) pso = g_sinks.psoSwap(pso);
     g_origSetPso(cl, pso);
     if (in.outer && !t_ours && g_sinks.fxBound) g_sinks.fxBound(cl, pso);
@@ -448,8 +710,11 @@ void STDMETHODCALLTYPE HookCUav(ID3D12GraphicsCommandList* cl, UINT i, D3D12_GPU
 void STDMETHODCALLTYPE HookDraw(ID3D12GraphicsCommandList* cl, UINT n, UINT inst, UINT first, UINT firstInst) {
     {
         const InList in;
+        if (in.outer && !t_ours) Count(kCensusDraw);
         if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 0)) return;   // [debug] skip_pipeline / patch_hunt 8
+        if (in.outer && !t_ours && g_sinks.vrsDraw) g_sinks.vrsDraw(cl);   // [render] foveated
         if (in.outer && !t_ours && g_sinks.fxDraw) g_sinks.fxDraw(cl, false, n, inst, first, 0, firstInst);
+        if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 0);
     }
     g_origDraw(cl, n, inst, first, firstInst);
 }
@@ -461,7 +726,9 @@ IndirectFn g_origIndirect = nullptr;
 void STDMETHODCALLTYPE HookDispatch(ID3D12GraphicsCommandList* cl, UINT x, UINT y, UINT z) {
     {
         const InList in;
+        if (in.outer && !t_ours) Count(kCensusDispatch);
         if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 1)) return;
+        if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 1);
     }
     g_origDispatch(cl, x, y, z);
 }
@@ -469,13 +736,226 @@ void STDMETHODCALLTYPE HookIndirect(ID3D12GraphicsCommandList* cl, ID3D12Command
                                     ID3D12Resource* count, UINT64 countAt) {
     {
         const InList in;
+        if (in.outer && !t_ours) Count(kCensusIndirect);
         if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 2)) return;
+        if (in.outer && !t_ours && g_sinks.vrsIndirect) g_sinks.vrsIndirect(cl);   // [render] foveated: an indirect call is not known - whole
+        if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 2);
     }
     g_origIndirect(cl, sig, n, args, argsAt, count, countAt);
 }
 
+// [render] shadows_once_a_pair (vr/shadows_once.h): the other ways a list writes - each told to soWrite (into what) or soWork (3: another kind),
+// before the real call (inside its InList: the D3D12 debug layer's forward to the runtime's list is the same call, not told again)
+using ClearUavUFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_GPU_DESCRIPTOR_HANDLE, D3D12_CPU_DESCRIPTOR_HANDLE, ID3D12Resource*, const UINT*, UINT,
+                                             const D3D12_RECT*);
+using ClearUavFFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_GPU_DESCRIPTOR_HANDLE, D3D12_CPU_DESCRIPTOR_HANDLE, ID3D12Resource*, const FLOAT*, UINT,
+                                             const D3D12_RECT*);
+using DiscardFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, const D3D12_DISCARD_REGION*);
+using CopyBufFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64, UINT64);
+using CopyTexFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, const D3D12_TEXTURE_COPY_LOCATION*, UINT, UINT, UINT, const D3D12_TEXTURE_COPY_LOCATION*,
+                                           const D3D12_BOX*);
+using CopyResFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, ID3D12Resource*);
+using CopyTilesFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, const D3D12_TILED_RESOURCE_COORDINATE*, const D3D12_TILE_REGION_SIZE*,
+                                             ID3D12Resource*, UINT64, D3D12_TILE_COPY_FLAGS);
+using ResolveFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, UINT, ID3D12Resource*, UINT, DXGI_FORMAT);
+using BundleFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12GraphicsCommandList*);
+using AtomicCopyFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, UINT64, ID3D12Resource*, UINT64, UINT, ID3D12Resource* const*,
+                                              const D3D12_SUBRESOURCE_RANGE_UINT64*);
+using ResolveRegionFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12Resource*, UINT, UINT, UINT, ID3D12Resource*, UINT, D3D12_RECT*, DXGI_FORMAT,
+                                                 D3D12_RESOLVE_MODE);
+using WriteImmFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER*, const D3D12_WRITEBUFFERIMMEDIATE_MODE*);
+using RenderPassFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, const D3D12_RENDER_PASS_RENDER_TARGET_DESC*, const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC*,
+                                              D3D12_RENDER_PASS_FLAGS);
+using MetaFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, ID3D12MetaCommand*, const void*, SIZE_T);
+using BuildAsFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC*, UINT,
+                                           const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC*);
+using CopyAsFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, D3D12_GPU_VIRTUAL_ADDRESS, D3D12_GPU_VIRTUAL_ADDRESS, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE);
+using RaysFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, const D3D12_DISPATCH_RAYS_DESC*);
+using MeshFn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT, UINT, UINT);
+using Barrier7Fn = void(STDMETHODCALLTYPE*)(ID3D12GraphicsCommandList*, UINT32, const D3D12_BARRIER_GROUP*);
+ClearUavUFn g_origClearUavU = nullptr;
+ClearUavFFn g_origClearUavF = nullptr;
+DiscardFn g_origDiscard = nullptr;
+CopyBufFn g_origCopyBuf = nullptr;
+CopyTexFn g_origCopyTex = nullptr;
+CopyResFn g_origCopyRes = nullptr;
+CopyTilesFn g_origCopyTiles = nullptr;
+ResolveFn g_origResolve = nullptr;
+BundleFn g_origBundle = nullptr;
+AtomicCopyFn g_origAtomic32 = nullptr, g_origAtomic64 = nullptr;
+ResolveRegionFn g_origResolveRegion = nullptr;
+WriteImmFn g_origWriteImm = nullptr;
+RenderPassFn g_origRenderPass = nullptr;
+MetaFn g_origMeta = nullptr;
+BuildAsFn g_origBuildAs = nullptr;
+CopyAsFn g_origCopyAs = nullptr;
+RaysFn g_origRays = nullptr;
+MeshFn g_origMesh = nullptr;
+Barrier7Fn g_origBarrier7 = nullptr;
+void SoWrite(const InList& in, ID3D12GraphicsCommandList* cl, ID3D12Resource* dst) {
+    if (in.outer && !t_ours && g_sinks.soWrite) g_sinks.soWrite(cl, dst);
+}
+void SoOther(const InList& in, ID3D12GraphicsCommandList* cl) {
+    if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 3);
+}
+// (ClearDepthStencilView: the one HookClearDsv above, lens_mask's too)
+void STDMETHODCALLTYPE HookClearUavU(ID3D12GraphicsCommandList* cl, D3D12_GPU_DESCRIPTOR_HANDLE g, D3D12_CPU_DESCRIPTOR_HANDLE c, ID3D12Resource* r, const UINT* v,
+                                     UINT n, const D3D12_RECT* rc) {
+    const InList in;
+    SoWrite(in, cl, r);
+    g_origClearUavU(cl, g, c, r, v, n, rc);
+}
+void STDMETHODCALLTYPE HookClearUavF(ID3D12GraphicsCommandList* cl, D3D12_GPU_DESCRIPTOR_HANDLE g, D3D12_CPU_DESCRIPTOR_HANDLE c, ID3D12Resource* r, const FLOAT* v,
+                                     UINT n, const D3D12_RECT* rc) {
+    const InList in;
+    SoWrite(in, cl, r);
+    g_origClearUavF(cl, g, c, r, v, n, rc);
+}
+void STDMETHODCALLTYPE HookDiscard(ID3D12GraphicsCommandList* cl, ID3D12Resource* r, const D3D12_DISCARD_REGION* reg) {
+    const InList in;
+    SoWrite(in, cl, r);
+    g_origDiscard(cl, r, reg);
+}
+void STDMETHODCALLTYPE HookCopyBuf(ID3D12GraphicsCommandList* cl, ID3D12Resource* dst, UINT64 at, ID3D12Resource* src, UINT64 from, UINT64 n) {
+    const InList in;
+    SoWrite(in, cl, dst);
+    g_origCopyBuf(cl, dst, at, src, from, n);
+}
+void STDMETHODCALLTYPE HookCopyTex(ID3D12GraphicsCommandList* cl, const D3D12_TEXTURE_COPY_LOCATION* dst, UINT x, UINT y, UINT z, const D3D12_TEXTURE_COPY_LOCATION* src,
+                                   const D3D12_BOX* box) {
+    const InList in;
+    SoWrite(in, cl, dst ? dst->pResource : nullptr);
+    g_origCopyTex(cl, dst, x, y, z, src, box);
+}
+void STDMETHODCALLTYPE HookCopyRes(ID3D12GraphicsCommandList* cl, ID3D12Resource* dst, ID3D12Resource* src) {
+    const InList in;
+    SoWrite(in, cl, dst);
+    g_origCopyRes(cl, dst, src);
+}
+void STDMETHODCALLTYPE HookCopyTiles(ID3D12GraphicsCommandList* cl, ID3D12Resource* t, const D3D12_TILED_RESOURCE_COORDINATE* c, const D3D12_TILE_REGION_SIZE* s,
+                                     ID3D12Resource* b, UINT64 at, D3D12_TILE_COPY_FLAGS f) {
+    const InList in;
+    SoOther(in, cl);
+    g_origCopyTiles(cl, t, c, s, b, at, f);
+}
+void STDMETHODCALLTYPE HookResolve(ID3D12GraphicsCommandList* cl, ID3D12Resource* dst, UINT ds, ID3D12Resource* src, UINT ss, DXGI_FORMAT f) {
+    const InList in;
+    SoWrite(in, cl, dst);
+    g_origResolve(cl, dst, ds, src, ss, f);
+}
+void STDMETHODCALLTYPE HookBundle(ID3D12GraphicsCommandList* cl, ID3D12GraphicsCommandList* b) {
+    const InList in;
+    SoOther(in, cl);
+    g_origBundle(cl, b);
+}
+void STDMETHODCALLTYPE HookAtomic32(ID3D12GraphicsCommandList* cl, ID3D12Resource* d, UINT64 at, ID3D12Resource* s, UINT64 from, UINT n, ID3D12Resource* const* deps,
+                                    const D3D12_SUBRESOURCE_RANGE_UINT64* r) {
+    const InList in;
+    SoOther(in, cl);
+    g_origAtomic32(cl, d, at, s, from, n, deps, r);
+}
+void STDMETHODCALLTYPE HookAtomic64(ID3D12GraphicsCommandList* cl, ID3D12Resource* d, UINT64 at, ID3D12Resource* s, UINT64 from, UINT n, ID3D12Resource* const* deps,
+                                    const D3D12_SUBRESOURCE_RANGE_UINT64* r) {
+    const InList in;
+    SoOther(in, cl);
+    g_origAtomic64(cl, d, at, s, from, n, deps, r);
+}
+void STDMETHODCALLTYPE HookResolveRegion(ID3D12GraphicsCommandList* cl, ID3D12Resource* dst, UINT ds, UINT x, UINT y, ID3D12Resource* src, UINT ss, D3D12_RECT* r,
+                                         DXGI_FORMAT f, D3D12_RESOLVE_MODE m) {
+    const InList in;
+    SoWrite(in, cl, dst);
+    g_origResolveRegion(cl, dst, ds, x, y, src, ss, r, f, m);
+}
+void STDMETHODCALLTYPE HookWriteImm(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_WRITEBUFFERIMMEDIATE_PARAMETER* p, const D3D12_WRITEBUFFERIMMEDIATE_MODE* m) {
+    const InList in;
+    SoOther(in, cl);
+    g_origWriteImm(cl, n, p, m);
+}
+void STDMETHODCALLTYPE HookRenderPass(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_RENDER_PASS_RENDER_TARGET_DESC* rt, const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC* ds,
+                                      D3D12_RENDER_PASS_FLAGS f) {
+    const InList in;
+    SoOther(in, cl);
+    g_origRenderPass(cl, n, rt, ds, f);
+}
+void STDMETHODCALLTYPE HookMeta(ID3D12GraphicsCommandList* cl, ID3D12MetaCommand* m, const void* p, SIZE_T n) {
+    const InList in;
+    SoOther(in, cl);
+    g_origMeta(cl, m, p, n);
+}
+void STDMETHODCALLTYPE HookBuildAs(ID3D12GraphicsCommandList* cl, const D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC* d, UINT n,
+                                   const D3D12_RAYTRACING_ACCELERATION_STRUCTURE_POSTBUILD_INFO_DESC* p) {
+    const InList in;
+    SoOther(in, cl);
+    g_origBuildAs(cl, d, n, p);
+}
+void STDMETHODCALLTYPE HookCopyAs(ID3D12GraphicsCommandList* cl, D3D12_GPU_VIRTUAL_ADDRESS d, D3D12_GPU_VIRTUAL_ADDRESS s, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_COPY_MODE m) {
+    const InList in;
+    SoOther(in, cl);
+    g_origCopyAs(cl, d, s, m);
+}
+void STDMETHODCALLTYPE HookRays(ID3D12GraphicsCommandList* cl, const D3D12_DISPATCH_RAYS_DESC* d) {
+    const InList in;
+    SoOther(in, cl);
+    g_origRays(cl, d);
+}
+void STDMETHODCALLTYPE HookMesh(ID3D12GraphicsCommandList* cl, UINT x, UINT y, UINT z) {
+    const InList in;
+    SoOther(in, cl);
+    g_origMesh(cl, x, y, z);
+}
+void STDMETHODCALLTYPE HookBarrier7(ID3D12GraphicsCommandList* cl, UINT32 n, const D3D12_BARRIER_GROUP* g) {
+    const InList in;
+    SoOther(in, cl);
+    g_origBarrier7(cl, n, g);
+}
+// The hooks above on a list of ours (every list's functions are its type's; the later interfaces' only where the runtime has them)
+bool HookShadowsOnce(ID3D12GraphicsCommandList* l, void** lt) {
+    // ID3D12GraphicsCommandList: DrawInstanced 12, Dispatch 14, CopyBufferRegion 15, CopyTextureRegion 16, CopyResource 17, CopyTiles 18,
+    // ResolveSubresource 19, ExecuteBundle 27, ClearDepthStencilView 47, ClearUnorderedAccessViewUint 49, ...Float 50, DiscardResource 51, ExecuteIndirect 59
+    bool ok = HookOne(lt[12], (void*)&HookDraw, (void**)&g_origDraw, "ID3D12GraphicsCommandList::DrawInstanced");
+    ok &= HookOne(lt[14], (void*)&HookDispatch, (void**)&g_origDispatch, "ID3D12GraphicsCommandList::Dispatch");
+    ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
+    ok &= HookOne(lt[15], (void*)&HookCopyBuf, (void**)&g_origCopyBuf, "ID3D12GraphicsCommandList::CopyBufferRegion");
+    ok &= HookOne(lt[16], (void*)&HookCopyTex, (void**)&g_origCopyTex, "ID3D12GraphicsCommandList::CopyTextureRegion");
+    ok &= HookOne(lt[17], (void*)&HookCopyRes, (void**)&g_origCopyRes, "ID3D12GraphicsCommandList::CopyResource");
+    ok &= HookOne(lt[18], (void*)&HookCopyTiles, (void**)&g_origCopyTiles, "ID3D12GraphicsCommandList::CopyTiles");
+    ok &= HookOne(lt[19], (void*)&HookResolve, (void**)&g_origResolve, "ID3D12GraphicsCommandList::ResolveSubresource");
+    ok &= HookOne(lt[27], (void*)&HookBundle, (void**)&g_origBundle, "ID3D12GraphicsCommandList::ExecuteBundle");
+    ok &= HookOne(lt[47], (void*)&HookClearDsv, (void**)&g_origClearDsv, "ID3D12GraphicsCommandList::ClearDepthStencilView");
+    ok &= HookOne(lt[49], (void*)&HookClearUavU, (void**)&g_origClearUavU, "ID3D12GraphicsCommandList::ClearUnorderedAccessViewUint");
+    ok &= HookOne(lt[50], (void*)&HookClearUavF, (void**)&g_origClearUavF, "ID3D12GraphicsCommandList::ClearUnorderedAccessViewFloat");
+    ok &= HookOne(lt[51], (void*)&HookDiscard, (void**)&g_origDiscard, "ID3D12GraphicsCommandList::DiscardResource");
+    // List1: AtomicCopyBufferUINT 60, ...UINT64 61, ResolveSubresourceRegion 64; List2: WriteBufferImmediate 66; List4: BeginRenderPass 68,
+    // ExecuteMetaCommand 71, BuildRaytracingAccelerationStructure 72, CopyRaytracingAccelerationStructure 74, DispatchRays 76; List6: DispatchMesh 79;
+    // List7: Barrier 80
+    auto has = [l](REFIID iid) {
+        IUnknown* u = nullptr;
+        if (FAILED(l->QueryInterface(iid, (void**)&u)) || !u) return false;
+        u->Release();
+        return true;
+    };
+    if (has(__uuidof(ID3D12GraphicsCommandList1))) {
+        ok &= HookOne(lt[60], (void*)&HookAtomic32, (void**)&g_origAtomic32, "ID3D12GraphicsCommandList1::AtomicCopyBufferUINT");
+        ok &= HookOne(lt[61], (void*)&HookAtomic64, (void**)&g_origAtomic64, "ID3D12GraphicsCommandList1::AtomicCopyBufferUINT64");
+        ok &= HookOne(lt[64], (void*)&HookResolveRegion, (void**)&g_origResolveRegion, "ID3D12GraphicsCommandList1::ResolveSubresourceRegion");
+    }
+    if (has(__uuidof(ID3D12GraphicsCommandList2))) ok &= HookOne(lt[66], (void*)&HookWriteImm, (void**)&g_origWriteImm, "ID3D12GraphicsCommandList2::WriteBufferImmediate");
+    if (has(__uuidof(ID3D12GraphicsCommandList4))) {
+        ok &= HookOne(lt[68], (void*)&HookRenderPass, (void**)&g_origRenderPass, "ID3D12GraphicsCommandList4::BeginRenderPass");
+        ok &= HookOne(lt[71], (void*)&HookMeta, (void**)&g_origMeta, "ID3D12GraphicsCommandList4::ExecuteMetaCommand");
+        ok &= HookOne(lt[72], (void*)&HookBuildAs, (void**)&g_origBuildAs, "ID3D12GraphicsCommandList4::BuildRaytracingAccelerationStructure");
+        ok &= HookOne(lt[74], (void*)&HookCopyAs, (void**)&g_origCopyAs, "ID3D12GraphicsCommandList4::CopyRaytracingAccelerationStructure");
+        ok &= HookOne(lt[76], (void*)&HookRays, (void**)&g_origRays, "ID3D12GraphicsCommandList4::DispatchRays");
+    }
+    if (has(__uuidof(ID3D12GraphicsCommandList6))) ok &= HookOne(lt[79], (void*)&HookMesh, (void**)&g_origMesh, "ID3D12GraphicsCommandList6::DispatchMesh");
+    if (has(__uuidof(ID3D12GraphicsCommandList7))) ok &= HookOne(lt[80], (void*)&HookBarrier7, (void**)&g_origBarrier7, "ID3D12GraphicsCommandList7::Barrier");
+    return ok;
+}
+
 void STDMETHODCALLTYPE HookViewports(ID3D12GraphicsCommandList* cl, UINT n, const D3D12_VIEWPORT* vp) {
     const InList in;
+    if (in.outer && !t_ours) Count(kCensusViewports);
+    if (in.outer && !t_ours && g_sinks.vrsViewport && n && vp) g_sinks.vrsViewport(cl, vp);   // [render] foveated
     if (in.outer && !t_ours && g_sinks.viewport && n && vp) g_sinks.viewport(cl, vp[0].Width, vp[0].Height);
     if (in.outer && !t_ours && g_sinks.viewports && n && vp) g_sinks.viewports(cl, n, vp);
     if (in.outer && !t_ours && g_sinks.huntViewport && n && vp) g_sinks.huntViewport(cl, vp[0].Width, vp[0].Height);
@@ -496,16 +976,17 @@ void HookDevice(ID3D12Device* dev, const char* when) {
     ok &= HookOne(vt[23], (void*)&HookCopyDesc, (void**)&g_origCopyDesc, "ID3D12Device::CopyDescriptors");
     ok &= HookOne(vt[24], (void*)&HookCopyDescSimple, (void**)&g_origCopyDescSimple, "ID3D12Device::CopyDescriptorsSimple");
     // ... CreateGraphicsPipelineState 10; ID3D12Device2::CreatePipelineState 47 ([fog] game_fog_height: the game's fog pass's pipeline)
-    if (g_sinks.graphicsPso) ok &= HookOne(vt[10], (void*)&HookCreateGpso, (void**)&g_origCreateGpso, "ID3D12Device::CreateGraphicsPipelineState");
+    if (g_sinks.graphicsPso || g_sinks.vrsGraphicsPso) ok &= HookOne(vt[10], (void*)&HookCreateGpso, (void**)&g_origCreateGpso, "ID3D12Device::CreateGraphicsPipelineState");
     // ... CreateComputePipelineState 11 ([render] light_bounds_fix without ReShade: the game's light-bin depth-bounds pipeline)
     if (g_sinks.computePso) ok &= HookOne(vt[11], (void*)&HookCreateCpso, (void**)&g_origCreateCpso, "ID3D12Device::CreateComputePipelineState");
-    if (g_sinks.streamPso) {
+    if (g_sinks.streamPso || g_sinks.vrsStreamPso) {
         ID3D12Device2* d2 = nullptr;
         if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D12Device2), (void**)&d2)) && d2) {
             ok &= HookOne((*(void***)d2)[47], (void*)&HookCreatePso, (void**)&g_origCreatePso, "ID3D12Device2::CreatePipelineState");
             d2->Release();
         }
     }
+    if (g_sinks.uploadMade) ok &= HookResourceCreation(dev);   // [stereo] native_replay: the camera's constants are read from the game's upload buffers
     g_rtvInc.store(dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV));
     g_dsvInc.store(dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV));
     g_srvInc.store(dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV));
@@ -518,13 +999,16 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         // RSSetScissorRects 22, ResourceBarrier 26, ... OMSetRenderTargets 46, ClearDepthStencilView 47, ClearRenderTargetView 48
         ok &= HookOne(lt[10], (void*)&HookReset, (void**)&g_origReset, "ID3D12GraphicsCommandList::Reset");
         ok &= HookOne(lt[13], (void*)&HookDrawIndexed, (void**)&g_origDrawIndexed, "ID3D12GraphicsCommandList::DrawIndexedInstanced");
-        if (g_sinks.psoSwap || g_sinks.fxBound || g_sinks.huntBound) ok &= HookOne(lt[25], (void*)&HookSetPso, (void**)&g_origSetPso, "ID3D12GraphicsCommandList::SetPipelineState");
+        if (g_sinks.psoSwap || g_sinks.fxBound || g_sinks.huntBound || g_sinks.vrsBound) ok &= HookOne(lt[25], (void*)&HookSetPso, (void**)&g_origSetPso, "ID3D12GraphicsCommandList::SetPipelineState");
         // [debug] skip_pipeline / patch_hunt 8: DrawInstanced 12, Dispatch 14, ExecuteIndirect 59 (HookDraw is [fog] game_fog_before_fx's too)
         if (g_sinks.huntSkip) {
             ok &= HookOne(lt[12], (void*)&HookDraw, (void**)&g_origDraw, "ID3D12GraphicsCommandList::DrawInstanced");
             ok &= HookOne(lt[14], (void*)&HookDispatch, (void**)&g_origDispatch, "ID3D12GraphicsCommandList::Dispatch");
             ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
         }
+        // [render] foveated: DrawInstanced 12 (each draw may take the rate image), ExecuteIndirect 59 (it is taken off before one)
+        if (g_sinks.vrsDraw) ok &= HookOne(lt[12], (void*)&HookDraw, (void**)&g_origDraw, "ID3D12GraphicsCommandList::DrawInstanced");
+        if (g_sinks.vrsIndirect) ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
         // [fog] game_fog_before_fx: DrawInstanced 12, SetDescriptorHeaps 28, SetComputeRootSignature 29, SetComputeRootDescriptorTable 31,
         // SetGraphicsRootSignature 30, SetGraphicsRootDescriptorTable 32, SetComputeRoot32BitConstant 33, ...Constants 35, SetComputeRootConstantBufferView 37,
         // ...ShaderResourceView 39, ...UnorderedAccessView 41
@@ -544,8 +1028,11 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         ok &= HookOne(lt[21], (void*)&HookViewports, (void**)&g_origViewports, "ID3D12GraphicsCommandList::RSSetViewports");
         ok &= HookOne(lt[22], (void*)&HookScissors, (void**)&g_origScissors, "ID3D12GraphicsCommandList::RSSetScissorRects");
         ok &= HookOne(lt[48], (void*)&HookClearRtv, (void**)&g_origClearRtv, "ID3D12GraphicsCommandList::ClearRenderTargetView");
+        // [render] lens_mask: ClearDepthStencilView 47 (the hidden area's clear recorded right after the game's scene depth clear)
+        if (g_sinks.clearDsv) ok &= HookOne(lt[47], (void*)&HookClearDsv, (void**)&g_origClearDsv, "ID3D12GraphicsCommandList::ClearDepthStencilView");
         ok &= HookOne(lt[26], (void*)&HookBarrier, (void**)&g_origBarrier, "ID3D12GraphicsCommandList::ResourceBarrier");
         ok &= HookOne(lt[46], (void*)&HookOmSet, (void**)&g_origOmSet, "ID3D12GraphicsCommandList::OMSetRenderTargets");
+        if (g_sinks.soReset) ok &= HookShadowsOnce(l, lt);   // [render] shadows_once_a_pair: everything else a list writes with
         l->Close();
     } else {
         ok = false;
@@ -730,13 +1217,7 @@ bool Install(const Sinks& sinks, LogFn log) {
     return ok;
 }
 
-ID3D12Resource* RtvResource(uint64_t handle) {
-    AcquireSRWLockShared(&g_rtvLock);
-    const auto it = g_rtvs.find((SIZE_T)handle);
-    ID3D12Resource* r = it != g_rtvs.end() ? it->second : nullptr;
-    ReleaseSRWLockShared(&g_rtvLock);
-    return r;
-}
+ID3D12Resource* RtvResource(uint64_t handle) { return CachedView(t_rtvCache, g_rtvGen, &g_rtvLock, g_rtvs, (SIZE_T)handle, nullptr); }
 unsigned RtvIncrement() { return g_rtvInc.load(); }
 void TrackSceneViews(bool on) { g_trackSrv.store(on); }
 void WatchDomeAtlas(bool on) { g_watchAtlas.store(on, std::memory_order_relaxed); }
@@ -751,6 +1232,34 @@ void WatchIndexCount(uint32_t indexCount) { g_watchCount.store(indexCount, std::
 void TakeWatched(uint32_t* draws, uint32_t* instances) {
     *draws = g_watchDraws.exchange(0, std::memory_order_relaxed);
     *instances = g_watchInstances.exchange(0, std::memory_order_relaxed);
+}
+
+void UploadCounts(uint32_t* made, uint32_t* gone) {
+    *made = g_uploadsMade.load(std::memory_order_relaxed);
+    *gone = g_uploadsGone.load(std::memory_order_relaxed);
+}
+
+void SetCensus(bool on) { g_census.store(on, std::memory_order_relaxed); }
+bool CensusOn() { return g_census.load(std::memory_order_relaxed); }
+Census TakeCensus(unsigned long drawThread) {
+    // the counters grow for ever (each written by its own thread only): what came since the last call is the difference from what it saw then
+    static uint32_t seen[kCensusSlots][kCensusKinds] = {};
+    Census c;
+    const int used = std::min(g_censusUsed.load(), kCensusSlots);
+    for (int i = 0; i < used; ++i) {
+        const DWORD tid = g_censusSlot[i].tid.load();
+        bool any = false;
+        for (int k = 0; k < kCensusKinds; ++k) {
+            const uint32_t now = g_censusSlot[i].n[k].load(std::memory_order_relaxed), d = now - seen[i][k];
+            seen[i][k] = now;
+            if (!d) continue;
+            any = true;
+            (tid == drawThread ? c.draw : c.other)[k] += d;
+        }
+        if (any) ++c.threads;
+    }
+    c.lost = g_censusUsed.load() > kCensusSlots;
+    return c;
 }
 
 Stats TakeStats() {
@@ -810,14 +1319,14 @@ ID3D12GraphicsCommandList* OpenList(ID3D12Device* dev) {
 
 void Submit(ID3D12CommandQueue* q) {
     Ring& r = g_ring;
-    t_ours = false;
-    if (r.open < 0) return;
+    if (r.open < 0) { t_ours = false; return; }
     const int i = r.open;
     r.open = -1;
-    if (FAILED(r.list->Close()) || !q) return;
+    if (FAILED(r.list->Close()) || !q) { t_ours = false; return; }
     ID3D12CommandList* l = r.list;
-    q->ExecuteCommandLists(1, &l);
+    q->ExecuteCommandLists(1, &l);   // (Ours() still true: [stereo] native_replay's look at the queue leaves this out)
     q->Signal(r.fence, ++r.v);
+    t_ours = false;
     r.done[i] = r.v;
     g_lists.fetch_add(1, std::memory_order_relaxed);
     r.at = (i + 1) % Ring::kN;

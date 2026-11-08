@@ -8,9 +8,12 @@
 // the crashing thread, so the lines before the crash are in the log.
 // [debug] log_async_auto (SetAuto): off, the lines a thread writes itself are timed; when the host's file turns out slow on this PC (vr/log_slow.h:
 // half of the last 16 lines 5 ms or more - a player's 0.181 log had 29 ms a line), the writer thread takes them over for the rest of the run, as
-// log_async on would. Off = as before.
+// log_async on would. And from the start, whatever the verdict: the lines of the game's draw thread (SetHotThread: the present's thread) go to
+// the writer thread - ~1.2 ms a line on Serg's PC, each one inside a VR pair (docs/notes/vr_cpu_overhead.md); the other threads write their own
+// as before. Off = as before (every thread its own lines).
 
 #include <atomic>
+#include <intrin.h>
 #include <cstdio>
 #include <mutex>
 
@@ -28,6 +31,8 @@ struct State {
     std::mutex switchLock;           // sw
     logslow::AutoSwitch sw;
     std::atomic<bool> timing{false};   // sw.Timing(), read without the lock on every line
+    std::atomic<bool> hotAuto{false};          // log_async_auto on: the draw thread's lines go to the writer
+    std::atomic<unsigned long> hot{0};         // the game's draw thread (SetHotThread)
 };
 // Never destroyed: at the process's end the writer may have been stopped in the middle of a line, with its lock held.
 inline State& S() {
@@ -71,10 +76,28 @@ inline void Timed(const D2RL::PluginContext* ctx, double ms) {
 }
 }   // namespace detail
 
+namespace detail {
+// The draw thread's line to the writer (the thread started the first time; s.on stays as it was: the other threads keep writing their own).
+inline bool HotPost(const D2RL::PluginContext* ctx, const char* text) {
+    State& s = S();
+    if (!s.pump.Running()) {
+        s.ctx.store(ctx);
+        if (!s.pump.Start(&Sink, nullptr)) {
+            s.hotAuto.store(false);   // (no thread: the draw thread writes its own lines, as before)
+            return false;
+        }
+    }
+    return s.pump.Post(text);
+}
+// (the thread's id from its TEB, as GetCurrentThreadId - without <windows.h> in this header)
+inline unsigned long ThisThread() { return (unsigned long)__readgsdword(0x48); }
+}   // namespace detail
+
 inline void Info(const D2RL::PluginContext* ctx, const char* text) {
     if (!ctx || !text) return;
     detail::State& s = detail::S();
     if (s.on.load(std::memory_order_relaxed) && s.pump.Post(text)) return;
+    if (s.hotAuto.load(std::memory_order_relaxed) && detail::ThisThread() == s.hot.load(std::memory_order_relaxed) && detail::HotPost(ctx, text)) return;
     if (!s.timing.load(std::memory_order_relaxed)) {
         ctx->LogInfo(text);
         return;
@@ -107,8 +130,11 @@ inline void SetAuto(bool on) {
         stop = s.sw.SetAuto(on);
         s.timing.store(s.sw.Timing());
     }
+    s.hotAuto.store(on);
     if (stop) detail::PumpOff(s);
 }
+// The game's draw thread (its present's): its lines go to the writer thread while log_async_auto is on. Any thread; 0 none.
+inline void SetHotThread(unsigned long tid) { detail::S().hot.store(tid, std::memory_order_relaxed); }
 inline bool Enabled() { return detail::S().on.load(std::memory_order_relaxed); }
 inline bool AutoFired() {
     detail::State& s = detail::S();
@@ -125,6 +151,7 @@ inline void Shutdown() {
         std::lock_guard<std::mutex> lock(s.switchLock);   // no verdict starts the thread again during the unload
         s.sw.SetAuto(false);
         s.timing.store(false);
+        s.hotAuto.store(false);
     }
     s.on.store(false);
     s.pump.Stop();

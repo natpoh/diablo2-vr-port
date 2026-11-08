@@ -14,6 +14,8 @@ bool CameraYawInModel(float* out, float* eyeModel, bool* eyeOk);
 bool CameraForwardInModel(float out[3]);
 // ... and its right ([body] flat_weapon_adjust: the arms moved along the camera's own axes)
 bool CameraRightInModel(float out[3]);
+// ... and a world point in the hero's model space by the same matrix ([body] flat_aim_tilt_target: the body under the crosshair)
+bool WorldPointInModel(const float world[3], float out[3]);
 bool FreshRoomShift(float shift[3]);
 // vr/body/arms.cpp: the head in BodyWalk's room, the hands, the hero's arms (skel::Input, every round of the update thread)
 void PushArms();

@@ -1542,6 +1542,28 @@ UINT Runtime::Impl::RunTechnique(Build& b, Technique& t, ID3D12GraphicsCommandLi
         }
         const D3D12_VIEWPORT vp{0.0f, 0.0f, (float)vw, (float)vh, 0.0f, 1.0f};
         const D3D12_RECT sc{0, 0, (LONG)vw, (LONG)vh};
+        // (Options::passRects: a pass into the picture drawn only where it can change it - vr/phantom_rect.h)
+        D3D12_RECT rects[8];
+        int nRects = -1;
+        if (o.passRects && p.rts.empty() && !p.info.clear_render_targets)
+            nRects = o.passRects(p.info.ps_entry_point.c_str(), vw, vh, rects, 8);
+        if (nRects == -1) { ++stats.rectFull; ++stats.rectPasses; stats.rectPixels += (uint64_t)vw * vh; stats.rectPixelsFull += (uint64_t)vw * vh; }
+        if (nRects >= 0) {
+            ++stats.rectPasses;
+            stats.rectPixelsFull += (uint64_t)vw * vh;
+            for (int i = 0; i < nRects && i < 8; ++i) {   // (clamped to the picture; an empty one is left out)
+                rects[i].left = std::max<LONG>(0, rects[i].left); rects[i].top = std::max<LONG>(0, rects[i].top);
+                rects[i].right = std::min<LONG>((LONG)vw, rects[i].right); rects[i].bottom = std::min<LONG>((LONG)vh, rects[i].bottom);
+                if (rects[i].right > rects[i].left && rects[i].bottom > rects[i].top)
+                    stats.rectPixels += (uint64_t)(rects[i].right - rects[i].left) * (uint64_t)(rects[i].bottom - rects[i].top);
+            }
+            if (nRects == 0) {   // nothing of it reaches the picture this frame: as a pass keepPass leaves out (COLOR is still the picture)
+                ++stats.skipped;
+                if (timed) Stamp();
+                for (int i : p.rts) { Texture& tx = b.textures[i]; to(tx.res, tx.state, kRead); }
+                continue;
+            }
+        }
         l->RSSetViewports(1, &vp);
         l->RSSetScissorRects(1, &sc);
         l->SetGraphicsRootSignature(b.root);
@@ -1555,7 +1577,16 @@ UINT Runtime::Impl::RunTechnique(Build& b, Technique& t, ID3D12GraphicsCommandLi
                                   : p.info.topology == pt::line_list ? D3D_PRIMITIVE_TOPOLOGY_LINELIST
                                   : p.info.topology == pt::line_strip ? D3D_PRIMITIVE_TOPOLOGY_LINESTRIP
                                   : p.info.topology == pt::triangle_strip ? D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP : D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        l->DrawInstanced(p.info.num_vertices, 1, 0, 0);
+        if (nRects > 0) {
+            for (int i = 0; i < nRects && i < 8; ++i) {
+                if (rects[i].right <= rects[i].left || rects[i].bottom <= rects[i].top) continue;
+                l->RSSetScissorRects(1, &rects[i]);
+                l->DrawInstanced(p.info.num_vertices, 1, 0, 0);
+            }
+            l->RSSetScissorRects(1, &sc);
+        } else {
+            l->DrawInstanced(p.info.num_vertices, 1, 0, 0);
+        }
         ++drawn;
         if (timed) Stamp();
         for (int i : p.rts) { Texture& tx = b.textures[i]; to(tx.res, tx.state, kRead); }
@@ -1793,6 +1824,8 @@ Stats Runtime::TakeStats() {
     Stats s = m_->stats;
     if (m_->cur) { s.width = m_->cur->w; s.height = m_->cur->h; }
     m_->stats.passes = m_->stats.renders = m_->stats.techniques = m_->stats.skipped = 0;
+    m_->stats.rectPasses = m_->stats.rectFull = 0;
+    m_->stats.rectPixels = m_->stats.rectPixelsFull = 0;
     if (m_->tsCount) {   // the averages, the dearest passes first (the entry points' names without the compiler's F__ / E__)
         s.timed = m_->tsCount;
         s.gpuMs = m_->tsTotal / m_->tsCount;

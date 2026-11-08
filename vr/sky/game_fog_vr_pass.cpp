@@ -12,7 +12,7 @@ namespace vrc {
 // game wrote its own fog there; this checks for 30 frames that the frame's fog is the blend's (the layout: vr/game_fog_vr.h SameFog),
 // then writes ours over it each frame - the frame's settings only, never the area's definitions (the game writes them again every
 // frame: unticked, or out of F4, its own are back at once). While it is on the post pass draws no fog of its own (fx::FogWanted).
-namespace fx { bool OurFogWanted(); bool FogColourNow(float rgb[3]); bool NoFogUnderground(); }
+namespace fx { bool OurFogWanted(); bool GameFogWanted(); bool FogColourNow(float rgb[3]); bool NoFogUnderground(); }
 namespace gamefogvr {
 using namespace ::gamefogvr;               // (the pure parts: vr/game_fog_vr.h)
 std::atomic<bool> g_on{false};             // this frame: ticked, VR F4, our fog wanted (the present sets it)
@@ -75,7 +75,7 @@ void Update() {
     // Under the Arcane Sanctuary's sky ([sky] arcane_fog) our post pass draws it: the fog there is the sky straight behind each point
     // (D2R_DepthFog.fx ArcaneHaze), the platforms fading into the void round them - one colour, as the game's pass takes, cannot
     const bool arcane = g_arcaneSky.load();
-    const bool want = g_set.gameFog.load() && GameDrawnView() && fx::OurFogWanted() && !arcane;
+    const bool want = GameDrawnView() && fx::GameFogWanted() && !arcane;   // ([fog] enabled not asked: it is our effect's fog)
     g_on.store(want);
     // [fog] caves=0 underground, the game's fog chosen: its pass would draw the area's own fog there - a fog of nothing goes over it (the
     // density 0: none at any distance), every frame as ours would; nothing else takes it for the game's fog drawing ours (Active false)
@@ -96,7 +96,7 @@ void Update() {
     static Fog toldFog{};
     // (the Arcane Sanctuary: told on every entry, whether the game's pass drew before or not - Serg, 2026-10-28: the game's fog there "is
     // worse than the one we drew")
-    const bool standAside = g_set.gameFog.load() && GameDrawnView() && arcane && fx::OurFogWanted();
+    const bool standAside = GameDrawnView() && arcane && fx::GameFogWanted();
     static bool toldAside = false;
     if (standAside && !toldAside)
         Log("vrcam: game fog - not here: under the Arcane Sanctuary's sky our effect draws the fog, fading into that sky ([sky] arcane_fog); "
@@ -159,11 +159,8 @@ void Update() {
             if (n >= (int)sizeof line) break;
         }
         const bool height = g_set.fogHeight.load() && !under;
-        LogF("vrcam: game fog - the share by distance (%s): %s; %s; %s", curve ? "the game's pass by our curve, while its patched pass is bound" : "the game's exponential",
-             line, height ? "the game's pass thinned above the eye from game_fog_top - game_fog_soft, none above game_fog_top" : "no height thinning",
-             g_set.fogMatch.load() && g_set.fogMeasured.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels (the dome untouched)"
-             : g_set.fogMatch.load() ? "[fog] game_fog_match makes up the rest to ours on the world's pixels in the sky's colour (fog_colour_measured off: "
-                                       "no measure, the game's fogged pixels not recoloured)" : "[fog] game_fog_match off: as the game lays it");
+        LogF("vrcam: game fog - the share by distance (%s): %s; %s", curve ? "the game's pass by our curve, while its patched pass is bound" : "the game's exponential",
+             line, height ? "the game's pass thinned above the eye from game_fog_top - game_fog_soft, none above game_fog_top" : "no height thinning");
     }
     told = 1;
     toldFog = f;

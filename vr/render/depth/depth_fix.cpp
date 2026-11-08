@@ -507,6 +507,64 @@ void Register() {
     reshade::register_event<reshade::addon_event::destroy_resource>(&d2rvr::D3D12Only<&OnDestroyResource>::Call);
     reshade::register_event<reshade::addon_event::reset_command_list>(&d2rvr::D3D12Only<&OnReset>::Call);
 }
+// [stereo] native_replay (vr/native_replay.h): the same without ReShade. The game's upload buffers from the plugin's own resource creation hooks
+// (natived3d Sinks::uploadMade / uploadGone - mapped there, as ReShade's map_buffer_region did), and the lists' hooks put in from lists of our
+// own of each type on the game's device, once (ReShade's reset_command_list only said when: the first list of each type).
+void NativeUploadMade(ID3D12Resource* r, uint64_t va, uint64_t size, uint8_t* cpu) {
+    g_nInit.fetch_add(1);
+    g_nUploads.fetch_add(1);
+    const Upload u{va, size, cpu, (uint64_t)(uintptr_t)r};
+    AcquireSRWLockExclusive(&g_upLock);
+    for (size_t i = 0; i < g_uploads.size(); ++i)   // (an address given again: the one before is gone without our word - not kept twice)
+        if (g_uploads[i].va == va) { g_uploads.erase(g_uploads.begin() + i); break; }
+    g_uploads.insert(std::upper_bound(g_uploads.begin(), g_uploads.end(), u, [](const Upload& a, const Upload& b) { return a.va < b.va; }), u);
+    ReleaseSRWLockExclusive(&g_upLock);
+}
+void NativeUploadGone(ID3D12Resource* r) {
+    const uint64_t key = (uint64_t)(uintptr_t)r;
+    AcquireSRWLockExclusive(&g_upLock);
+    for (size_t i = 0; i < g_uploads.size(); ++i)
+        if (g_uploads[i].res == key) { g_uploads.erase(g_uploads.begin() + i); break; }
+    ReleaseSRWLockExclusive(&g_upLock);
+}
+size_t NativeUploadsKnown() {
+    AcquireSRWLockShared(&g_upLock);
+    const size_t n = g_uploads.size();
+    ReleaseSRWLockShared(&g_upLock);
+    return n;
+}
+// True when both list types' root signature / root CBV functions are hooked (another hook on one of them - [fog] game_fog_before_fx's on the
+// direct lists' compute root calls - makes MinHook refuse it: the replay then stays off, its right eye would be the left one).
+bool HookNative(ID3D12Device* dev) {
+    static int result = -1;
+    if (result >= 0) return result == 1;
+    if (!dev) return false;
+    bool ok = true;
+    natived3d::SetOurs(true);   // (our lists: not the game's to the plugin's other hooks)
+    const D3D12_COMMAND_LIST_TYPE types[2] = {D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_TYPE_COMPUTE};
+    for (int slot = 0; slot < 2; ++slot) {
+        ID3D12CommandAllocator* a = nullptr;
+        ID3D12GraphicsCommandList* l = nullptr;
+        bool done = false;
+        if (SUCCEEDED(dev->CreateCommandAllocator(types[slot], __uuidof(ID3D12CommandAllocator), (void**)&a)) &&
+            SUCCEEDED(dev->CreateCommandList(0, types[slot], a, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&l))) {
+            l->Close();
+            AcquireSRWLockExclusive(&g_hookLock);
+            void** vt = *(void***)l;
+            done = slot == 0 ? HookTable<0>(vt) : HookTable<1>(vt);
+            g_slotDone[slot] = true;
+            ReleaseSRWLockExclusive(&g_hookLock);
+            LogF("vrcam: native replay - %s command list hooks (root signature, root CBV) %s, vtable %p", slot == 0 ? "direct" : "compute",
+                 done ? "in" : "FAILED (another hook holds one of them)", (void*)vt);
+        }
+        if (l) l->Release();
+        if (a) a->Release();
+        ok &= done;
+    }
+    natived3d::SetOurs(false);
+    result = ok ? 1 : 0;
+    return ok;
+}
 // No waiting for the GPU (2026-10-09): the camera buffers the left pass binds are bound
 // from slots of our own GPU buffer instead. At the binding, the game's values are copied
 // into an upload staging slot for the left eye and, moved by the eye separation, into

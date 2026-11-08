@@ -24,7 +24,12 @@ void PlateWorldTick(ULONGLONG nowMs);
 void NoticeCardTick(ULONGLONG nowMs);
 void StabNoteSink(const stabdbg::Note& n);   // [debug] stab_debug
 namespace dlsseyes { void Install(); }
-namespace noreshade { void Install(); bool FxWaiting(); }
+namespace noreshade {
+void Install();
+bool FxWaiting();
+// [stereo] native_replay: the left eye at the replay's hold - its depth copied and its effects drawn into the back buffer, no present
+void HoldEye(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb);
+}
 }  // namespace fx
 
 }  // namespace vrc

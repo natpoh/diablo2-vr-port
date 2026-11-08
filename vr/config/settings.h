@@ -201,6 +201,7 @@ struct Settings {
     std::atomic<bool>  domeInGameColour{true};   // [sky] dome_in_game_colour: the game samples our baked picture for the dome (vr/sky/dome_atlas.h)
     std::atomic<bool>  domeTrueColour{false};   // [sky] dome_true_colour: the game's dome brought to our sky's colours (D2R_DepthFog.fx DomeSeen / DomeLookOf)
     std::atomic<bool>  effectWorld{true};       // [render] effect_world: our effect's sky and fog passes (off: only its overlays and interface)
+    std::atomic<bool>  phantomRects{true};      // [render] phantom_rects: the vignette pass drawn only where it can change the picture (vr/phantom_rect.h)
     std::atomic<bool>  domeGainOnce{false};     // [sky] dome_gain_once: that measure taken once per area and period, kept in d2r_vr_dome_gain.txt
     std::atomic<bool>  domeFogHorizon{true};   // [sky] dome_fog_horizon: the game's dome's low part into the act's fog colour (D2R_DepthFog.fx DomeHorizon)
     // [sky] dome_fog_baked / dome_fog_baked_strength: with the game's fog, the dome's low part baked into the fog's own colour (vr/sky/dome_atlas.h
@@ -285,6 +286,7 @@ struct Settings {
     std::atomic<bool>  flatClickShoot{true}; // [input] flat_click_shoot: flat mouse look, a click with no target under the crosshair = a shot there, never a walk
     std::atomic<bool>  flatAimGround{true};  // [input] flat_aim_ground: flat with our camera, the mouse's point is the cell of the ground drawn under it (raised floors)
     std::atomic<bool>  flatBodyPick{true};   // [input] flat_body_pick: flat F2 / F3, a unit or object clicked by its body (vr/flat_body.h)
+    std::atomic<bool>  flatBodyTarget{true}; // [input] flat_body_target: flat (with flat_body_pick), the map click's target is the unit the crosshair's ray meets (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPick{true};     // [input] vr_body_pick: VR, the game's mouse point (F1 - F3's pointer and crosshair, F4's shift + click aim) by the body too (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPickHand{false};   // [input] vr_body_pick_hand: VR F4, the pad's attack and interact go to the unit the aiming hand points at (vr/vr_body_pick.h)
     std::atomic<bool>  pointPickup{true};       // [input] point_pickup: VR F4, A picks up the item on the floor the aiming hand points at (vr/unleashed_loot_aim.h)
@@ -547,8 +549,13 @@ struct Settings {
     std::atomic<bool>  lockUpper{true};     // nothing above the pelvis from the game's animation
     std::atomic<bool>  legsUnder{true};     // with it: pelvis and legs kept under that body (no lunge, no hip turn)
     std::atomic<bool>  flatHoldTrunk{false};   // [body] flat_hold_trunk: flat F3, the trunk and hips held under the camera through a swing (drawn only)
+    std::atomic<bool>  flatHoldTrunkTwist{false};   // [body] flat_hold_trunk_twist: with it, the arms keep the chest's turn about the vertical (a side swing in view)
     std::atomic<bool>  attackLean{false};      // [body] attack_lean: flat F2 / F3 and VR F2, the swing leans toward where the crosshair looks (drawn only; vr/attack_lean.h)
     std::atomic<float> attackLeanMaxDeg{40.0f};   // [body] attack_lean_max_deg: the most it leans, up or down
+    std::atomic<bool>  flatAimTilt{false};     // [body] flat_aim_tilt: flat F3, the arms and the weapon tilt with the crosshair (drawn only; vr/aim_tilt.h); attack_lean steps aside there
+    std::atomic<float> flatAimTiltPct{100.0f};    // [body] flat_aim_tilt_pct: how much of the crosshair's pitch they follow, %
+    std::atomic<float> flatAimTiltMaxDeg{60.0f};  // [body] flat_aim_tilt_max_deg: the most they tilt, up or down
+    std::atomic<bool>  flatAimTiltTarget{true};   // [body] flat_aim_tilt_target: while the attack plays, onto the monster's body under the crosshair
     std::atomic<bool>  flatWeaponAdjust{true};   // [body] flat_weapon_adjust: flat F3, each arm with its weapon moved by [weapon_<kind>] flat_* (drawn only, vr/flat_weapon.h)
     std::atomic<bool>  underCamera{true};   // [body] under_camera: the drawn body under the camera through a leap's arc and the game camera's trail (F4; vr/under_camera.h)
     std::atomic<bool>  leapCameraUp{false}; // [body] leap_camera_up: with it, the camera rises with the leap's arc (off: it stays, the body is kept down with it)
@@ -626,10 +633,9 @@ struct Settings {
     std::atomic<bool>  fogOurCurve{false};     // [fog] game_fog_our_curve: the game's fog by our effect's curve, not its exponential
     std::atomic<bool>  fogKeepsColour{false};  // [fog] fog_keeps_colour: the act's fog colour at every hour, not darkened with the game's light
     std::atomic<bool>  fogIntoSky{false};      // [fog] fog_into_sky: the fog's colour the sky straight behind each point (D2R_DepthFog.fx SkyBehind)
-    // [fog] fog_colour_measured: the fog's colour measured from the game (game_fog_match's FogSeen); off (the default): the fog's colour is the
+    // [fog] fog_colour_measured: the fog's colour measured from the game (the measure was game_fog_match's FogSeen - removed 2026-11-08; now: the act's / cave's own colour); off (the default): the fog's colour is the
     // baked sky's at the horizon, a number (vr/sky/three_skies.h HorizonScene) - no measure, no passes
     std::atomic<bool>  fogMeasured{false};
-    std::atomic<bool>  fogMatch{false};        // [fog] game_fog_match: the game's fog shown in the act's colour, its grading measured (D2R_DepthFog.fx GameFogTrue)
     std::atomic<bool>  gameDrawnFlat{false};   // [render] game_drawn_flat: the game-drawn sky dome, ceiling and fog in the flat game too (GameDrawnView)
     std::atomic<int>   solidWalls{1};          // [render] solid_walls: 0 the game's see-through walls, 1 solid but in F1, 2 solid in every view
     std::atomic<bool>  keepRoofs{false};       // [render] keep_roofs: F4 - the game's roof cut-away (fade to 0) answered with 1 (vr/roof_keep.h)

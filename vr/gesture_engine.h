@@ -28,6 +28,8 @@ struct PenIn {
     bool recording = false;   // the Gestures tab's take runs (or is armed)
     uint8_t recHand = BW_LINK_GH_RIGHT;   // ... with this hand (BW_LINK_GH_*)
     int playPens = kPenBoth;  // [gestures] engine_pen
+    bool roles = false;       // [gestures] trigger_left / trigger_right in use (vr/trigger_roles.h): the pens in play are the Glyphs triggers' strokes
+    bool rolePen[2] = {false, false};
 };
 inline void Pens(const PenIn& in, uint8_t pen[2]) {
     pen[0] = pen[1] = 0;
@@ -37,6 +39,11 @@ inline void Pens(const PenIn& in, uint8_t pen[2]) {
         return;
     }
     if (in.panelOpen || !in.play) return;
+    if (in.roles) {   // a trigger given to glyphs is a pen while its press is a stroke; any other trigger is never one
+        pen[0] = in.rolePen[0];
+        pen[1] = in.rolePen[1];
+        return;
+    }
     pen[0] = (in.playPens & kPenLeft) != 0;
     pen[1] = (in.playPens & kPenRight) != 0;
 }

@@ -12,12 +12,16 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "banner.h"   // a select the game cannot take: said on the HUD
 #include "direct_input.h"
+#include "haptics.h"  // a select taken: a pulse in the right hand
 #include "link.h"
 #include "log_async.h"
 #include "skill_link.h"
 #include "skill_link_wire.h"
+#include "rune_flash.h"   // a gesture recognised: the trail's flash
 #include "skill_wheel.h"
+#include "trigger_roles_wire.h"   // the Glyphs triggers: which hand's slot a select fills, and that it is armed
 #include "view_gate.h"
 #include "wheel_game.h"
 
@@ -39,6 +43,14 @@ uint32_t g_latestRev = 0;
 bool g_haveLatest = false;
 int32_t g_engineCasts[16];         // CastFromEngine's, not yet taken by the tick (under g_lock)
 int g_engineCastCount = 0;
+int32_t g_engineArms[8];           // ArmFromEngine's (under g_lock)
+int g_engineArmHands[8];
+int g_engineArmCount = 0;
+uint64_t g_armSeq = 0;             // the setter's request for an arm, until its answer
+std::atomic<int32_t> g_armed[2] = {{-1}, {-1}};   // the skill a select gesture put on each hand's trigger
+std::atomic<uint64_t> g_armedAt[2] = {{0}, {0}};
+int g_armedSlot[2] = {-1, -1};     // the slot each hand's armed skill was put on (the tick's): changed there since, it is no longer armed
+std::atomic<bool> g_selectIcon{true};
 
 void Log(const char* text) {
     if (g_ctx) logasync::Info(g_ctx, text);
@@ -121,6 +133,22 @@ void CastFromEngine(int32_t skill) {
     if (g_engineCastCount < 16) g_engineCasts[g_engineCastCount++] = skill;
 }
 
+void ArmFromEngine(int32_t skill, int hand) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (g_engineArmCount < 8) {
+        g_engineArmHands[g_engineArmCount] = hand ? 1 : 0;
+        g_engineArms[g_engineArmCount++] = skill;
+    }
+}
+
+void SetSelectIcon(bool on) { g_selectIcon = on; }
+bool SelectIcon() { return g_selectIcon.load(); }
+
+int32_t ArmedSkill(int hand, uint64_t* at) {
+    if (at) *at = g_armedAt[hand & 1].load();
+    return g_armed[hand & 1].load();
+}
+
 uint32_t RecordState(int32_t* skill) {
     std::lock_guard<std::mutex> lock(g_lock);
     if (skill) *skill = g_recStateSkill;
@@ -194,6 +222,84 @@ void Tick(bool play, int heroMode) {
         }
     }
 
+    // the gesture engine's selects: the skill onto the right trigger's slot by the game's setter, nothing cast (the trigger casts it from now on)
+    {
+        int32_t arms[8];
+        int hands[8];
+        int n = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            n = g_engineArmCount;
+            for (int i = 0; i < n; ++i) { arms[i] = g_engineArms[i]; hands[i] = g_engineArmHands[i]; }
+            g_engineArmCount = 0;
+        }
+        for (int h = 0; h < 2; ++h)   // an armed skill whose slot holds something else now (the player set it, another bank): no longer armed
+            if (g_armed[h].load() >= 0 && g_armedSlot[h] >= 0 && g_snap.ready && g_snap.slot[g_armedSlot[h]].known && g_snap.slot[g_armedSlot[h]].id != g_armed[h].load() &&
+                !g_armSeq && now - g_armedAt[h].load() > 1500) {
+                LogF("vrcam: skill link - select: the %s trigger's slot (%s) holds another skill now: skill %d is no longer armed", h ? "right" : "left", SlotName(g_armedSlot[h]),
+                     g_armed[h].load());
+                g_armed[h] = -1;
+                g_armedSlot[h] = -1;
+                trigroleswire::SetArmed(h, false);
+            }
+        if (g_armSeq) {   // the last one's answer
+            const wheel::Reply r = wheelgame::ReplyNow();
+            if (r.sequence == g_armSeq && r.result == wheel::Result::Refused) {
+                banner::Show("The game would not put that skill on the trigger", false, now, 2500);
+                LogF("vrcam: skill link - select: the game's setter refused");
+            }
+            if (r.sequence == g_armSeq && r.result != wheel::Result::Pending) g_armSeq = 0;
+        }
+        for (int i = 0; i < n; ++i) {
+            const int32_t skill = arms[i];
+            const int hand = hands[i];
+            if (!play || !g_snap.ready) {
+                LogF("vrcam: skill link - the gesture engine's select of skill %d dropped: %s", skill,
+                     !viewgate::F4() ? "not in VR first person (F4)" : !g_snap.ready ? "the game's skills are not read" : "a menu is open");
+                continue;
+            }
+            // the drawing hand's trigger's own slot: the left's LT + RT (the game's second layer); the right's RT when its trigger is the glyphs' or
+            // [openxr] skill_rt_a makes it the RT slot, else A (the trigger is pad A)
+            const int slot = hand == 0 ? 11 : (trigroleswire::RoleOf(1) == trigroles::Role::Glyphs || skillwheel::SlotControlsOn()) ? 9 : 8;
+            const wheel::Skill* k = skilllink::Find(g_snap, skill);
+            if (!k) { LogF("vrcam: skill link - select: the hero does not have skill %d now", skill); continue; }
+            if (g_snap.slot[slot].known && g_snap.slot[slot].id == skill) {   // already there: nothing to set
+                g_armed[hand].store(skill);
+                g_armedAt[hand].store(now);
+                g_armedSlot[hand] = slot;
+                trigroleswire::SetArmed(hand, true);
+                haptics::Pulse(hand ? haptics::kRight : haptics::kLeft, 0.7f, 45);
+                LogF("vrcam: skill link - select: skill %d is already on the %s trigger (%s)", skill, hand ? "right" : "left", SlotName(slot));
+                continue;
+            }
+            if (!g_snap.editable) {
+                banner::Show("Skills can be set only in the game's controller layout", false, now, 2500);
+                LogF("vrcam: skill link - select of skill %d: the game is not in its controller layout (its slots cannot be set)", skill);
+                continue;
+            }
+            static uint64_t seq = 0x5E1EC70000000000ull;   // apart from the panel's editor's and the cast's own numbers
+            wheel::Request r;
+            r.op = wheel::Op::Assign;
+            r.sequence = ++seq;
+            r.session = g_snap.session;
+            r.slot = slot;
+            r.skill = k->id;
+            r.owner = k->owner;
+            r.bank = g_snap.bank;
+            r.prevSkill = g_snap.slot[slot].known ? g_snap.slot[slot].id : -1;
+            r.prevOwner = g_snap.slot[slot].known ? g_snap.slot[slot].owner : -1;
+            g_armSeq = r.sequence;
+            wheelgame::Submit(r);
+            g_armed[hand].store(skill);
+            g_armedAt[hand].store(now);
+            g_armedSlot[hand] = slot;
+            trigroleswire::SetArmed(hand, true);
+            haptics::Pulse(hand ? haptics::kRight : haptics::kLeft, 0.7f, 45);   // (felt on a PS VR2 too: vr/haptics.h's weak pulses are not)
+            LogF("vrcam: skill link - select: skill %d put on the %s trigger (%s) by the game's setter - the trigger casts it from now on", skill, hand ? "right" : "left",
+                 SlotName(slot));
+        }
+    }
+
     // BodyWalk's casts
     const bool haveCasts = on && link::Casts(&g_casts);
     {
@@ -212,6 +318,7 @@ void Tick(bool play, int heroMode) {
                      !viewgate::F4() ? "not in VR first person (F4)" : !g_snap.ready ? "the game's skills are not read" : "a menu is open");
                 continue;
             }
+            if (fresh[i].source == BW_LINK_CAST_GESTURE) runeflash::Shared().Trigger(now);   // (a drawn gesture recognised: its trail flashes)
             g_caster.Start(fresh[i].skill, now);
         }
     }

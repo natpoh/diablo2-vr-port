@@ -30,7 +30,9 @@
 #include <cstdio>
 #include <cstring>
 
+#include "gesture_actions.h"
 #include "gesture_cmds.h"
+#include "pose_zones.h"
 #include "skill_link_abi.h"
 #include "wheel_types.h"   // wheel::Skill: the hero's skills, as the skill panel's snapshot has them
 
@@ -60,22 +62,39 @@ enum : int {
     kRetry = 9,      // Recording, a failed take: Try again
     kNoSkill = 10,   // BindSkill: the gesture casts nothing
     kFix = 11,       // List, nothing to manage: ENABLE / START BODYWALK (Avail's fix)
+    kZonesToggle = 12,   // List: the hand poses' zones shown in play or hidden ([gestures] show_zones)
+    kZoneLess = 13,  // Review of a hand pose: its zone smaller
+    kZoneMore = 14,  // ... larger
+    kPlay = 15,      // Review: play the take once (the picture moves; in the headset the hero's own arms)
+    kBindTabSkills = 16,    // BindSkill: the skills ...
+    kBindTabActions = 17,   // ... or the game's actions (vr/gesture_actions.h)
+    kRevHand = 18,   // Review of a glyph: its hand line - Right / Left / Either, a click the next
+    kRevMode = 19,   // Review of a gesture with a skill: cast once / select, a click the other
+    kTriggers = 24,  // List: the Triggers screen (each trigger's role: as before / glyphs / Shift / an action)
+    kTrigRole0 = 40, // Triggers: kTrigRole0 + hand row * 4 + role (row 0 the right trigger, 1 the left)
+    kTrigAction0 = 48,   // Triggers: an Action trigger's action, row 0 / 1 (the actions' grid)
     kChoice0 = 20,   // NewType / NewHand: the big choices, 20..22
-    kRow0 = 100,     // List: kRow0 + row * 8 + part
+    kSwatch0 = 30,   // Colour (and a glyph's / motion's review): the ray's colours, 30..39
+    kRow0 = 100,     // List: kRow0 + row * 10 + part
     kGrid0 = 200,    // the grids: kGrid0 + 0..23
 };
-enum Part : int { kPic = 0, kRowRerecord = 1, kRowClear = 2, kRowBind = 3, kThrLess = 4, kThrMore = 5, kParts = 6 };
-constexpr int RowCell(int row, int part) { return kRow0 + row * 8 + part; }
-constexpr bool IsRowCell(int c) { return c >= kRow0 && c < kRow0 + 8 * 6 && (c - kRow0) % 8 < kParts; }
-constexpr int RowOf(int c) { return (c - kRow0) / 8; }
-constexpr int PartOf(int c) { return (c - kRow0) % 8; }
+// A row's parts: the picture plays the gesture (as BodyWalk's Play), the chip by the name picks its ray's colour.
+// A glyph's type line names its hand: a click steps it Right -> Left -> Either (Serg, 2026-11-08: "a glyph by the right hand, the left, or either").
+// A skill's line ("casts Fire Ball" / "arms Fire Ball") steps its mode: cast once, or select (Serg: "draw the glyph, the spell is chosen, the trigger strikes
+// with it until another glyph").
+enum Part : int { kPic = 0, kRowRerecord = 1, kRowClear = 2, kRowBind = 3, kThrLess = 4, kThrMore = 5, kColour = 6, kHand = 7, kMode = 8, kParts = 9 };
+constexpr int RowCell(int row, int part) { return kRow0 + row * 10 + part; }
+constexpr bool IsRowCell(int c) { return c >= kRow0 && c < kRow0 + 10 * 6 && (c - kRow0) % 10 < kParts; }
+constexpr int RowOf(int c) { return (c - kRow0) / 10; }
+constexpr int PartOf(int c) { return (c - kRow0) % 10; }
+static_assert(kRow0 + 10 * 6 <= 200, "the rows' cells end before the grids'");
 
 // The list's rows: six to a page, between the tab strip and the status lines.
 constexpr int kRowsPerPage = 6;
 constexpr float kRowTop = 138.0f, kRowH = 108.0f, kRowGap = 8.0f, kRowL = 60.0f, kRowR = 1540.0f;
 inline R RowRect(int i) { const float t = kRowTop + i * (kRowH + kRowGap); return {kRowL, t, kRowR, t + kRowH}; }
 inline R PicRect(int i) { const R r = RowRect(i); return {r.l + 10.0f, r.t + 4.0f, r.l + 110.0f, r.b - 4.0f}; }
-inline R NameRect(int i) { const R r = RowRect(i); return {r.l + 128.0f, r.t + 8.0f, r.l + 676.0f, r.t + 58.0f}; }
+inline R NameRect(int i) { const R r = RowRect(i); return {r.l + 128.0f, r.t + 8.0f, r.l + 626.0f, r.t + 58.0f}; }
 inline R SkillLineRect(int i) { const R r = RowRect(i); return {r.l + 128.0f, r.t + 58.0f, r.l + 676.0f, r.b - 6.0f}; }
 inline R TypeRect(int i) { const R r = RowRect(i); return {r.l + 686.0f, r.t + 8.0f, r.l + 896.0f, r.t + 54.0f}; }
 inline R ThrTextRect(int i) { const R r = RowRect(i); return {r.l + 730.0f, r.t + 58.0f, r.l + 852.0f, r.b - 8.0f}; }
@@ -83,6 +102,9 @@ inline R PartRect(int i, int part) {
     const R r = RowRect(i);
     switch (part) {
     case kPic: return PicRect(i);
+    case kColour: return {r.l + 634.0f, r.t + 12.0f, r.l + 676.0f, r.t + 54.0f};
+    case kHand: return TypeRect(i);
+    case kMode: return SkillLineRect(i);
     case kThrLess: return {r.l + 686.0f, r.t + 58.0f, r.l + 730.0f, r.b - 8.0f};
     case kThrMore: return {r.l + 852.0f, r.t + 58.0f, r.l + 896.0f, r.b - 8.0f};
     case kRowRerecord: return {r.l + 908.0f, r.t + 20.0f, r.l + 1114.0f, r.b - 20.0f};   // (wide enough for the game's gem buttons' ends and the word)
@@ -97,9 +119,18 @@ constexpr R kNoteLine{160.0f, 836.0f, 1440.0f, 886.0f};
 constexpr R kHintLine{160.0f, 888.0f, 1440.0f, 926.0f};
 constexpr float kFootT = 940.0f, kFootB = 1020.0f, kButtonW = 340.0f, kButtonGap = 24.0f;
 inline R FooterRect(int index, int count) {
-    const float total = count * kButtonW + (count - 1) * kButtonGap, l = 0.5f * (kW - total) + index * (kButtonW + kButtonGap);
-    return {l, kFootT, l + kButtonW, kFootB};
+    const float w = count * kButtonW + (count - 1) * kButtonGap > kW - 100.0f ? (kW - 100.0f - (count - 1) * kButtonGap) / count : kButtonW;   // (five: narrower)
+    const float total = count * w + (count - 1) * kButtonGap, l = 0.5f * (kW - total) + index * (w + kButtonGap);
+    return {l, kFootT, l + w, kFootB};
 }
+// Triggers: per trigger (row 0 the right, 1 the left) its name, its four roles, and an Action trigger's action.
+constexpr int kTrigRoles = 4;
+inline R TrigLabelRect(int row) { const float t = 196.0f + row * 300.0f; return {120.0f, t, 1480.0f, t + 50.0f}; }
+inline R TrigRoleRect(int row, int role) {
+    const float w = 300.0f, gap = 24.0f, l = 0.5f * (kW - (kTrigRoles * w + (kTrigRoles - 1) * gap)) + role * (w + gap), t = 256.0f + row * 300.0f;
+    return {l, t, l + w, t + 74.0f};
+}
+inline R TrigActionRect(int row) { const float t = 346.0f + row * 300.0f; return {460.0f, t, 1140.0f, t + 60.0f}; }
 
 // NewType / NewHand: big choices, one under another, in the middle.
 inline R ChoiceRect(int i, int n) {
@@ -118,6 +149,9 @@ inline R GridRect(int i) {
 inline R GridTileRect(int i) { const R r = GridRect(i); return {r.l, r.t, r.r, r.t + kCellTile}; }
 inline R GridNameRect(int i) { const R r = GridRect(i); return {r.l - 4.0f, r.t + kCellTile + 4.0f, r.r + 4.0f, r.b}; }
 
+// BindSkill's two tabs over the grid: Skills | Game actions.
+inline R BindTabRect(int i) { return i == 0 ? R{470.0f, 116.0f, 790.0f, 162.0f} : R{810.0f, 116.0f, 1130.0f, 162.0f}; }
+
 // Recording and Review.
 constexpr R kRecTitle{140.0f, 150.0f, 1460.0f, 220.0f};     // "RECORDING: <type>, <hand>" / the gesture's name
 constexpr R kRecText{160.0f, 236.0f, 1440.0f, 520.0f};      // what to do, three lines
@@ -125,6 +159,22 @@ constexpr R kRecState{420.0f, 560.0f, 1180.0f, 700.0f};     // READY / DRAWING..
 constexpr R kReviewPic{540.0f, 140.0f, 1060.0f, 640.0f};
 constexpr R kReviewName{160.0f, 660.0f, 1440.0f, 724.0f};
 constexpr R kReviewLine{160.0f, 728.0f, 1440.0f, 780.0f};
+// ... split: the type and hand on its left half (a glyph's hand steps there), what it does on its right (a skill's mode steps there)
+constexpr R kReviewHandHalf{160.0f, 728.0f, 790.0f, 780.0f};
+constexpr R kReviewModeHalf{810.0f, 728.0f, 1440.0f, 780.0f};
+// Review of a hand pose: its zone's size, "< Zone 12 cm >", under the line.
+constexpr R kZoneLessRect{560.0f, 784.0f, 616.0f, 830.0f};
+constexpr R kZoneText{616.0f, 784.0f, 984.0f, 830.0f};
+constexpr R kZoneMoreRect{984.0f, 784.0f, 1040.0f, 830.0f};
+// The ray's colours: kSwatches swatches in a row - big on the Colour screen, small under a glyph's / motion's review line.
+constexpr int kSwatches = 10;
+inline R SwatchRect(int i, bool big) {
+    const float s = big ? 104.0f : 44.0f, gap = big ? 20.0f : 12.0f, total = kSwatches * s + (kSwatches - 1) * gap, l = 0.5f * (kW - total) + i * (s + gap);
+    const float t = big ? 620.0f : 784.0f;
+    return {l, t, l + s, t + s};
+}
+constexpr R kColourPic{600.0f, 190.0f, 1000.0f, 560.0f};   // the Colour screen: the gesture in the colour pointed at
+constexpr R kColourTitle{160.0f, 128.0f, 1440.0f, 180.0f};
 // The list with nothing to manage: what is missing (a headline and a line of detail) and the fix under it.
 constexpr R kMissTitle{140.0f, 300.0f, 1460.0f, 370.0f};
 constexpr R kMissText{160.0f, 380.0f, 1440.0f, 500.0f};
@@ -132,7 +182,7 @@ constexpr R kFixRect{560.0f, 540.0f, 1040.0f, 630.0f};
 
 // -- what the painter is given ----------------------------------------------------------------------------------------------------------------
 
-enum class Screen : uint8_t { List, NewType, NewHand, NewSkill, BindSkill, Recording, Review };
+enum class Screen : uint8_t { List, NewType, NewHand, NewSkill, BindSkill, Recording, Review, Colour, Triggers };
 
 // Whether there is anything to manage: the skill link's tick on, a BodyWalk writing its Gestures, a hero (BodyWalk's set = the class) - and
 // when not, which piece is missing.
@@ -156,13 +206,16 @@ inline Fix FixFor(Avail a, bool canStart) { return a == Avail::LinkOff ? Fix::En
 // The line under the screen (the painter words it): what happened last, or what is in the way.
 enum class Note : uint8_t {
     None, NoAnswer, Busy, NoGesture, Bad, NoSet,      // BodyWalk's answers (BW_LINK_GR_*) and none at all
-    Asked, Kept, Discarded, Cleared, Bound, Coloured, Threshold,
+    Asked, Kept, Discarded, Cleared, Bound, Coloured, Threshold, NoActions, HandSet, NoHandSet, ModeSet, NoModeSet,
     ClearAgain, ChooseReview, NoSkills, Failed, Cancelled, Stopped,
 };
 
 struct Row {
     BW_LinkGesture g;
     char skill[wheel::kNameLen];   // the skill it casts, in the game's words (empty: none / not known)
+    float zone[2];                 // a hand pose: its zone's radius per hand, metres (the host's: the engine's, else posezones::kDefaultM)
+    char action[32];               // the game action it does instead of a skill (vr/gesture_actions.h id; empty: a skill or nothing)
+    uint8_t mode;                  // its skill: 0 cast once, 1 select (put on the right trigger; the engine's BWGE_GetMode)
 };
 
 struct View {
@@ -171,6 +224,7 @@ struct View {
     int hover;
     Avail avail;
     bool canStart;                 // a BodyWalkVR.exe was found to start (NotRunning: START BODYWALK; else where to get one)
+    bool zonesShown;               // [gestures] show_zones: the hand poses' zones shown in play
     char setKey[32];
     int count, page, pages, rows;   // the class's gestures, the list's page and pages, the rows on this page
     Row row[kRowsPerPage];
@@ -179,16 +233,32 @@ struct View {
     int options, pickPage, pickPages;
     wheel::Skill option[kGridCount];
     int32_t bindSkill;             // BindSkill: what the gesture casts now (its tile framed)
+    uint8_t bindTab;               // BindSkill: 0 the skills, 1 the game's actions
+    bool actionsOk;                // the engine binds game actions (its BWGE_BindAction): else the actions' tab only says what it needs
+    bool handsOk;                  // the engine changes a glyph's hand (its BWGE_SetHand): else a click on the hand says to record it again
+    bool modesOk;                  // the engine keeps a gesture's mode (its BWGE_SetMode): else a click on the mode says what it needs
+    int actCount;                  // BindSkill, actions: the actions on this page ...
+    int16_t act[kGridCount];       // ... their places in gact::All()
+    char bindAction[32];           // ... and the one the gesture does now (framed)
+    uint8_t bindTrigger;           // BindSkill for a trigger's action (Triggers): 0 none, 1 the right trigger, 2 the left (actions only)
+    uint8_t trigRole[2];           // each trigger's role ([0] the right, [1] the left: vr/trigger_roles.h Role)
+    char trigAction[2][32];        // ... an Action trigger's action
     bool waiting;                  // a command not yet acted on by BodyWalk
     bool live;                     // Recording: BodyWalk records (or is about to): the trigger is its pen, no click here
     bool queued;                   // Recording: the RECORD waits for the triggers to be let go
     bool failed;                   // Recording: the take failed (or BodyWalk refused / did not answer) - Try again / Back
     uint32_t recordState;          // BW_LINK_REC_*
     uint8_t recType, recHand;
+    uint32_t recTarget;            // the gesture re-taken (0: a new one)
     char recSkill[wheel::kNameLen];
     char recName[48];              // a re-record: the gesture's name
     bool haveReview;
     Row review;
+    bool haveColour;               // Colour: the gesture whose ray colour is picked
+    Row colour;
+    uint32_t playId;               // the gesture playing on the tab (its picture moves), 0 none
+    float playT;                   // ... how far, 0..1
+    uint8_t playHand;              // ... its hand (the window swings away from it meanwhile)
     Note note;
     bool lastShown;                // a stroke was read since BodyWalk started: the hint line says how it went
     float lastPercent;
@@ -201,36 +271,45 @@ inline void Zero(View& v) { std::memset(&v, 0, sizeof v); v.hover = kNone; v.bin
 inline int FooterCells(const View& v, int* out) {
     int n = 0;
     switch (v.screen) {
-    case Screen::List: out[n++] = kPrev; out[n++] = kNew; out[n++] = kNext; break;
+    case Screen::List: out[n++] = kPrev; out[n++] = kNew; out[n++] = kZonesToggle; out[n++] = kTriggers; out[n++] = kNext; break;
     case Screen::NewType:
     case Screen::NewHand: out[n++] = kBack; break;
     case Screen::NewSkill: out[n++] = kPrev; out[n++] = kNext; out[n++] = kBack; break;
-    case Screen::BindSkill: out[n++] = kPrev; out[n++] = kNext; out[n++] = kNoSkill; out[n++] = kBack; break;
+    case Screen::BindSkill: out[n++] = kPrev; out[n++] = kNext; out[n++] = kNoSkill; out[n++] = kBack; break;   // (No skill: nothing at all - skill or action)
     case Screen::Recording:
         if (v.failed) { out[n++] = kRetry; out[n++] = kBack; }
         else out[n++] = kStop;
         break;
-    case Screen::Review: out[n++] = kKeep; out[n++] = kRerecord; out[n++] = kDiscard; break;
+    case Screen::Review: out[n++] = kKeep; out[n++] = kRerecord; out[n++] = kDiscard; out[n++] = kPlay; break;
+    case Screen::Colour: out[n++] = kBack; break;
+    case Screen::Triggers: out[n++] = kBack; break;
     }
     return n;
 }
 // A footer button that does something now (the painter dims the rest; a click on one is refused).
 inline bool FooterEnabled(const View& v, int cell) {
-    if (v.waiting && cell != kBack) return false;
+    if (v.waiting && cell != kBack && cell != kPlay) return false;   // (Play asks BodyWalk nothing)
     switch (cell) {
     case kPrev: return v.screen == Screen::List ? v.page > 0 : v.pickPage > 0;
     case kNext: return v.screen == Screen::List ? v.page + 1 < v.pages : v.pickPage + 1 < v.pickPages;
     case kNew: return v.avail == Avail::Ok && v.count < (int)BW_LINK_GESTURES_MAX;
     case kFix: return FixFor(v.avail, v.canStart) != Fix::None;
+    case kZonesToggle: return true;
+    case kTriggers: return true;
     case kStop: return false;   // (B / Y: the trigger is the pen while recording)
     default: return true;
     }
 }
 // A row's part that can be clicked: the picture of a glyph / motion (its colour), Re-record (not a button: BodyWalk chooses those), Clear,
 // Bind, the threshold's arrows (not a button).
+// A gesture drawn with a ray in the air (a glyph, a motion's path): it has a ray colour to pick.
+inline bool HasRay(const BW_LinkGesture& g) { return g.type == BW_LINK_GT_GLYPH || g.type == BW_LINK_GT_MOTION; }
 inline bool PartUsable(const BW_LinkGesture& g, int part) {
     switch (part) {
-    case kPic: return g.type == BW_LINK_GT_GLYPH || g.type == BW_LINK_GT_MOTION;
+    case kPic: return g.type != BW_LINK_GT_BUTTON && (g.flags & (BW_LINK_GF_RECORDED | BW_LINK_GF_REVIEW));   // (Play: a take to play)
+    case kColour: return g.type == BW_LINK_GT_GLYPH || g.type == BW_LINK_GT_MOTION;
+    case kHand: return g.type == BW_LINK_GT_GLYPH;
+    case kMode: return g.type != BW_LINK_GT_BUTTON && g.skill >= 0;   // (a skill: an action is done once)
     case kRowRerecord: case kThrLess: case kThrMore: return g.type != BW_LINK_GT_BUTTON;
     case kRowClear: case kRowBind: return true;
     default: return false;
@@ -245,6 +324,8 @@ inline const char* ScreenName(Screen s) {
     case Screen::BindSkill: return "bind: skill";
     case Screen::Recording: return "recording";
     case Screen::Review: return "review";
+    case Screen::Colour: return "colour";
+    case Screen::Triggers: return "triggers";
     }
     return "?";
 }
@@ -253,26 +334,42 @@ inline const char* StateName(uint32_t st) {
     return st < 6 ? k[st] : "?";
 }
 
-// NewHand's choices, top down: Right (most players' pen hand), Left, and Both for a pose.
+// NewHand's choices, top down: Right (most players' pen hand), Left, and a third - Both for a pose, Either for a glyph (BW_LINK_GH_BOTH: a glyph
+// drawn by either hand, its pen either trigger).
 inline uint8_t HandOfChoice(int i) { return uint8_t(i == 0 ? BW_LINK_GH_RIGHT : i == 1 ? BW_LINK_GH_LEFT : BW_LINK_GH_BOTH); }
 inline int ChoiceCount(const View& v) {
     if (v.screen == Screen::NewType) return 3;
-    if (v.screen == Screen::NewHand) return v.newType == BW_LINK_GT_POSE ? 3 : 2;
+    if (v.screen == Screen::NewHand) return v.newType == BW_LINK_GT_POSE || v.newType == BW_LINK_GT_GLYPH ? 3 : 2;
     return 0;
 }
+// A glyph's next hand: Right -> Left -> Either -> Right.
+inline uint8_t NextGlyphHand(uint8_t h) { return h == BW_LINK_GH_RIGHT ? uint8_t(BW_LINK_GH_LEFT) : h == BW_LINK_GH_LEFT ? uint8_t(BW_LINK_GH_BOTH) : uint8_t(BW_LINK_GH_RIGHT); }
 
 inline bool CellRect(const View& v, int cell, R* out) {
-    int cells[4];
+    int cells[5];
     const int n = FooterCells(v, cells);
     for (int i = 0; i < n; ++i)
         if (cells[i] == cell) { *out = FooterRect(i, n); return true; }
     if (v.screen == Screen::List && IsRowCell(cell) && RowOf(cell) < v.rows) { *out = PartRect(RowOf(cell), PartOf(cell)); return true; }
     if (v.screen == Screen::List && cell == kFix && FixFor(v.avail, v.canStart) != Fix::None) { *out = kFixRect; return true; }
+    if (v.screen == Screen::Review && v.haveReview && v.review.g.type == BW_LINK_GT_POSE && (cell == kZoneLess || cell == kZoneMore)) {
+        *out = cell == kZoneLess ? kZoneLessRect : kZoneMoreRect;
+        return true;
+    }
+    if (cell >= kSwatch0 && cell < kSwatch0 + kSwatches && (v.screen == Screen::Colour || (v.screen == Screen::Review && v.haveReview && HasRay(v.review.g)))) {
+        *out = SwatchRect(cell - kSwatch0, v.screen == Screen::Colour);
+        return true;
+    }
     if (cell >= kChoice0 && cell < kChoice0 + ChoiceCount(v)) { *out = ChoiceRect(cell - kChoice0, ChoiceCount(v)); return true; }
-    if ((v.screen == Screen::NewSkill || v.screen == Screen::BindSkill) && cell >= kGrid0 && cell < kGrid0 + v.options) {
+    if ((v.screen == Screen::NewSkill || v.screen == Screen::BindSkill) && cell >= kGrid0 && cell < kGrid0 + (v.bindTab ? v.actCount : v.options)) {
         *out = GridRect(cell - kGrid0);
         return true;
     }
+    if (v.screen == Screen::BindSkill && (cell == kBindTabSkills || cell == kBindTabActions)) { *out = BindTabRect(cell - kBindTabSkills); return true; }
+    if (v.screen == Screen::Triggers && cell >= kTrigRole0 && cell < kTrigRole0 + 2 * kTrigRoles) { *out = TrigRoleRect((cell - kTrigRole0) / kTrigRoles, (cell - kTrigRole0) % kTrigRoles); return true; }
+    if (v.screen == Screen::Triggers && (cell == kTrigAction0 || cell == kTrigAction0 + 1) && v.trigRole[cell - kTrigAction0] == 3) { *out = TrigActionRect(cell - kTrigAction0); return true; }
+    if (v.screen == Screen::Review && cell == kRevHand && v.haveReview && v.review.g.type == BW_LINK_GT_GLYPH) { *out = kReviewHandHalf; return true; }
+    if (v.screen == Screen::Review && cell == kRevMode && v.haveReview && PartUsable(v.review.g, kMode)) { *out = kReviewModeHalf; return true; }
     return false;
 }
 
@@ -280,7 +377,7 @@ inline bool CellRect(const View& v, int cell, R* out) {
 inline int HitTest(const View& v, float u, float vv, int previous) {
     if (!std::isfinite(u) || !std::isfinite(vv) || u < 0.0f || u >= 1.0f || vv < 0.0f || vv >= 1.0f) return kNone;
     const float x = u * kW, y = vv * kH;
-    int cells[4];
+    int cells[5];
     const int n = FooterCells(v, cells);
     for (int i = 0; i < n; ++i)
         if (FooterRect(i, n).Has(x, y)) return cells[i];
@@ -298,8 +395,33 @@ inline int HitTest(const View& v, float u, float vv, int previous) {
         break;
     case Screen::NewSkill:
     case Screen::BindSkill:
-        for (int i = 0; i < v.options; ++i)
+        if (v.screen == Screen::BindSkill)
+            for (int i = 0; i < 2; ++i)
+                if (BindTabRect(i).Has(x, y)) return kBindTabSkills + i;
+        for (int i = 0; i < (v.bindTab ? v.actCount : v.options); ++i)
             if (GridRect(i).Has(x, y)) return kGrid0 + i;
+        break;
+    case Screen::Review:
+        if (v.haveReview && v.review.g.type == BW_LINK_GT_POSE) {
+            if (kZoneLessRect.Has(x, y)) return kZoneLess;
+            if (kZoneMoreRect.Has(x, y)) return kZoneMore;
+        }
+        if (v.haveReview && HasRay(v.review.g))
+            for (int i = 0; i < kSwatches; ++i)
+                if (SwatchRect(i, false).Has(x, y)) return kSwatch0 + i;
+        if (v.haveReview && v.review.g.type == BW_LINK_GT_GLYPH && kReviewHandHalf.Has(x, y)) return kRevHand;
+        if (v.haveReview && PartUsable(v.review.g, kMode) && kReviewModeHalf.Has(x, y)) return kRevMode;
+        break;
+    case Screen::Colour:
+        for (int i = 0; i < kSwatches; ++i)
+            if (SwatchRect(i, true).Has(x, y)) return kSwatch0 + i;
+        break;
+    case Screen::Triggers:
+        for (int row = 0; row < 2; ++row) {
+            for (int role = 0; role < kTrigRoles; ++role)
+                if (TrigRoleRect(row, role).Has(x, y)) return kTrigRole0 + row * kTrigRoles + role;
+            if (v.trigRole[row] == 3 && TrigActionRect(row).Has(x, y)) return kTrigAction0 + row;
+        }
         break;
     default: break;
     }
@@ -308,9 +430,10 @@ inline int HitTest(const View& v, float u, float vv, int previous) {
     return kNone;
 }
 
-// -- the colours a click on a picture steps through (R in the low byte, A 255) ------------------------------------------------------------------
+// -- the ray's colours (R in the low byte, A 255): red, orange, yellow, green, cyan, blue, violet, pink, white, gold ------------------------------
 
-constexpr uint32_t kPalette[8] = {0xFF3C3CE6u, 0xFF2896F0u, 0xFF3CD2F0u, 0xFF50D25Au, 0xFFC8C83Cu, 0xFFF08C3Cu, 0xFFE65AB4u, 0xFFF0F0F0u};
+constexpr uint32_t kPalette[10] = {0xFF3C3CE6u, 0xFF2896F0u, 0xFF3CD2F0u, 0xFF50D25Au, 0xFFC8C83Cu, 0xFFF08C3Cu, 0xFFE65AB4u, 0xFFB45AE6u, 0xFFF0F0F0u, 0xFF46B4E6u};
+static_assert(sizeof kPalette / sizeof kPalette[0] == kSwatches, "a swatch per colour");
 inline uint32_t NextColour(uint32_t rgba) {
     int best = 0;
     long bestD = 0x7FFFFFFF;
@@ -322,7 +445,7 @@ inline uint32_t NextColour(uint32_t rgba) {
         }
         if (d < bestD) { bestD = d; best = i; }
     }
-    return kPalette[(best + 1) % 8];
+    return kPalette[(best + 1) % kSwatches];
 }
 // The threshold a step of the arrows gives: on the 5 % grid, 50 .. 95.
 inline float StepThreshold(float now, int dir) {
@@ -361,6 +484,33 @@ struct In {
     Missing missing = Avail::NotRunning;  // ... and then why (the host's look at the process and Game Link): NotRunning .. NoGestures
     bool canStart = false;        // a BodyWalkVR.exe was found (START BODYWALK can do something)
     bool triggers = false;        // either hand's trigger is down: a RECORD waits until both are let go (the click's pull is never BodyWalk's pen)
+    // the hand poses' zones (vr/pose_zones.h): each gesture's radius per hand as the host knows it (the engine's, else what was set here); absent = the default
+    struct ZoneSize {
+        uint32_t id;
+        float radius[2];
+    };
+    const ZoneSize* zones = nullptr;
+    int zoneCount = 0;
+    bool zonesShown = false;      // [gestures] show_zones
+    float playDurationS = 0;      // the take playing lasts this long (the host's, from the engine's samples); 0 = kPlayS by its type
+    // the game actions the gestures do instead of a skill (the engine's BWGE_GetAction), and whether it can bind them at all
+    struct ActionOf {
+        uint32_t id;
+        char action[32];
+    };
+    const ActionOf* actionOf = nullptr;
+    int actionOfCount = 0;
+    bool actionsOk = false;
+    bool handsOk = false;         // the engine changes a glyph's hand (BWGE_SetHand)
+    struct ModeOf {
+        uint32_t id;
+        uint8_t mode;
+    };
+    const ModeOf* modeOf = nullptr;   // the gestures in select mode (absent: cast once)
+    int modeOfCount = 0;
+    bool modesOk = false;         // the engine keeps a gesture's mode (BWGE_SetMode)
+    uint8_t trigRole[2] = {0, 0}; // each trigger's role as the host has it ([0] the right, [1] the left)
+    const char* trigAction[2] = {nullptr, nullptr};
     const wheel::Skill* catalog = nullptr;   // the hero's skills, for the names and the grids
     int catalogCount = 0;
 };
@@ -370,6 +520,8 @@ enum class Feedback : uint8_t { None, Hover, Chosen, Refused, Applied };
 // How long BodyWalk is given to act on a command (a minimised or busy BodyWalk ticks slowly), how long it may stop writing its Gestures before the
 // screens give up and go back to the list, and how long after its answer a take must show READY / DRAWING (else BodyWalk did not start it).
 constexpr double kAnswerS = 6.0, kLostS = 5.0, kStartS = 2.0;
+// A take played without the engine's own timing: a glyph is drawn in 1.6 s, a motion in 1.4 s, the arms move into a pose in 1.0 s. Once, no loop.
+inline double PlaySecondsFor(uint8_t type) { return type == BW_LINK_GT_GLYPH ? 1.6 : type == BW_LINK_GT_MOTION ? 1.4 : 1.0; }
 
 // [debug] gesture_trace: what the model did this frame and why, a line each (the host writes them to the log with its own lines: the commands, the
 // block, the pen). Kept even with the key off (a few bytes a frame); only the host decides whether they are written.
@@ -388,6 +540,25 @@ struct Out {
     bool send = false;            // `cmd` goes to BodyWalk (vr/link.cpp PushGestureCmd) - Sent() is told its sequence
     gesturecmd::Cmd cmd;
     Fix fix = Fix::None;          // the list's fix was clicked: the host enables the skill link / starts BodyWalk
+    bool zoneSet = false;         // a hand pose's zone resized: the host keeps zoneM for zoneGesture's hands (zoneHand) and hands it to the engine
+    uint32_t zoneGesture = 0;
+    uint8_t zoneHand = 0;
+    float zoneM = 0;
+    bool toggleZones = false;     // the list's "Zones" was clicked: the host flips [gestures] show_zones
+    uint32_t play = 0;            // Play clicked for this gesture: the host plays its take once (in the headset the hero's own arms, F4)
+    bool trigSet = false;         // a trigger's role or action changed (the host writes [gestures] trigger_<hand>, trigger_<hand>_action and applies it)
+    uint8_t trigRow = 0;          // 0 the right trigger, 1 the left
+    uint8_t trigRole = 0;
+    char trigAction[32] = {};     // (with trigRole 3)
+    bool modeSet = false;         // a gesture's mode changed: the host asks the engine (BWGE_SetMode) for modeGesture -> mode
+    uint32_t modeGesture = 0;
+    uint8_t mode = 0;
+    bool handSet = false;         // a glyph's hand changed: the host asks the engine (BWGE_SetHand) for handGesture -> hand
+    uint32_t handGesture = 0;
+    uint8_t hand = 0;
+    bool bindAction = false;      // a game action chosen for bindGesture (the engine's BWGE_BindAction; it takes the skill away)
+    uint32_t bindGesture = 0;
+    char action[32] = {};
     Feedback feedback = Feedback::None;
 };
 
@@ -424,6 +595,41 @@ class Model {
     bool canStart_ = false;
     wheel::Skill picks_[wheel::kCatalogMax];
     int pickCount_ = 0;
+    uint32_t colourId_ = 0;        // Colour: the gesture whose ray colour is picked
+    uint8_t bindTab_ = 0;          // BindSkill: 0 skills, 1 game actions
+    uint8_t bindTrigger_ = 0;      // BindSkill for a trigger's action: 0 none, 1 the right trigger, 2 the left
+    int actPage_ = 0;
+    uint32_t playId_ = 0;          // the gesture playing on the tab, 0 none
+    double playStart_ = 0, playDur_ = 1;
+    // A glyph's hand stepped (the engine's own call: no command). Without the call: said to record it again with the hand wanted.
+    void SetHand(const In& in, const BW_LinkGesture& r, Out* out) {
+        if (r.type != BW_LINK_GT_GLYPH) return;
+        if (!in.handsOk) { Say(Note::NoHandSet, in.time, 5.0); out->feedback = Feedback::Refused; return; }
+        out->handSet = true;
+        out->handGesture = r.id;
+        out->hand = NextGlyphHand(r.hand);
+        Say(Note::HandSet, in.time, 1.5);
+    }
+    // A gesture's mode flipped: cast once <-> select (the engine's own call: no command).
+    void SetMode(const In& in, const BW_LinkGesture& r, uint8_t now, Out* out) {
+        if (!PartUsable(r, kMode)) return;
+        if (!in.modesOk) { Say(Note::NoModeSet, in.time, 5.0); out->feedback = Feedback::Refused; return; }
+        out->modeSet = true;
+        out->modeGesture = r.id;
+        out->mode = now ? 0 : 1;
+        Say(Note::ModeSet, in.time, 1.5);
+    }
+    static uint8_t ModeOfId(const In& in, uint32_t id) {
+        for (int i = 0; i < in.modeOfCount && in.modeOf; ++i)
+            if (in.modeOf[i].id == id) return in.modeOf[i].mode;
+        return 0;
+    }
+    void Play(uint32_t id, uint8_t type, double now, Out* out) {
+        playId_ = id;
+        playStart_ = now;
+        playDur_ = PlaySecondsFor(type);
+        out->play = id;
+    }
 
     void Say(Note n, double now, double seconds = 3.0) { note_ = n; noteUntil_ = now + seconds; }
     static const BW_LinkGesture* Find(const BW_LinkGestures* g, uint32_t id) {
@@ -439,6 +645,20 @@ class Model {
         for (int i = 0; i < in.catalogCount; ++i)
             if (in.catalog[i].id == id && in.catalog[i].name[0]) { std::snprintf(out, size, "%s", in.catalog[i].name); return; }
         std::snprintf(out, size, "#%d", (int)id);   // (a skill the hero has not now: its number)
+    }
+    static void ActionOfId(const In& in, uint32_t id, char* out, size_t size) {
+        out[0] = 0;
+        for (int i = 0; i < in.actionOfCount && in.actionOf; ++i)
+            if (in.actionOf[i].id == id) { std::snprintf(out, size, "%.31s", in.actionOf[i].action); return; }
+    }
+    static void ZoneOf(const In& in, uint32_t id, float out[2]) {
+        out[0] = out[1] = posezones::kDefaultM;
+        for (int i = 0; i < in.zoneCount && in.zones; ++i)
+            if (in.zones[i].id == id) {
+                out[0] = posezones::Clamp(in.zones[i].radius[0]);
+                out[1] = posezones::Clamp(in.zones[i].radius[1]);
+                return;
+            }
     }
     bool Live(const BW_LinkGestures* g) const {
         if (screen_ != Screen::Recording || failed_) return false;
@@ -658,7 +878,10 @@ public:
             case Screen::NewType: screen_ = Screen::List; break;
             case Screen::NewHand: screen_ = Screen::NewType; break;
             case Screen::NewSkill: screen_ = Screen::NewHand; break;
-            case Screen::BindSkill: screen_ = Screen::List; break;
+            case Screen::BindSkill:
+                screen_ = bindTrigger_ ? Screen::Triggers : Screen::List;
+                bindTrigger_ = 0;
+                break;
             case Screen::Recording:
                 recQueued_ = false;
                 if (Live(g) && avail == Avail::Ok && (pending_ || sentWait_ || recAcked_)) {
@@ -670,6 +893,8 @@ public:
                 screen_ = Screen::List;
                 break;
             case Screen::Review: Say(Note::ChooseReview, in.time); out.feedback = Feedback::Refused; break;
+            case Screen::Colour: screen_ = Screen::List; break;
+            case Screen::Triggers: screen_ = Screen::List; break;
             default: break;
             }
         }
@@ -691,17 +916,21 @@ public:
 
 private:
     void Click(const In& in, const BW_LinkGestures* g, Avail avail, int h, Out* out) {
-        const bool busy = pending_ || sentWait_;
-        int cells[4];
+        bool busy = pending_ || sentWait_;
+        if (busy && (h == kPlay || (IsRowCell(h) && PartOf(h) == kPic))) busy = false;   // (Play asks BodyWalk nothing)
+        int cells[5];
         const int n = FooterCells(v_, cells);
         for (int i = 0; i < n; ++i)
             if (cells[i] == h && !FooterEnabled(v_, h)) { out->feedback = Feedback::Refused; return; }
         if (busy && h != kBack) { out->feedback = Feedback::Refused; return; }
-        if (avail != Avail::Ok && h != kBack && h != kFix) { out->feedback = Feedback::Refused; return; }   // (BodyWalk away a moment: nothing asked meanwhile)
+        const bool local = h == kBack || h == kFix || h == kZonesToggle || h == kTriggers || screen_ == Screen::Triggers || bindTrigger_;   // (the triggers ask BodyWalk nothing)
+        if (avail != Avail::Ok && !local) { out->feedback = Feedback::Refused; return; }   // (BodyWalk away a moment: nothing asked meanwhile)
         out->feedback = Feedback::Chosen;
         switch (screen_) {
         case Screen::List:
             if (h == kFix) out->fix = FixFor(avail, canStart_);
+            else if (h == kZonesToggle) out->toggleZones = true;
+            else if (h == kTriggers) screen_ = Screen::Triggers;
             else if (h == kPrev) page_ = std::max(0, page_ - 1);
             else if (h == kNext) page_ = std::min(v_.pages - 1, page_ + 1);
             else if (h == kNew) screen_ = Screen::NewType;
@@ -710,9 +939,27 @@ private:
                 gesturecmd::Cmd c;
                 c.gesture = r.id;
                 switch (PartOf(h)) {
-                case kPic: c.op = BW_LINK_GC_COLOR; c.rgba = NextColour(r.rgba); Ask(out, in.time, c); break;
+                case kPic: Play(r.id, r.type, in.time, out); break;   // (as BodyWalk's Play: once)
+                case kColour:
+                    colourId_ = r.id;
+                    screen_ = Screen::Colour;
+                    break;
+                case kHand: SetHand(in, r, out); break;
+                case kMode: SetMode(in, r, v_.row[RowOf(h)].mode, out); break;
                 case kThrLess:
-                case kThrMore: c.op = BW_LINK_GC_THRESHOLD; c.value = StepThreshold(r.threshold, PartOf(h) == kThrLess ? -1 : 1); Ask(out, in.time, c); break;
+                case kThrMore:
+                    if (r.type == BW_LINK_GT_POSE) {   // a hand pose's arrows size its zone (the host keeps it: no command)
+                        const float now = v_.row[RowOf(h)].zone[r.hand == BW_LINK_GH_LEFT ? 0 : 1];
+                        out->zoneSet = true;
+                        out->zoneGesture = r.id;
+                        out->zoneHand = r.hand;
+                        out->zoneM = posezones::Step(now, PartOf(h) == kThrLess ? -1 : 1);
+                        break;
+                    }
+                    c.op = BW_LINK_GC_THRESHOLD;
+                    c.value = StepThreshold(r.threshold, PartOf(h) == kThrLess ? -1 : 1);
+                    Ask(out, in.time, c);
+                    break;
                 case kRowRerecord: Record(out, in.time, r.id, r.type, r.hand, r.skill); break;
                 case kRowClear:
                     if (clearArmed_ == r.id) {
@@ -725,10 +972,15 @@ private:
                         Say(Note::ClearAgain, in.time);
                     }
                     break;
-                case kRowBind:
+                case kRowBind: {
                     bindGesture_ = r.id;
                     OpenPicker(in, Screen::BindSkill);
+                    char a[32];
+                    ActionOfId(in, r.id, a, sizeof a);
+                    bindTab_ = a[0] ? 1 : 0;   // (a gesture that does an action opens on the actions)
+                    actPage_ = a[0] ? std::max(0, gact::All().IndexOf(a)) / kGridCount : 0;
                     break;
+                }
                 default: break;
                 }
             }
@@ -751,10 +1003,28 @@ private:
             break;
         case Screen::NewSkill:
         case Screen::BindSkill:
-            if (h == kBack) screen_ = screen_ == Screen::NewSkill ? Screen::NewHand : Screen::List;
-            else if (h == kPrev) pickPage_ = std::max(0, pickPage_ - 1);
-            else if (h == kNext) pickPage_ = std::min(v_.pickPages - 1, pickPage_ + 1);
-            else if (h == kNoSkill || (h >= kGrid0 && h < kGrid0 + v_.options)) {
+            if (h == kBack) {
+                screen_ = screen_ == Screen::NewSkill ? Screen::NewHand : bindTrigger_ ? Screen::Triggers : Screen::List;
+                bindTrigger_ = 0;
+            } else if (h == kBindTabSkills || h == kBindTabActions) bindTab_ = h == kBindTabActions || bindTrigger_ ? 1 : 0;   // (a trigger's: actions only)
+            else if (screen_ == Screen::BindSkill && bindTrigger_ && h >= kGrid0 && h < kGrid0 + v_.actCount) {   // a trigger's action: the host keeps it
+                out->trigSet = true;
+                out->trigRow = uint8_t(bindTrigger_ - 1);
+                out->trigRole = 3;
+                std::snprintf(out->trigAction, sizeof out->trigAction, "%s", gact::All().At(v_.act[h - kGrid0]).id);
+                screen_ = Screen::Triggers;
+                bindTrigger_ = 0;
+            }
+            else if (h == kPrev) (screen_ == Screen::BindSkill && bindTab_ ? actPage_ : pickPage_) = std::max(0, (screen_ == Screen::BindSkill && bindTab_ ? actPage_ : pickPage_) - 1);
+            else if (h == kNext) (screen_ == Screen::BindSkill && bindTab_ ? actPage_ : pickPage_) = std::min(v_.pickPages - 1, (screen_ == Screen::BindSkill && bindTab_ ? actPage_ : pickPage_) + 1);
+            else if (screen_ == Screen::BindSkill && bindTab_ && h >= kGrid0 && h < kGrid0 + v_.actCount) {   // a game action (the engine's own call: no command)
+                if (!in.actionsOk || avail != Avail::Ok) { Say(Note::NoActions, in.time, 5.0); out->feedback = Feedback::Refused; break; }
+                out->bindAction = true;
+                out->bindGesture = bindGesture_;
+                std::snprintf(out->action, sizeof out->action, "%s", gact::All().At(v_.act[h - kGrid0]).id);
+                Say(Note::Bound, in.time);
+                screen_ = Screen::List;
+            } else if (h == kNoSkill || (h >= kGrid0 && h < kGrid0 + v_.options)) {
                 const int32_t skill = h == kNoSkill ? -1 : v_.option[h - kGrid0].id;
                 if (avail != Avail::Ok) { out->feedback = Feedback::Refused; break; }
                 if (screen_ == Screen::NewSkill) {
@@ -776,6 +1046,34 @@ private:
         case Screen::Review: {
             gesturecmd::Cmd c;
             c.gesture = reviewId_;
+            if (h == kZoneLess || h == kZoneMore) {   // its zone resized while it is shown big (the host keeps it)
+                const BW_LinkGesture* rg = Find(g, reviewId_);
+                if (rg) {
+                    out->zoneSet = true;
+                    out->zoneGesture = rg->id;
+                    out->zoneHand = rg->hand;
+                    out->zoneM = posezones::Step(v_.review.zone[rg->hand == BW_LINK_GH_LEFT ? 0 : 1], h == kZoneLess ? -1 : 1);
+                }
+                break;
+            }
+            if (h == kPlay) {
+                if (const BW_LinkGesture* rg = Find(g, reviewId_)) Play(rg->id, rg->type, in.time, out);
+                break;
+            }
+            if (h == kRevHand) {
+                if (const BW_LinkGesture* rg = Find(g, reviewId_)) SetHand(in, *rg, out);
+                break;
+            }
+            if (h == kRevMode) {
+                if (const BW_LinkGesture* rg = Find(g, reviewId_)) SetMode(in, *rg, v_.review.mode, out);
+                break;
+            }
+            if (h >= kSwatch0 && h < kSwatch0 + kSwatches) {   // the ray's colour, right there (BodyWalk keeps it: SetColor)
+                c.op = BW_LINK_GC_COLOR;
+                c.rgba = kPalette[h - kSwatch0];
+                Ask(out, in.time, c);
+                break;
+            }
             if (h == kKeep) { c.op = BW_LINK_GC_KEEP; Ask(out, in.time, c); screen_ = Screen::List; }
             else if (h == kDiscard) { c.op = BW_LINK_GC_DISCARD; Ask(out, in.time, c); screen_ = Screen::List; }
             else if (h == kRerecord) {
@@ -784,6 +1082,44 @@ private:
             }
             break;
         }
+        case Screen::Triggers:
+            if (h == kBack) screen_ = Screen::List;
+            else if (h >= kTrigRole0 && h < kTrigRole0 + 2 * kTrigRoles) {
+                const int row = (h - kTrigRole0) / kTrigRoles, role = (h - kTrigRole0) % kTrigRoles;
+                out->trigSet = true;
+                out->trigRow = (uint8_t)row;
+                out->trigRole = (uint8_t)role;
+                if (role == 3) {   // an action: kept as it is, or chosen now
+                    const char* a = in.trigAction[row];
+                    if (a && a[0]) std::snprintf(out->trigAction, sizeof out->trigAction, "%s", a);
+                    else {
+                        out->trigSet = false;
+                        bindTrigger_ = uint8_t(row + 1);
+                        bindTab_ = 1;
+                        actPage_ = 0;
+                        screen_ = Screen::BindSkill;
+                    }
+                }
+            } else if (h == kTrigAction0 || h == kTrigAction0 + 1) {   // another action for it
+                const int row = h - kTrigAction0;
+                bindTrigger_ = uint8_t(row + 1);
+                bindTab_ = 1;
+                const char* a = in.trigAction[row];
+                actPage_ = a && a[0] ? std::max(0, gact::All().IndexOf(a)) / kGridCount : 0;
+                screen_ = Screen::BindSkill;
+            }
+            break;
+        case Screen::Colour:
+            if (h == kBack) screen_ = Screen::List;
+            else if (h >= kSwatch0 && h < kSwatch0 + kSwatches) {
+                gesturecmd::Cmd c;
+                c.op = BW_LINK_GC_COLOR;
+                c.gesture = colourId_;
+                c.rgba = kPalette[h - kSwatch0];
+                Ask(out, in.time, c);
+                screen_ = Screen::List;
+            }
+            break;
         }
         if (screen_ == Screen::List && clearArmed_ && !(IsRowCell(h) && PartOf(h) == kRowClear)) clearArmed_ = 0;   // (any other click: Clear asks anew)
     }
@@ -795,6 +1131,7 @@ private:
         n.screen = screen_;
         n.avail = avail;
         n.canStart = canStart_;
+        n.zonesShown = in.zonesShown;
         n.hover = hover_;
         if (g) std::memcpy(n.setKey, g->setKey, sizeof n.setKey);
         n.setKey[sizeof n.setKey - 1] = 0;
@@ -814,12 +1151,35 @@ private:
             n.row[i].g.name[sizeof n.row[i].g.name - 1] = 0;
             n.row[i].g.button[sizeof n.row[i].g.button - 1] = 0;
             SkillName(in, n.row[i].g.skill, n.row[i].skill, sizeof n.row[i].skill);
+            ZoneOf(in, n.row[i].g.id, n.row[i].zone);
+            ActionOfId(in, n.row[i].g.id, n.row[i].action, sizeof n.row[i].action);
+            n.row[i].mode = ModeOfId(in, n.row[i].g.id);
         }
         n.clearArmed = clearArmed_;
         n.newType = newType_;
         n.newHand = newHand_;
         // the grids
-        if (screen_ == Screen::NewSkill || screen_ == Screen::BindSkill) {
+        n.actionsOk = in.actionsOk;
+        n.bindTrigger = bindTrigger_;
+        for (int k = 0; k < 2; ++k) {
+            n.trigRole[k] = in.trigRole[k];
+            if (in.trigAction[k]) std::snprintf(n.trigAction[k], sizeof n.trigAction[k], "%.31s", in.trigAction[k]);
+        }
+        n.handsOk = in.handsOk;
+        n.modesOk = in.modesOk;
+        if (screen_ == Screen::BindSkill && (bindTab_ || bindTrigger_)) {   // the game's actions, a page of them
+            n.bindTab = 1;
+            const int total = gact::All().Count();
+            n.pickPages = std::max(1, (total + kGridCount - 1) / kGridCount);
+            actPage_ = std::clamp(actPage_, 0, n.pickPages - 1);
+            n.pickPage = actPage_;
+            n.actCount = std::max(0, std::min(kGridCount, total - actPage_ * kGridCount));
+            for (int i = 0; i < n.actCount; ++i) n.act[i] = (int16_t)(actPage_ * kGridCount + i);
+            ActionOfId(in, bindGesture_, n.bindAction, sizeof n.bindAction);
+            if (bindTrigger_ && in.trigAction[bindTrigger_ - 1]) std::snprintf(n.bindAction, sizeof n.bindAction, "%.31s", in.trigAction[bindTrigger_ - 1]);
+            const BW_LinkGesture* bg = bindTrigger_ ? nullptr : Find(g, bindGesture_);
+            n.bindSkill = bg ? bg->skill : -1;
+        } else if (screen_ == Screen::NewSkill || screen_ == Screen::BindSkill) {
             n.pickPages = std::max(1, (pickCount_ + kGridCount - 1) / kGridCount);
             pickPage_ = std::clamp(pickPage_, 0, n.pickPages - 1);
             n.pickPage = pickPage_;
@@ -827,6 +1187,7 @@ private:
             for (int i = 0; i < n.options; ++i) std::memcpy(&n.option[i], &picks_[pickPage_ * kGridCount + i], sizeof(wheel::Skill));
             const BW_LinkGesture* bg = screen_ == Screen::BindSkill ? Find(g, bindGesture_) : nullptr;
             n.bindSkill = bg ? bg->skill : -1;
+            if (screen_ == Screen::BindSkill) ActionOfId(in, bindGesture_, n.bindAction, sizeof n.bindAction);
         } else {
             n.pickPages = 1;
         }
@@ -838,6 +1199,7 @@ private:
         n.queued = screen_ == Screen::Recording && recQueued_;
         n.recordState = recAcked_ && recSeenLive_ && g ? g->recordState : uint32_t(BW_LINK_REC_NONE);
         n.recType = recType_;
+        n.recTarget = recTarget_;
         n.recHand = recHand_;
         SkillName(in, recSkill_, n.recSkill, sizeof n.recSkill);
         if (const BW_LinkGesture* rg = recTarget_ ? Find(g, recTarget_) : nullptr) std::snprintf(n.recName, sizeof n.recName, "%.47s", rg->name);
@@ -848,7 +1210,33 @@ private:
                 n.review.g.name[sizeof n.review.g.name - 1] = 0;
                 n.review.g.button[sizeof n.review.g.button - 1] = 0;
                 SkillName(in, rg->skill, n.review.skill, sizeof n.review.skill);
+                ZoneOf(in, rg->id, n.review.zone);
+                ActionOfId(in, rg->id, n.review.action, sizeof n.review.action);
+                n.review.mode = ModeOfId(in, rg->id);
             }
+        if (screen_ == Screen::Colour) {
+            if (const BW_LinkGesture* cg = Find(g, colourId_)) {
+                n.haveColour = true;
+                std::memcpy(&n.colour.g, cg, sizeof *cg);
+                n.colour.g.name[sizeof n.colour.g.name - 1] = 0;
+                n.colour.g.button[sizeof n.colour.g.button - 1] = 0;
+            } else {
+                screen_ = Screen::List;   // (gone meanwhile)
+                n.screen = screen_;
+            }
+        }
+        // a take playing on the tab: how far (once; then it stops)
+        if (playId_) {
+            if (in.playDurationS > 0.05f) playDur_ = in.playDurationS;
+            const double t = (in.time - playStart_) / std::max(0.05, playDur_);
+            const BW_LinkGesture* pg = Find(g, playId_);
+            if (t >= 1.0 || t < 0.0 || !pg) playId_ = 0;
+            else {
+                n.playId = playId_;
+                n.playT = (float)t;
+                n.playHand = pg->hand;
+            }
+        }
         if (note_ != Note::None && in.time > noteUntil_) note_ = Note::None;
         n.note = note_;
         // the last stroke read

@@ -13,12 +13,20 @@
 //
 // Whether the game really hangs it on the right bone is read off its own pose each time (Shown): the right attach bone shown at its size beside its wrist. Shrunk (the
 // right wrist holds nothing in the game's eyes), it is drawn on the left one already and nothing is carried.
+//
+// The grip (MirrorGrip). The game animates such a weapon as a RIGHT-hand one (its grip keyed on R_weapon_attach against the right wrist); the left fist's attach bone in
+// that animation holds nothing, so taken as the left slot's grip it laid the sword in the left hand turned off the way the game holds it (Serg on 0.206.11: «оно
+// расположено повёрнутым на 30 градусов по часовой стрелке»), and every hand laid on the shaft copied that wrong base - the hand-to-hand pass with it. The left slot's
+// grip is the game's right-hand grip of this weapon mirrored onto the left hand, by the rig's own correspondences (weapon_mirror.h: the bind pose's two wrists kh and
+// two attach bones kw): left attach against the left wrist = kw * right attach against the right wrist * kh^T. Were the hands each other's mirror images, the
+// left weapon is then exactly the right one's mirror image. No angle set by hand.
 #pragma once
 
 #include <cmath>
 #include <cstdint>
 
 #include "d2r_vr_state.h"
+#include "weapon_mirror.h"
 
 namespace drawnhand {
 
@@ -106,6 +114,49 @@ inline bool Carried(const float slotPose[16], const float drawnNow[16], const fl
         if (!std::isfinite(r[i])) return false;
     for (int i = 0; i < 16; ++i) out[i] = r[i];
     return true;
+}
+
+// The game's grip of the right hand (`attachRight`: R_weapon_attach against the right wrist, 16 floats, row vectors) as the left hand's (L_weapon_attach against the left
+// wrist): kw * attachRight * kh^T - the turn's rows and the place, kh the wrists' correspondence and kw the attach bones' (weaponmirror::FromMirrorPair of the bind pose:
+// left = K * right * X). The size stays (a signed permutation only reorders and turns rows over). False (out untouched) on anything not finite.
+inline bool MirrorGrip(const float attachRight[16], const weaponmirror::K& kw, const weaponmirror::K& kh, float out[16]) {
+    double w[9], h[9];
+    weaponmirror::ToMat(kw, w);
+    weaponmirror::ToMat(kh, h);
+    double a[9], t[9], r[9];
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) a[i * 3 + j] = attachRight[i * 4 + j];
+    double ht[9];
+    weaponmirror::T3(h, ht);
+    weaponmirror::Mul3(w, a, t);
+    weaponmirror::Mul3(t, ht, r);
+    float o[16];
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) o[i * 4 + j] = (float)r[i * 3 + j];
+        o[i * 4 + 3] = 0.0f;
+    }
+    for (int j = 0; j < 3; ++j)   // the place: p kh^T
+        o[12 + j] = (float)(attachRight[12] * ht[j] + attachRight[13] * ht[3 + j] + attachRight[14] * ht[6 + j]);
+    o[15] = 1.0f;
+    for (int i = 0; i < 16; ++i)
+        if (!std::isfinite(o[i])) return false;
+    for (int i = 0; i < 16; ++i) out[i] = o[i];
+    return true;
+}
+
+// How far one grip is from another (for the log): the angle of the turn between them (rows made unit length; degrees) and the distance of their places (the matrices'
+// units). -1 for an angle when a matrix has no axes.
+inline double GripTurnDeg(const float a[16], const float b[16]) {
+    double ra[9], rb[9], rbt[9], m[9];
+    if (!weaponmirror::Rot(a, ra) || !weaponmirror::Rot(b, rb)) return -1.0;
+    weaponmirror::T3(rb, rbt);
+    weaponmirror::Mul3(ra, rbt, m);
+    const double c = std::fmax(-1.0, std::fmin(1.0, (m[0] + m[4] + m[8] - 1.0) * 0.5));
+    return std::acos(c) * 57.29577951308232;
+}
+inline double GripApart(const float a[16], const float b[16]) {
+    const double x = (double)a[12] - b[12], y = (double)a[13] - b[13], z = (double)a[14] - b[14];
+    return std::sqrt(x * x + y * y + z * z);
 }
 
 }  // namespace drawnhand

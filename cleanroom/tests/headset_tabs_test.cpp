@@ -28,6 +28,13 @@
 #include "../../vr/wheel_flip.h"
 #include "../../vr/wheel_icons.h"
 #include "../../vr/wheel_model.h"
+
+// The Video page's slider at a side (Serg 2026-11-08: the size presets' buttons are gone - the slider is the size choice): a thin rectangle on its
+// track where the thumb stands for that side, to click as a button was.
+static hset::Rect SliderAtSide(int side) {
+    const int x = hset::kSlX0 + (int)std::lround(hset::video::FractionOfSide(side) * (hset::kSlX1 - hset::kSlX0));
+    return {x - 2, hset::kSlTrack.y, 4, hset::kSlTrack.h};
+}
 #include "../../vr/wheel_paint.h"
 
 using namespace wheel;
@@ -425,6 +432,7 @@ struct World {
         Step s = ClickSheet(hset::TabRect(hset::TabOf(page), c.SettingsModel().View()));   // (the view's strip: VR F1 - F3 have fewer tabs)
         if (hset::HasSubRow(page) && page != hset::SubFirst(page)) s = ClickSheet(hset::kSubBtn(page - hset::SubFirst(page), hset::SubCount(page)));   // (World's, Controls' buttons)
         if (page == hset::kPageParty) s = ClickSheet(hset::kPreviewBtn);   // the Co-op page's Party button (Party is that tab's second page)
+        if (page == hset::kPageRender) s = ClickSheet(hset::kPreviewBtn);  // the Video page's Render button (Render is that tab's second page)
         return s;
     }
     void Run(int frames) {
@@ -717,7 +725,7 @@ static void TestPagesOnWindow() {
         w.ClickTab(1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         CHECK(w.c.SettingsModel().page == hset::kPageVideo);
-        w.ClickSheet(hset::kPreset(4));   // 2560
+        w.ClickSheet(SliderAtSide(2560));
         CHECK(w.c.SettingsModel().Dirty() && w.c.SettingsModel().DraftPick() == hset::video::Square(2560));
         CHECK(w.c.ViewNow().settings.DraftPick() == hset::video::Square(2560));   // the picture's copy follows
         const Step s = w.ClickSheet(hset::kApply);
@@ -740,7 +748,7 @@ static void TestPagesOnWindow() {
         w.Run(2);
         CHECK(w.c.SettingsModel().DraftPick() == hset::video::Square(3072));
         // a save that could not be handed over
-        w.ClickSheet(hset::kPreset(1));
+        w.ClickSheet(SliderAtSide(1024));
         const Step bad = w.ClickSheet(hset::kApply);
         CHECK(bad.settings.what == hset::Do::Save);
         w.c.SettingsSubmitFailed(bad.settings.request.sequence);
@@ -764,7 +772,7 @@ static void TestPagesOnWindow() {
         w.AimSheet(1200.0f, 40.0f);   // past the sheet's edge, above the track, but on the window
         w.Next();
         CHECK(w.c.SettingsModel().Get()[hset::kKeyPx] == 4096.0f);
-        w.AimSheet(0.5f * hset::kW, mid);
+        w.AimSheet(0.5f * (hset::kSlX0 + hset::kSlX1), mid);   // (the track's middle)
         w.Next();
         CHECK(w.c.SettingsModel().Get()[hset::kKeyPx] == 2560.0f);
         w.Hand(1, 0, 0, 0);
@@ -787,7 +795,7 @@ static void TestPagesOnWindow() {
         w.LongPress();
         w.ClickTab(1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
-        w.ClickSheet(hset::kPreset(1));
+        w.ClickSheet(SliderAtSide(1024));
         CHECK(w.c.SettingsModel().Dirty());
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageBody)));
         w.AimRect(hset::kCalibrate);
@@ -1238,10 +1246,10 @@ static void TestPaint(const char* dumpDir) {
     // states: a hovered button, an edited preset, a measured body
     w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
     const std::vector<uint32_t> before = Paint(w.c.ViewNow());
-    w.ClickSheet(hset::kPreset(4));
+    w.ClickSheet(SliderAtSide(2560));
     const std::vector<uint32_t> edited = Paint(w.c.ViewNow());
     CHECK(edited != before);
-    w.AimRect(hset::kPreset(2));
+    w.AimRect(hset::kInc(0, hset::kPageVideo));   // (the Render type row's +: a stepper since 2026-11-08)
     w.Hand(1, 0, 0, 0);
     w.Next();
     const std::vector<uint32_t> hovered = Paint(w.c.ViewNow());
@@ -1275,7 +1283,8 @@ static void TestPaint(const char* dumpDir) {
         a.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         View unlit = a.c.ViewNow();
         unlit.settingsHover = {};
-        for (const hset::Rect& r : {hset::kPreset(3), hset::kPreset(6), hset::kClose, hset::kRecentre}) {
+        // (the Video page's first row, Render type, is a stepper since its five entries (2026-11-08): its + where the toggle was)
+        for (const hset::Rect& r : {hset::kInc(0, hset::kPageVideo), hset::kInc(1, hset::kPageVideo), hset::kClose, hset::kRecentre}) {
             View lit = unlit;
             const float cx = WinX(r.x + 0.5f * r.w), cy = WinY(r.y + 0.5f * r.h);
             float su, sv;
@@ -1356,13 +1365,16 @@ static void TestScene() {
     nr.Open(hset::Snapshot{});   // not ready: nothing can be changed
     nr.Click({hset::Kind::Tab, hset::kPageVideo, 0});
     bool hotDisabled = false;
-    for (const hset::Item& it : hset::Compose(nr, {hset::Kind::Preset, 3, 0}))
-        if (it.type == hset::Item::Type::Button && it.text == "2048" && it.hot) hotDisabled = true;
+    // (the Video page's Render type row: the size presets' buttons are gone; a stepper since its five entries - its "+" is the button hovered)
+    const hset::Hit row3d{hset::Kind::Change, hset::kKeyPairPerTick, 1};
+    for (const hset::Item& it : hset::Compose(nr, row3d))
+        if (it.type == hset::Item::Type::Button && it.text == "+" && it.hot) hotDisabled = true;
     CHECK(!hotDisabled);
     bool hot = false;
-    for (const hset::Item& it : hset::Compose(m, {hset::Kind::Preset, 3, 0}))
-        if (it.type == hset::Item::Type::Button && it.text == "2048" && it.hot) hot = true;
-    CHECK(hot);
+    int hotButtons = 0;
+    for (const hset::Item& it : hset::Compose(m, row3d))
+        if (it.type == hset::Item::Type::Button && it.hot) { ++hotButtons; hot |= it.text == "+"; }
+    CHECK(hot && hotButtons == 1);   // only the row's "+", not its "-" or the other rows'
 }
 
 // -- flipping: a stick's flick, a grip's tap, the arrows and the dots -------------------------------------------------------------------------
@@ -1372,8 +1384,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 22 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(21, 1) == 21 && FlipTo(21, -1) == 20 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 23 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(22, 1) == 22 && FlipTo(22, -1) == 21 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1903,33 +1915,35 @@ static void TestFlipController() {
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageVideo && w.c.FlipPlace() == 3);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 4);
+        CHECK(w.c.SettingsModel().page == hset::kPageRender && w.c.FlipPlace() == 4);   // the Video tab's second page (Render): a flick passes it too
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 5);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 5);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 6);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 6);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 7);
+        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 7);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 8);
+        CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 8);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 9);
+        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 9);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 10);
+        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 10);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 11);
+        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 11);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 12);
+        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 12);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && w.c.FlipPlace() == 13);   // the Melee tab's second page
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 13);
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && w.c.FlipPlace() == 14);   // the Melee tab's second page
         for (int i = 0; i < hset::kWorldPages; ++i) {   // the World tab's four pages, one flick each
             Flick(w, 1.0f);
-            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 14 + i);
+            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 15 + i);
         }
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 18);
+        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 19);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 19);   // the Party page (the Co-op tab's second page): a flick passes it too
+        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 20);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);   // the strike statistics' tab
         Flick(w, 1.0f);
@@ -1949,8 +1963,10 @@ static void TestFlipController() {
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
-        CHECK(w.c.FlipPlace() == 5 && w.c.SettingsModel().page == hset::kPageKeysR);
+        CHECK(w.c.FlipPlace() == 6 && w.c.SettingsModel().page == hset::kPageKeysR);
         Flick(w, -1.0f);
+        Flick(w, -1.0f);
+        CHECK(w.c.FlipPlace() == 4 && w.c.SettingsModel().page == hset::kPageRender);
         Flick(w, -1.0f);
         CHECK(w.c.FlipPlace() == 3 && w.c.SettingsModel().page == hset::kPageVideo);
         Flick(w, -1.0f);
@@ -1964,7 +1980,7 @@ static void TestFlipController() {
         Flick(w, 1.0f, 0);
         CHECK(w.c.FlipPlace() == 1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
-        w.ClickSheet(hset::kPreset(4));
+        w.ClickSheet(SliderAtSide(2560));
         CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 3);
         Flick(w, 1.0f);
         Flick(w, -1.0f);
@@ -2105,14 +2121,14 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 0 && w.c.Open());
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
-        for (int i = 0; i < 20; ++i) w.ClickPx(CentreX(next), CentreY(next));
+        for (int i = 0; i < hset::kPageGuide; ++i) w.ClickPx(CentreX(next), CentreY(next));   // (the last page: a click a page)
         CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(prev), CentreY(prev));
         CHECK(w.c.FlipPlace() == 1 + hset::kPageStats && w.c.SettingsModel().page == hset::kPageStats);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 19 && w.c.SettingsModel().page == hset::kPageParty);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageParty && w.c.SettingsModel().page == hset::kPageParty);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);

@@ -78,11 +78,11 @@ const char* TypeWord(uint8_t type) {
     default: return "?";
     }
 }
-const char* HandWord(uint8_t hand) {
+const char* HandWord(uint8_t hand, uint8_t type = BW_LINK_GT_POSE) {
     switch (hand) {
     case BW_LINK_GH_LEFT: return uitext::Tr("vr.gestures.hand_left", "Left hand");
     case BW_LINK_GH_RIGHT: return uitext::Tr("vr.gestures.hand_right", "Right hand");
-    default: return uitext::Tr("vr.gestures.hand_both", "Both hands");
+    default: return type == BW_LINK_GT_GLYPH ? uitext::Tr("vr.gestures.hand_either", "Either hand") : uitext::Tr("vr.gestures.hand_both", "Both hands");
     }
 }
 
@@ -128,8 +128,61 @@ void DrawCloud(Canvas& cv, const gpic::Cloud& c, float rim) {
     Ellipse(0.0f, fill);
 }
 
-// A gesture's picture in a box (its own dark tile under it): `big` on the review screen.
-void DrawGesturePicture(Canvas& cv, Fonts& fonts, const BW_LinkGesture& g, Rect box, bool big, bool hot) {
+// A hand pose's zone round a hand on the picture: a soft see-through sphere as big as the zone at the figure's scale, its rim, a highlight.
+void DrawZone(Canvas& cv, float cx, float cy, float r, bool big) {
+    if (!(r > 1.0f)) return;
+    const Col fill{240, 200, 120}, rim{255, 226, 160};
+    Disc(cv, cx, cy, r, fill, 0.22f);
+    Ring(cv, cx, cy, r, big ? 3.0f : 1.5f, rim, 0.75f);
+    Disc(cv, cx - 0.35f * r, cy - 0.35f * r, 0.22f * r, Col{255, 255, 255}, 0.18f);   // (a sphere's light)
+}
+
+// Two figures blended (a pose played: from the arms hanging to the pose).
+gpic::Figure Blend(const gpic::Figure& a, const gpic::Figure& b, float t) {
+    auto L = [t](gpic::P2 p, gpic::P2 q) { return gpic::P2{p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t}; };
+    gpic::Figure f = b;
+    f.head = L(a.head, b.head);
+    f.headR = a.headR + (b.headR - a.headR) * t;
+    f.neck = L(a.neck, b.neck);
+    f.pelvis = L(a.pelvis, b.pelvis);
+    for (int k = 0; k < 2; ++k) {
+        f.shoulder[k] = L(a.shoulder[k], b.shoulder[k]);
+        f.elbow[k] = L(a.elbow[k], b.elbow[k]);
+        f.hand[k] = L(a.hand[k], b.hand[k]);
+        f.hip[k] = L(a.hip[k], b.hip[k]);
+        f.foot[k] = L(a.foot[k], b.foot[k]);
+        f.fist[k] = t > 0.6f ? b.fist[k] : a.fist[k];
+    }
+    return f;
+}
+// The pose's arms hanging (where a played pose starts): the same body, the hands at the hips, open.
+BW_LinkGesture ArmsDown(const BW_LinkGesture& g) {
+    BW_LinkGesture r = g;
+    const float side[2] = {-0.21f, 0.21f};
+    for (int k = 0; k < 2; ++k) {
+        float* h = r.joints[k ? BW_LINK_J_RHAND : BW_LINK_J_LHAND];
+        h[0] = side[k];
+        h[1] = -0.02f;
+        h[2] = -0.04f;
+        r.grip[k] = 0.0f;
+    }
+    r.jointValid |= (1u << BW_LINK_J_LHAND) | (1u << BW_LINK_J_RHAND);
+    return r;
+}
+// Play's mark on a picture pointed at: a dark disc with a light triangle.
+void PlayMark(Canvas& cv, Rect box, bool big) {
+    const float r = big ? 34.0f : 15.0f, cx = box.r - r - (big ? 14.0f : 5.0f), cy = box.b - r - (big ? 14.0f : 5.0f);
+    Disc(cv, cx, cy, r, Col{0, 0, 0}, 0.7f);
+    Ring(cv, cx, cy, r, big ? 3.0f : 1.5f, kGoldBright, 0.9f);
+    const float s = 0.45f * r;
+    for (float k = 0.0f; k <= 1.0f; k += 0.08f)   // (a filled triangle: lines from its left edge to its point)
+        Seg(cv, cx - 0.6f * s, cy - s + 2.0f * s * k, cx + s, cy, big ? 3.0f : 1.6f, kGoldBright);
+}
+
+// A gesture's picture in a box (its own dark tile under it): `big` on the review screen. `zone`: a hand pose's zone radius per hand, metres.
+// `playT` 0..1: it is being played (a glyph's / path's stroke drawn so far, a pose's arms moving into it); `rgba`: another ray colour than its own.
+void DrawGesturePicture(Canvas& cv, Fonts& fonts, const BW_LinkGesture& g, Rect box, bool big, bool hot, const float zone[2] = nullptr, float playT = -1.0f,
+                        uint32_t rgba = 0) {
     RoundRect(cv, box, big ? 14.0f : 8.0f, Col{8, 8, 10}, 0.92f, hot ? InkHot() : InkGold(), hot ? 1.0f : 0.65f, big ? 3.0f : 2.0f);
     const gpic::Box b{box.l, box.t, box.r, box.b};
     const float margin = big ? 34.0f : 12.0f, width = big ? 9.0f : 4.0f;
@@ -143,13 +196,16 @@ void DrawGesturePicture(Canvas& cv, Fonts& fonts, const BW_LinkGesture& g, Rect 
     case BW_LINK_GT_MOTION: {
         gpic::P2 p[BW_LINK_GESTURE_POINTS];
         const int n = gpic::Polyline(g.pts, std::min<int>(g.pointCount ? g.pointCount : BW_LINK_GESTURE_POINTS, BW_LINK_GESTURE_POINTS), b, margin, p, BW_LINK_GESTURE_POINTS);
-        const Col c = FromRgba(g.rgba);
+        const Col c = FromRgba(rgba ? rgba : g.rgba);
+        const bool playing = playT >= 0.0f && n > 1;
+        const int shown = playing ? std::clamp(1 + (int)std::lround(std::clamp(playT, 0.0f, 1.0f) * (n - 1)), 2, n) : n;   // (played: drawn so far)
+        if (playing) Stroke(cv, p, n, width * 0.5f, c, 0.18f);   // (the whole path faint under it)
         if (g.type == BW_LINK_GT_GLYPH) {
-            Stroke(cv, p, n, width, c);
+            Stroke(cv, p, shown, width, c);
         } else {
-            Stroke(cv, p, n, width * 0.8f, c);
+            Stroke(cv, p, shown, width * 0.8f, c);
             gpic::P2 l, r;
-            if (gpic::ArrowHead(p, n, big ? 46.0f : 16.0f, &l, &r)) {
+            if (!playing && gpic::ArrowHead(p, n, big ? 46.0f : 16.0f, &l, &r)) {
                 const gpic::P2 e = p[n - 1];
                 Seg(cv, e.x, e.y, l.x, l.y, width * 0.8f + 3.0f, Col{0, 0, 0}, 0.55f);
                 Seg(cv, e.x, e.y, r.x, r.y, width * 0.8f + 3.0f, Col{0, 0, 0}, 0.55f);
@@ -161,16 +217,29 @@ void DrawGesturePicture(Canvas& cv, Fonts& fonts, const BW_LinkGesture& g, Rect 
                 Disc(cv, p[0].x, p[0].y, width * 1.6f, Col{70, 210, 90});
             }
         }
+        if (playing) {   // the pen's tip, bright
+            Disc(cv, p[shown - 1].x, p[shown - 1].y, width * 1.5f + 2.0f, Col{0, 0, 0}, 0.5f);
+            Disc(cv, p[shown - 1].x, p[shown - 1].y, width * 1.3f, Col{255, 250, 235});
+        }
+        if (hot && !big && !playing) PlayMark(cv, box, big);
         break;
     }
-    case BW_LINK_GT_POSE: {
-        const gpic::Box inner{b.l + margin * 0.5f, b.t + margin * 0.5f, b.r - margin * 0.5f, b.b - margin * 0.5f};
-        const gpic::PoseLayout lay = gpic::LayoutPose(inner);
-        const gpic::Figure thinker = gpic::StickFigure(g.joints, g.jointValid, g.grip, lay.thinker, big ? 6.0f : 2.0f);
-        DrawFigure(cv, thinker, Ink(), big ? 4.0f : 1.6f);
-        DrawCloud(cv, lay.cloud, big ? 4.0f : 2.0f);
-        const gpic::Figure pose = gpic::StickFigure(g.joints, g.jointValid, g.grip, lay.cloud.inner, big ? 8.0f : 2.0f, 0.28f);   // (leg stubs: the arms bigger)
-        DrawFigure(cv, pose, Col{34, 30, 26}, big ? 7.0f : 2.4f);
+    case BW_LINK_GT_POSE: {   // the figure in the pose recorded, a zone round each hand of the pose (Serg: "the cloud is the size of the space the hand is in")
+        gpic::Figure f = gpic::StickFigure(g.joints, g.jointValid, g.grip, b, margin);
+        if (playT >= 0.0f) {   // played: the arms move from hanging into the pose (eased)
+            const BW_LinkGesture down = ArmsDown(g);
+            const float t = std::clamp(playT * 1.25f, 0.0f, 1.0f), e = t * t * (3.0f - 2.0f * t);
+            f = Blend(gpic::StickFigure(down.joints, down.jointValid, down.grip, b, margin), f, e);
+        }
+        DrawFigure(cv, f, Ink(), big ? 6.0f : 2.0f);
+        bool use[2];
+        posezones::HandsOf(g.hand, use);
+        for (int h = 0; h < 2; ++h)
+            if (use[h] && f.known[h]) {
+                const float r = zone && zone[h] > 0.0f ? posezones::Clamp(zone[h]) : posezones::kDefaultM;
+                DrawZone(cv, f.hand[h].x, f.hand[h].y, r * f.scale, big);
+            }
+        if (hot && !big && playT < 0.0f) PlayMark(cv, box, big);
         break;
     }
     case BW_LINK_GT_BUTTON: {   // its name in a key frame
@@ -254,15 +323,33 @@ void DrawGestureRows(Canvas& cv, Fonts& fonts, const gov::View& v) {
         const BW_LinkGesture& g = row.g;
         const bool rowHot = gov::IsRowCell(v.hover) && gov::RowOf(v.hover) == i;
         GField(cv, GR(gov::RowRect(i)), rowHot);
-        DrawGesturePicture(cv, fonts, g, GR(gov::PicRect(i)), false, v.hover == gov::RowCell(i, gov::kPic));
+        DrawGesturePicture(cv, fonts, g, GR(gov::PicRect(i)), false, v.hover == gov::RowCell(i, gov::kPic), row.zone, v.playId == g.id ? v.playT : -1.0f);
+        if (gov::PartUsable(g, gov::kColour)) {   // the ray's colour: a chip by the name (the Colour screen)
+            const Rect r = GR(gov::PartRect(i, gov::kColour));
+            const bool hot = v.hover == gov::RowCell(i, gov::kColour);
+            RoundRect(cv, r, 6.0f, FromRgba(g.rgba), 1.0f, hot ? InkHot() : InkGold(), hot ? 1.0f : 0.7f, hot ? 3.0f : 2.0f);
+        }
         GLine(cv, fonts, g.name[0] ? std::string(g.name) : std::string(TypeWord(g.type)), GR(gov::NameRect(i)), 32, true, rowHot ? InkHot() : InkGold());
-        std::string casts = row.skill[0] ? uitext::TrF("vr.gestures.casts", "casts {skill}", {{"skill", row.skill}}) : std::string(uitext::Tr("vr.gestures.no_skill", "casts nothing"));
+        std::string casts = row.action[0] ? uitext::TrF("vr.gestures.does", "does {action}", {{"action", gact::NameOf(row.action)}})
+                          : row.skill[0] ? (row.mode ? uitext::TrF("vr.gestures.arms", "arms {skill} on the trigger", {{"skill", row.skill}})
+                                                     : uitext::TrF("vr.gestures.casts", "casts {skill}", {{"skill", row.skill}}))
+                                         : std::string(uitext::Tr("vr.gestures.no_skill", "casts nothing"));
+        const bool modeHot = v.hover == gov::RowCell(i, gov::kMode);
+        if (modeHot) RoundRect(cv, GR(gov::SkillLineRect(i)), 6.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);   // (a skill's line steps its mode)
         if (g.lastPercent >= 0.0f) casts += "   " + uitext::TrF("vr.gestures.last_read", "last read {percent}", {{"percent", Percent(g.lastPercent)}});
         if (g.flags & BW_LINK_GF_REVIEW) casts += "   " + std::string(uitext::Tr("vr.gestures.in_review", "(new take waiting)"));
-        GLine(cv, fonts, casts, GR(gov::SkillLineRect(i)), 24, false, row.skill[0] ? Ink() : InkDim());
-        GLine(cv, fonts, std::string(TypeWord(g.type)) + " - " + HandWord(g.hand), GR(gov::TypeRect(i)), 22, false, Ink(), hset::Align::Center);
+        GLine(cv, fonts, casts, GR(gov::SkillLineRect(i)), 24, false, modeHot ? InkHot() : row.mode && !row.action[0] ? InkGold() : row.skill[0] || row.action[0] ? Ink() : InkDim());
+        {   // the type and hand (a glyph's hand: a click steps it)
+            const bool handHot = v.hover == gov::RowCell(i, gov::kHand);
+            if (handHot) RoundRect(cv, GR(gov::TypeRect(i)), 6.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);
+            GLine(cv, fonts, std::string(TypeWord(g.type)) + " - " + HandWord(g.hand, g.type), GR(gov::TypeRect(i)), 22, false, handHot ? InkHot() : Ink(), hset::Align::Center);
+        }
         if (g.type != BW_LINK_GT_BUTTON) {   // the threshold, with its arrows
-            GLine(cv, fonts, Percent(g.threshold), GR(gov::ThrTextRect(i)), 26, false, Ink(), hset::Align::Center);
+            if (g.type == BW_LINK_GT_POSE)   // (a hand pose: its zone's size, in cm)
+                GLine(cv, fonts, uitext::TrF("vr.gestures.zone_cm", "zone {cm} cm", {{"cm", std::to_string((int)std::lround(100.0f * row.zone[g.hand == BW_LINK_GH_LEFT ? 0 : 1]))}}),
+                      GR(gov::ThrTextRect(i)), 24, false, Ink(), hset::Align::Center);
+            else
+                GLine(cv, fonts, Percent(g.threshold), GR(gov::ThrTextRect(i)), 26, false, Ink(), hset::Align::Center);
             for (int p : {gov::kThrLess, gov::kThrMore}) {
                 const Rect r = GR(gov::PartRect(i, p));
                 const bool hot = v.hover == gov::RowCell(i, p);
@@ -299,20 +386,54 @@ void DrawGestureChoices(Canvas& cv, Fonts& fonts, const gov::View& v) {
                  : i == 1 ? uitext::Tr("vr.gestures.about_pose", "Where your hands are and how they are closed - taken at the trigger's press")
                           : uitext::Tr("vr.gestures.about_motion", "A movement - the trigger starts it, the trigger again ends it");
         } else {
-            word = HandWord(gov::HandOfChoice(i));
+            word = HandWord(gov::HandOfChoice(i), v.newType);
             text = v.newType == BW_LINK_GT_POSE ? uitext::Tr("vr.gestures.about_hand_pose", "The trigger of this hand takes the pose")
-                                                : uitext::Tr("vr.gestures.about_hand", "This hand draws or moves, with its trigger");
+                 : v.newType == BW_LINK_GT_GLYPH && i == 2 ? uitext::Tr("vr.gestures.about_hand_either", "Drawn by either hand, with its trigger - either casts it")
+                                                           : uitext::Tr("vr.gestures.about_hand", "This hand draws or moves, with its trigger");
         }
         GLine(cv, fonts, word, Rect{r.l + 30, r.t + 14, r.r - 30, r.t + 78}, 44, true, hot ? InkHot() : InkGold(), hset::Align::Center);
         GLine(cv, fonts, text, Rect{r.l + 30, r.t + 82, r.r - 30, r.b - 16}, 26, false, Ink(), hset::Align::Center);
     }
 }
 
+// BindSkill's game actions: a tile each with its name, the one bound framed; without the engine's call, what it needs.
+void DrawGestureActions(Canvas& cv, Fonts& fonts, const gov::View& v) {
+    if (!v.actionsOk) {
+        UseFace(fonts, false, "x");
+        Text(cv, fonts, uitext::Tr("vr.gestures.actions_need", "Game actions are kept by the in-game gesture engine: tick In-game gesture engine in D2R VR Settings (Gestures), with a d2r_vr_gestures.dll that binds actions."),
+             Rect{220, 330, 1380, 520}, 32, false, InkDim());
+        fonts.use = nullptr;
+        return;
+    }
+    for (int i = 0; i < v.actCount; ++i) {
+        const gact::Def& d = gact::All().At(v.act[i]);
+        const Rect r = GR(gov::GridRect(i));
+        const bool hot = v.hover == gov::kGrid0 + i, cur = std::strcmp(v.bindAction, d.id) == 0;
+        GField(cv, r, hot);
+        if (cur) RoundRect(cv, Rect{r.l - 4, r.t - 4, r.r + 4, r.b + 4}, 10.0f, Col{0, 0, 0}, 0.0f, kGoldBright, 1.0f, 3.0f);
+        const char* kind = d.kind == gact::Kind::Pad ? uitext::Tr("vr.gestures.kind_pad", "pad") : d.kind == gact::Kind::Item ? uitext::Tr("vr.gestures.kind_item", "item")
+                                                                                                                              : uitext::Tr("vr.gestures.kind_game", "game");
+        GLine(cv, fonts, kind, Rect{r.l + 6, r.t + 8, r.r - 6, r.t + 36}, 18, false, InkDim(), hset::Align::Center);
+        UseFace(fonts, false, d.name);
+        Text(cv, fonts, d.name, Rect{r.l + 8, r.t + 40, r.r - 8, r.b - 8}, 22, false, hot ? kGoldBright : cur ? InkHot() : kSilver);
+        fonts.use = nullptr;
+    }
+}
+
 void DrawGestureGrid(Canvas& cv, Fonts& fonts, const gov::View& v) {
-    std::string title = v.screen == gov::Screen::BindSkill ? std::string(uitext::Tr("vr.gestures.choose_bind", "The skill this gesture casts"))
-                                                           : std::string(uitext::Tr("vr.gestures.choose_skill", "New gesture: the skill it casts"));
-    if (v.pickPages > 1) title += "   " + uitext::TrF("vr.tiles.page", "Page {page} of {pages}", {{"page", std::to_string(v.pickPage + 1)}, {"pages", std::to_string(v.pickPages)}});
-    GLine(cv, fonts, title, Rect{160, 124, 1440, 162}, 30, true, InkGold(), hset::Align::Center);
+    if (v.screen == gov::Screen::BindSkill) {   // Skills | Game actions
+        for (int i = 0; i < 2; ++i)
+            GButton(cv, fonts, GR(gov::BindTabRect(i)), i ? uitext::Tr("vr.gestures.tab_actions", "Game actions") : uitext::Tr("vr.gestures.tab_skills", "Skills"),
+                    v.hover == gov::kBindTabSkills + i || v.bindTab == i, !(v.bindTrigger && i == 0), 26, v.bindTab == i ? kGameGoldBright : kGameText);   // (a trigger's: actions only)
+        if (v.pickPages > 1)
+            GLine(cv, fonts, uitext::TrF("vr.tiles.page", "Page {page} of {pages}", {{"page", std::to_string(v.pickPage + 1)}, {"pages", std::to_string(v.pickPages)}}),
+                  Rect{1150, 124, 1500, 162}, 24, false, InkDim(), hset::Align::Center);
+        if (v.bindTab) { DrawGestureActions(cv, fonts, v); return; }
+    } else {
+        std::string title = uitext::Tr("vr.gestures.choose_skill", "New gesture: the skill it casts");
+        if (v.pickPages > 1) title += "   " + uitext::TrF("vr.tiles.page", "Page {page} of {pages}", {{"page", std::to_string(v.pickPage + 1)}, {"pages", std::to_string(v.pickPages)}});
+        GLine(cv, fonts, title, Rect{160, 124, 1440, 162}, 30, true, InkGold(), hset::Align::Center);
+    }
     if (!v.options) {
         GLine(cv, fonts, uitext::Tr("vr.skills.none", "No skills to choose from"), Rect{200, 380, 1400, 460}, 40, false, InkDim(), hset::Align::Center);
         return;
@@ -321,7 +442,7 @@ void DrawGestureGrid(Canvas& cv, Fonts& fonts, const gov::View& v) {
         const Skill& sk = v.option[i];
         PlateLook k;
         k.hot = v.hover == gov::kGrid0 + i;
-        k.active = v.screen == gov::Screen::BindSkill && sk.id == v.bindSkill;
+        k.active = v.screen == gov::Screen::BindSkill && sk.id == v.bindSkill && !v.bindAction[0];
         DrawTile(cv, fonts, GR(gov::GridTileRect(i)), k, &sk, false);
         UseFace(fonts, false, sk.name);
         Text(cv, fonts, sk.name, GR(gov::GridNameRect(i)), 20, false, k.hot ? kGoldBright : kSilver);
@@ -332,7 +453,7 @@ void DrawGestureGrid(Canvas& cv, Fonts& fonts, const gov::View& v) {
 void DrawGestureRecording(Canvas& cv, Fonts& fonts, const gov::View& v) {
     std::string title = v.recName[0] ? uitext::TrF("vr.gestures.rec_again", "Re-recording {name}", {{"name", v.recName}})
                                      : uitext::TrF("vr.gestures.rec_new", "Recording: {type}", {{"type", TypeWord(v.recType)}});
-    title += " - " + std::string(HandWord(v.recHand));
+    title += " - " + std::string(HandWord(v.recHand, v.recType));
     if (v.recSkill[0]) title += " - " + uitext::TrF("vr.gestures.for_skill", "for {skill}", {{"skill", v.recSkill}});
     GLine(cv, fonts, title, GR(gov::kRecTitle), 36, true, InkGold(), hset::Align::Center);
     // which trigger is the pen: the hand chosen (a pose of both hands: either)
@@ -362,13 +483,87 @@ void DrawGestureRecording(Canvas& cv, Fonts& fonts, const gov::View& v) {
           hset::Align::Center);
 }
 
+// The ray's colours as swatches, `now` framed, the one pointed at lit.
+void DrawSwatches(Canvas& cv, const gov::View& v, uint32_t now, bool big) {
+    for (int i = 0; i < gov::kSwatches; ++i) {
+        const Rect r = GR(gov::SwatchRect(i, big));
+        const bool hot = v.hover == gov::kSwatch0 + i, cur = (now | 0xFF000000u) == gov::kPalette[i];
+        if (cur) RoundRect(cv, Rect{r.l - 6, r.t - 6, r.r + 6, r.b + 6}, big ? 14.0f : 8.0f, Col{0, 0, 0}, 0.0f, kGoldBright, 1.0f, big ? 4.0f : 3.0f);
+        RoundRect(cv, r, big ? 10.0f : 6.0f, FromRgba(gov::kPalette[i]), 1.0f, hot ? InkHot() : Col{20, 18, 16}, 1.0f, hot ? (big ? 5.0f : 3.0f) : 2.0f);
+    }
+}
+
+// Colour: a glyph's / motion's ray colour - the gesture in the colour pointed at, the swatches under it.
+void DrawGestureColour(Canvas& cv, Fonts& fonts, const gov::View& v) {
+    if (!v.haveColour) return;
+    const BW_LinkGesture& g = v.colour.g;
+    GLine(cv, fonts, uitext::TrF("vr.gestures.colour_title", "Ray colour: {name}", {{"name", g.name[0] ? std::string(g.name) : std::string(TypeWord(g.type))}}),
+          GR(gov::kColourTitle), 34, true, InkGold(), hset::Align::Center);
+    const int hot = v.hover >= gov::kSwatch0 && v.hover < gov::kSwatch0 + gov::kSwatches ? v.hover - gov::kSwatch0 : -1;
+    DrawGesturePicture(cv, fonts, g, GR(gov::kColourPic), true, false, nullptr, -1.0f, hot >= 0 ? gov::kPalette[hot] : 0u);
+    DrawSwatches(cv, v, g.rgba, true);
+}
+
+const char* TrigRoleWord(int role) {
+    switch (role) {
+    case 1: return uitext::Tr("vr.gestures.trig_glyphs", "Glyphs");
+    case 2: return uitext::Tr("vr.gestures.trig_shift", "Shift");
+    case 3: return uitext::Tr("vr.gestures.trig_action", "Action");
+    default: return uitext::Tr("vr.gestures.trig_before", "As before");
+    }
+}
+// Triggers: each trigger's role (as before / glyphs / Shift / an action) - one trigger can be the glyphs' and the other kept as it was.
+void DrawGestureTriggers(Canvas& cv, Fonts& fonts, const gov::View& v) {
+    GLine(cv, fonts, uitext::Tr("vr.gestures.trig_title", "What each trigger does in play (F4)"), Rect{160, 128, 1440, 176}, 32, true, InkGold(), hset::Align::Center);
+    for (int row = 0; row < 2; ++row) {
+        const int role = v.trigRole[row];
+        std::string label = row == 0 ? uitext::Tr("vr.gestures.trig_right", "Right trigger") : uitext::Tr("vr.gestures.trig_left", "Left trigger");
+        label += ": ";
+        label += role == 1 ? (row == 0 ? uitext::Tr("vr.gestures.trig_about_glyphs_r", "draws glyphs and casts the skill a Select glyph armed on it (its RT slot)")
+                                       : uitext::Tr("vr.gestures.trig_about_glyphs_l", "draws glyphs and casts the skill a Select glyph armed on it (its LT + RT slot) - no Shift"))
+               : role == 2 ? uitext::Tr("vr.gestures.trig_about_shift", "the game's Shift")
+               : role == 3 ? uitext::TrF("vr.gestures.trig_about_action", "does {action}", {{"action", v.trigAction[row][0] ? gact::NameOf(v.trigAction[row]) : "?"}})
+                           : (row == 0 ? uitext::Tr("vr.gestures.trig_about_before_r", "as before (its skill slot / the attack)")
+                                       : uitext::Tr("vr.gestures.trig_about_before_l", "as before (the game's Shift)"));
+        GLine(cv, fonts, label, GR(gov::TrigLabelRect(row)), 28, false, Ink(), hset::Align::Center);
+        for (int r = 0; r < gov::kTrigRoles; ++r)
+            GButton(cv, fonts, GR(gov::TrigRoleRect(row, r)), TrigRoleWord(r), v.hover == gov::kTrigRole0 + row * gov::kTrigRoles + r || role == r, true, 28,
+                    role == r ? kGameGoldBright : kGameText);
+        if (role == 3)
+            GButton(cv, fonts, GR(gov::TrigActionRect(row)), uitext::Tr("vr.gestures.trig_choose", "Choose its action"), v.hover == gov::kTrigAction0 + row, true, 24);
+    }
+}
+
 void DrawGestureReview(Canvas& cv, Fonts& fonts, const gov::View& v) {
     if (!v.haveReview) return;
-    DrawGesturePicture(cv, fonts, v.review.g, GR(gov::kReviewPic), true, false);
+    DrawGesturePicture(cv, fonts, v.review.g, GR(gov::kReviewPic), true, false, v.review.zone, v.playId == v.review.g.id ? v.playT : -1.0f);
+    if (gov::HasRay(v.review.g)) DrawSwatches(cv, v, v.review.g.rgba, false);   // the ray's colour, right here
     GLine(cv, fonts, v.review.g.name[0] ? std::string(v.review.g.name) : std::string(TypeWord(v.review.g.type)), GR(gov::kReviewName), 40, true, InkGold(), hset::Align::Center);
-    std::string line = std::string(TypeWord(v.review.g.type)) + " - " + HandWord(v.review.g.hand);
-    line += " - " + (v.review.skill[0] ? uitext::TrF("vr.gestures.casts", "casts {skill}", {{"skill", v.review.skill}}) : std::string(uitext::Tr("vr.gestures.no_skill", "casts nothing")));
-    GLine(cv, fonts, line, GR(gov::kReviewLine), 28, false, Ink(), hset::Align::Center);
+    // the line in two halves: the type and hand (a glyph's hand steps there), what it does (a skill's mode steps there)
+    const std::string kindLine = std::string(TypeWord(v.review.g.type)) + " - " + HandWord(v.review.g.hand, v.review.g.type);
+    const std::string doesLine = v.review.action[0] ? uitext::TrF("vr.gestures.does", "does {action}", {{"action", gact::NameOf(v.review.action)}})
+                               : v.review.skill[0] ? (v.review.mode ? uitext::TrF("vr.gestures.arms", "arms {skill} on the trigger", {{"skill", v.review.skill}})
+                                                                    : uitext::TrF("vr.gestures.casts", "casts {skill}", {{"skill", v.review.skill}}))
+                                                   : std::string(uitext::Tr("vr.gestures.no_skill", "casts nothing"));
+    if (v.hover == gov::kRevHand) RoundRect(cv, GR(gov::kReviewHandHalf), 8.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);
+    if (v.hover == gov::kRevMode) RoundRect(cv, GR(gov::kReviewModeHalf), 8.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);
+    GLine(cv, fonts, kindLine, GR(gov::kReviewHandHalf), 28, false, v.hover == gov::kRevHand ? InkHot() : Ink(), hset::Align::Right);
+    GLine(cv, fonts, doesLine, GR(gov::kReviewModeHalf), 28, false, v.hover == gov::kRevMode ? InkHot() : v.review.mode ? InkGold() : Ink(), hset::Align::Left);
+    if (v.review.g.type == BW_LINK_GT_POSE) {   // its zone's size, "< Zone 12 cm >"
+        const float r = v.review.zone[v.review.g.hand == BW_LINK_GH_LEFT ? 0 : 1];
+        GLine(cv, fonts, uitext::TrF("vr.gestures.zone_size", "Zone {cm} cm", {{"cm", std::to_string((int)std::lround(100.0f * r))}}), GR(gov::kZoneText), 30, false,
+              Ink(), hset::Align::Center);
+        for (int c : {gov::kZoneLess, gov::kZoneMore}) {
+            const Rect rr = GR(c == gov::kZoneLess ? gov::kZoneLessRect : gov::kZoneMoreRect);
+            const bool hot = v.hover == c;
+            if (g_game) Fit(cv, Art(c == gov::kZoneLess ? gameui::Sprite::ArrowLeft : gameui::Sprite::ArrowRight), hot ? 1 : 0, Rect{rr.l + 4, rr.t + 4, rr.r - 4, rr.b - 4});
+            else {
+                const float cy = 0.5f * (rr.t + rr.b), tip = c == gov::kZoneLess ? rr.l + 10.0f : rr.r - 10.0f, back = c == gov::kZoneLess ? rr.r - 12.0f : rr.l + 12.0f;
+                Seg(cv, tip, cy, back, cy - 14.0f, 4.5f, hot ? kGoldBright : kSilverDim);
+                Seg(cv, tip, cy, back, cy + 14.0f, 4.5f, hot ? kGoldBright : kSilverDim);
+            }
+        }
+    }
 }
 
 const char* GestureButtonText(int cell) {
@@ -383,6 +578,9 @@ const char* GestureButtonText(int cell) {
     case gov::kStop: return uitext::Tr("vr.gestures.stop", "Stop: B / Y");
     case gov::kRetry: return uitext::Tr("vr.gestures.retry", "Try again");
     case gov::kNoSkill: return uitext::Tr("vr.gestures.none", "No skill");
+    case gov::kPlay: return uitext::Tr("vr.gestures.play", "Play");
+    case gov::kZonesToggle: return "";   // (worded with its state: GestureFooterText)
+    case gov::kTriggers: return uitext::Tr("vr.gestures.triggers", "Triggers");
     default: return "";
     }
 }
@@ -400,9 +598,14 @@ void DrawGestureLines(Canvas& cv, Fonts& fonts, const gov::View& v) {
     case N::Kept: note = uitext::Tr("vr.gestures.kept", "Kept"); break;
     case N::Discarded: note = uitext::Tr("vr.gestures.discarded", "Discarded"); break;
     case N::Cleared: note = uitext::Tr("vr.gestures.cleared", "Gesture cleared"); break;
-    case N::Bound: note = uitext::Tr("vr.gestures.bound", "Skill set"); break;
+    case N::Bound: note = uitext::Tr("vr.gestures.bound2", "Binding set"); break;
     case N::Coloured: note = uitext::Tr("vr.gestures.coloured", "Colour changed"); break;
     case N::Threshold: note = uitext::Tr("vr.gestures.threshold", "Threshold changed"); break;
+    case N::NoActions: note = uitext::Tr("vr.gestures.no_actions", "Game actions need the in-game gesture engine"); break;
+    case N::HandSet: note = uitext::Tr("vr.gestures.hand_set", "Hand changed"); break;
+    case N::ModeSet: note = uitext::Tr("vr.gestures.mode_set", "Mode changed"); break;
+    case N::NoModeSet: note = uitext::Tr("vr.gestures.no_mode_set", "This gesture engine cannot keep a mode yet (cast once only)"); break;
+    case N::NoHandSet: note = uitext::Tr("vr.gestures.no_hand_set", "This gesture engine cannot change the hand - record it again with the hand you want"); break;
     case N::ClearAgain: note = uitext::Tr("vr.gestures.clear_again", "Clear again to delete it"); break;
     case N::ChooseReview: note = uitext::Tr("vr.gestures.choose_review", "Choose Keep, Re-record or Discard"); break;
     case N::NoSkills: note = uitext::Tr("vr.gestures.no_skills", "The game's skills are not read yet"); break;
@@ -426,12 +629,18 @@ void DrawGestureLines(Canvas& cv, Fonts& fonts, const gov::View& v) {
     std::string hint;
     switch (v.screen) {
     case gov::Screen::List:
-        hint = v.setKey[0] ? uitext::TrF("vr.gestures.hint_list", "{count} gestures for {set} - point at a picture to change its colour",
+        hint = v.setKey[0] ? uitext::TrF("vr.gestures.hint_list3", "{count} gestures for {set} - a picture plays it, a skill's line: cast once or arm the trigger",
                                          {{"count", std::to_string(v.count)}, {"set", v.setKey}})
                            : std::string(uitext::Tr("vr.gestures.hint_none", "Your BodyWalk gestures, per class"));
         break;
     case gov::Screen::Recording: hint = uitext::Tr("vr.gestures.hint_rec", "The trigger is BodyWalk's now - B or Y stops"); break;
-    case gov::Screen::Review: hint = uitext::Tr("vr.gestures.hint_review", "Keep it, record it again, or drop this take"); break;
+    case gov::Screen::Review:
+        hint = v.haveReview && v.review.g.type == BW_LINK_GT_GLYPH
+                   ? uitext::Tr("vr.gestures.hint_review_glyph", "Keep it, record it again, or drop this take - its hand line steps Right / Left / Either")
+                   : uitext::Tr("vr.gestures.hint_review", "Keep it, record it again, or drop this take");
+        break;
+    case gov::Screen::Colour: hint = uitext::Tr("vr.gestures.hint_colour", "The trail it draws in the air and its flash take this colour - B or Y: back"); break;
+    case gov::Screen::Triggers: hint = uitext::Tr("vr.gestures.hint_triggers3", "A glyph trigger: draw for a glyph, hold still to aim, let go to cast - B or Y: back"); break;
     default: hint = uitext::Tr("vr.gestures.hint_back", "B or Y: one step back"); break;
     }
     const tiles::PRect hl = tiles::kHintLine;
@@ -441,13 +650,15 @@ void DrawGestureLines(Canvas& cv, Fonts& fonts, const gov::View& v) {
 }
 
 void DrawGestureFooter(Canvas& cv, Fonts& fonts, const gov::View& v) {
-    int cells[4];
+    int cells[5];
     const int n = gov::FooterCells(v, cells);
     for (int i = 0; i < n; ++i) {
         const int c = cells[i];
         if ((c == gov::kPrev || c == gov::kNext) && (v.screen == gov::Screen::List ? v.pages : v.pickPages) <= 1) continue;   // (one page: no arrows)
         if (c == gov::kNew && v.avail != gov::Avail::Ok) continue;   // (nothing to manage: the fix in the middle says what to do)
-        GButton(cv, fonts, GR(gov::FooterRect(i, n)), GestureButtonText(c), v.hover == c, gov::FooterEnabled(v, c) || c == gov::kStop, 30);
+        const char* label = c == gov::kZonesToggle ? (v.zonesShown ? uitext::Tr("vr.gestures.zones_shown", "Zones: shown") : uitext::Tr("vr.gestures.zones_hidden", "Zones: hidden"))
+                                                   : GestureButtonText(c);
+        GButton(cv, fonts, GR(gov::FooterRect(i, n)), label, v.hover == c, gov::FooterEnabled(v, c) || c == gov::kStop, 30);
     }
 }
 
@@ -461,6 +672,8 @@ void DrawGestures(Canvas& cv, Fonts& fonts, const gov::View& v) {
     case gov::Screen::BindSkill: DrawGestureGrid(cv, fonts, v); break;
     case gov::Screen::Recording: DrawGestureRecording(cv, fonts, v); break;
     case gov::Screen::Review: DrawGestureReview(cv, fonts, v); break;
+    case gov::Screen::Colour: DrawGestureColour(cv, fonts, v); break;
+    case gov::Screen::Triggers: DrawGestureTriggers(cv, fonts, v); break;
     }
     DrawGestureLines(cv, fonts, v);
     DrawGestureFooter(cv, fonts, v);

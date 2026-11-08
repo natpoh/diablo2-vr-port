@@ -552,7 +552,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/native_rsapi.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -561,6 +561,7 @@ target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp)   # [hands]
 target_sources(d2rl-vrcam PRIVATE vr/aura_view.cpp)     # [render] aura_centre: the Paladin's aura rings centred under the hero in VR (hooks the game's view.direction for particle scripts)
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/head_shadow.cpp)   # [arms] head_shadow: the hidden head still casts its shadow (the eyes' skinning only has it shrunk), visual only
+target_sources(d2rl-vrcam PRIVATE vr/simpler_sun.cpp)   # [render] sun_shadow_radius_m / sun_shadow_every: the game's sun shadow map filled for less (F4), visual only
 target_sources(d2rl-vrcam PRIVATE vr/headset_shot.cpp vr/headset_clip.cpp vr/headset_grid.cpp)   # [headset_shot]: a screenshot of what reaches the headset (the layers / pictures handed over, read back to PNGs)
 target_sources(d2rl-vrcam PRIVATE vr/flatvr_feed.cpp)   # [render] flatvr_feed: without ReShade, FlatVR's picture and depth from the plugin (FlatVR_DepthProvider's blocks)
 target_sources(d2rl-vrcam PRIVATE vr/monitor_eye.cpp vr/monitor_layers.cpp)   # [render] monitor_eye: the game's window shows one eye, steady - to capture the screen (bearstonem/d2r-pcvr's desktop_one_eye, MIT)
@@ -1303,6 +1304,10 @@ target_compile_options(claw_strike_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(form_strength_test cleanroom/tests/form_strength_test.cpp)
 target_include_directories(form_strength_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(form_strength_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [render] foveated (shared/unleashed_foveation.h, MPL, from Unleashed's steamvr/foveation_math.h + foveation.cpp): the shading-rate image's
+# tiles per eye and per fov, which draws take it. Run: unleashed_foveation_test.exe
+add_executable(unleashed_foveation_test cleanroom/tests/unleashed_foveation_test.cpp)
+target_compile_options(unleashed_foveation_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_fog_test cleanroom/tests/unleashed_fog_test.cpp)
 target_compile_definitions(unleashed_fog_test PRIVATE UNLEASHED_FXH_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_FogEase_Unleashed.fxh"
                            DEPTHFOG_FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx" _CRT_SECURE_NO_WARNINGS)
@@ -1423,6 +1428,10 @@ target_compile_options(trunk_hold_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(attack_lean_test cleanroom/tests/attack_lean_test.cpp)
 target_include_directories(attack_lean_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(attack_lean_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [body] flat_aim_tilt (flat F3), vr/aim_tilt.h: which bones tilt with the crosshair, the look's and the target's tilt, the hold through a swing, the turn.
+add_executable(aim_tilt_test cleanroom/tests/aim_tilt_test.cpp)
+target_include_directories(aim_tilt_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(aim_tilt_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # From sajmonsoft's flat fork: [input] portal_look_horizon and portal_auto (vr/portal_auto.h) - an arrival told apart, the walk into a portal.
 add_executable(portal_auto_test cleanroom/tests/portal_auto_test.cpp)
 target_include_directories(portal_auto_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1448,6 +1457,33 @@ endif()
 
 # [debug] frame_trace (vr/frame_trace.h): where the time of a slow pair went and what part of it is the plugin's - the meter, the
 # probes, the situation of a pair (idle, walking, swinging, a hit) and the lines, on made-up pairs.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/lit_flat_test.cpp")
+    # [render] bench_lit_flat (vr/lit_flat.h): our flat lit shaders, their layouts the game's, drawn on WARP. Run: lit_flat_test.exe [game shaders folder]
+    add_executable(lit_flat_test cleanroom/tests/lit_flat_test.cpp)
+    target_include_directories(lit_flat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(lit_flat_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(lit_flat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/bench_lights_test.cpp")
+    # [render] bench_skip_point_lights (vr/bench_lights.h): our light bins / light volumes shaders run on WARP. Run: bench_lights_test.exe
+    add_executable(bench_lights_test cleanroom/tests/bench_lights_test.cpp)
+    target_include_directories(bench_lights_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(bench_lights_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(bench_lights_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/render_bench_test.cpp")
+    # [render] bench_skip_* (vr/render_bench.h): the game's shaders sorted into its render stages. Run: render_bench_test.exe
+    add_executable(render_bench_test cleanroom/tests/render_bench_test.cpp)
+    target_include_directories(render_bench_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(render_bench_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/simpler_sun_test.cpp")
+    # [render] sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): the sun's light, the models cast into its map, the kept map's light, the
+    # frame decision, the barrier that ends the map. Run: simpler_sun_test.exe
+    add_executable(simpler_sun_test cleanroom/tests/simpler_sun_test.cpp)
+    target_include_directories(simpler_sun_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(simpler_sun_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/frame_trace_test.cpp")
     add_executable(frame_trace_test cleanroom/tests/frame_trace_test.cpp)
     target_include_directories(frame_trace_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1995,6 +2031,21 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/dome_atlas_test.cpp")
     target_link_libraries(dome_atlas_test PRIVATE d3d12 dxgi)
     target_compile_options(dome_atlas_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/phantom_rect_test.cpp")
+    # [render] phantom_rects (vr/phantom_rect.h): where the vignette pass can change the picture. Run: phantom_rect_test.exe
+    add_executable(phantom_rect_test cleanroom/tests/phantom_rect_test.cpp)
+    target_include_directories(phantom_rect_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(phantom_rect_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/phantom_rect_gpu_test.cpp")
+    # [render] phantom_rects on WARP: the effect's vignette pass through vr/fx_native.cpp, full screen and in rectangles, compared byte for byte
+    add_executable(phantom_rect_gpu_test tools/phantom_rect_gpu_test.cpp vr/fx_native.cpp)
+    target_include_directories(phantom_rect_gpu_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${RESHADE_SDK_INCLUDE})
+    target_link_libraries(phantom_rect_gpu_test PRIVATE reshadefx d3d12 dxgi d3dcompiler windowscodecs ole32)
+    target_compile_definitions(phantom_rect_gpu_test PRIVATE FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx" _CRT_SECURE_NO_WARNINGS)
+    target_link_options(phantom_rect_gpu_test PRIVATE /STACK:268435456)
+    target_compile_options(phantom_rect_gpu_test PRIVATE /utf-8 /W4 /EHsc /permissive- /Zc:char8_t-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/fx_native_test.cpp")
     # [render] no_reshade's own runtime for D2R_DepthFog.fx (vr/fx_native.cpp) on the graphics card: built in the background, uniforms as ReShade
     # lays them out, the fog drawn by the real effect (full, half, off), a rebuild on a definition. fx_native_test.exe <cache folder>
@@ -2152,6 +2203,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/flatvr_feed_test.cpp")
     target_link_libraries(flatvr_feed_test PRIVATE minhook d3d12 dxgi)
     target_compile_options(flatvr_feed_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/near_overlay_test.cpp")
+    # [openxr] hands_over_panels' pass (vr/near_overlay.cpp) on a WARP device: a picture and its reverse-Z depth in, the near pixels over a panel out
+    add_executable(near_overlay_test tools/near_overlay_test.cpp vr/near_overlay.cpp)
+    target_include_directories(near_overlay_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(near_overlay_test PRIVATE d3d12 dxgi)
+    target_compile_options(near_overlay_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/native_d3d12_test.cpp")
     # [render] no_reshade's own hooks (vr/native_d3d12.cpp) on a WARP device and a hidden window: the device, the swap chain, its presents and resizes,
     # the depth-stencil binds, barriers and viewports reach the sinks; the plugin's own ("d2rvr ...") depth-stencils and our own list do not
@@ -2159,6 +2217,55 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/native_d3d12_test.cpp")
     target_include_directories(native_d3d12_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)   # (shared/sky_atlas.h: the domes' picture watched)
     target_link_libraries(native_d3d12_test PRIVATE minhook d3d12 dxgi)
     target_compile_options(native_d3d12_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/native_replay_test.cpp")
+    # [stereo] native_replay (vr/native_replay.h) on a WARP device: the path's decision, the game's upload buffers told by the device hooks, a pair
+    # end to end (the left pass captured by the ExecuteCommandLists hook, the camera slots patched, the lists submitted again), a resize while a pass
+    # is recorded and the area-load pause. Run: native_replay_test.exe
+    add_executable(native_replay_test tools/native_replay_test.cpp vr/native_d3d12.cpp vr/ecl_hook.cpp vr/shadows_once.cpp)
+    target_include_directories(native_replay_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(native_replay_test PRIVATE minhook d3d12 dxgi d3dcompiler)
+    target_compile_options(native_replay_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/simpler_sun_warp_test.cpp")
+    # [render] sun_shadow_radius_m / sun_shadow_every end to end on WARP (vr/simpler_sun.cpp through vr/native_d3d12.cpp's hooks): the collector's say,
+    # a kept frame's map read back as the last drawn one, our copies unseen by the other sinks. Run: simpler_sun_warp_test.exe [--plain]
+    add_executable(simpler_sun_warp_test tools/simpler_sun_warp_test.cpp vr/simpler_sun.cpp vr/native_d3d12.cpp)
+    target_include_directories(simpler_sun_warp_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(simpler_sun_warp_test PRIVATE minhook d3d12 dxgi)
+    target_compile_options(simpler_sun_warp_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/foveation_native_test.cpp")
+    # [render] foveated end to end (vr/foveation.cpp through vr/native_d3d12.cpp's hooks) on a D3D12 device with VRS tier 2 (WARP, else the PC's GPU):
+    # the picture read back is shaded 2x2 at the edges and whole round each eye's lens centre, mirrored between the eyes. Run: foveation_native_test.exe
+    add_executable(foveation_native_test tools/foveation_native_test.cpp vr/foveation.cpp vr/native_d3d12.cpp)
+    target_include_directories(foveation_native_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(foveation_native_test PRIVATE minhook d3d12 dxgi d3dcompiler)
+    target_compile_options(foveation_native_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/vrs_probe_test.cpp")
+    # shared/vrs_probe.h: variable rate shading tier 2 asked of D3D12 (the plugin's load: foveation a true no-op without it; Settings' rows greyed)
+    # - the decision over the adapters' answers, and this PC's adapters asked. Run: vrs_probe_test.exe
+    add_executable(vrs_probe_test tools/vrs_probe_test.cpp)
+    target_include_directories(vrs_probe_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(vrs_probe_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/hook_cost_bench.cpp")
+    # What the plugin's own D3D12 hooks cost the game's recording, per call and per VR pass (docs/notes/vr_cpu_overhead.md): one D2R pass's call
+    # mix recorded with no hooks, then with natived3d's hooks and the sinks the game has (WARP; --gpu the PC's driver). Run: hook_cost_bench.exe
+    add_executable(hook_cost_bench tools/hook_cost_bench.cpp vr/foveation.cpp vr/native_d3d12.cpp vr/shadows_once.cpp)
+    target_include_directories(hook_cost_bench PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(hook_cost_bench PRIVATE minhook d3d12 dxgi d3dcompiler)
+    target_compile_options(hook_cost_bench PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/lens_mask_test.cpp")
+    # [render] lens_mask (vr/lens_mask.cpp through vr/native_d3d12.cpp's ClearDepthStencilView hook) on WARP: the mesh -> rectangles mapping never
+    # covers a shown pixel (off-axis eyes, runtime_fov's box, an upscaler's share), and a scene depth cleared by the "game" gets the eye's mask:
+    # a depth-tested draw fails exactly there - each eye in two passes, and both eyes from ONE list under the per-eye predicate (the replay). Run: lens_mask_test.exe
+    add_executable(lens_mask_test tools/lens_mask_test.cpp vr/lens_mask.cpp vr/native_d3d12.cpp)
+    target_include_directories(lens_mask_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(lens_mask_test PRIVATE minhook d3d12 dxgi d3dcompiler)
+    target_compile_options(lens_mask_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/xr_busy_test.cpp")
     # A runtime call that never returns (xrWaitFrame under a headset another app holds) does not hold the draw thread (vr/bounded_call.h); FlatVR over the headset (vr/flatvr_gate.h)
@@ -2295,7 +2402,8 @@ target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wi
 target_sources(d2rl-vrcam PRIVATE vr/point_cast_wire.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/skill_link_wire.cpp)   # [gestures] skill_link: the skills to BodyWalk, its casts back (vr/skill_link.h)   # [gameplay] teleport_circle: a point skill's press held for an arc and a circle (vr/point_cast.h)
 target_sources(d2rl-vrcam PRIVATE vr/bodywalk_start.cpp)   # [openxr] gesture_overlay: the Gestures tab's Start BodyWalk (the copy D2R VR Setup put in, never a second one)
-target_sources(d2rl-vrcam PRIVATE vr/gesture_engine_lib.cpp vr/gesture_engine_wire.cpp)   # [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll, shared/gesture_engine_abi.h)
+target_sources(d2rl-vrcam PRIVATE vr/gesture_engine_lib.cpp vr/gesture_engine_wire.cpp vr/gesture_play_wire.cpp vr/trigger_roles_wire.cpp)   # [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll, shared/gesture_engine_abi.h)
+target_sources(d2rl-vrcam PRIVATE vr/near_overlay.cpp)   # [openxr] hands_over_panels: the hands and the weapon over the skill panel (one pass of the eyes' near pixels)
 target_sources(d2rl-vrcam PRIVATE vr/bow_pitch_wire.cpp)   # [bow] pitch_aim: the scene a bow's shot is decided in (vr/bow_pitch.h), the heading the aim hooks give it
 target_sources(d2rl-vrcam PRIVATE vr/arrow_flight_wire.cpp)   # [bow] arrow_flight: the hero's shot arrow drawn by us (vr/arrow_flight.h), on the potion hide's renderer hooks
 # [bow] quiver (vr/bow_quiver.h): the bow skill table, the glow and the arrow's element: bow_quiver_test (its old request-machine checks gave way to bow_quiver_armed_test)

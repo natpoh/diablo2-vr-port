@@ -3,10 +3,15 @@
 // (vr/vrcam_headers.h) and the names of vrcam.cpp it sets (vr/vrcam_internal.h). Its place in the update thread is the same.
 #include "../vrcam_headers.h"
 #include "../../shared/draw_distance.h"
+#include "../../shared/render_type.h"   // the render type the keys make: one log line at each change
 #include "../bone_cap.h"
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: the defaults and the range of [weapon_<kind>] flat_*
+#include "../aim_tilt.h"      // [body] flat_aim_tilt: the defaults and the range of its share and its cap
 #include "../view_keys.h"
 #include "../quick_blow.h"   // [gameplay] quick_blow_min_ms: its default
+#include "../render_bench.h"   // [render] bench_skip_*: the keys, one per game stage
+#include "../trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right
+#include "../bench_lights.h"   // [render] bench_skip_point_lights
 
 using namespace D2RL;
 
@@ -21,7 +26,7 @@ void LoadSettings() {
             LogF("vrcam: bench_bare %s - %s", bench ? "ON" : "OFF",
                  bench ? "stopped: our whole effect (D2R_DepthFog.fx, its overlays and interface passes - medallions, labels, toolbar, "
                          "phantoms), our sky, fog, ceiling and distance blur; the game's fog as the game ships it (game_fog, its height and "
-                         "mist patch, the step before the effects and the effects' depth, game_fog_match); the game's dome, its bake and both "
+                         "mist patch, the step before the effects and the effects' depth); the game's dome, its bake and both "
                          "colour measures; the hand vitals' orbs, the monsters' bars; knock_props, grab_props / items, world_contact, "
                          "monster_bodies / ragdolls / knock-down, npc_bodies, legs_rear and the side gait; every [debug] key. NOT live (as they "
                          "were at the start, until the game restarts): room rings, the models' radius, big objects; the native hooks stay "
@@ -465,6 +470,24 @@ void LoadSettings() {
         // is on at the game's start, bound live in VR
         refleye::Configure(IniB(L"render", L"reflections_per_eye", false), !flat);
     }
+    {   // [render] foveated (vr/foveation.h): fixed foveated rendering in F4 - live (its hooks go in only when it was on at the start)
+        foveation::Config fc;
+        fc.on = IniB(L"render", L"foveated", false);
+        fc.strength = (int)IniF(L"render", L"foveated_strength", 1.0f);
+        fc.radius = IniF(L"render", L"foveated_radius", 0.0f);
+        fc.unseen = IniB(L"render", L"foveated_unseen", true);
+        fc.abSeconds = (int)IniF(L"render", L"foveated_ab", 0.0f);
+        fc.gaze = IniB(L"render", L"foveated_gaze", true);   // (the gaze itself is asked of the runtime at the session start)
+        fc.fullscreen = (int)IniF(L"render", L"foveated_fullscreen", 0.0f);   // the heavy full-screen passes too (vr/fullscreen_passes.h)
+        fc.grassCoarse = (int)IniF(L"render", L"grass_lighting_coarse", 0.0f);  // the grass lighting at 2x1 / 2x2
+        foveation::Configure(fc);
+    }
+    {   // [render] lens_mask (vr/lens_mask.h): the hidden area of each eye cleared to the nearest depth after the game's scene depth clear - live
+        lensmask::Config lc;
+        lc.on = IniB(L"render", L"lens_mask", false);
+        lc.turnWarp = IniB(L"stereo", L"turn_warp", true);   // (eyes by turns: the eye made is moved by the depth - no mask with it)
+        lensmask::Configure(lc);
+    }
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
     g_set.keepRoofs.store(IniB(L"render", L"keep_roofs", false));
     g_set.roofsTwoSided.store(IniB(L"render", L"roofs_two_sided", false));
@@ -480,7 +503,37 @@ void LoadSettings() {
         static const int kHz[5] = {72, 75, 80, 90, 120};
         g_set.headsetHz.store(kHz[std::clamp((int)IniF(L"stereo", L"headset_rate", 3.0f), 0, 4)]);
     }
-    replay::g_want.store((int)IniF(L"stereo", L"replay_right", 0.0f));
+    // [stereo] replay_right: the ReShade path's; [stereo] native_replay: the plugin's own path's (vr/native_replay.h) - each its own key
+    // (native_replay's default 1: one pass, Serg 2026-11-08 - shared/render_type.h reads an ini without it the same way)
+    replay::SetWant((int)IniF(L"stereo", L"replay_right", 0.0f), (int)IniF(L"stereo", L"native_replay", 1.0f));
+    {   // the render type (shared/render_type.h) as these keys make it: one line at the start and at every change, and whether it takes effect now
+        // (Serg's 0.207.7 report, 2026-11-08: "глаза по очереди - ничего не поменялось" - the log said nothing of what the file asked for)
+        rendertype::Keys k;
+        k.openxrOn = (int)IniF(L"openxr", L"on", 0.0f);
+        k.afr = (int)IniF(L"stereo", L"afr", 0.0f);
+        k.pairPerTick = (int)IniF(L"stereo", L"pair_per_tick", 0.0f);
+        k.nativeReplay = (int)IniF(L"stereo", L"native_replay", 1.0f);
+        k.source = (int)IniF(L"stereo", L"source", k.afr ? 2.0f : 1.0f);
+        const int type = rendertype::FromKeys(k);
+        static int told = -1;
+        if (type != told) {
+            const bool first = told < 0;
+            told = type;
+            const char* when = type == rendertype::kNativeOne && !replay::NativeAtStart()
+                                   ? "AFTER A RESTART - one pass's hooks go in at the game's start ([stereo] native_replay was 0 then): two passes until then"
+                               : type == rendertype::kNativeOne ? "now (once an area has settled, F4; a paused pair is two passes)"
+                               : rendertype::Native(type) ? "now"
+                                                          : "now - native OpenXR ends and FlatVR (BodyWalk) shows the picture";
+            LogF("vrcam: render type %s %s ([openxr] on=%d, [stereo] afr=%d pair_per_tick=%d native_replay=%d source=%d): %s", first ? "at the start:" : "changed to",
+                 rendertype::Name(type), k.openxrOn, k.afr, k.pairPerTick, k.nativeReplay, k.source, when);
+        }
+    }
+    shadowsonce::SetOn(IniB(L"render", L"shadows_once_a_pair", false));   // (live once its hooks went in at the start; vr/shadows_once.h)
+    // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): the game's sun shadow map filled for less in F4 - live
+    // ([render] game_stages 2, the Potato stages: the Potato light reads no sun map, so none of its casters is collected either - sun_shadows 0's
+    // processor saving; the stage skip alone only drops the ~1,800 draws a present after the game has collected them. Serg's 0.207.8 run)
+    simplersun::Configure(std::clamp((int)IniF(L"render", L"game_stages", 0.0f), 0, 2) >= 2 ? 0 : (int)IniF(L"render", L"sun_shadows", 2.0f),
+                          IniF(L"render", L"sun_shadow_radius_m", 0.0f), (int)IniF(L"render", L"sun_shadow_every", 1.0f));
     replay::g_ahead.store(std::clamp((int)IniF(L"stereo", L"replay_ahead", 1.0f), 1, 3));
     replay::g_depthCopy.store(IniB(L"stereo", L"replay_depth", false));
     replay::g_rightDepth.store(IniB(L"stereo", L"replay_right_depth", true));
@@ -622,7 +675,9 @@ void LoadSettings() {
     g_set.fogBeforeFx.store(IniB(L"fog", L"game_fog_before_fx", false));
     g_set.fogFxDepth.store(IniB(L"fog", L"game_fog_fx_depth", false));
     g_set.fogOurCurve.store(IniB(L"fog", L"game_fog_our_curve", false));
-    g_set.fogMatch.store(IniB(L"fog", L"game_fog_match", false));
+    // ([fog] game_fog_match removed 2026-11-08 - Serg: "она плохо работает и ломает туман - можно вообще её удалить, чтобы кто-то случайно не
+    // включил". It kept our effect's whole world pass running to move the game's fogged pixels (Potato 95 -> 83 pairs/s); a leftover key in an
+    // old ini is read by nothing)
     g_set.fogMeasured.store(IniB(L"fog", L"fog_colour_measured", false));
     g_set.fogIntoSky.store(IniB(L"fog", L"fog_into_sky", false));
     g_set.fogKeepsColour.store(IniB(L"fog", L"fog_keeps_colour", false));
@@ -696,6 +751,42 @@ void LoadSettings() {
         pipehunt::SetSkipShaders(hs, nh);   // (without ReShade, vr/pipe_hunt.h)
         static std::wstring toldShaders;
         if (toldShaders != ss) { toldShaders = ss; LogF("vrcam: [render] skip_shaders - %d shader(s) left out", nh); }
+        {   // [render] bench_skip_<stage> / bench_skip_all: the game's own render stages left out, live, to measure each one's cost (vr/render_bench.h)
+            uint32_t mask = IniB(L"render", L"bench_skip_all", false) ? renderbench::kAll : 0u;
+            for (int k = 0; k < renderbench::kKeys; ++k) {
+                wchar_t key[64];
+                swprintf_s(key, L"bench_skip_%hs", renderbench::KeyName(k));
+                if (IniB(L"render", key, false)) mask |= 1u << k;
+            }
+            // the players' [render] game_stages (0 as the game, 1 Low, 2 Potato) and [render] game_outline (0: the game's hover outline left out) on
+            // top of the bench's keys - the Quality presets' (vr/render_bench.h StagesMask; F4 only, as every stage skip)
+            const int stages = std::clamp((int)IniF(L"render", L"game_stages", 0.0f), 0, 2);
+            // (the game's fog pass kept with [fog] game_fog=1: the game's own fog is the fog - Serg 2026-11-08)
+            mask |= renderbench::StagesMask(stages, IniB(L"render", L"game_outline", true), IniB(L"fog", L"game_fog", false));
+            pipehunt::SetBench(mask);
+            // the local lights out: the sun alone (vr/bench_lights.h) - the bench's key, or the Potato stages
+            benchlights::SetOn(IniB(L"render", L"bench_skip_point_lights", false) || stages >= 2);
+            {   // the lit pass in its own colours times one light (vr/lit_flat.h): [render] potato_light (Performance > Render cost, the player's: its
+                // _brightness 0.3 - 2, _colour 0 neutral / 1 warm / 2 cool / 3 the area's own), else the bench's [render] bench_lit_flat (_level,
+                // _colour #RRGGBB, empty white) - kept as it was
+                if (IniB(L"render", L"potato_light", false) || stages >= 2) {   // (the Potato stages take the sun's shadows away: never without it)
+                    const int choice = std::clamp((int)IniF(L"render", L"potato_light_colour", 0.0f), 0, 3);
+                    // (0.3 - 5 since Serg 2026-11-08: "яркость надо сделать ползунок больше 2"; underground its own, "для пещер отдельный ползунок
+                    // яркости" - without the key, the open's level)
+                    const float open = std::clamp(IniF(L"render", L"potato_light_brightness", 1.0f), 0.3f, 5.0f);
+                    litflat::Configure(true, open, litflat::PresetColour(choice), choice == 3,
+                                       std::clamp(IniF(L"render", L"potato_light_brightness_caves", open), 0.3f, 5.0f));
+                } else {
+                    wchar_t c[32];
+                    GetPrivateProfileStringW(L"render", L"bench_lit_flat_colour", L"", c, (DWORD)std::size(c), g_iniPath);
+                    const wchar_t* h = c[0] == L'#' ? c + 1 : c;
+                    wchar_t* end = nullptr;
+                    const unsigned long rgb = wcstoul(h, &end, 16);
+                    litflat::Configure(IniB(L"render", L"bench_lit_flat", false), IniF(L"render", L"bench_lit_flat_level", 1.0f),
+                                       (end && end != h && wcslen(h) == 6) ? (uint32_t)rgb : 0xFFFFFFu);
+                }
+            }
+        }
         // [render] depth_fix: the game's linear depth (fog, height fog, AO, reflections, water) over 0 .. depth_range
         // world units from our camera instead of its own camera's 550 .. 1060 (uitrace.cpp, 2026-10-13; on since the
         // headset test the same day: the act 2 town's veil gone); 0 = the game's
@@ -750,6 +841,7 @@ void LoadSettings() {
     g_set.domeTrueColour.store(IniB(L"sky", L"dome_true_colour", false));
     g_set.domeGainOnce.store(IniB(L"sky", L"dome_gain_once", false));
     g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
+    g_set.phantomRects.store(IniB(L"render", L"phantom_rects", false));   // (our effect's wrist-orb pass in rectangles: vr/phantom_rect.h; 0 = full screen - 0.208 ships it off)
     g_set.domeInGameColour.store(IniB(L"sky", L"dome_in_game_colour", true));
     g_set.domePastFar.store(IniB(L"sky", L"dome_past_far", false));
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
@@ -827,6 +919,17 @@ void LoadSettings() {
     g_set.flatPickLog.store(IniB(L"debug", L"flat_pick", false));   // docs/notes/flat_targeting.md
     g_set.frameLog.store(IniB(L"debug", L"frame_log", false));
     frametrace::SetOn(IniB(L"debug", L"frame_trace", false));   // a slow pair's time and the plugin's part of it (vr/frame_trace.h); measures only
+    {   // [debug] call_census (vr/native_d3d12.h): the game's D3D12 calls through our hooks counted, a line every 10 s; view only, live
+        static int was = -1;
+        const bool on = IniB(L"debug", L"call_census", false);
+        natived3d::SetCensus(on);
+        if ((int)on != was) {
+            if (was >= 0 || on)
+                Log(on ? "vrcam: call census on - the game's draws, pipelines, binds, barriers... through our hooks counted, a line every 10 s ([debug] call_census)"
+                       : "vrcam: call census off ([debug] call_census)");
+            was = on;
+        }
+    }
     health::SetOn(IniB(L"debug", L"health", false));   // one line per feature every 10 s, a mark where a chain is broken (vr/health.h); counts only
     ftraceSetOverMs(IniF(L"debug", L"frame_trace_ms", (float)frametrace::kDefaultOverMs));
     {   // [debug] log_async (vr/log_async.h): the log lines written by a thread of their own; off = each thread writes its own, as ever
@@ -892,6 +995,7 @@ void LoadSettings() {
     g_set.flatClickShoot.store(IniB(L"input", L"flat_click_shoot", true));
     g_set.flatAimGround.store(IniB(L"input", L"flat_aim_ground", true));
     g_set.flatBodyPick.store(IniB(L"input", L"flat_body_pick", true));
+    g_set.flatBodyTarget.store(IniB(L"input", L"flat_body_target", true));
     g_set.vrBodyPick.store(IniB(L"input", L"vr_body_pick", true));
     g_set.vrBodyPickHand.store(IniB(L"input", L"vr_body_pick_hand", false));
     meleetouch::SetPickWanted(g_set.vrBodyPickHand.load());   // vr_body_pick_hand: the monsters near the hero and the server's verdicts (F4)
@@ -929,8 +1033,13 @@ void LoadSettings() {
     g_set.lockUpper.store(IniB(L"body", L"lock", true));
     g_set.legsUnder.store(IniB(L"body", L"legs_under_body", true));
     g_set.flatHoldTrunk.store(IniB(L"body", L"flat_hold_trunk", false));
+    g_set.flatHoldTrunkTwist.store(IniB(L"body", L"flat_hold_trunk_twist", false));
     g_set.attackLean.store(IniB(L"body", L"attack_lean", false));
     g_set.attackLeanMaxDeg.store(std::clamp(IniF(L"body", L"attack_lean_max_deg", 40.0f), 0.0f, 90.0f));
+    g_set.flatAimTilt.store(IniB(L"body", L"flat_aim_tilt", false));
+    g_set.flatAimTiltPct.store(aimtilt::Pct(IniF(L"body", L"flat_aim_tilt_pct", aimtilt::kPctDefault)));
+    g_set.flatAimTiltMaxDeg.store(aimtilt::MaxDeg(IniF(L"body", L"flat_aim_tilt_max_deg", aimtilt::kMaxDegDefault)));
+    g_set.flatAimTiltTarget.store(IniB(L"body", L"flat_aim_tilt_target", true));
     g_set.flatWeaponAdjust.store(IniB(L"body", L"flat_weapon_adjust", true));
     g_set.walkBack.store(IniB(L"body", L"walk_back", true));
     g_set.walkBackReverse.store(IniB(L"body", L"walk_back_reverse", true));
@@ -945,8 +1054,9 @@ void LoadSettings() {
     g_set.legsSideGait.store(IniB(L"body", L"legs_side_gait", false));
     g_set.legsSideCross.store(IniB(L"body", L"legs_side_cross", true));
     // ... the hero drawn from a copy of the pose as we finished it (the skinning met the game's own legs); [body] attack_lean's bend and
-    // flat_weapon_adjust's arms go the same way
-    headshadow::WantForPose(g_set.legsRear.load() || g_set.attackLean.load() || (g_set.flatWeaponAdjust.load() && g_set.platform.load() == 0));
+    // flat_weapon_adjust's arms go the same way, and flat_aim_tilt's
+    headshadow::WantForPose(g_set.legsRear.load() || g_set.attackLean.load() ||
+                            ((g_set.flatWeaponAdjust.load() || g_set.flatAimTilt.load()) && g_set.platform.load() == 0));
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     {   // [body] leap_camera_up_pct: an ini with no _pct key keeps what leap_camera_up said (on = the whole arc)
@@ -1175,7 +1285,9 @@ void LoadSettings() {
     }
     g_set.bowLatency.store(IniB(L"debug", L"bow_latency", false));
     g_pressTraceKey.store(IniB(L"debug", L"melee_press_trace", false));   // [debug] melee_press_trace (the first 12 presses are told whatever it says)
-    moveattack::SetProbe(IniB(L"debug", L"quick_blow_probe", false));   // [debug] quick_blow_probe: one line per attack - what became of its blow (vr/quick_blow_probe.h)
+    moveattack::SetProbe(IniB(L"debug", L"quick_blow_probe", false));
+    weight::SetGripTrace(IniB(L"debug", L"grip_trace", false));   // [debug] grip_trace: a line per grip press and per change of who holds the weapon (vr/weight.cpp, vr/skeletons.cpp)
+    weight::SetGripDraw(IniB(L"debug", L"grip_draw", false));     // [debug] grip_draw: the attach bones, the hands, the shaft and the take zone drawn in the headset (F4)   // [debug] quick_blow_probe: one line per attack - what became of its blow (vr/quick_blow_probe.h)
     animcut::Configure(animcut::Kind::Bow, IniB(L"bow", L"quick_release", false), (int)std::lround(IniF(L"bow", L"quick_release_frame", 2.0f)));
     g_set.quickThrowPotions.store(IniB(L"hands", L"quick_throw_potions", false));
     g_set.grabNearest.store(IniB(L"belt", L"grab_nearest", true));
@@ -1186,6 +1298,16 @@ void LoadSettings() {
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
     // the hero's skills to BodyWalk and a button or a recorded gesture per skill cast back (F4); the spare slot a skill on none is put on first
     gengine::Configure(IniB(L"gestures", L"engine_in_game", false), (int)std::lround(IniF(L"gestures", L"engine_pen", 3.0f)));   // (before the skill link: SetEngine)
+    {   // [gestures] trigger_left / trigger_right (vr/trigger_roles.h): each trigger's role - as before, glyphs, Shift, an action; F4
+        wchar_t a[2][64] = {};
+        GetPrivateProfileStringW(L"gestures", L"trigger_left_action", L"", a[0], 64, g_iniPath);
+        GetPrivateProfileStringW(L"gestures", L"trigger_right_action", L"", a[1], 64, g_iniPath);
+        char u[2][32] = {};
+        for (int h = 0; h < 2; ++h) WideCharToMultiByte(CP_UTF8, 0, a[h], -1, u[h], (int)sizeof u[h], nullptr, nullptr);
+        trigroleswire::Configure((int)std::lround(IniF(L"gestures", L"trigger_left", 0.0f)), (int)std::lround(IniF(L"gestures", L"trigger_right", 0.0f)), u[0], u[1],
+                                 IniB(L"gestures", L"glyph_cast_hold", false));
+        skilllinkwire::SetSelectIcon(IniB(L"gestures", L"select_icon", true));   // the armed skills' icons in the medallions
+    }
     skilllinkwire::Configure(IniB(L"gestures", L"skill_link", false),
                              (int)std::lround(IniF(L"gestures", L"skill_link_slot", (float)skilllink::kDefaultSpareSlot)),
                              IniB(L"gestures", L"skill_link_settle", true));

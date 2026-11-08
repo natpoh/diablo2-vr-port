@@ -155,7 +155,104 @@ static void Carried_() {
     }
 }
 
+// ---- MirrorGrip: the game's right-hand grip mirrored onto the left hand, on a synthetic mirrored rig ----
+// Row-vector 4x4 helpers (skeletons.cpp's convention: rows the axes, the place in 12..14).
+struct M4 { float m[16]; };
+static M4 MulM(const M4& a, const M4& b) {
+    M4 r{};
+    for (int i = 0; i < 4; ++i)
+        for (int j = 0; j < 4; ++j) {
+            float v = 0;
+            for (int k = 0; k < 4; ++k) v += a.m[i * 4 + k] * b.m[k * 4 + j];
+            r.m[i * 4 + j] = v;
+        }
+    return r;
+}
+static M4 InvRigid(const M4& a) {   // rows orthogonal with any lengths and signs (a mirror too): the inverse of the 3x3 is its transpose over the squared lengths
+    M4 r{};
+    for (int i = 0; i < 3; ++i) {
+        const float l2 = a.m[i * 4] * a.m[i * 4] + a.m[i * 4 + 1] * a.m[i * 4 + 1] + a.m[i * 4 + 2] * a.m[i * 4 + 2];
+        for (int j = 0; j < 3; ++j) r.m[j * 4 + i] = a.m[i * 4 + j] / l2;
+    }
+    for (int j = 0; j < 3; ++j) r.m[12 + j] = -(a.m[12] * r.m[j] + a.m[13] * r.m[4 + j] + a.m[14] * r.m[8 + j]);
+    r.m[15] = 1;
+    return r;
+}
+static M4 Rot(int axis, float deg, float tx = 0, float ty = 0, float tz = 0, float scale = 1) {
+    M4 r{};
+    r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1;
+    const float t = deg * 0.01745329f, c = std::cos(t), sn = std::sin(t);
+    const int i = (axis + 1) % 3, j = (axis + 2) % 3;
+    r.m[i * 4 + i] = c; r.m[i * 4 + j] = sn; r.m[j * 4 + i] = -sn; r.m[j * 4 + j] = c;
+    for (int k = 0; k < 12; ++k) r.m[k] *= scale;
+    r.m[12] = tx; r.m[13] = ty; r.m[14] = tz;
+    return r;
+}
+static M4 KMat(const weaponmirror::K& k) {   // the signed permutation as a 4x4 acting in a bone's own frame (pre-multiplied)
+    M4 r{};
+    for (int i = 0; i < 3; ++i) r.m[i * 4 + k.col[i]] = (float)k.sign[i];
+    r.m[15] = 1;
+    return r;
+}
+static M4 ReflectX(const M4& a) {   // the world reflected in x (post-multiplied: X)
+    M4 r = a;
+    for (int i = 0; i < 4; ++i) r.m[i * 4] = -r.m[i * 4];
+    return r;
+}
+static bool Near(const M4& a, const M4& b, float eps = 2e-4f) {
+    for (int i = 0; i < 16; ++i)
+        if (std::fabs(a.m[i] - b.m[i]) > eps) return false;
+    return true;
+}
+
+static void MirrorGrip_() {
+    // the rig's correspondences, as the Amazon's: her L_weapon_attach has its x the other way, y (the shaft) and z the same; the wrists another
+    weaponmirror::K kw, kh;
+    kw.sign[0] = -1;
+    kh.col[0] = 0; kh.col[1] = 2; kh.col[2] = 1; kh.sign[1] = -1;
+    // the bind pose: the right wrist somewhere, its attach bone in it; the left ones their mirror images (left = K * right * X)
+    const M4 handR = MulM(Rot(1, 25.0f, 0, 0, 0, 1.3f), Rot(2, -40.0f, -0.6f, 3.1f, 0.4f));
+    const M4 attachRbind = Rot(0, 8.0f, 0.02f, 0.05f, -0.01f, 1.0f);   // against the wrist
+    const M4 weaponR = MulM(attachRbind, handR);
+    const M4 handL = MulM(KMat(kh), ReflectX(handR)), weaponL = MulM(KMat(kw), ReflectX(weaponR));
+    // the rig read back: the correspondences FromMirrorPair finds are the ones built in
+    weaponmirror::K kh2, kw2;
+    CHECK(weaponmirror::FromMirrorPair(handR.m, handL.m, &kh2) && weaponmirror::FromMirrorPair(weaponR.m, weaponL.m, &kw2));
+    CHECK(kh2.col[0] == kh.col[0] && kh2.col[1] == kh.col[1] && kh2.col[2] == kh.col[2] && kh2.sign[0] == kh.sign[0] && kh2.sign[1] == kh.sign[1] && kh2.sign[2] == kh.sign[2]);
+    CHECK(kw2.col[0] == 0 && kw2.col[1] == 1 && kw2.col[2] == 2 && kw2.sign[0] == -1 && kw2.sign[1] == 1 && kw2.sign[2] == 1);
+    // at the bind pose the mirrored right grip IS the left attach bone against the left wrist
+    M4 out{};
+    CHECK(MirrorGrip(attachRbind.m, kw2, kh2, out.m));
+    CHECK(Near(out, MulM(weaponL, InvRigid(handL))));
+    CHECK(GripTurnDeg(out.m, MulM(weaponL, InvRigid(handL)).m) < 0.05 && GripApart(out.m, MulM(weaponL, InvRigid(handL)).m) < 1e-4);
+    // the game's animated grip of a sword (rolled 30 deg about the shaft, slid along it, at the attach bone's own scale 1.0): mirrored, the left weapon is the right
+    // weapon's mirror image, wherever the hands are
+    for (float roll : {-30.0f, 12.0f, 30.0f, 47.0f}) {
+        const M4 gripR = MulM(Rot(1, roll, 0.0f, 0.12f, 0.0f, 1.0f), attachRbind);
+        const M4 swordR = MulM(gripR, handR);
+        const M4 swordMirror = MulM(KMat(kw2), ReflectX(swordR));   // the right sword reflected, in the left attach bone's axes
+        CHECK(MirrorGrip(gripR.m, kw2, kh2, out.m));
+        CHECK(Near(MulM(out, handL), swordMirror));
+        // the left fist's attach bone in a right-hand animation (the bind's, holding nothing): the log's measure tells the roll it lacked
+        const M4 idle = MulM(weaponL, InvRigid(handL));
+        CHECK(std::fabs(GripTurnDeg(out.m, idle.m) - std::fabs(roll)) < 0.1);
+        // the size the game draws at stays; the mirror's handedness: the left grip's as the bind's left attach bone has it
+        CHECK(std::fabs(RowLen(out.m, 1) - RowLen(gripR.m, 1)) < 1e-5f);
+        CHECK((Det3(out.m) < 0.0) == (Det3(idle.m) < 0.0));
+    }
+    // a scaled grip (the hero drawn bigger): the size kept
+    const M4 big = MulM(Rot(2, 10.0f, 0.1f, 0.2f, 0.3f, 1.7f), attachRbind);
+    CHECK(MirrorGrip(big.m, kw2, kh2, out.m) && std::fabs(RowLen(out.m, 0) - RowLen(big.m, 0)) < 1e-4f);
+    // not finite: out untouched
+    M4 bad = attachRbind;
+    bad.m[5] = NAN;
+    M4 keep{};
+    keep.m[0] = 7.0f;
+    CHECK(!MirrorGrip(bad.m, kw2, kh2, keep.m) && keep.m[0] == 7.0f);
+}
+
 int main() {
+    MirrorGrip_();
     Slots_();
     Shown_();
     ShieldArm_();

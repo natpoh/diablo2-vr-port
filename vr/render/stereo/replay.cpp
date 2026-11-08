@@ -3,6 +3,7 @@
 #include "../../vrcam_headers.h"
 #include "../../fence_wait.h"   // a fence wait that does not end on a wake meant for an older one
 #include "../../resize_drain.h"   // [render] resize_drain: no replay of a pass the game resized in, the GPU drained first
+#include "../../shadows_once.h"   // [render] shadows_once_a_pair: the lists that only draw the shadow / grass maps not replayed for the right eye
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -33,8 +34,13 @@ std::atomic<bool> g_on{false};
 // 150 ms) - the right pass lays its labels out for the right eye itself.
 std::atomic<bool> g_rightReplayed{false};
 std::atomic<int> g_capturing{0};   // 1 while the left pass runs
-std::atomic<int> g_want{0};        // [stereo] replay_right, from LoadSettings
-struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; };   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec
+std::atomic<int> g_want{0};        // [stereo] replay_right, from LoadSettings (the native path: [stereo] native_replay - SetWant)
+// [stereo] native_replay (vr/native_replay.h): the replay on the plugin's own hooks, without ReShade
+std::atomic<bool> g_nativeHooks{false};   // its hooks went in at the start (NativeSinks: the key on then)
+std::atomic<int> g_nativeKey{0};          // [stereo] native_replay now (live)
+std::atomic<int> g_replayRightIni{0};     // [stereo] replay_right as the ini has it (the ReShade path's)
+std::atomic<bool> g_nativeNow{false};     // this pair goes the native way (Wanted, once a pair)
+struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; bool mapsOnly = false; };   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec; mapsOnly: it only draws the shadow / grass maps ([render] shadows_once_a_pair, vr/shadows_once.h)
 std::vector<Sub> g_subs;           // the left pass's direct and compute submissions, in order
 SRWLOCK g_lock = SRWLOCK_INIT;
 IDXGISwapChain* g_proxy = nullptr; // the game's swap chain (ReShade's proxy): what it presents through
@@ -290,48 +296,91 @@ struct Outside { DWORD tid; int type; double atUs; };
 Outside g_outside[8] = {};
 std::atomic<uint32_t> g_outsideAt{0};
 std::atomic<double> g_pairStartUs{0.0};
-void OnExecute(command_queue* q, command_list* cl) {
-    HookQueueSignal((ID3D12CommandQueue*)q->get_native());
-    if (!t_ours) NoteGame((ID3D12CommandQueue*)q->get_native(), 'x', nullptr, 0);
-    if (!t_ours && g_on.load(std::memory_order_relaxed) && g_want.load(std::memory_order_relaxed) == 1) {
-        const command_queue_type t = q->get_type();
-        if ((t & command_queue_type::graphics) != 0 || (t & command_queue_type::compute) != 0) {
+// Those lists in ONE line, at the replay's 900-pair report (Serg's 0.207.4 log, 2026-11-08: eight identical "outside" lines every report, each
+// ~1 ms of the draw thread - 29 ms on a slow PC). They had been noted before the first replayed pair (the draw thread and the pair's start not
+// known yet: "788001 ms after the left pass began" was the time since the game started) and never cleared, so the same eight came again each
+// time. Now noted only once a pair has begun (BeginLeft), told only when there are new ones, and cleared after the line.
+uint32_t g_outsideTold = 0;   // g_outsideOther at the last line
+void OutsideLine() {
+    const uint32_t all = g_outsideOther.load(std::memory_order_relaxed), fresh = all - g_outsideTold;
+    g_outsideTold = all;
+    if (!fresh) return;
+    DWORD tids[8] = {};
+    int nt = 0;
+    bool direct = false, compute = false;
+    double lo = 1e300, hi = 0.0;
+    for (Outside& o : g_outside) {
+        if (!o.tid) continue;
+        bool seen = false;
+        for (int k = 0; k < nt; ++k) seen |= tids[k] == o.tid;
+        if (!seen && nt < 8) tids[nt++] = o.tid;
+        (o.type == 0 ? direct : compute) = true;
+        lo = std::min(lo, o.atUs);
+        hi = std::max(hi, o.atUs);
+        o = Outside{};
+    }
+    char ts[96] = "";
+    for (int k = 0, at = 0; k < nt && at < 80; ++k) at += snprintf(ts + at, sizeof ts - at, "%s%lu", k ? ", " : "", tids[k]);
+    LogF("vrcam: replay - %u list(s) from threads other than the draw thread (%lu) since the last report, not replayed: thread(s) %s, %s queue; "
+         "the last %d between %.2f and %.2f ms after their pair's left pass began", fresh, g_captureThread.load(), nt ? ts : "?",
+         direct && compute ? "direct and compute" : direct ? "direct" : "compute", nt ? std::min<int>(8, (int)fresh) : 0, nt ? lo / 1000.0 : 0.0,
+         nt ? hi / 1000.0 : 0.0);
+}
+// One list of the game's ExecuteCommandLists, before it goes to the queue: ReShade's execute_command_list event (OnExecute), or - [stereo]
+// native_replay - the plugin's own hook on the queues (NativeExec). `ours`: one of our own submissions (never noted; ReShade never told those).
+void ExecCore(ID3D12CommandQueue* nq, ID3D12CommandList* ncl, bool ours) {
+    HookQueueSignal(nq);
+    if (!ours) NoteGame(nq, 'x', nullptr, 0);
+    const D3D12_COMMAND_LIST_TYPE t = nq->GetDesc().Type;
+    // (only once a replayed pair has begun: before it the draw thread and the pair's start are not known - its lists were all "other threads'")
+    if (!ours && g_on.load(std::memory_order_relaxed) && g_want.load(std::memory_order_relaxed) == 1 && g_pairStartUs.load(std::memory_order_relaxed) > 0.0) {
+        if (t == D3D12_COMMAND_LIST_TYPE_DIRECT || t == D3D12_COMMAND_LIST_TYPE_COMPUTE) {
             if (g_capturing.load(std::memory_order_relaxed)) g_insideLists.fetch_add(1, std::memory_order_relaxed);
             else if (GetCurrentThreadId() == g_captureThread.load(std::memory_order_relaxed)) g_outsideDraw.fetch_add(1, std::memory_order_relaxed);
             else {
                 g_outsideOther.fetch_add(1, std::memory_order_relaxed);
                 const uint32_t i = g_outsideAt.fetch_add(1) & 7;
-                g_outside[i] = {GetCurrentThreadId(), (t & command_queue_type::graphics) != 0 ? 0 : 2, pairtime::UsNow() - g_pairStartUs.load()};
+                g_outside[i] = {GetCurrentThreadId(), t == D3D12_COMMAND_LIST_TYPE_DIRECT ? 0 : 2, pairtime::UsNow() - g_pairStartUs.load()};
             }
         }
     }
-    if (!g_capturing.load(std::memory_order_relaxed)) return;
-    const command_queue_type t = q->get_type();
     // The copy queue: its lists from the draw thread inside the left pass are part of the frame -
     // mid-frame the direct queue signals, the copy queue waits for it, copies, and the direct
     // queue waits for that ([stereo] replay_copy, on: replayed too; left out, the right eye read
     // the left eye's copy - its character sat in shadows of its own, 2026-10-10). The streaming's
-    // uploads come from other threads and stay out.
-    if ((t & command_queue_type::graphics) == 0 && (t & command_queue_type::compute) == 0 &&
-        !(g_replayCopy.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_captureThread.load(std::memory_order_relaxed))) return;
-    ReleaseHeld((ID3D12CommandQueue*)q->get_native());   // signals mid-frame: before this queue's next lists
+    // uploads come from other threads and stay out. (vr/native_replay.h NoteList)
+    if (!nativereplay::NoteList(g_capturing.load(std::memory_order_relaxed) != 0, ours, (int)t,
+                                GetCurrentThreadId() == g_captureThread.load(std::memory_order_relaxed), g_replayCopy.load(std::memory_order_relaxed)))
+        return;
+    ReleaseHeld(nq);   // signals mid-frame: before this queue's next lists
     if (g_restorePending.exchange(false)) {   // the left pass's first list: the left camera into the slots first
         StepTimer st(kWaitRestore);
         if (camfix::g_redirect.load()) {
-            if (!g_direct) {   // (the first pair: the direct queue is this one)
-                D3D12_COMMAND_QUEUE_DESC d = ((ID3D12CommandQueue*)q->get_native())->GetDesc();
-                if (d.Type == D3D12_COMMAND_LIST_TYPE_DIRECT) g_direct = (ID3D12CommandQueue*)q->get_native();
-            }
+            if (!g_direct && t == D3D12_COMMAND_LIST_TYPE_DIRECT) g_direct = nq;   // (the first pair: the direct queue is this one)
             if (g_direct && Setup(g_direct)) CopySlots(0);
         } else {
             WaitFor(g_lastReplay);
             camfix::Restore();
         }
     }
-    else CopyLateSlots((ID3D12CommandQueue*)q->get_native());
+    else CopyLateSlots(nq);
+    const bool mapsOnly = shadowsonce::MapsOnly(ncl);   // (judged now: closed, before the game's ExecuteCommandLists; false with the tick off)
     AcquireSRWLockExclusive(&g_lock);
-    g_subs.push_back({(ID3D12CommandQueue*)q->get_native(), (ID3D12CommandList*)cl->get_native()});
+    g_subs.push_back({nq, ncl, 0, mapsOnly});
     ReleaseSRWLockExclusive(&g_lock);
+}
+void OnExecute(command_queue* q, command_list* cl) {
+    ExecCore((ID3D12CommandQueue*)q->get_native(), (ID3D12CommandList*)cl->get_native(), t_ours);
+}
+// [stereo] native_replay: every ExecuteCommandLists of the game's queues (vr/ecl_hook.h, all three types), before the real call - each list as
+// ReShade's event gave it, then the call itself numbered for [debug] replay_marks 3 / 4 (ObserveExec). Ours (the replay's own lists and signals,
+// natived3d's list, the headset and monitor copies: t_ours or natived3d::Ours) are left out of the capture.
+void NativeExec(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* lists) {
+    if (!q || !n || !lists) return;
+    const bool ours = t_ours || natived3d::Ours();
+    for (unsigned i = 0; i < n; ++i)
+        if (lists[i]) ExecCore(q, lists[i], ours);
+    if (!ours) ObserveExec(q, n, lists);
 }
 
 void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
@@ -460,11 +509,13 @@ const char* const kListMark[32] = {
     "replay: list 8", "replay: list 9", "replay: list 10", "replay: list 11", "replay: list 12", "replay: list 13", "replay: list 14", "replay: list 15",
     "replay: list 16", "replay: list 17", "replay: list 18", "replay: list 19", "replay: list 20", "replay: list 21", "replay: list 22", "replay: list 23",
     "replay: list 24", "replay: list 25", "replay: list 26", "replay: list 27", "replay: list 28", "replay: list 29", "replay: list 30", "replay: list 31+"};
-void GpuWait(ID3D12CommandQueue* q, const Pt& p) { if (p.f) { t_ours = true; q->Wait(p.f, p.v); t_ours = false; Note(q, 'W', p.f, p.v); } }
+// (t_ours put back as it was, not cleared: a replay loop of ours goes on as ours after it - the native path's queue hook sees our calls too)
+void GpuWait(ID3D12CommandQueue* q, const Pt& p) { if (p.f) { const bool was = t_ours; t_ours = true; q->Wait(p.f, p.v); t_ours = was; Note(q, 'W', p.f, p.v); } }
 Pt SignalOn(ID3D12CommandQueue* q) {
     for (QFence& x : g_qf)
         if (x.q == q) {
-            t_ours = true; q->Signal(x.f, ++x.v); t_ours = false;
+            const bool was = t_ours;
+            t_ours = true; q->Signal(x.f, ++x.v); t_ours = was;
             Note(q, 'S', x.f, x.v); return {x.f, x.v};
         }
     QFence x{q, nullptr, 0};
@@ -626,14 +677,15 @@ D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_R
 // Native OpenXR (vr/xr.cpp) on the game's queue: the runtime's own signals pass our queue
 // hooks as ours do.
 bool XrBegin() {
+    const bool was = t_ours;
     t_ours = true;
     const bool on = xr::BeginPair(g_dev, g_direct);
-    t_ours = false;
+    t_ours = was;
     return on;
 }
-void XrCopy(int eye, ID3D12Resource* bb) { t_ours = true; xr::CopyEye(eye, bb); t_ours = false; }
+void XrCopy(int eye, ID3D12Resource* bb) { const bool was = t_ours; t_ours = true; xr::CopyEye(eye, bb); t_ours = was; }
 void ShotHold(ID3D12Resource* bb);   // [headset_shot] on FlatVR: the left eye at its hold, after its effects (below)
-void XrEnd() { t_ours = true; xr::EndPair(); t_ours = false; }
+void XrEnd() { const bool was = t_ours; t_ours = true; xr::EndPair(); t_ours = was; }
 // Eyes by turns with the other eye made on the GPU (xr::TurnMake, [stereo] turn_warp): what D2R_DepthFog.fx draws without the scene's
 // depth - the game's labels laid back, the wrist medallions, the bow's orbs, the hitboxes, the low-life vignette - is left out of the
 // picture the warp moves (OverlaysApart, set at the effects' begin for this present) and drawn after it for each eye on its own picture
@@ -889,7 +941,10 @@ ID3D12GraphicsCommandList* Open() {
 void Submit(ID3D12CommandQueue* q) {
     g_list->Close();
     ID3D12CommandList* l = g_list;
+    const bool was = t_ours;
+    t_ours = true;   // (ours: the native path's queue hook leaves it out of the capture)
     q->ExecuteCommandLists(1, &l);
+    t_ours = was;
     g_allocDone[g_openAlloc] = SignalOn(q);
 }
 // One eye's camera values into the slots, on the direct queue.
@@ -938,7 +993,10 @@ void Copy(ID3D12Resource* dst, D3D12_RESOURCE_STATES dstState, ID3D12Resource* s
     g_list->ResourceBarrier(2, c);
     g_list->Close();
     ID3D12CommandList* l = g_list;
+    const bool was = t_ours;
+    t_ours = true;
     g_direct->ExecuteCommandLists(1, &l);
+    t_ours = was;
     g_allocDone[a] = SignalOn(g_direct);
 }
 
@@ -978,7 +1036,10 @@ void Peek(int eye, ID3D12Resource* bb) {
     g_list->ResourceBarrier(1, &c);
     g_list->Close();
     ID3D12CommandList* l = g_list;
+    const bool was = t_ours;
+    t_ours = true;
     g_direct->ExecuteCommandLists(1, &l);
+    t_ours = was;
     g_allocDone[a] = g_peekDone = SignalOn(g_direct);
 }
 void PeekReport() {
@@ -1098,6 +1159,9 @@ bool EffectsAtHold(ID3D12Resource* bb, UINT index, bool right = false, bool fenc
 }
 // The fences instead of ReShade's drain, this pair (see g_fxFence).
 bool FxFence() { return g_fxFence.load() && viewgate::F4(); }
+// One present a pair: the left eye goes out from its hold (its effects and its headset copy there), the right eye's present is the pair's
+// only one - ReShade's effects at the hold ([stereo] replay_fx), or the native path, where the plugin's own present hook draws the right eye's.
+bool OnePresent() { return (g_fxAtHold.load() && g_rt) || g_nativeNow.load(); }
 
 // The left pass's Present: its picture copied out, the Present held back (told the game it went).
 bool HoldLeft() {
@@ -1114,6 +1178,21 @@ bool HoldLeft() {
     g_pairIdx[g_pairIdxAt & 15] = {holdIndex, g_gameIdxNow, ~0u, ~0u, 0u, S_OK};
     ID3D12Resource* bb = BackBuffer(holdIndex);
     if (!bb) return false;
+    if (g_nativeNow.load()) {   // [stereo] native_replay: the left eye goes out from here - its depth, its effects, its headset copy
+        g_pairFence = false;    // (the native runtime keeps a ring of uniform buffers: no fence between the eyes' effects)
+        ID3D12CommandQueue* q = natived3d::GameQueue() ? natived3d::GameQueue() : direct;
+        const bool was = t_ours;
+        t_ours = true;   // our submissions in here are not the left pass's lists
+        if (!SkipWhileStuck("the left eye's effects at the hold")) fx::noreshade::HoldEye(g_dev, q, bb);
+        if (g_peekStage == 1) Peek(0, bb);
+        XrCopy(0, bb);     // native OpenXR: the left eye, after its effects
+        t_ours = true;
+        ShotHold(bb);      // (FlatVR only: nothing with native OpenXR running)
+        MonitorHeld(bb);   // [render] monitor_eye: kept for the window (the right eye's present follows)
+        t_ours = was;
+        bb->Release();
+        return true;
+    }
     if (g_fxAtHold.load() && g_rt) {   // one present a pair: the left eye goes out from this effect pass
         g_pairFence = FxFence();   // decided once a pair: both eyes the same way
         if ((g_fxSync.load() || g_pairFence) && g_lastReplay.f) { StepTimer st(kWaitLeft); WaitFor(g_lastReplay); }
@@ -1180,6 +1259,13 @@ void* HookGamePresent(void* dev, void* result, void* wrap) {
             g_presentFlags = *((const uint8_t*)dev + 0x80) && *(const uint32_t*)(w + 0x50) == 0 && !w[0x38] && w[0x39] ? 0x200u : 0u;
         } __except (EXCEPTION_EXECUTE_HANDLER) {}
     }
+    // [stereo] native_replay: no ReShade present event to say which swap chain - the one the game presents through, asked at each of its
+    // presents and held by no reference of ours (a swap chain we held kept its window from the game's next one, native_d3d12.cpp); used only
+    // inside this present and the pair it ends, while the game holds it.
+    if (g_nativeHooks.load() && g_proxy) {
+        IDXGISwapChain3* s = nullptr;
+        if (SUCCEEDED(g_proxy->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&s)) && s) { g_native = s; s->Release(); }
+    }
     double holdT0 = pairtime::UsNow();
     if (g_capturing.load() && !g_leftHeld && HoldLeft()) {
         g_stepUs[kHold] += pairtime::UsNow() - holdT0;
@@ -1239,7 +1325,7 @@ DWORD WINAPI Watchdog(void*) {
         for (const QFence& x : g_qf)
             LogF("vrcam: watchdog -   queue %p (type %d): our fence signalled %llu, done %llu", (void*)x.q, (int)x.q->GetDesc().Type,
                  (unsigned long long)x.v, (unsigned long long)x.f->GetCompletedValue());
-        if (g_native) {
+        if (g_native && !g_nativeHooks.load()) {   // (the native path holds no reference: the game's swap chain may be gone by now)
             UINT last = 0; g_native->GetLastPresentCount(&last);
             DXGI_FRAME_STATISTICS fs{};
             const HRESULT hs = g_native->GetFrameStatistics(&fs);
@@ -1281,8 +1367,11 @@ DWORD WINAPI Watchdog(void*) {
 
 // On unless [debug] replay_proto=0: the hooks cost next to nothing while [stereo] replay_right is
 // off, and the Settings' "Stereo" mode switches it on live.
-void Register() {
-    if (!IniB(L"debug", L"replay_proto", true)) return;
+// The stall guard's limits and the watchdog thread (both paths, once)
+void StartGuard() {
+    static bool started = false;
+    if (started) return;
+    started = true;
     g_guardOn.store(IniB(L"debug", L"stall_guard", true));   // [debug] stall_guard: the queue that stands for good (vr/stall_guard.h)
     g_guardLimits.skipMs = (double)GetPrivateProfileIntW(L"debug", L"stall_skip_ms", 250, g_iniPath);
     g_guardLimits.unstickMs = (double)GetPrivateProfileIntW(L"debug", L"stall_unstick_ms", 8000, g_iniPath);
@@ -1290,6 +1379,10 @@ void Register() {
     if (g_guardLimits.removeMs <= 0.0 && IniB(L"debug", L"stall_remove", false)) g_guardLimits.removeMs = 20000.0;   // the tick: 20 s
     g_guardGameFences.store(IniB(L"debug", L"stall_unstick_game", false));
     if (HANDLE h = CreateThread(nullptr, 0, Watchdog, nullptr, 0, nullptr)) CloseHandle(h);
+}
+void Register() {
+    if (!IniB(L"debug", L"replay_proto", true)) return;
+    StartGuard();
     reshade::register_event<reshade::addon_event::execute_command_list>(&d2rvr::D3D12Only<&OnExecute>::Call);
     reshade::register_event<reshade::addon_event::present>(&d2rvr::D3D12Only<&OnPresent>::Call);
     reshade::register_event<reshade::addon_event::barrier>(&d2rvr::D3D12Only<&OnBarrier>::Call);
@@ -1297,6 +1390,91 @@ void Register() {
     camfix::Register();
     g_on.store(true);
     Log("vrcam: replay prototype on - [stereo] replay_right=1 draws the right eye from the left eye's lists");
+}
+
+// ---- [stereo] native_replay (vr/native_replay.h): the replay on the plugin's own hooks ---------------------------------------------------
+// The keys as the ini has them (LoadSettings, every change): the native path takes its want from its own key, never from replay_right.
+void SetWant(int replayRight, int nativeKey) {
+    g_replayRightIni.store(replayRight);
+    g_nativeKey.store(nativeKey);
+    g_want.store(g_nativeHooks.load() ? (nativeKey == 1 ? 1 : 0) : replayRight);
+}
+bool NativeOn() { return g_nativeHooks.load() && g_nativeKey.load() == 1; }
+bool NativeAtStart() { return g_nativeHooks.load(); }
+// At the plugin's load, before natived3d::Install (vrcam noreshade::Install): with the key on, the device's resource creation is followed for
+// camfix (the game makes its upload buffers early: a switch later waits for the next start). Told once, either way: which path the pairs take.
+void NativeSinks(natived3d::Sinks& k) {
+    const int key = (int)IniF(L"stereo", L"native_replay", 1.0f);   // (the default: one pass - shared/render_type.h)
+    g_nativeKey.store(key);
+    if (!nativereplay::InstallAtStart(key, g_noReShade)) {
+        LogF("vrcam: stereo - [stereo] native_replay=%d at the start: \"Both eyes\" draws two passes a pair (the game's whole draw twice on the CPU, "
+             "as since 0.203); 1 draws the right eye from the left pass's lists (one pass, two pictures) - from the next start", key);
+        return;
+    }
+    k.uploadMade = &camfix::NativeUploadMade;
+    k.uploadGone = &camfix::NativeUploadGone;
+    g_nativeHooks.store(true);
+    xr::SetReplayAtStart(!IniB(L"fog", L"game_fog_before_fx", false));   // (the headset's render type row: one pass works now, or after a restart)
+    // [fog] game_fog_before_fx hooks the lists' compute root signature / root CBV calls first (natived3d's fxRoot, at the device's creation):
+    // camfix's camera hooks on the same functions cannot go in after it, and without them the right eye would be the left one - skipped, said now
+    if (IniB(L"fog", L"game_fog_before_fx", false))
+        Log("vrcam: stereo - the replay will be SKIPPED this session: [fog] game_fog_before_fx=1 holds the camera's root hooks (the same functions) - "
+            "\"Native one pass\" draws two passes a pair; untick \"fog before the effects\" and restart for one pass");
+    SetWant(g_replayRightIni.load(), key);
+    StartGuard();
+    g_on.store(true);
+    Log("vrcam: stereo - [stereo] native_replay=1 at the start: one pass, two pictures without ReShade - the game's upload buffers followed from "
+        "its device, its queues' ExecuteCommandLists and the camera's root bindings hooked once the first pair wants it (F4, native OpenXR); "
+        "until an area has settled (240 pairs) the pair is two passes");
+}
+// Once, the first time a pair could take the native path (the game's queue and device are there by then): camfix's root hooks on both list
+// types, and the game's ExecuteCommandLists on all three queue types (compute and copy found from queues of ours made for a moment: a type's
+// function is every queue of that type's). False: the replay stays off for this session (said why).
+bool NativeSetup() {
+    static int done = -1;
+    if (done >= 0) return done == 1;
+    ID3D12CommandQueue* gq = natived3d::GameQueue();
+    if (!gq) return false;   // (not yet: asked again)
+    ID3D12Device* dev = nullptr;
+    if (FAILED(gq->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) || !dev) return false;
+    const bool root = camfix::HookNative(dev);
+    bool ecl = eclhook::Install(gq, &NativeExec);
+    const D3D12_COMMAND_LIST_TYPE others[2] = {D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_LIST_TYPE_COPY};
+    for (const D3D12_COMMAND_LIST_TYPE t : others) {
+        D3D12_COMMAND_QUEUE_DESC d{};
+        d.Type = t;
+        ID3D12CommandQueue* q = nullptr;
+        if (SUCCEEDED(dev->CreateCommandQueue(&d, __uuidof(ID3D12CommandQueue), (void**)&q)) && q) {
+            ecl &= eclhook::Install(q, &NativeExec);
+            q->Release();
+        } else {
+            ecl = false;
+        }
+    }
+    dev->Release();
+    done = root && ecl ? 1 : 0;
+    LogF("vrcam: native replay - set up: the camera's root hooks %s, the game's ExecuteCommandLists on its direct, compute and copy queues %s; "
+         "%zu upload buffers of the game's known so far%s%s", root ? "in" : "NOT in", ecl ? "watched" : "NOT all watched", camfix::NativeUploadsKnown(),
+         done ? "" : " - the replay stays off this session (two passes a pair)",
+         !root && IniB(L"fog", L"game_fog_before_fx", false) ? " - SKIPPED because [fog] game_fog_before_fx=1 hooked the same functions first" : "");
+    return done == 1;
+}
+// Once a pair (Wanted): does this pair take the native path (vr/native_replay.h Decide)? The reason told at the first pair and at each change.
+bool NativeWanted() {
+    static int told = -1;
+    nativereplay::In in;
+    in.key = g_nativeKey.load();
+    in.hooksIn = g_nativeHooks.load();
+    in.xr = xr::On() && xr::Running();
+    in.f4 = viewgate::F4();
+    in.rootHooksOk = in.key == 1 && in.hooksIn && in.xr && in.f4 ? NativeSetup() : true;   // (set up only when it would run: the log's reason stays the real one)
+    nativereplay::Why why = nativereplay::Why::kOn;
+    const bool on = nativereplay::Decide(in, &why) == nativereplay::Path::kNative;
+    if ((int)why != told) {
+        told = (int)why;
+        LogF("vrcam: stereo - %s", nativereplay::WhyText(why));
+    }
+    return on;
 }
 
 // The game's present is hooked when first wanted, in the world: at ReShade's start the
@@ -1371,6 +1549,14 @@ void AreaChanged() {
     }
 }
 bool Wanted() {
+    if (!g_on.load() && g_noReShade && g_nativeKey.load() == 1) {   // [stereo] native_replay switched on after the start: its hooks are not in
+        static bool told = false;
+        if (!told) { told = true; LogF("vrcam: stereo - %s", nativereplay::WhyText(nativereplay::Why::kNotAtStart)); }
+    }
+    if (g_nativeHooks.load()) {   // [stereo] native_replay: its own key, F4, native OpenXR (vr/native_replay.h)
+        g_nativeNow.store(NativeWanted());
+        if (!g_nativeNow.load()) return false;
+    }
     if (!g_on.load() || !g_want.load()) return false;
     const bool wasSettled = g_settle.Settled();
     replaypause::Why stopped;
@@ -1412,7 +1598,7 @@ void BeginLeft() {
         // once a pass, we present twice a pair - with one wait a pair the count drifted, DXGI
         // handed out the back buffer still on screen and the GPU waited for a newer present
         // queued behind it (the game hung at replay_ahead 2). Here, where the pass would wait.
-        if (g_ahead.load() == 2 && g_latency && !(g_fxAtHold.load() && g_rt)) WaitForSingleObject(g_latency, 100);
+        if (g_ahead.load() == 2 && g_latency && !OnePresent()) WaitForSingleObject(g_latency, 100);
     }
     if (g_peekStage == 2) { PeekReport(); g_peekStage = 0; }
     if (g_peekStage == 1) g_peekStage = 0;   // armed but the pair went out otherwise: again
@@ -1426,6 +1612,12 @@ void BeginLeft() {
     AcquireSRWLockExclusive(&g_dsLock);
     for (DsSeen& d : g_ds) d.binds = 0;   // this pair's binds; a buffer's last barrier state is kept
     ReleaseSRWLockExclusive(&g_dsLock);
+    if (shadowsonce::On()) {   // [render] shadows_once_a_pair: the eye's render sizes (a map is never one of them, nor a half / quarter / eighth)
+        DXGI_SWAP_CHAIN_DESC1 d{};
+        if (g_native) g_native->GetDesc1(&d);
+        const D3D12_RESOURCE_DESC sd = fx::scenedepth::g_nCopy ? fx::scenedepth::g_nCopy->GetDesc() : D3D12_RESOURCE_DESC{};
+        shadowsonce::SetEyes(d.Width, d.Height, (unsigned)sd.Width, sd.Height);
+    }
     g_captureThread.store(GetCurrentThreadId());
     g_pairStartUs.store(pairtime::UsNow());
     g_captureEpoch = g_resizes.load();   // ([render] resize_drain) a resize while this pass is recorded: its lists are not replayed
@@ -1490,6 +1682,13 @@ bool RightFromLeft() {
         StepTimer st(kPatch);
         camfix::RightEye();
     }
+    // [render] shadows_once_a_pair (vr/shadows_once.h): the lists that only draw the shadow maps and the grass map are not submitted again - the
+    // right eye samples the maps the left pass drew (they do not depend on the eye: the same light cameras, lights and hero in this one CPU pass)
+    if (mode == 1 && !resized && shadowsonce::On()) {
+        uint32_t skipped = 0;
+        shadowsonce::Filter(subs, true, [](const Sub& s) { return s.mapsOnly; }, &skipped);
+        shadowsonce::NotePair((uint32_t)subs.size(), skipped);
+    }
     double t = pairtime::UsNow();
     if (mode != 3 && !resized) {   // the lists again, a batch per run of one queue; a fence between queues
         // (the first batch may be the compute queue's: it must see the right eye's slots too)
@@ -1504,8 +1703,9 @@ bool RightFromLeft() {
                     static std::vector<ID3D12CommandQueue*> hooked;
                     if (std::find(hooked.begin(), hooked.end(), s.q) == hooked.end()) {
                         hooked.push_back(s.q);
+                        // (the native path's observer is the hook's one already - it numbers the calls too: kept, never replaced by ObserveExec alone)
                         LogF("vrcam: replay - the game's ExecuteCommandLists on queue %p (type %d) watched %s (replay_marks %d: its calls are replayed as they were)", (void*)s.q,
-                             (int)s.q->GetDesc().Type, eclhook::Install(s.q, &ObserveExec) ? "- hook in" : "- hook FAILED", g_marks);
+                             (int)s.q->GetDesc().Type, eclhook::Install(s.q, g_nativeHooks.load() ? &NativeExec : &ObserveExec) ? "- hook in" : "- hook FAILED", g_marks);
                     }
                 }
         }
@@ -1514,6 +1714,8 @@ bool RightFromLeft() {
                 if (!s.call) ++g_eclUntagged;
         const double ecl0 = pairtime::UsNow();
         unsigned eclCalls = 0, eclSignals = 0;
+        const bool wasOurs = t_ours;
+        t_ours = true;   // the replay's submissions are ours (the native path's queue hook sees them: not the game's, not counted)
         while (i < subs.size()) {
             ID3D12CommandQueue* q = subs[i].q;
             const size_t runStart = i;
@@ -1535,6 +1737,7 @@ bool RightFromLeft() {
             }
             prev = q;
         }
+        t_ours = wasOurs;
         g_eclUs += pairtime::UsNow() - ecl0;
         g_eclLists += (uint32_t)subs.size(); g_eclCalls += eclCalls; g_eclSignals += eclSignals;
         if (prev && prev != g_direct) { g_why = "replay: back to direct"; GpuWait(g_direct, SignalOn(prev)); }
@@ -1554,7 +1757,7 @@ bool RightFromLeft() {
             UINT was = 0;
             s2->GetMaximumFrameLatency(&was);
             const UINT want = (UINT)std::clamp((int)IniF(L"stereo", L"replay_latency", 3.0f), 1, 8);
-            const bool change = g_ahead.load() >= 2 && !(g_fxAtHold.load() && g_rt) && want != was;
+            const bool change = g_ahead.load() >= 2 && !OnePresent() && want != was;
             if (change) s2->SetMaximumFrameLatency(want);
             LogF("vrcam: replay - frame latency %u -> %u", was, change ? want : was);
             s2->Release();
@@ -1575,9 +1778,11 @@ bool RightFromLeft() {
         if (n > g_heldMax.load()) { g_heldMax.store(n); LogF("vrcam: replay - %u end-of-frame signal(s) of the game held for the replay", n); }
         static ULONGLONG told = 0;
         if (GetTickCount64() - told > 10000) {
+            const double since = told ? (GetTickCount64() - told) / 1000.0 : 10.0;
             told = GetTickCount64();
             LogF("vrcam: replay - queue signals: %u in all, %u while holding, %u held; at this replay %u still held",
                  g_sigCalls.load(), g_sigWhileHolding.load(), g_sigHeld.load(), n);
+            shadowsonce::Report(since);   // [render] shadows_once_a_pair: lists / draws left out a pair (beside N pairs/s)
         }
         ReleaseHeld(nullptr);
     }
@@ -1602,7 +1807,8 @@ bool RightFromLeft() {
             if (g_peekStage == 1) { Peek(1, bb); g_peekStage = 2; }
             bb->Release();
         }
-    if (xr::On())   // native OpenXR: the right eye
+    // native OpenXR: the right eye (the native path: at its present, after its effects - the plugin's own present hook, XrPresent)
+    if (xr::On() && !g_nativeNow.load())
         if (ID3D12Resource* bb = BackBuffer(bbRight)) { XrCopy(1, bb); bb->Release(); }
     if (replaygroups::SignalAfterEach(g_marks)) { g_why = "after the right eye's effects, before its present"; SignalOn(g_direct); }
     double t1 = pairtime::UsNow(); g_stepUs[kSubmit] += t1 - t; t = t1;
@@ -1618,7 +1824,7 @@ bool RightFromLeft() {
     // the left eye: its copy into the next back buffer (not with its effects run at the hold:
     // it went out from that effect pass)
     const UINT bbLeft = g_native->GetCurrentBackBufferIndex();
-    if (g_fxAtHold.load() && g_rt) {
+    if (OnePresent()) {
         g_why = "end of pair";
         g_lastReplay = SignalOn(g_direct);
         if (g_wrap) SetGameBackBuffer(g_wrap, g_native->GetCurrentBackBufferIndex());
@@ -1632,9 +1838,7 @@ bool RightFromLeft() {
                  g_depthBinds.load(), g_depthKept.load(), g_fxFence.load() ? 1 : 0, g_fxFenceWaits.load());
             LogF("vrcam: replay - the game's lists a pair: %.1f in the left pass (replayed), %.1f outside it on the draw thread, %.1f from other threads (neither replayed)",
                  g_insideLists.load() / (double)pairs, g_outsideDraw.load() / (double)pairs, g_outsideOther.load() / (double)pairs);
-            for (int i = 0; i < 8; ++i)
-                if (g_outside[i].tid) LogF("vrcam: replay -   outside: thread %lu (draw thread %lu), queue type %d, %.2f ms after the left pass began",
-                                           g_outside[i].tid, g_captureThread.load(), g_outside[i].type, g_outside[i].atUs / 1000.0);
+            OutsideLine();   // (one line, only when other threads sent lists since the last one; the ring cleared)
             LogF("vrcam: replay - the right eye's camera, a pair: %.1f folded into the projection, %.1f views moved, %.1f positions; shift %.4f (eye half %.4f x2 x%.2f), off-axis %.4f, x scale %.4f",
                  g_nFold.load() / (double)pairs, g_nView.load() / (double)pairs, g_nPos.load() / (double)pairs,
                  2.0 * g_eyeHalf.load() * g_shiftMul.load(), g_eyeHalf.load(), g_shiftMul.load(), g_projShift.load(), g_projSx.load());

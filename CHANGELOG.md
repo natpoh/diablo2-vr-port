@@ -1,5 +1,49 @@
 # What's new in D2R VR
 
+## 0.208.0
+
+A performance release: more frames per second on every graphics card, and new quality presets for weak ones.
+
+- **Both eyes from one game frame again** (`[stereo] native_replay`, on): the game draws its scene once, and the right eye is that
+  same pass replayed with the right eye's camera on the graphics card. Since 0.203 the game drew its whole frame twice. On a
+  test PC: 61-65 -> 75-85 frames a second.
+- **Render type, five choices** (Settings > Stereo 3D and the headset's Video page): native one pass (the default), native two
+  passes, native eyes by turns (the other eye made from depth), FlatVR stereo, FlatVR depth.
+- **Quality presets: Potato / Low / Medium** (Medium for new players). They are on Settings' Home tab, the Performance tab and the
+  headset's Video page (long press on the right stick click):
+  - **Medium**: the game's full frame;
+  - **Low**: only the game's lighting, sun shadows and tone map (no grass lighting, water / glass / hair, ambient occlusion, bloom
+    or reflections), and the lens mask and shadows once a pair below;
+  - **Potato**: the world lit evenly, with no sun shadows or torches, and a brightness slider (another one for caves and
+    dungeons). On a weak test card (100 W limit, 2880 px, 120 Hz) it ran at about 90-95 frames a second.
+  - All three keep the game's own fog and sky, 2 room rings and the wrist medallions. Models are drawn to 150 on Potato and Low,
+    210 on Medium; big objects to 200 on Potato and Low, 600 on Medium.
+- **The game draws the fog and the sky in every preset** (`[fog] game_fog`, `[sky] game_sky`), as it draws them on the monitor.
+  The fog matching is removed (`[fog] game_fog_match`): it broke the game's fog.
+- **No Draw distance slider any more**: seeing farther than a player on the monitor is an advantage the game doesn't give. The
+  presets set the distances.
+- **The game's hover outline is left out** (`[render] game_outline`): it only cost frames.
+- **Less CPU in our graphics hooks**: each feature hooks the game only while it is on. The cost was 0.08-0.5 ms a pass, now
+  0.08-0.28 ms.
+- **Flat F2 / F3:**
+  - the hit lands up close (`[input] flat_body_target`): the click goes to the monster, NPC or object the crosshair's ray meets
+    first, so no more swings at the floor behind a monster;
+  - in F3 the arms tilt with the crosshair (`flat_aim_tilt`).
+- **Left-hand grips fixed:**
+  - a weapon in the left hand no longer sits turned by about 30 degrees, and it passes between the hands again;
+  - the right hand takes the hilt above the left one;
+  - taking the sword from the left hand no longer twists the right arm.
+- **Fixes:**
+  - a crash from an editor's dot-files in data mods (they are no longer merged);
+  - the headset brightness tip no longer names SteamVR.
+- **For trying, off as it comes:**
+  - Auto (`[autotune] enabled`: a button that measures the frames and lowers the render size, then the preset, then the size again);
+  - foveated rendering (`[render] foveated`; greyed out on graphics cards without variable rate shading, where it can't work);
+  - the lens mask (`[render] lens_mask`: what the lenses never show is skipped) and shadows once a pair
+    (`[render] shadows_once_a_pair`: the right eye uses the left pass's shadow maps), both on with Low and Potato;
+  - wrist medallions drawn only where they are (`[render] phantom_rects`).
+  - The in-game gestures stay out of this release.
+
 ## 0.207.0
 
 - **Hits land again on every class** (`[gameplay] quick_blow`): quick blow moved the blow to a frame the game never checks, so

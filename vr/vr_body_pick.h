@@ -94,4 +94,59 @@ inline bool HandPick(const flatbody::Cap* caps, int n, const float o[3], const f
     return *index >= 0 && Answers(ask, caps[*index], verdictOf(caps[*index]));
 }
 
+// ---- flat: the map click's target ([input] flat_body_target) ------------------------------------------------------------------------------
+// Serg's player (2026-11-08): in flat 3D, right up against a monster the blade went "through it into the distance" - the hit did not land
+// until he stepped back. flat_body_pick only moves the game's mouse POINT to the cell a body stands for; the game's own hover then looks for
+// a unit round that cell with its boxes made for the view from above, and up close (the crosshair on the chest or the head, the ray down to
+// the floor behind the monster) it found none: the click was a shot at the bare ground (flat_click_shoot's Stand Still), a melee swing at
+// nothing. Here, as F4's hand does: what the crosshair's ray meets first answers the map click's own target lookup itself - the unit, not a
+// cell - and the game does the rest (its reach, the walk up, the swing, the hit, a door opened, an NPC talked to).
+
+struct FlatAsk {
+    bool flat = false;   // platform 0
+    bool key = false;    // [input] flat_body_target
+    bool on = false;     // the mod on, in a game area
+    bool menu = false;   // a panel or menu open: the pointer is the menu's
+};
+inline bool FlatWanted(const FlatAsk& a) { return a.flat && a.key && a.on && !a.menu; }
+
+// The pixel the pick goes through: the game's mouse pixel when d2rcam's last pick is ours (by 1) and fresh, else - mouse look on (the
+// crosshair) - the middle of the viewport. False: nothing of ours (the game's own camera, or nothing known).
+inline bool FlatPixel(bool pickOk, int by, uint64_t ageMs, float px, float py, float vpW, float vpH, bool crosshair, float out[2]) {
+    if (!pickOk || by != 1) return false;
+    if (ageMs <= 250 && std::isfinite(px) && std::isfinite(py)) { out[0] = px; out[1] = py; return true; }
+    if (!crosshair || !(vpW > 0.0f) || !(vpH > 0.0f)) return false;
+    out[0] = 0.5f * vpW;
+    out[1] = 0.5f * vpH;
+    return true;
+}
+
+// The first capsule the click's ray meets before the hero's floor as drawn: its index, -1 none. A capsule the eye stands inside (a big
+// monster right against the hero) counts only while the look goes towards its axis - looking away from it is not aiming at it.
+inline int ClickMet(const flatbody::Cap* caps, int n, const float o[3], const float d[3], float floorY) {
+    float best = FloorT(o, d, floorY);
+    int met = -1;
+    for (int i = 0; i < n; ++i) {
+        float t;
+        if (!flatbody::RayCapsule(o, d, caps[i], &t) || !(t < best)) continue;
+        if (t <= 0.021f) {   // inside (RayCapsule's 0.02)
+            float b[3];
+            flatbody::Base(caps[i], b);
+            if ((b[0] - o[0]) * d[0] + (b[2] - o[2]) * d[2] < 0.0f) continue;
+        }
+        best = t;
+        met = i;
+    }
+    return met;
+}
+
+// What the capsule met may answer for a click: an object (a door, a chest, a shrine, a portal), an NPC (to talk to), a monster unless the
+// server's verdict is known "not hostile, or behind a wall" (0: a hireling or a summon, or one the swing could not reach). -1 (not known -
+// flat asks no verdicts ahead) lets the game decide, as a click at its feet would. The game's own answer an item (a label or a drop under the
+// pointer): the game's - a pick-up is never turned into a swing.
+inline bool ClickAnswers(const flatbody::Cap& c, int verdict, bool gameIsItem) {
+    if (gameIsItem) return false;
+    return !c.body || c.npc || verdict != 0;
+}
+
 }  // namespace vrbody

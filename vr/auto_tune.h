@@ -17,6 +17,14 @@
 // A settings set measured once is not measured again (the cache), so Up never retries the step Down just took.
 //
 // Frame generation is never a knob here (it needs a restart and is a lead in GPU hangs): the caller leaves it as it is.
+//
+// The ladder (Options::ladder, Serg 2026-11-08 - "если разрешением не спасти, то менять пресет"): instead of 2 - 4, fixed steps in a fixed
+// order, each measured, the first that meets the target kept and the run over: frames fine at the baseline - nothing changes, on any card
+// (a 5090's supersampling stays); else the render size down to 1600, then the presets Medium -> Low -> Potato, then the size down to 1300,
+// then foveated rendering (Medium, then Maximum - "а потом фоверацию"), then the size down to 1200 ("а потом 1200 на 1200"), never lower,
+// then eyes by turns with the fill ("если недостаточно fps, то делаем проход по очереди", "после 1200 пусть будет по очереди") - by turns
+// and 1200 swap with one flag (SergLadder's turnsBefore1200; the run's kTurnsBefore1200).
+// Out of steps and still short: BelowMinimum() - the PC is below what VR needs here (no half rate in the ladder). SergLadder makes the rungs.
 
 #include <algorithm>
 #include <cmath>
@@ -66,7 +74,30 @@ struct LogRow {
     bool kept = false;
 };
 
+// One rung of the ladder: knob `knob` set to `level` (taken only when that is below where it stands).
+struct LadderStep { int knob = 0; int level = 0; };
+
+// Serg's ladder over the run's knobs (-1: a knob not offered). The size knob's levels go from 0 (the smallest) up to sizeStart (the player's
+// own); size1600 / size1300 are the levels of those sizes (-1: none - the player's own was at or under it). The preset and the foveation
+// knobs: level 0 the cheapest, their start the player's own. Eyes by turns (turnsKnob: level 0 by turns, its start the player's one pass)
+// before the size's last drop to 1200, or after it with turnsBefore1200 false (Serg to confirm which).
+inline std::vector<LadderStep> SergLadder(int sizeKnob, int sizeStart, int size1600, int size1300, int presetKnob, int presetStart, int fovKnob,
+                                          int fovStart, int turnsKnob = -1, int turnsStart = 0, bool turnsBefore1200 = true) {
+    std::vector<LadderStep> r;
+    const int mid = sizeKnob >= 0 && size1600 >= 0 ? size1600 : sizeStart;          // the size after the first drop (1600, or his own)
+    const int low = sizeKnob >= 0 && size1300 >= 0 && size1300 < mid ? size1300 : mid;   // ... after the second (1300, or as it was)
+    if (sizeKnob >= 0) for (int l = sizeStart - 1; l >= mid; --l) r.push_back({sizeKnob, l});
+    if (presetKnob >= 0) for (int l = presetStart - 1; l >= 0; --l) r.push_back({presetKnob, l});
+    if (sizeKnob >= 0) for (int l = mid - 1; l >= low; --l) r.push_back({sizeKnob, l});
+    if (fovKnob >= 0) for (int l = fovStart - 1; l >= 0; --l) r.push_back({fovKnob, l});
+    if (turnsKnob >= 0 && turnsBefore1200) for (int l = turnsStart - 1; l >= 0; --l) r.push_back({turnsKnob, l});
+    if (sizeKnob >= 0) for (int l = low - 1; l >= 0; --l) r.push_back({sizeKnob, l});
+    if (turnsKnob >= 0 && !turnsBefore1200) for (int l = turnsStart - 1; l >= 0; --l) r.push_back({turnsKnob, l});
+    return r;
+}
+
 struct Options {
+    std::vector<LadderStep> ladder;   // non-empty: the fixed ladder instead of probe / down / up (see above)
     float fpsTolDown = 0.03f;   // the target counts as met at (1 - this) x target frames/s
     float fpsTolUp = 0.015f;    // a raise is kept only at (1 - this) x target (a little headroom: no flapping)
     float minGainMs = 0.25f;    // a probe that wins less than this is "costs nothing measurable": never turned down
@@ -96,6 +127,7 @@ public:
     bool Done() const { return ph_ == Phase::Done; }
     bool Reached() const { return reached_; }                    // the final set met the target
     bool Aborted() const { return aborted_; }                    // gave up (no valid measure): Result() is the start
+    bool BelowMinimum() const { return below_; }                 // the ladder's last rung measured and still short of the target
     float Target() const { return target_; }
     float Hz() const { return hz_; }
     float ProbeGainMs(size_t i) const { return i < gain_.size() ? gain_[i] : -1.0f; }   // proved cost, -1 not probed
@@ -105,6 +137,14 @@ public:
     // A rough count of measures still to come, for a progress bar.
     int Remaining() const {
         if (ph_ == Phase::Done) return 0;
+        if (!o_.ladder.empty()) {   // the rungs still ahead that would move something, and the final measure
+            int n = 1;
+            for (size_t r = ladderAt_; r < o_.ladder.size(); ++r) {
+                const LadderStep& st = o_.ladder[r];
+                if (st.knob >= 0 && st.knob < (int)k_.size() && st.level < cur_[(size_t)st.knob]) ++n;
+            }
+            return ph_ == Phase::Baseline ? n + 1 : n;
+        }
         int probes = 0, room = 0;
         for (size_t i = 0; i < k_.size(); ++i) {
             if (gain_[i] < 0 && cur_[i] > k_[i].floor) ++probes;
@@ -164,7 +204,8 @@ private:
     size_t probeAt_ = 0;
     std::vector<size_t> probeOrder_;
     int lastRaised_ = -1, lastRaisedFrom_ = 0, badInRow_ = 0, measured_ = 0;
-    bool reached_ = false, aborted_ = false, halved_ = false;
+    bool reached_ = false, aborted_ = false, halved_ = false, below_ = false;
+    size_t ladderAt_ = 0;
     LogRow pending_{};
 
     void Row(Phase p, int knob, int from, int to, const Measure& before, const Measure& after, bool kept) {
@@ -188,6 +229,13 @@ private:
         hz_ = m.hz;
         target_ = hz_;
         Row(Phase::Baseline, -1, 0, 0, m, m, true);
+        if (!o_.ladder.empty()) {   // the ladder: frames fine - nothing changes; else its rungs in order
+            if (Meets(m, false)) { reached_ = true; ph_ = Phase::Done; want_ = cur_; return; }
+            ph_ = Phase::Down;
+            ladderAt_ = 0;
+            NextRung();
+            return;
+        }
         if (Meets(m, false)) { reached_ = true; StartUp(); return; }
         // probe order: the logged cost first (it under-reads but ranks), only what is above its floor
         for (size_t i = 0; i < k_.size(); ++i) if (cur_[i] > k_[i].floor) probeOrder_.push_back(i);
@@ -268,7 +316,43 @@ private:
     }
 
     void OnDown(const Measure& m) {
+        if (!o_.ladder.empty()) { TakeRung(m); return; }
         if (!TakeDown(m)) NextDown();
+    }
+
+    // The ladder's next rung that moves something; out of rungs: short - BelowMinimum, the final measure of where it ended.
+    void NextRung() {
+        while (ladderAt_ < o_.ladder.size()) {
+            const LadderStep st = o_.ladder[ladderAt_++];
+            if (st.knob < 0 || st.knob >= (int)k_.size()) continue;
+            const size_t i = (size_t)st.knob;
+            const int to = std::clamp(st.level, k_[i].floor, k_[i].levels - 1);
+            if (to >= cur_[i]) continue;   // (not below where it stands: nothing to take)
+            std::vector<int> w = cur_;
+            w[i] = to;
+            pending_ = LogRow{};
+            pending_.knob = (int)i;
+            pending_.from = cur_[i];
+            pending_.to = to;
+            Measure c;
+            if (Ask(w, &c)) return;
+            if (TakeRungMeasure(c)) return;   // (cached)
+        }
+        reached_ = false;
+        below_ = true;
+        StartFinal();
+    }
+    // A rung measured: kept (the way down); true when the target is met (the final measure next).
+    bool TakeRungMeasure(const Measure& m) {
+        const int i = pending_.knob;
+        Row(Phase::Down, i, pending_.from, pending_.to, last_, m, true);
+        cur_[(size_t)i] = pending_.to;
+        last_ = m;
+        if (Meets(m, false)) { reached_ = true; StartFinal(); return true; }
+        return false;
+    }
+    void TakeRung(const Measure& m) {
+        if (!TakeRungMeasure(m)) NextRung();
     }
 
     // Nothing more to turn down and still short of the target.
@@ -345,6 +429,19 @@ private:
     void OnFinal(const Measure& m) {
         const bool ok = Meets(m, false);
         Row(Phase::Final, -1, 0, 0, last_, m, ok);
+        if (!o_.ladder.empty()) {   // the ladder: a rung that met only by luck - on down the ladder (nothing to undo: no raises)
+            last_ = m;
+            if (!ok && reached_ && ladderAt_ < o_.ladder.size()) {
+                reached_ = false;
+                ph_ = Phase::Down;
+                NextRung();
+                return;
+            }
+            if (!ok) { reached_ = false; below_ = ladderAt_ >= o_.ladder.size(); }
+            ph_ = Phase::Done;
+            want_ = cur_;
+            return;
+        }
         if (!ok && reached_ && lastRaised_ >= 0) {   // the last raise held only by luck: undone, measured again
             cur_[lastRaised_] = lastRaisedFrom_;
             lastRaised_ = -1;

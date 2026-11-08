@@ -247,7 +247,8 @@ void SendKeysMouse(bool down);
 void SendLeftButton(bool down);
 
 // ---- what vr/input/pad.cpp (M10) reads of vrcam.cpp ----
-struct StickFrame { float camR[3], camF[3], scrR[3], scrU[3], mirX, mirY; float yawAtBuild; bool valid; };   // yawAtBuild: TargetYaw this view was built with
+struct StickFrame { float camR[3], camF[3], scrR[3], scrU[3], mirX, mirY; float yawAtBuild; bool valid;   // yawAtBuild: TargetYaw this view was built with
+                    float camLook[3]; };   // camF is the way ahead on the ground; camLook the view's own forward, its pitch too (the crosshair's ray)
 extern SRWLOCK g_stickLock;
 extern StickFrame g_stickFrame;
 extern std::atomic<float> g_camYaw;

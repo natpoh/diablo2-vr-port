@@ -988,7 +988,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.207.0";
+static const char g_info_version[] = "0.208.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file

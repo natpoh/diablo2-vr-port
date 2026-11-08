@@ -190,6 +190,7 @@ bool ParseLine(const std::string& line, Entry* out) {
     out->key = f.size() > 2 && KeyOk(f[2]) ? f[2] : std::string();
     out->cls = f.size() > 3 ? Small(f[3], 15, -1) : -1;
     out->page = f.size() > 4 && out->cls >= 0 ? Small(f[4], 3, 0) : 0;
+    out->aims = f.size() > 5 ? Small(f[5], 1, -1) : -1;
     return true;
 }
 
@@ -235,6 +236,13 @@ bool SkillTree(int32_t skillId, int* cls, int* page) {
     *cls = it->second.cls;
     *page = it->second.page;
     return true;
+}
+
+int Aims(int32_t skillId) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    ReadManifestLocked();
+    const auto it = g_entries.find(skillId);
+    return it == g_entries.end() ? -1 : it->second.aims;
 }
 
 std::string TreeKey(int cls, int tree) {

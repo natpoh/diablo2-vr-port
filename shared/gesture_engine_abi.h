@@ -81,9 +81,71 @@ typedef uint32_t(__cdecl* BWGE_ListFn)(void* engine, BW_LinkGestures* out);   //
 typedef int(__cdecl* BWGE_PollCastsFn)(void* engine, BWGE_Cast* out, int max);   // matches since the last call, each once
 typedef uint32_t(__cdecl* BWGE_TrailFn)(void* engine, BW_LinkVrRune* out, uint32_t max);   // the pen's trail and the match's picture to draw
 
+// A pose's zone (optional exports: a library without them has no zones to show - look them up by name, a missing one is not an error).
+// A held pose matches when each of its hands is within radiusM of its recorded spot, turned alike (|quaternion dot| >= rotationMatch,
+// the turn about the vertical taken out) and, where the take was a fist, closed. The spots are in the body's frame the engine measures
+// in, given here in metres from the pelvis, x to the body's right, y up, z behind it (as BW_LinkGesture.joints):
+//   chest  = head - 0.07*heightM * headForward - 0.04*heightM * headUp - 0.11*heightM * worldUp   (head's own forward / up, pitch included)
+//   pelvis = chest - 0.42 m * worldUp
+//   axes   = the head's forward laid level (its heading); the hands' offsets from the chest scale with armM.
+#pragma pack(push, 8)
+typedef struct BWGE_PoseZone {
+    uint32_t size;          // sizeof(BWGE_PoseZone)
+    float radiusM;          // each hand within this of its spot, metres
+    float rotationMatch;    // and turned alike: |quaternion dot| at least this, 0..1
+    float centre[2][3];     // the hands' spots ([0] left, [1] right), metres from the pelvis (x right, y up, z back)
+    uint32_t handValid;     // bit 0 left, bit 1 right: the hands the pose holds
+    float heightM, armM;    // the body the engine measures with
+} BWGE_PoseZone;
+#pragma pack(pop)
+typedef int(__cdecl* BWGE_GetPoseZoneFn)(void* engine, uint32_t gesture, BWGE_PoseZone* out);   // BW_LINK_GR_BAD: not a pose
+typedef int(__cdecl* BWGE_SetPoseZoneFn)(void* engine, uint32_t gesture, float radiusM);        // 0.03 .. 0.50 m
+
+// A game action instead of a skill (optional exports): the game's own id ("d2r.town_portal", "pad.A", "key.0x54" ...), kept with the
+// gesture and handed back when it fires - the game does it. Binding an action takes the gesture's skill away (skill -1) and BWGE_Bind
+// takes the action away. BWGE_PollCasts2 drains the same queue as BWGE_PollCasts (use one of them): an action's cast has skill -1 and
+// its action; BWGE_PollCasts hands out only the skills' casts.
+#pragma pack(push, 8)
+typedef struct BWGE_Cast2 {
+    int32_t skill;     // the skill; -1 for an action
+    uint32_t gesture;
+    float percent;
+    uint32_t stamp;
+    char action[32];   // the action; "" for a skill
+} BWGE_Cast2;
+#pragma pack(pop)
+typedef int(__cdecl* BWGE_BindActionFn)(void* engine, uint32_t gesture, const char* action);        // "" unbinds
+typedef int(__cdecl* BWGE_GetActionFn)(void* engine, uint32_t gesture, char* out, uint32_t cap);   // "" = a skill or nothing
+typedef int(__cdecl* BWGE_PollCasts2Fn)(void* engine, BWGE_Cast2* out, int max);
+
+// A take to play back (optional export), once: its samples in time, the hands in the joints' frame (as BWGE_PoseZone.centre: metres
+// from the pelvis, x right, y up, z back) and turned in it (x y z w; the controller as it would be held facing -z). A pose has one sample.
+#pragma pack(push, 8)
+typedef struct BWGE_TakeSample {
+    float timeS;           // from the take's start
+    float hand[2][3];      // [0] left, [1] right
+    float rot[2][4];
+    float grip[2];         // 0 open .. 1 fist
+    uint32_t handValid;    // bit 0 left, bit 1 right
+} BWGE_TakeSample;
+#pragma pack(pop)
+typedef int(__cdecl* BWGE_GetTakeFn)(void* engine, uint32_t gesture, BWGE_TakeSample* out, int max);   // the samples written; 0 none
+
+// A glyph's hand (optional export): BW_LINK_GH_LEFT / RIGHT, or BOTH = either hand - a take armed with BOTH is drawn by whichever pen
+// presses first, and in play a stroke from either pen matches it. A glyph keeps only the drawing hand's path; changing the hand keeps that
+// path as the glyph (no re-recording). Saved in the per-class gesture. Not a glyph: BW_LINK_GR_BAD; its take running: BW_LINK_GR_BUSY.
+typedef int(__cdecl* BWGE_SetHandFn)(void* engine, uint32_t gesture, uint8_t hand);
+
+// A gesture's mode (optional exports): what the game does when it is recognised - 0 casts it once, 1 selects it (the game puts the skill
+// on its trigger's slot). The engine only keeps it (saved in the per-class gesture); its casts come through BWGE_PollCasts2 either way.
+typedef int(__cdecl* BWGE_SetModeFn)(void* engine, uint32_t gesture, uint8_t mode);   // 0 cast, 1 select; others BW_LINK_GR_BAD
+typedef int(__cdecl* BWGE_GetModeFn)(void* engine, uint32_t gesture, uint8_t* out);
+
 // The exports, by these names:
 //   BWGE_Abi BWGE_Open BWGE_Close BWGE_SetSet BWGE_Feed BWGE_Record BWGE_Stop BWGE_Keep BWGE_Discard BWGE_Clear BWGE_Bind BWGE_SetColor
 //   BWGE_SetThreshold BWGE_List BWGE_PollCasts BWGE_Trail
+//   optional: BWGE_GetPoseZone BWGE_SetPoseZone BWGE_BindAction BWGE_GetAction BWGE_PollCasts2 BWGE_GetTake BWGE_SetHand BWGE_SetMode
+//             BWGE_GetMode
 
 #ifdef __cplusplus
 }

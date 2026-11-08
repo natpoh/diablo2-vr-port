@@ -458,10 +458,34 @@ bool CameraRightInModel(float out[3]) {
     for (int i = 0; i < 3; ++i) out[i] = g_camRightModel[i].load();
     return true;
 }
+// [body] flat_aim_tilt_target: the hero's model matrix the camera's forward was last read through, for a world point the same way (WorldPointInModel)
+SRWLOCK g_modelMLock = SRWLOCK_INIT;
+float g_modelM[16] = {};
+bool g_modelMOk = false;
+bool WorldPointInModel(const float world[3], float out[3]) {
+    float m[16];
+    AcquireSRWLockShared(&g_modelMLock);
+    const bool ok = g_modelMOk;
+    memcpy(m, g_modelM, sizeof m);
+    ReleaseSRWLockShared(&g_modelMLock);
+    if (!ok) return false;
+    // (world - translation), dotted with each row over its squared length (the rows carry the model's scale) - as the eye's point below
+    const float d[3] = {world[0] - m[12], world[1] - m[13], world[2] - m[14]};
+    for (int r = 0; r < 3; ++r) {
+        const float l2 = m[r*4]*m[r*4] + m[r*4+1]*m[r*4+1] + m[r*4+2]*m[r*4+2];
+        if (!(l2 > 1e-12f)) return false;
+        out[r] = (d[0]*m[r*4] + d[1]*m[r*4+1] + d[2]*m[r*4+2]) / l2;
+    }
+    return std::isfinite(out[0] + out[1] + out[2]);
+}
 bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, float rows[3][3]) {
     *eyeOk = false;
     AcquireSRWLockShared(&g_stickLock); StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
     if (!f.valid) return false;
+    AcquireSRWLockExclusive(&g_modelMLock);
+    memcpy(g_modelM, m, sizeof g_modelM);
+    g_modelMOk = true;
+    ReleaseSRWLockExclusive(&g_modelMLock);
     // The camera's forward as it will be drawn, not as last built: the skeleton
     // runs before its pass rebuilds the view, so on the first pass of a pair the
     // stored forward was the last pair's and the body shook in the left eye on
@@ -474,6 +498,8 @@ bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, flo
             f.camF[0] = x * c - z * sn; f.camF[2] = z * c + x * sn;
             const float rx = f.camR[0], rz = f.camR[2];   // (its right turned alike)
             f.camR[0] = rx * c - rz * sn; f.camR[2] = rz * c + rx * sn;
+            const float lx = f.camLook[0], lz = f.camLook[2];   // (and the view's own forward)
+            f.camLook[0] = lx * c - lz * sn; f.camLook[2] = lz * c + lx * sn;
         }
     }
     // world -> model for a row-vector rotation: dot with each (normalised) row
@@ -484,10 +510,14 @@ bool YawFromMatrix(const float* m, float* out, float* eyeModel, bool* eyeOk, flo
     const float cx = f.camF[0]*rows[0][0] + f.camF[1]*rows[0][1] + f.camF[2]*rows[0][2];
     const float cz = f.camF[0]*rows[2][0] + f.camF[1]*rows[2][1] + f.camF[2]*rows[2][2];
     *out = atan2f(cx, cz);
-    {   // [debug] body_dump: the whole forward (its pitch too), for the video from his camera
-        const float cy = f.camF[0]*rows[1][0] + f.camF[1]*rows[1][1] + f.camF[2]*rows[1][2];
-        const float l = sqrtf(cx * cx + cy * cy + cz * cz);
-        if (l > 1e-6f && std::isfinite(l)) { g_camFwdModel[0].store(cx / l); g_camFwdModel[1].store(cy / l); g_camFwdModel[2].store(cz / l); g_camFwdOk.store(true); }
+    {   // the whole forward (its pitch too): [body] attack_lean / flat_aim_tilt's crosshair, [debug] body_dump's video from his camera. From the view's own
+        // forward (camLook), not the way ahead on the ground (camF: its pitch was always 0 - the 2026-11-07 log, "the look 0 deg down" at every attack)
+        const float* L = f.camLook;
+        const float lx = L[0]*rows[0][0] + L[1]*rows[0][1] + L[2]*rows[0][2];
+        const float ly = L[0]*rows[1][0] + L[1]*rows[1][1] + L[2]*rows[1][2];
+        const float lz = L[0]*rows[2][0] + L[1]*rows[2][1] + L[2]*rows[2][2];
+        const float l = sqrtf(lx * lx + ly * ly + lz * lz);
+        if (l > 1e-6f && std::isfinite(l)) { g_camFwdModel[0].store(lx / l); g_camFwdModel[1].store(ly / l); g_camFwdModel[2].store(lz / l); g_camFwdOk.store(true); }
     }
     {   // [body] flat_weapon_adjust: its right the same way - read through the rows, never a cross worked out here (a mirrored model keeps it right)
         float rm[3];

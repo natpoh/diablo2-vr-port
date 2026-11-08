@@ -269,7 +269,7 @@ Snapshot LoadSnapshot(const wchar_t* path) {
     DirectLines* direct = &lines;
     for (int i = 0; i < kCount; ++i) {
         const Def& d = kDefs[i];
-        if (IsGame(i)) continue;   // the game's own (the Players row): not in the ini, the default stands
+        if (IsGame(i) || IsDerived(i)) continue;   // the game's own (the Players row), the preset (made of other keys): not in the ini
         if (IsBindKey(i)) {   // a [direct] line: the pick it is by the list's reading (the plugin's default when the line is not there), and its text as the file has it
             if (s.ready) {
                 const std::string key = keys::KeyOf(BindSlot(i));
@@ -322,7 +322,7 @@ Result SaveRequest(const wchar_t* path, const Request& r, std::string* why) {
     for (int i = 0; i < kCount; ++i)
         if (write & Bit(i)) {
             const Def& d = kDefs[i];
-            if (IsGame(i)) continue;   // the game's own: never written here
+            if (IsGame(i) || IsDerived(i)) continue;   // the game's own, the preset (its keys are written each): never written here
             if (IsBindKey(i)) {   // a [direct] line: the list's own change (its text, or the key out when the pick is what the plugin does anyway), judged against the line as the panel read it
                 directinput::remap::Change ch;
                 if (!keys::Choose(direct.Getter(), BindSlot(i), (int)std::lround(r.values[i]), &ch)) continue;   // Custom is not a thing to write

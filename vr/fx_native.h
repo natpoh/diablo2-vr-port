@@ -40,6 +40,13 @@ struct Options {
     // A graphics pass by its pixel shader's entry point: false = not drawn this frame (it would give the picture as it is - vr/fx_pass_keep.h),
     // nor COLOR copied after it. Empty: every pass drawn.
     std::function<bool(const char* entryPoint)> keepPass;
+    // A graphics pass into the picture by its pixel shader's entry point and the picture's size: where it can change the picture - -2 not a pass
+    // this looks after (drawn as ever, not counted), -1 everywhere (one full-screen draw, as without this; counted), 0 nowhere this frame (not
+    // drawn), n > 0 the rectangles written to `rects` (at most `max`; pixels,
+    // [left, right) x [top, bottom)) - the pass is drawn once for each, under its scissor. COLOR is copied before the pass, so a pixel two
+    // rectangles share is drawn twice from the same copy: the same value. Only for a pass whose pixels outside them come back as COLOR had them
+    // (vr/phantom_rect.h: D2R_DepthFog.fx's vignette pass). Empty: every pass full screen.
+    std::function<int(const char* entryPoint, uint32_t width, uint32_t height, D3D12_RECT* rects, int max)> passRects;
     // A view handle given to update_texture_bindings (a texture made for the effect elsewhere - vr/hud.cpp's through vr/native_rsapi.h): its
     // resource and format (nullptr: not known - the binding left as it was).
     std::function<ID3D12Resource*(uint64_t view, DXGI_FORMAT* format)> viewResource;
@@ -66,6 +73,10 @@ struct Stats {
     uint32_t colorsMade = 0;                 // COLOR (the back buffer's copy) made, since the start: once a size
 
     double pictureMiB = 0.0;
+    // the passes drawn under Options::passRects since the last call: how many draws, the pixels they covered, the pixels a full-screen draw of
+    // each would have covered, and how many went full screen all the same (-1)
+    uint32_t rectPasses = 0, rectFull = 0;
+    uint64_t rectPixels = 0, rectPixelsFull = 0;
     // the graphics card's time (SetTimestampFrequency given): a Render's, on average since the last call, and its dearest passes
     double gpuMs = 0.0;
     uint32_t timed = 0;                      // Renders timed

@@ -186,9 +186,27 @@ static void TestDefs() {
     for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsMax && (perPage[p] <= kRowsPerPage || CloseRows(p)), "no more rows than the page has room for (a seventh: the rows closer)");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
-    CHECK(RowsOn(kPageVideo) == 0 && RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Video, Co-op and Guide pages have no table rows (they draw their own)");
+    CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
+    CHECK(RowsOn(kPageVideo) == 6, "the Video page: its slider by hand, six table rows under it (the Quality preset, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 21 && PageCount() <= kMaxPages && kTabCount == 15, "twenty-one pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op)");
+    CHECK(PageCount() == 22 && PageCount() <= kMaxPages && kTabCount == 15,
+          "twenty-two pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video)");
+    {   // Render (Serg 2026-11-08): the Video tab's second page - seven rows, stood closer, above the status line; F4 only; the bottom bar's Render / Video
+        CHECK(RowsOn(kPageRender) == 7 && CloseRows(kPageRender) && TabOf(kPageRender) == TabOf(kPageVideo) && !StartsTab(kPageRender),
+              "Render: seven rows under the Video tab");
+        static const wchar_t* const keys[7] = {L"foveated", L"foveated_strength", L"foveated_gaze", L"foveated_fullscreen", L"grass_lighting_coarse",
+                                               L"shadows_once_a_pair", L"lens_mask"};
+        for (int r = 0; r < 7; ++r)
+            CHECK(KeyAt(kPageRender, r) >= 0 && std::wstring(kDefs[KeyAt(kPageRender, r)].section) == L"render" &&
+                      std::wstring(kDefs[KeyAt(kPageRender, r)].key) == keys[r], "Render's rows in D2R VR Settings' order");
+        CHECK(RowY(6, kPageRender) + RowStep(kPageRender) - 5 <= kStatus.y, "its last row above the status line");
+        CHECK(!PageShown(kPageRender, 1) && !PageShown(kPageRender, 3) && PageShown(kPageRender, 4) && PageShown(kPageRender, 0), "F4 only (and Settings' own)");
+        float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
+        CHECK((HitTest(kPageVideo, u, v, 4) == Hit{Kind::Tab, kPageRender, 0}) && (HitTest(kPageRender, u, v, 4) == Hit{Kind::Tab, kPageVideo, 0}),
+              "Video's Render button, Render's Video button");
+        CHECK(HitTest(kPageVideo, u, v, 2).kind == Kind::None, "no Render button in VR F2 (the page is F4's)");
+        CHECK(!std::strcmp(kPageNames[kPageRender], "Render"), "the page's name");
+    }
     CHECK(RowsOn(kPageVibration) == 7 && CloseRows(kPageVibration) && !std::strcmp(kPageNames[kPageVibration], "Vibration"), "the Vibration page: seven rows, stood closer");
     // the keys the hand-drawn pages work on are in the table, with no row, named as the plugin reads them
     const int hidden[6] = {kKeyMode, kKeyPx, kKeyUse, kKeyVersion, kKeyEye, kKeySpan};
@@ -1307,14 +1325,36 @@ static void TestVideoModel() {
 // the places of the new pages
 static void TestPagesHit() {
     using namespace hset::video;
-    for (int i = 0; i < kPresetCount; ++i) {
-        CHECK(Inside(kPreset(i)), "a preset inside the atlas");
-        CHECK(!Overlap(kPreset(i), kStatus) && !Overlap(kPreset(i), kSlTrack) && !Overlap(kPreset(i), kSlDec) && !Overlap(kPreset(i), kSlInc), "presets clear of the slider and the status line");
-        for (int j = i + 1; j < kPresetCount; ++j) CHECK(!Overlap(kPreset(i), kPreset(j)), "presets apart");
+    {   // Serg 2026-11-08: the size presets' buttons are gone - nowhere on any page is one hit (the slider is the size choice)
+        int presetHits = 0;
+        for (int p = 0; p < kPageCount; ++p)
+            for (float y = 0.01f; y < 1.0f; y += 0.02f)
+                for (float x = 0.01f; x < 1.0f; x += 0.02f) presetHits += HitTest(p, x, y).kind == Kind::Preset;
+        CHECK(presetHits == 0, "no preset button left on any page");
+    }
+    {   // the Video page's three rows: under the slider and its ends, above the cost line; each row's control hit
+        CHECK(RowsOn(kPageVideo) == 6 && KeyAt(kPageVideo, 0) == kKeyPreset && KeyAt(kPageVideo, 1) == kKeyPairPerTick && KeyAt(kPageVideo, 2) == kKeyGameSky &&
+                  KeyAt(kPageVideo, 3) == kKeyGameFog,
+              "Video: the Quality preset, Render type, Sky drawn by, Fog drawn by");
+        {   // the Potato light's brightness (Serg 2026-11-08), the Settings' Render cost slider's key and range
+            const Def& d = kDefs[KeyAt(kPageVideo, 4)];
+            CHECK(!wcscmp(d.section, L"render") && !wcscmp(d.key, L"potato_light_brightness") && d.min == 0.3f && d.max == 5.0f && d.def == 1.0f,
+                  "Video's fifth row: the Potato light's brightness, 0.3 - 5.0, 1 by default");
+            const Def& c = kDefs[KeyAt(kPageVideo, 5)];
+            CHECK(!wcscmp(c.section, L"render") && !wcscmp(c.key, L"potato_light_brightness_caves") && c.min == 0.3f && c.max == 5.0f && c.def == 1.0f,
+                  "Video's sixth row: the Potato light's brightness in caves, the same range");
+        }
+        CHECK(RowY(0, kPageVideo) - 5 >= kSlTrack.y + kSlTrack.h && RowY(5, kPageVideo) + RowH(kPageVideo) <= kVidCost.y && !Overlap(kAutoBtn, {32, RowY(0, kPageVideo) - 5, 960, 4}),
+              "the rows between the slider (and Auto beside it) and the line under them");
+        CHECK(kVidCost.y + kVidCost.h <= kStatus.y && kVidLimit.y == kVidCost.y && kVidNote.y == kVidCost.y && kVidLimit.h == kVidCost.h,
+              "one line under the rows (the limit's warning, the Apply note or the cost), above the status line");
         float u, v;
-        Centre(kPreset(i), &u, &v);
-        CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Preset, i, 0}), "a preset's centre");
-        CHECK(HitTest(kPageView, u, v).kind != Kind::Preset && HitTest(kPageBody, u, v).kind != Kind::Preset, "and not on the other pages");
+        for (int r = 0; r < 6; ++r) {   // (the render type a stepper too since its five entries; the preset one too)
+            Centre(kDec(r, kPageVideo), &u, &v);
+            CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Change, KeyAt(kPageVideo, r), -1}), "a Video row's <");
+            Centre(kInc(r, kPageVideo), &u, &v);
+            CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Change, KeyAt(kPageVideo, r), 1}), "a Video row's >");
+        }
     }
     CHECK(Inside(kSlDec) && Inside(kSlInc) && Inside(kSlTrack) && !Overlap(kSlDec, kSlTrack) && !Overlap(kSlInc, kSlTrack) && !Overlap(kSlDec, kSlInc), "the slider's parts");
     CHECK(!Overlap(kSlTrack, kStatus) && !Overlap(kVidNote, kStatus) && !Overlap(kVidNote, kApply) && Inside(kVidNote) && Inside(kVidCost) && Inside(kVidLimit) && Inside(kVidNow) && Inside(kVidTitle),
@@ -1768,7 +1808,7 @@ static void TestPagesHands() {
         r.Point(1, -0.06f, 0.9f);
         r.Step();
         CHECK(r.c.model.Get()[kKeyPx] == 1024.0f, "past the other edge: the other end");
-        r.Point(1, 0.5f, mid);
+        r.Point(1, 0.5f * (kSlX0 + kSlX1) / kW, mid);
         r.Step();
         CHECK(r.c.model.Get()[kKeyPx] == 2560.0f, "the middle");
         r.PullTrigger(1, false);
@@ -1782,13 +1822,14 @@ static void TestPagesHands() {
         Rig r;
         r.Open();
         r.Click(1, kTab(TabOf(kPageVideo)));
-        float u, v;
-        Centre(kPreset(3), &u, &v);
+        float u = (kSlX0 + video::FractionOfSide(2048) * (kSlX1 - kSlX0)) / kW, v = (kSlTrack.y + 0.5f * kSlTrack.h) / kH;   // (the slider's 2048)
         r.Point(1, u, v);
         r.Step();
         r.PullTrigger(1, true);
         r.Step();
-        CHECK(r.c.model.DraftPick() == video::Square(2048), "a preset");
+        r.PullTrigger(1, false);
+        r.Step();
+        CHECK(r.c.model.DraftPick() == video::Square(2048), "the slider at 2048");
         r.Point(1, 0.7f, (kSlTrack.y + 0.5f * kSlTrack.h) / kH);
         r.Run(100);
         CHECK(r.c.model.DraftPick() == video::Square(2048), "held and dragged over the slider: it is not a slider drag");
@@ -1988,9 +2029,9 @@ static void TestPaintPages() {
     Paint(m, {}, c);
     CHECK(b != c, "the sizes the plugin reports are painted");
     float u, v;
-    Centre(kPreset(2), &u, &v);
+    Centre(kInc(0, kPageVideo), &u, &v);   // (the render type's > : a stepper since its five entries)
     Paint(m, HitTest(kPageVideo, u, v), d);
-    CHECK(c != d, "a hovered preset looks different");
+    CHECK(c != d, "a hovered row looks different");
     m.Click({Kind::Slider, 3008, 0});
     std::vector<uint32_t> f;
     Paint(m, {}, f);
@@ -2180,7 +2221,7 @@ static void Dump(const std::string& dir) {
     WriteBmp(dir + "/hset_noini.bmp", px);
 
     // the Video page: a size picked and not applied, with the headset's numbers; the Body page measured and not
-    Snapshot vs = SnapWith({{kKeyPx, 2048}});
+    Snapshot vs = SnapWith({{kKeyPx, 2048}, {kKeyAfr, 1}, {kKeyPairPerTick, 1}, {kKeySkyOn, 1}, {kKeyGameSky, 1}, {kKeyFogOn, 1}, {kKeyGameFog, 0}});
     Model vm;
     vm.Open(vs);
     video::Env env;
@@ -2191,11 +2232,32 @@ static void Dump(const std::string& dir) {
     vm.Click({Kind::Tab, kPageVideo, 0});
     Paint(vm, {}, px);
     WriteBmp(dir + "/hset_page2_video_clean.bmp", px);
+    {   // [autotune] on: Auto at the slider's end; then a run measuring, then its result waiting for Keep / Undo
+        Model am;
+        am.Open(vs);
+        am.SetEnv(env);
+        am.Click({Kind::Tab, kPageVideo, 0});
+        AutoTune at;
+        at.on = true;
+        at.revision = 1;
+        am.SetAuto(at);
+        Paint(am, {}, px);
+        WriteBmp(dir + "/hset_page2_video_auto.bmp", px);
+        at.state = 2;
+        at.revision = 2;
+        at.title = "Auto: 90 frames/s reached (headset 90 Hz)";
+        at.status = "Keep writes this to d2r_vr.ini (the old one is copied first). Undo puts everything back.";
+        at.lines = {"Changed: Sky our effect -> off", "Your settings: 71 frames/s", "Tried Sky on -> off: 71 -> 90 frames/s",
+                    "Tried Fog full -> light: 71 -> 74 frames/s", "Turned down Sky on -> off: 71 -> 90 frames/s", "Checked again: 90 frames/s"};
+        am.SetAuto(at);
+        Paint(am, {}, px);
+        WriteBmp(dir + "/hset_page2_video_auto_result.bmp", px);
+    }
     vm.Click({Kind::Slider, 3008, 0});
     Paint(vm, {Kind::Slider, 3008, 0}, px);
     WriteBmp(dir + "/hset_page2_video_edited.bmp", px);
     vm.Click({Kind::Preset, 7, 0});
-    Centre(kPreset(2), &u, &v);
+    Centre(kInc(1, kPageVideo), &u, &v);
     Paint(vm, HitTest(kPageVideo, u, v), px);
     WriteBmp(dir + "/hset_page2_video_headset.bmp", px);
     Model vw;
@@ -2446,10 +2508,11 @@ static void TestBelt() {
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
     CHECK(live == 55 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
           "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names - not the others");
-    CHECK(kCount <= 128 && kCount > 64, "the masks are 128 bits, and the table is past 64 keys");
-    {   // the 128-bit mask: a key past 64 has its own bit, sets and tests as the first ones do
-        const Mask a = Bit(3), b = Bit(70), ab = a | b;
-        CHECK(a != b && (ab & b) == b && (ab & a) == a && !(a & b) && static_cast<bool>(ab) && !Mask(0) && ab.Count() == 2 && (~Mask(0)).Count() == 128,
+    CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
+    {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
+        const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
+        CHECK(a != b && (ab & b) == b && (ab & a) == a && !(a & b) && static_cast<bool>(ab) && !Mask(0) && ab.Count() == 2 && (~Mask(0)).Count() == 256 &&
+                  all4.Count() == 4 && (all4 & c) == c && (all4 & d) == d && !(c & d) && !Bit(-1) && !Bit(256),
               "the mask's bits: |, &, ~, ==, Count");
         CHECK(kAllKeys.Count() == kCount && !(Bit(kCount) & kAllKeys) && (kAllKeys & Bit(kCount - 1)), "every key of the table in kAllKeys, none past it");
     }
@@ -3111,11 +3174,11 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 21, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 22, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");
-    CHECK(kCount <= 128, "all the keys have a bit in the change mask");
+    CHECK(kCount <= 64 * Mask::kWords, "all the keys have a bit in the change mask");
 
     // the tab strip: six tabs under the title, each a tab, none off the sheet
     for (int i = 0; i < kTabCount; ++i) {
@@ -4418,13 +4481,268 @@ static bool HasLabel(const Scene& sc, const std::string& t, Item* got = nullptr)
         if (it.type != Item::Type::Fill && it.text == t) { if (got) *got = it; return true; }
     return false;
 }
+// The Video page's rows (Serg 2026-11-08): 3D in the headset writes what Settings' native list writes; Sky / Fog drawn by step none, our effect,
+// the game's over two keys each (vr/draw_by.h), named as Settings names them.
+// Serg's 0.207.7 report (2026-11-08): "глаза по очереди - ничего не поменялось". The render type row from his ini's keys, each step applied and
+// written to a file as the plugin's store writes it, then read back: each of the five must land in the file as its own keys.
+static void TestRenderTypeApply() {
+    const std::wstring path = g_dir + L"\\render_type.ini";
+    Spit(path, "[openxr]\r\non=1\r\n[stereo]\r\nafr=1\r\npair_per_tick=1\r\nnative_replay=1\r\nreplay_right=1\r\nreplay_ahead=2\r\nsource=2\r\nturn_warp=1\r\n");
+    for (int want : {rendertype::kNativeTurns, rendertype::kNativeTwo, rendertype::kNativeOne, rendertype::kNativeTurns, rendertype::kFlatStereo,
+                     rendertype::kFlatDepth, rendertype::kNativeOne}) {
+        Snapshot s = store::LoadSnapshot(path.c_str());
+        CHECK(s.ready, "the render type's ini read");
+        Model m = OnPage(s, kPageVideo);
+        int now = rendertype::FromKeys(RenderTypeKeys(m.Get()));
+        for (int guard = 0; now != want && guard < 8; ++guard) {
+            m.Click({Kind::Change, kKeyPairPerTick, want > now ? 1 : -1});
+            now = rendertype::FromKeys(RenderTypeKeys(m.Get()));
+        }
+        CHECK(now == want && m.Dirty(), "the row stepped to the type");
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        CHECK(a.what == Do::Save, "Apply asks to save");
+        std::string why;
+        CHECK(store::SaveRequest(path.c_str(), a.request, &why) == Result::Saved, "the type's keys saved");
+        const Snapshot back = store::LoadSnapshot(path.c_str());
+        CHECK(rendertype::FromKeys(RenderTypeKeys(back.values)) == want, "the file reads back as the type chosen");
+        if (want == rendertype::kNativeTurns)
+            CHECK(back.values[kKeyPairPerTick] == 0.0f && back.values[kKeyAfr] == 1.0f && back.values[kKeyOpenXrOn] == 1.0f,
+                  "by turns: pair_per_tick=0, afr=1, native OpenXR on (what the plugin reads live: xr.cpp byTurns, frame_order NativeByTurns)");
+    }
+    // ... and in ONE open panel, Apply after Apply (as Serg flipped one pass / two passes, then by turns): the store's answer taken each time
+    Spit(path, "[openxr]\r\non=1\r\n[stereo]\r\nafr=1\r\npair_per_tick=1\r\nnative_replay=1\r\nreplay_right=1\r\nreplay_ahead=2\r\nsource=2\r\nturn_warp=1\r\n");
+    Model m = OnPage(store::LoadSnapshot(path.c_str()), kPageVideo);
+    for (int want : {rendertype::kNativeTwo, rendertype::kNativeOne, rendertype::kNativeTwo, rendertype::kNativeTurns, rendertype::kNativeOne,
+                     rendertype::kNativeTurns}) {
+        int now = rendertype::FromKeys(RenderTypeKeys(m.Get()));
+        for (int guard = 0; now != want && guard < 8; ++guard) {
+            m.Click({Kind::Change, kKeyPairPerTick, want > now ? 1 : -1});
+            now = rendertype::FromKeys(RenderTypeKeys(m.Get()));
+        }
+        const Action a = m.Click({Kind::Apply, -1, 0});
+        CHECK(a.what == Do::Save, "Apply after Apply asks to save");
+        const Result r = store::SaveRequest(path.c_str(), a.request);
+        CHECK(r == Result::Saved, "Apply after Apply saved (no conflict with the panel's own last save)");
+        Snapshot back = store::LoadSnapshot(path.c_str());
+        back.sequence = a.request.sequence;
+        back.result = r;
+        m.Observe(back);
+        CHECK(rendertype::FromKeys(RenderTypeKeys(back.values)) == want && !m.Dirty(), "the file is the type, the panel clean again");
+    }
+    DeleteFileW(path.c_str());
+    {   // the row's line says when the type takes effect: one pass after a restart when its hooks were not in at the start
+        Model w = OnPage(SnapWith({{kKeyOpenXrOn, 1}, {kKeyAfr, 1}, {kKeyPairPerTick, 1}, {kKeyNativeReplay, 1}}), kPageVideo);
+        video::Env e;
+        e.replayAtStart = true;
+        w.SetEnv(e);
+        CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeOne, true)), "one pass, hooks in: right away");
+        e.replayAtStart = false;
+        w.SetEnv(e);
+        CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeOne, false)) &&
+                  std::string(RenderTypeWhen(rendertype::kNativeOne, false)).find("RESTART") != std::string::npos, "one pass, hooks not in: after a restart");
+        w.Click({Kind::Change, kKeyPairPerTick, 1});
+        CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeTurns, false)), "by turns: right away, whatever the hooks");
+        w.Click({Kind::Change, kKeyPairPerTick, 1});
+        CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kFlatStereo, false)), "FlatVR: the game leaves the headset");
+    }
+}
+static void TestVideoRows() {
+    TestRenderTypeApply();
+    CHECK(drawby::FromKeys(false, true) == drawby::kNone && drawby::FromKeys(true, false) == drawby::kOurs && drawby::FromKeys(true, true) == drawby::kGame,
+          "drawn by: the two keys read");
+    int on = -1, game = -1;
+    // the fog (gameAlone): game_fog=1 is the game's whatever [fog] enabled says; none writes both off, the game's turns our effect's off
+    CHECK(drawby::FromKeys(false, true, true) == drawby::kGame && drawby::FromKeys(true, true, true) == drawby::kGame &&
+              drawby::FromKeys(true, false, true) == drawby::kOurs && drawby::FromKeys(false, false, true) == drawby::kNone,
+          "fog drawn by: game_fog alone");
+    {
+        int fe = -1, fg = -1;
+        drawby::ToKeys(drawby::kNone, 1, &fe, &fg, true);
+        CHECK(fe == 0 && fg == 0, "fog none: both off");
+        drawby::ToKeys(drawby::kGame, 0, &fe, &fg, true);
+        CHECK(fe == 0 && fg == 1, "fog the game's: game_fog 1, ours off");
+        drawby::ToKeys(drawby::kOurs, 1, &fe, &fg, true);
+        CHECK(fe == 1 && fg == 0, "fog ours: enabled 1, game_fog 0");
+    }
+    drawby::ToKeys(drawby::kNone, 1, &on, &game);
+    CHECK(on == 0 && game == 1, "none keeps the drawn-by key (the choice comes back)");
+    drawby::ToKeys(drawby::kOurs, 1, &on, &game);
+    CHECK(on == 1 && game == 0, "our effect");
+    drawby::ToKeys(drawby::kGame, 0, &on, &game);
+    CHECK(on == 1 && game == 1, "the game's");
+    CHECK(drawby::Step(drawby::kNone, -1) == drawby::kNone && drawby::Step(drawby::kGame, 1) == drawby::kGame && drawby::Step(drawby::kOurs, 1) == drawby::kGame,
+          "the steps stop at the ends");
+    {   // the render type (shared/render_type.h, Serg 2026-11-08): the five, in order, read from old inis by their keys
+        using namespace rendertype;
+        Keys k;
+        k.openxrOn = 1; k.afr = 1; k.pairPerTick = 1; k.nativeReplay = 1;
+        CHECK(FromKeys(k) == kNativeOne, "native, both eyes, no native_replay key (1): one pass - the default");
+        k.nativeReplay = 0;
+        CHECK(FromKeys(k) == kNativeTwo, "native_replay=0: two passes");
+        k.pairPerTick = 0;
+        CHECK(FromKeys(k) == kNativeTurns, "pair_per_tick 0: eyes by turns, whatever native_replay says");
+        Keys f;
+        f.afr = 1; f.source = 2;
+        CHECK(FromKeys(f) == kFlatStereo, "FlatVR stereo as before (afr)");
+        f.afr = 0; f.source = 1;
+        CHECK(FromKeys(f) == kFlatDepth, "FlatVR depth as before (source 1)");
+        f.source = 0;
+        CHECK(FromKeys(f) == kFlatStereo, "mono shows as FlatVR stereo, as Settings always showed it");
+        f.source = -1;
+        CHECK(FromKeys(f) == kFlatDepth, "no source key, no afr: depth (Settings' default 1)");
+        for (int t = 0; t < rendertype::kCount; ++t) {   // each type's keys read back as that type
+            Keys w;
+            w.openxrOn = 1; w.afr = 1; w.pairPerTick = 1; w.nativeReplay = 1; w.source = 2;
+            ToKeys(t, &w);
+            CHECK(FromKeys(w) == t, "a type's keys read back as it");
+            CHECK(Native(t) == (w.openxrOn == 1), "native types turn [openxr] on, FlatVR's off");
+        }
+        CHECK(Step(kNativeTwo, -1) == kNativeTwo && Step(kFlatDepth, 1) == kFlatDepth && Step(kNativeOne, 1) == kNativeTurns, "the steps stop at the ends");
+        CHECK(std::string(Name(kNativeTwo)) == "Native two passes" && std::string(Name(kFlatDepth)) == "FlatVR depth", "the names in Serg's order");
+    }
+    {   // the Render type row: by turns -> one pass -> two passes, and on to FlatVR stereo / depth, writing what Settings' list writes
+        Model m = OnPage(SnapWith({{kKeyOpenXrOn, 1}, {kKeyAfr, 1}, {kKeyPairPerTick, 0}, {kKeyNativeReplay, 1}, {kKeyReplayRight, 0}, {kKeyReplayAhead, 1}}),
+                         kPageVideo);
+        CHECK(HasLabel(Compose(m, {}), "Native eyes by turns") && HasLabel(Compose(m, {}), "Render type"), "by turns shown, the row named");
+        m.Click({Kind::Change, kKeyPairPerTick, -1});
+        CHECK(m.Get()[kKeyPairPerTick] == 1.0f && m.Get()[kKeyAfr] == 1.0f && m.Get()[kKeyNativeReplay] == 1.0f && m.Get()[kKeyOpenXrOn] == 1.0f &&
+              m.Get()[kKeyReplayAhead] == 2.0f && m.Dirty(), "one pass: pair_per_tick 1, native_replay 1, replay_ahead 2");
+        CHECK(HasLabel(Compose(m, {}), "Native one pass"), "one pass shown");
+        m.Click({Kind::Change, kKeyPairPerTick, -1});
+        CHECK(m.Get()[kKeyPairPerTick] == 1.0f && m.Get()[kKeyNativeReplay] == 0.0f && HasLabel(Compose(m, {}), "Native two passes"), "two passes");
+        m.Click({Kind::Change, kKeyPairPerTick, -1});
+        CHECK(m.Get()[kKeyNativeReplay] == 0.0f && HasLabel(Compose(m, {}), "Native two passes"), "the first stays the first");
+        m.Click({Kind::Change, kKeyPairPerTick, 1});
+        m.Click({Kind::Change, kKeyPairPerTick, 1});
+        m.Click({Kind::Change, kKeyPairPerTick, 1});
+        CHECK(m.Get()[kKeyOpenXrOn] == 0.0f && m.Get()[kKeyAfr] == 1.0f && m.Get()[kKeySource] == 2.0f && HasLabel(Compose(m, {}), "FlatVR stereo"),
+              "FlatVR stereo: [openxr] off, afr 1, source 2");
+        m.Click({Kind::Change, kKeyPairPerTick, 1});
+        CHECK(m.Get()[kKeyOpenXrOn] == 0.0f && m.Get()[kKeyAfr] == 0.0f && m.Get()[kKeySource] == 1.0f && HasLabel(Compose(m, {}), "FlatVR depth"),
+              "FlatVR depth: afr 0, source 1");
+    }
+    {   // the Quality preset (shared/quality_presets.h): Custom from a file that matches none; > Potato writes every key of it, < Low, < stays...
+        Model m = OnPage(Snap(), kPageVideo);
+        CHECK(PresetOf(m.Get()) == qualitypreset::kCount && HasLabel(Compose(m, {}), "Custom") && HasLabel(Compose(m, {}), "Quality preset"),
+              "a file of no preset: Custom, the row named");
+        m.Click({Kind::Change, kKeyPreset, 1});
+        CHECK(PresetOf(m.Get()) == 0 && HasLabel(Compose(m, {}), "Potato") && m.Dirty(), "> from Custom: Potato, the draft changed");
+        bool all = true;
+        for (const qualitypreset::Key& k : qualitypreset::kKeys) {
+            if (qualitypreset::IsRenderType(k)) {
+                all = all && rendertype::FromKeys(RenderTypeKeys(m.Get())) == (int)k.v[0];
+                continue;
+            }
+            const int i = IndexOf(k.section, k.key);
+            all = all && i >= 0 && m.Get()[i] == k.v[0];
+        }
+        CHECK(all, "Potato: every key the table has, the render type one pass");
+        CHECK(m.Get()[IndexOf(L"render", L"game_stages")] == 2.0f && m.Get()[IndexOf(L"render", L"potato_light")] == 1.0f &&
+                  m.Get()[IndexOf(L"render", L"model_radius")] == 150.0f && m.Get()[IndexOf(L"render", L"big_radius")] == 200.0f &&
+                  m.Get()[IndexOf(L"render", L"rings")] == 2.0f && m.Get()[kKeyGameFog] == 1.0f && m.Get()[kKeyFogOn] == 0.0f && m.Get()[kKeyGameSky] == 1.0f,
+              "Potato: its stages and light, models 150, big 200, 2 rings, the game's fog and sky");
+        CHECK(HasLabel(Compose(m, {}), "The game's fog") && HasLabel(Compose(m, {}), "The game's dome"), "the drawn-by rows agree: the game's fog and dome");
+        m.Click({Kind::Change, kKeyPreset, -1});
+        CHECK(PresetOf(m.Get()) == 0, "< at Potato: stays");
+        m.Click({Kind::Change, kKeyPreset, 1});
+        m.Click({Kind::Change, kKeyPreset, 1});
+        CHECK(PresetOf(m.Get()) == 2 && m.Get()[IndexOf(L"render", L"game_stages")] == 0.0f && m.Get()[IndexOf(L"render", L"potato_light")] == 0.0f &&
+                  m.Get()[IndexOf(L"render", L"model_radius")] == 210.0f && m.Get()[IndexOf(L"render", L"big_radius")] == 600.0f &&
+                  HasLabel(Compose(m, {}), "Medium"),
+              "Medium: the whole frame, models 210, big 600");
+        m.Click({Kind::Change, kKeyPreset, 1});
+        CHECK(PresetOf(m.Get()) == 2, "> at Medium: stays (the highest)");
+        CHECK(m.Get()[IndexOf(L"render", L"lens_mask")] == 1.0f && m.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 1.0f,
+              "Medium leaves the lens mask and the shadows once as they were (Potato set them on)");
+        {   // a fresh ini at Medium's values with the lens mask and the shadows once off (0.208's shipped): Medium, not Custom
+            Model f = OnPage(Snap(), kPageVideo);
+            f.Click({Kind::Change, kKeyPreset, -1});   // Custom -> Medium
+            CHECK(PresetOf(f.Get()) == 2 && f.Get()[IndexOf(L"render", L"lens_mask")] == 0.0f && f.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 0.0f,
+                  "Medium with the lens mask and the shadows once off is still Medium");
+        }
+        m.Click({Kind::Change, IndexOf(L"render", L"potato_light_brightness"), 1});
+        CHECK(PresetOf(m.Get()) == 2, "the brightness is no preset key: still Medium");
+        CHECK(qualitypreset::Step(qualitypreset::kCount, -1) == 2 && qualitypreset::Step(qualitypreset::kCount, 1) == 0, "from Custom: < Medium, > Potato");
+        CHECK(!IsDerived(kKeyPairPerTick) && IsDerived(kKeyPreset) && !IsGame(kKeyPreset), "the preset row: derived, not the game's");
+        int changed = 0;   // only the preset's keys (and the render type's) move
+        const Values base = OnPage(Snap(), kPageVideo).Get();
+        Model p = OnPage(Snap(), kPageVideo);
+        p.Click({Kind::Change, kKeyPreset, 1});
+        for (int i = 0; i < kCount; ++i) {
+            if (p.Get()[i] == base[i]) continue;
+            bool own = i == kKeyOpenXrOn || i == kKeyAfr || i == kKeyPairPerTick || i == kKeyNativeReplay || i == kKeySource || i == kKeyReplayRight ||
+                       i == kKeyReplayAhead;
+            for (const qualitypreset::Key& k : qualitypreset::kKeys) own = own || IndexOf(k.section, k.key) == i;
+            changed += own ? 0 : 1;
+        }
+        CHECK(changed == 0, "the preset writes nothing but its keys (never the medallions or the render size)");
+        CHECK(IndexOf(L"hud", L"bar_place") < 0 || [] {
+                  for (const qualitypreset::Key& k : qualitypreset::kKeys) if (qualitypreset::Same(k.section, L"hud")) return false;
+                  return true;
+              }(),
+              "no [hud] key in any preset");
+    }
+    {   // a card without variable rate shading (video::Env::vrs 0): the Render page's foveation rows greyed with the reason, their changes refused
+        Model m = OnPage(Snap(), kPageRender);
+        video::Env e;
+        e.vrs = 0;
+        m.SetEnv(e);
+        const float was = m.Get()[kKeyFoveated];
+        m.Click({Kind::Change, kKeyFoveated, 1});
+        m.Click({Kind::Change, kKeyGrassRate, 1});
+        CHECK(m.Get()[kKeyFoveated] == was && m.Get()[kKeyGrassRate] == 0.0f && !m.Dirty(), "no VRS: the foveation rows do not change");
+        CHECK(HasLabel(Compose(m, {}), "This graphics card has no variable rate shading - off"), "no VRS: the reason on the rows");
+        m.Click({Kind::Change, IndexOf(L"render", L"lens_mask"), 1});
+        CHECK(m.Dirty(), "no VRS: the lens mask still changes (it needs none)");
+        e.vrs = 1;
+        Model n = OnPage(Snap(), kPageRender);
+        n.SetEnv(e);
+        n.Click({Kind::Change, kKeyFoveated, 1});
+        CHECK(n.Dirty() && !HasLabel(Compose(n, {}), "This graphics card has no variable rate shading - off"), "VRS: foveated changes, no reason shown");
+        CHECK(NeedsVrs(kKeyFoveated) && NeedsVrs(kKeyGrassRate) && !NeedsVrs(IndexOf(L"render", L"lens_mask")) &&
+                  !NeedsVrs(IndexOf(L"render", L"shadows_once_a_pair")),
+              "only the foveation rows and the grass rate need VRS");
+    }
+    {   // Sky drawn by: the game's -> ours -> none -> ours -> the game's
+        Model m = OnPage(SnapWith({{kKeySkyOn, 1}, {kKeyGameSky, 1}, {kKeyFogOn, 0}, {kKeyGameFog, 1}}), kPageVideo);
+        const Scene s = Compose(m, {});
+        CHECK(HasLabel(s, "The game's dome") && HasLabel(s, "The game's fog") && HasLabel(s, "Sky drawn by") && HasLabel(s, "Fog drawn by"),
+              "the two rows' names (the fog: game_fog alone is the game's, [fog] enabled 0 or not)");
+        m.Click({Kind::Change, kKeyGameSky, -1});
+        CHECK(m.Get()[kKeySkyOn] == 1.0f && m.Get()[kKeyGameSky] == 0.0f && HasLabel(Compose(m, {}), "Our effect"), "sky: our effect");
+        m.Click({Kind::Change, kKeyGameSky, -1});
+        CHECK(m.Get()[kKeySkyOn] == 0.0f, "sky: none");
+        m.Click({Kind::Change, kKeyGameSky, -1});
+        CHECK(m.Get()[kKeySkyOn] == 0.0f, "sky: none stays at the end");
+        m.Click({Kind::Change, kKeyGameFog, -1});
+        CHECK(m.Get()[kKeyFogOn] == 1.0f && m.Get()[kKeyGameFog] == 0.0f, "fog: the game's -> our effect");
+        m.Click({Kind::Change, kKeyGameFog, -1});
+        CHECK(m.Get()[kKeyFogOn] == 0.0f && m.Get()[kKeyGameFog] == 0.0f && HasLabel(Compose(m, {}), "None"), "fog: none - both off");
+        m.Click({Kind::Change, kKeyGameFog, 1});
+        CHECK(m.Get()[kKeyFogOn] == 1.0f && m.Get()[kKeyGameFog] == 0.0f, "fog: none -> our effect");
+        m.Click({Kind::Change, kKeyGameFog, 1});
+        CHECK(m.Get()[kKeyFogOn] == 0.0f && m.Get()[kKeyGameFog] == 1.0f && HasLabel(Compose(m, {}), "The game's fog"), "fog: the game's (our effect's off)");
+        AutoTune at;
+        at.on = true;
+        at.state = 1;
+        at.revision = 9;
+        m.SetAuto(at);
+        const Values before = m.Get();
+        m.Click({Kind::Change, kKeyGameFog, -1});
+        CHECK(!Changed(before, m.Get()) && !HasLabel(Compose(m, {}), "Fog drawn by"), "under an Auto run: the rows hidden and taking nothing");
+    }
+}
+
 // [autotune] the Video page's Auto (vr/auto_tune_run.h): its button only with the feature on and nothing edited; while a run measures or its
 // result waits, the run's lines instead of the render size, Stop / Keep / Undo, and the size controls take nothing.
 static void TestAutoTune() {
-    CHECK(Inside(kAutoBtn) && !Overlap(kAutoBtn, kRecentre) && !Overlap(kAutoBtn, kClose) && !Overlap(kAutoBtn, kApply), "Auto between Recentre and Close");
+    CHECK(Inside(kAutoBtn) && !Overlap(kAutoBtn, kSlTrack) && !Overlap(kAutoBtn, kSlInc) && !Overlap(kAutoBtn, kVidNow) && !Overlap(kAutoBtn, kVidTitle),
+          "Auto inside, clear of the slider and the lines above");
+    // Serg 2026-11-08: beside the size choice - the size buttons are gone, so at the slider's right end, as tall as it
+    CHECK(kAutoBtn.y == kSlTrack.y && kAutoBtn.h == kSlTrack.h && kAutoBtn.x > kSlInc.x + kSlInc.w && kAutoBtn.w >= 150, "Auto at the slider's right end");
+    for (int r = 0; r < 3; ++r) CHECK(!Overlap(kAutoBtn, kToggle(r, kPageVideo)) && !Overlap(kAutoBtn, kDec(r, kPageVideo)), "Auto clear of the rows");
     CHECK(Inside(kAutoKeep) && Inside(kAutoUndo) && !Overlap(kAutoKeep, kAutoUndo) && kAutoKeep.y + kAutoKeep.h <= kStatus.y, "Keep and Undo above the status line");
     CHECK(kAutoLine(kAutoLines - 1).y + kAutoLine(kAutoLines - 1).h <= kAutoKeep.y && kAutoLine(0).y >= kAutoTitle.y + kAutoTitle.h, "the lines between the title and Keep");
-    for (int i = 0; i < video::kPresetCount; ++i) CHECK(!Overlap(kPreset(i), kAutoKeep) && !Overlap(kPreset(i), kAutoUndo), "a preset clear of Keep / Undo");
     CHECK(!Overlap(kSlTrack, kAutoKeep) && !Overlap(kSlTrack, kAutoUndo), "the slider clear of Keep / Undo");
     float u, v;
     Centre(kAutoBtn, &u, &v);
@@ -4660,6 +4978,7 @@ int main(int argc, char** argv) {
     TestWorld();
     TestParty();
     TestAutoTune();
+    TestVideoRows();
 
     // the temp folder's files go
     WIN32_FIND_DATAW fd;

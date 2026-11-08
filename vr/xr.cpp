@@ -44,6 +44,7 @@
 // vrcam.cpp: the balls over the belt's bottles a hand is at (x y z in BodyWalk's frame, radius m, alpha, r g b)
 int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hud_native.h"
+#include "native_d3d12.h"   // natived3d::SetOurs: our submissions marked ours ([stereo] native_replay)
 #include "plate_world.h"   // [hud] monster_bar_room: the monster's health bar over its head, in the room (HangPlate)
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (HangNotice)
 #include "rtv_slots.h"     // the render-target views of the interface chains, handed out and given back (EnsureHudOut)
@@ -75,6 +76,8 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "frame_gen_lib.h"   // [openxr] frame_generation: OFXR Bridge, for this process only (shared/frame_gen.h)
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "eye_fov.h"   // [openxr] runtime_fov / symmetric_fov / fov_crop: the fov each eye is drawn and submitted with (the pure maths)
+#include "unleashed_foveation.h"   // [render] foveated: the eyes' gaze sample's freshness (Bear's rule, MPL 2.0)
+#include "foveation.h"   // [render] foveated: variable rate shading here (the headset Video / Render page's rows greyed without it)
 #include "session_end.h"   // a live session end off the game's present: the exit asked for, the runtime's handles destroyed on a thread of their own
 #include "api_layers_lib.h"   // [openxr] block_listed_layers: implicit OpenXR layers known to break the picture off in this process (shared/api_layers.h)
 #include "hset_panel.h"   // the in-headset settings panel ([openxr] headset_settings): vr/xr_headset_settings.h
@@ -101,6 +104,8 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "party_cmd.h"     // the settings' Party page: the game's roster and its Party panel's buttons ([openxr] headset_party)
 #include "players_cmd.h"   // the settings' Players row: the game's own /players N ([openxr] headset_players)
 #include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine's trail for the runes layer (vr/xr_runes.h)
+#include "rune_flash.h"     // the glyph's "done right" flash over the runes (vr/xr_runes.h)
+#include "near_overlay.h"   // [openxr] hands_over_panels: the near pixels (hands, weapon) over the skill panel
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
@@ -177,6 +182,7 @@ struct Cfg {
     float turnKeepGap = turnwarp::kKeepGapPx, turnKeepReach = turnwarp::kKeepReachPx;          // turns_keep_gap, turns_keep_reach: near things, a 4096-wide eye's pixels
     float turnEffectsLevel = turnwarp::kEffectsLevel, turnEffectsReach = turnwarp::kEffectsReachPx;   // turns_effects_level, turns_effects_reach
     bool turnSharp = true, turnFill = true, turnRims = true;   // [stereo] turns_sharp, turns_fill, turns_rims (turn_warp.h Gpu::Sharpen, Fill, Rims)
+    bool eyeGaze = false;     // [render] foveated + foveated_gaze: the eyes' gaze asked of the runtime (XR_EXT_eye_gaze_interaction); taken at a session start
     bool frameProfile = true; // frame_profile: Steam Frame's controllers in their own layout when the runtime offers it (vr/xr_profiles.h); taken at a session start
     bool indexGripForce = false;   // index_grip_force: an Index hand's grip is how hard it squeezes (squeeze/force), not the fingers round the handle
     bool menusWaitTracking = true;   // menus_wait_tracking: the flat picture / menu panel placed only once the head is tracked, again after a focus loss (vr/anchor_gate.h)
@@ -213,6 +219,8 @@ struct Cfg {
     bool handInv = false;     // hand_inventory: away from town the inventory's panel on the left hand, the left stick walking on (vr/hand_inventory.h)
     bool handInvFront = false;   // hand_inventory_front: the button beside it last put it in front, full size (remembered, written by the button)
     float handInvWidthM = handinv::kWidthDefault;   // hand_inventory_width_m: that panel's width
+    int handsOverPanels = 0;        // hands_over_panels: the hands and the weapon drawn over the skill panel on its Gestures tab (vr/near_overlay.h Mode: 0 off, 1 that tab), F4, live
+    float nearPanelM = 0.8f;        // ... the panel's distance (skill_wheel_distance_m): nearer than it is over it
     bool headsetSettings = false;   // headset_settings: a settings panel in the headset, opened with the long press of the right stick click (vr/xr_headset_settings.h)
     bool twoGripChord = false;      // [debug] settings_two_grip_chord: the old way in as well - both grips squeezed, then a thumbstick click (off: two grips held mean nothing)
     bool runesDraw = false;   // runes_draw: BodyWalk's gesture runes and the hand's trail drawn in the headset, F4 only (vr/xr_runes.h)
@@ -227,6 +235,7 @@ Cfg g_cfg;
 // [render] vr_resolution: what the runtime holds per eye (both eyes' limits and the system's swapchain limit), taken when
 // a session starts; and the size of the last back buffer a present showed.
 std::atomic<uint64_t> g_vrRecommended{0}, g_vrMaximum{0}, g_outputSize{0};
+std::atomic<bool> g_replayAtStart{false};   // [stereo] native_replay's hooks went in at the start (SetReplayAtStart; the Video page's render type)
 wchar_t g_headsetPath[MAX_PATH] = L"";   // d2r_vr_headset.ini beside d2r_vr.ini (LoadSettings)
 // What the runtime says of the headset, for D2R VR Settings (the render size slider's tip says what the headset recommends, with the
 // game closed too): [headset] name, recommended_w/h, max_w/h, in a file beside the ini - not in the ini itself, which vrcam reloads
@@ -516,6 +525,17 @@ bool g_rotButtonFailed = false;
 std::atomic<int> g_rotateSaveWant{-1};   // [hud] map_rotate to write (0 / 1), -1 none
 std::atomic<bool> g_rotateSaving{false};
 HudOut g_bigTurnOut;  // [hud] map_click_big + map_rotate / map_top_down: the big map turned, a square of its own
+HudOut g_nearOut[2];  // [openxr] hands_over_panels: each eye's near pixels (NearMakeLocked), hung over the skill panel (HangNear) - its Gestures tab only
+bool g_nearMade[2] = {false, false};   // ... drawn since the tab came up (both before the layer goes)
+// ... what the pass cost while the tab was up, logged every 10 s and as it stops
+struct NearCost {
+    double since = 0;      // the window's start (us)
+    double passUs = 0;     // the pass's CPU time summed (record + submit, both eyes)
+    uint32_t passes = 0, frames = 0;
+};
+NearCost g_nearCost;
+nearoverlay::Pass g_nearPass;   // (its pipeline and descriptors made as the tab opens, released once its last list is done after it closes: FreeIdle)
+UINT64 g_nearFence = 0;         // the copy fence's value after the pass's last list
 HudOut g_noticeOut;  // the quest / level-up notice's card (HangNotice): a swapchain at the notice's box's size, kept to the session's end
 noticecard::Card g_noticeCard;   // when the card comes and goes (draw thread)
 XrPosef g_noticePose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};   // where it stands, set when it comes up
@@ -549,6 +569,19 @@ PendingImage g_pendingImg[16];
 bool g_copied[2] = {};
 XrFovf g_fovUsed[2] = {};
 eyefov::Window g_winUsed[2];   // [openxr] runtime_fov: where the runtime's own view lies in each eye's picture (OpenFrame); whole = the picture
+// [render] foveated (vr/foveation.h): each eye's frustum as drawn, its own straight-ahead in that frame (tangents; 0, 0 unless canted) and
+// the view the headset shows of it (the runtime's own, or the hand's with fov_override_centred; seenOk false: canted, not known) - OpenFrame
+xr::EyeLens g_lens[2];
+XrQuaternionf g_lensQ[2] = {{0, 0, 0, 1}, {0, 0, 0, 1}};   // ... the frame each eye is drawn in (the eye's own turn; canted: the head's), in g_space
+// [render] foveated + foveated_gaze: the eyes' gaze (XR_EXT_eye_gaze_interaction) - asked for only then. g_gazeExt: the extension enabled;
+// g_gazeSys: the system says it has an eye tracker; this frame's gaze in g_space (g_gazeOk: tracked, timed, fresh). No gaze is ever logged,
+// only how many samples were usable (vr/foveation.h).
+bool g_gazeExt = false, g_gazeSys = false, g_gazeOk = false, g_gazeSeen = false;
+XrAction g_aGaze = XR_NULL_HANDLE;
+XrSpace g_gazeSpace = XR_NULL_HANDLE;
+XrQuaternionf g_gazeQ = {0, 0, 0, 1};
+struct GazeCount { uint32_t usable = 0, inactive = 0, untracked = 0, untimed = 0, stale = 0; } g_gazeN;
+ULONGLONG g_gazeLineAt = 0;
 // [openxr] views_3d (vr/views3d.h)
 int g_viewsMode = 0;      // what vrcam asked the next pair to be (xr.h SetViewsMode): kViewsHead, kViewsWindow, kViewsRoom
 PointerAtFn g_pointerAt = nullptr;   // vrcam's: the ground under the game's mouse in F1 / F3 (xr.h)
@@ -891,6 +924,42 @@ uint32_t g_touch[2] = {};     // the last frame's TouchBit bits of each hand
 int g_touchLooked[2] = {};    // frames a controller was in the hand with no touch input reported (told once)
 bool g_touchSaid[2] = {};     // this hand's touch inputs told in the log
 bool g_frameExt = false;   // XR_VALVE_frame_controller_interaction enabled in this instance ([openxr] frame_profile)
+// [render] lens_mask (vr/lens_mask.h): the runtime's hidden-area mesh of each eye (XR_KHR_visibility_mask, enabled whenever offered: asking for it
+// changes nothing). Fetched when the session is made and again on XrEventDataVisibilityMaskChangedKHR; read by the draw thread under g_visLock.
+bool g_visExt = false;
+PFN_xrGetVisibilityMaskKHR g_xrGetVisMask = nullptr;
+SRWLOCK g_visLock = SRWLOCK_INIT;
+xr::VisMask g_vis[2];
+uint32_t g_visGen = 0;
+// One view's mesh (eye 0 / 1) asked of the runtime: two calls (the sizes, then the data). False: none (said once a session)
+bool FetchVisMask(uint32_t eye, const char* why) {
+    if (!g_visExt || !g_xrGetVisMask || !g_session || eye > 1) return false;
+    XrVisibilityMaskKHR m{XR_TYPE_VISIBILITY_MASK_KHR};
+    XrResult r = g_xrGetVisMask(g_session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, eye, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
+    std::vector<XrVector2f> v;
+    std::vector<uint32_t> idx;
+    if (XR_SUCCEEDED(r) && m.vertexCountOutput && m.indexCountOutput) {
+        v.resize(m.vertexCountOutput);
+        idx.resize(m.indexCountOutput);
+        m.vertexCapacityInput = (uint32_t)v.size();
+        m.vertices = v.data();
+        m.indexCapacityInput = (uint32_t)idx.size();
+        m.indices = idx.data();
+        r = g_xrGetVisMask(g_session, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, eye, XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR, &m);
+        v.resize(XR_SUCCEEDED(r) ? std::min<size_t>(v.size(), m.vertexCountOutput) : 0);
+        idx.resize(XR_SUCCEEDED(r) ? std::min<size_t>(idx.size(), m.indexCountOutput) : 0);
+    }
+    AcquireSRWLockExclusive(&g_visLock);
+    xr::VisMask& o = g_vis[eye];
+    o.xy.resize(v.size() * 2);
+    for (size_t i = 0; i < v.size(); ++i) { o.xy[2 * i] = v[i].x; o.xy[2 * i + 1] = v[i].y; }
+    o.idx = idx;
+    o.gen = ++g_visGen;
+    ReleaseSRWLockExclusive(&g_visLock);
+    LogF("vrcam: openxr - lens mask: the runtime's hidden-area mesh of the %s eye (%s): %zu triangles, %zu vertices%s", eye ? "right" : "left", why,
+         idx.size() / 3, v.size(), XR_SUCCEEDED(r) ? (idx.empty() ? " - EMPTY: nothing hidden in this eye" : "") : " - the call FAILED: no mask in this eye");
+    return !idx.empty();
+}
 XrAction g_aHaptic = XR_NULL_HANDLE;   // output: a pulse in a controller ([openxr] haptics, vr/haptics.cpp)
 // [openxr] haptics_hand_actions: instead of the one action filtered by hand, an action per hand ([0] left, [1] right) with only that
 // hand's motor bound - some runtimes routed a hand-filtered pulse to the wrong hand (bearstonem/d2r-pcvr, steamvr/haptic_actions.h).
@@ -961,6 +1030,45 @@ void Suggest(const char* profile, std::initializer_list<std::pair<XrAction, cons
         r = xrSuggestInteractionProfileBindings(g_inst, &sb);
     }
     if (XR_FAILED(r)) LogF("vrcam: openxr - bindings for %s refused: %s", profile, Res(r));
+}
+
+// [render] foveated: the eyes' gaze this frame (after xrSyncActions), located in g_space at the frame's display time - only when tracked,
+// timed by the runtime and fresh (shared/unleashed_foveation.h GazeFresh, Bear's rule). A line every 10 s says how many were usable.
+void SampleGaze(bool synced) {
+    g_gazeOk = false;
+    if (!g_gazeSpace || !g_aGaze) return;
+    XrActionStatePose st{XR_TYPE_ACTION_STATE_POSE};
+    XrActionStateGetInfo gi{XR_TYPE_ACTION_STATE_GET_INFO};
+    gi.action = g_aGaze;
+    if (!synced || XR_FAILED(xrGetActionStatePose(g_session, &gi, &st)) || !st.isActive) ++g_gazeN.inactive;
+    else {
+        XrEyeGazeSampleTimeEXT t{XR_TYPE_EYE_GAZE_SAMPLE_TIME_EXT};
+        XrSpaceLocation l{XR_TYPE_SPACE_LOCATION};
+        l.next = &t;
+        const XrSpaceLocationFlags need = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT;
+        if (XR_FAILED(xrLocateSpace(g_gazeSpace, g_space, g_fs.predictedDisplayTime, &l)) || (l.locationFlags & need) != need) ++g_gazeN.untracked;
+        else if (!t.time) ++g_gazeN.untimed;
+        else if (!unleashed::foveation::GazeFresh(g_fs.predictedDisplayTime, t.time)) ++g_gazeN.stale;
+        else {
+            const XrQuaternionf& q = l.pose.orientation;
+            const float n2 = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+            if (std::isfinite(n2) && fabsf(n2 - 1.0f) < 0.02f) {
+                g_gazeQ = q;
+                g_gazeOk = true;
+                ++g_gazeN.usable;
+                if (!g_gazeSeen) { g_gazeSeen = true; Log("vrcam: openxr - eye gaze: the first tracked sample came - the sharp area follows the eyes"); }
+            } else ++g_gazeN.untracked;
+        }
+    }
+    const ULONGLONG now = GetTickCount64();
+    if (!g_gazeLineAt) g_gazeLineAt = now;
+    if (now - g_gazeLineAt >= 10000) {
+        g_gazeLineAt = now;
+        LogF("vrcam: openxr - eye gaze, 10 s: %u usable, %u not active, %u not tracked, %u with no time, %u too old%s", g_gazeN.usable, g_gazeN.inactive,
+             g_gazeN.untracked, g_gazeN.untimed, g_gazeN.stale,
+             g_gazeN.usable ? "" : " - none usable: on PS VR2 / SteamVR switch on PSVR2 Toolkit's eye tracking and SteamVR's 'Share eye tracking data'");
+        g_gazeN = GazeCount{};
+    }
 }
 
 bool MakeActions() {
@@ -1052,6 +1160,23 @@ bool MakeActions() {
         Ok(xrCreateActionSpace(g_session, &ai, &g_gripSpace[h]), "xrCreateActionSpace(grip)");
         ai.action = g_aAim;
         Ok(xrCreateActionSpace(g_session, &ai, &g_aimSpace[h]), "xrCreateActionSpace(aim)");
+    }
+    if (g_gazeSys) {   // [render] foveated: the eyes' gaze, a pose of its own interaction profile (XR_EXT_eye_gaze_interaction)
+        g_aGaze = MakeAction("eye_gaze", "Eye gaze (foveated rendering)", XR_ACTION_TYPE_POSE_INPUT);
+        XrResult r = XR_ERROR_HANDLE_INVALID;
+        if (g_aGaze) {
+            XrActionSuggestedBinding b{g_aGaze, Path("/user/eyes_ext/input/gaze_ext/pose")};
+            XrInteractionProfileSuggestedBinding sb{XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+            sb.interactionProfile = Path("/interaction_profiles/ext/eye_gaze_interaction");
+            sb.countSuggestedBindings = 1;
+            sb.suggestedBindings = &b;
+            r = xrSuggestInteractionProfileBindings(g_inst, &sb);
+        }
+        XrActionSpaceCreateInfo gi{XR_TYPE_ACTION_SPACE_CREATE_INFO};
+        gi.action = g_aGaze;
+        gi.poseInActionSpace.orientation.w = 1.0f;
+        if (XR_FAILED(r) || XR_FAILED(xrCreateActionSpace(g_session, &gi, &g_gazeSpace))) g_gazeSpace = XR_NULL_HANDLE;
+        LogF("vrcam: openxr - eye gaze: %s", g_gazeSpace ? "bound (/user/eyes_ext/input/gaze_ext/pose) - waiting for tracked samples" : "NOT bound - the lens centre");
     }
     XrReferenceSpaceCreateInfo vs{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     vs.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
@@ -1552,6 +1677,8 @@ void WristStatusTeardown();   // the wrist status panels' pictures, below (xr_wr
 void AllyPortraitsTeardown();   // the allies' portraits' picture, below (xr_ally_portraits.h)
 void BannerTeardown();   // the banner's picture, below (xr_banner.h)
 void HsStep(D2RVR_XrInput& in, bool focused);   // the settings panel, below (xr_headset_settings.h)
+uint32_t HangNear(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerProjectionView eyes[2],
+                  XrCompositionLayerProjection& proj, XrCompositionLayerProjectionView pv[2]);   // [openxr] hands_over_panels, below (CopyEye's)
 void HsTeardown();
 void DropCalibration(bool now);   // the T-pose measurement's picture, below
 void StickersTeardown();   // the pointer's and the stickers' pictures, below
@@ -2060,6 +2187,9 @@ void Teardown() {   // under g_lock or before the session exists
     }
     if (g_viewSpace) { xrDestroySpace(g_viewSpace); g_viewSpace = XR_NULL_HANDLE; }
     if (g_roomSpace) { xrDestroySpace(g_roomSpace); g_roomSpace = XR_NULL_HANDLE; }
+    if (g_gazeSpace) { xrDestroySpace(g_gazeSpace); g_gazeSpace = XR_NULL_HANDLE; }
+    g_aGaze = XR_NULL_HANDLE;   // (with the action set)
+    g_gazeOk = false;
     if (g_actSet) { xrDestroyActionSet(g_actSet); g_actSet = XR_NULL_HANDLE; }   // its actions go with it
     g_aHaptic = g_aHapticHand[0] = g_aHapticHand[1] = XR_NULL_HANDLE;
     g_actionsOk = false;
@@ -2138,6 +2268,9 @@ void Teardown() {   // under g_lock or before the session exists
     g_bridgeIn = false;
     g_routeTold = false;
     g_kind = kNone;
+    AcquireSRWLockExclusive(&g_visLock);   // [render] lens_mask: no mesh without a session
+    for (xr::VisMask& m : g_vis) { m.xy.clear(); m.idx.clear(); m.gen = ++g_visGen; }
+    ReleaseSRWLockExclusive(&g_visLock);
     vrres::SessionEnded();   // [render] vr_resolution: the window's own size back (a post - the window's thread does it)
     g_vrRecommended.store(0);
     g_vrMaximum.store(0);
@@ -2175,15 +2308,38 @@ bool StartSession() {
     if (!Ok(xrEnumerateInstanceExtensionProperties(nullptr, 0, &n, nullptr), "xrEnumerateInstanceExtensionProperties")) return false;
     std::vector<XrExtensionProperties> ext(n, {XR_TYPE_EXTENSION_PROPERTIES});
     xrEnumerateInstanceExtensionProperties(nullptr, n, &n, ext.data());
-    bool d3d12 = false, hands = false, handSource = false, colorScale = false, frame = false;
+    bool d3d12 = false, hands = false, handSource = false, colorScale = false, frame = false, eyeGaze = false, visMask = false;
+    std::string extNames, fovNames;   // every extension the runtime offers; the ones about foveation
     for (const auto& e : ext) {
+        if (!strcmp(e.extensionName, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME)) eyeGaze = true;   // ([render] foveated: the eyes' gaze)
+        if (!extNames.empty()) extNames += ' ';
+        extNames += e.extensionName;
+        static const char* const kFov[] = {"XR_EXT_eye_gaze_interaction", "XR_FB_eye_tracking_social", "XR_FB_foveation", "XR_FB_foveation_configuration",
+                                           "XR_FB_foveation_vulkan", "XR_META_foveation_eye_tracked", "XR_VARJO_quad_views", "XR_VARJO_foveated_rendering",
+                                           "XR_ANDROID_eye_tracking", "XR_HTC_foveation", "XR_ML_eye_tracking"};
+        for (const char* f : kFov)
+            if (!strcmp(e.extensionName, f)) { if (!fovNames.empty()) fovNames += ", "; fovNames += f; }
         if (!strcmp(e.extensionName, XR_KHR_D3D12_ENABLE_EXTENSION_NAME)) d3d12 = true;
         if (!strcmp(e.extensionName, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME)) colorScale = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_EXTENSION_NAME)) hands = true;
         if (!strcmp(e.extensionName, XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME)) handSource = true;
         if (!strcmp(e.extensionName, xrprofiles::kFrameExtension)) frame = true;
+        if (!strcmp(e.extensionName, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME)) visMask = true;   // ([render] lens_mask)
     }
     if (!d3d12) { Log("vrcam: openxr - the runtime has no XR_KHR_D3D12_enable: no session"); return false; }
+    for (size_t at = 0, part = 1; at < extNames.size(); ++part) {   // every extension the runtime offers, in lines the log takes
+        size_t n = std::min<size_t>(700, extNames.size() - at);
+        if (at + n < extNames.size()) { const size_t sp = extNames.rfind(' ', at + n); if (sp != std::string::npos && sp > at) n = sp - at; }
+        LogF("vrcam: openxr - the runtime's extensions (%zu, part %zu): %s", ext.size(), part, extNames.substr(at, n).c_str());
+        at += n + 1;
+    }
+    // [render] foveated: what this runtime offers for foveated rendering. Its own foveation (XR_FB_foveation and kin) is for Vulkan swapchains,
+    // quad views would mean two more passes of the game a frame: we shade the edges coarser ourselves (variable rate shading), centred on the
+    // eyes' gaze where the runtime gives it, else on each lens centre.
+    g_gazeExt = g_cfg.eyeGaze && eyeGaze;
+    LogF("vrcam: openxr - foveation in this runtime: %s; eye gaze %s", fovNames.empty() ? "nothing" : fovNames.c_str(),
+         !eyeGaze ? "not offered" : g_gazeExt ? "offered - asked for ([render] foveated, foveated_gaze)"
+                                             : "offered - not asked for ([render] foveated or foveated_gaze off at the start)");
     {
         uint32_t nl = 0;
         xrEnumerateApiLayerProperties(0, &nl, nullptr);
@@ -2197,8 +2353,14 @@ bool StartSession() {
     std::vector<const char*> exts{XR_KHR_D3D12_ENABLE_EXTENSION_NAME};
     if (hands) exts.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
     if (hands && handSource) exts.push_back(XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
+    if (g_gazeExt) exts.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
     if (colorScale) exts.push_back(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
     g_colorScaleExt = colorScale;
+    g_visExt = visMask;   // [render] lens_mask: the hidden-area mesh, asked for whenever offered (the key decides whether it is drawn)
+    g_xrGetVisMask = nullptr;
+    if (visMask) exts.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
+    Log(visMask ? "vrcam: openxr - lens mask: XR_KHR_visibility_mask offered - each eye's hidden area known ([render] lens_mask)"
+                : "vrcam: openxr - lens mask: the runtime has no XR_KHR_visibility_mask - [render] lens_mask does nothing with it");
     g_frameExt = xrprofiles::WantFrame(g_cfg.frameProfile, frame);
     if (g_frameExt) exts.push_back(xrprofiles::kFrameExtension);
     if (frame) Log(g_frameExt ? "vrcam: openxr - Steam Frame controllers offered: their own layout (left D-pad down / up = X / Y)"
@@ -2222,6 +2384,7 @@ bool StartSession() {
     if (!g_inst && !Ok(xrCreateInstance(&ci, &g_inst), "xrCreateInstance")) return false;
     framegenlib::Attach(g_inst, withFrameGen);
     g_bridgeIn = withFrameGen;
+    if (g_visExt && XR_FAILED(xrGetInstanceProcAddr(g_inst, "xrGetVisibilityMaskKHR", (PFN_xrVoidFunction*)&g_xrGetVisMask))) g_xrGetVisMask = nullptr;
     XrInstanceProperties ip{XR_TYPE_INSTANCE_PROPERTIES};
     g_runtimeName[0] = 0;
     if (XR_SUCCEEDED(xrGetInstanceProperties(g_inst, &ip))) {
@@ -2241,7 +2404,17 @@ bool StartSession() {
     XrSystemProperties sp{XR_TYPE_SYSTEM_PROPERTIES};
     XrSystemHandTrackingPropertiesEXT hp{XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT};
     if (hands) sp.next = &hp;
+    XrSystemEyeGazeInteractionPropertiesEXT gp{XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT};
+    if (g_gazeExt) { gp.next = sp.next; sp.next = &gp; }
+    g_gazeSys = false;
     if (XR_SUCCEEDED(xrGetSystemProperties(g_inst, g_sys, &sp))) {
+        g_gazeSys = g_gazeExt && gp.supportsEyeGazeInteraction;
+        if (g_gazeExt)
+            LogF("vrcam: openxr - foveation path: %s", g_gazeSys
+                 ? "EYE-TRACKED - the headset says it has an eye tracker (each eye's sharp area follows the gaze; the lens centre while no tracked gaze comes)"
+                 : "fixed (each lens centre) - the runtime offers eye gaze but this headset has no eye tracker it gives (PS VR2 on SteamVR: PSVR2 Toolkit's eye tracking on, SteamVR's 'Share eye tracking data' on)");
+        else if (g_cfg.eyeGaze)
+            Log("vrcam: openxr - foveation path: fixed (each lens centre) - the runtime offers no eye gaze (XR_EXT_eye_gaze_interaction)");
         if (hands && hp.supportsHandTracking) {
             xrGetInstanceProcAddr(g_inst, "xrCreateHandTrackerEXT", (PFN_xrVoidFunction*)&g_xrCreateHandTracker);
             xrGetInstanceProcAddr(g_inst, "xrDestroyHandTrackerEXT", (PFN_xrVoidFunction*)&g_xrDestroyHandTracker);
@@ -2296,6 +2469,7 @@ bool StartSession() {
     sci.next = &gb;
     sci.systemId = g_sys;
     if (!Ok(xrCreateSession(g_inst, &sci, &g_session), "xrCreateSession")) return false;
+    for (uint32_t e = 0; e < 2; ++e) FetchVisMask(e, "the session made");   // [render] lens_mask
 
     XrReferenceSpaceCreateInfo rs{XR_TYPE_REFERENCE_SPACE_CREATE_INFO};
     rs.referenceSpaceType = g_cfg.stage ? XR_REFERENCE_SPACE_TYPE_STAGE : XR_REFERENCE_SPACE_TYPE_LOCAL;
@@ -2522,8 +2696,11 @@ ID3D12GraphicsCommandList* OpenList() {
 void SubmitList() {
     g_list->Close();
     ID3D12CommandList* l = g_list;
+    const bool was = natived3d::Ours();
+    natived3d::SetOurs(true);   // ([stereo] native_replay's look at the game's queue: ours, never one of the left pass's lists)
     g_queue->ExecuteCommandLists(1, &l);
     g_queue->Signal(g_fence, ++g_fenceV);
+    natived3d::SetOurs(was);
     g_allocDone[g_openAlloc] = g_fenceV;
 }
 
@@ -3618,6 +3795,35 @@ uint32_t HangZones(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
             b.glow = 0.5f;
         }
     }
+    {   // and the hand poses' zones (vr/pose_zones.h, the skill panel's Gestures tab): round the hand while a pose is taken, at its spots on its review,
+        // every live pose's in play with [gestures] show_zones - in the body frame the engine compares in (pelvis from the live head), F4 only
+        posezones::Zone pz[posezones::kMaxZones];
+        const int np = viewgate::F4() ? skillwheel::PoseZones(pz, posezones::kMaxZones) : 0;
+        if (np > 0) {
+            posezones::Head hd;
+            const XrQuaternionf hq = Q4(g_inNow.head.rot);
+            const XrVector3f fw = Rot(hq, {0.0f, 0.0f, -1.0f}), up = Rot(hq, {0.0f, 1.0f, 0.0f});
+            for (int k = 0; k < 3; ++k) hd.pos[k] = g_inNow.head.pos[k];
+            hd.fwd[0] = fw.x; hd.fwd[1] = fw.y; hd.fwd[2] = fw.z;
+            hd.up[0] = up.x; hd.up[1] = up.y; hd.up[2] = up.z;
+            hd.ok = g_inNow.head.valid != 0;
+            float hands[2][3];
+            bool handOk[2];
+            for (int h = 0; h < 2; ++h) {
+                for (int k = 0; k < 3; ++k) hands[h][k] = g_inNow.hand[h].grip.pos[k];
+                handOk[h] = g_inNow.hand[h].grip.valid == 1;
+            }
+            for (int i = 0; i < np && n < BW_LINK_VRZONES_MAX; ++i) {
+                float c[3];
+                if (!posezones::CentreOf(pz[i], hd, hands, handOk, c)) continue;
+                BW_LinkVrZone& b = z[n++];
+                b.centre[0] = c[0]; b.centre[1] = c[1]; b.centre[2] = c[2];
+                b.radius = pz[i].radius;
+                b.rgba = pz[i].rgba;
+                b.glow = 0.6f;
+            }
+        }
+    }
     if (!n || nl >= max || !g_inNow.head.valid || !MakeHudPipeline()) return nl;
     const XrVector3f head = P3(g_inNow.head.pos);
     uint32_t order[BW_LINK_VRZONES_MAX];
@@ -4702,6 +4908,9 @@ void Poll() {
             return;
         } else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
             if (g_actionsOk) ReadProfiles();
+        } else if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR) {   // [render] lens_mask: the runtime changed an eye's hidden area
+            const auto& vm = *(const XrEventDataVisibilityMaskChangedKHR*)&ev;
+            if (vm.session == g_session && vm.viewConfigurationType == XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO) FetchVisMask(vm.viewIndex, "changed by the runtime");
         } else if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
             // The runtime recentred: ours follows - in the new space, from the change's moment on
             // when it is our space that moves (the yaw was taken in the old one: the view 108 deg
@@ -4913,6 +5122,23 @@ bool OpenFrame(Kind kind) {
                              : RuntimeFovNow() && !fr.canted && !ExactEyes() ? eyefov::WindowOf(drawn, {rt.angleLeft, rt.angleRight, rt.angleUp, rt.angleDown})
                                                                              : eyefov::Window{};
             }
+            for (int e = 0; e < 2; ++e) {   // [render] foveated: the lens centre and the shown part of each eye's picture
+                EyeLens& L = g_lens[e];
+                L.drawn[0] = tanf(fr.fov[e].l); L.drawn[1] = tanf(fr.fov[e].r); L.drawn[2] = tanf(fr.fov[e].u); L.drawn[3] = tanf(fr.fov[e].d);
+                L.fwd[0] = L.fwd[1] = 0.0f;
+                if (fr.canted) {   // the eye drawn turned: where its own straight-ahead lies in the frame it is drawn in
+                    const float ahead[3] = {0.0f, 0.0f, -1.0f};
+                    float v[3];
+                    eyeframe::Rotate(eyeframe::Mul(eyeframe::Conj(fr.ref), q[e]), ahead, v);
+                    if (v[2] < -1e-3f) { L.fwd[0] = v[0] / -v[2]; L.fwd[1] = v[1] / -v[2]; }
+                }
+                const XrFovf& rt = g_views[e].fov;
+                const eyefov::Angles seen = HandCentredNow() ? eyefov::FromHand(g_cfg.hand, e) : eyefov::Angles{rt.angleLeft, rt.angleRight, rt.angleUp, rt.angleDown};
+                L.seen[0] = tanf(seen.l); L.seen[1] = tanf(seen.r); L.seen[2] = tanf(seen.u); L.seen[3] = tanf(seen.d);
+                L.seenOk = !fr.canted;
+                L.ok = true;
+                g_lensQ[e] = fr.canted ? XrQuaternionf{fr.ref.x, fr.ref.y, fr.ref.z, fr.ref.w} : g_views[e].pose.orientation;
+            }
             if (g_cfg.runtimeFov && !g_cfg.fovOverride && !ExactEyes() && !g_routeTold) {
                 g_routeTold = true;
                 Log(g_bridgeIn ? "vrcam: openxr - runtime_fov is ON but OFXR Bridge (frame generation) is in this session: the eyes are drawn and submitted the "
@@ -5039,6 +5265,7 @@ bool OpenFrame(Kind kind) {
     if (g_actionsOk) { sync.countActiveActionSets = 1; sync.activeActionSets = &active; }
     const XrResult sr = xrSyncActions(g_session, &sync);
     if (sr != XR_SESSION_NOT_FOCUSED && sr != XR_ERROR_ACTIONSET_NOT_ATTACHED) Ok(sr, "xrSyncActions");
+    SampleGaze(sr == XR_SUCCESS);   // [render] foveated: the eyes' gaze at this frame's display time
     Publish(sr == XR_SUCCESS);
     FlushHaptics();   // after Publish: a click the laser made this frame is felt this frame
     // F3: the floor in the space the pair is drawn in. The runtime's STAGE has it (the head's height over it is Publish's head);
@@ -5659,6 +5886,25 @@ void FreeIdle() {
     auto idle = [&](ULONGLONG usedAt) { return now - usedAt > kIdleFreeMs; };
     for (HudOut* o : {&g_noticeOut, &g_bigTurnOut})
         if (o->sc && idle(o->usedAt)) ReleaseHudOut(*o);
+    {   // [openxr] hands_over_panels: only while the skill panel is up on its Gestures tab - as it closes its two swapchains go back at once and the
+        // pass's pipeline and descriptors once the GPU is past its last list; elsewhere nothing of it exists (vr/near_overlay.h)
+        const bool want = NearOverlayWanted();
+        static bool was = false;
+        if (want != was) {
+            was = want;
+            LogF("vrcam: openxr - hands over the Gestures tab: %s", want ? "started - the tab is up: what is nearer than the window (the hands, the weapon) is drawn over "
+                                                                            "it; one small pass a frame and two swapchains while it stays up"
+                                                                          : "stopped - the tab closed: its swapchains and pass given back, nothing of it runs elsewhere");
+        }
+        if (!want) {
+            if (g_nearOut[0].sc || g_nearOut[1].sc) {
+                ReleaseHudOut(g_nearOut[0]);
+                ReleaseHudOut(g_nearOut[1]);
+            }
+            g_nearMade[0] = g_nearMade[1] = false;
+            if (g_nearPass.Ready() && (!g_fence || g_fence->GetCompletedValue() >= g_nearFence)) g_nearPass.Release();
+        }
+    }
     if (g_hsAtlas.sc && !g_hsOpen.load() && idle(g_hsAtlas.usedAt)) QuadAtlasRetire(g_hsAtlas, "headset settings");   // (painted again when opened: HsPaint)
     if (g_wheelAtlas.sc && idle(g_wheelAtlas.usedAt)) {
         QuadAtlasRetire(g_wheelAtlas, "skill wheel");
@@ -5696,6 +5942,8 @@ void CloseFrame() {
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
     XrCompositionLayerProjection proj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    XrCompositionLayerProjectionView nearPv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
+    XrCompositionLayerProjection nearProj{XR_TYPE_COMPOSITION_LAYER_PROJECTION};   // [openxr] hands_over_panels (HangNear)
     XrCompositionLayerQuad winQuad[2] = {{XR_TYPE_COMPOSITION_LAYER_QUAD}, {XR_TYPE_COMPOSITION_LAYER_QUAD}};   // F1 in 3D (views_3d): the window, a quad per eye
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD}, pointer{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
@@ -5795,6 +6043,7 @@ void CloseFrame() {
         nl = HangBanner(layers, nl, most);        // a message that must be seen (the capture key's)
         nl = HangSettings(layers, nl, most, hsPanel, hsBeam, hsDot);   // the settings panel, nearest of all
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
+        if (proj.views == pv) nl = HangNear(layers, nl, most, pv, nearProj, nearPv);   // [openxr] hands_over_panels: ... but the hands and the weapon over them
         if (runesOverPanel) nl = HangRunes(layers, nl, most);   // ... but the trail drawn for the Gestures tab lies over it (the window keeps its place)
         ++g_st.pairs;
     } else if (g_fs.shouldRender && g_kind == kMono && g_copied[0]) {
@@ -6163,8 +6412,8 @@ void LoadSettings(const wchar_t* ini) {
         // [openxr] frame_generation (experimental, OFXR Bridge): Off / FidelityFX / NVIDIA and NVIDIA's options, live into a loaded bridge; on / off at the next start
         framegenlib::Configure(framegen::Read((int)f(L"frame_generation", 0.0f), (int)f(L"frame_generation_preset", 1.0f), (int)f(L"frame_generation_scale", 2.0f)), !turns);
         // the eye not drawn made from pictures already drawn (bearstonem/d2r-pcvr's by turns), live
-        const bool warp = GetPrivateProfileIntW(L"stereo", L"turn_warp", 1, ini) != 0;
-        const bool fromDrawn = GetPrivateProfileIntW(L"stereo", L"turn_from_drawn", 1, ini) != 0;
+        const bool warp = IniIntRun(L"stereo", L"turn_warp", 1, ini) != 0;   // (IniIntRun: [autotune]'s eyes-by-turns rung tries these too)
+        const bool fromDrawn = IniIntRun(L"stereo", L"turn_from_drawn", 1, ini) != 0;
         static int saidWarp = -1;
         if (on && turns && (int)warp * 2 + (int)fromDrawn != saidWarp) {
             saidWarp = (int)warp * 2 + (int)fromDrawn;
@@ -6232,7 +6481,7 @@ void LoadSettings(const wchar_t* ini) {
              "vrcam: openxr - eyes by turns: the dark rims round things against the sky stay with the sky, as before ([stereo] turns_rims=0)"}};
         static int saidFix[3] = {-1, -1, -1};
         for (int i = 0; i < 3; ++i) {
-            const bool v = GetPrivateProfileIntW(L"stereo", fixes[i].key, 1, ini) != 0;
+            const bool v = IniIntRun(L"stereo", fixes[i].key, 1, ini) != 0;
             if (on && turns && warp && (int)v != saidFix[i]) {
                 saidFix[i] = v;
                 Log(v ? fixes[i].on : fixes[i].off);
@@ -6278,6 +6527,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.handSpace = (int)f(L"hand_space", 2.0f);   // live
     g_cfg.roomByHead = (int)f(L"room_by_head", 2.0f);   // live
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
+    g_cfg.eyeGaze = GetPrivateProfileIntW(L"render", L"foveated", 0, ini) != 0 && GetPrivateProfileIntW(L"render", L"foveated_gaze", 1, ini) != 0;   // (next session)
     {
         g_cfg.indexGripForce = f(L"index_grip_force", 0.0f) != 0.0f;   // live
         static int said = 0;   // (off at the start: not a word)
@@ -6511,6 +6761,22 @@ void LoadSettings(const wchar_t* ini) {
         // which D2R VR Authentic Settings makes from the player's game); off, or no such folder: our look. Live (the next picture of the panel).
         gameui::SetLog(&Log);
         gameui::SetOn(wheelOn && f(L"skill_panel_game_look", 0.0f) >= 0.5f);   // (before Configure: the window's layout asks for it)
+        {   // [openxr] hands_over_panels: what is nearer than the skill panel (the hands, the weapon) drawn over it on its Gestures tab, by the scene's depth (vr/near_overlay.h)
+            const int asked = nearoverlay::ModeOf(f(L"hands_over_panels", 0.0f));
+            const int want = wheelOn ? asked : 0;   // (the Gestures tab is the skill panel's)
+            const float dist = f(L"skill_wheel_distance_m", 0.8f);
+            g_cfg.nearPanelM = std::isfinite(dist) ? std::clamp(dist, 0.4f, 3.0f) : 0.8f;
+            static int said = -1;
+            if (on && want != said) {
+                said = want;
+                Log(want == nearoverlay::kGesturesTab
+                        ? "vrcam: openxr - hands over the panel: the Gestures tab only ([openxr] hands_over_panels=1) - while the skill panel is up on its Gestures tab "
+                          "in F4, what is nearer than the window (the hands, the weapon) is drawn over it by the scene's depth; the other tabs, every other menu and "
+                          "play: nothing of it (no pass, no swapchains)"
+                        : "vrcam: openxr - hands over the panel: off - the panels lie over the hands");
+            }
+            g_cfg.handsOverPanels = want;
+        }
         skillwheel::Configure(wheelOn, g_cfg.laserHand, wheelOn ? f(L"skill_wheel_distance_m", 0.8f) : 0.8f, wheelOn ? f(L"skill_wheel_width_m", 0.8f) : 0.8f,
                               wheelOn && f(L"skill_panel_style", 0.0f) >= 0.5f ? 1 : 0, wheelOn ? f(L"skill_tiles_width_m", 0.9f) : 0.9f, ini,
                               g_cfg.headsetSettings);   // ([openxr] headset_settings with the tiles' look: the panel has the Settings tab)
@@ -6534,6 +6800,7 @@ bool Running() { return g_running.load(); }
 float LeanM() { return g_cfg.leanM; }
 void HoldBody() { g_bodyHeldAt.store(GetTickCount64()); }
 bool ByTurns() { return g_cfg.on && g_cfg.byTurns; }
+void SetReplayAtStart(bool in) { g_replayAtStart.store(in); }
 bool StopPending() { return g_stopWanted.load() && g_state.load() != kIdle; }
 void Recenter() { g_recentre.store(true); }
 void SetLaserWanted(bool menus) { g_laserWanted.store(menus); }
@@ -6633,6 +6900,28 @@ bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     ReleaseSRWLockExclusive(&g_lock);
     g_clock.begin = UsNow() - b0;
     return ok;
+}
+
+bool VisibilityMask(int eye, VisMask* out) {   // [render] lens_mask: any thread
+    if (eye < 0 || eye > 1 || !out) return false;
+    AcquireSRWLockShared(&g_visLock);
+    *out = g_vis[eye];
+    ReleaseSRWLockShared(&g_visLock);
+    return !out->idx.empty();
+}
+const char* RuntimeName() { return g_runtimeName; }
+
+bool PairLens(int eye, EyeLens* out) {   // [render] foveated: the draw thread, after BeginPair (OpenFrame wrote them)
+    if (eye < 0 || eye > 1 || g_kind != kPair || !g_viewsOk || g_pairMode != kViewsHead || !g_lens[eye].ok) return false;
+    *out = g_lens[eye];
+    out->gazeAvail = g_gazeSys && g_gazeSpace;
+    out->gazeOk = false;
+    if (g_gazeOk) {   // the gaze's straight-ahead, turned into the frame this eye is drawn in
+        const XrQuaternionf& q = g_lensQ[eye];
+        const XrVector3f d = Rot({-q.x, -q.y, -q.z, q.w}, Rot(g_gazeQ, {0.0f, 0.0f, -1.0f}));
+        if (d.z < -1e-3f && std::isfinite(d.x) && std::isfinite(d.y)) { out->gaze[0] = d.x / -d.z; out->gaze[1] = d.y / -d.z; out->gazeOk = true; }
+    }
+    return true;
 }
 
 bool PairEyes(Eyes* out) {
@@ -7159,6 +7448,134 @@ void TurnFinish() {
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+// [openxr] hands_over_panels: this present's depth, for the eye copied next (SetNearDepth) - under g_turnLock as the turn path's.
+struct NearIn {
+    ID3D12Resource* res = nullptr;
+    DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN;
+    float scale[2] = {1, 1};
+    float nearPlane = 0, upm = 1;
+    bool ok = false;
+};
+NearIn g_nearIn;
+
+bool NearOverlayWanted() {   // (only while the skill panel is up on its Gestures tab - vr/near_overlay.h Wanted)
+    return nearoverlay::Wanted(g_cfg.handsOverPanels, g_session != XR_NULL_HANDLE, g_kind == kPair, viewgate::F4(), skillwheel::GesturesTabOpen());
+}
+
+// [openxr] hands_over_panels: what the pass cost while the Gestures tab was up - every 10 s while it runs, and once as it stops (the CPU time of the pass on
+// the present, both eyes; the headset's frames in that time - compare with the key at 0 to see the GPU's share: our own timestamps under-read).
+void NearCostTick(bool ran, double passUs) {
+    NearCost& c = g_nearCost;
+    const double now = UsNow();
+    if (!ran && c.since <= 0) { c.frames = 0; return; }   // (idle: nothing counted)
+    if (ran) {
+        if (c.since <= 0) c.since = now;
+        c.passUs += passUs;
+        ++c.passes;
+    }
+    const bool due = c.since > 0 && (now - c.since >= 10e6 || (!ran && c.passes > 0));
+    if (!due) return;
+    const double secs = (now - c.since) / 1e6;
+    const Chain& e = g_eyeChain[0];
+    LogF("vrcam: openxr - hands over the Gestures tab cost: %u passes in %.1f s (%.0f a second), %.0f us CPU each on the present; two "
+         "swapchains %ux%u held; %.0f headset frames a second meanwhile (compare with hands_over_panels=0 for the GPU's share)%s",
+         c.passes, secs, c.passes / std::max(secs, 0.001), c.passes ? c.passUs / c.passes : 0.0, e.w, e.h,
+         c.frames / std::max(secs, 0.001), ran ? "" : " - stopped (the tab closed)");
+    c = NearCost{};
+    if (ran) c.since = now;
+}
+
+void SetNearDepth(void* resource, uint32_t viewFormat, float scaleX, float scaleY, float nearPlane, float upm) {
+    AcquireSRWLockExclusive(&g_turnLock);
+    g_nearIn = NearIn{(ID3D12Resource*)resource, (DXGI_FORMAT)viewFormat, {scaleX, scaleY}, nearPlane, upm, resource != nullptr && nearPlane > 0.0f && upm > 0.0f};
+    ReleaseSRWLockExclusive(&g_turnLock);
+}
+
+// The eye just copied (its back buffer `bb` still in PRESENT): its near pixels - nearer than the panel by this present's depth - into its near swapchain,
+// premultiplied, alpha the mask (vr/near_overlay.cpp). Under g_lock, from CopyEye.
+void NearMakeLocked(int eye, ID3D12Resource* bb) {
+    if (eye == 1) ++g_nearCost.frames;
+    if (!NearOverlayWanted()) {
+        g_nearMade[0] = g_nearMade[1] = false;
+        if (eye == 1) NearCostTick(false, 0.0);
+        return;
+    }
+    const double costT0 = UsNow();
+    AcquireSRWLockExclusive(&g_turnLock);
+    const NearIn din = g_nearIn;
+    g_nearIn.ok = false;   // (one present's)
+    ReleaseSRWLockExclusive(&g_turnLock);
+    static int told = -1;
+    const int state = din.ok ? 1 : 0;
+    if (state != told) {   // (a word when the depth comes or goes)
+        told = state;
+        LogF("vrcam: openxr - hands over the panel: %s", din.ok ? "the scene's depth is there - what is nearer than the panel is drawn over it ([openxr] hands_over_panels)"
+                                                               : "no scene depth this present - the panel lies over the hands as before");
+    }
+    if (!din.ok) return;
+    std::string why;
+    if (!g_nearPass.Init(g_dev, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, &why)) {
+        static bool failTold = false;
+        if (!failTold) { failTold = true; LogF("vrcam: openxr - hands over the panel: the pass could not be made (%s) - the panel lies over the hands", why.c_str()); }
+        return;
+    }
+    const Chain& c = g_eyeChain[eye];
+    HudOut& o = g_nearOut[eye];
+    if (!EnsureHudOut(o, c.w, c.h, "hands over the panel")) return;
+    uint32_t idx = 0;
+    if (NextImage(o.sc, &idx, "hands over the panel") <= 0) return;
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    ID3D12GraphicsCommandList* l = OpenList();
+    if (!l || idx >= o.img.size()) { xrReleaseSwapchainImage(o.sc, &ri); return; }
+    const D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    rtv.ptr += (SIZE_T)(o.rtv0 + (int)idx) * g_rtvInc;
+    nearoverlay::Params p;
+    p.ox = (int)c.sx;
+    p.oy = (int)c.sy;
+    p.pictureW = (float)bd.Width;
+    p.pictureH = (float)bd.Height;
+    p.depthScale[0] = din.scale[0];
+    p.depthScale[1] = din.scale[1];
+    p.nearPlane = din.nearPlane;
+    p.upm = din.upm;
+    p.maxM = nearoverlay::MaxFor(g_cfg.nearPanelM);
+    p.decodeSrgb = nearoverlay::IsSrgb((DXGI_FORMAT)c.fmt);   // (the eye's swapchain shows the picture as sRGB: the same here)
+    D3D12_RESOURCE_BARRIER b = Tr(bb, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    l->ResourceBarrier(1, &b);
+    const bool drawn = g_nearPass.Record(l, bb, nearoverlay::PictureView(bd.Format), din.res, din.view, rtv, c.w, c.h, p);
+    b = Tr(bb, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_PRESENT);
+    l->ResourceBarrier(1, &b);
+    SubmitList();
+    g_nearFence = g_fenceV;   // (the pass's pipeline is let go only once the GPU is past this: FreeIdle)
+    xrReleaseSwapchainImage(o.sc, &ri);
+    o.usedAt = GetTickCount64();
+    g_nearMade[eye] = drawn;
+    static double pairUs = 0;   // (both eyes' pass, one tick a frame)
+    pairUs = eye == 0 ? UsNow() - costT0 : pairUs + (UsNow() - costT0);
+    if (eye == 1) NearCostTick(true, pairUs);
+}
+
+// The near pixels hung over the skill panel: a projection layer of both eyes' near images, with the eyes' own poses, fovs and parts (`eyes`), blended
+// by its alpha. Only while wanted and both eyes have one. (In the file's unnamed namespace, where CloseFrame declares it.)
+namespace {
+uint32_t HangNear(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerProjectionView eyes[2],
+                  XrCompositionLayerProjection& proj, XrCompositionLayerProjectionView pv[2]) {
+    if (nl >= max || !NearOverlayWanted() || !g_nearMade[0] || !g_nearMade[1] || !g_nearOut[0].sc || !g_nearOut[1].sc) return nl;
+    for (int e = 0; e < 2; ++e) {
+        pv[e] = eyes[e];
+        pv[e].subImage.swapchain = g_nearOut[e].sc;   // (the same size as the eye's: the same part of it)
+    }
+    proj = XrCompositionLayerProjection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+    proj.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    proj.space = g_space;
+    proj.viewCount = 2;
+    proj.views = pv;
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&proj;
+    return nl;
+}
+}  // namespace
+
 void CopyEye(int eye, ID3D12Resource* bb) {
     if (g_kind != kPair || !bb || eye < 0 || eye > 1 || g_copied[eye] || DeviceLost()) return;
     AcquireSRWLockExclusive(&g_lock);
@@ -7171,6 +7588,7 @@ void CopyEye(int eye, ID3D12Resource* bb) {
                                                                   g_fovUsed[eye].angleDown);   // [headset_shot] grid: this image's edges
         g_copied[eye] = CopyInto(g_eyeChain[eye], bb);
         g_cropped[eye] = cropNow && g_copied[eye];
+        if (g_copied[eye]) NearMakeLocked(eye, bb);   // [openxr] hands_over_panels: its near pixels, while the skill panel is up
         if (g_cropped[eye]) {
             g_cropFov[eye] = {atanf(crop.tan.l), atanf(crop.tan.r), atanf(crop.tan.u), atanf(crop.tan.d)};
             if (!g_cropTold && eye == 1) {
