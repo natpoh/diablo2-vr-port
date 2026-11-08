@@ -594,6 +594,8 @@ struct Settings {
     std::atomic<float> tableHeightM{0.0f};  // [table] height_m: the game's ground this far above the room's floor (0 = on the floor, ~0.75 = a table)
     std::atomic<float> tableAheadM{1.0f};
     std::atomic<float> tableBounds{1.0f};
+    std::atomic<bool>  tableFull{false};     // [table] full_width: F3 not cut at the board's edge - the world as far as drawn, the game's own dome and fog round it (TableFull)
+    std::atomic<int>   tableDistance{0};     // [table] draw_distance: F3's own Draw distance stop (shared/draw_distance.h ViewStop), 0 = the shared keys
     std::atomic<int>   tablePlace{0};
     std::atomic<float> tableTurnDeg{0.0f};  // [table] turn: the world turned about the hero on the board, degrees (45: its grid square to the board)       // [table] place: the settings program's "put the game in front of me" button, one more per press   // [table] bounds: the diorama is the ground the game's own view shows, times this; 0 = no edge   // [table] ahead_m: the hero this far ahead of where the head is when the view is taken (F5, F11)
     std::atomic<float> thirdHeight{6.5f};   // third person: the eye point above the ground

@@ -490,6 +490,10 @@ table.hero_cm.label = Tamanho: altura do herói no chão, cm
 table.hero_cm.tip = F3 põe o jogo no chão da sua sala e você olha para ele de cima, andando ao redor. Este é o tamanho dele: quão alto o herói fica. O campo inteiro cresce e encolhe com ele. Cerca de 180 = tamanho real.
 table.place.label = Pôr o jogo à minha frente (F11)
 table.place.tip = Põe o jogo no chão de novo à frente de onde você está e olha, na distância abaixo - como F11 no jogo. Fique em pé, reto: o chão é encontrado pela sua altura no BodyWalk.
+table.full_width.label = Largura total: o céu e a névoa do próprio jogo ao redor do jogo
+table.full_width.tip = O F3 não é cortado na borda do tabuleiro: o mundo até onde é desenhado, com a cúpula de céu do próprio jogo ao redor e a névoa do próprio jogo sobre o chão distante, como no F4 (na aba Sky, "Sky drawn by", e na aba World, a névoa, devem ser as do jogo). A cor de fundo não é usada então, portanto sem passthrough / chroma key. Até onde, define o F3 draw distance abaixo. Na hora. Desligado = o tabuleiro com sua borda, como antes.
+table.draw_distance.label = Distância de desenho do F3 (0 = como as outras vistas)
+table.draw_distance.tip = Até onde o mundo é desenhado ao redor do herói no F3, perto (1) a longe (8): os anéis de salas, o raio dos modelos, a cúpula de céu do jogo nessa borda e sua névoa logo antes - os passos do controle Draw distance, medidos ao redor do herói. Visto de cima, os ladrilhos do chão precisam chegar à névoa por todos os lados, por isso o F3 desenha mais anéis de salas que o mesmo passo em outras vistas (2, 2, 3, 3, 4, 5, 7, 8). Só enquanto o F3 é a vista: o F4 e as outras vistas mantêm a própria distância. Mais longe custa CPU. Na hora. 0 = F3 tão longe quanto as outras vistas, como antes.
 table.bounds.label = Tamanho do diorama (1 = tudo o que o jogo mostra)
 table.bounds.tip = O jogo no chão termina onde terminaria a visão de cima do próprio jogo: 1 = o mesmo terreno do monitor, mais mostra mais ao redor do herói, menos um tabuleiro menor. 0 = sem borda, o mundo até onde é desenhado. Uma parede na borda é mantida inteira: o que conta é o terreno sob ela.
 table.turn.label = Girar o mapa, graus
@@ -4101,6 +4105,7 @@ status.layer_warn.toolkit.how = marque "Disable OpenXR Toolkit" no OpenXR Toolki
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = Visão
+vr.hset.page.f3 = F3
 vr.hset.page.options = Opções
 vr.hset.page.video = Vídeo
 vr.hset.page.render = Renderização
@@ -4153,6 +4158,10 @@ vr.hset.turn.speed.label = Velocidade do giro suave
 vr.hset.turn.speed.detail = Graus por segundo, com o giro suave ligado
 vr.hset.game.players.label = Jogadores (dificuldade)
 vr.hset.game.players.detail = Como /players: monstros mais fortes, mais experiência e itens
+vr.hset.table.full_width.label = Largura total
+vr.hset.table.full_width.detail = O céu e a névoa do jogo ao redor, sem borda
+vr.hset.table.draw_distance.label = Distância F3
+vr.hset.table.draw_distance.detail = Perto (1) - longe (8); 0 = como as outras vistas
 vr.hset.hud.low_hp_vignette.label = Pouca vida: vinheta vermelha
 vr.hset.hud.low_hp_vignette.detail = As bordas pulsam em vermelho com a vida baixa (F4)
 vr.hset.hud.low_hp_threshold.label = Liga abaixo de
@@ -5377,6 +5386,8 @@ vr.party.go = Grupo
 vr.party.back = Relay
 vr.hset.render.go = Renderização
 vr.hset.render.back = Vídeo
+vr.hset.f3.go = F3
+vr.hset.f3.back = Vista
 vr.hset.recentre = Recentralizar
 vr.hset.close = Fechar
 vr.hset.apply = Aplicar

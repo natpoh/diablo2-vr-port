@@ -490,6 +490,10 @@ table.hero_cm.label = Größe: Höhe des Helden auf dem Boden, cm
 table.hero_cm.tip = F3 legt das Spiel auf den Boden deines Raums, und du siehst von oben darauf und gehst darum herum. Das ist seine Größe: wie groß der Held steht. Das ganze Feld wächst und schrumpft mit ihm. Etwa 180 = Lebensgröße.
 table.place.label = Spiel vor mich stellen (F11)
 table.place.tip = Stellt das Spiel wieder vor dich hin, wo du stehst und hinschaust, im Abstand darunter - wie F11 im Spiel. Steh gerade: Der Boden wird aus deiner Größe in BodyWalk gefunden.
+table.full_width.label = Volle Breite: der eigene Himmel und Nebel des Spiels rund um das Spiel
+table.full_width.tip = F3 wird nicht am Rand des Bretts abgeschnitten: die Welt so weit, wie sie gezeichnet wird, rundum mit der eigenen Himmelskuppel des Spiels und dem eigenen Nebel des Spiels über dem fernen Boden, wie in F4 (auf dem Sky-Tab muss bei „Sky drawn by" und auf dem World-Tab bei der Nebelwahl das Spiel stehen). Die Hintergrundfarbe wird dann nicht benutzt, also kein Passthrough / Chroma-Key. Wie weit, bestimmt F3 draw distance unten. Sofort. Aus = das Brett mit seinem Rand, wie bisher.
+table.draw_distance.label = F3-Sichtweite (0 = wie die anderen Ansichten)
+table.draw_distance.tip = Wie weit um den Helden die Welt in F3 gezeichnet wird, nah (1) bis fern (8): die Raumringe, der Radius der Modelle, die Himmelskuppel des Spiels an diesem Rand und sein Nebel kurz davor - die Stufen des Draw-distance-Reglers, um den Helden gemessen. Von oben gesehen müssen die Bodenkacheln rundum bis zum Nebel reichen, daher zeichnet F3 mehr Raumringe als dieselbe Stufe anderswo (2, 2, 3, 3, 4, 5, 7, 8). Nur solange F3 die Ansicht ist: F4 und die anderen Ansichten behalten ihre eigene Weite. Weiter kostet CPU. Sofort. 0 = F3 so weit wie die anderen Ansichten, wie bisher.
 table.bounds.label = Diorama-Größe (1 = so viel, wie das Spiel zeigt)
 table.bounds.tip = Das Spiel auf dem Boden endet dort, wo die eigene Ansicht des Spiels von oben enden würde: 1 = derselbe Boden wie am Monitor, mehr zeigt mehr um den Helden, weniger ein kleineres Brett. 0 = kein Rand, die Welt so weit, wie sie gezeichnet wird. Eine Wand am Rand bleibt ganz: Was zählt, ist der Boden darunter.
 table.turn.label = Karte drehen, Grad
@@ -4101,6 +4105,7 @@ status.layer_warn.toolkit.how = hake "Disable OpenXR Toolkit" in OpenXR Toolkit 
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = Ansicht
+vr.hset.page.f3 = F3
 vr.hset.page.options = Optionen
 vr.hset.page.video = Video
 vr.hset.page.render = Render
@@ -4153,6 +4158,10 @@ vr.hset.turn.speed.label = Tempo weiches Drehen
 vr.hset.turn.speed.detail = Grad pro Sekunde, solange weiches Drehen an ist
 vr.hset.game.players.label = Spieler (Schwierigkeit)
 vr.hset.game.players.detail = Wie /players: härtere Monster, mehr Erfahrung und Beute
+vr.hset.table.full_width.label = Volle Breite
+vr.hset.table.full_width.detail = Himmel und Nebel des Spiels rundum, kein Rand
+vr.hset.table.draw_distance.label = F3-Sichtweite
+vr.hset.table.draw_distance.detail = Nah (1) - fern (8); 0 = wie die anderen Ansichten
 vr.hset.hud.low_hp_vignette.label = Wenig Leben: rote Vignette
 vr.hset.hud.low_hp_vignette.detail = Die Ränder pochen rot, solange dein Leben niedrig ist (F4)
 vr.hset.hud.low_hp_threshold.label = Beginnt unter
@@ -5377,6 +5386,8 @@ vr.party.go = Gruppe
 vr.party.back = Relay
 vr.hset.render.go = Render
 vr.hset.render.back = Video
+vr.hset.f3.go = F3
+vr.hset.f3.back = Ansicht
 vr.hset.recentre = Ansicht neu zentrieren
 vr.hset.close = Schließen
 vr.hset.apply = Übernehmen

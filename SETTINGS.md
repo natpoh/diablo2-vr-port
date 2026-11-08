@@ -230,7 +230,16 @@ and towns. Visual only, live.
 - **F3 The game on your floor** - the size of the diorama, *Put the game in
   front of me*, its turn, height and distance, the background round it. On
   native OpenXR it lies on the headset's own floor, wherever you stand, and
-  the headset's recentre puts it down again in front of you.
+  the headset's recentre puts it down again in front of you. *Full width*
+  (`[table] full_width`) drops the board's edge and the keyed background:
+  the world as far as it is drawn, with the game's own sky dome and fog
+  round it, as in F4 (no passthrough then). *F3 draw distance*
+  (`[table] draw_distance`, 1-8, 0 = as the other views) is F3's own stop of
+  the Draw distance slider - rings, models, dome and fog, measured round the
+  hero, with enough room rings that the tiles seen from above reach the fog
+  all round (2, 2, 3, 3, 4, 5, 7, 8) - read only while F3 is the view; F4
+  keeps its own distance. Both are in the headset too, in VR F3: the
+  settings panel's View page > *F3* button.
 
 ## Body
 

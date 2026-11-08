@@ -34,6 +34,9 @@ int main(int argc, char** argv) {
         for (int k = 2; k <= 4; k += 2) { v.view = k; CHECK(!*ViewWhyNot(v)); }                 // VR F2, F4
         v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // VR F1
         v.view = 3; CHECK(std::strstr(ViewWhyNot(v), "table") != nullptr);                      // VR F3
+        v.tableFull = true; CHECK(!*ViewWhyNot(v));                                             // ... with [table] full_width: the dome round it
+        v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // (VR F1 still not)
+        v.tableFull = false;
         v.view = 2; v.enabled = false; CHECK(std::strstr(ViewWhyNot(v), "F12") != nullptr);
         v.vr = false; v.enabled = true; v.gameDrawnFlat = true;
         for (int k = 2; k <= 3; ++k) { v.view = k; CHECK(!*ViewWhyNot(v)); }                    // flat F2, F3

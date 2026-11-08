@@ -4,6 +4,8 @@
 
 #include <atomic>
 
+namespace drawdistance { struct Stop; }
+
 namespace vrc {
 
 extern std::atomic<int> g_view;         // while on: 1 first person, 2 third person (F12 goes round)
@@ -27,6 +29,11 @@ bool EffectsPaused();     // the sky, the fog and the cave ceiling stop for it i
 bool TableView();         // VR F3, the game on the floor
 bool TopPersp();          // VR F1 through our camera
 bool Overhead();          // TableView or TopPersp
+bool TableFull();         // VR F3 with [table] full_width: no board edge, the game's own dome and fog
+int RingsNow();           // [render] rings, or F3's own Draw distance stop ([table] draw_distance) while F3 is the view
+float ModelRadiusNow();   // [render] model_radius, likewise
+float GameSkyRadiusNow(); // [sky] game_sky_radius_m in world units, likewise
+const drawdistance::Stop* ViewDistanceStop();   // F3's own Draw distance stop while F3 is the view, nullptr: the shared keys
 int ArmsMode();
 bool MouseLookForView();
 bool ClassicNow();        // the interface in the picture (not taken out for FlatVR)

@@ -433,6 +433,7 @@ struct World {
         if (hset::HasSubRow(page) && page != hset::SubFirst(page)) s = ClickSheet(hset::kSubBtn(page - hset::SubFirst(page), hset::SubCount(page)));   // (World's, Controls' buttons)
         if (page == hset::kPageParty) s = ClickSheet(hset::kPreviewBtn);   // the Co-op page's Party button (Party is that tab's second page)
         if (page == hset::kPageRender) s = ClickSheet(hset::kPreviewBtn);  // the Video page's Render button (Render is that tab's second page)
+        if (page == hset::kPageF3) s = ClickSheet(hset::kPreviewBtn);      // the View page's F3 button (F3 is that tab's second page; VR F3 and view 0)
         return s;
     }
     void Run(int frames) {
@@ -1221,6 +1222,7 @@ static void TestPaint(const char* dumpDir) {
     w.host.party = SampleRoster();   // the Party page shows a game's roster
     std::vector<uint32_t> pages[hset::kMaxPages];
     for (int p = 0; p < hset::PageCount(); ++p) {
+        if (!hset::PageShown(p, w.c.SettingsModel().View())) continue;   // (F3's page in this F4 rig: its picture in the VR F3 walk below)
         w.ClickPage(p);
         CHECK(w.c.SettingsModel().page == p);
         pages[p] = Paint(w.c.ViewNow());
@@ -1384,8 +1386,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 23 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(22, 1) == 22 && FlipTo(22, -1) == 21 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 24 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(23, 1) == 23 && FlipTo(23, -1) == 22 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1911,39 +1913,40 @@ static void TestFlipController() {
         Flick(w, 1.0f);
         CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().page == hset::kPageView && w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageOptions && w.c.FlipPlace() == 2);
+        // (place 2, the View tab's second page F3, is VR F3's only: this F4 walk passes over it)
+        CHECK(w.c.SettingsModel().page == hset::kPageOptions && w.c.FlipPlace() == 3);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageVideo && w.c.FlipPlace() == 3);
+        CHECK(w.c.SettingsModel().page == hset::kPageVideo && w.c.FlipPlace() == 4);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageRender && w.c.FlipPlace() == 4);   // the Video tab's second page (Render): a flick passes it too
+        CHECK(w.c.SettingsModel().page == hset::kPageRender && w.c.FlipPlace() == 5);   // the Video tab's second page (Render): a flick passes it too
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 5);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysL && w.c.FlipPlace() == 6);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 6);
+        CHECK(w.c.SettingsModel().page == hset::kPageKeysR && w.c.FlipPlace() == 7);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 7);
+        CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 8);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 8);
+        CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 9);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 9);
+        CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 10);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 10);
+        CHECK(w.c.SettingsModel().page == hset::kPageLook && w.c.FlipPlace() == 11);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 11);
+        CHECK(w.c.SettingsModel().page == hset::kPageBody && w.c.FlipPlace() == 12);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 12);
+        CHECK(w.c.SettingsModel().page == hset::kPageBelt && w.c.FlipPlace() == 13);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 13);
+        CHECK(w.c.SettingsModel().page == hset::kPageMelee && w.c.FlipPlace() == 14);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && w.c.FlipPlace() == 14);   // the Melee tab's second page
+        CHECK(w.c.SettingsModel().page == hset::kPageMeleeAttack && w.c.FlipPlace() == 15);   // the Melee tab's second page
         for (int i = 0; i < hset::kWorldPages; ++i) {   // the World tab's four pages, one flick each
             Flick(w, 1.0f);
-            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 15 + i);
+            CHECK(w.c.SettingsModel().page == hset::kPageWorld + i && w.c.FlipPlace() == 16 + i);
         }
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 19);
+        CHECK(w.c.SettingsModel().page == hset::kPageCoop && w.c.FlipPlace() == 20);
         Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 20);   // the Party page (the Co-op tab's second page): a flick passes it too
+        CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 21);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);   // the strike statistics' tab
         Flick(w, 1.0f);
@@ -1963,12 +1966,12 @@ static void TestFlipController() {
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
-        CHECK(w.c.FlipPlace() == 6 && w.c.SettingsModel().page == hset::kPageKeysR);
+        CHECK(w.c.FlipPlace() == 7 && w.c.SettingsModel().page == hset::kPageKeysR);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
-        CHECK(w.c.FlipPlace() == 4 && w.c.SettingsModel().page == hset::kPageRender);
+        CHECK(w.c.FlipPlace() == 5 && w.c.SettingsModel().page == hset::kPageRender);
         Flick(w, -1.0f);
-        CHECK(w.c.FlipPlace() == 3 && w.c.SettingsModel().page == hset::kPageVideo);
+        CHECK(w.c.FlipPlace() == 4 && w.c.SettingsModel().page == hset::kPageVideo);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
@@ -1981,11 +1984,11 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 1);
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageVideo)));
         w.ClickSheet(SliderAtSide(2560));
-        CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 3);
+        CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 1 + hset::kPageVideo);
         Flick(w, 1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
-        CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 2);
+        CHECK(w.c.SettingsModel().Dirty() && w.c.FlipPlace() == 1 + hset::kPageOptions);
     }
     {   // one flick = one page: held over, dead zone, re-arm
         World w;
@@ -2004,7 +2007,7 @@ static void TestFlipController() {
         w.Next();
         Stick(w, 1, 1.0f, 0.0f);
         w.Next();
-        CHECK(w.c.FlipPlace() == 2);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
         Stick(w, 1, 0.0f, 0.0f);
         w.Next();
         // not far enough, and up / down: nothing
@@ -2014,13 +2017,13 @@ static void TestFlipController() {
         w.Run(5);
         Stick(w, 1, 0.7f, 0.9f);
         w.Run(5);
-        CHECK(w.c.FlipPlace() == 2);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
         // the flip's tick
         Stick(w, 1, 0.0f, 0.0f);
         w.Next();
         Stick(w, 1, 1.0f, 0.0f);
         const Step s = w.Next();
-        CHECK(s.feedback == Feedback::Hover && w.c.FlipPlace() == 3);
+        CHECK(s.feedback == Feedback::Hover && w.c.FlipPlace() == 1 + hset::kPageVideo);
     }
     {   // a stick pushed as the window opens (the player was turning) is not a flick
         World w;
@@ -2076,7 +2079,7 @@ static void TestFlipController() {
         Tap(w, 1);
         CHECK(w.c.FlipPlace() == 1);
         Tap(w, 1);
-        CHECK(w.c.FlipPlace() == 2);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
         Tap(w, 0);
         CHECK(w.c.FlipPlace() == 1);
         Tap(w, 0);
@@ -2310,6 +2313,7 @@ static void TestViews() {
         const bool flat = view >= 1 && view <= 3;
         for (int p : bodyPages) CHECK(PageShown(p, view) == !flat);
         for (int p : allPages) CHECK(PageShown(p, view));
+        CHECK(PageShown(kPageF3, view) == (view == 0 || view == 3));   // F3's page ([table] full_width, draw_distance): VR F3 only (0: Settings' own)
         int tabs = 0;
         for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
         CHECK(tabs == (flat ? 7 : 15));   // View, Options, Video, Controls, HUD, Co-op, Guide - or all fifteen (Stats is F4's: the touch counts there)
@@ -2329,7 +2333,8 @@ static void TestViews() {
         CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == 6 && RowsOn(kPageKeysR, view) == 6);
         for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
         // the flips: Skills and the pages shown (Party with it, while it is on)
-        CHECK(FlipCount(view) == (flat ? 10 : kFlipPlaces) && FlipCount(view, false) == (flat ? 9 : kFlipPlaces - 1));
+        const int f3Page = view == 0 || view == 3 ? 1 : 0;   // (F3's page: VR F3 only, and 0)
+        CHECK(FlipCount(view) == (flat ? 10 : kFlipPlaces - 1) + f3Page && FlipCount(view, false) == (flat ? 9 : kFlipPlaces - 2) + f3Page);
     }
     // Controls: one tab, two pages, a button each on top
     CHECK(TabOf(kPageKeysL) == TabOf(kPageKeysR) && TabPage(kTabControls) == kPageKeysL && !std::strcmp(kTabNames[kTabControls], "Controls") && HasSubRow(kPageKeysR));
@@ -2379,11 +2384,29 @@ static void TestViews() {
         CHECK((s.take[1] & di::kTakeTrigger) && (s.take[0] & di::kTakeStick));   // the window has the hands, as in F4
         w.ClickTab(1);
         CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().View() == view && w.c.SettingsModel().page == kPageView);
-        CHECK(w.c.ViewNow().flipCount == 10 && w.c.ViewNow().flipAt == 1);
-        const int along[] = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
-        for (size_t i = 1; i < sizeof along / sizeof along[0]; ++i) {
+        const bool f3 = view == 3;   // VR F3: the View tab's second page, F3 ([table] full_width, draw_distance), comes next
+        CHECK(w.c.ViewNow().flipCount == (f3 ? 11 : 10) && w.c.ViewNow().flipAt == 1);
+        const std::vector<uint32_t> viewPic = Paint(w.c.ViewNow());
+        std::vector<int> along = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
+        if (f3) along.insert(along.begin() + 1, kPageF3);
+        for (size_t i = 1; i < along.size(); ++i) {
             Flick(w, 1.0f);
             CHECK(w.c.SettingsModel().page == along[i] && w.c.ViewNow().flipAt == (int)i + 1);
+            if (along[i] == kPageF3) CHECK(Paint(w.c.ViewNow()) != viewPic);   // its own picture: the two rows
+        }
+        if (f3) {   // the View page's F3 button opens it, its View button goes back
+            w.ClickSheet(hset::TabRect(hset::TabOf(kPageView), view));
+            CHECK(w.c.SettingsModel().page == kPageView);
+            w.ClickSheet(hset::kPreviewBtn);
+            CHECK(w.c.SettingsModel().page == kPageF3);
+            w.ClickSheet(hset::kPreviewBtn);
+            CHECK(w.c.SettingsModel().page == kPageView);
+            w.ClickPage(kPageGuide);
+        } else {   // ... and in F1 / F2 no F3 button: the View page stays
+            w.ClickSheet(hset::TabRect(hset::TabOf(kPageView), view));
+            w.ClickSheet(hset::kPreviewBtn);
+            CHECK(w.c.SettingsModel().page == kPageView);
+            w.ClickPage(kPageGuide);
         }
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == kPageGuide && w.c.Open());   // the end
@@ -2419,7 +2442,7 @@ static void TestViews() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces);
+        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces - 1);
         w.ClickSheet(kTab(TabOf(kPageMelee)));
         CHECK(w.c.SettingsModel().page == kPageMelee);
     }

@@ -12,6 +12,7 @@
 #include "sky/sky_choice.h"
 #include "config/settings.h"
 #include "vrcam_internal.h"
+#include "../../shared/draw_distance.h"
 
 #include <cstdio>
 
@@ -21,8 +22,9 @@ static char g_case[256] = "";
 
 // ---- the made-up world (vrcam.cpp's names, as sky_choice.cpp reads them) ----
 static bool w_overhead = false, w_third = false, w_menuFlat = false, w_effectsPaused = false, w_gameView = true, w_gameFogBad = false,
-            w_gameFogActive = false;
+            w_gameFogActive = false, w_tableFull = false;
 static const char* w_skyCannot = nullptr;
+static const drawdistance::Stop* w_stop = nullptr;   // VR F3's own Draw distance stop ([table] draw_distance), nullptr: the shared keys
 namespace autotunerun { bool Forced(const wchar_t*, const wchar_t*, float*) { return false; } }   // (vrc::IniF: no Auto run here)
 namespace vrc {
 std::atomic<bool> g_enabled{true}, g_inWorld{true};
@@ -39,6 +41,10 @@ bool Overhead() { return w_overhead; }
 bool ThirdPerson() { return w_third; }
 bool MenuFlat() { return w_menuFlat; }
 bool EffectsPaused() { return w_effectsPaused; }
+std::atomic<bool> g_floorCamOk{false};
+std::atomic<float> g_floorEyeH{0.0f};
+bool TableFull() { return w_tableFull; }   // VR F3 with [table] full_width
+const drawdistance::Stop* ViewDistanceStop() { return w_stop; }
 // (vrcam.cpp's log: not called by the choice)
 void Log(const char*) {}
 void LogF(const char*, ...) {}
@@ -48,7 +54,7 @@ int main() {
     using namespace vrc;
     int cases = 0;
     // every combination of what the answers read
-    for (int bits = 0; bits < (1 << 19); ++bits) {
+    for (int bits = 0; bits < (1 << 20); ++bits) {
         auto b = [&](int i) { return ((bits >> i) & 1) != 0; };
         g_set.gameSky.store(b(0));
         g_set.gameFog.store(b(1));
@@ -70,6 +76,7 @@ int main() {
         w_overhead = b(16);
         w_third = b(17);
         w_effectsPaused = w_menuFlat = b(18);
+        w_tableFull = b(19) && w_overhead && w_third;   // (VR F3 is from above and counts as third person)
         g_enabled.store(true);
         g_inWorld.store(true);
         std::snprintf(g_case, sizeof g_case, "bits %05X", bits);
@@ -84,13 +91,23 @@ int main() {
         if (w_gameFogActive) CHECK(!fx::FogWanted());
         if (gameFogHolds && !g_arcaneSky.load()) CHECK(!fx::FogWanted());
         // 3. unable for good: ours instead
-        if (g_set.gameSky.load() && w_skyCannot && g_skyPalette.load() >= 0) CHECK(fx::OurSkyWanted());
-        if (!g_set.gameSky.load()) CHECK(fx::OurSkyWanted() == (g_skyPalette.load() >= 0));
+        if (g_set.gameSky.load() && w_skyCannot && g_skyPalette.load() >= 0 && !w_tableFull) CHECK(fx::OurSkyWanted());
+        if (!g_set.gameSky.load() && !w_tableFull) CHECK(fx::OurSkyWanted() == (g_skyPalette.load() >= 0));
         CHECK((fogCannot != nullptr) == (!w_gameView || w_gameFogBad));
         if (fx::OurFogWanted() && !w_gameFogActive && (!g_set.gameFog.load() || fogCannot || g_arcaneSky.load())) CHECK(fx::FogWanted());
         // 4. ... none under a flat menu in VR
         if (w_effectsPaused) { CHECK(!fx::OurFogWanted()); CHECK(!fx::FogWanted()); CHECK(!fx::CeilWanted()); }
         if (w_overhead) { CHECK(!fx::OurFogWanted()); }
+        // 8. VR F3 full width ([table] full_width): only the game's dome and the game's fog pass - nothing of our post pass, not even in
+        //    their place; the game's fog wanted there exactly as it would be in F4 (the same area, choice and menu)
+        if (w_tableFull) {
+            CHECK(!fx::OurSkyWanted()); CHECK(!fx::FogWanted()); CHECK(!fx::OurFogWanted()); CHECK(!fx::GameSkyFixWanted());
+            CHECK(!fx::CeilWanted()); CHECK(!fx::GameCeilWanted());
+            const bool here = fx::GameFogWanted();
+            w_overhead = w_third = w_tableFull = false;
+            CHECK(fx::GameFogWanted() == here);
+            w_overhead = w_third = w_tableFull = true;
+        } else if (w_overhead) CHECK(!fx::GameFogWanted());   // (from above, the board as before: no fog at all)
         // 5. the ceiling: from inside, on its biomes
         if (w_third) { CHECK(!fx::CeilWanted()); CHECK(!fx::GameCeilWanted()); }
         if (!g_ceilBiome.load()) CHECK(!fx::CeilWanted());
@@ -129,6 +146,21 @@ int main() {
     CHECK(!fx::OurFogWanted()); CHECK(!fx::FogWanted()); CHECK(!fx::CeilWanted()); CHECK(!fx::GameCeilWanted());
     g_inWorld.store(true);
     CHECK(fx::CeilWanted()); CHECK(fx::GameCeilWanted());
+
+    // 8. VR F3's own Draw distance: its stop's fog for the game's fog, measured round the hero from the head over him
+    g_underground.store(false); g_arcaneArea.store(false); g_set.arcaneOwnFog.store(false);
+    std::snprintf(g_case, sizeof g_case, "F3 draw distance");
+    w_stop = drawdistance::ViewStop(3);
+    w_tableFull = false;
+    CHECK(fx::GameFogNumbersNow().start == w_stop->fogStart && fx::GameFogNumbersNow().end == w_stop->fogEnd);   // (the board: no fog shown anyway)
+    w_tableFull = true; g_floorCamOk.store(true); g_floorEyeH.store(54.0f);
+    CHECK(fx::GameFogNumbersNow().start == drawdistance::FromEyeAbove(54.0f, w_stop->fogStart));
+    CHECK(fx::GameFogNumbersNow().end == drawdistance::FromEyeAbove(54.0f, w_stop->fogEnd));
+    g_underground.store(true);
+    CHECK(fx::GameFogNumbersNow().end == drawdistance::FromEyeAbove(54.0f, w_stop->cavesEnd));
+    w_stop = nullptr; g_underground.store(false); g_floorEyeH.store(0.0f);
+    CHECK(fx::GameFogNumbersNow().start == g_set.gameFogStart.load() && fx::GameFogNumbersNow().end == g_set.gameFogEnd.load());   // 0: the shared keys
+    w_tableFull = false;
 
     std::printf("sky_choice_test: %d cases, %d checks, %d failed\n", cases, g_checks, g_fail);
     return g_fail ? 1 : 0;

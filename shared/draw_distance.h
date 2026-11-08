@@ -58,6 +58,28 @@ inline int Nearest(float modelRadius) {
     return best;
 }
 
+// VR F3's own draw distance ([table] draw_distance, Serg 2026-11-08: "вернуть ползунок драв дистанс в режиме ф3, он нужен"): 0 = F3 draws as
+// far as the shared keys above say (as before), 1 ... kCount = that stop's rings, models' radius, dome and fog while F3 is the view. The
+// shared keys - and so VR F4 and the other views - are never written by it: the slider stays out of F4 (seeing farther than a player
+// from above is an advantage there). nullptr = the shared keys.
+inline const Stop* ViewStop(int stop) { return stop >= 1 && stop <= kCount ? &kStops[stop - 1] : nullptr; }
+// ... and its room rings. F3 is looked at from above, so the ground's tiles must be seen all round the hero (Serg 2026-11-08: "там
+// смотришь сверху и плитки надо чтобы было видно"): enough rings that the rooms reach the fog's full end wherever the hero stands in his
+// room. The kth ring ends at least k rooms past the hero's room edge. A room is 8 tiles of 5 cells, 2 world units a cell (the game's grid;
+// grabmove::kUnitsPerCell), 80 units outdoors - the smallest the game makes. Never fewer than the stop's own rings, at most [render]
+// rings' 8. Stops 1-8: 2, 2, 3, 3, 4, 5, 7, 8 rings.
+inline constexpr float kUnitsPerCell = 2.0f;
+inline constexpr float kRoomUnits = 8.0f * 5.0f * kUnitsPerCell;
+inline constexpr int kMaxRings = 8;
+inline int FromAboveRings(const Stop& s) {
+    const int k = (int)std::ceil(s.fogEnd / kRoomUnits - 1e-4f);
+    return k < s.rings ? s.rings : k > kMaxRings ? kMaxRings : k;
+}
+// The fog's distances are the eye's. In F4 the eye is the hero's, so a stop's fog lies round him; in F3 the eye is the head high over the
+// diorama ([table] hero_cm: the smaller the hero, the more world units it is above him), and the same numbers fogged the hero himself. A
+// ring r round the hero, seen from `heightAbove` over him, is this far from the eye: the stop's ring kept round the hero, as in F4.
+inline float FromEyeAbove(float heightAbove, float r) { return std::sqrt(heightAbove * heightAbove + r * r); }
+
 // The two domes' radii are set in metres (Serg, 2026-10-31: "тут радиус в метрах, а не единицах"): [sky] game_sky_radius_m and
 // game_dome_caves_radius_m, the game's world units at kUnitsPerMetre - the mod's own world units a metre at the hero's size (melee_touch's
 // and melee_boxes' upm; Serg's live scale, the hero's 7.05-unit eyes over his 1.76 m, is 4.0). One number for both keys and the slider's

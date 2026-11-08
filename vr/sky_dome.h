@@ -21,17 +21,19 @@ constexpr float kDomeBand = 0.98f;       // our passes take everything from 98 %
 // every view of our camera that looks round the world from in it. Not: the views from above (the world under the camera - a dome round it
 // would stand between them; VR F1, in perspective or the game's own, and the flat game's F1), the table (VR F3: the world a model on a
 // table in the room, no sky round it), the VR camera off (F12: the game's own picture), and the flat game without [render]
-// game_drawn_flat (our effect draws its sky). "" = the dome can be laid.
+// game_drawn_flat (our effect draws its sky). The table does get it with [table] full_width (Serg 2026-11-08: "не обрезать квадратом режим ф3,
+// а делать полную ширину и рисовать купол и туман") - the diorama with no edge, the sky round the room. "" = the dome can be laid.
 struct ViewIn {
     bool vr = false;              // [mode] platform 1
     int view = 0;                 // [mode] vr_view / flat_view: 1 from above, 2 third person, 3 the table (VR) / first person (flat), 4 VR first person
     bool enabled = false;         // our camera on (not F12)
     bool gameDrawnFlat = false;   // [render] game_drawn_flat
+    bool tableFull = false;       // [table] full_width: the table (VR F3) with no edge and the game's dome round it
 };
 inline const char* ViewWhyNot(const ViewIn& v) {
     if (!v.enabled) return "the VR camera is off (F12)";
     if (v.view == 1) return "the view from above (the world under the camera)";
-    if (v.vr && v.view == 3) return "the table view (the world a model in the room)";
+    if (v.vr && v.view == 3 && !v.tableFull) return "the table view (the world a model in the room; [table] full_width=0)";
     if (!v.vr && !v.gameDrawnFlat) return "the flat game with [render] game_drawn_flat=0 (our effect draws its sky)";
     if (v.view < 1 || v.view > 4 || (!v.vr && v.view > 3)) return "not a view of ours";
     return "";

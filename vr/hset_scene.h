@@ -562,6 +562,10 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (m.page == kPageVideo && PageShown(kPageRender, m.View()))
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.go", "Render"), {Kind::Tab, kPageRender, 0}, false, true, Role::Accent);
     if (m.page == kPageRender) b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.back", "Video"), {Kind::Tab, kPageVideo, 0});
+    // the View tab's second page, F3 (the game on the floor's [table] keys): its button on the View page in VR F3, View back from it
+    if (m.page == kPageView && PageShown(kPageF3, m.View()))
+        b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.go", "F3"), {Kind::Tab, kPageF3, 0}, false, true, Role::Accent);
+    if (m.page == kPageF3) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.back", "View"), {Kind::Tab, kPageView, 0});
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
     const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)

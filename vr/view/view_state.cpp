@@ -6,6 +6,7 @@
 #include "../config/settings.h"
 #include "../xr.h"
 #include "d2rcam.h"
+#include "../../shared/draw_distance.h"
 
 namespace hud { bool LayerFound(); bool FlatVrTakesMenu(); }   // (vr/hud.cpp)
 namespace gamestate { bool MenuOpen(); }                        // (vr/gamestate.cpp)
@@ -98,6 +99,16 @@ bool TableView() { return g_set.platform.load() == 1 && g_set.vrView.load() == 3
 bool TopPersp() { return g_set.platform.load() == 1 && g_set.vrView.load() == 1 && (g_set.topPersp.load() || xr::Views3dOn()); }
 
 bool Overhead() { return TableView() || TopPersp(); }
+// VR F3 with [table] full_width (Serg 2026-11-08, after a player's wish for a sky in F3: "не обрезать квадратом режим ф3, а делать полную
+// ширину и рисовать купол и туман"): the board's edge and the keyed void are gone - the world as far as it is drawn, with the game's own sky
+// dome ([sky] game_sky) and the game's own fog ([fog] game_fog) round it, as in F4. Only the game's objects and its fog pass: our post pass's
+// sky, fog and blur stay out, and no fog tweak. Unticked: the board as before.
+bool TableFull() { return TableView() && g_set.tableFull.load(); }
+// F3's own Draw distance ([table] draw_distance) while F3 is the view; nullptr: the shared keys (every other view, or 0)
+const drawdistance::Stop* ViewDistanceStop() { return TableView() ? drawdistance::ViewStop(g_set.tableDistance.load()) : nullptr; }
+int RingsNow() { const drawdistance::Stop* s = ViewDistanceStop(); return s ? drawdistance::FromAboveRings(*s) : g_set.rings.load(); }   // (F3: the tiles seen from above)
+float ModelRadiusNow() { const drawdistance::Stop* s = ViewDistanceStop(); return s ? s->modelRadius : g_set.modelRadius.load(); }
+float GameSkyRadiusNow() { const drawdistance::Stop* s = ViewDistanceStop(); return s ? s->skyRadius : g_set.gameSkyRadius.load(); }
 #if D2RVR_FIRST_PERSON
 int ArmsMode() { return FullBody() ? 2 : g_set.armsMode.load() == 1 ? 1 : 0; }   // 1 = the test pose, kept for debugging
 #else

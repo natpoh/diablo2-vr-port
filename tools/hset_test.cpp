@@ -189,8 +189,42 @@ static void TestDefs() {
     CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageVideo) == 6, "the Video page: its slider by hand, six table rows under it (the Quality preset, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 22 && PageCount() <= kMaxPages && kTabCount == 15,
-          "twenty-two pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video)");
+    CHECK(PageCount() == 23 && PageCount() <= kMaxPages && kTabCount == 15,
+          "twenty-three pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F3 under View)");
+    {   // F3 (Serg 2026-11-08, "Yes, add them"): the View tab's second page - [table] full_width and draw_distance as D2R VR Settings > Camera > "F3 The
+        // game on your floor" has them, live; VR F3 only (and Settings' own / a test); the bottom bar's F3 / View
+        CHECK(RowsOn(kPageF3) == 2 && !CloseRows(kPageF3) && TabOf(kPageF3) == TabOf(kPageView) && !StartsTab(kPageF3) && LeadOf(kPageF3) == kPageView,
+              "F3: two rows under the View tab");
+        const int full = KeyAt(kPageF3, 0), dist = KeyAt(kPageF3, 1);
+        CHECK(full >= 0 && !wcscmp(kDefs[full].section, L"table") && !wcscmp(kDefs[full].key, L"full_width") && IsToggle(kDefs[full]) && kDefs[full].def == 0.0f &&
+                  kDefs[full].live,
+              "Full width: [table] full_width, a tick, off as shipped (the board as before), live");
+        CHECK(dist >= 0 && !wcscmp(kDefs[dist].section, L"table") && !wcscmp(kDefs[dist].key, L"draw_distance") && !IsToggle(kDefs[dist]) &&
+                  kDefs[dist].def == 0.0f && kDefs[dist].min == 0.0f && kDefs[dist].max == 8.0f && kDefs[dist].step == 1.0f && kDefs[dist].live,
+              "F3 draw distance: [table] draw_distance, 0 (as the other views) - 8, the Draw distance slider's stops, live as the Settings slider");
+        CHECK(!std::strcmp(kDefs[full].label, "Full width") && !std::strcmp(kDefs[dist].label, "F3 draw distance"), "Settings' words");
+        for (int k : {full, dist}) CHECK(std::strlen(kDefs[k].label) <= 30 && std::strlen(kDefs[k].detail) <= 52, "the texts fit the row");
+        CHECK(PageShown(kPageF3, 3) && PageShown(kPageF3, 0) && !PageShown(kPageF3, 1) && !PageShown(kPageF3, 2) && !PageShown(kPageF3, 4),
+              "VR F3 only (and Settings' own)");
+        CHECK(KeyAt(kPageView, kViewRow - 1) >= 0 && RowsOn(kPageView) == kViewRow, "the View page as it was: five rows, the game view's buttons");
+        float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
+        CHECK((HitTest(kPageView, u, v, 3) == Hit{Kind::Tab, kPageF3, 0}) && (HitTest(kPageF3, u, v, 3) == Hit{Kind::Tab, kPageView, 0}),
+              "View's F3 button, F3's View button");
+        CHECK(HitTest(kPageView, u, v, 4).kind == Kind::None && HitTest(kPageView, u, v, 1).kind == Kind::None, "no F3 button in VR F1 or F4");
+        CHECK(!std::strcmp(kPageNames[kPageF3], "F3"), "the page's name");
+        // a change on the page: written by itself (live), no Apply - as D2R VR Settings' slider
+        Snapshot s;
+        s.ready = true;
+        Model m;
+        m.Open(s);
+        m.Click({Kind::Tab, kPageF3, 0});
+        CHECK(m.page == kPageF3, "the page opens");
+        m.Click({Kind::Change, dist, 1});
+        CHECK(std::fabs(m.Get()[dist] - 1.0f) < 1e-4f && (kLiveMask & Bit(dist)) && (kLiveMask & Bit(full)), "+ steps to stop 1; both keys live");
+        m.Click({Kind::Change, dist, -1});
+        m.Click({Kind::Change, dist, -1});
+        CHECK(std::fabs(m.Get()[dist]) < 1e-4f, "- stops at 0 (as the other views)");
+    }
     {   // Render (Serg 2026-11-08): the Video tab's second page - seven rows, stood closer, above the status line; F4 only; the bottom bar's Render / Video
         CHECK(RowsOn(kPageRender) == 7 && CloseRows(kPageRender) && TabOf(kPageRender) == TabOf(kPageVideo) && !StartsTab(kPageRender),
               "Render: seven rows under the Video tab");
@@ -624,8 +658,8 @@ static void TestClicks() {
         Rig r;
         r.Open();
         r.Click(1, kTab(1));
-        CHECK(r.c.model.page == 1, "tab 1");
-        const int tg = KeyAt(1, 0);
+        CHECK(r.c.model.page == kPageOptions, "tab 1: Options (F3 is the View tab's second page)");
+        const int tg = KeyAt(kPageOptions, 0);
         r.Click(1, kToggle(0));
         CHECK(r.c.model.Get()[tg] != r.snap.values[tg], "toggle on page 1");
     }
@@ -766,11 +800,11 @@ static void TestClicks() {
         Centre(kToggle(0), &tu, &tv);
         r.Point(1, tu, tv);
         r.Step();
-        const float tgBefore = r.c.model.Get()[KeyAt(1, 0)];
+        const float tgBefore = r.c.model.Get()[KeyAt(kPageOptions, 0)];
         r.PullTrigger(1, true);
         r.Run(2000);
-        CHECK(r.c.model.Get()[KeyAt(1, 0)] != tgBefore, "a toggle flipped once");
-        CHECK(std::fabs(r.c.model.Get()[KeyAt(1, 0)] - (1.0f - tgBefore)) < 1e-4f, "and stayed (no repeat)");
+        CHECK(r.c.model.Get()[KeyAt(kPageOptions, 0)] != tgBefore, "a toggle flipped once");
+        CHECK(std::fabs(r.c.model.Get()[KeyAt(kPageOptions, 0)] - (1.0f - tgBefore)) < 1e-4f, "and stayed (no repeat)");
         r.PullTrigger(1, false);
         r.Step();
     }
@@ -2506,8 +2540,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 55 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names - not the others");
+    CHECK(live == 57 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and the F3 page's two - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -3174,7 +3208,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 22, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 23, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");

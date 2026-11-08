@@ -530,6 +530,7 @@ bool AfrOn() { return g_set.afr.load() && g_inWorld.load() && (g_enabled.load() 
 bool TopPersp();
 bool GameDrawnView() {
     if (viewgate::F4()) return true;
+    if (TableFull()) return true;   // VR F3 with [table] full_width: the diorama with the game's dome and fog round it (no ceiling - not first person)
     return g_set.gameDrawnFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
 }
 
@@ -988,7 +989,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.208.0";
+static const char g_info_version[] = "0.209.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file

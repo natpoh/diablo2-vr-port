@@ -1,5 +1,28 @@
 # What's new in D2R VR
 
+## 0.209.0
+
+Gestures: draw a shape in the air and its skill is cast.
+
+- **Gestures in the game** (VR first person, F4; `[gestures] engine_in_game`, on). They are recorded and recognised inside the game,
+  so no BodyWalk window is needed. The engine is `d2r_vr_gestures.dll`, which Setup puts in the mod's `d2r_vr_libs` folder.
+  - **The skill panel's Gestures tab** (right stick, `[openxr] gesture_overlay`): record a gesture, record it again, clear it, and
+    bind it to a skill or a game action (town portal, potions, panels). Gestures are kept per class.
+  - **In play**, a stroke drawn with a trigger held (both triggers by default, `[gestures] engine_pen`) that matches a gesture
+    casts its skill the game's own way: its skill button is pressed, or the skill is put on the spare slot first. The trigger
+    still does what it does in the game.
+  - **The rune and the trail** (`[openxr] runes_draw`, on): the gesture's picture hangs in front of you and lights up as your
+    hand draws it, and your hand leaves a glowing trail.
+- **VR F3, full width** (Settings > Camera > F3 The game on your floor, `[table] full_width`, off as it comes): F3 is not cut at the
+  board's edge. The game's own sky dome and fog go all round, as in F4.
+  - **F3 draw distance** (`[table] draw_distance`, 0 = as the other views): F3's own distance, with more room rings because you
+    look down at the tiles.
+  - Both are also on the headset panel's new F3 page (from the View page).
+- **Item descriptions with our own hover names**: with `[hud] npc_names_own` and `own_labels_drop_game` on (both off as they come),
+  the inventory, stash, vendor and cube showed no item description. Now we draw only a one-line name in the world. The game draws
+  every tooltip with a menu open, and every tooltip of more than one line.
+- BodyWalk Portable is still 1.83, as in 0.208.
+
 ## 0.208.0
 
 A performance release: more frames per second on every graphics card, and new quality presets for weak ones.

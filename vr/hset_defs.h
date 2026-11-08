@@ -29,7 +29,7 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 22;
+constexpr int kMaxPages = 23;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
@@ -45,12 +45,15 @@ constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands
 // Stats (Serg, 2026-11-06: the strike statistics, [stats] strike_stats; vr/hset_stats.h) is a tab of its own before the Guide: it only shows.
 // Render (Serg, 2026-11-08: foveated rendering and the other render-cost switches in the headset) has no tab either: it is the Video tab's second page,
 // reached by the Video page's Render button (the bottom bar) and back by its Video button, as Party is Co-op's; F4 only (its features are).
+// F3 (Serg 2026-11-08: "Yes, add them" - the Draw distance slider looked for in the headset and not found) has no tab either: it is the View tab's
+// second page, reached by the View page's F3 button (the bottom bar) and back by its View button, as Render is Video's; VR F3 only (its keys are
+// [table]'s: the game on the floor) - D2R VR Settings > Camera > "F3 The game on your floor" has the same two.
 enum Page : int {
-    kPageView = 0, kPageOptions = 1, kPageVideo = 2, kPageRender = 3, kPageKeysL = 4, kPageKeysR = 5, kPageVibration = 6, kPageHud = 7,
-    kPageLife = 8, kPageLook = 9, kPageBody = 10, kPageBelt = 11, kPageMelee = 12, kPageMeleeAttack = 13,
-    kPageWorld = 14, kPageWorldReact = 15, kPageWorldGrab = 16, kPageWorldMore = 17, kPageCoop = 18, kPageParty = 19, kPageStats = 20, kPageGuide = 21
+    kPageView = 0, kPageF3 = 1, kPageOptions = 2, kPageVideo = 3, kPageRender = 4, kPageKeysL = 5, kPageKeysR = 6, kPageVibration = 7, kPageHud = 8,
+    kPageLife = 9, kPageLook = 10, kPageBody = 11, kPageBelt = 12, kPageMelee = 13, kPageMeleeAttack = 14,
+    kPageWorld = 15, kPageWorldReact = 16, kPageWorldGrab = 17, kPageWorldMore = 18, kPageCoop = 19, kPageParty = 20, kPageStats = 21, kPageGuide = 22
 };
-constexpr int kPageCount = 22;
+constexpr int kPageCount = 23;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 // Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
@@ -65,8 +68,10 @@ constexpr bool IsMeleePage(int page) { return page >= kPageMelee && page < kPage
 constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page) || IsMeleePage(page); }
 constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : IsMeleePage(page) ? kPageMelee : page; }
 constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : IsMeleePage(page) ? kMeleePages : 1; }
-// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, else the page itself.
-constexpr int LeadOf(int page) { return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page; }
+// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, F3's View, else the page itself.
+constexpr int LeadOf(int page) {
+    return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page == kPageF3 ? kPageView : page;
+}
 constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
 // The tab a page is under, and the page a tab opens.
 constexpr int TabOf(int page) {
@@ -81,8 +86,9 @@ constexpr int TabPage(int tab) {
 }
 constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
 static_assert(kTabCount == 15 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
-                  TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && TabOf(kPageRender) == TabOf(kPageVideo) && TabPage(TabOf(kPageVideo)) == kPageVideo,
-              "fifteen tabs over the twenty-two pages");
+                  TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && TabOf(kPageRender) == TabOf(kPageVideo) && TabPage(TabOf(kPageVideo)) == kPageVideo &&
+                  TabOf(kPageF3) == TabOf(kPageView) && TabPage(TabOf(kPageF3)) == kPageView,
+              "fifteen tabs over the twenty-three pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 256 bits: the Vibration page took the
@@ -140,38 +146,45 @@ struct Def {
 inline constexpr Def kDefs[] = {
     // View: how the picture stands
     {L"screen", L"menu_distance_m", "Panel distance", "A panel open in the game: inventory, stash, trader",
-     1.6f, 0.5f, 8.0f, 0.1f, "%.1f m", "", "", 0},
+     1.6f, 0.5f, 8.0f, 0.1f, "%.1f m", "", "", kPageView},
     {L"openxr", L"flat_distance_m", "Screen distance", "Menus, loading screens, the flat views F1 and F3",
-     2.0f, 0.5f, 10.0f, 0.1f, "%.1f m", "", "", 0},
+     2.0f, 0.5f, 10.0f, 0.1f, "%.1f m", "", "", kPageView},
     {L"openxr", L"flat_width_m", "Screen width", "How wide the menus and panels stand",
-     2.4f, 0.5f, 8.0f, 0.1f, "%.1f m", "", "", 0},
+     2.4f, 0.5f, 8.0f, 0.1f, "%.1f m", "", "", kPageView},
     {L"openxr", L"brightness", "Brightness", "Everything in the headset, 1 = as the game draws it",
-     1.0f, 0.2f, 1.5f, 0.05f, "%.2f", "", "", 0},
+     1.0f, 0.2f, 1.5f, 0.05f, "%.2f", "", "", kPageView},
     {L"stereo", L"user_height_m", "Your height", "World and hands scale; BodyWalk's Body Height wins",
-     1.75f, 1.10f, 2.30f, 0.01f, "%.2f m", "", "", 0},
+     1.75f, 1.10f, 2.30f, 0.01f, "%.2f m", "", "", kPageView},
     // Options
     {L"openxr", L"laser", "Laser on menus", "Point a controller at a menu and it is the mouse",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageOptions},
     {L"openxr", L"laser_hand", "Laser hand", "The hand the laser comes from",
-     1.0f, 0.0f, 1.0f, 1.0f, "", "Left", "Right", 1},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Left", "Right", kPageOptions},
     {L"openxr", L"menu_3d", "Menus as a panel", "The world stays in 3D behind an open menu",
-     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageOptions},
     // How the right stick turns (shared/turn_mode.h, after bearstonem/d2r-pcvr, MIT): the toggle is its own key, so the angle and
     // the speed are both kept when it is switched. An older ini has no `smooth` and says snap=0 for smooth turning: the store
     // reads it that way (hset_store.cpp), and writes `smooth` with `snap` so an angle chosen later does not flip the mode.
     // The panel's speed starts at 30 (a step of 30 from 30 keeps the default 120 on the grid); the ini takes 10 - 720.
     {L"turn", L"smooth", "Smooth turning", "Right stick: turn continuously, or one snap a flick",
-     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", 1},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageOptions},
     {L"turn", L"snap", "Snap turn angle", "Degrees per flick, while smooth turning is off",
-     30.0f, 15.0f, 180.0f, 15.0f, "%.0f deg", "", "", 1},
+     30.0f, 15.0f, 180.0f, 15.0f, "%.0f deg", "", "", kPageOptions},
     {L"turn", L"speed", "Smooth turn speed", "Degrees per second, while smooth turning is on",
-     120.0f, 30.0f, 720.0f, 30.0f, "%.0f deg/s", "", "", 1},
+     120.0f, 30.0f, 720.0f, 30.0f, "%.0f deg/s", "", "", kPageOptions},
     // Serg (2026-10-30, a player's question in Discord: how to set "players 8" in VR): "я имел в виду выбор сложности". The game's players count, 1 - 8:
     // the value is the game's own (its Options > Gameplay "Offline Difficulty Scaling", Settings.json), not a key of d2r_vr.ini; - / + send the game's own
     // chat command "/players N" (vr/players_cmd.cpp), with every check of the game's: only in a game of one's own (single player, a TCP/IP host). The
     // seventh row: the page's rows stand closer (hset_model.h RowStep). [openxr] headset_players (no row, below) switches it on.
     {L"game", L"players", "Players (difficulty)", "As /players: tougher monsters, more experience and drops",
-     1.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", 1, false, DefType::Game},
+     1.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kPageOptions, false, DefType::Game},
+    // F3 (the View tab's second page): the game on the floor's two of D2R VR Settings > Camera > "F3 The game on your floor", in its words (a row's
+    // name short, the rest in its line). [table] full_width: no board edge, the game's own sky dome and fog round the game (vr/view/view_state.cpp
+    // TableFull); [table] draw_distance: F3's own Draw distance stop, 0 = as the other views (shared/draw_distance.h ViewStop). Both live, as there.
+    {L"table", L"full_width", "Full width", "The game's own sky and fog round the game, no edge",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF3, true},
+    {L"table", L"draw_distance", "F3 draw distance", "Near (1) - far (8); 0 = as the other views",
+     0.0f, 0.0f, 8.0f, 1.0f, "%.0f", "", "", kPageF3, true},
     // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too (seven rows): the
     // next key needs a page of its own - kMaxPages and the tabs' places in the tile window and the panel).
     //
@@ -602,7 +615,7 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
+constexpr const char* kPageNames[kMaxPages] = {"View", "F3", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
                                                "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Guide"};
 constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
                                               "World", "Co-op", "Stats", "Guide"};
@@ -649,7 +662,11 @@ constexpr bool F4OnlyKey(int key) {
                                         key == IndexOf(L"hud", L"ordinary_mob_bars") || key == kKeyAlliesPlace || key == IndexOf(L"hud", L"names_own_size_pct") ||
                                         key == IndexOf(L"hud", L"names_own_far_pct") || key == IndexOf(L"hud", L"names_own_alpha"));   // (where the allies are, our names: F4 only)
 }
-constexpr bool PageShown(int page, int view) { return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)); }
+// F3's page (the game on the floor's keys): VR F3 only, and view 0 (not known: a test) - "only what relates" (Serg, 2026-11-02) the other way round.
+constexpr bool F3OnlyPage(int page) { return page == kPageF3; }
+constexpr bool PageShown(int page, int view) {
+    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)) && !(F3OnlyPage(page) && view != 0 && view != 3);
+}
 constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key)); }
 constexpr bool TabShown(int tab, int view) { return tab >= 0 && tab < kTabCount && PageShown(TabPage(tab), view); }
 static_assert(IndexOf(L"openxr", L"menu_3d") >= 0 && IndexOf(L"hud", L"monster_height") >= 0 && IndexOf(L"hud", L"ordinary_mob_bars") >= 0,

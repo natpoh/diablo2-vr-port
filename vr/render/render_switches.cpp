@@ -121,11 +121,23 @@ void InstallRoomHeightHook() {
 std::atomic<bool> g_renderDirty{true};
 std::atomic<bool> g_bigDirty{true};
 void ApplyRender() {
+    // RingsNow / ModelRadiusNow: [render] rings and model_radius, or VR F3's own Draw distance ([table] draw_distance) while F3 is the view -
+    // so going into F3 or out of it, or moving F3's slider, applies again (only when the pair changes: SetModelRadius re-sorts for 500 ms)
+    static int viewRings = -1;
+    static float viewRadius = -1.0f;
+    const int rings = RingsNow();
+    const float radius = ModelRadiusNow();
+    if (rings != viewRings || radius != viewRadius) {
+        if (viewRings >= 0) g_renderDirty.store(true);
+        viewRings = rings;
+        viewRadius = radius;
+    }
     if (g_renderDirty.load()) {
-        d2rcam::SetRenderRadius(g_set.rings.load());
-        if (d2rcam::SetModelRadius(g_set.modelRadius.load())) {
+        d2rcam::SetRenderRadius(rings);
+        if (d2rcam::SetModelRadius(radius)) {
             g_renderDirty.store(false);
-            LogF("vrcam: render distance - %d room rings, models out to %.0f", d2rcam::GetRenderRadius(), g_set.modelRadius.load());
+            LogF("vrcam: render distance - %d room rings, models out to %.0f%s", d2rcam::GetRenderRadius(), radius,
+                 ViewDistanceStop() ? " (VR F3's own Draw distance, [table] draw_distance)" : "");
         }
     }
     const float big = g_set.bigRadius.load();

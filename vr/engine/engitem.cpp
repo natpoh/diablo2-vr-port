@@ -1471,8 +1471,9 @@ const char* DomeWhyNot() {
     v.view = ViewNow();
     v.enabled = g_enabled.load();
     v.gameDrawnFlat = g_set.gameDrawnFlat.load();
+    v.tableFull = g_set.tableFull.load();
     in.viewWhy = skydome::ViewWhyNot(v);
-    in.f4 = !*in.viewWhy && !TopPersp() && !TableView();
+    in.f4 = !*in.viewWhy && !TopPersp() && (!TableView() || TableFull());   // ([table] full_width: the table too)
     in.inWorld = g_inWorld.load();
     in.palette = g_skyPalette.load();
     in.act = g_fogAct.load();
@@ -1530,7 +1531,8 @@ void SkyDomeFrame() {
     }
     // [sky] game_skybox (an option, off by default): at the Summits the dome behind the game's mist - as far as the depth holds it (skydome::SkyboxRadius)
     const bool skybox = g_set.gameSkybox.load() && g_gameSkyboxHere.load();
-    float radius = skybox ? skydome::SkyboxRadius(g_set.gameSkyRadius.load(), g_lastNear.load()) : g_set.gameSkyRadius.load();
+    // (GameSkyRadiusNow: VR F3's own Draw distance there, [table] draw_distance)
+    float radius = skybox ? skydome::SkyboxRadius(GameSkyRadiusNow(), g_lastNear.load()) : GameSkyRadiusNow();
     // [sky] dome_past_far: off VR F4 (the flat game's views, VR F2) the dome past the far end of the game's depth range in every pixel on the
     // screen - nearer, the game's own haze lay on part of it (skydome::PastFarRadius); F4 as set
     if (g_set.domePastFar.load() && !viewgate::F4()) {

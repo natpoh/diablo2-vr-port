@@ -490,6 +490,10 @@ table.hero_cm.label = 大小：英雄在地板上的身高，cm
 table.hero_cm.tip = F3 把游戏铺在你房间的地板上，你从上方看着它，绕着它走动。这是它的大小：英雄站着有多高。整个场地随他一起放大缩小。约 180 = 真人大小。
 table.place.label = 把游戏放到我面前（F11）
 table.place.tip = 把游戏重新放到你所站位置和注视方向的前面，距离见下方 - 与游戏中的 F11 相同。请站直：地板位置根据 BodyWalk 中你的身高得出。
+table.full_width.label = 全宽：游戏周围显示游戏自带的天空和雾
+table.full_width.tip = F3 不再在棋盘边缘裁切：世界画到多远就显示多远，四周是游戏自带的天穹，远处地面上是游戏自带的雾，与 F4 相同（Sky 页的“Sky drawn by”和 World 页的雾选项必须选游戏的）。此时不使用背景色，因此没有透视 / 色键。距离由下方的 F3 draw distance 决定。即时生效。关闭 = 带边缘的棋盘，与以前相同。
+table.draw_distance.label = F3 绘制距离（0 = 与其他视角相同）
+table.draw_distance.tip = F3 中英雄周围的世界画多远，近 (1) 到远 (8)：房间圈数、模型半径、该边缘处的游戏天穹以及其前方的雾 - 即 Draw distance 滑块的各档，以英雄为中心测量。从上方看，地面图块必须四周都延伸到雾中，因此 F3 比其他视角的同一档画更多房间圈（2, 2, 3, 3, 4, 5, 7, 8）。仅在 F3 视角时：F4 和其他视角保持各自的距离。越远越耗 CPU。即时生效。0 = F3 与其他视角一样远，与以前相同。
 table.bounds.label = 微缩景观大小（1 = 游戏所显示的全部）
 table.bounds.tip = 地板上的游戏在游戏自带俯视视角会结束的地方结束：1 = 与显示器上相同的地面，更大则显示英雄周围更多的范围，更小则是更小的棋盘。0 = 没有边缘，世界绘制到多远就到多远。边缘处的墙会保持完整：起决定作用的是它下面的地面。
 table.turn.label = 旋转地图，度
@@ -4101,6 +4105,7 @@ status.layer_warn.toolkit.how = 在 OpenXR Toolkit Companion 中勾选“Disable
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = 视角
+vr.hset.page.f3 = F3
 vr.hset.page.options = 选项
 vr.hset.page.video = 视频
 vr.hset.page.render = 渲染
@@ -4153,6 +4158,10 @@ vr.hset.turn.speed.label = 平滑转向速度
 vr.hset.turn.speed.detail = 每秒的度数，平滑转向开启时
 vr.hset.game.players.label = 玩家数（难度）
 vr.hset.game.players.detail = 如同 /players：怪物更强，经验和掉落更多
+vr.hset.table.full_width.label = 全宽
+vr.hset.table.full_width.detail = 四周是游戏的天空和雾，无边缘
+vr.hset.table.draw_distance.label = F3 距离
+vr.hset.table.draw_distance.detail = 近 (1) - 远 (8)；0 = 与其他视角相同
 vr.hset.hud.low_hp_vignette.label = 低生命：红色暗角
 vr.hset.hud.low_hp_vignette.detail = 生命低时边缘跳动变红（F4）
 vr.hset.hud.low_hp_threshold.label = 低于此值出现
@@ -5377,6 +5386,8 @@ vr.party.go = 队伍
 vr.party.back = 中继
 vr.hset.render.go = 渲染
 vr.hset.render.back = 视频
+vr.hset.f3.go = F3
+vr.hset.f3.back = 视角
 vr.hset.recentre = 重新居中视角
 vr.hset.close = 关闭
 vr.hset.apply = 应用

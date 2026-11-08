@@ -495,6 +495,10 @@ table.hero_cm.label = Size: the hero's height on the floor, cm
 table.hero_cm.tip = F3 lays the game on the floor of your room and you look at it from above, walking round it. This is its size: how tall the hero stands. The whole field grows and shrinks with him. About 180 = life size.
 table.place.label = Put the game in front of me (F11)
 table.place.tip = Puts the game down again in front of where you stand and look, at the distance below - as F11 in the game. Stand up straight: the floor is found from your height in BodyWalk.
+table.full_width.label = Full width: the game's own sky and fog round the game
+table.full_width.tip = F3 is not cut at the board's edge: the world as far as it is drawn, with the game's own sky dome all round and the game's own fog over the far ground, as in F4 (the Sky tab's "Sky drawn by" and the World tab's fog choice must be the game's). The background colour is not used then, so no passthrough / chroma key. Use F3's Draw distance below for how far. Live. Off = the board with its edge, as before.
+table.draw_distance.label = F3 draw distance (0 = as the other views)
+table.draw_distance.tip = How far round the hero the world is drawn in F3, near (1) to far (8): the room rings, the models' radius, the game's sky dome at that edge and its fog just before it - the Draw distance slider's stops, measured round the hero. Looked at from above, the ground's tiles must reach the fog all round, so F3 draws more room rings than the same stop elsewhere (2, 2, 3, 3, 4, 5, 7, 8). Only while F3 is the view: F4 and the other views keep their own distance. Farther costs CPU. Live. 0 = F3 as far as the other views, as before.
 table.bounds.label = Diorama size (1 = as much as the game shows)
 table.bounds.tip = The game on the floor ends where the game's own view from above would: 1 = the same ground as on the monitor, more shows more round the hero, less a smaller board. 0 = no edge, the world as far as it is drawn. A wall at the edge is kept whole: what counts is the ground under it.
 table.turn.label = Turn the map, degrees
@@ -4106,6 +4110,7 @@ status.layer_warn.toolkit.how = tick "Disable OpenXR Toolkit" in OpenXR Toolkit 
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = View
+vr.hset.page.f3 = F3
 vr.hset.page.options = Options
 vr.hset.page.video = Video
 vr.hset.page.render = Render
@@ -4158,6 +4163,10 @@ vr.hset.turn.speed.label = Smooth turn speed
 vr.hset.turn.speed.detail = Degrees per second, while smooth turning is on
 vr.hset.game.players.label = Players (difficulty)
 vr.hset.game.players.detail = As /players: tougher monsters, more experience and drops
+vr.hset.table.full_width.label = Full width
+vr.hset.table.full_width.detail = The game's own sky and fog round the game, no edge
+vr.hset.table.draw_distance.label = F3 draw distance
+vr.hset.table.draw_distance.detail = Near (1) - far (8); 0 = as the other views
 vr.hset.hud.low_hp_vignette.label = Low life: red vignette
 vr.hset.hud.low_hp_vignette.detail = The edges beat red while your life is low (F4)
 vr.hset.hud.low_hp_threshold.label = Comes on under
@@ -5382,6 +5391,8 @@ vr.party.go = Party
 vr.party.back = Relay
 vr.hset.render.go = Render
 vr.hset.render.back = Video
+vr.hset.f3.go = F3
+vr.hset.f3.back = View
 vr.hset.recentre = Recentre view
 vr.hset.close = Close
 vr.hset.apply = Apply

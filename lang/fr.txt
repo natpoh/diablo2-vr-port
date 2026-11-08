@@ -490,6 +490,10 @@ table.hero_cm.label = Taille : hauteur du héros sur le sol, cm
 table.hero_cm.tip = F3 pose le jeu sur le sol de votre pièce et vous le regardez d'en haut, en tournant autour. C'est sa taille : la hauteur du héros debout. Tout le terrain grandit et rétrécit avec lui. Environ 180 = taille réelle.
 table.place.label = Placer le jeu devant moi (F11)
 table.place.tip = Repose le jeu devant l'endroit où vous vous tenez et regardez, à la distance ci-dessous - comme F11 dans le jeu. Tenez-vous droit : le sol est trouvé d'après votre taille dans BodyWalk.
+table.full_width.label = Pleine largeur : le ciel et le brouillard du jeu lui-même autour du jeu
+table.full_width.tip = F3 n'est pas coupé au bord du plateau : le monde aussi loin qu'il est dessiné, avec tout autour le dôme de ciel du jeu et son propre brouillard sur le sol lointain, comme en F4 (dans l'onglet Sky, « Sky drawn by », et dans l'onglet World, le brouillard, doivent être ceux du jeu). La couleur de fond n'est alors pas utilisée, donc pas de passthrough / incrustation. La distance se règle avec F3 draw distance ci-dessous. En direct. Désactivé = le plateau avec son bord, comme avant.
+table.draw_distance.label = Distance d'affichage F3 (0 = comme les autres vues)
+table.draw_distance.tip = Jusqu'où le monde est dessiné autour du héros en F3, proche (1) à loin (8) : les anneaux de salles, le rayon des modèles, le dôme de ciel du jeu à ce bord et son brouillard juste avant - les crans du curseur Draw distance, mesurés autour du héros. Vues d'en haut, les dalles du sol doivent atteindre le brouillard tout autour, donc F3 dessine plus d'anneaux de salles que le même cran ailleurs (2, 2, 3, 3, 4, 5, 7, 8). Seulement tant que F3 est la vue : F4 et les autres vues gardent leur propre distance. Plus loin coûte du CPU. En direct. 0 = F3 aussi loin que les autres vues, comme avant.
 table.bounds.label = Taille du diorama (1 = tout ce que montre le jeu)
 table.bounds.tip = Le jeu sur le sol s'arrête là où s'arrêterait la vue du dessus propre au jeu : 1 = le même terrain que sur le moniteur, plus montre plus de terrain autour du héros, moins un plateau plus petit. 0 = pas de bord, le monde aussi loin qu'il est dessiné. Un mur au bord est gardé entier : ce qui compte, c'est le sol en dessous.
 table.turn.label = Tourner la carte, degrés
@@ -4101,6 +4105,7 @@ status.layer_warn.toolkit.how = cochez "Disable OpenXR Toolkit" dans OpenXR Tool
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = Vue
+vr.hset.page.f3 = F3
 vr.hset.page.options = Options
 vr.hset.page.video = Vidéo
 vr.hset.page.render = Rendu
@@ -4153,6 +4158,10 @@ vr.hset.turn.speed.label = Vitesse de rotation
 vr.hset.turn.speed.detail = Degrés par seconde, rotation progressive activée
 vr.hset.game.players.label = Joueurs (difficulté)
 vr.hset.game.players.detail = Comme /players : monstres plus coriaces, plus d'expérience et de butin
+vr.hset.table.full_width.label = Pleine largeur
+vr.hset.table.full_width.detail = Le ciel et le brouillard du jeu autour, sans bord
+vr.hset.table.draw_distance.label = Distance F3
+vr.hset.table.draw_distance.detail = Proche (1) - loin (8) ; 0 = comme les autres vues
 vr.hset.hud.low_hp_vignette.label = Vie basse : vignette rouge
 vr.hset.hud.low_hp_vignette.detail = Les bords battent en rouge quand votre vie est basse (F4)
 vr.hset.hud.low_hp_threshold.label = S'active sous
@@ -5377,6 +5386,8 @@ vr.party.go = Groupe
 vr.party.back = Relais
 vr.hset.render.go = Rendu
 vr.hset.render.back = Vidéo
+vr.hset.f3.go = F3
+vr.hset.f3.back = Vue
 vr.hset.recentre = Recentrer la vue
 vr.hset.close = Fermer
 vr.hset.apply = Appliquer

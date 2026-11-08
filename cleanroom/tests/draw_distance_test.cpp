@@ -70,6 +70,26 @@ int main() {
     // the slider moving the models' radius: the cave dome keeps its share of it
     CHECK(CaveRadiusFollowing(52.5f, 210.0f, 400.0f) == 100.0f && CaveRadiusFollowing(52.5f, 0.0f, 400.0f) == 52.5f);
     CHECK(std::fabs(CaveRadiusFollowing(ToMetres(1.05f * 200.0f), 200.0f, 150.0f) - ToMetres(1.05f * 150.0f)) < 1e-4f);
+    // VR F3's own stop ([table] draw_distance): 0 = the shared keys, 1 ... kCount the slider's stops, anything else the shared keys
+    CHECK(ViewStop(0) == nullptr && ViewStop(-1) == nullptr && ViewStop(kCount + 1) == nullptr);
+    CHECK(ViewStop(1) == &kStops[0] && ViewStop(3)->modelRadius == 200.0f && ViewStop(kCount) == &kStops[kCount - 1]);
+    // ... its room rings from above: the rooms (80 units, 8 tiles of 5 cells of 2 units) reach the fog's full end wherever the hero stands
+    // in his room (k rings: at least k rooms past his room's edge), never fewer than the stop's own, at most 8
+    CHECK(kRoomUnits == 80.0f);
+    {
+        const int want[kCount] = {2, 2, 3, 3, 4, 5, 7, 8};
+        for (int i = 0; i < kCount; ++i) {
+            const int k = FromAboveRings(kStops[i]);
+            CHECK(k == want[i]);
+            CHECK(k >= kStops[i].rings && k <= kMaxRings);
+            if (k < kMaxRings) CHECK(k * kRoomUnits >= kStops[i].fogEnd);
+        }
+        CHECK(FromAboveRings(Stop{1, 100, 20, 160, 50, 100, 100}) == 2);   // exactly two rooms: two rings, not three
+    }
+    // ... its fog measured round the hero from the head high above him: a ring r on his ground, h over him, is sqrt(h^2 + r^2) away;
+    // no height (F4's eye at the hero) leaves the stop's numbers as they are
+    CHECK(FromEyeAbove(0.0f, 50.0f) == 50.0f && FromEyeAbove(30.0f, 40.0f) == 50.0f && FromEyeAbove(54.0f, 0.0f) == 54.0f);
+    CHECK(FromEyeAbove(54.0f, 180.0f) > 180.0f && FromEyeAbove(54.0f, 180.0f) < 180.0f + 54.0f);
     if (g_failures) { std::printf("%d check(s) FAILED\n", g_failures); return 1; }
     std::printf("draw_distance_test: all %d checks passed\n", g_checks);
     return 0;

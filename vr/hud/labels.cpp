@@ -568,15 +568,29 @@ constexpr uint64_t RVA_TOOLTIP_DRAW = 0x8DA7E0;
 const uint8_t kSigTooltipDraw[9] = {0x40,0x56,0x48,0x81,0xEC,0x10,0x01,0x00,0x00};   // push rsi; sub rsp, 0x110 (then the stack cookie, RIP-relative)
 using TooltipDrawFn = uintptr_t (*)(const uint8_t* record);
 TooltipDrawFn OrigTooltipDraw = nullptr;
+// Only a hover NAME is ours: one line in the world. Every other tooltip the same drawer draws - an item's description in the inventory, stash,
+// vendor or cube, a belt potion, a skill, a stat - is the game's and drawn as it is (Serg 2026-11-08: with npc_names_own + own_labels_drop_game
+// the items' descriptions were gone). A menu open, or a text of more than one line: the game's own.
+bool TooltipIsHoverName(const char* text) {
+    if (gamestate::MenuOpen()) return false;
+    for (const char* p = text; *p; ++p)
+        if (*p == '\n' || *p == '\r') return false;
+    return true;
+}
 uintptr_t HookTooltipDraw(const uint8_t* rec) {
     if (!g_hoverOn.load(std::memory_order_relaxed) || !rec || !DropGameLayer()) return OrigTooltipDraw(rec);
     const float scale = GameUiScaleNow();
     uintptr_t text = 0, more = 0, moreLen = 0;
-    if (SafeRead(&text, rec + 0x00, sizeof text) && text >= 0x10000) {
-        char buf[0x80];
-        CopyGameText((const char*)text, buf, sizeof buf);
-        if (buf[0]) NoteHoverText(buf, (const int32_t*)(rec + 0x60), rec + 0x80, scale);
+    char first[0x80] = {};
+    if (SafeRead(&text, rec + 0x00, sizeof text) && text >= 0x10000) CopyGameText((const char*)text, first, sizeof first);
+    if (!first[0] || !TooltipIsHoverName(first)) {
+        static std::atomic<int> toldPass{0};
+        if (toldPass.fetch_add(1) < 2)
+            Log(gamestate::MenuOpen() ? "vrcam: [hud] npc_names_own - a tooltip with a menu open: the game's own, drawn as it is (an item's description...)"
+                                      : "vrcam: [hud] npc_names_own - a tooltip of more than one line: the game's own, drawn as it is (not a hover name)");
+        return OrigTooltipDraw(rec);
     }
+    NoteHoverText(first, (const int32_t*)(rec + 0x60), rec + 0x80, scale);
     if (SafeRead(&moreLen, rec + 0x30, sizeof moreLen) && moreLen && SafeRead(&more, rec + 0x28, sizeof more) && more >= 0x10000) {
         char buf[0x80];
         CopyGameText((const char*)more, buf, sizeof buf);

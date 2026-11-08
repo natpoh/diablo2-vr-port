@@ -1386,10 +1386,26 @@ std::vector<Item> g_items = {
     Button(L"table", L"place", L"Put the game in front of me (F11)",
            L"Puts the game down again in front of where you stand and look, at the distance below - as F11 in the game. "
            L"Stand up straight: the floor is found from your height in BodyWalk."),
-    Slider(L"table", L"bounds", L"Diorama size (1 = as much as the game shows)", 0, 3, 0.05f, 1,
+    // [table] full_width (Serg 2026-11-08, after a player's wish for a sky in F3): no board edge, no keyed void - the game's own dome and fog
+    // round the diorama (vr/view/view_state.cpp TableFull). Unticked: the board as before; the board's own items below are greyed while ticked.
+    Toggle(L"table", L"full_width", L"Full width: the game's own sky and fog round the game", 0,
+           L"F3 is not cut at the board's edge: the world as far as it is drawn, with the game's own sky dome all round and the game's own "
+           L"fog over the far ground, as in F4 (the Sky tab's \"Sky drawn by\" and the World tab's fog choice must be the game's). The "
+           L"background colour is not used then, so no passthrough / chroma key. Use F3's Draw distance below for how far. Live. "
+           L"Off = the board with its edge, as before."),
+    // [table] draw_distance: F3's own stop of the Draw distance slider (shared/draw_distance.h ViewStop) - the Home slider stays out of VR F4
+    // (0.208: seeing farther than a player from above is an advantage there); this one is read only while F3 is the view.
+    Slider(L"table", L"draw_distance", L"F3 draw distance (0 = as the other views)", 0, (float)drawdistance::kCount, 1, 0,
+           L"How far round the hero the world is drawn in F3, near (1) to far (8): the room rings, the models' radius, the game's sky "
+           L"dome at that edge and its fog just before it - the Draw distance slider's stops, measured round the hero. Looked at from "
+           L"above, the ground's tiles must reach the fog all round, so F3 draws more room rings than the same stop elsewhere (2, 2, 3, "
+           L"3, 4, 5, 7, 8). Only "
+           L"while F3 is the view: F4 and the other views keep their own distance. Farther costs CPU. Live. 0 = F3 as far as the other "
+           L"views, as before."),
+    Needs(L"table", L"full_width", 0, Slider(L"table", L"bounds", L"Diorama size (1 = as much as the game shows)", 0, 3, 0.05f, 1,
            L"The game on the floor ends where the game's own view from above would: 1 = the same ground as on the monitor, "
            L"more shows more round the hero, less a smaller board. 0 = no edge, the world as far as it is drawn. "
-           L"A wall at the edge is kept whole: what counts is the ground under it."),
+           L"A wall at the edge is kept whole: what counts is the ground under it.")),
     Slider(L"table", L"turn", L"Turn the map, degrees", -180, 180, 1, 0,
            L"Turns the game world about the hero, the board stays where it is. The game draws its world at 45 degrees "
            L"to the screen: 45 or -45 puts its grid square to the board's edges."),
@@ -1397,13 +1413,13 @@ std::vector<Item> g_items = {
            L"0 = the game lies on the floor. About 0.75 = on a table top. Below 0 lowers it, if it looks above the real floor."),
     Slider(L"table", L"ahead_m", L"Distance ahead, m", 0, 3, 0.05f, 1,
            L"Where the hero is put: this far in front of you when you press F3 or F11. Moving it moves the game at once, along where you looked then."),
-    Color(L"table", L"background", L"Background round the game", L"black",
+    Needs(L"table", L"full_width", 0, Color(L"table", L"background", L"Background round the game", L"black",
           L"What the void round the game is filled with: Virtual Desktop's passthrough cuts it by colour and shows "
           L"your room there - set its chroma key to the same colour. Black by default; a pure colour (green #00FF00, "
-          L"blue #0000FF, magenta #FF00FF) if black cuts holes in the game. Empty (x) = black."),
-    Slider(L"table", L"floor", L"Lift the game off black", 0, 0.3f, 0.01f, 0.05f,
+          L"blue #0000FF, magenta #FF00FF) if black cuts holes in the game. Empty (x) = black.")),
+    Needs(L"table", L"full_width", 0, Slider(L"table", L"floor", L"Lift the game off black", 0, 0.3f, 0.01f, 0.05f,
            L"With a black background: the game's own dark parts are lifted this far off black, so the chroma key does not "
-           L"cut them too. Raise it if shadows show the room, lower it if the picture looks washed out."),
+           L"cut them too. Raise it if shadows show the room, lower it if the picture looks washed out.")),
     // [audio] head_follow, listener_turn: the two FMOD hooks from bearstonem/d2r-pcvr (vr/spatial_audio.h)
     Group(L"Sound", L"The game's sounds come from where they are around you as you turn your head, the stick or the mouse - a monster on your left is heard on the left. Music, the interface and the hero's own sounds stay in the middle."),
     Toggle(L"audio", L"head_follow", L"The game's sounds turn with your view", 1,
@@ -5299,58 +5315,55 @@ std::vector<Item> g_items = {
            L"refuse it (\"I can't use that yet\") and the first cast is lost. Every such press is watched: when the hero does not start "
            L"casting within half a second it is pressed once more, and the log says each time (how long after the set, cast or refused). "
            L"Only this path waits; skills already on a button cast at once. On by default. Live.")),
-    // The gesture engine and everything built on it (the headset's Gestures tab, the triggers' roles, Select, the hands over the tab, the
-    // zones): not in 0.208 (Serg: no gestures in this release, the DLL not shipped) - the rows left out of the page, their keys at their
-    // defaults (all off) in the shipped ini. Take the Hide() off when they come back.
-    Hide(Toggle(L"gestures", L"engine_in_game", L"In-game gesture engine (prototype)", 0,
+    Toggle(L"gestures", L"engine_in_game", L"In-game gesture engine (prototype)", 0,
            L"The gestures are recorded and recognised inside the game by BodyWalk's gesture engine (d2r_vr_gestures.dll, which D2R VR Setup puts in "
            L"the mod's d2r_vr_libs folder) - no BodyWalk window or process is needed for them. The skill panel's Gestures tab records, re-records, binds "
            L"and clears them; a recognised gesture casts its skill the game's own way (its skill button pressed, or the skill put on the spare slot "
            L"first). Kept in BodyWalk's settings folder, per class, where BodyWalk shows them too. VR first person (F4) only. Without the DLL the "
-           L"Gestures tab says so. Unticked: the Gestures tab uses BodyWalk over Game Link (Skills to BodyWalk), as before. Live.")),
-    Hide(Needs(L"gestures", L"engine_in_game", 1, Choice(L"gestures", L"engine_pen", L"In-game gesture engine: the pens in play", 3,
+           L"Gestures tab says so. Unticked: the Gestures tab uses BodyWalk over Game Link (Skills to BodyWalk), as before. Live."),
+    Needs(L"gestures", L"engine_in_game", 1, Choice(L"gestures", L"engine_pen", L"In-game gesture engine: the pens in play", 3,
            {L"None (only the Gestures tab's takes)", L"The left trigger", L"The right trigger", L"Both triggers"},
            L"Which triggers draw for the gesture engine while you play: a stroke drawn with one held is read, and one that matches a gesture casts "
-           L"its skill. The trigger still does what it does in the game. Live."))),
-    Hide(Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 0,
+           L"its skill. The trigger still does what it does in the game. Live.")),
+    Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 0,
            L"In VR first person (F4), while the skill panel is open on its Gestures tab, what is nearer than the window - your hands and arms, the "
            L"weapon you hold - is drawn over it instead of under it, by the scene's depth, so you see your hands while you record and try gestures. "
            L"The Gestures tab only: the panel's other tabs, every other menu and play are as before and this costs nothing there. On the tab it "
-           L"costs one small pass a frame and two swapchains (the log says how much). Needs the skill panel. Off: as before. Live.")),
-    Hide(Choice(L"gestures", L"trigger_right", L"Right trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+           L"costs one small pass a frame and two swapchains (the log says how much). Needs the skill panel. Off: as before. Live."),
+    Choice(L"gestures", L"trigger_right", L"Right trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
            L"The right trigger's role in VR first person (F4), in play (the panels' pointer click and the menus are as before). As before: its skill "
            L"slot / the attack. Glyphs: it draws gesture strokes and casts the skill a Select glyph armed on it - nothing else: every press is a "
            L"stroke, and at the release one that matched a glyph is that glyph, anything else casts the armed skill once (see the cast rule below). "
            L"Shift: the game's second layer. Action: the action picked on the "
-           L"headset's Gestures tab (Triggers). With either trigger set, only the glyph triggers draw for the gesture engine. Live.")),
-    Hide(Choice(L"gestures", L"trigger_left", L"Left trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+           L"headset's Gestures tab (Triggers). With either trigger set, only the glyph triggers draw for the gesture engine. Live."),
+    Choice(L"gestures", L"trigger_left", L"Left trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
            L"The left trigger's role in VR first person (F4), in play. As before: the game's Shift. Glyphs: it draws gesture strokes and casts the "
            L"skill a Select glyph armed on it, on the game's LT + RT slot - nothing else, so Shift is gone from it (give Shift to the right trigger "
-           L"or leave it). Shift: as before. Action: the action picked on the headset's Gestures tab (Triggers). Live.")),
-    Hide(Choice(L"gestures", L"glyph_cast_hold", L"Glyph trigger: when it casts", 0, {L"At the release", L"Still press, hold repeats"},
+           L"or leave it). Shift: as before. Action: the action picked on the headset's Gestures tab (Triggers). Live."),
+    Choice(L"gestures", L"glyph_cast_hold", L"Glyph trigger: when it casts", 0, {L"At the release", L"Still press, hold repeats"},
            L"A trigger set to Glyphs both draws and casts the skill a Select glyph armed on it. At the release (default): hold it and draw - a glyph, "
            L"read when you let go, no cast; hold it with the hand still - you aim: a skill that flies shows its aim line from that hand, one cast "
            L"onto a point shows its arc and circle (Teleport circle on); let go and it is cast there, the game's own way. A plain skill shows nothing "
            L"and is cast at the release; a quick tap casts too. No hold-to-repeat (tap again). Still press, hold repeats: the hand still for 0.12 s "
-           L"casts and holding repeats as the game does; moving 6 cm first draws - a cast comes up to 0.12 s late. Live.")),
-    Hide(Toggle(L"gestures", L"select_icon", L"Gestures: the armed skill's icon in the medallions", 1,
+           L"casts and holding repeats as the game does; moving 6 cm first draws - a cast comes up to 0.12 s late. Live."),
+    Toggle(L"gestures", L"select_icon", L"Gestures: the armed skill's icon in the medallions", 1,
            L"A skill a Select glyph armed shows inside the wrist medallions (Hand vitals, the 3D orbs with the medallion shape): the right trigger's "
            L"in the mana medallion, the left trigger's in the life one - the game's own icon, as the melee armed skill's. Unticked: no icon; the arming "
-           L"works the same. Live.")),
-    Hide(Toggle(L"gestures", L"show_zones", L"Gestures: show the hand poses' zones in play", 0,
+           L"works the same. Live."),
+    Toggle(L"gestures", L"show_zones", L"Gestures: show the hand poses' zones in play", 0,
            L"In VR first person (F4), with the skill panel down, every hand pose's zone is shown: a see-through sphere where your hand must be for "
            L"the pose, as big as its zone. The Gestures tab sizes a zone (zone < 6 cm > on the pose's row and on its review: saved with the gesture, "
            L"so BodyWalk shows the same) and its Zones button "
            L"flips this tick. While a pose is being recorded its zone is shown round your hand, and on its review at its spots, whatever this says. "
-           L"Unticked: hidden in play. Live.")),
-    Hide(Toggle(L"openxr", L"gesture_overlay", L"Gestures tab in the headset (prototype)", 0,
+           L"Unticked: hidden in play. Live."),
+    Toggle(L"openxr", L"gesture_overlay", L"Gestures tab in the headset (prototype)", 0,
            L"A GESTURES tab beside Settings in the skill panel's window (it needs the tiles' look and Settings in the headset), in VR first "
            L"person (F4): your BodyWalk gestures for the class you play, each with a picture - a glyph's shape, a body motion's path with its "
            L"start and its end, a stick figure holding a hand pose, a button's name - the skill it casts and its threshold. NEW GESTURE records "
            L"one: the kind (glyph, hand pose, body motion), the hand, the skill; then you see the take and keep it, record it again or drop it. "
            L"Re-record, Clear and Bind on each row; a click on a picture changes its colour. While BodyWalk records, the trigger is its pen: the "
            L"window steps aside and B / Y stop. BodyWalk records, recognises and keeps the gestures; the game only shows them and asks. Needs "
-           L"BodyWalk with Game skills, or the in-game gesture engine above. Unticked: no Gestures tab. Live.")),
+           L"BodyWalk with Game skills, or the in-game gesture engine above. Unticked: no Gestures tab. Live."),
     Group(L"Debug (the same ticks as on the Debug tab)", L"Drawings and tests for tuning Hit by touch and the shield bash: draw the blade and monster capsules, colour refused contacts, try touches without attacking, and fit the blade's length, butt and thickness to the weapon you see."),
     Toggle(L"debug", L"melee_touch_client_verdict", L"Hit by touch: decide hostile / wall from the client's own units", 0,
            L"What a player who JOINED a TCP/IP game gets (the game's server runs on the host's PC there, so it cannot be asked), tried "

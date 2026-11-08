@@ -136,7 +136,7 @@ void SkyTick() {
     const char* why = nullptr;
     if (!g_set.skyOn.load()) why = "[sky] enabled=0";
     else if (!g_enabled.load()) why = "the VR camera is off (F12)";
-    else if (TableView()) why = "the table view (the room round the game)";
+    else if (TableView() && !(TableFull() && g_set.gameSky.load())) why = "the table view (the room round the game; the game's dome there with [table] full_width and [sky] game_sky)";
     else if (TopPersp()) why = "the view from above";
     else if (palette < 0) why = "not outdoors";
     else if (EffectsPaused()) why = "a menu is open";   // (a menu as a panel, menu_3d: the world as without one)

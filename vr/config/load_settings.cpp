@@ -609,6 +609,8 @@ void LoadSettings() {
     g_set.tableTurnDeg.store(std::clamp(IniF(L"table", L"turn", 0.0f), -180.0f, 180.0f));
     g_set.tablePlace.store((int)IniF(L"table", L"place", 0.0f));
     g_set.tableBounds.store(std::clamp(IniF(L"table", L"bounds", 1.0f), 0.0f, 5.0f));
+    g_set.tableFull.store(IniB(L"table", L"full_width", false));   // 0 = the board with its edge and the keyed void, as before
+    g_set.tableDistance.store(std::clamp((int)IniF(L"table", L"draw_distance", 0.0f), 0, drawdistance::kCount));
     g_set.tableAheadM.store(std::clamp(IniF(L"table", L"ahead_m", 1.0f), 0.0f, 5.0f));
     LoadTableBackground();
     g_set.thirdHeight.store(std::clamp(IniF(L"third", L"height", 6.5f), 0.0f, 40.0f));
