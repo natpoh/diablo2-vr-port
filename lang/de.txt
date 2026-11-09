@@ -360,6 +360,8 @@ render.rings.label = Raumringe um den Helden
 render.rings.tip = Zusätzliche Raumringe um den Helden. Mit Nebel reichen 4-6.
 render.model_radius.label = Sichtradius der Modelle
 render.model_radius.tip = Der eigene Wert des Spiels ist 150.
+render.big_radius.label = Große Objekte: Bäume, Häuser, Mauern weiter (0 = aus)
+render.big_radius.tip = Bäume, Häuser und Mauern werden weiter gezeichnet als der Sichtradius der Modelle - je größer, desto weiter (das 30-Fache ihrer Höhe oder ihrer halben Breite), bis zu so vielen Einheiten (300 - 1000; 100 und 200 zählen als 300). Steine, Gras und Monster behalten den Sichtradius der Modelle. Braucht 3 oder mehr Raumringe (jenseits der Räume, die das Spiel dort baut, gibt es nichts zu zeichnen) und dahinter den vollen Nebel und die Himmelskuppel, damit man es sieht. Kostet Frames in Wäldern und Städten. Aus D2R VR Unleashed (bearstonem). Nur optisch. Sofort. 0 = aus, wie bisher.
 sky.game_sky.label = Wer den Himmel zeichnet
 sky.game_sky.tip = Wer den Himmel im Freien zeichnet. Die Kuppel des Spiels (neu): eine Himmelskuppel von uns, die das Spiel selbst in seiner eigenen Szene zeichnet - ohne Bildzeit von uns (VR F4; das flache Spiel auch mit "Das Spiel zeichnet den Himmel auch im flachen Spiel"). Unser Effekt (alt): Der Nebel-Shader malt den Himmel in die Leere. Beides passt zu beiden Nebeln ("Nebel gezeichnet von"): Der untere Teil des Himmels geht in beiden Fällen in die Farbe des Nebels über. Sofort - die Dateien der Himmelskuppel des Spiels erzeugt dieses Programm bei seinem Start: Starte ein bereits laufendes Spiel beim ersten Mal nach einer Installation oder einem Update neu.
 sky.game_sky.choice0 = Unser Effekt (alt)
@@ -385,8 +387,6 @@ group.draw_distance.help#2 = Wie weit um dich herum die Welt gezeichnet wird, mi
 # --- What the slider sets ---
 group.what_the_slider_sets = Was der Regler einstellt
 group.what_the_slider_sets.help = Jeder Wert, den der Regler Sichtweite schreibt, zum Einstellen von Hand. Die des Nebels sind ausgegraut, solange der Distanznebel aus ist, die der Himmelskuppel, solange das Spiel den Himmel nicht zeichnet (Tab Himmel: „Wer den Himmel zeichnet“), die der Höhlenkuppel, solange sie aus ist.
-render.big_radius.label = Große Objekte: Bäume, Häuser, Mauern weiter (0 = aus)
-render.big_radius.tip = Bäume, Häuser und Mauern werden weiter gezeichnet als der Sichtradius der Modelle - je größer, desto weiter (das 30-Fache ihrer Höhe oder ihrer halben Breite), bis zu so vielen Einheiten (300 - 1000; 100 und 200 zählen als 300). Steine, Gras und Monster behalten den Sichtradius der Modelle. Braucht 3 oder mehr Raumringe (jenseits der Räume, die das Spiel dort baut, gibt es nichts zu zeichnen) und dahinter den vollen Nebel und die Himmelskuppel, damit man es sieht. Kostet Frames in Wäldern und Städten. Aus D2R VR Unleashed (bearstonem). Nur optisch. Sofort. 0 = aus, wie bisher.
 sky.game_sky_radius_m.label = Himmel des Spiels: Kuppelradius, m
 sky.game_sky_radius_m.tip = Wie weit um dich herum die Himmelskuppel des Spiels gelegt wird, in Metern (4 Einheiten des Spiels pro Meter; sofort). 50 m: ein naher Horizont - die Kuppel schneidet die ferne Welt in einem sauberen Kreis ab, der Nebel des Spiels darüber. Weiter kommt der Himmel aus dem Nebel heraus. Das Log nennt bei jeder Änderung den benutzten Radius.
 fog.enabled.label = Distanznebel

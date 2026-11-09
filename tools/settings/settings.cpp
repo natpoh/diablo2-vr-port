@@ -1261,8 +1261,14 @@ std::vector<Item> g_items = {
            L"measures and the distance blur - while the medallions, the labels, the toolbar, the phantoms and the interface stay as they are. "
            L"For seeing what the sky and the fog cost (the log's \"native effects, 10 s\" line says each pass's time). The game's own sky and "
            L"fog stay the game's. Live. Ticked: as before."),
-    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 2, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
-    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 200, L"The game's own is 150.")),
+    // the draw distance's parts by hand (Serg 2026-11-09 "каждый отдельно плитки обьекты большие обьекты", "верни их в перформансе")
+    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 2, L"Extra room rings around the hero. With fog, 4-6 is enough."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 200, L"The game's own is 150."),
+    Slider(L"render", L"big_radius", L"Big objects: trees, houses, walls farther (0 = off)", 0, 1000, 100, 0,
+           L"Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half "
+           L"its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility "
+           L"radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome "
+           L"past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before."),
     Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
            L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
            L"ours (VR F4; the flat game too with \"The game draws the sky in the flat game too\"). Our effect (old): the fog shader paints the sky "

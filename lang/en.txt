@@ -365,6 +365,8 @@ render.rings.label = Room rings around the hero
 render.rings.tip = Extra room rings around the hero. With fog, 4-6 is enough.
 render.model_radius.label = Model visibility radius
 render.model_radius.tip = The game's own is 150.
+render.big_radius.label = Big objects: trees, houses, walls farther (0 = off)
+render.big_radius.tip = Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before.
 sky.game_sky.label = Sky drawn by
 sky.game_sky.tip = Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of ours (VR F4; the flat game too with "The game draws the sky in the flat game too"). Our effect (old): the fog shader paints the sky in the void. Either goes with either fog ("Fog drawn by"): the sky's low part sinks into the fog's colour both ways. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
 sky.game_sky.choice0 = Our effect (old)
@@ -390,8 +392,6 @@ group.draw_distance.help#2 = How far round you the world is drawn, in one slider
 # --- What the slider sets ---
 group.what_the_slider_sets = What the slider sets
 group.what_the_slider_sets.help = Each value the Draw distance slider writes, to set by hand. The fog's are greyed while the distance fog is off, the sky dome's while the game does not draw the sky (Sky tab: "Sky drawn by"), the cave dome's while it is off.
-render.big_radius.label = Big objects: trees, houses, walls farther (0 = off)
-render.big_radius.tip = Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before.
 sky.game_sky_radius_m.label = The game's sky: dome radius, m
 sky.game_sky_radius_m.tip = How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in use with each change.
 fog.enabled.label = Distance fog

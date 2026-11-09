@@ -360,6 +360,8 @@ render.rings.label = Anéis de salas ao redor do herói
 render.rings.tip = Anéis de salas extras ao redor do herói. Com neblina, 4-6 bastam.
 render.model_radius.label = Raio de visibilidade dos modelos
 render.model_radius.tip = O do próprio jogo é 150.
+render.big_radius.label = Objetos grandes: árvores, casas, muros mais longe (0 = desligado)
+render.big_radius.tip = Árvores, casas e muros continuam desenhados além do raio de visibilidade dos modelos - quanto maiores, mais longe (30 vezes a altura ou metade da largura), até esta quantidade de unidades (300 - 1000; 100 e 200 contam como 300). Pedras, grama e monstros mantêm o raio de visibilidade dos modelos. Precisa de anéis de salas 3 ou mais (além das salas que o jogo monta não há nada para desenhar), e da neblina total e da cúpula de céu além dela para ser visto. Custa quadros em florestas e cidades. Do D2R VR Unleashed (bearstonem). Só visual. Ao vivo. 0 = desligado, como antes.
 sky.game_sky.label = Céu desenhado por
 sky.game_sky.tip = Quem desenha o céu ao ar livre. A cúpula do jogo (novo): uma cúpula de céu nossa que o próprio jogo desenha na sua cena - sem tempo de quadro nosso (VR F4; o jogo plano também com "O jogo desenha o céu também no jogo plano"). Nosso efeito (antigo): o shader de neblina pinta o céu no vazio. Qualquer um vai com qualquer uma das neblinas ("Neblina desenhada por"): a parte baixa do céu afunda na cor da neblina nos dois casos. Ao vivo - os arquivos da cúpula de céu do jogo são criados por este programa ao iniciar: na primeira vez depois de uma instalação ou atualização, reinicie um jogo que já esteja aberto.
 sky.game_sky.choice0 = Nosso efeito (antigo)
@@ -385,8 +387,6 @@ group.draw_distance.help#2 = Até onde o mundo é desenhado ao seu redor, num s�
 # --- What the slider sets ---
 group.what_the_slider_sets = O que o controle deslizante define
 group.what_the_slider_sets.help = Cada valor que o controle Distância de desenho grava, para ajustar à mão. Os da neblina ficam cinza enquanto a neblina de distância está desligada, os da cúpula de céu enquanto o jogo não desenha o céu (aba Céu: "Céu desenhado por"), os da cúpula das cavernas enquanto ela está desligada.
-render.big_radius.label = Objetos grandes: árvores, casas, muros mais longe (0 = desligado)
-render.big_radius.tip = Árvores, casas e muros continuam desenhados além do raio de visibilidade dos modelos - quanto maiores, mais longe (30 vezes a altura ou metade da largura), até esta quantidade de unidades (300 - 1000; 100 e 200 contam como 300). Pedras, grama e monstros mantêm o raio de visibilidade dos modelos. Precisa de anéis de salas 3 ou mais (além das salas que o jogo monta não há nada para desenhar), e da neblina total e da cúpula de céu além dela para ser visto. Custa quadros em florestas e cidades. Do D2R VR Unleashed (bearstonem). Só visual. Ao vivo. 0 = desligado, como antes.
 sky.game_sky_radius_m.label = Céu do jogo: raio da cúpula, m
 sky.game_sky_radius_m.tip = A que distância ao seu redor a cúpula de céu do jogo é posta, em metros (4 unidades do jogo por metro; ao vivo). 50 m: um horizonte próximo - a cúpula corta o mundo distante num círculo limpo, com a neblina do jogo sobre ela. Mais longe, o céu sai da neblina. O log diz o raio em uso a cada mudança.
 fog.enabled.label = Neblina de distância

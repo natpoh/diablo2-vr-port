@@ -1,5 +1,14 @@
 # What's new in D2R VR
 
+## 0.210.1
+
+- **Fog before the effects ships off** (Settings > Fog > "The fog before smoke and fire"): the game's own fog as in 0.209, which
+  hides far trees cleanly. The new fog is still there to tick.
+- **Known issue**: with the fog before the effects on, far trees can show speckled through it against the sky (mostly VR F4); to be
+  fixed in the next versions.
+- **Draw distance by hand again** (Settings > Performance): room rings, the models' radius and the big objects' radius,
+  each its own slider, beside the one Draw distance slider on Home.
+
 ## 0.210.0
 
 Fire stays bright in the fog, the game's own day and night, and many fixes from today's tests.
