@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace monitoreye {
 
@@ -42,6 +43,59 @@ inline Rect Crop(uint32_t sw, uint32_t sh, uint32_t ww, uint32_t wh) {
     }
     const float h = (float)(have / want);   // the picture is higher (or the same): its top and bottom cut
     return {0.0f, (1.0f - h) * 0.5f, 1.0f, h};
+}
+
+// What the lens shows of the eye's picture (Serg, 0.209.18: the window showed the headset's lens mask - [render] lens_mask clears the hidden
+// area to black, the runtime's own view is often narrower than what is drawn - a jagged black polygon round the picture). `hidden` is a grid
+// of the picture's CORNERS, (gw + 1) x (gh + 1) (lens_mask_shape.h Corners on a coarse grid: 1 = inside the runtime's hidden mesh or
+// outside its view); a cell counts as shown only when its four corners are all shown. The box: the biggest one of the window's shape
+// (`aspect`: the window's width / height, `picAspect`: the picture's) made of shown cells only, the one nearest the middle of what is shown
+// (the eye's own straight-ahead, roughly). False when nothing is hidden (the whole picture: Crop as before) or no box fits.
+inline bool VisibleBox(const std::vector<uint8_t>& hidden, uint32_t gw, uint32_t gh, double aspect, double picAspect, Rect* out) {
+    if (!gw || !gh || hidden.size() != (size_t)(gw + 1) * (gh + 1) || aspect <= 0 || picAspect <= 0) return false;
+    const uint32_t cw = gw + 1;
+    // a cell hidden when any of its corners is; prefix sums of hidden cells
+    std::vector<uint32_t> sum((size_t)(gw + 1) * (gh + 1), 0);
+    uint32_t nHidden = 0;
+    double cx = 0, cy = 0;
+    uint32_t nShown = 0;
+    for (uint32_t j = 0; j < gh; ++j)
+        for (uint32_t i = 0; i < gw; ++i) {
+            const bool h = hidden[(size_t)j * cw + i] || hidden[(size_t)j * cw + i + 1] || hidden[(size_t)(j + 1) * cw + i] || hidden[(size_t)(j + 1) * cw + i + 1];
+            nHidden += h;
+            if (!h) { cx += i + 0.5; cy += j + 0.5; ++nShown; }
+            sum[(size_t)(j + 1) * cw + i + 1] = (uint32_t)h + sum[(size_t)j * cw + i + 1] + sum[(size_t)(j + 1) * cw + i] - sum[(size_t)j * cw + i];
+        }
+    if (!nHidden || !nShown) return false;
+    cx /= nShown;
+    cy /= nShown;
+    auto anyHidden = [&](uint32_t x, uint32_t y, uint32_t w, uint32_t h) {
+        return sum[(size_t)(y + h) * cw + x + w] - sum[(size_t)y * cw + x + w] - sum[(size_t)(y + h) * cw + x] + sum[(size_t)y * cw + x] != 0;
+    };
+    // the window's shape in cells: a cell is (1/gw) x (1/gh) of a picture picAspect wide to 1 high
+    const double cells = aspect / picAspect * (double)gw / (double)gh;   // width / height in cells
+    for (uint32_t hc = gh; hc >= 1; --hc) {
+        const double wExact = hc * cells;
+        const uint32_t wc = (uint32_t)std::ceil(wExact - 1e-6);
+        if (wc < 1 || wc > gw) continue;
+        double best = 1e30;
+        uint32_t bx = 0, by = 0;
+        for (uint32_t y = 0; y + hc <= gh; ++y)
+            for (uint32_t x = 0; x + wc <= gw; ++x) {
+                if (anyHidden(x, y, wc, hc)) continue;
+                const double dx = x + wc * 0.5 - cx, dy = y + hc * 0.5 - cy, d = dx * dx + dy * dy;
+                if (d < best) { best = d; bx = x; by = y; }
+            }
+        if (best < 1e29) {   // the exact shape inside those cells, at their middle
+            const float h = (float)hc / gh, w = (float)(wExact / gw);
+            out->u = ((float)bx + (float)wc * 0.5f) / gw - w * 0.5f;
+            out->v = (float)by / gh;
+            out->w = w;
+            out->h = h;
+            return true;
+        }
+    }
+    return false;
 }
 
 // Where the window's picture comes from at this present.

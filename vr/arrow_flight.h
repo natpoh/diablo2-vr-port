@@ -51,6 +51,10 @@ inline bool IsArrowClass(uint32_t c) {
 }
 // Guided Arrow homes on its target: the game's path bends, a straight line of ours would leave it - always Blend.
 inline bool Homes(uint32_t c) { return c == kGuidedArrow; }
+// A fan of arrows from one shot (Multiple Shot, Strafe): only the one along the heading given is the shot's own - told by its heading. Any other arrow class
+// is one arrow a shot: the shot's own whatever its first few centimetres look like (Serg's flat test of 23cd650b: an arrow turned 0.0 degrees at the create
+// was still taken for a side one - its drawn place wobbles a centimetre or so in the first 15 cm, more than 4 degrees there - and bent onto the game's path).
+inline bool Fans(uint32_t c) { return c == kMultiArrow || c == kMultiBolt || c == kStrafeArrow || c == kStrafeBolt; }
 
 // -- the unit (potion_hide.h's fields: a missile is type 3, its owner recorded when +0x128 has 0x400)
 constexpr uint32_t kTypePlayer = 0, kTypeMissile = 3, kFlagHasOwner = 0x400;
@@ -161,7 +165,7 @@ inline Pose Step(Track& tr, V3 game, const Params& p = Params{}) {
     if (!tr.decided && o.travel >= p.decideM * upm) {
         tr.decided = true;
         const V3 h = Unit3(flat, given);
-        tr.own = !Homes(tr.cls) && Dot(h, given) >= std::cos(p.aimTolDeg * 0.0174532925f);
+        tr.own = !Homes(tr.cls) && (!Fans(tr.cls) || Dot(h, given) >= std::cos(p.aimTolDeg * 0.0174532925f));
         tr.aimed = tr.own && sh.target;
         if (tr.aimed) {   // the game's arrow reaches the target's cell after the cell's distance less where it began along the heading
             V3 off = tr.g0 - sh.hero;

@@ -901,6 +901,48 @@ inline bool Remesh(File& f, const Mesh& m, const Renames& textures, int lod, Don
     if (done) *done = d;
     return true;
 }
+// [holes] patch_world: the file cut down to its mesh `k` alone, so that Remesh (which edits Meshes[0], every TriTopology and Models[0]) makes a
+// one-mesh model of that mesh's own material - the game's model the patch carries on: its root Meshes array starts at mesh k with one entry,
+// TriTopologies holds only k's topology (none when the file lists it nowhere there), the first model binds k alone, and every other model is
+// left out (shadow proxies and the like). Nothing is freed or moved; the other meshes stay in the file, named by nothing. False with `why`.
+inline bool KeepOnlyMesh(File& f, int k, std::string* why) {
+    auto no = [&](const char* w) { if (why) *why = w; return false; };
+    Walk g(f);
+    const Addr rt{f.h.rootType.section, f.h.rootType.offset}, ro{f.h.rootObj.section, f.h.rootObj.offset};
+    Addr t;
+    const Addr meshes = g.Member(rt, ro, "Meshes", &t);
+    if (!meshes.ok() || g.Kind(t) != 4 || k < 0 || k >= g.Get<int32_t>(meshes)) return no("no such mesh");
+    const Addr meshType = g.Ref(t), arr = g.Ptr(meshes.at(4));
+    const Addr mesh = g.Ptr(arr.at((uint32_t)k * 8));
+    if (!mesh.ok()) return no("no such mesh");
+    g.SetPtr(meshes.at(4), arr.at((uint32_t)k * 8));
+    g.Put<int32_t>(meshes, 1);
+    // its topology alone among TriTopologies
+    const Addr topo = g.Ptr(g.Member(meshType, mesh, "PrimaryTopology", &t));
+    const Addr tts = g.Member(rt, ro, "TriTopologies", &t);
+    if (tts.ok() && g.Kind(t) == 4) {
+        const Addr tarr = g.Ptr(tts.at(4));
+        int32_t at = -1;
+        for (int32_t j = 0; j < g.Get<int32_t>(tts) && at < 0; ++j) if (g.Ptr(tarr.at((uint32_t)j * 8)) == topo) at = j;
+        if (at >= 0) { g.SetPtr(tts.at(4), tarr.at((uint32_t)at * 8)); g.Put<int32_t>(tts, 1); }
+        else g.Put<int32_t>(tts, 0);
+    }
+    // the first model binds it alone; no other model
+    const Addr models = g.Member(rt, ro, "Models", &t);
+    if (!models.ok() || g.Kind(t) != 4 || g.Get<int32_t>(models) < 1) return no("no model");
+    const Addr modelType = g.Ref(t), model = g.Ptr(g.Ptr(models.at(4)));
+    g.Put<int32_t>(models, 1);
+    Addr bt;
+    const Addr mb = g.Member(modelType, model, "MeshBindings", &bt);
+    if (!mb.ok() || g.Kind(bt) != 3 || g.Get<int32_t>(mb) < 1) return no("the model binds no mesh");
+    Addr e;
+    const Addr ref = g.Member(g.Ref(bt), g.Ptr(mb.at(4)), "Mesh", &e);
+    if (!ref.ok()) return no("the model's binding names no mesh");
+    g.SetPtr(ref, mesh);
+    g.Put<int32_t>(mb, 1);
+    return true;
+}
+
 inline bool Remesh(File& f, const Mesh& m, const std::string& oldTexture, const std::string& newTexture, int lod, Done* done, std::string* why) {
     return Remesh(f, m, Renames{{oldTexture, newTexture}}, lod, done, why);
 }

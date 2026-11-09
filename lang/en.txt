@@ -85,10 +85,12 @@ render.menu_wide.tip = Native OpenXR: the game lays its menus out for the shape 
 # --- Quality preset ---
 group.quality_preset = Quality preset
 group.quality_preset.help = How much the game draws against how fast it runs, in one choice - the same as on Performance (a change in either shows in both). Potato and Low for a weak graphics card, Medium the farthest monsters; with Potato, its light's brightness right under it. Auto (with Auto graphics tuning ticked) finds the settings for your PC in the running game.
-@preset.preset.tip = Sets the settings below at once. All three draw the same picture of the world round you: the game's own sky dome and the game's own fog (55 to 140, in caves 65 to 200, none of our fog tweaks), 2 room rings, Native one pass, the pixels the lenses never show skipped, the shadows once for both eyes, the cave ceiling, the headset at 90 Hz, the game's hover outline left out. Potato (the weakest graphics card): the game's frame without the sun's shadows and the torch lights, everything lit evenly by the Potato light (its brightness right below and on Render cost); monsters and objects out to 150 (the game's own), big objects 200. Low (a weak graphics card): only the game's lit world, the sun's shadows and the tone map (Render cost: the game's own render stages); monsters and objects out to 150, big objects 200. Medium: the game's whole frame; monsters and objects out to 210, big objects 600 - the only other difference. Room rings and the models' radius take effect at the next game start. Changing any of them by hand shows Custom.
+@preset.preset.tip = Sets the settings below at once. All three draw the same picture of the world round you: the game's own sky dome and the game's own fog (55 to 140, in caves 65 to 200, none of our fog tweaks), 2 room rings, Native one pass, the pixels the lenses never show skipped, the shadows once for both eyes, the cave ceiling, the headset at 90 Hz, the game's hover outline left out. Potato (the weakest graphics card): the game's frame without the sun's shadows and the torch lights, everything lit evenly by the Potato light (its brightness right below and on Render cost); monsters and objects out to 150 (the game's own), big objects 200. Low (a weak graphics card): only the game's lit world, the sun's shadows and the tone map (Render cost: the game's own render stages); monsters and objects out to 150, big objects 200. Medium: the game's whole frame; monsters and objects out to 200, big objects 600 - the only other difference. The Draw distance slider (Home) sets the distance apart: 1 is Low and Potato's, 2 Medium's, farther past it. Room rings and the models' radius take effect at the next game start. Changing any of them by hand shows Custom.
 @preset.preset.choice0 = Potato
 @preset.preset.choice1 = Low
 @preset.preset.choice3 = Custom
+render.preset_game_options.label = ... the preset also sets the game's own graphics options
+render.preset_game_options.tip = Ticked: picking a Quality preset also changes three of the game's own Options > Video settings, as if you had set them in its menu (the game keeps them in its Settings.json): Potato - Ambient Occlusion off, Shadow Quality low, Light Quality low; Low - all three medium; Medium - Ambient Occlusion high, Shadow Quality high, Light Quality high. They are set once, when the preset changes (or when you tick this): a change you make later in the game's menu stays. Anti aliasing, DLSS and the resolution scale are never touched. The log says the old and new values. Live, in every view. Unticked: the game's options are never touched, as before.
 autotune.run.label = Auto
 autotune.run.tip = Auto graphics tuning, in the running game: stand still (in town is best) with the headset on. The game measures its frames a second with your settings. Fine at the headset's rate: nothing changes, on any graphics card. Short of it, it steps down in this order, measuring each step, and stops at the first that holds: the render size down to 1600 x 1600, then the preset Medium -> Low -> Potato, then the size down to 1300, then foveated rendering (Medium, then Maximum), then the size down to 1200, then eyes by turns. Still short there: it says the PC is below the minimum, and whether the processor or the graphics card holds it back. A minute or two; two passes, FlatVR and the headset's rate are never chosen. The steps and the result show on the headset panel's Video page (a long press of the right stick click), with Keep and Undo there or below. After Keep the preset here shows the one the new settings match, or Custom.
 render.potato_light_brightness.label = ... Potato light: brightness
@@ -134,9 +136,9 @@ openxr.fov_override_centred.tip = On (the default): both eyes are drawn as one c
 
 # --- Draw distance ---
 group.draw_distance = Draw distance
-group.draw_distance.help = How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. Each single value is on the Draw distance tab (and where it was: Performance, World, Sky); changing one of them shows Custom here.
+group.draw_distance.help = How far round you the world is drawn, in one slider: the room rings, the models' radius and the fog together, so the fog is full before the drawn world ends. 2 is the default - the distance of the Medium preset (1: Low and Potato's); farther shows more of the world and costs processor time. Moving it shows Custom in the Quality preset.
 @distance.stop.label = Draw distance (near - far)
-@distance.stop.tip = Sets five things at once, near (1) to far (8): how many rings of rooms round you the game draws, how far out it draws monsters and objects (the models' radius: the edge of the drawn world), the game's sky dome at that edge, and where the fog starts and is full - outdoors full just before the dome (at 0.9 of the radius), in caves at the radius - so nothing pops out of the void. 3: 2 rings, models out to 200. Farther costs processor time (more rooms and models each frame); nearer is lighter. The line under it says what is set now. Custom: one of the single values was changed by hand - moving the slider sets them all again. Live.
+@distance.stop.tip = How far round you the world is drawn, near (1) to far (7): how many rings of rooms round you the game draws, how far out it draws monsters and objects (the models' radius), and where the fog starts and is full, outdoors and in caves - so the farther world is seen and nothing pops out of the void. 1: the Low and Potato presets' distance (models out to 150). 2, the default: Medium's - 2 room rings, models out to 200, the game's fog 55 to 140 (in caves 65 to 200). 3 - 7 draw farther and open the fog with it; they cost processor time (more rooms and models each frame). The line under it says what is set now. Moving it shows Custom in the Quality preset; picking a preset sets the slider back to its stop. Custom here: one of the values was changed by hand - moving the slider sets them all again. Live.
 
 # --- The game and the mod ---
 group.the_game_and_the_mod = The game and the mod
@@ -341,6 +343,8 @@ render.potato_light_colour.choice0 = Neutral (white)
 render.potato_light_colour.choice1 = Warm
 render.potato_light_colour.choice2 = Cool
 render.potato_light_colour.choice3 = The area's own (its sky and fog colour)
+render.potato_light_game.label = ... Potato light in the game's own colours
+render.potato_light_game.tip = Ticked: the Potato light is not one even colour but the game's own light as its lit pass gets it - the area's sky light (its colours and strength from the area's lighting file for this time of day) and the sun or the moon (its colour, power and the side it shines on) - still without shadows, torches, light loops or reflections, so it stays as cheap. The grass and the ground keep the colour the game gives them, by day, at dusk and at night. The brightness sliders still work; the colour choice is not used. Native OpenXR first person (F4). Live. Unticked: one even light, as before.
 
 # --- Quality ---
 group.quality = Quality
@@ -362,24 +366,10 @@ render.rings.tip = Extra room rings around the hero. With fog, 4-6 is enough.
 render.model_radius.label = Model visibility radius
 render.model_radius.tip = The game's own is 150.
 sky.game_sky.label = Sky drawn by
-sky.game_sky.tip = Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of ours (VR F4; the flat game too with "The game draws them in the flat game too"). Our effect (old): the fog shader paints the sky in the void. Either goes with either fog ("Fog drawn by"): the sky's low part sinks into the fog's colour both ways. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
+sky.game_sky.tip = Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of ours (VR F4; the flat game too with "The game draws the sky in the flat game too"). Our effect (old): the fog shader paints the sky in the void. Either goes with either fog ("Fog drawn by"): the sky's low part sinks into the fog's colour both ways. Live - the game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game already running.
 sky.game_sky.choice0 = Our effect (old)
 sky.game_sky.choice1 = The game's dome (new)
-fog.game_fog.label = Fog drawn by
-fog.game_fog.tip = Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers (Fog start / Full fog below) - no frame time of ours, drawn whether "Distance fog" is ticked or not (VR F4; the flat game too with "The game draws them in the flat game too"; its own options on the World tab). Our effect (old): the fog shader lays the fog by the depth. Either goes with either sky ("Sky drawn by"). Live.
-fog.game_fog.choice1 = The game's fog (new)
-fog.enabled.label = Distance fog
-fog.enabled.tip = Our effect's distance fog, with "Fog drawn by: Our effect (old)". The game's fog is drawn by "Fog drawn by: The game's fog" alone - unticking this never takes it away (the presets leave it unticked: the game draws the fog). With the sky on, ours fades into the sky.
-fog.light.label = Light fog (weak graphics cards)
-fog.light.tip = Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before.
-fog.start.label = Fog start
-fog.start.tip = Where the fog begins. World units (the hero is ~7.5 tall).
-fog.end.label = Full fog
-fog.end.tip = Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).
-fog.caves_start.label = Fog start in caves
-fog.caves_start.tip = Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).
-fog.caves_end.label = Full fog in caves
-fog.caves_end.tip = Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).
+@status.fog_moved_perf.label = The fog - who draws it, its distances, caves and colours - is on the Fog tab.
 sky.enabled.label = Sky outdoors
 sky.enabled.tip = A painted sky over the black void outdoors. Who draws it: "Sky drawn by" above (our effect, or the game's dome).
 ceiling.enabled.label = Ceiling in caves and dungeons
@@ -404,7 +394,16 @@ render.big_radius.label = Big objects: trees, houses, walls farther (0 = off)
 render.big_radius.tip = Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before.
 sky.game_sky_radius_m.label = The game's sky: dome radius, m
 sky.game_sky_radius_m.tip = How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in use with each change.
-fog.enabled.tip#2 = A distance fog. Who draws it: the Sky tab's "Fog drawn by" (our effect, or the game itself). With the sky on, it fades into the sky.
+fog.enabled.label = Distance fog
+fog.enabled.tip = A distance fog. Who draws it: the Sky tab's "Fog drawn by" (our effect, or the game itself). With the sky on, it fades into the sky.
+fog.game_fog_start.label = Fog start
+fog.game_fog_start.tip = Where the fog begins. World units (the hero is ~7.5 tall).
+fog.game_fog_end.label = Full fog
+fog.game_fog_end.tip = Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).
+fog.game_fog_caves_start.label = Fog start in caves
+fog.game_fog_caves_start.tip = Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).
+fog.game_fog_caves_end.label = Full fog in caves
+fog.game_fog_caves_end.tip = Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).
 sky.game_dome_caves.label = A black dome round you in caves
 sky.game_dome_caves.tip = Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.
 sky.game_dome_caves_radius_m.label = The cave dome: radius, m
@@ -678,6 +677,12 @@ render.own_auras_side_cm.tip = Positive = to your right, negative = to your left
 # ===== Tab: Controls =====
 tab.controls = Controls
 
+# --- Hands ---
+group.hands = Hands
+group.hands.help = Which VR controller is the weapon hand.
+hands.left_handed.label = Left-handed: swap the controllers
+hands.left_handed.tip = The LEFT controller holds the main weapon and strikes with it, the right one is the off hand (shield, second weapon, the hand that holds the bow). The buttons, stick and trigger swap too: what the right controller did, the left one does. The inventory and the map in the hand, the wrist orbs, the belt, throws, the bow and vibration follow. The menu button stays where it is. First person (F4) only; the game's own weapons are not changed. Unticked = as before. Live.
+
 # --- Walking (left stick) ---
 group.walking_left_stick = Walking (left stick)
 group.walking_left_stick.help = How the left stick walks the hero: walk where you look, and fixes for when walking goes the wrong way or diagonals drift after a turn.
@@ -737,6 +742,8 @@ input.flat_aim_ground.label = Flat: aim on raised ground (stairs, ledges) where 
 input.flat_aim_ground.tip = With our camera (first or third person) a click, the hover and a skill's point go to the ground drawn under the crosshair, raised floors too. Unticked: the game's own point, made for its view from above - from first person it lands cells off on stairs and ledges.
 input.flat_body_pick.label = Flat: click a monster, an NPC or a chest by its body
 input.flat_body_pick.tip = Third and first person: monsters, NPCs, doors, shrines, chests and portals near you are clicked by their body, not only by their feet (from sajmonsoft's flat fork). Unticked: by the feet, as the game's own view from above has it.
+input.flat_shot_at_crosshair.label = Flat: a bow or throw goes exactly into the crosshair (no auto-aim)
+input.flat_shot_at_crosshair.tip = With a bow, a crossbow, a javelin or a throwing weapon in hand, in first and third person: a click on a monster goes where the crosshair is, as a shot in place - not at the monster the game finds near the crosshair, the hero does not walk to it, and a held button does not keep shooting it when you look away. Items, NPCs, hirelings, chests, doors and portals are clicked as ever. Unticked: the game's own attack at the monster under the pointer.
 input.vr_body_pick.label = VR: point at a monster, an NPC or a chest by its body
 input.vr_body_pick.tip = The mouse pointer (F1, F3), the crosshair (F2 with mouse look) and the hand's Shift + click aim pick monsters, NPCs, doors, shrines, chests and portals near you by their body, not only by their feet. The game still decides the hit. Unticked: by the feet.
 input.vr_body_pick_hand.label = VR F4: attack and interact go to what your hand points at
@@ -902,7 +909,7 @@ gameplay.quick_blow_min_ms.tip = Strike faster than the animation: no next blow 
 group.swing_timer = Swing timer
 group.swing_timer.help = After each attack, how long until the game takes the next one, and what the blow did. Only shown: the game's attack speed and roll stay as they are.
 hud.swing_timer.label = Swing timer: when the next attack counts
-hud.swing_timer.tip = VR first person (F4) and the monitor's F2 / F3. Nothing is shown until you attack: no ring means go. Once the game starts an attack, a ring in the middle of the view fills until the game lets the next attack in. Red: the game refuses a new attack now - a touch then is lost and says "too soon". Amber: the game's last moments of the animation - an attack now is kept and lands as the animation ends. Green: in. Then the ring melts away. Inside it, what the blow did: the life it took (a critical hit in gold and larger; one swing through several monsters summed, with x2, x3 ...), or miss, blocked, dodged, avoided. Nothing here changes the game: its attack speed, its roll and its damage are its own - the ring only shows its timing so you swing with it, not into it. Single player or a game you host: exact. Joined to someone's TCP/IP game: the ring from your hero's own animation (close, not exact) and no numbers. The monitor needs D2R_DepthFog.fx on in ReShade. Unticked: nothing shown. Live.
+hud.swing_timer.tip = VR first person (F4) and the monitor's F2 / F3. Nothing is shown until you attack: no ring means go. Once the game starts an attack, a ring in the middle of the view fills until the game lets the next attack in. Red: the game refuses a new attack now - a touch then is lost and says "too soon". Amber: the game's last moments of the animation - an attack now is kept and lands as the animation ends. Green: in. Then the ring melts away. Inside it, what the blow did: the life it took (a critical hit in gold and larger; one swing through several monsters summed, with x2, x3 ...), or miss, blocked, dodged, avoided. Nothing here changes the game: its attack speed, its roll and its damage are its own - the ring only shows its timing so you swing with it, not into it. Single player or a game you host: exact. Joined to someone's TCP/IP game: the ring from your hero's own animation (close, not exact), the numbers only when the host sends them (its "Host: send the joined players what their blows did"). The monitor needs D2R_DepthFog.fx on in ReShade. Unticked: nothing shown. Live.
 hud.swing_timer_style.label = Swing timer: where
 hud.swing_timer_style.tip = Ring in the middle: a small ring round the middle of the view (in VR before the eyes, on the monitor round the crosshair), the number inside it. Bar at the top: a bar across the top of the view filling left to right, the numbers rising over it and fading. Live.
 hud.swing_timer_style.choice0 = Ring in the middle
@@ -910,9 +917,13 @@ hud.swing_timer_style.choice1 = Bar at the top
 gameplay.swing_pace_joined.label = Joined: send a touch when the host takes it (VR)
 gameplay.swing_pace_joined.tip = Joined to someone else's TCP/IP game, VR first person (F4). The host's game decides when your hero may attack again, and a touch it refuses is lost. Ticked: your PC counts your hero's attack the way the swing timer does (from your hero's own animation) and sends a touch only when the host will take it - a touch while it would refuse is not sent ("too soon"), one in the last moments of the attack is held and sent as it ends, so it is never thrown away on the way. The attack, its speed and its roll stay the host's game's. Works from your second attack on (the first one is measured). Single player or a game you host: nothing changes (your own game decides at once). Unticked: every touch is sent as it comes. Live.
 hud.swing_timer_numbers.label = Swing timer: show what the blow did
-hud.swing_timer_numbers.tip = The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone ("too soon" still shows). Single player or a game you host only: a joined player's blows are rolled on the host's machine. Live.
+hud.swing_timer_numbers.tip = The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone ("too soon" still shows). Joined to someone's TCP/IP game: only when the host sends them (a joined player's blows are rolled on the host's machine). Live.
+multiplayer.share_hit_outcomes.label = Host: send the joined players what their blows did
+multiplayer.share_hit_outcomes.tip = You host a TCP/IP game: each joined player with this mod version gets what his own blows did - hit, miss, blocked, dodged, avoided, the life taken, a critical hit - and his swing timer shows it as yours does (he needs "Swing timer: show what the blow did" ticked). The roll and the damage happen on the host's machine only, so without this a joined player's timer has no numbers. Only the host's box counts: joined to someone else's game, yours means nothing there. A few bytes per blow; nothing in the game changes. Live.
 hud.swing_timer_reasons.label = Swing timer: say why a touch was no attack
 hud.swing_timer_reasons.tip = A touch with the weapon that did not become an attack says why, in the ring or over the bar (VR first person): shaft or handle - it met the body behind the weapon's head or behind your front hand, a push; not the tip - outside the part of the blade that strikes; slow - your swing against the speed it needs (3.1/5.0, m/s); weak - a strike too weak for the weapon; short - the swing or thrust was too short to count; push - a thrust with too little jab; wrong way - the blade moved away from the monster or backward; shield - its shield or weapon stopped the blow. Nothing here changes the game or what counts as a hit: it only tells you. Live.
+gameplay.shot_at_release.label = The arrow goes where you aim as it leaves the bow
+gameplay.shot_at_release.tip = A bow or crossbow. The game aims a shot when you click and lets the arrow go half a second or more later, at the animation's action frame; if you turned the camera in between, the arrow went where you aimed at the click. On: the arrow leaving the bow is turned to where the crosshair is at that moment (2D first and third person); a Multiple Shot's fan turns as a whole. Strafe and Guided Arrow pick their own targets and are left as the game made them. Only the arrow's direction changes - its speed, range, hit and damage are the game's. A TCP/IP game: who hosts decides - the host's server turns every player's arrows by the aim each player's mod sends (the same version of the mod); a joined player's own box means nothing there. Unticked: the arrow goes where the click aimed. Live.
 
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = In-game settings and the host's rules
@@ -1047,6 +1058,8 @@ stereo.pair_per_tick.label = Both eyes from one game frame
 stereo.pair_per_tick.tip = The frame is drawn twice (left, then right with the game time held) instead of one eye per frame by turns. Same pairs per second; the game itself updates half as often.
 stereo.native_replay.label = ... drawn once, the right eye again on the graphics card
 stereo.native_replay.tip = With Both eyes from one game frame: the game draws the frame once, and the right eye is drawn again on the graphics card from the same work with its own camera, instead of the whole frame drawn twice. The game's thread does about half the work: on a PC held back by its processor, many more frames a second; a PC held back by its graphics card gains little. Native OpenXR, first person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the picture has settled (a few seconds) - two passes then, never a black eye. On by default ("Native one pass" in 3D in the headset). Takes effect at the next game start. Off: two passes ("Native two passes").
+stereo.replay_reset_guard.label = ... never again a list the game took up
+stereo.replay_reset_guard.tip = With the right eye drawn again on the graphics card: the game may start a new recording in one of its lists as soon as it has sent it, and by the time the right eye sends the same list again it holds other commands - an unfinished one takes the graphics device away, a later one makes the card draw from what is not there yet (it hangs). On: such a frame's right eye is the left picture once, and the log says so. Off: told in the log, sent again anyway (as before). Live.
 stereo.turn_warp.label = Eyes by turns: make the other eye from the depth
 stereo.turn_warp.tip = Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. Unticked: it goes to the headset as it was last drawn, and the headset turns it (rotation only: a step or a moving monster shows a frame behind in that eye). First person (F4) only. Live. Idea: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... with the eye drawn this frame over it
@@ -1220,6 +1233,14 @@ group.item_labels_on_the_ground.help#2 = The names of items lying on the ground 
 hud_third.labels_alpha.tip = How much of the dark box behind the names of items on the ground is drawn in third person (F2): 1 = as the game draws it, 0 = no box, the names alone. The names stay bright. Through the game's label code (vrcam's log says "item-label hook in"); on another game build it does nothing here.
 hud_third.labels_size.tip = The names of items on the ground and their boxes in third person (F2), smaller or larger, each about the point under it. 100 = the game's own. Item tooltips and all other text keep their size.
 
+# --- Monster plate, third person ---
+group.monster_plate_third_person = Monster plate, third person
+group.monster_plate_third_person.help = The name and health bar over the monster you target in third person (F2): at its monster's depth, so it does not look doubled.
+hud_third.monster_depth.label = Monster plate: at its monster, %
+hud_third.monster_depth.tip = The name and health bar the game hangs over the monster you target, in third person (F2): in stereo the game draws it on the same spot in both eyes, so it floats at the screen's depth and looks doubled when you look at the monster. Here it is moved to its monster's own depth, by the point over the monster's head: 100 = exactly there, 0 = where the game leaves it. Our own plate (Name over a monster: our own, in every view) stands there by itself; this is for the game's. Live.
+hud.npc_dialog_keep_view.label = Talking to an NPC keeps the view (test)
+hud.npc_dialog_keep_view.tip = In the headset (native OpenXR), talking to an NPC opened its small Talk / Trade / Cancel box as a menu, and in F1, F2 and F3 a menu puts up the flat picture of the game far ahead: the view flew away. On: while that box (or its speech scroll) is the only menu open, the view stays as it was, the box drawn in the game's picture as the toolbar is; pick Talk / Trade with the controller. Trade, the stash and every other screen still go to the flat picture. F1, F2, F3; F4 keeps its own way (Menus as a panel). Live. Off: the flat picture, as before.
+
 # ===== Tab: UI: F3 floor =====
 tab.ui_f3_floor = UI: F3 floor
 
@@ -1245,6 +1266,11 @@ hud_floor.map_y.tip = The map moved up the screen, % of the screen's height: + u
 group.item_labels_on_the_ground.help#3 = The names of items lying on the ground when the game is on your floor (F3): how much of the dark box behind them shows and how big they are. Item tooltips and all other text keep their size.
 hud_floor.labels_alpha.tip = How much of the dark box behind the names of items on the ground is drawn: 1 = as the game draws it, 0 = no box, the names alone. The names themselves stay bright. Should the game's label code not be found (another game build), the labels are faded as a picture by D2R_DepthFog.fx instead: the boxes fade, the names stay. Only on the floor (F3).
 hud_floor.labels_size.tip = The names of items on the ground and their boxes, smaller or larger, each about the point under it; the game makes room for them at that size. 100 = the game's own. Through the game's label code: on another game build it does nothing (vrcam's log says so). Only on the floor (F3); item tooltips and every other text keep their size.
+
+# --- Monster plate, the game on your floor ---
+group.monster_plate_the_game_on_your_floor = Monster plate, the game on your floor
+group.monster_plate_the_game_on_your_floor.help = The name and health bar over the monster you target on the floor (F3): at its monster's depth, so it does not look doubled.
+hud_floor.monster_depth.tip = The name and health bar the game hangs over the monster you target, in F3, the game on your floor: in stereo the game draws it on the same spot in both eyes, so it floats at the screen's depth and looks doubled when you look at the monster. Here it is moved to its monster's own depth, by the point over the monster's head: 100 = exactly there, 0 = where the game leaves it. Our own plate (Name over a monster: our own, in every view) stands there by itself; this is for the game's. Live.
 
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = UI: F3 eyes
@@ -1359,6 +1385,8 @@ openxr.menu_zoom.label = Right grip + right stick: a panel nearer / farther
 openxr.menu_zoom.tip = Native OpenXR, F4: with a panel of the game in front (the inventory, the stash, a trader, the waypoints...), hold the right grip and push the right stick forward to bring it nearer, back to send it farther; let go and it stays there - written to "Flat picture with a panel open: distance" ([screen] menu_distance_m). It stops where the panel stops being readable: nearer, part of it would be out of sight; farther, the headset's pixels would skip the game's text. While the grip is held the stick's forward / back is not the game's, and the grip's own press (the menu's right bumper, where the laser does not have it) comes when you let go without moving the panel. Off: as before.
 openxr.menu_zoom_speed_mps.label = Panel nearer / farther: speed, m/s
 openxr.menu_zoom_speed_mps.tip = How fast the panel moves with the right stick pushed all the way. Live.
+openxr.panel_grab.label = Grab a panel with a grip: move it, pull it nearer, push it farther
+openxr.panel_grab.tip = Native OpenXR, F4: with a panel of the game in front (the inventory, the stash, a trader, the cube...), point either hand at it (or put the hand on it) and squeeze the grip: the panel is in your hand. Move the hand and it follows; pull the hand in and it comes nearer, push it out and it goes farther (three times the hand's own travel, so one pull brings it to arm's length); that hand's stick forward / back does the same. Let go and it stays where it is; it opens there next time. Nearer than where all of it is in sight it keeps its size in view, so near it is a tablet you point at from a few centimetres. Only a grip that starts on the panel takes it: a trigger pressed first is still the right click (or Shift click), a grip let go without moving is still the menu's page button, and weapon or potion grabs elsewhere are untouched. While it is on, the right grip + right stick distance above steps aside (the grab's stick does it). Off: as before.
 openxr.hand_inventory.label = Inventory on the left hand outside town
 openxr.hand_inventory.tip = Native OpenXR, F4, with the laser on: away from town the game's whole inventory window hangs on your LEFT hand instead of in front - cut out of the interface, held over the left controller like a tablet, turned to your eyes - and the left stick goes on walking the hero while it is open: it no longer moves the inventory's cursor (the RIGHT hand's laser is the mouse on it) and goes to the game's own walking. The small button beside it puts the inventory in front, full size, and back on the hand. Drag an item off it and let go: the inventory closes and the game drops it. The long press of the left stick click opens and closes it even while you walk. In town, or with another menu (a waypoint, the game menu), in front as before. The game locks its own walk while its inventory is open; the left stick then sends the stick's own walk command for it, with the game's run rules. Off: as before.
 openxr.hand_inventory_width_m.label = Inventory on the hand: width, m
@@ -1524,7 +1552,9 @@ input.point_pickup_label_pct.tip = The name of the item your hand points at (Con
 # --- Monster plates ---
 group.monster_plates.help#3 = The name and health bar over the monster you target: opacity, size, smaller far away, height and stereo depth, so in F4 it sits at its monster. Plate over the monster's head keeps it a set gap over the head at any distance.
 hud.monster_names_own.label = Name over a monster: our own, sharp (test)
-hud.monster_names_own.tip = The name in the plate over the monster you target drawn by the mod instead of the game's copy: sharp at any render size, in the game's colours (unique gold, champion blue). The bar, its frame and the targeting stay the game's. It has its own size, size far away and backdrop ("Our names" below) and stands at its monster's own depth; the plate's sliders stay the game plate's. First person (F4); not with the plate hung in the room. Needs the D2R_DepthFog.fx of the same build. Live. Unticked: the game's name, as before.
+hud.monster_names_own.tip = The name in the plate over the monster you target drawn by the mod instead of the game's copy: sharp at any render size, in the game's colours (unique gold, champion blue). The bar, its frame and the targeting stay the game's. It has its own size, size far away and backdrop ("Our names" below) and stands at its monster's own depth; the plate's sliders stay the game plate's. First person (F4), and F1 - F3 with the tick below; not with the plate hung in the room. Needs the D2R_DepthFog.fx of the same build. Live. Unticked: the game's name, as before.
+hud.monster_names_own_all_views.label = Name over a monster: our own, in every view (test)
+hud.monster_names_own_all_views.tip = The plate above (our own name on the red bar, type, immunities) in F1, F2 and F3 too, wherever the mod's camera draws the view in stereo: it stands over the monster's head at its own depth in each eye, and the game's plate under it is not drawn - no doubled bar. The game's own camera from above (flat F1) keeps the game's plate. Needs the tick above. Live. Unticked: F4 only, as before.
 hud.npc_names_own.label = Names over NPCs and objects: our own, sharp (test)
 hud.npc_names_own.tip = The names the game shows over the NPCs (Warriv, Kashya, Akara...), objects, portals and exits you point at, drawn by the mod instead of the game's copy: sharp at any render size, where the game puts them, on the game's own dark box, with the size and backdrop of "Our names" below. First person (F4). Needs the D2R_DepthFog.fx of the same build. Live. Unticked: the game's names, as before.
 hud.own_labels_drop_game.label = Our labels and names: the game's not drawn at all (test)
@@ -1987,54 +2017,6 @@ hud.map_width.label = Map width, m
 # ===== Tab: World =====
 tab.world = World
 
-# --- Fog ---
-group.fog = Fog
-group.fog.help = The distance fog, and fixes for the game's depth effects seen from our camera. Set where the fog is complete, its falloff, fog in caves and its colour, whether fire and spells are spared, and fixes for the game's own fogs, walls in front of the hero, roofs and lighting at a square window.
-fog.game_fog_mist.label = The game's fog over its mist too
-fog.game_fog_mist.tip = The game's own fog pass adds its volumetric mist (lit by torches and the like) after the fog, never fogged by distance: in a cave our dark fog turned the far walls black and the mist stayed, a light band behind the fires. Ticked: the mist fades with distance as everything else does. Without ReShade only. Live.
-fog.game_fog_caves_black.label = The game's fog darkens to black in caves
-fog.game_fog_caves_black.tip = Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. Without ReShade only. Live.
-fog.game_fog_our_curve.label = The game's fog by our curve
-fog.game_fog_our_curve.tip = The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.
-fog.fog_keeps_colour.label = The game's fog keeps the act's colour at night
-fog.fog_keeps_colour.tip = While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to "Sky at night" and by the sky's brightness for each time of day. With the sky's colour ("The fog's colour: measured from the game" unticked): the day sky's at the horizon at every hour; off, the night sky's by night - near black. Live.
-fog.fog_into_sky.label = The game's fog fades the far into the sky behind it
-fog.fog_into_sky.tip = In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, as it is drawn). Far objects show the sky through them. It worked through "The game's fog as thick and as coloured as ours", removed (it broke the fog): for now it changes nothing. Live. Off: one fog colour, as before.
-fog.fog_colour_measured.label = The fog's colour: measured from the game
-fog.fog_colour_measured.tip = Ticked: the fog's colour is the act's own colour as set (its measure from the game went with the removed "The game's fog as thick and as coloured as ours"). Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live.
-fog.game_fog_before_fx.label = The fog before smoke and fire
-fog.game_fog_before_fx.tip = The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card (its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started again.
-fog.game_fog_fx_depth.label = Far smoke and fire fade into the fog
-fog.game_fog_fx_depth.tip = With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. Without ReShade only. Live. Off: the effects never fogged.
-fog.game_fog_height.label = The game's fog thins with height
-fog.game_fog_height.tip = The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, nothing added. Outdoors only (underground no sky to keep clear). Without ReShade only. Off: the game's fog as it is. Live.
-fog.game_fog_top.label = The game's fog: its top, units above the eyes
-fog.game_fog_top.tip = How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.
-fog.game_fog_soft.label = The game's fog: softness of its top, units
-fog.game_fog_soft.tip = How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.
-fog.game_fog_top_from_floor.label = The game's fog: its top counted from the hero's floor
-fog.game_fog_top_from_floor.tip = The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. Off: from the eyes, as before. Unticking "thins with height" instead gives the fog by distance alone, as our own fog. Live.
-fog.end.tip#2 = Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).
-fog.curve.label = Falloff
-fog.curve.tip = 1 = linear; more = a clearer middle distance.
-fog.blur.label = Depth blur, px (0 = off)
-fog.blur.tip = The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away.
-fog.spare_effects.label = Fog spares fire, spells and smoke (test)
-fog.spare_effects.tip = Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before.
-render.fog_in_frame.label = Fog drawn inside the game's frame (test)
-render.fog_in_frame.tip = The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 only. Applies when the game is started again; off = the fog as before. Over "Fog spares fire" when both are on.
-fog.caves.label = Fog in caves and dungeons
-fog.caves.tip = Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky): on, it keeps its fog with either fog. Live.
-fog.ease_in.label = Fog eased in, no hard ring
-fog.ease_in.tip = The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our curve draws the fog: our effect, and the game's fog with "The game's fog by our curve" on (not the game's own curve). From D2R VR Unleashed (bearstonem). Live. Off: the fog as before.
-fog.no_fog_river.label = No fog in the River of Flame
-fog.no_fog_river.tip = No added fog in the River of Flame, though it is open air: its lava's own glow and haze stay the game's. Our effect's fog and the game's fog alike. From D2R VR Unleashed (bearstonem). Live. Off: the fog there as everywhere outdoors.
-fog.caves_strength.label = Fog strength in caves
-fog.caves_strength.tip = How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.
-fog.color_caves.label = Fog colour in caves
-fog.color_caves.tip = Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.
-fog.color_caves.empty = same as the act
-
 # --- Distance blur ---
 group.distance_blur = Distance blur
 group.distance_blur.help = The far picture blurred, as through a pane of frosted glass standing at a distance in front of you: nothing nearer than the pane is touched; behind it the world blurs more the farther it is. Set where the pane stands, where the blur is at its widest, and how wide that is. Apart from the fog: no colour of its own, the fog keeps its look.
@@ -2047,30 +2029,9 @@ render.distance_blur_full_m.tip = Where the blur is at its widest, metres (at le
 render.distance_blur_strength.label = Blur strength
 render.distance_blur_strength.tip = How wide the blur is at its widest: 1 = 2.5 % of the picture's height (about 50 pixels on a 2000-line eye), 0.4 as the fractal game has it. 0 = no blur. Live.
 
-# --- Arcane Sanctuary ---
-group.arcane_sanctuary = Arcane Sanctuary
-group.arcane_sanctuary.help = The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the caves' fog until "Its own fog" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: fog fades into its sky).
-fog.arcane_own.label = Arcane Sanctuary: its own fog
-fog.arcane_own.tip = The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' start, end, strength and colour, as before.
-fog.arcane_start.label = Arcane Sanctuary: fog start
-fog.arcane_start.tip = Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-fog.arcane_end.label = Arcane Sanctuary: full fog
-fog.arcane_end.tip = Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
-fog.arcane_strength.label = Arcane Sanctuary: fog strength
-fog.arcane_strength.tip = How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.
-fog.arcane_curve.label = Arcane Sanctuary: fog curve
-fog.arcane_curve.tip = How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it thickens soon after the start. Live.
-fog.arcane_color.label = Arcane Sanctuary: fog colour
-fog.arcane_color.tip = The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.
-fog.arcane_color.empty = same as caves
-fog.arcane_into_sky.label = Arcane Sanctuary: fog fades into the sky behind
-fog.arcane_into_sky.tip = Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they fade into the fog colour above instead. Live.
-render.game_height_fog.label = The game's own height fog
-render.game_height_fog.tip = Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0.
-render.game_depth_fog.label = The game's own depth fog
-render.game_depth_fog.tip = Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture (from above too), over the near ground from our camera. Off: vrcam sets it to 0.
-render.game_fog_scan_safe.label = Find the game's fog safely
-render.game_fog_scan_safe.tip = How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live.
+# --- Depth and view ---
+group.depth_and_view = Depth and view
+group.depth_and_view.help = How the game's depth effects see our camera, and the walls, roofs and lighting seen from it. (The Arcane Sanctuary's fog and the game's own fogs are on the Fog tab.)
 render.depth_fix.label = The game's effects measure depth from our camera
 render.depth_fix.tip = The game keeps a copy of the depth for its fog, height fog, ambient occlusion, reflections and water, made for its camera from above (550 to 1060 units away). From ours everything is nearer and read as one flat wall 550 away: the act 2 town's straight line with a pale veil above it, the haze in the corners. On: that depth runs from our camera. Off: the game's own.
 render.own_depth.label = Depth for the effects
@@ -2099,6 +2060,8 @@ render.light_bounds_fix.label = Fix the game's lighting at a square or wide wind
 render.light_bounds_fix.tip = The game cuts the picture into 32 x 20 tiles and finds each tile's depth range for its lights with a shader that is right only at a 16:10 window. At a square or wide one (the VR window, 16:9) it misses rows: lights vanish in hard rectangles and a roof's shading flickers as the head moves. On: our own shader does that one job right while VR renders, with ReShade or without it (at 16:10 the numbers are the same as the game's). Off at once; ticked on again it takes effect at the next start of the game. Off: the game's own.
 render.light_bounds_flat.label = ... in flat mode too
 render.light_bounds_flat.tip = The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at 16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own shader, as before.
+render.symmetric_projection.label = Lighting right with off-centre eyes (softer)
+render.symmetric_projection.tip = Native OpenXR: the game finds which lights reach each of its 32 x 20 tiles with a shader that takes the picture as centred. An eye drawn off-centre (frame generation on, "Each eye exactly as the headset gives it" off or on the headset's own angles, angles by hand without "Names and interface single in both eyes", a headset whose displays are turned outward) gets its lights in the tiles beside their own: patches of ground detail that slide with the hero on one side of the view and move as you turn. On: both eyes are drawn and handed to the headset with one centred view that holds both eyes' (after bearstonem/d2r-pcvr) - the patches should go; the picture is a little softer (the same pixels over a wider angle). With "Each eye exactly as the headset gives it" on Centred (the default), on most headsets the eyes are centred already and nothing changes. If the headset goes black with frame generation, untick it. Live. Off: each eye as its choice draws it.
 render.reflections_per_eye.label = Reflections in puddles and blood at their true depth (3D)
 render.reflections_per_eye.tip = With "Stereo - one pass, two pictures" the game's reflections in water, puddles and blood pools were drawn in the right eye as if seen from twice the distance between the eyes: twice the parallax, half the depth - the reflection seemed to float above the puddle and strained the eyes. On: the game's two reflection passes read each eye's own position (one value in its own shader changed; no extra work for the graphics card), so each reflection lies in the water. The other 3D modes and flat mode look the same either way. Made at the start of the game: switched on, it works from the next start; after that it follows this tick at once. Off: the game's own.
 
@@ -2108,11 +2071,15 @@ group.render_distance.help = How far around the hero the world is drawn: more ro
 
 # --- Scenery ---
 group.scenery = Scenery
-group.scenery.help = Fixes to the game's scenery for first person: floors that keep their height when you come back to a room, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes.
-render.floors_stay.label = Floors stay where they were (no ground that slides on a way back)
-render.floors_stay.tip = The game gives each room of a level a height when it starts drawing it, matched to the rooms drawn round it at that moment, and forgets it when the room is out of sight. Its tiles' edges do not agree all the way round, so a room you come back to by another way (or after another area or town) can be a step higher or lower - from the game's camera above nobody sees it, from ours the floor slides: blocks pushed up, down and aside, the void showing between them. On: every room keeps the height it was first drawn at until you leave the game. The trade: the game also mends a room drawn at the wrong height (a step seen from afar, as by the Pandemonium Fortress's gate) when it draws it again as you come near - with this on, that mend does not come. Only the picture; nothing of the fight or the paths changes. Live. Off (the default): the game's own heights.
+group.scenery.help = Fixes to the game's scenery for first person: dungeon floors that join up along your way, ground tiles at their own floor's height, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes.
+render.room_stitch.label = Dungeon floors join up along the way you come
+render.room_stitch.tip = The game gives each room a height when it builds it, meeting ONE of the rooms already built round it - the hero's own room if it is one, else whichever asks the biggest step. From its camera above that never shows; from ours, rooms built a few rings out hang a step above or below the next one with a black void between, and snap into place at the threshold. On: each room meets its built neighbour nearest you, so floors join along the way you come; what a loop of the level cannot close is left on the borders away from you. Where our copy of the game's choice ever disagrees with the game, the game's answer stands. Only the picture; monsters, missiles and items follow the floor by themselves. A room you come back to by another way meets your way too. Every view: flat F1 - F3, VR F4 and the flat game with its own camera (from above it never shows, so nothing changes there); a room keeps its height when you switch views. Legacy graphics draws no such rooms. From D2R VR Unleashed (Cal, bearstonem's team). On by default. Off: the game's own choice.
+render.terrain_heights.label = Ground tiles at their own floor's height (stairs, ledges)
+render.terrain_heights.tip = The game draws every tile of the outdoor ground (sand, grass, snow and the paving over them) at the height of the floor under the hero. From its camera above that never shows; from ours, where the ground has two levels - the act 2 desert's plateaus and their stairs, ledges - the other level's ground lies at the hero's level, pushed aside, and the whole ground jumps up or down with each step of the stairs. On: each tile is drawn at the height of its own floor and stitched to the tiles round it - a tile across a ledge joins the level its neighbours stand on, so no steps or gaps open between tiles of one floor; real drops (cliffs, ledges, stairs) stay. Only the picture; nothing of the fight or the paths changes. Live. Off (the default): the game's one height for all.
 world.kurast_boat.label = Kurast Docks: the canoe in the sky sits on the water
 world.kurast_boat.tip = The town's HD scenery places one canoe 50 units up, where the view from above never looks; in first person it hangs over the huts. On: it lies on the water by the western docks, where its prefab was built - one number of the town's scenery file changed (found by bearstonem/d2r-pcvr). This program makes that file from your game's own when it opens (Home: Kurast Docks canoe) and keeps it inside the mod (mods\D2R-VR\D2R-VR.mpq); nothing of the game itself changes, nor anything you play with. Takes effect at the next start of the game (a game already running keeps the canoe where it was). Off: the file is taken out again, the canoe as the game has it.
+holes.patch_world.label = Holes in the world patched (a test: the bridge out of the Rogue Encampment)
+holes.patch_world.tip = The game was built for a camera that looks down from above: some places were never modelled where that camera never looks - the bridge out of the Rogue Encampment has a strip along its deck with no floor, between the deck and its parapet, through which first and third person see the river far below. Ticked, this program makes a patch for each such place from your game's own files (the deck's own ground material, its edges carried on to the parapet - nothing placed by hand) and the game draws it as its own piece, lit and shadowed as the deck. Every view: flat F1, F2, F3 and VR. Takes effect at the next start of the game. Off: the files are taken out again, the bridge as the game has it.
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = Monsters (flat play)
@@ -2126,8 +2093,9 @@ tab.sky = Sky
 # --- Sky and fog ---
 group.sky_and_fog = Sky and fog
 group.sky_and_fog.help = Who draws the sky and who draws the distance fog: the game itself (new) or our effect (old) - a choice each, any two together (the game's dome with our fog, our sky with the game's fog).
-render.game_drawn_flat.label = The game draws them in the flat game too
-render.game_drawn_flat.tip = The sky dome, the cave dome and ceiling and the fog the game draws itself, also when you play on the monitor without a headset (the flat first and third person views; from above stays as it is). Off: only in VR first person (F4). Live.
+render.game_drawn_flat.label = The game draws the sky in the flat game too
+render.game_drawn_flat.tip = The sky dome, the cave dome and ceiling the game draws itself, also when you play on the monitor without a headset (the flat first and third person views; from above stays as it is). Off: only in VR first person (F4). The fog has its own on the Fog tab. Live.
+@status.fog_moved_sky.label = Who draws the fog, the fog's colours and the sky's low part in the fog's colour are on the Fog tab.
 
 # --- Sky ---
 group.sky.help = A sky in the black void beyond the world, only in the open air. Set the clouds, whether the sky turns slowly, the sky over the dark rim round roofs and trees, and the Arcane Sanctuary's own stars all round and its fog.
@@ -2146,12 +2114,6 @@ sky.dome_gain_once.label = The game's sky: its colours measured once
 sky.dome_gain_once.tip = With "its colours drawn by the game": the measure of the game's sky against ours is taken once for each area and time of day, and kept in d2r_vr_dome_gain.txt beside the settings (delete it to measure again). After that the sky is baked from those numbers only when the light, the time of day or a slider changes - nothing measured or baked again while you play. Live. Off: measured all the time, as before.
 sky.dome_in_game_colour.label = The game's sky: its colours drawn by the game
 sky.dome_in_game_colour.tip = Our effect recoloured the game-drawn sky after the game had drawn the trees, the palisade and the roofs over it: their edges, blended into the sky as the game drew it, kept its old colour - a light outline round every branch at night. Ticked, the game draws the sky from a picture of ours instead, made from its own with the night picture, the day and night dimming, the brightness of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect recolours it as before.
-sky.dome_fog_horizon.label = The game's sky: its horizon into the fog
-sky.dome_fog_horizon.tip = The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.
-sky.dome_fog_baked.label = The game's sky: its low part in the fog's colour
-sky.dome_fog_baked.tip = With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.
-sky.dome_fog_baked_strength.label = The game's sky: how much of the fog's colour
-sky.dome_fog_baked_strength.tip = 1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.
 sky.game_sky_closed.label = The game's sky: a whole sphere, one colour below
 sky.game_sky_closed.tip = The game-drawn sky ended 12 degrees under the horizon: past a cliff's edge its rim stood as a hard line with a hole under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - the sky's own at the horizon (with a fog drawn, the fog's: they meet in one colour). In every act, VR and flat. This program makes the dome's models again at once; the game takes them at its next start. Off: the open dome, as before.
 sky.game_skybox.label = Arreat Summit: the sky dome far out
@@ -2165,8 +2127,6 @@ sky.weather_first_person.choice1 = Hidden
 sky.weather_first_person.choice2 = Round you
 sky.arcane_sky.label = Arcane Sanctuary: its own stars all round
 sky.arcane_sky.tip = In the Arcane Sanctuary the void round the platforms shows the game's own star layers and clouds in every direction, below the platforms too (after bearstonem/d2r-pcvr). The pictures are made from your game's files when this program opens (Home: Arcane Sanctuary sky) and live inside the mod (mods\D2R-VR); nothing of the game is changed. Not in the views from above. Works with the outdoor sky off too. Off: the void as the game draws it.
-sky.arcane_fog.label = Arcane Sanctuary: fog fades into its sky
-sky.arcane_fog.tip = The distance fog ([fog] on, World > Fog) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end.
 
 # --- Day and night ---
 group.day_and_night = Day and night
@@ -2219,9 +2179,6 @@ sky.brightness_act1.label = Brightness
 sky.texture_act1.label = Sky panorama
 sky.texture_act1.tip = A bare name is looked for in reshade-shaders\Textures; a full path works too. Empty (x) = the shader draws this sky itself.
 sky.cap_act1.label = Zenith
-fog.color_act1.label = Fog colour
-fog.color_act1.tip = The fog colour of this act, its caves included; the low part of the sky sinks into it. Empty (x) = the sky's horizon colour, or dark without a sky.
-fog.color_act1.empty = from the sky
 
 # --- Act 2 (desert) ---
 group.act_2_desert = Act 2 (desert)
@@ -2243,6 +2200,140 @@ group.act_5_ruins.help = The sky over act 5's ruins: its brightness, panorama pi
 group.act_5_snow = Act 5 (snow)
 group.act_5_snow.help = The sky over act 5's snow: its brightness, panorama picture, zenith and fog colour, as for act 1.
 
+# ===== Tab: Fog =====
+tab.fog = Fog
+
+# --- Fog drawn by ---
+group.fog_drawn_by = Fog drawn by
+group.fog_drawn_by.help = Who draws the distance fog: nobody, the game's own fog pass (new, the default) or our old effect. The block of the one not chosen stays greyed.
+@fogby.way.tip = Who draws the distance fog. The game's fog: the game's own fog pass with our distances and colours (the block below) - no frame time of ours. Old fog (our effect): our fog shader lays the fog by the depth, as before (its own block). None: no distance fog. Live.
+@fogby.way.choice1 = The game's fog
+@fogby.way.choice2 = Old fog (our effect)
+@fogby.way.choice3 = Fog planes before the player
+
+# --- The game's fog ---
+group.the_game_s_fog.help = The game's own fog pass: where it begins and where it is complete, in the open air and in caves, its colour by the game's time of day, and the sky's low part baked into that colour. Its own sliders - the old fog's are below.
+fog.game_fog_flat.label = The game's fog in the flat game too
+fog.game_fog_flat.tip = The game draws its fog also when you play on the monitor without a headset (the flat first and third person views). Off: only in VR first person (F4). Empty: as "The game draws the sky in the flat game too" (the one switch before). Live.
+fog.game_fog_before_fx.label = The fog before smoke and fire
+fog.game_fog_before_fx.tip = The fog is laid on the world before the game adds its smoke, fire, mist and spells, so they stay bright over the fogged world. Off: the game's own order - the fog goes over them by whatever is far behind them, and a torch's flame and smoke in front of a far, fogged background are wiped out. One pass of ours on the graphics card (its cost in the log's 10 s line). Applies when the game is started again.
+fog.game_fog_planes_count.label = How many planes
+fog.game_fog_planes_count.tip = With "Fog drawn by: Fog planes before the player": the fog as planes facing you, standing from Fog start to Full fog, each a layer of the fog's colour; what is behind a plane is covered by it, what is in front of it (a torch's flame) stays bright. More planes: smoother, the same cost. Live.
+fog.game_fog_planes_soft.label = How soft each plane is
+fog.game_fog_planes_soft.tip = 0: hard planes - a line where each cuts the ground; 1: each fades in over the gap to the next, no lines. Live.
+group.caves_and_dungeons = Caves and dungeons
+fog.game_fog_caves.label = Fog in caves and dungeons
+fog.game_fog_caves.tip = The game's fog in caves, dungeons and crypts too (every area that is not open air). Live.
+fog.game_fog_caves_strength.label = Fog strength in caves
+fog.game_fog_caves_strength.tip = How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.
+fog.game_fog_caves_black.label = The game's fog darkens to black in caves
+fog.game_fog_caves_black.tip = Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. Without ReShade only. Live.
+group.its_colour_by_the_time_of_day = Its colour by the time of day
+fog.game_fog_colour.label = The game's raw colour
+fog.game_fog_colour.tip = Unticked (the default): the fog is the dawn, day, dusk and night colours below, blended by the game's own clock. Ticked: the colour the game's own lighting files hold, as it is - with our near, dense fog a pale wall over the far land by day and a lavender one at night. Live.
+fog.game_fog_act1_dawn.label = Dawn colour
+fog.game_fog_act1_dawn.tip = The game's fog colour at dawn in this act's open air (the game's light: dawn's both parts). Empty = the day colour in the game's own dawn cast - the day colour times the game's own change from its day fog to its dawn fog, per colour, each part of the dawn its own (from the act's lighting files). Live.
+fog.game_fog_act1_dawn.empty = the day's in the game's dawn cast
+fog.game_fog_act1_day.label = Day colour
+fog.game_fog_act1_day.tip = The game's fog colour by day in this act's open air (the game's light: the day). Empty = the old fog's colour of this act (World > the act's Fog colour), as it is now. Live.
+fog.game_fog_act1_day.empty = the old fog's
+fog.game_fog_act1_dusk.label = Dusk colour
+fog.game_fog_act1_dusk.tip = The game's fog colour at dusk in this act's open air (the game's light: dusk's both parts). Empty = the day colour in the game's own dusk cast - the day colour times the game's own change from its day fog to its dusk fog, per colour, each part of the dusk its own (from the act's lighting files). Live.
+fog.game_fog_act1_dusk.empty = the day's in the game's dusk cast
+fog.game_fog_act1_night.label = Night colour
+fog.game_fog_act1_night.tip = The game's fog colour at night in this act's open air (the game's light: the night). Empty = the old fog's colour of this act times "Sky at night", as the old fog darkened at night. Live.
+fog.game_fog_act1_night.empty = the old fog's by night
+group.the_sky_s_low_part_in_the_fog_s_colour_baked_into_the_dome = The sky's low part in the fog's colour (baked into the dome)
+sky.dome_fog_horizon.label = The game's sky: its horizon into the fog
+sky.dome_fog_horizon.tip = The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.
+sky.dome_fog_baked.label = The game's sky: its low part in the fog's colour
+sky.dome_fog_baked.tip = With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.
+sky.dome_fog_baked_strength.label = The game's sky: how much of the fog's colour
+sky.dome_fog_baked_strength.tip = 1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.
+
+# --- Old fog (our effect) ---
+group.old_fog_our_effect.help = Our own effect's distance fog, as it was (frozen) - with "Fog drawn by: Old fog" only, greyed otherwise. Its own sliders.
+fog.end.tip = Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).
+fog.light.label = Light fog (weak graphics cards)
+fog.light.tip = Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before.
+fog.curve.label = Falloff
+fog.curve.tip = 1 = linear; more = a clearer middle distance.
+fog.blur.label = Depth blur, px (0 = off)
+fog.blur.tip = The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away.
+fog.ease_in.label = Fog eased in, no hard ring
+fog.ease_in.tip = The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our curve draws the fog: our effect, and the game's fog with "The game's fog by our curve" on (not the game's own curve). From D2R VR Unleashed (bearstonem). Live. Off: the fog as before.
+fog.spare_effects.label = Fog spares fire, spells and smoke (test)
+fog.spare_effects.tip = Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before.
+render.fog_in_frame.label = Fog drawn inside the game's frame (test)
+render.fog_in_frame.tip = The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 only. Applies when the game is started again; off = the fog as before. Over "Fog spares fire" when both are on.
+fog.caves.tip = Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog fades into its sky): on, it keeps its fog with either fog. Live.
+group.fog_colour_of_each_act = Fog colour of each act
+fog.color_act1.label = Fog colour: Act 1 (night, storm)
+fog.color_act1.tip = The fog colour of this act, its caves included; the low part of the sky sinks into it. Empty (x) = the sky's horizon colour, or dark without a sky.
+fog.color_act1.empty = from the sky
+fog.color_act2.label = Fog colour: Act 2 (desert)
+fog.color_act3.label = Fog colour: Act 3 (jungle)
+fog.color_act4.label = Fog colour: Act 4 (Hell)
+fog.color_act5.label = Fog colour: Act 5 (ruins)
+fog.color_snow.label = Fog colour: Act 5 (snow)
+fog.arcane_curve.label = Arcane Sanctuary: fog curve
+fog.arcane_curve.tip = How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it thickens soon after the start. Live.
+
+# --- Both fogs ---
+group.both_fogs = Both fogs
+group.both_fogs.help = What the game's fog and the old one both take, whichever draws.
+fog.no_fog_river.label = No fog in the River of Flame
+fog.no_fog_river.tip = No added fog in the River of Flame, though it is open air: its lava's own glow and haze stay the game's. Our effect's fog and the game's fog alike. From D2R VR Unleashed (bearstonem). Live. Off: the fog there as everywhere outdoors.
+fog.color_caves.label = Fog colour in caves
+fog.color_caves.tip = Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.
+fog.color_caves.empty = same as the act
+group.arcane_sanctuary = Arcane Sanctuary
+fog.arcane_own.label = Arcane Sanctuary: its own fog
+fog.arcane_own.tip = The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' start, end, strength and colour, as before.
+fog.arcane_start.label = Arcane Sanctuary: fog start
+fog.arcane_start.tip = Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
+fog.arcane_end.label = Arcane Sanctuary: full fog
+fog.arcane_end.tip = Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.
+fog.arcane_strength.label = Arcane Sanctuary: fog strength
+fog.arcane_strength.tip = How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.
+fog.arcane_color.label = Arcane Sanctuary: fog colour
+fog.arcane_color.tip = The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.
+fog.arcane_color.empty = same as caves
+fog.arcane_into_sky.label = Arcane Sanctuary: fog fades into the sky behind
+fog.arcane_into_sky.tip = Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they fade into the fog colour above instead. Live.
+sky.arcane_fog.label = Arcane Sanctuary: fog fades into its sky
+sky.arcane_fog.tip = The distance fog ([fog] on, World > Fog) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end.
+
+# --- Advanced ---
+group.advanced = Advanced
+group.advanced.help = The game's own built-in fogs, which our numbers replace, and how they are found.
+render.game_depth_fog.label = The game's own depth fog
+render.game_depth_fog.tip = Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture (from above too), over the near ground from our camera. Off: vrcam sets it to 0.
+render.game_fog_scan_safe.label = Find the game's fog safely
+render.game_fog_scan_safe.tip = How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live.
+render.game_height_fog.label = The game's own height fog
+render.game_height_fog.tip = Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0.
+fog.game_fog_mist.label = The game's fog over its mist too
+fog.game_fog_mist.tip = The game's own fog pass adds its volumetric mist (lit by torches and the like) after the fog, never fogged by distance: in a cave our dark fog turned the far walls black and the mist stayed, a light band behind the fires. Ticked: the mist fades with distance as everything else does. Without ReShade only. Live.
+fog.game_fog_our_curve.label = The game's fog by our curve
+fog.game_fog_our_curve.tip = The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.
+fog.fog_keeps_colour.label = The game's fog keeps the act's colour at night
+fog.fog_keeps_colour.tip = While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to "Sky at night" and by the sky's brightness for each time of day. With the sky's colour ("The fog's colour: measured from the game" unticked): the day sky's at the horizon at every hour; off, the night sky's by night - near black. Live.
+fog.fog_into_sky.label = The game's fog fades the far into the sky behind it
+fog.fog_into_sky.tip = In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, as it is drawn). Far objects show the sky through them. It worked through "The game's fog as thick and as coloured as ours", removed (it broke the fog): for now it changes nothing. Live. Off: one fog colour, as before.
+fog.fog_colour_measured.label = The fog's colour: measured from the game
+fog.fog_colour_measured.tip = Ticked: the fog's colour is the act's own colour as set (its measure from the game went with the removed "The game's fog as thick and as coloured as ours"). Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live.
+fog.game_fog_fx_depth.label = Far smoke and fire fade into the fog
+fog.game_fog_fx_depth.tip = With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. Without ReShade only. Live. Off: the effects never fogged.
+fog.game_fog_height.label = The game's fog thins with height
+fog.game_fog_height.tip = The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, nothing added. Outdoors only (underground no sky to keep clear). Without ReShade only. Off: the game's fog as it is. Live.
+fog.game_fog_top.label = The game's fog: its top, units above the eyes
+fog.game_fog_top.tip = How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.
+fog.game_fog_soft.label = The game's fog: softness of its top, units
+fog.game_fog_soft.tip = How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.
+fog.game_fog_top_from_floor.label = The game's fog: its top counted from the hero's floor
+fog.game_fog_top_from_floor.tip = The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. Off: from the eyes, as before. Unticking "thins with height" instead gives the fog by distance alone, as our own fog. Live.
+
 # ===== Tab: Ceiling =====
 tab.ceiling = Ceiling
 
@@ -2254,6 +2345,8 @@ ceiling.game_ceiling_wall.label = The game's ceiling: bent down into a wall at i
 ceiling.game_ceiling_wall.tip = A ring of the same lit rock round you where the game's ceiling ends (about 215 units out at tile size 10), from the ceiling down to below the floor (the floor's depth below): the black void past the ceiling's edge - a band between it and the far floor, lit by the fog behind fires - is closed by stone, as our effect's far wall closed it. Off: the flat ceiling. Live.
 ceiling.game_ceiling_beams.label = The game's ceiling: the barracks' own wooden beams
 ceiling.game_ceiling_beams.tip = The game ships a wooden ceiling frame for the barracks (and its jail) that it never places: a grid of beams whose bottom sits at the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, wood and size, lit by its torches - with the barracks' stone over the beams to close the gaps between them. Made from your game's files. VR F4 only. Off: the flat stone ceiling. Live.
+ceiling.top_from_level.label = The ceiling over the level's highest floor
+ceiling.top_from_level.tip = The ceiling stood on the lowest floor you had stood on in the area, so up a staircase it stayed low until you walked on. Ticked: its height is measured from the highest floor of the level you are on - every room the game builds there tells its floors - taken whole 2 s after you enter a level, raised gently if a higher room is built later, never lowered. The game's ceiling and our effect's vault alike. Each room's own height (above) is still measured from there. From D2R VR Unleashed (Cal, bearstonem's team). VR F4 only. Off: as before. Live.
 ceiling.game_ceiling_dome.label = The game's ceiling: the cathedral's dome over the chapel
 ceiling.game_ceiling_dome.tip = In the Cathedral the game's ceiling rises into a dome over the chapel, as our effect's vault did there: one even dome standing on the four pillars round the altar, just high enough to pass over the altar's canopy. Where, how wide and how high come from the game's own pieces (measured from your game's files, the canopy found in the game as it is drawn); the cathedral's own stone, lit by its candles. The rest of the cathedral keeps the flat ceiling at its height. VR F4 only. Off: the flat ceiling. Live.
 ceiling.game_ceiling_dome_size.label = The cathedral's dome: size
@@ -2478,6 +2571,8 @@ bow.draw_shoots_arrow.label = Bow draw: the release shoots the bow's own arrow, 
 bow.draw_shoots_arrow.tip = The bow draw's release presses the game's attack - the pad's A. The game casts whatever skill its A slot holds: a spell, a warcry or a melee skill there is cast instead, and no arrow flies (the string draws, nothing comes out). On: for the release's own press a skill on A that is not a bow skill is read as the plain Attack, the bow's own arrow; a bow skill on A (Multiple Shot, Strafe...) stays, and a skill armed from the quiver comes first. The A button itself, other weapons and the other slots are the game's as ever. Off: the release casts what the A slot holds. Live.
 bow.arrow_flight.label = Bow: draw the shot arrow ourselves, from the bow along the shot's line
 bow.arrow_flight.tip = First person (F4). The game draws its arrow flat, from the hero's chest. On: the arrow (or bolt) you shoot leaves the bow and flies along the shot's line - with "aim up and down" on, up or down to what the line met: a monster's body, or the ground (where it stays stuck when something stands near). It arrives when the game's own arrow does. It is the game's own arrow model, put where we draw it; the game's missile - its flight, its hit, its damage - is the game's. Multiple Shot's side arrows, Strafe's and Guided Arrow leave the bow and join their own path. Off: the game draws its arrows. Live.
+bow.arrow_flight_flat.label = Flat: the arrow flies into the crosshair
+bow.arrow_flight_flat.tip = First and third person, with a bow or crossbow: the arrow (or bolt) you shoot is drawn leaving from just below your eye (first person) or the hero's chest (third person) and flying to what the crosshair is on - a monster's body, or the ground, where it stays stuck. It arrives when the game's own arrow does; the game's missile - its flight, its hit, its damage - is the game's. Multiple Shot's side arrows, Strafe's and Guided Arrow join their own path. Unticked: the game draws its arrows flat, from the hero's body.
 bow.arrow_flight_straight.label = Bow: the drawn arrow flies straight along the shot's line
 bow.arrow_flight_straight.tip = With "draw the shot arrow ourselves": an arrow whose line met nothing (aim up and down off, a shot into the air) flies straight along the line it was drawn along, from the bow - no bend. Off: it leaves the bow and swings onto the game's own path, which runs from your body beside the line, over the first 2.5 m. Side arrows of Multiple Shot and Strafe, and Guided Arrow, swing onto their own paths either way. Live.
 bow.shot_line_hold.label = Bow draw: the shot keeps the line it was drawn along until the game takes it
@@ -3760,6 +3855,8 @@ multiplayer.pose_share_legs.label = Their legs step the way they move
 multiplayer.pose_share_legs.tip = With the box above: their legs step along their travel - forward, backward, sideways - while their pelvis faces where they look, the game's own walk within "the game's own walk within +- this" (Body) of it. The feet stay planted while they bear the body; the knees bend only forward. Needs the gait library d2r_vr_gait.dll in d2rloader\d2r_vr_libs (else the game's own walk). Any view. Live.
 multiplayer.pose_share_held.label = See what their hands hold (potions, items, props) and what they throw
 multiplayer.pose_share_held.tip = What your hands have goes to the others with your pose, and theirs is drawn for you: a belt potion in the hand, let fall or emptied, an item taken off the ground, a prop of the level - a jar, a book, a cup - in the hand, flying as it was thrown, and where it came to rest. Their potions and items are copies of the game's own models; their props are the level's own, moved where they have them (with "knock props", near you, in F4). Visual only: the potion's use, the items and the props stay each game's own. Live.
+multiplayer.pose_share_grab.label = See the bodies they hold, knock down and throw - and let them see mine
+multiplayer.pose_share_grab.tip = A body your hand holds ("Lift and throw a humanoid you grab": taken, lifted, carried) goes to the others with your pose - which monster, the limb and the point your hand took, your palm, and the throw as you let go - and theirs hang from their hands for you, drawn by your own ragdoll at the same limb and point and thrown as they let go. A blow of yours that knocks a humanoid down, staggers or shoves it goes too (the limb and point it met, how fast it sent the body), and theirs knock your own drawing of it down the same way. Needs "Lift and throw a humanoid you grab" or "A hard blow knocks a humanoid off its feet" on here and the weight library; a monster your game has not got near is not drawn. Visual only: the monster's real place and the game stay each game's own. Live. F4 only.
 
 # ===== Tab: Debug =====
 tab.debug = Debug
@@ -3815,6 +3912,8 @@ debug.walk_start_log.label = Log each walk start of BodyWalk's: stick, dead zone
 debug.walk_start_log.tip = One line in the log ("walk start (BodyWalk): ...") each time BodyWalk's stick leaves rest after half a second of standing: the time it left rest, then the milliseconds to it passing the game's dead zone on its own, the game's walk being given a vector (earlier with "BodyWalk's walk starts from"), and the hero's position moving. BodyWalk's own half is its Debug tab's "Walk Start Timing" ("STEP START: first step ..."), on the same clock. Read only: nothing is changed in the game. Live.
 debug.bow_latency.label = Log where the time goes between a release and its arrow / thrown missile
 debug.bow_latency.tip = Native OpenXR, "Bow: draw the string with both hands" or a throw gesture on. One line in the log for every bow shot and every throw: the milliseconds after the release to the gesture's press, the pad's button reaching the game, the hero's attack or throw mode, the body's turn toward the aim, the animation row the action runs on (name, frames, the action frame), the game's own missile being created (read only: the game's missile create is watched, nothing is changed) and the client showing a missile. Nothing is drawn and nothing is changed in the game. Live.
+debug.missile_probe.label = Log every missile a player's shot or throw creates (the server's create, read only)
+debug.missile_probe.tip = One line in the log for each missile the game's server creates for a player - an arrow, a bolt, each arrow of a Multiple Shot, a javelin, a throwing knife or axe, a potion: its class, the game's call site, the start and target cells, the heading, the target unit if any and every number of its create, with the whole block in hex once a shot; then one line per shot (how many missiles, the fan's angles). Offline and as the host only (a joined player's server is the host's). Read only: nothing is changed in the game. Live.
 debug.shot_trace.label = Log what the game does with each attack of ours
 debug.shot_trace.tip = On: for every attack the plugin presses (a bow's shot, a blow, a throw), from its press until 1.5 s after it, the log tells every map click (with the Stand Still and Run flags it carries), the command the game's click builds from it, and every command through the game's funnel with its way back up the stack. To find out why the game sometimes runs the hero off after a shot. Read only. Needs "attack in place" on. Live.
 debug.game_sky_test.label = The game's sky: another model for the dome (a test)
@@ -3843,6 +3942,8 @@ debug.log_async_auto.label = Write the log from a thread of its own where it is 
 debug.log_async_auto.tip = With the one above off, every log line's write is timed. Where the log's file is slow on this PC - 8 of the last 16 lines took 5 ms or more (an antivirus, a slow disk; a player's log had 29 ms a line, and every Frozen Orb cast stopped the game ~330 ms for its eleven lines) - the lines go to that thread for the rest of the run, and the log says so once. At about 1 ms a line nothing changes. Off: the log's speed is not looked at, as before. Live.
 debug.dred.label = Say why the GPU's device was lost (DRED)
 debug.dred.tip = The game ends - after a failed check in its own DX12 code, a moment before the headset's runtime logs "HRESULT failure [887a0005]" - when the graphics device is removed (a GPU hang, a page fault, a driver reset). On: Windows' DRED is asked for before the game makes its device, and the moment the device goes the log (d2r-vr-vrcam.log) and d2rloader\logs\d2r_vr_gpu_fault.txt say why: the reason, what each command list had done when the GPU stopped, the address of a page fault and what was allocated or freed there, and the plugin's own last events that touch the GPU's memory. Send that file in. It costs the runtime a marker between commands. Needs a game restart. Off: the device loss is still told, with its reason only.
+debug.dred_events.label = ... and name the game's events where the GPU stopped
+debug.dred_events.tip = With DRED: the report also names the game's events open where each unfinished command list stopped (Windows keeps the text of each of the game's event marks - Windows 10 2004 and later), so a hang says which of the game's draws it was in, not only "DrawIndexedInstanced". Costs a little. Takes effect at the next game start.
 debug.d3d12_validation.label = D3D12 debug layer: errors in the log (slow)
 debug.d3d12_validation.tip = To find what takes the graphics device down. Needs Windows' optional feature Graphics Tools. On: before the game makes its device the D3D12 debug layer is switched on, and its errors and warnings go to the log (d2r-vr-vrcam.log) in its own words - a barrier that names the wrong state, a copy past the end of a buffer, a resource released while a list that names it has not run. The game runs much slower: for a test, not for play. Needs a game restart. (d2r_vr.ini: 2 also checks every shader access on the GPU, ten times slower again - for a flat repro only.)
 debug.stall_guard.label = Free a GPU queue that stands still for good
@@ -4241,6 +4342,8 @@ vr.hset.direct.right_b.label = Right B
 vr.hset.direct.right_stick.label = Right stick click
 vr.hset.direct.right_stick_hold.label = Right stick, long press
 vr.hset.direct.right_menu.label = Right menu button
+vr.hset.hands.left_handed.label = Left-handed
+vr.hset.hands.left_handed.detail = Swap the controllers: the left one holds the weapon (F4)
 vr.hset.openxr.haptics.label = Controller vibration
 vr.hset.openxr.haptics.detail = Pulses in the controllers on what happens (F4)
 vr.hset.openxr.haptics_scale.label = Strength
@@ -4311,6 +4414,8 @@ vr.hset.hands.belt_models.label = Potions on the belt
 vr.hset.hands.belt_models.detail = The game's own potion models on the hero's hips
 vr.hset.@preset.preset.label = Quality preset
 vr.hset.@preset.preset.detail = Potato, Low, Medium - room rings and models from the next start
+vr.hset.@distance.stop.label = Draw distance
+vr.hset.@distance.stop.detail = Near (1) - far (7): room rings, models, the fog. 2 = Medium's, the default
 vr.hset.stereo.pair_per_tick.label = Render type
 vr.hset.stereo.pair_per_tick.detail = Native two passes / one pass / eyes by turns, FlatVR stereo / depth (one pass: from the next game start)
 vr.hset.sky.game_sky.label = Sky drawn by
@@ -4359,6 +4464,8 @@ vr.hset.render.game_outline.label = The game's hover outline
 vr.hset.render.game_outline.detail = A Quality preset key ([render] game_outline)
 vr.hset.render.potato_light.label = Potato light
 vr.hset.render.potato_light.detail = A Quality preset key ([render] potato_light)
+vr.hset.render.potato_light_game.label = Potato light in the game's colours
+vr.hset.render.potato_light_game.detail = A Quality preset key ([render] potato_light_game)
 vr.hset.render.rings.label = Room rings
 vr.hset.render.rings.detail = A Quality preset key ([render] rings)
 vr.hset.render.model_radius.label = Model radius
@@ -4367,16 +4474,16 @@ vr.hset.render.big_radius.label = Big objects' radius
 vr.hset.render.big_radius.detail = A Quality preset key ([render] big_radius)
 vr.hset.fog.light.label = Light fog
 vr.hset.fog.light.detail = A Quality preset key ([fog] light)
-vr.hset.fog.start.label = Fog start
-vr.hset.fog.start.detail = A Quality preset key ([fog] start)
-vr.hset.fog.end.label = Full fog
-vr.hset.fog.end.detail = A Quality preset key ([fog] end)
-vr.hset.fog.caves.label = Fog in caves
-vr.hset.fog.caves.detail = A Quality preset key ([fog] caves)
-vr.hset.fog.caves_start.label = Fog start in caves
-vr.hset.fog.caves_start.detail = A Quality preset key ([fog] caves_start)
-vr.hset.fog.caves_end.label = Full fog in caves
-vr.hset.fog.caves_end.detail = A Quality preset key ([fog] caves_end)
+vr.hset.fog.game_fog_start.label = Fog start
+vr.hset.fog.game_fog_start.detail = A Quality preset key ([fog] game_fog_start)
+vr.hset.fog.game_fog_end.label = Full fog
+vr.hset.fog.game_fog_end.detail = A Quality preset key ([fog] game_fog_end)
+vr.hset.fog.game_fog_caves.label = Fog in caves
+vr.hset.fog.game_fog_caves.detail = A Quality preset key ([fog] game_fog_caves)
+vr.hset.fog.game_fog_caves_start.label = Fog start in caves
+vr.hset.fog.game_fog_caves_start.detail = A Quality preset key ([fog] game_fog_caves_start)
+vr.hset.fog.game_fog_caves_end.label = Full fog in caves
+vr.hset.fog.game_fog_caves_end.detail = A Quality preset key ([fog] game_fog_caves_end)
 vr.hset.fog.game_fog_mist.label = The game's fog over its mist
 vr.hset.fog.game_fog_mist.detail = A Quality preset key ([fog] game_fog_mist)
 vr.hset.fog.game_fog_height.label = The game's fog thinned with height
@@ -4395,6 +4502,10 @@ vr.hset.ceiling.steps.label = Cave ceiling relief
 vr.hset.ceiling.steps.detail = A Quality preset key ([ceiling] steps)
 vr.hset.stereo.headset_rate.label = Headset refresh rate
 vr.hset.stereo.headset_rate.detail = A Quality preset key ([stereo] headset_rate)
+vr.hset.render.monitor_eye.label = Monitor shows one eye
+vr.hset.render.monitor_eye.detail = A Quality preset key ([render] monitor_eye)
+vr.hset.openxr.hands_over_panels.label = Your hands over the Gestures tab
+vr.hset.openxr.hands_over_panels.detail = A Quality preset key ([openxr] hands_over_panels)
 vr.hset.render.vr_resolution.label = VR render size: mode
 vr.hset.render.vr_resolution.detail = 0 window, 1 headset, 2-6 an older square
 vr.hset.render.vr_resolution_px.label = VR render size: side
@@ -4594,9 +4705,9 @@ button.clear = Clear
 status.vrs.none = This graphics card has no variable rate shading (tier 2): foveated rendering and the grass lighting rate cannot work on it - D2R VR leaves them off, whatever is ticked.
 status.draw_distance.stop = {n} of {count}: 
 status.draw_distance.custom = Custom (a value changed by hand): 
-status.draw_distance.values = {rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}), the game's sky dome at {sky} m. All live - no restart.
+status.draw_distance.reach = {rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}). All live - no restart.
+status.draw_distance.default =  The default (the Medium preset's distance).
 status.draw_distance.fog_off =  The fog is off (Performance): the drawn world ends in the void.
-status.draw_distance.no_game_sky =  The sky dome counts only while the game draws the sky (Sky tab).
 res.tip = The size of the game's picture in the headset: a square, its side in pixels, whatever size the game window is - the window keeps its size. Drag to any size from 1024 to 4096 (steps of 64); the left end, "window's size", is Desktop: the picture is the window's, as before.\n\nBigger is sharper and dearer, by the pixels - against 2048 x 2048:
 res.tip_headset_max = Your headset{headset} recommends {w} x {h} per eye and takes up to {mw} x {mh}; a size past that is shrunk to it. (Read at the last game start with a headset.)
 res.tip_headset = Your headset{headset} recommends {w} x {h} per eye. (Read at the last game start with a headset.)
@@ -5187,6 +5298,8 @@ vr.rules.move_while_attacking = Spear and bow: walk on after the blow (VR F4)
 vr.rules.melee_direct_client_cleave = Two-handed swing hits each monster (VR)
 vr.rules.quick_blow = Quick blow: the swing never stops the hero (VR)
 vr.rules.quick_blow_faster = Quick blow: faster than the animation
+vr.rules.share_hit_outcomes = Send the joined players what their blows did
+vr.rules.shot_at_release = The arrow goes where you aim as it leaves the bow
 vr.rules.walk = Walk
 vr.rules.walk_or_run = Walk or run
 vr.rules.spear_and_bow = Spear and bow
@@ -5281,6 +5394,7 @@ vr.preset.potato = Potato
 vr.preset.low = Low
 vr.preset.medium = Medium
 vr.preset.custom = Custom
+vr.distance.default = 2 (default)
 vr.party.map = The game's map shows
 vr.party.map.off = Your party is hidden: allies on no map (the game's Show Party)
 vr.party.map.unknown = The game's Show Party / Show Party Names (not read yet)

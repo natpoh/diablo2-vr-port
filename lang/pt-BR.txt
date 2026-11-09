@@ -80,10 +80,12 @@ render.menu_wide.tip = OpenXR nativo: o jogo organiza seus menus conforme o form
 # --- Quality preset ---
 group.quality_preset = Preset de qualidade
 group.quality_preset.help = Quanto o jogo desenha contra a velocidade em que roda, numa só escolha - o mesmo que em Desempenho (uma mudança em um aparece nos dois). Batata e Baixo para uma placa de vídeo fraca, Médio com os monstros mais distantes; com Batata, o brilho da luz dele logo abaixo. Auto (com o ajuste gráfico Auto ligado) encontra as configurações do seu PC no jogo em execução.
-@preset.preset.tip = Define de uma vez as configurações abaixo. Os três desenham a mesma imagem do mundo ao seu redor: a cúpula do céu do próprio jogo e a neblina do próprio jogo (55 a 140, em cavernas 65 a 200, nenhum dos nossos ajustes de neblina), 2 anéis de salas, Nativo uma passada, os pixels que as lentes nunca mostram pulados, as sombras uma vez para os dois olhos, o teto das cavernas, o headset a 90 Hz, o contorno de destaque do jogo deixado de fora. Batata (a placa de vídeo mais fraca): o quadro do jogo sem as sombras do sol e as luzes das tochas, tudo iluminado por igual pela luz Batata (o brilho dela logo abaixo e em Custo de renderização); monstros e objetos até 150 (o do próprio jogo), objetos grandes 200. Baixo (uma placa de vídeo fraca): só o mundo iluminado do jogo, as sombras do sol e o mapeamento de tons (Custo de renderização: as etapas de renderização do próprio jogo); monstros e objetos até 150, objetos grandes 200. Médio: o quadro inteiro do jogo; monstros e objetos até 210, objetos grandes 600 - a única outra diferença. Os anéis de salas e o raio dos modelos valem a partir da próxima inicialização do jogo. Mudar qualquer um deles à mão mostra Personalizado.
+@preset.preset.tip = Define de uma vez as configurações abaixo. Os três desenham a mesma imagem do mundo ao seu redor: a cúpula de céu do próprio jogo e a neblina do próprio jogo (55 a 140, nas cavernas 65 a 200, sem nenhum dos nossos ajustes de neblina), 2 anéis de salas, Native one pass, os pixels que as lentes nunca mostram ignorados, as sombras uma só vez para os dois olhos, o teto das cavernas, o headset a 90 Hz, o contorno de seleção do jogo omitido. Potato (a placa de vídeo mais fraca): o quadro do jogo sem as sombras do sol e as luzes das tochas, tudo iluminado por igual pela luz Potato (o brilho dela logo abaixo e em Custo de renderização); monstros e objetos até 150 (o do próprio jogo), objetos grandes 200. Low (uma placa de vídeo fraca): só o mundo iluminado do jogo, as sombras do sol e o mapeamento de tons (Custo de renderização: as etapas de renderização do próprio jogo); monstros e objetos até 150, objetos grandes 200. Medium: o quadro inteiro do jogo; monstros e objetos até 200, objetos grandes 600 - a única outra diferença. O controle deslizante Distância de desenho (Início) define a distância à parte: 1 é a de Low e Potato, 2 a de Medium, além disso, mais longe. Os anéis de salas e o raio dos modelos valem a partir da próxima inicialização do jogo. Mudar qualquer um deles à mão mostra Personalizado.
 @preset.preset.choice0 = Batata
 @preset.preset.choice1 = Baixo
 @preset.preset.choice3 = Personalizado
+render.preset_game_options.label = ... a predefinição também muda as opções gráficas do próprio jogo
+render.preset_game_options.tip = Marcado: escolher uma predefinição de qualidade também muda três ajustes do próprio jogo em Options > Video, como se você os tivesse definido no menu dele (o jogo os guarda no seu Settings.json): Potato - Ambient Occlusion desligado, Shadow Quality baixa, Light Quality baixa; Low - os três médios; Medium - Ambient Occlusion alto, Shadow Quality alta, Light Quality alta. Eles são definidos uma vez, quando a predefinição muda (ou quando você marca isto): o que você mudar depois no menu do jogo fica. Anti-aliasing, DLSS e a escala de resolução nunca são tocados. O log mostra os valores antigos e novos. Ao vivo, em todas as visões. Desmarcado: as opções do jogo nunca são tocadas, como antes.
 autotune.run.label = Ajustar agora (o jogo precisa estar aberto)
 autotune.run.tip = Ajuste gráfico Auto, no jogo em execução: fique parado (na cidade é melhor) com o headset colocado. O jogo mede os seus quadros por segundo com as suas configurações. Bom na taxa do headset: nada muda, em qualquer placa de vídeo. Abaixo dela, ele vai descendo nesta ordem, medindo cada passo, e para no primeiro que se sustenta: o tamanho de renderização até 1600 x 1600, depois o preset Médio -> Baixo -> Batata, depois o tamanho até 1300, depois a renderização foveada (Média, depois Máxima), depois o tamanho até 1200, depois olhos alternados. Ainda abaixo disso: ele diz que o PC está abaixo do mínimo, e se é o processador ou a placa de vídeo que o limita. Um ou dois minutos; duas passadas, FlatVR e a taxa do headset nunca são escolhidos. Os passos e o resultado aparecem na página Vídeo do painel do headset (um toque longo no clique do analógico direito), com Manter e Desfazer lá ou abaixo. Depois de Manter, o preset aqui mostra aquele com que as novas configurações coincidem, ou Personalizado.
 render.potato_light_brightness.label = ... Luz Batata: brilho
@@ -129,9 +131,9 @@ openxr.fov_override_centred.tip = Ligado (o padrão): os dois olhos são desenha
 
 # --- Draw distance ---
 group.draw_distance = Distância de desenho
-group.draw_distance.help = Até onde o mundo é desenhado ao seu redor, num só controle deslizante: os anéis de salas, o raio dos modelos, a cúpula do céu do jogo na borda e a neblina juntos, de modo que a neblina fica total logo antes de terminar o mundo desenhado. Mais perto roda mais rápido num processador ou placa de vídeo fracos. Cada valor individual fica na aba Distância de desenho (e onde ficava: Desempenho, Mundo, Céu); mudar um deles mostra Personalizado aqui.
+group.draw_distance.help = Até onde o mundo é desenhado ao seu redor, num só controle deslizante: os anéis de salas, o raio dos modelos e a neblina juntos, de modo que a neblina fica total antes de terminar o mundo desenhado. 2 é o padrão - a distância do preset Medium (1: a de Low e Potato); mais longe mostra mais do mundo e custa tempo de processador. Movê-lo mostra Personalizado no preset de qualidade.
 @distance.stop.label = Distância de desenho (perto - longe)
-@distance.stop.tip = Define cinco coisas de uma vez, de perto (1) a longe (8): quantos anéis de salas ao seu redor o jogo desenha, até onde ele desenha monstros e objetos (o raio dos modelos: a borda do mundo desenhado), a cúpula do céu do jogo nessa borda, e onde a neblina começa e fica total - ao ar livre total logo antes da cúpula (a 0.9 do raio), nas cavernas no raio - para nada surgir do vazio. 3: 2 anéis, modelos até 200. Mais longe custa tempo de processador (mais salas e modelos a cada quadro); mais perto é mais leve. A linha abaixo diz o que está definido agora. Personalizado: um dos valores individuais foi mudado à mão - mover o controle deslizante define todos de novo. Ao vivo.
+@distance.stop.tip = Até onde o mundo é desenhado ao seu redor, de perto (1) a longe (7): quantos anéis de salas o jogo desenha ao seu redor, até onde ele desenha monstros e objetos (o raio dos modelos) e onde a neblina começa e fica total, ao ar livre e nas cavernas - assim o mundo mais distante é visto e nada surge do vazio de repente. 1: a distância dos presets Low e Potato (modelos até 150). 2, o padrão: a de Medium - 2 anéis de salas, modelos até 200, a neblina do jogo de 55 a 140 (nas cavernas de 65 a 200). 3 - 7 desenham mais longe e abrem a neblina junto; custam tempo de processador (mais salas e modelos a cada quadro). A linha abaixo diz o que está definido agora. Movê-lo mostra Personalizado no preset de qualidade; escolher um preset devolve o controle deslizante à sua posição. Personalizado aqui: um dos valores foi mudado à mão - mover o controle deslizante define todos de novo. Ao vivo.
 
 # --- The game and the mod ---
 group.the_game_and_the_mod = O jogo e o mod
@@ -336,6 +338,8 @@ render.potato_light_colour.choice0 = Neutra (branca)
 render.potato_light_colour.choice1 = Quente
 render.potato_light_colour.choice2 = Fria
 render.potato_light_colour.choice3 = A da própria área (a cor do céu e da neblina dela)
+render.potato_light_game.label = ... Luz Potato nas cores próprias do jogo
+render.potato_light_game.tip = Marcado: a luz Potato não é de uma só cor uniforme, e sim a luz própria do jogo como a sua passada iluminada a recebe - a luz do céu da área (as cores e a força dela vindas do arquivo de iluminação da área para esta hora do dia) e o sol ou a lua (a cor, a potência e o lado para onde brilha) - ainda sem sombras, tochas, laços de luz ou reflexos, então continua igualmente barata. A grama e o chão mantêm a cor que o jogo lhes dá, de dia, ao entardecer e à noite. Os controles de brilho continuam funcionando; a escolha de cor não é usada. OpenXR nativo em primeira pessoa (F4). Ao vivo. Desmarcado: uma luz uniforme, como antes.
 
 # --- Quality ---
 group.quality = Qualidade
@@ -357,24 +361,10 @@ render.rings.tip = Anéis de salas extras ao redor do herói. Com neblina, 4-6 b
 render.model_radius.label = Raio de visibilidade dos modelos
 render.model_radius.tip = O do próprio jogo é 150.
 sky.game_sky.label = Céu desenhado por
-sky.game_sky.tip = Quem desenha o céu ao ar livre. A cúpula do jogo (novo): uma cúpula de céu nossa que o próprio jogo desenha na sua cena - sem tempo de quadro nosso (VR F4; o jogo plano também com "O jogo os desenha também no jogo plano"). Nosso efeito (antigo): o shader de neblina pinta o céu no vazio. Qualquer um combina com qualquer neblina ("Neblina desenhada por"): a parte baixa do céu mergulha na cor da neblina nos dois casos. Ao vivo - os arquivos da cúpula de céu do jogo são feitos por este programa ao iniciar: na primeira vez depois de uma instalação ou atualização, reinicie um jogo já aberto.
+sky.game_sky.tip = Quem desenha o céu ao ar livre. A cúpula do jogo (novo): uma cúpula de céu nossa que o próprio jogo desenha na sua cena - sem tempo de quadro nosso (VR F4; o jogo plano também com "O jogo desenha o céu também no jogo plano"). Nosso efeito (antigo): o shader de neblina pinta o céu no vazio. Qualquer um vai com qualquer uma das neblinas ("Neblina desenhada por"): a parte baixa do céu afunda na cor da neblina nos dois casos. Ao vivo - os arquivos da cúpula de céu do jogo são criados por este programa ao iniciar: na primeira vez depois de uma instalação ou atualização, reinicie um jogo que já esteja aberto.
 sky.game_sky.choice0 = Nosso efeito (antigo)
 sky.game_sky.choice1 = A cúpula do jogo (novo)
-fog.game_fog.label = Neblina desenhada por
-fog.game_fog.tip = Quem desenha a neblina de distância. A neblina do jogo (nova): a passada de neblina do próprio jogo com os nossos números (Início da neblina / Neblina total abaixo) - nenhum tempo de quadro nosso, desenhada com "Neblina de distância" marcada ou não (VR F4; o jogo plano também com "O jogo as desenha também no jogo plano"; as opções dele na aba Mundo). Nosso efeito (antigo): o shader de neblina põe a neblina pela profundidade. Qualquer um serve com qualquer céu ("Céu desenhado por"). Ao vivo.
-fog.game_fog.choice1 = A neblina do jogo (novo)
-fog.enabled.label = Neblina de distância
-fog.enabled.tip = A neblina de distância do nosso efeito, com "Neblina desenhada por: Nosso efeito (antigo)". A neblina do jogo é desenhada só por "Neblina desenhada por: A neblina do jogo" - desmarcar isto nunca a tira (os presets o deixam desmarcado: o jogo desenha a neblina). Com o céu ligado, a nossa se dissolve no céu.
-fog.light.label = Neblina leve (placas de vídeo fracas)
-fog.light.tip = A neblina do nosso efeito pelo caminho curto: a profundidade lida uma vez por pixel, a neblina por ela, o céu no vazio ainda desenhado - sem desfoque de profundidade, sem neblina sobre brilhos e faíscas contra o céu, sem teto das cavernas. Uma fração do custo da neblina completa na placa de vídeo (a linha de 10 s do log mostra). Desligado: a neblina completa, como antes.
-fog.start.label = Início da neblina
-fog.start.tip = Onde a neblina começa. Unidades do mundo (o herói tem cerca de 7.5 de altura).
-fog.end.label = Neblina total
-fog.end.tip = Onde a neblina é total. Unidades do mundo (o herói tem cerca de 7.5 de altura). A neblina próxima esconde o que uma distância de renderização curta deixa de fora. Com a neblina do jogo, abaixo do Início da neblina os dois são tomados ao contrário (neblina do nosso efeito: total logo após o Início da neblina).
-fog.caves_start.label = Início da neblina nas cavernas
-fog.caves_start.tip = Onde a neblina começa em cavernas, masmorras e criptas. Unidades do mundo (o herói tem cerca de 7.5 de altura).
-fog.caves_end.label = Neblina total nas cavernas
-fog.caves_end.tip = Onde a neblina é total em cavernas, masmorras e criptas. Unidades do mundo (o herói tem cerca de 7.5 de altura).
+@status.fog_moved_perf.label = A neblina - quem a desenha, as distâncias, as cavernas e as cores - está na aba Neblina.
 sky.enabled.label = Céu ao ar livre
 sky.enabled.tip = Um céu pintado sobre o vazio negro ao ar livre. Quem o desenha: "Céu desenhado por" acima (nosso efeito ou a cúpula do jogo).
 ceiling.enabled.label = Teto em cavernas e masmorras
@@ -399,7 +389,16 @@ render.big_radius.label = Objetos grandes: árvores, casas, muros mais longe (0 
 render.big_radius.tip = Árvores, casas e muros continuam desenhados além do raio de visibilidade dos modelos - quanto maiores, mais longe (30 vezes a altura ou metade da largura), até esta quantidade de unidades (300 - 1000; 100 e 200 contam como 300). Pedras, grama e monstros mantêm o raio de visibilidade dos modelos. Precisa de anéis de salas 3 ou mais (além das salas que o jogo monta não há nada para desenhar), e da neblina total e da cúpula de céu além dela para ser visto. Custa quadros em florestas e cidades. Do D2R VR Unleashed (bearstonem). Só visual. Ao vivo. 0 = desligado, como antes.
 sky.game_sky_radius_m.label = Céu do jogo: raio da cúpula, m
 sky.game_sky_radius_m.tip = A que distância ao seu redor a cúpula de céu do jogo é posta, em metros (4 unidades do jogo por metro; ao vivo). 50 m: um horizonte próximo - a cúpula corta o mundo distante num círculo limpo, com a neblina do jogo sobre ela. Mais longe, o céu sai da neblina. O log diz o raio em uso a cada mudança.
-fog.enabled.tip#2 = Uma neblina de distância. Quem a desenha: "Neblina desenhada por" da aba Céu (nosso efeito ou o próprio jogo). Com o céu ligado, ela se funde ao céu.
+fog.enabled.label = Neblina de distância
+fog.enabled.tip = Uma neblina de distância. Quem a desenha: "Neblina desenhada por" da aba Céu (o nosso efeito ou o próprio jogo). Com o céu ligado, ela se dissolve no céu.
+fog.game_fog_start.label = Início da neblina
+fog.game_fog_start.tip = Onde a neblina começa. Unidades do mundo (o herói tem ~7,5 de altura).
+fog.game_fog_end.label = Neblina total
+fog.game_fog_end.tip = Onde a neblina é completa. Unidades do mundo (o herói tem ~7,5 de altura). Uma neblina próxima esconde o que uma distância de renderização curta deixa de fora. Com a neblina do jogo, abaixo de Início da neblina os dois são tomados ao contrário (a neblina do nosso efeito: total logo depois de Início da neblina).
+fog.game_fog_caves_start.label = Início da neblina nas cavernas
+fog.game_fog_caves_start.tip = Onde a neblina começa em cavernas, masmorras e criptas. Unidades do mundo (o herói tem ~7,5 de altura).
+fog.game_fog_caves_end.label = Neblina total nas cavernas
+fog.game_fog_caves_end.tip = Onde a neblina é completa em cavernas, masmorras e criptas. Unidades do mundo (o herói tem ~7,5 de altura).
 sky.game_dome_caves.label = Uma cúpula preta ao seu redor nas cavernas
 sky.game_dome_caves.tip = No subsolo o jogo desenha uma cúpula preta ao redor da sua cabeça no raio de visibilidade dos modelos: sem vazio além da borda do teto, a neblina do jogo se apaga em paredes pretas - sem brilho atrás das fogueiras. Os arquivos próprios da cúpula de céu (criados por este programa ao iniciar). VR F4. Ao vivo.
 sky.game_dome_caves_radius_m.label = Cúpula das cavernas: raio, m
@@ -673,6 +672,12 @@ render.own_auras_side_cm.tip = Positivo = à sua direita, negativo = à sua esqu
 # ===== Tab: Controls =====
 tab.controls = Controles
 
+# --- Hands ---
+group.hands = Mãos
+group.hands.help = Qual controle VR é a mão da arma.
+hands.left_handed.label = Canhoto: trocar os controles
+hands.left_handed.tip = O controle ESQUERDO segura a arma principal e ataca com ela; o direito é a mão secundária (escudo, segunda arma, a mão que segura o arco). Os botões, o stick e o gatilho também trocam: o que o controle direito fazia, o esquerdo faz. O inventário e o mapa na mão, as esferas do pulso, o cinto, os arremessos, o arco e a vibração acompanham. O botão de menu fica onde está. Só primeira pessoa (F4); as armas do próprio jogo não mudam. Desmarcado = como antes. Ao vivo.
+
 # --- Walking (left stick) ---
 group.walking_left_stick = Andar (analógico esquerdo)
 group.walking_left_stick.help = Como o analógico esquerdo faz o herói andar: andar para onde você olha, e correções para quando o andar vai para o lado errado ou as diagonais desviam depois de um giro.
@@ -732,6 +737,8 @@ input.flat_aim_ground.label = Plano: mirar em terreno elevado (escadas, degraus)
 input.flat_aim_ground.tip = Com a nossa câmera (primeira ou terceira pessoa), um clique, o hover e o ponto de uma habilidade vão para o chão desenhado sob a mira, pisos elevados também. Desmarcado: o ponto do próprio jogo, feito para a visão de cima dele - em primeira pessoa ele cai a células de distância em escadas e saliências.
 input.flat_body_pick.label = Plano: clicar num monstro, NPC ou baú pelo corpo
 input.flat_body_pick.tip = Terceira e primeira pessoa: monstros, NPCs, portas, santuários, baús e portais perto de você são clicados pelo corpo, não só pelos pés (do fork plano de sajmonsoft). Desmarcado: pelos pés, como na visão de cima do próprio jogo.
+input.flat_shot_at_crosshair.label = Plano: um arco ou arremesso vai exatamente para a mira (sem mira automática)
+input.flat_shot_at_crosshair.tip = Com um arco, uma besta, um dardo ou uma arma de arremesso na mão, em primeira e terceira pessoa: um clique num monstro vai para onde está a mira, como um tiro no lugar - não para o monstro que o jogo acha perto da mira, o herói não anda até ele, e um botão mantido não continua atirando nele quando você olha para outro lado. Itens, NPCs, mercenários, baús, portas e portais são clicados como sempre. Desmarcado: o ataque do próprio jogo ao monstro sob o ponteiro.
 input.vr_body_pick.label = VR: mirar num monstro, NPC ou baú pelo corpo
 input.vr_body_pick.tip = O ponteiro do mouse (F1, F3), a mira (F2 com o olhar pelo mouse) e a mira da mão com Shift + clique escolhem monstros, NPCs, portas, santuários, baús e portais perto de você pelo corpo, não só pelos pés. O jogo continua decidindo o acerto. Desmarcado: pelos pés.
 input.vr_body_pick_hand.label = VR F4: o ataque e a interação vão para onde a sua mão aponta
@@ -897,7 +904,7 @@ gameplay.quick_blow_min_ms.tip = Golpear mais rápido que a animação: nenhum g
 group.swing_timer = Temporizador do golpe
 group.swing_timer.help = Depois de cada ataque, quanto falta até o jogo aceitar o próximo e o que o golpe fez. Só exibição: a velocidade de ataque e o sorteio do jogo continuam como estão.
 hud.swing_timer.label = Temporizador do golpe: quando o próximo ataque conta
-hud.swing_timer.tip = VR em primeira pessoa (F4) e F2 / F3 do monitor. Nada é exibido até você atacar: sem anel, pode atacar. Quando o jogo começa um ataque, um anel no meio da visão se enche até o jogo deixar entrar o próximo ataque. Vermelho: o jogo recusa um novo ataque agora - um toque então se perde e diz "cedo demais". Âmbar: os últimos instantes da animação do jogo - um ataque agora é guardado e acerta quando a animação termina. Verde: pode. Depois o anel se desfaz. Dentro dele, o que o golpe fez: a vida que tirou (um golpe crítico em dourado e maior; um golpe através de vários monstros somado, com x2, x3 ...), ou errou, bloqueado, esquivado, evitado. Nada aqui muda o jogo: a velocidade de ataque, o sorteio e o dano são dele - o anel só mostra o tempo dele para você golpear junto com ele, não contra ele. Um jogador ou um jogo que você hospeda: exato. Conectado ao jogo TCP/IP de alguém: o anel pela animação do seu herói (perto, não exato) e sem números. O monitor precisa do D2R_DepthFog.fx ligado no ReShade. Desmarcado: nada é exibido. Ao vivo.
+hud.swing_timer.tip = VR em primeira pessoa (F4) e F2 / F3 do monitor. Nada é exibido até você atacar: sem anel, pode atacar. Quando o jogo começa um ataque, um anel no meio da visão se enche até o jogo deixar entrar o próximo ataque. Vermelho: o jogo recusa um novo ataque agora - um toque então se perde e diz "cedo demais". Âmbar: os últimos instantes da animação do jogo - um ataque agora é guardado e acontece quando a animação termina. Verde: dentro. Depois o anel se dissolve. Dentro dele, o que o golpe fez: a vida que tirou (um golpe crítico em dourado e maior; um golpe que atravessa vários monstros, somado, com x2, x3 ...), ou errou, bloqueado, esquivado, evitado. Nada disto muda o jogo: a velocidade de ataque, a rolagem e o dano são dele - o anel só mostra o tempo dele para você atacar junto com ele, não contra ele. Um jogador ou um jogo que você hospeda: exato. Entrou no jogo TCP/IP de outra pessoa: o anel vem da animação do seu próprio herói (próximo, não exato), os números só quando o anfitrião os envia (o "Anfitrião: enviar aos jogadores que entraram o que os golpes deles fizeram"). O monitor precisa de D2R_DepthFog.fx ligado no ReShade. Desmarcado: nada é exibido. Ao vivo.
 hud.swing_timer_style.label = Temporizador do golpe: onde
 hud.swing_timer_style.tip = Anel no meio: um pequeno anel em volta do meio da visão (na VR diante dos olhos, no monitor em volta da mira), o número dentro. Barra no topo: uma barra pelo topo da visão que se enche da esquerda para a direita, os números subindo sobre ela e sumindo. Ao vivo.
 hud.swing_timer_style.choice0 = Anel no meio
@@ -905,9 +912,13 @@ hud.swing_timer_style.choice1 = Barra no topo
 gameplay.swing_pace_joined.label = Conectado: enviar um toque quando o host o aceita (VR)
 gameplay.swing_pace_joined.tip = Conectado ao jogo TCP/IP de outra pessoa, VR em primeira pessoa (F4). O jogo do host decide quando o seu herói pode atacar de novo, e um toque que ele recusa se perde. Marcado: o seu PC conta o ataque do seu herói como o temporizador do golpe (pela animação do seu herói) e envia um toque só quando o host o aceita - um toque que ele recusaria não é enviado ("cedo demais"), um nos últimos instantes do ataque é segurado e enviado quando ele termina, então nunca é jogado fora pelo caminho. O ataque, a velocidade e o sorteio continuam do jogo do host. Funciona a partir do seu segundo ataque (o primeiro é medido). Um jogador ou um jogo que você hospeda: nada muda (o seu próprio jogo decide na hora). Desmarcado: cada toque é enviado como vem. Ao vivo.
 hud.swing_timer_numbers.label = Temporizador do golpe: mostrar o que o golpe fez
-hud.swing_timer_numbers.tip = A vida que o golpe tirou, ou errou / bloqueado / esquivado / evitado, no anel ou sobre a barra. Desmarcado: só o temporizador ("cedo demais" ainda aparece). Só um jogador ou um jogo que você hospeda: os golpes de um jogador conectado são sorteados na máquina do host. Ao vivo.
+hud.swing_timer_numbers.tip = A vida que o golpe tirou, ou errou / bloqueado / esquivado / evitado, no anel ou sobre a barra. Desmarcado: só o temporizador ("cedo demais" ainda aparece). Entrou no jogo TCP/IP de outra pessoa: só quando o anfitrião os envia (os golpes de um jogador que entrou são rolados na máquina do anfitrião). Ao vivo.
+multiplayer.share_hit_outcomes.label = Anfitrião: enviar aos jogadores que entraram o que os golpes deles fizeram
+multiplayer.share_hit_outcomes.tip = Você hospeda um jogo TCP/IP: cada jogador que entrou com esta versão do mod recebe o que os próprios golpes dele fizeram - acerto, erro, bloqueado, esquivado, evitado, a vida tirada, um golpe crítico - e o temporizador do golpe dele mostra isso como o seu (ele precisa de "Temporizador do golpe: mostrar o que o golpe fez" marcado). A rolagem e o dano acontecem só na máquina do anfitrião, então sem isto o temporizador de um jogador que entrou não tem números. Só vale a caixa do anfitrião: se você entrou no jogo de outra pessoa, a sua não significa nada ali. Poucos bytes por golpe; nada muda no jogo. Ao vivo.
 hud.swing_timer_reasons.label = Temporizador do golpe: dizer por que um toque não foi ataque
 hud.swing_timer_reasons.tip = Um toque com a arma que não virou ataque diz o porquê, no anel ou sobre a barra (VR primeira pessoa): haste ou cabo - acertou o corpo atrás da cabeça da arma ou atrás da sua mão da frente, um empurrão; não é a ponta - fora da parte da lâmina que golpeia; lento - seu golpe contra a velocidade necessária (3.1/5.0, m/s); fraco - um golpe fraco demais para a arma; curto - o golpe ou a estocada foi curto demais para contar; empurrão - uma estocada com pouco impulso; lado errado - a lâmina se afastou do monstro ou foi para trás; escudo - o escudo ou a arma dele parou o golpe. Nada aqui muda o jogo nem o que conta como acerto: só informa. Ao vivo.
+gameplay.shot_at_release.label = A flecha vai para onde você mira ao sair do arco
+gameplay.shot_at_release.tip = Um arco ou uma besta. O jogo mira um tiro quando você clica e solta a flecha meio segundo ou mais depois, no quadro de ação da animação; se você girou a câmera nesse meio tempo, a flecha ia para onde você mirou no clique. Ligado: a flecha que sai do arco é girada para onde a mira está nesse momento (2D primeira e terceira pessoa); o leque de um Tiro múltiplo gira inteiro. Estratégia e Flecha guiada escolhem os próprios alvos e ficam como o jogo os fez. Só a direção da flecha muda - a velocidade, o alcance, o acerto e o dano são os do jogo. Um jogo TCP/IP: quem hospeda decide - o servidor do anfitrião gira as flechas de todos os jogadores pela mira que o mod de cada jogador envia (a mesma versão do mod); a caixa de um jogador que entrou não significa nada ali. Desmarcado: a flecha vai para onde o clique mirou. Ao vivo.
 
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = Configurações no jogo e regras do anfitrião
@@ -1042,6 +1053,8 @@ stereo.pair_per_tick.label = Os dois olhos a partir de um quadro do jogo
 stereo.pair_per_tick.tip = O quadro é desenhado duas vezes (esquerdo, depois direito com o tempo do jogo parado) em vez de um olho por quadro, em alternância. Os mesmos pares por segundo; o próprio jogo se atualiza com metade da frequência.
 stereo.native_replay.label = ... desenhado uma vez, o olho direito de novo na placa de vídeo
 stereo.native_replay.tip = Com Os dois olhos a partir de um quadro do jogo: o jogo desenha o quadro uma vez, e o olho direito é desenhado de novo na placa de vídeo a partir do mesmo trabalho, com a sua própria câmera, em vez de o quadro inteiro ser desenhado duas vezes. A thread do jogo faz cerca de metade do trabalho: num PC limitado pelo processador, muito mais quadros por segundo; um PC limitado pela placa de vídeo ganha pouco. Só OpenXR nativo, primeira pessoa (F4). Depois de uma troca de área, de um carregamento ou de uma mudança nas opções de vídeo, o olho direito é desenhado por conta própria até a imagem se firmar (alguns segundos) - duas passadas nessa hora, nunca um olho preto. Ligado por padrão ("Nativo uma passada" em 3D no headset). Vale a partir da próxima inicialização do jogo. Desligado: duas passadas ("Nativo duas passadas").
+stereo.replay_reset_guard.label = ... nunca mais uma lista que o jogo já reaproveitou
+stereo.replay_reset_guard.tip = Com o olho direito desenhado de novo na placa de vídeo: o jogo pode começar uma nova gravação numa das suas listas assim que a enviou, e quando o olho direito envia a mesma lista outra vez ela contém outros comandos - um inacabado faz o dispositivo gráfico ser perdido, um posterior faz a placa desenhar a partir do que ainda não existe (trava). Ligado: o olho direito de um quadro assim é a imagem esquerda uma vez, e o registro diz isso. Desligado: anotado no registro e enviado mesmo assim (como antes). Ao vivo.
 stereo.turn_warp.label = Olhos alternados: criar o outro olho a partir da profundidade
 stereo.turn_warp.tip = OpenXR nativo com os olhos alternados: o olho não desenhado neste quadro é criado na placa de vídeo para onde a cabeça está agora - a última imagem própria dele movida com a profundidade com que foi desenhada (o que o herói segura vai com ele), na pose deste quadro. Desmarcado: ele vai ao headset como foi desenhado por último, e o headset o gira (só rotação: um passo ou um monstro em movimento aparece um quadro atrás nesse olho). Só em primeira pessoa (F4). Ao vivo. Ideia: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... com o olho desenhado neste quadro por cima
@@ -1215,6 +1228,14 @@ group.item_labels_on_the_ground.help#2 = Os nomes de itens no chão em terceira 
 hud_third.labels_alpha.tip = Quanto da caixa escura atrás dos nomes de itens no chão é desenhada em terceira pessoa (F2): 1 = como o jogo a desenha, 0 = sem caixa, só os nomes. Os nomes continuam brilhantes. Pelo código de rótulos do jogo (o log do vrcam diz "item-label hook in"); em outra versão do jogo, não faz nada aqui.
 hud_third.labels_size.tip = Os nomes de itens no chão e suas caixas em terceira pessoa (F2), menores ou maiores, cada um em torno do ponto sob ele. 100 = o próprio do jogo. As dicas de itens e todo o outro texto mantêm o tamanho.
 
+# --- Monster plate, third person ---
+group.monster_plate_third_person = Placa de monstro, terceira pessoa
+group.monster_plate_third_person.help = O nome e a barra de vida sobre o monstro que você mira em terceira pessoa (F2): na profundidade do monstro, para não parecer duplo.
+hud_third.monster_depth.label = Placa de monstro: no monstro, %
+hud_third.monster_depth.tip = O nome e a barra de vida que o jogo pendura sobre o monstro que você mira, em terceira pessoa (F2): em estéreo o jogo os desenha no mesmo ponto nos dois olhos, então flutuam na profundidade da tela e parecem duplos quando você olha para o monstro. Aqui são movidos para a profundidade própria do monstro, pelo ponto sobre a cabeça dele: 100 = exatamente ali, 0 = onde o jogo os deixa. Nossa própria placa (Nome sobre um monstro: o nosso, em todas as visões) fica ali por conta própria; isto é para a do jogo. Ao vivo.
+hud.npc_dialog_keep_view.label = Falar com um NPC mantém a visão (teste)
+hud.npc_dialog_keep_view.tip = No headset (OpenXR nativo), falar com um NPC abria a caixinha Falar / Negociar / Cancelar como um menu, e em F1, F2 e F3 um menu põe a imagem plana do jogo bem à frente: a visão saía voando. Ligado: enquanto essa caixa (ou o pergaminho de fala dela) é o único menu aberto, a visão fica como estava, a caixa desenhada na imagem do jogo como a barra de ferramentas; escolha Falar / Negociar com o controle. Negociar, o baú e qualquer outra tela continuam indo para a imagem plana. F1, F2, F3; F4 tem o seu próprio jeito (Menus como painel). Ao vivo. Desligado: a imagem plana, como antes.
+
 # ===== Tab: UI: F3 floor =====
 tab.ui_f3_floor = IU: F3 chão
 
@@ -1240,6 +1261,11 @@ hud_floor.map_y.tip = O mapa movido para cima na tela, % da altura da tela: + pa
 group.item_labels_on_the_ground.help#3 = Os nomes de itens no chão quando o jogo está no seu chão (F3): quanto da caixa escura atrás deles aparece e quão grandes são. As dicas de itens e todo o outro texto mantêm o tamanho.
 hud_floor.labels_alpha.tip = Quanto da caixa escura atrás dos nomes de itens no chão é desenhada: 1 = como o jogo a desenha, 0 = sem caixa, só os nomes. Os próprios nomes continuam brilhantes. Se o código de rótulos do jogo não for encontrado (outra versão do jogo), os rótulos são esmaecidos como imagem pelo D2R_DepthFog.fx: as caixas esmaecem, os nomes ficam. Só no chão (F3).
 hud_floor.labels_size.tip = Os nomes de itens no chão e suas caixas, menores ou maiores, cada um em torno do ponto sob ele; o jogo abre espaço para eles nesse tamanho. 100 = o próprio do jogo. Pelo código de rótulos do jogo: em outra versão do jogo não faz nada (o log do vrcam diz isso). Só no chão (F3); as dicas de itens e todo o outro texto mantêm o tamanho.
+
+# --- Monster plate, the game on your floor ---
+group.monster_plate_the_game_on_your_floor = Placa de monstro, o jogo no seu chão
+group.monster_plate_the_game_on_your_floor.help = O nome e a barra de vida sobre o monstro que você mira no chão (F3): na profundidade do monstro, para não parecer duplo.
+hud_floor.monster_depth.tip = O nome e a barra de vida que o jogo pendura sobre o monstro que você mira, em F3, o jogo no seu chão: em estéreo o jogo os desenha no mesmo ponto nos dois olhos, então flutuam na profundidade da tela e parecem duplos quando você olha para o monstro. Aqui são movidos para a profundidade própria do monstro, pelo ponto sobre a cabeça dele: 100 = exatamente ali, 0 = onde o jogo os deixa. Nossa própria placa (Nome sobre um monstro: o nosso, em todas as visões) fica ali por conta própria; isto é para a do jogo. Ao vivo.
 
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = IU: F3 olhos
@@ -1354,6 +1380,8 @@ openxr.menu_zoom.label = Grip direito + analógico direito: painel mais perto / 
 openxr.menu_zoom.tip = OpenXR nativo, F4: com um painel do jogo à frente (o inventário, o baú, um comerciante, os waypoints...), segure o grip direito e empurre o analógico direito para a frente para trazê-lo mais perto, para trás para mandá-lo mais longe; solte e ele fica ali - gravado em "Imagem plana com um painel aberto: distância" ([screen] menu_distance_m). Ele para onde o painel deixa de ser legível: mais perto, parte dele ficaria fora de vista; mais longe, os pixels do headset pulariam o texto do jogo. Enquanto o grip está pressionado, o para a frente / para trás do analógico não é do jogo, e o aperto do próprio grip (o bumper direito do menu, onde o laser não o tem) vem quando você solta sem ter movido o painel. Desligado: como antes.
 openxr.menu_zoom_speed_mps.label = Painel mais perto / mais longe: velocidade, m/s
 openxr.menu_zoom_speed_mps.tip = Quão rápido o painel se move com o analógico direito empurrado até o fim. Ao vivo.
+openxr.panel_grab.label = Agarrar um painel com o grip: movê-lo, puxá-lo para perto, empurrá-lo para longe
+openxr.panel_grab.tip = OpenXR nativo, F4: com um painel do jogo à frente (o inventário, o baú, um comerciante, o cubo...), aponte qualquer mão para ele (ou ponha a mão nele) e aperte o grip: o painel está na sua mão. Mova a mão e ele acompanha; puxe a mão e ele chega mais perto, empurre e ele vai mais longe (três vezes o percurso da mão, então um puxão o traz à distância do braço); o stick dessa mão para frente / trás faz o mesmo. Solte e ele fica onde está; abre ali da próxima vez. Mais perto do que onde ele todo está à vista, mantém o tamanho na visão, então de perto é um tablet para o qual você aponta a poucos centímetros. Só um grip que começa no painel o pega: um gatilho apertado antes continua sendo o clique direito (ou Shift + clique), um grip solto sem mover continua sendo o botão de página do menu, e agarrões de armas ou poções em outros lugares ficam intactos. Enquanto está ligado, a distância grip direito + stick direito sai do caminho (o stick do agarrão faz isso). Desligado: como antes.
 openxr.hand_inventory.label = Inventário na mão esquerda fora da cidade
 openxr.hand_inventory.tip = OpenXR nativo, F4, com o laser ligado: longe da cidade a janela inteira do inventário do jogo fica pendurada na sua mão ESQUERDA em vez de na frente - recortada da interface, segura sobre o controle esquerdo como um tablet, virada para os seus olhos - e o analógico esquerdo continua fazendo o herói andar enquanto ele está aberto: ele não move mais o cursor do inventário (o laser da mão DIREITA é o mouse nele) e vai para o próprio andar do jogo. O botãozinho ao lado põe o inventário na frente, em tamanho cheio, e de volta na mão. Arraste um item para fora dele e solte: o inventário fecha e o jogo o larga. O toque longo no clique do analógico esquerdo o abre e fecha mesmo enquanto você anda. Na cidade, ou com outro menu (um Ponto de Passagem, o menu do jogo), na frente como antes. O jogo trava o próprio andar enquanto o inventário dele está aberto; o analógico esquerdo então manda por ele o comando de andar do próprio analógico, com as regras de corrida do jogo. Desligado: como antes.
 openxr.hand_inventory_width_m.label = Inventário na mão: largura, m
@@ -1519,7 +1547,9 @@ input.point_pickup_label_pct.tip = O nome do item para o qual sua mão aponta (C
 # --- Monster plates ---
 group.monster_plates.help#3 = O nome e a barra de vida sobre o monstro que você mira: opacidade, tamanho, menores ao longe, altura e profundidade estéreo, para que em F4 fique junto ao monstro. Placa sobre a cabeça do monstro a mantém a uma distância definida sobre a cabeça, em qualquer distância.
 hud.monster_names_own.label = Nome sobre um monstro: o nosso, nítido (teste)
-hud.monster_names_own.tip = O nome na placa sobre o monstro que você mira desenhado pelo mod em vez da cópia do jogo: nítido em qualquer tamanho de renderização, nas cores do jogo (único dourado, campeão azul). A barra, a moldura e a mira continuam as do jogo. Tem tamanho, tamanho ao longe e fundo próprios ("Nossos nomes" abaixo) e fica na profundidade do seu monstro; os controles da placa continuam os da placa do jogo. Primeira pessoa (F4); não com a placa pendurada na sala. Precisa do D2R_DepthFog.fx da mesma versão. Ao vivo. Desmarcado: o nome do jogo, como antes.
+hud.monster_names_own.tip = O nome na placa sobre o monstro que você mira desenhado pelo mod em vez da cópia do jogo: nítido em qualquer tamanho de renderização, nas cores do jogo (único dourado, campeão azul). A barra, a moldura dela e a mira continuam do jogo. Tem tamanho próprio, tamanho ao longe e fundo ("Nossos nomes" abaixo) e fica na profundidade própria do monstro; os controles deslizantes da placa continuam sendo os da placa do jogo. Primeira pessoa (F4), e F1 - F3 com a marca abaixo; não com a placa pendurada na sala. Precisa do D2R_DepthFog.fx da mesma versão. Ao vivo. Desmarcado: o nome do jogo, como antes.
+hud.monster_names_own_all_views.label = Nome sobre um monstro: o nosso, em todas as visões (teste)
+hud.monster_names_own_all_views.tip = A placa acima (nosso nome sobre a barra vermelha, tipo, imunidades) em F1, F2 e F3 também, onde quer que a câmera do mod desenhe a visão em estéreo: fica sobre a cabeça do monstro na profundidade própria em cada olho, e a placa do jogo embaixo não é desenhada - sem barra dupla. A câmera própria do jogo de cima (F1 plano) mantém a placa do jogo. Precisa da marca acima. Ao vivo. Desmarcado: só F4, como antes.
 hud.npc_names_own.label = Nomes sobre NPCs e objetos: os nossos, nítidos (teste)
 hud.npc_names_own.tip = Os nomes que o jogo mostra sobre os NPCs (Warriv, Kashya, Akara...), objetos, portais e saídas que você aponta, desenhados pelo mod em vez da cópia do jogo: nítidos em qualquer tamanho de renderização, onde o jogo os põe, na caixa escura do próprio jogo, com o tamanho e o fundo de "Nossos nomes" abaixo. Primeira pessoa (F4). Precisa do D2R_DepthFog.fx da mesma versão. Ao vivo. Desmarcado: os nomes do jogo, como antes.
 hud.own_labels_drop_game.label = Nossos rótulos e nomes: os do jogo não são desenhados (teste)
@@ -1982,54 +2012,6 @@ hud.map_width.label = Largura do mapa, m
 # ===== Tab: World =====
 tab.world = Mundo
 
-# --- Fog ---
-group.fog = Neblina
-group.fog.help = A neblina de distância, e correções para os efeitos de profundidade do jogo vistos da nossa câmera. Defina onde a neblina é total, sua atenuação, a neblina nas cavernas e a cor dela, se fogo e magias são poupados, e correções para as neblinas do próprio jogo, paredes diante do herói, telhados e a iluminação numa janela quadrada.
-fog.game_fog_mist.label = A neblina do jogo também sobre a névoa dele
-fog.game_fog_mist.tip = O passe de neblina do próprio jogo acrescenta a névoa volumétrica dele (iluminada por tochas e similares) depois da neblina, nunca embaçada pela distância: numa caverna a nossa neblina escura deixava as paredes distantes pretas e a névoa continuava, uma faixa clara atrás das fogueiras. Marcado: a névoa some com a distância como todo o resto. Só sem ReShade. Ao vivo.
-fog.game_fog_caves_black.label = A neblina do jogo escurece até o preto nas cavernas
-fog.game_fog_caves_black.tip = No subsolo a neblina do jogo se apaga até o preto, seja qual for a cor de neblina das cavernas, e o vazio além da borda do teto da caverna é deixado em paz - o passe de neblina do jogo punha a névoa iluminada por tochas sobre ele inteiro, uma faixa clara atrás das fogueiras. A distância escurece, nunca brilha. Só sem ReShade. Ao vivo.
-fog.game_fog_our_curve.label = A neblina do jogo pela nossa curva
-fog.game_fog_our_curve.tip = A própria passada de neblina do jogo faz a neblina surgir como o nosso efeito faz - de Início da neblina até Neblina total pela Atenuação abaixo (nas cavernas o início, o fim e a força próprios delas) - em vez da exponencial própria dela, que põe quase toda a neblina logo depois do início e deixa a faixa distante de um cinza só. Algumas instruções na passada dela, nada acrescentado. Só sem ReShade. Ao vivo.
-fog.fog_keeps_colour.label = A neblina do jogo mantém a cor do ato à noite
-fog.fog_keeps_colour.tip = Enquanto o jogo desenha a neblina: a cor dela é a do próprio ato (as cores acima) a qualquer hora - o distante se apaga numa névoa clara dela, nunca rumo ao preto. A neblina do nosso efeito não muda. Desligado: ela escurece com a luz do jogo como o céu - à noite até "Céu à noite" e pelo brilho do céu em cada hora do dia. Com a cor do céu ("A cor da neblina: medida do jogo" desmarcado): a do céu de dia no horizonte a qualquer hora; desligado, a do céu noturno à noite - quase preta. Ao vivo.
-fog.fog_into_sky.label = A neblina do jogo dissolve o distante no céu atrás dele
-fog.fog_into_sky.tip = Ao ar livre, a cor da neblina em cada ponto é o céu logo atrás dele, como no Santuário Arcano: a terra distante, a borda do mundo e os prédios altos e distantes se dissolvem no céu, não numa cor chapada (a parte baixa do céu é a cor da neblina do ato, como é desenhada). Objetos distantes mostram o céu através deles. Funcionava por meio de "A neblina do jogo tão espessa e tão colorida quanto a nossa", removida (ela quebrava a neblina): por ora não muda nada. Ao vivo. Desligado: uma só cor de neblina, como antes.
-fog.fog_colour_measured.label = A cor da neblina: medida do jogo
-fog.fog_colour_measured.tip = Marcado: a cor da neblina é a cor própria do ato como definida (a medição dela a partir do jogo foi embora com "A neblina do jogo tão espessa e tão colorida quanto a nossa", removida). Desmarcado: a cor da neblina é a do próprio céu no horizonte - a imagem pré-calculada ali no brilho do controle deslizante dela - de modo que a terra distante se funde ao céu sem emenda; um número, definido quando a hora do dia ou um controle deslizante muda: nenhuma medição, nada dela no efeito. No subsolo, no Santuário Arcano e com o céu tingido: a cor do ato ou da caverna como definida. Ao vivo.
-fog.game_fog_before_fx.label = A neblina antes da fumaça e do fogo
-fog.game_fog_before_fx.tip = A neblina posta sobre a cena antes de o jogo acrescentar a fumaça, a névoa, o fogo e as magias, para que fiquem sobre o mundo enevoado sem neblina - sem isso a neblina é posta sobre eles pela parede atrás deles (bruma recortada em buracos pretos diante de paredes distantes, uma magia de fogo se apagando ao passar por uma parede distante). A neblina do jogo ou a do nosso efeito, qualquer uma que a desenhe. Um passe nosso na placa de vídeo (o custo dele na linha de 10 s do log). Com ReShade: só a neblina do nosso efeito, só VR em primeira pessoa. Vale quando o jogo é iniciado de novo.
-fog.game_fog_fx_depth.label = Fumaça e fogo distantes se apagam na neblina
-fog.game_fog_fx_depth.tip = Com a neblina antes da fumaça e do fogo: a fumaça, a névoa, o fogo e as magias também recebem neblina, cada um pela própria distância - os próximos como estão, os distantes se apagando na neblina com o mundo atrás deles. Sem isso uma fogueira de acampamento distante fica com luz total em neblina total e as bordas transparentes de cercas distantes aparecem como pontinhos no horizonte. Os efeitos do jogo são desenhados mais uma vez só para a profundidade deles: CARO - num Quest 3 a 2048 x 2048 por olho custou cerca de 30 quadros por segundo (72 -> 42); o custo nas linhas de 10 s do log. Só sem ReShade. Ao vivo. Desligado: os efeitos nunca recebem neblina.
-fog.game_fog_height.label = A neblina do jogo afina com a altura
-fog.game_fog_height.tip = O passe de neblina do próprio jogo deixa o céu limpo: a neblina como está até o topo da neblina menos a suavidade dele, sumindo acima disso, nenhuma acima do topo (unidades do mundo acima dos seus olhos). Para a cúpula de céu do jogo, para que o céu dele apareça acima do horizonte enevoado. Passe do próprio jogo, nada acrescentado. Só ao ar livre (no subsolo não há céu a manter limpo). Só sem ReShade. Desligado: a neblina do jogo como está. Ao vivo.
-fog.game_fog_top.label = A neblina do jogo: o topo dela, unidades acima dos olhos
-fog.game_fog_top.tip = Até que altura chega a neblina do jogo: nenhuma acima disso, em unidades do mundo acima dos seus olhos (o herói tem cerca de 7.5 de altura; a cúpula de céu no raio dela). Ao vivo.
-fog.game_fog_soft.label = A neblina do jogo: suavidade do topo dela, unidades
-fog.game_fog_soft.tip = Quanto abaixo do topo a neblina do jogo se apaga: pequeno, uma borda nítida; grande, um desvanecer longo e suave. Ao vivo.
-fog.game_fog_top_from_floor.label = A neblina do jogo: o topo contado do chão do herói
-fog.game_fog_top_from_floor.tip = O topo acima é contado a partir do chão onde o herói está, não dos seus olhos: uma câmera bem acima do herói (terceira pessoa, a visão de cima) não muda mais onde a neblina termina, e a terra abaixo dos seus olhos não fica toda enevoada com uma linha na altura dos olhos. Desligado: a partir dos olhos, como antes. Desmarcar "A neblina do jogo afina com a altura" em vez disso dá a neblina só pela distância, como a nossa própria neblina. Ao vivo.
-fog.end.tip#2 = Onde a neblina é total. Unidades do mundo (o herói tem cerca de 7.5 de altura). Com a neblina do jogo, abaixo do Início da neblina os dois são tomados ao contrário (neblina do nosso efeito: total logo após o Início da neblina).
-fog.curve.label = Atenuação
-fog.curve.tip = 1 = linear; mais = uma distância média mais nítida.
-fog.blur.label = Desfoque de profundidade, px (0 = desligado)
-fog.blur.tip = A neblina sobre uma grade 5x5 com este número de pixels de intervalo: buracos e manchas na profundidade se dissolvem.
-fog.spare_effects.label = A neblina poupa fogo, magias e fumaça (teste)
-fog.spare_effects.tip = Fogo, magias, fumaça e brilhos recebem neblina só na medida em que a cena atrás deles não recebe: uma tocha ou um Raio de Fogo diante de uma parede distante continua brilhante, em vez de ficar com neblina como a parede. As camadas transparentes do próprio jogo em cada quadro são copiadas para isso (só VR F4). Aplica-se quando o jogo é iniciado de novo; desligado = a neblina como antes.
-render.fog_in_frame.label = Neblina desenhada dentro do quadro do jogo (teste)
-render.fog_in_frame.tip = A neblina é desenhada na própria imagem do jogo antes do seu fogo, magias e fumaça, e o jogo os põe sobre a cena com neblina: uma tocha, um Raio de Fogo ou um Inferno diante de uma parede distante não fica com neblina como a parede. O céu e o preto além do mundo mantêm a neblina como antes. Com a cor de neblina própria de um ato (Mundo > Céu); só VR F4. Aplica-se quando o jogo é iniciado de novo; desligado = a neblina como antes. Tem precedência sobre "A neblina poupa fogo, magias e fumaça" quando as duas estão ligadas.
-fog.caves.label = Neblina em cavernas e masmorras
-fog.caves.tip = Desligado: sem neblina no subsolo (toda área que não é ao ar livre) - nem a do nosso efeito nem a própria neblina do jogo, e nada posto antes da fumaça e do fogo ali; o ar livre a mantém. O Santuário Arcano tem o próprio interruptor (Céu > Santuário Arcano: a neblina se dissolve no céu dele): ligado, ele mantém a neblina com qualquer uma das neblinas. Ao vivo.
-fog.ease_in.label = Neblina que entra suave, sem anel duro
-fog.ease_in.tip = A neblina surge suavemente nas primeiras 40 unidades depois do início dela: sem borda nítida ao redor do chão limpo aos seus pés. Onde quer que a nossa curva desenhe a neblina: o nosso efeito, e a neblina do jogo com "A neblina do jogo pela nossa curva" ligado (não a curva própria do jogo). Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina como antes.
-fog.no_fog_river.label = Sem neblina no Rio de Chamas
-fog.no_fog_river.tip = Nenhuma neblina acrescentada no Rio de Chamas, embora seja ao ar livre: o brilho e a névoa da própria lava continuam os do jogo. A neblina do nosso efeito e a do jogo, igualmente. Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina ali como em todo lugar ao ar livre.
-fog.caves_strength.label = Intensidade da neblina nas cavernas
-fog.caves_strength.tip = Quanto a neblina total cobre nas cavernas: 1 = o fundo some na cor da neblina, menos = ele aparece através dela.
-fog.color_caves.label = Cor da neblina nas cavernas
-fog.color_caves.tip = Cavernas, masmorras, criptas: toda área que não é ao ar livre. Vazio (x) = a cor desse ato.
-fog.color_caves.empty = igual ao do ato
-
 # --- Distance blur ---
 group.distance_blur = Desfoque de distância
 group.distance_blur.help = A imagem distante desfocada, como através de um painel de vidro fosco posto a uma distância à sua frente: nada mais perto que o painel é tocado; atrás dele o mundo fica mais desfocado quanto mais longe está. Defina onde o painel fica, onde o desfoque chega ao máximo e quão largo ele é. À parte da neblina: sem cor própria, a neblina mantém o visual dela.
@@ -2042,30 +2024,9 @@ render.distance_blur_full_m.tip = Onde o desfoque chega ao máximo, em metros (p
 render.distance_blur_strength.label = Intensidade do desfoque
 render.distance_blur_strength.tip = Quão largo é o desfoque no máximo: 1 = 2.5 % da altura da imagem (cerca de 50 pixels num olho de 2000 linhas), 0.4 como o jogo fractal o tem. 0 = sem desfoque. Ao vivo.
 
-# --- Arcane Sanctuary ---
-group.arcane_sanctuary = Santuário Arcano
-group.arcane_sanctuary.help = A neblina no Santuário Arcano (ato 2), definida à parte da das cavernas: ele não é ao ar livre, então ele usa a neblina das cavernas até "A própria neblina" ser marcada. Se há neblina sob o próprio céu dele fica na aba Céu (Santuário Arcano: a neblina se dissolve no céu dele).
-fog.arcane_own.label = Santuário Arcano: a própria neblina
-fog.arcane_own.tip = A neblina no Santuário Arcano definida à parte, com os valores abaixo; as cavernas mantêm a delas. Ao vivo. Desligado: ele usa o início, o fim, a intensidade e a cor das cavernas, como antes.
-fog.arcane_start.label = Santuário Arcano: início da neblina
-fog.arcane_start.tip = Onde a neblina começa no Santuário Arcano. Unidades do mundo (o herói tem cerca de 7.5 de altura). Ao vivo.
-fog.arcane_end.label = Santuário Arcano: neblina total
-fog.arcane_end.tip = Onde a neblina é total no Santuário Arcano. Unidades do mundo (o herói tem cerca de 7.5 de altura). Ao vivo.
-fog.arcane_strength.label = Santuário Arcano: intensidade da neblina
-fog.arcane_strength.tip = Quanto a neblina total cobre ali: 1 = as plataformas distantes somem na neblina, menos = elas aparecem através dela. Ao vivo.
-fog.arcane_curve.label = Santuário Arcano: curva da neblina
-fog.arcane_curve.tip = Como a neblina cresce do início até o total: 1 = por igual, mais = ela fica rala por mais tempo e engrossa perto do fim, menos = ela engrossa logo após o início. Ao vivo.
-fog.arcane_color.label = Santuário Arcano: cor da neblina
-fog.arcane_color.tip = A cor da neblina no Santuário Arcano. Vazio (x) = a cor das cavernas (com a neblina do jogo, nunca preta ali). Ao vivo.
-fog.arcane_color.empty = igual às cavernas
-fog.arcane_into_sky.label = Santuário Arcano: a neblina se dissolve no céu atrás
-fog.arcane_into_sky.tip = Sob o próprio céu dele (aba Céu) a neblina é o céu logo atrás de cada ponto: as plataformas distantes se dissolvem no vazio. Desligado: elas se apagam na cor da neblina acima. Ao vivo.
-render.game_height_fog.label = A neblina de altura do próprio jogo
-render.game_height_fog.tip = Só a cidade do ato 2 a tem. Da nossa câmera, a borda dela é uma linha dura atravessando a imagem, com um véu pálido acima (a câmera do jogo nunca vê essa borda). Desligado: o vrcam a define como 0.
-render.game_depth_fog.label = A neblina de profundidade do próprio jogo
-render.game_depth_fog.tip = Toda área ao ar livre a tem, a partir da distância da câmera dele: uma névoa cinza nos quatro cantos da imagem (também vista de cima), sobre o chão próximo da nossa câmera. Desligado: o vrcam a define como 0.
-render.game_fog_scan_safe.label = Encontrar a névoa do jogo com segurança
-render.game_fog_scan_safe.tip = Como o D2R VR encontra a névoa de altura e de profundidade do jogo para desligá-las: lendo cópias da memória do jogo, então um bloco que o jogo libera nesse meio-tempo é pulado sem erro (o D2RLoader registrava isso como relatórios de crash), só definições onde as áreas do jogo as têm, e um valor só é alterado enquanto ainda é o que acabou de ser lido. Desligado: leituras diretas, como antes. Ao vivo.
+# --- Depth and view ---
+group.depth_and_view = Profundidade e visão
+group.depth_and_view.help = Como os efeitos de profundidade do jogo enxergam a nossa câmera, e as paredes, os telhados e a iluminação vistos dela. (A neblina do Santuário Arcano e as neblinas do próprio jogo estão na aba Neblina.)
 render.depth_fix.label = Os efeitos do jogo medem a profundidade a partir da nossa câmera
 render.depth_fix.tip = O jogo guarda uma cópia da profundidade para a neblina, a neblina de altura, a oclusão de ambiente, os reflexos e a água, feita para a câmera dele vista de cima (a 550 a 1060 unidades de distância). Da nossa, tudo está mais perto e é lido como uma parede plana a 550: a linha reta da cidade do ato 2 com um véu pálido acima, a névoa nos cantos. Ligado: essa profundidade parte da nossa câmera. Desligado: a do próprio jogo.
 render.own_depth.label = Profundidade para os efeitos
@@ -2094,6 +2055,8 @@ render.light_bounds_fix.label = Corrigir a iluminação do jogo numa janela quad
 render.light_bounds_fix.tip = O jogo corta a imagem em 32 x 20 ladrilhos e acha a faixa de profundidade de cada ladrilho para as luzes com um shader que só está certo numa janela 16:10. Numa janela quadrada ou larga (a janela VR, 16:9) ele perde fileiras: luzes somem em retângulos duros e o sombreamento de um telhado pisca quando a cabeça se move. Ligado: o nosso próprio shader faz esse trabalho certo enquanto o VR renderiza, com ReShade ou sem ele (em 16:10 os números são os mesmos do jogo). Desligado, vale na hora; marcado de novo, vale na próxima inicialização do jogo. Desligado: o do próprio jogo.
 render.light_bounds_flat.label = ... no modo plano também
 render.light_bounds_flat.tip = A mesma correção no modo plano (um monitor ou uma janela, também a imagem plana do OpenXR nativo): o shader do jogo também está errado em 16:9 e numa janela quadrada, não só em VR. Acompanha o modo na hora. Desligado: o modo plano mantém o shader do próprio jogo, como antes.
+render.symmetric_projection.label = Iluminação correta com olhos descentralizados (mais suave)
+render.symmetric_projection.tip = OpenXR nativo: o jogo descobre quais luzes chegam a cada um dos seus 32 x 20 ladrilhos com um shader que toma a imagem como centralizada. Um olho desenhado descentralizado (geração de quadros ligada, "Cada olho exatamente como o headset dá" desligado ou nos ângulos próprios do headset, ângulos à mão sem "Nomes e interface únicos nos dois olhos", um headset cujas telas são viradas para fora) recebe as luzes nos ladrilhos ao lado dos seus: manchas de detalhe do chão que deslizam com o herói de um lado da visão e se movem quando você gira. Ligado: os dois olhos são desenhados e entregues ao headset com uma visão centralizada que contém a de ambos (segundo bearstonem/d2r-pcvr) - as manchas devem sumir; a imagem fica um pouco mais suave (os mesmos pixels sobre um ângulo mais largo). Com "Cada olho exatamente como o headset dá" em Centralizado (o padrão), na maioria dos headsets os olhos já são centralizados e nada muda. Se o headset ficar preto com a geração de quadros, desmarque. Ao vivo. Desligado: cada olho como a escolha dele desenha.
 render.reflections_per_eye.label = Reflexos em poças e sangue na profundidade real (3D)
 render.reflections_per_eye.tip = Com "Stereo - one pass, two pictures" os reflexos do jogo em água, poças e poças de sangue eram desenhados no olho direito como se vistos do dobro da distância entre os olhos: o dobro de paralaxe, metade da profundidade; o reflexo parecia flutuar sobre a poça e cansava a vista. Ligado: as duas passagens de reflexo do jogo leem a posição própria de cada olho (um valor no shader dele muda; sem trabalho extra para a placa de vídeo), então cada reflexo fica na água. Os outros modos 3D e o modo plano ficam iguais nos dois casos. Feito ao iniciar o jogo: se ligado, vale a partir da próxima inicialização; depois disso segue esta caixa na hora. Desligado: o do jogo.
 
@@ -2103,11 +2066,15 @@ group.render_distance.help = Até onde ao redor do herói o mundo é desenhado: 
 
 # --- Scenery ---
 group.scenery = Cenário
-group.scenery.help = Correções do cenário do jogo para a primeira pessoa: pisos que mantêm a altura quando você volta a uma sala, e a canoa das Docas de Kurast posta na água em vez de pendurada no céu. Só a imagem muda.
-render.floors_stay.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
-render.floors_stay.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, combinada com as salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos não batem em toda a volta, então uma sala à qual você volta por outro caminho (ou depois de outra área ou cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá de cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para o lado, o vazio aparecendo entre eles. Ligado: toda sala mantém a altura em que foi desenhada pela primeira vez até você sair do jogo. A troca: o jogo também conserta uma sala desenhada na altura errada (um degrau visto de longe, como no portão da Fortaleza do Pandemônio) quando a desenha de novo ao você se aproximar - com isto ligado, esse conserto não vem. Só a imagem; nada da luta ou dos caminhos muda. Ao vivo. Desligado (o padrão): as alturas do próprio jogo.
+group.scenery.help = Correções do cenário do jogo para a primeira pessoa: pisos de masmorra que se encontram ao longo do seu caminho, ladrilhos do chão na altura do próprio piso, e a canoa das Docas de Kurast posta na água em vez de pendurada no céu. Só a imagem muda.
+render.room_stitch.label = Pisos de masmorra se encontram ao longo do caminho por onde você vem
+render.room_stitch.tip = O jogo dá a cada sala uma altura quando a constrói, encontrando UMA das salas já construídas ao redor - a sala do próprio herói se for uma, senão a que pedir o maior degrau. Da câmera dele, de cima, isso nunca aparece; da nossa, salas construídas alguns anéis adiante ficam um degrau acima ou abaixo da próxima com um vazio preto entre elas, e encaixam de repente no limiar. Ligado: cada sala encontra a vizinha já construída mais perto de você, então os pisos se encontram ao longo do caminho por onde você vem; o que um laço do nível não consegue fechar fica nas bordas longe de você. Onde a nossa cópia da escolha do jogo discordar do jogo, vale a resposta do jogo. Só a imagem; monstros, projéteis e itens seguem o chão por conta própria. Uma sala a que você volta por outro caminho também encontra o seu caminho. Todas as visões: F1 - F3 planos, VR F4 e o jogo plano com câmera própria (de cima nunca aparece, então nada muda ali); uma sala mantém a altura quando você troca de visão. Os gráficos clássicos não desenham essas salas. De D2R VR Unleashed (Cal, equipe de bearstonem). Ligado por padrão. Desligado: a escolha do próprio jogo.
+render.terrain_heights.label = Ladrilhos do chão na altura do próprio piso (escadas, saliências)
+render.terrain_heights.tip = O jogo desenha cada ladrilho do chão ao ar livre (areia, grama, neve e o calçamento sobre eles) na altura do piso sob o herói. Da câmera dele, de cima, isso nunca aparece; da nossa, onde o chão tem dois níveis - os platôs do deserto do ato 2 e as escadas deles, saliências - o chão do outro nível fica na altura do herói, empurrado para o lado, e todo o chão salta para cima ou para baixo a cada degrau. Ligado: cada ladrilho é desenhado na altura do próprio piso e costurado aos ladrilhos ao redor - um ladrilho do outro lado de uma saliência se junta ao nível em que os vizinhos estão, então não se abrem degraus nem vãos entre ladrilhos de um mesmo piso; desníveis reais (penhascos, saliências, escadas) ficam. Só a imagem; nada da luta ou dos caminhos muda. Ao vivo. Desligado (o padrão): a altura única do jogo para todos.
 world.kurast_boat.label = Docas de Kurast: a canoa no céu fica sobre a água
 world.kurast_boat.tip = O cenário HD da cidade põe uma canoa 50 unidades no alto, onde a visão de cima nunca olha; em primeira pessoa ela fica pendurada sobre as cabanas. Ligado: ela fica deitada na água junto às docas do oeste, onde o prefab dela foi construído - um número do arquivo de cenário da cidade alterado (encontrado por bearstonem/d2r-pcvr). Este programa cria esse arquivo a partir do próprio do seu jogo quando abre (Início: Canoa das Docas de Kurast) e o guarda dentro do mod (mods\D2R-VR\D2R-VR.mpq); nada do próprio jogo muda, nem nada com que você joga. Vale a partir da próxima inicialização do jogo (um jogo já em execução mantém a canoa onde estava). Desligado: o arquivo é retirado de novo, a canoa como o jogo a tem.
+holes.patch_world.label = Buracos do mundo remendados (um teste: a ponte na saída do Acampamento das Rogues)
+holes.patch_world.tip = O jogo foi feito para uma câmera que olha de cima: alguns lugares nunca foram modelados onde essa câmera nunca olha - a ponte na saída do Acampamento das Rogues tem uma faixa ao longo do tabuleiro sem piso, entre o tabuleiro e o parapeito, por onde a primeira e a terceira pessoa veem o rio lá embaixo. Marcado, este programa faz um remendo para cada lugar assim a partir dos arquivos do seu próprio jogo (o material de chão do próprio tabuleiro, as bordas levadas até o parapeito - nada posto à mão) e o jogo o desenha como uma peça própria, iluminada e sombreada como o tabuleiro. Todas as visões: F1, F2, F3 planos e VR. Vale a partir da próxima inicialização do jogo. Desmarcado: os arquivos são tirados de novo, a ponte como o jogo a tem.
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = Monstros (jogo plano)
@@ -2121,8 +2088,9 @@ tab.sky = Céu
 # --- Sky and fog ---
 group.sky_and_fog = Céu e neblina
 group.sky_and_fog.help = Quem desenha o céu e quem desenha a neblina de distância: o próprio jogo (novo) ou o nosso efeito (antigo) - uma escolha para cada, dois quaisquer juntos (a cúpula do jogo com a nossa neblina, o nosso céu com a neblina do jogo).
-render.game_drawn_flat.label = O jogo os desenha também no jogo plano
-render.game_drawn_flat.tip = A cúpula do céu, a cúpula e o teto da caverna e a neblina que o próprio jogo desenha, também quando você joga no monitor sem headset (as visões planas em primeira e terceira pessoa; a de cima fica como está). Desligado: só na primeira pessoa em VR (F4). Ao vivo.
+render.game_drawn_flat.label = O jogo desenha o céu também no jogo plano
+render.game_drawn_flat.tip = A cúpula do céu, a cúpula das cavernas e o teto que o próprio jogo desenha, também quando você joga no monitor sem headset (as visões planas em primeira e terceira pessoa; de cima fica como está). Desligado: só em VR primeira pessoa (F4). A neblina tem a sua própria opção na aba Neblina. Ao vivo.
+@status.fog_moved_sky.label = Quem desenha a neblina, as cores da neblina e a parte baixa do céu na cor da neblina estão na aba Neblina.
 
 # --- Sky ---
 group.sky.help = Um céu no vazio preto além do mundo, só ao ar livre. Defina as nuvens, se o céu gira devagar, o céu sobre a borda escura ao redor de telhados e árvores, e as estrelas próprias do Santuário Arcano por toda parte e a neblina dele.
@@ -2141,12 +2109,6 @@ sky.dome_gain_once.label = Céu do jogo: as cores dele medidas uma vez
 sky.dome_gain_once.tip = Com "as cores dele desenhadas pelo jogo": a medição do céu do jogo contra o nosso é feita uma vez para cada área e hora do dia, e guardada em d2r_vr_dome_gain.txt ao lado das configurações (apague-o para medir de novo). Depois disso o céu é pré-calculado a partir desses números só quando a luz, a hora do dia ou um controle muda - nada medido nem pré-calculado de novo enquanto você joga. Ao vivo. Desligado: medido o tempo todo, como antes.
 sky.dome_in_game_colour.label = Céu do jogo: as cores dele desenhadas pelo jogo
 sky.dome_in_game_colour.tip = O nosso efeito recoloria o céu desenhado pelo jogo depois de o jogo ter desenhado as árvores, a paliçada e os telhados sobre ele: as bordas deles, misturadas ao céu como o jogo o desenhou, mantinham a cor antiga dele - um contorno claro em volta de cada galho à noite. Marcado, o jogo desenha o céu a partir de uma imagem nossa, feita a partir da própria dele com a imagem noturna, o escurecimento de dia e noite, o brilho de cada período do dia e as cores medidas nela - cada borda se mistura ao céu certo. Só sem ReShade (os nossos próprios efeitos). Vale a partir do próximo início do jogo; desmarcado ao vivo, o céu volta às próprias cores do jogo na hora e o nosso efeito o recolore como antes.
-sky.dome_fog_horizon.label = O céu do jogo: o horizonte dele na neblina
-sky.dome_fog_horizon.tip = A parte baixa do céu desenhado pelo jogo afunda na cor de neblina do ato, como fazia a do nosso próprio céu: a terra enevoada encontra o céu sem borda dura, e as cores combinam onde se encontram. Só enquanto uma neblina é desenhada. Desligado: o céu como o jogo o desenha. Ao vivo.
-sky.dome_fog_baked.label = Céu do jogo: a parte baixa dele na cor da neblina
-sky.dome_fog_baked.tip = Com a neblina do jogo, a parte baixa do céu é posta na própria cor da neblina na própria imagem do céu, como a parte baixa do nosso céu antigo vai para a neblina: árvores e arbustos contra o horizonte ficam sobre a cor da neblina, sem uma borda clara do horizonte da imagem em volta deles. O horizonte do céu na neblina acima fica de lado enquanto isso. Desligado: a imagem como ela é. Ao vivo.
-sky.dome_fog_baked_strength.label = Céu do jogo: quanto da cor da neblina
-sky.dome_fog_baked_strength.tip = 1: o horizonte inteiro na cor da neblina, passando para a imagem até 11 graus; menos: um pouco da imagem através dele. Ao vivo.
 sky.game_sky_closed.label = O céu do jogo: uma esfera inteira, uma cor embaixo
 sky.game_sky_closed.tip = O céu desenhado pelo jogo terminava 12 graus abaixo do horizonte: além da beira de um penhasco a borda dele ficava como uma linha dura com um buraco embaixo, o vazio e a neblina aparecendo através. Marcado, ele se fecha numa esfera inteira e a metade de baixo é de uma cor só - a do próprio céu no horizonte (com uma neblina desenhada, a da neblina: eles se encontram numa cor só). Em todo ato, VR e plano. Este programa refaz os modelos da cúpula na hora; o jogo os pega na próxima inicialização. Desligado: a cúpula aberta, como antes.
 sky.game_skybox.label = Cume do Arreat: a cúpula de céu bem longe
@@ -2160,8 +2122,6 @@ sky.weather_first_person.choice1 = Escondida
 sky.weather_first_person.choice2 = Ao seu redor
 sky.arcane_sky.label = Santuário Arcano: suas próprias estrelas por toda parte
 sky.arcane_sky.tip = No Santuário Arcano, o vazio ao redor das plataformas mostra as camadas de estrelas e as nuvens do próprio jogo em todas as direções, também abaixo das plataformas (segundo bearstonem/d2r-pcvr). As imagens são feitas a partir dos arquivos do seu jogo quando este programa abre (Início: Céu do Santuário Arcano) e ficam dentro do mod (mods\D2R-VR); nada do jogo é alterado. Não nas visões de cima. Funciona também com o céu ao ar livre desligado. Desligado: o vazio como o jogo o desenha.
-sky.arcane_fog.label = Santuário Arcano: a neblina se dissolve no céu dele
-sky.arcane_fog.tip = A neblina de distância ([fog] on, Mundo > Neblina) também no Santuário Arcano: as plataformas distantes se dissolvem no céu atrás delas - na escuridão e na nebulosa dele, não nas estrelas. Desligado: sem neblina sob esse céu, as plataformas nítidas até o fim.
 
 # --- Day and night ---
 group.day_and_night = Dia e noite
@@ -2214,9 +2174,6 @@ sky.brightness_act1.label = Brilho
 sky.texture_act1.label = Panorama do céu
 sky.texture_act1.tip = Um nome simples é procurado em reshade-shaders\Textures; um caminho completo também serve. Vazio (x) = o shader desenha esse céu sozinho.
 sky.cap_act1.label = Zênite
-fog.color_act1.label = Cor da neblina
-fog.color_act1.tip = A cor de neblina deste ato, cavernas incluídas; a parte baixa do céu afunda nela. Vazio (x) = a cor do horizonte do céu, ou escuro sem céu.
-fog.color_act1.empty = do céu
 
 # --- Act 2 (desert) ---
 group.act_2_desert = Ato 2 (deserto)
@@ -2238,6 +2195,140 @@ group.act_5_ruins.help = O céu sobre as ruínas do ato 5: seu brilho, imagem pa
 group.act_5_snow = Ato 5 (neve)
 group.act_5_snow.help = O céu sobre a neve do ato 5: seu brilho, imagem panorâmica, zênite e cor de neblina, como no ato 1.
 
+# ===== Tab: Fog =====
+tab.fog = Neblina
+
+# --- Fog drawn by ---
+group.fog_drawn_by = Neblina desenhada por
+group.fog_drawn_by.help = Quem desenha a neblina de distância: ninguém, a passada de neblina do próprio jogo (nova, o padrão) ou o nosso efeito antigo. O bloco do que não foi escolhido fica esmaecido.
+@fogby.way.tip = Quem desenha a neblina de distância. A neblina do jogo: a passada de neblina do próprio jogo com as nossas distâncias e cores (o bloco abaixo) - nenhum tempo de quadro nosso. Neblina antiga (nosso efeito): o nosso shader de neblina põe a neblina pela profundidade, como antes (bloco próprio). Nenhuma: sem neblina de distância. Ao vivo.
+@fogby.way.choice1 = A neblina do jogo
+@fogby.way.choice2 = Neblina antiga (nosso efeito)
+@fogby.way.choice3 = Planos de neblina diante do jogador
+
+# --- The game's fog ---
+group.the_game_s_fog.help = A passada de neblina do próprio jogo: onde começa e onde é completa, ao ar livre e nas cavernas, a cor dela pela hora do dia do jogo, e a parte baixa do céu embutida nessa cor. Controles deslizantes próprios - os da neblina antiga estão abaixo.
+fog.game_fog_flat.label = A neblina do jogo também no jogo plano
+fog.game_fog_flat.tip = O jogo desenha a neblina dele também quando você joga no monitor sem headset (as visões planas em primeira e terceira pessoa). Desligado: só em VR primeira pessoa (F4). Vazio: como "O jogo desenha o céu também no jogo plano" (a chave de antes). Ao vivo.
+fog.game_fog_before_fx.label = A neblina antes da fumaça e do fogo
+fog.game_fog_before_fx.tip = A neblina é posta sobre o mundo antes de o jogo acrescentar fumaça, fogo, bruma e feitiços, então eles continuam brilhantes sobre o mundo enevoado. Desligado: a ordem do próprio jogo - a neblina passa sobre eles pelo que está longe atrás deles, e a chama e a fumaça de uma tocha diante de um fundo distante enevoado são apagadas. Uma passada nossa na placa de vídeo (o custo dela na linha de 10 s do registro). Vale quando o jogo é iniciado de novo.
+fog.game_fog_planes_count.label = Quantos planos
+fog.game_fog_planes_count.tip = Com "Neblina desenhada por: Planos de neblina diante do jogador": a neblina como planos voltados para você, de Início da neblina a Neblina total, cada um uma camada da cor da neblina; o que está atrás de um plano é coberto por ele, o que está na frente (a chama de uma tocha) continua brilhante. Mais planos: mais suave, o mesmo custo. Ao vivo.
+fog.game_fog_planes_soft.label = Quão suave é cada plano
+fog.game_fog_planes_soft.tip = 0: planos duros - uma linha onde cada um corta o chão; 1: cada um se dissolve ao longo do vão até o próximo, sem linhas. Ao vivo.
+group.caves_and_dungeons = Cavernas e masmorras
+fog.game_fog_caves.label = Neblina em cavernas e masmorras
+fog.game_fog_caves.tip = A neblina do jogo também em cavernas, masmorras e criptas (toda área que não é ao ar livre). Ao vivo.
+fog.game_fog_caves_strength.label = Intensidade da neblina nas cavernas
+fog.game_fog_caves_strength.tip = Quanto a neblina total cobre nas cavernas: 1 = a ponta distante some na cor da neblina, menos = aparece através dela.
+fog.game_fog_caves_black.label = A neblina do jogo escurece até o preto nas cavernas
+fog.game_fog_caves_black.tip = No subsolo a neblina do jogo se apaga até o preto, seja qual for a cor de neblina das cavernas, e o vazio além da borda do teto da caverna é deixado em paz - o passe de neblina do jogo punha a névoa iluminada por tochas sobre ele inteiro, uma faixa clara atrás das fogueiras. A distância escurece, nunca brilha. Só sem ReShade. Ao vivo.
+group.its_colour_by_the_time_of_day = A cor dela pela hora do dia
+fog.game_fog_colour.label = A cor bruta do jogo
+fog.game_fog_colour.tip = Desmarcado (o padrão): a neblina tem as cores de alvorada, dia, entardecer e noite abaixo, misturadas pelo relógio do próprio jogo. Marcado: a cor que os arquivos de iluminação do próprio jogo guardam, como está - com a nossa neblina próxima e densa, uma parede pálida sobre a terra distante de dia e uma lavanda à noite. Ao vivo.
+fog.game_fog_act1_dawn.label = Cor da alvorada
+fog.game_fog_act1_dawn.tip = A cor da neblina do jogo na alvorada ao ar livre deste ato (a luz do jogo: as duas partes da alvorada). Vazio = a cor do dia no tom próprio da alvorada do jogo - a cor do dia vezes a mudança própria do jogo da neblina de dia para a de alvorada, por cor, cada parte da alvorada a sua (dos arquivos de iluminação do ato). Ao vivo.
+fog.game_fog_act1_dawn.empty = a do dia no tom da alvorada do jogo
+fog.game_fog_act1_day.label = Cor do dia
+fog.game_fog_act1_day.tip = A cor da neblina do jogo de dia ao ar livre deste ato (a luz do jogo: o dia). Vazio = a cor da neblina antiga deste ato (Mundo > Cor da neblina do ato), como está agora. Ao vivo.
+fog.game_fog_act1_day.empty = a da neblina antiga
+fog.game_fog_act1_dusk.label = Cor do entardecer
+fog.game_fog_act1_dusk.tip = A cor da neblina do jogo no entardecer ao ar livre deste ato (a luz do jogo: as duas partes do entardecer). Vazio = a cor do dia no tom próprio do entardecer do jogo - a cor do dia vezes a mudança própria do jogo da neblina de dia para a de entardecer, por cor, cada parte do entardecer a sua (dos arquivos de iluminação do ato). Ao vivo.
+fog.game_fog_act1_dusk.empty = a do dia no tom do entardecer do jogo
+fog.game_fog_act1_night.label = Cor da noite
+fog.game_fog_act1_night.tip = A cor da neblina do jogo à noite ao ar livre deste ato (a luz do jogo: a noite). Vazio = a cor da neblina antiga deste ato vezes "Céu à noite", como a neblina antiga escurecia à noite. Ao vivo.
+fog.game_fog_act1_night.empty = a da neblina antiga à noite
+group.the_sky_s_low_part_in_the_fog_s_colour_baked_into_the_dome = A parte baixa do céu na cor da neblina (embutida na cúpula)
+sky.dome_fog_horizon.label = O céu do jogo: o horizonte dele na neblina
+sky.dome_fog_horizon.tip = A parte baixa do céu desenhado pelo jogo afunda na cor de neblina do ato, como fazia a do nosso próprio céu: a terra enevoada encontra o céu sem borda dura, e as cores combinam onde se encontram. Só enquanto uma neblina é desenhada. Desligado: o céu como o jogo o desenha. Ao vivo.
+sky.dome_fog_baked.label = Céu do jogo: a parte baixa dele na cor da neblina
+sky.dome_fog_baked.tip = Com a neblina do jogo, a parte baixa do céu é posta na própria cor da neblina na própria imagem do céu, como a parte baixa do nosso céu antigo vai para a neblina: árvores e arbustos contra o horizonte ficam sobre a cor da neblina, sem uma borda clara do horizonte da imagem em volta deles. O horizonte do céu na neblina acima fica de lado enquanto isso. Desligado: a imagem como ela é. Ao vivo.
+sky.dome_fog_baked_strength.label = Céu do jogo: quanto da cor da neblina
+sky.dome_fog_baked_strength.tip = 1: o horizonte inteiro na cor da neblina, passando para a imagem até 11 graus; menos: um pouco da imagem através dele. Ao vivo.
+
+# --- Old fog (our effect) ---
+group.old_fog_our_effect.help = A neblina de distância do nosso próprio efeito, como era (congelada) - só com "Neblina desenhada por: Neblina antiga", esmaecida nos outros casos. Controles deslizantes próprios.
+fog.end.tip = Onde a neblina é completa. Unidades do mundo (o herói tem ~7,5 de altura). Com a neblina do jogo, abaixo de Início da neblina os dois são tomados ao contrário (a neblina do nosso efeito: total logo depois de Início da neblina).
+fog.light.label = Neblina leve (placas de vídeo fracas)
+fog.light.tip = A neblina do nosso efeito pelo caminho curto: a profundidade lida uma vez por pixel, a neblina por ela, o céu no vazio ainda desenhado - sem desfoque de profundidade, sem neblina sobre brilhos e faíscas contra o céu, sem teto das cavernas. Uma fração do custo da neblina completa na placa de vídeo (a linha de 10 s do log mostra). Desligado: a neblina completa, como antes.
+fog.curve.label = Atenuação
+fog.curve.tip = 1 = linear; mais = uma distância média mais nítida.
+fog.blur.label = Desfoque de profundidade, px (0 = desligado)
+fog.blur.tip = A neblina sobre uma grade 5x5 com este número de pixels de intervalo: buracos e manchas na profundidade se dissolvem.
+fog.ease_in.label = Neblina que entra suave, sem anel duro
+fog.ease_in.tip = A neblina surge suavemente nas primeiras 40 unidades depois do início dela: sem borda nítida ao redor do chão limpo aos seus pés. Onde quer que a nossa curva desenhe a neblina: o nosso efeito, e a neblina do jogo com "A neblina do jogo pela nossa curva" ligado (não a curva própria do jogo). Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina como antes.
+fog.spare_effects.label = A neblina poupa fogo, magias e fumaça (teste)
+fog.spare_effects.tip = Fogo, magias, fumaça e brilhos recebem neblina só na medida em que a cena atrás deles não recebe: uma tocha ou um Raio de Fogo diante de uma parede distante continua brilhante, em vez de ficar com neblina como a parede. As camadas transparentes do próprio jogo em cada quadro são copiadas para isso (só VR F4). Aplica-se quando o jogo é iniciado de novo; desligado = a neblina como antes.
+render.fog_in_frame.label = Neblina desenhada dentro do quadro do jogo (teste)
+render.fog_in_frame.tip = A neblina é desenhada na própria imagem do jogo antes do seu fogo, magias e fumaça, e o jogo os põe sobre a cena com neblina: uma tocha, um Raio de Fogo ou um Inferno diante de uma parede distante não fica com neblina como a parede. O céu e o preto além do mundo mantêm a neblina como antes. Com a cor de neblina própria de um ato (Mundo > Céu); só VR F4. Aplica-se quando o jogo é iniciado de novo; desligado = a neblina como antes. Tem precedência sobre "A neblina poupa fogo, magias e fumaça" quando as duas estão ligadas.
+fog.caves.tip = Desligado: sem neblina no subsolo (toda área que não é ao ar livre) - nem a do nosso efeito nem a própria neblina do jogo, e nada posto antes da fumaça e do fogo ali; o ar livre a mantém. O Santuário Arcano tem o próprio interruptor (Céu > Santuário Arcano: a neblina se dissolve no céu dele): ligado, ele mantém a neblina com qualquer uma das neblinas. Ao vivo.
+group.fog_colour_of_each_act = Cor da neblina de cada ato
+fog.color_act1.label = Cor da neblina: Ato 1 (noite, tempestade)
+fog.color_act1.tip = A cor de neblina deste ato, cavernas incluídas; a parte baixa do céu afunda nela. Vazio (x) = a cor do horizonte do céu, ou escuro sem céu.
+fog.color_act1.empty = do céu
+fog.color_act2.label = Cor da neblina: Ato 2 (deserto)
+fog.color_act3.label = Cor da neblina: Ato 3 (selva)
+fog.color_act4.label = Cor da neblina: Ato 4 (Inferno)
+fog.color_act5.label = Cor da neblina: Ato 5 (ruínas)
+fog.color_snow.label = Cor da neblina: Ato 5 (neve)
+fog.arcane_curve.label = Santuário Arcano: curva da neblina
+fog.arcane_curve.tip = Como a neblina cresce do início até o total: 1 = por igual, mais = ela fica rala por mais tempo e engrossa perto do fim, menos = ela engrossa logo após o início. Ao vivo.
+
+# --- Both fogs ---
+group.both_fogs = As duas neblinas
+group.both_fogs.help = O que a neblina do jogo e a antiga tomam em comum, qualquer que desenhe.
+fog.no_fog_river.label = Sem neblina no Rio de Chamas
+fog.no_fog_river.tip = Nenhuma neblina acrescentada no Rio de Chamas, embora seja ao ar livre: o brilho e a névoa da própria lava continuam os do jogo. A neblina do nosso efeito e a do jogo, igualmente. Do D2R VR Unleashed (bearstonem). Ao vivo. Desligado: a neblina ali como em todo lugar ao ar livre.
+fog.color_caves.label = Cor da neblina nas cavernas
+fog.color_caves.tip = Cavernas, masmorras, criptas: toda área que não é ao ar livre. Vazio (x) = a cor desse ato.
+fog.color_caves.empty = igual ao do ato
+group.arcane_sanctuary = Santuário Arcano
+fog.arcane_own.label = Santuário Arcano: a própria neblina
+fog.arcane_own.tip = A neblina no Santuário Arcano definida à parte, com os valores abaixo; as cavernas mantêm a delas. Ao vivo. Desligado: ele usa o início, o fim, a intensidade e a cor das cavernas, como antes.
+fog.arcane_start.label = Santuário Arcano: início da neblina
+fog.arcane_start.tip = Onde a neblina começa no Santuário Arcano. Unidades do mundo (o herói tem cerca de 7.5 de altura). Ao vivo.
+fog.arcane_end.label = Santuário Arcano: neblina total
+fog.arcane_end.tip = Onde a neblina é total no Santuário Arcano. Unidades do mundo (o herói tem cerca de 7.5 de altura). Ao vivo.
+fog.arcane_strength.label = Santuário Arcano: intensidade da neblina
+fog.arcane_strength.tip = Quanto a neblina total cobre ali: 1 = as plataformas distantes somem na neblina, menos = elas aparecem através dela. Ao vivo.
+fog.arcane_color.label = Santuário Arcano: cor da neblina
+fog.arcane_color.tip = A cor da neblina no Santuário Arcano. Vazio (x) = a cor das cavernas (com a neblina do jogo, nunca preta ali). Ao vivo.
+fog.arcane_color.empty = igual às cavernas
+fog.arcane_into_sky.label = Santuário Arcano: a neblina se dissolve no céu atrás
+fog.arcane_into_sky.tip = Sob o próprio céu dele (aba Céu) a neblina é o céu logo atrás de cada ponto: as plataformas distantes se dissolvem no vazio. Desligado: elas se apagam na cor da neblina acima. Ao vivo.
+sky.arcane_fog.label = Santuário Arcano: a neblina se dissolve no céu dele
+sky.arcane_fog.tip = A neblina de distância ([fog] on, Mundo > Neblina) também no Santuário Arcano: as plataformas distantes se dissolvem no céu atrás delas - na escuridão e na nebulosa dele, não nas estrelas. Desligado: sem neblina sob esse céu, as plataformas nítidas até o fim.
+
+# --- Advanced ---
+group.advanced = Avançado
+group.advanced.help = As neblinas embutidas do próprio jogo, que os nossos números substituem, e como são encontradas.
+render.game_depth_fog.label = A neblina de profundidade do próprio jogo
+render.game_depth_fog.tip = Toda área ao ar livre a tem, a partir da distância da câmera dele: uma névoa cinza nos quatro cantos da imagem (também vista de cima), sobre o chão próximo da nossa câmera. Desligado: o vrcam a define como 0.
+render.game_fog_scan_safe.label = Encontrar a névoa do jogo com segurança
+render.game_fog_scan_safe.tip = Como o D2R VR encontra a névoa de altura e de profundidade do jogo para desligá-las: lendo cópias da memória do jogo, então um bloco que o jogo libera nesse meio-tempo é pulado sem erro (o D2RLoader registrava isso como relatórios de crash), só definições onde as áreas do jogo as têm, e um valor só é alterado enquanto ainda é o que acabou de ser lido. Desligado: leituras diretas, como antes. Ao vivo.
+render.game_height_fog.label = A neblina de altura do próprio jogo
+render.game_height_fog.tip = Só a cidade do ato 2 a tem. Da nossa câmera, a borda dela é uma linha dura atravessando a imagem, com um véu pálido acima (a câmera do jogo nunca vê essa borda). Desligado: o vrcam a define como 0.
+fog.game_fog_mist.label = A neblina do jogo também sobre a névoa dele
+fog.game_fog_mist.tip = O passe de neblina do próprio jogo acrescenta a névoa volumétrica dele (iluminada por tochas e similares) depois da neblina, nunca embaçada pela distância: numa caverna a nossa neblina escura deixava as paredes distantes pretas e a névoa continuava, uma faixa clara atrás das fogueiras. Marcado: a névoa some com a distância como todo o resto. Só sem ReShade. Ao vivo.
+fog.game_fog_our_curve.label = A neblina do jogo pela nossa curva
+fog.game_fog_our_curve.tip = A própria passada de neblina do jogo faz a neblina surgir como o nosso efeito faz - de Início da neblina até Neblina total pela Atenuação abaixo (nas cavernas o início, o fim e a força próprios delas) - em vez da exponencial própria dela, que põe quase toda a neblina logo depois do início e deixa a faixa distante de um cinza só. Algumas instruções na passada dela, nada acrescentado. Só sem ReShade. Ao vivo.
+fog.fog_keeps_colour.label = A neblina do jogo mantém a cor do ato à noite
+fog.fog_keeps_colour.tip = Enquanto o jogo desenha a neblina: a cor dela é a do próprio ato (as cores acima) a qualquer hora - o distante se apaga numa névoa clara dela, nunca rumo ao preto. A neblina do nosso efeito não muda. Desligado: ela escurece com a luz do jogo como o céu - à noite até "Céu à noite" e pelo brilho do céu em cada hora do dia. Com a cor do céu ("A cor da neblina: medida do jogo" desmarcado): a do céu de dia no horizonte a qualquer hora; desligado, a do céu noturno à noite - quase preta. Ao vivo.
+fog.fog_into_sky.label = A neblina do jogo dissolve o distante no céu atrás dele
+fog.fog_into_sky.tip = Ao ar livre, a cor da neblina em cada ponto é o céu logo atrás dele, como no Santuário Arcano: a terra distante, a borda do mundo e os prédios altos e distantes se dissolvem no céu, não numa cor chapada (a parte baixa do céu é a cor da neblina do ato, como é desenhada). Objetos distantes mostram o céu através deles. Funcionava por meio de "A neblina do jogo tão espessa e tão colorida quanto a nossa", removida (ela quebrava a neblina): por ora não muda nada. Ao vivo. Desligado: uma só cor de neblina, como antes.
+fog.fog_colour_measured.label = A cor da neblina: medida do jogo
+fog.fog_colour_measured.tip = Marcado: a cor da neblina é a cor própria do ato como definida (a medição dela a partir do jogo foi embora com "A neblina do jogo tão espessa e tão colorida quanto a nossa", removida). Desmarcado: a cor da neblina é a do próprio céu no horizonte - a imagem pré-calculada ali no brilho do controle deslizante dela - de modo que a terra distante se funde ao céu sem emenda; um número, definido quando a hora do dia ou um controle deslizante muda: nenhuma medição, nada dela no efeito. No subsolo, no Santuário Arcano e com o céu tingido: a cor do ato ou da caverna como definida. Ao vivo.
+fog.game_fog_fx_depth.label = Fumaça e fogo distantes se apagam na neblina
+fog.game_fog_fx_depth.tip = Com a neblina antes da fumaça e do fogo: a fumaça, a névoa, o fogo e as magias também recebem neblina, cada um pela própria distância - os próximos como estão, os distantes se apagando na neblina com o mundo atrás deles. Sem isso uma fogueira de acampamento distante fica com luz total em neblina total e as bordas transparentes de cercas distantes aparecem como pontinhos no horizonte. Os efeitos do jogo são desenhados mais uma vez só para a profundidade deles: CARO - num Quest 3 a 2048 x 2048 por olho custou cerca de 30 quadros por segundo (72 -> 42); o custo nas linhas de 10 s do log. Só sem ReShade. Ao vivo. Desligado: os efeitos nunca recebem neblina.
+fog.game_fog_height.label = A neblina do jogo afina com a altura
+fog.game_fog_height.tip = O passe de neblina do próprio jogo deixa o céu limpo: a neblina como está até o topo da neblina menos a suavidade dele, sumindo acima disso, nenhuma acima do topo (unidades do mundo acima dos seus olhos). Para a cúpula de céu do jogo, para que o céu dele apareça acima do horizonte enevoado. Passe do próprio jogo, nada acrescentado. Só ao ar livre (no subsolo não há céu a manter limpo). Só sem ReShade. Desligado: a neblina do jogo como está. Ao vivo.
+fog.game_fog_top.label = A neblina do jogo: o topo dela, unidades acima dos olhos
+fog.game_fog_top.tip = Até que altura chega a neblina do jogo: nenhuma acima disso, em unidades do mundo acima dos seus olhos (o herói tem cerca de 7.5 de altura; a cúpula de céu no raio dela). Ao vivo.
+fog.game_fog_soft.label = A neblina do jogo: suavidade do topo dela, unidades
+fog.game_fog_soft.tip = Quanto abaixo do topo a neblina do jogo se apaga: pequeno, uma borda nítida; grande, um desvanecer longo e suave. Ao vivo.
+fog.game_fog_top_from_floor.label = A neblina do jogo: o topo contado do chão do herói
+fog.game_fog_top_from_floor.tip = O topo acima é contado a partir do chão onde o herói está, não dos seus olhos: uma câmera bem acima do herói (terceira pessoa, a visão de cima) não muda mais onde a neblina termina, e a terra abaixo dos seus olhos não fica toda enevoada com uma linha na altura dos olhos. Desligado: a partir dos olhos, como antes. Desmarcar "A neblina do jogo afina com a altura" em vez disso dá a neblina só pela distância, como a nossa própria neblina. Ao vivo.
+
 # ===== Tab: Ceiling =====
 tab.ceiling = Teto
 
@@ -2249,6 +2340,8 @@ ceiling.game_ceiling_wall.label = O teto do jogo: dobrado em parede na borda
 ceiling.game_ceiling_wall.tip = Um anel da mesma rocha iluminada ao seu redor onde o teto do jogo termina (a cerca de 215 unidades de distância no tamanho de ladrilho 10), do teto até abaixo do chão (a profundidade do chão abaixo): o vazio preto além da borda do teto - uma faixa entre ele e o chão distante, iluminada pela neblina atrás das fogueiras - é fechado por pedra, como a parede distante do nosso efeito o fechava. Desligado: o teto plano. Ao vivo.
 ceiling.game_ceiling_beams.label = O teto do jogo: as próprias vigas de madeira do quartel
 ceiling.game_ceiling_beams.tip = O jogo traz uma armação de teto de madeira para o quartel (e a prisão dele) que nunca coloca: uma grade de vigas cuja base fica no topo das paredes do quartel. Marcado, o jogo desenha essa armação sobre você numa grade de armações inteiras fixas no mundo - o próprio modelo, a madeira e o tamanho dela, iluminada pelas tochas dele - com a pedra do quartel sobre as vigas para fechar os vãos entre elas. Feito a partir dos arquivos do seu jogo. Só VR F4. Desligado: o teto de pedra plano. Ao vivo.
+ceiling.top_from_level.label = O teto sobre o piso mais alto do nível
+ceiling.top_from_level.tip = O teto ficava sobre o piso mais baixo em que você tinha pisado na área, então ao subir uma escada ele continuava baixo até você andar mais. Marcado: a altura dele é medida a partir do piso mais alto do nível em que você está - cada sala que o jogo constrói ali informa os seus pisos - tomada inteira 2 s depois de você entrar num nível, levantada com suavidade se uma sala mais alta for construída depois, nunca abaixada. Tanto o teto do jogo quanto a abóbada do nosso efeito. A altura própria de cada sala (acima) continua sendo medida a partir dali. De D2R VR Unleashed (Cal, equipe de bearstonem). Só VR F4. Desligado: como antes. Ao vivo.
 ceiling.game_ceiling_dome.label = O teto do jogo: a cúpula da catedral sobre a capela
 ceiling.game_ceiling_dome.tip = Na Catedral o teto do jogo sobe numa cúpula sobre a capela, como fazia ali a abóbada do nosso efeito: uma cúpula uniforme apoiada nos quatro pilares ao redor do altar, alta o bastante para passar sobre o dossel do altar. Onde, quão larga e quão alta vêm das próprias peças do jogo (medidas a partir dos arquivos do seu jogo, o dossel encontrado no jogo tal como é desenhado); a própria pedra da catedral, iluminada pelas velas dela. O resto da catedral mantém o teto plano na altura dele. Só VR F4. Desligado: o teto plano. Ao vivo.
 ceiling.game_ceiling_dome_size.label = A cúpula da catedral: tamanho
@@ -2473,6 +2566,8 @@ bow.draw_shoots_arrow.label = Puxada do arco: a soltura atira a flecha do própr
 bow.draw_shoots_arrow.tip = A soltura da puxada do arco pressiona o ataque do jogo - o A do gamepad. O jogo lança a habilidade que o espaço A dele contém: uma magia, um grito de guerra ou uma habilidade corpo a corpo ali é lançada no lugar, e nenhuma flecha voa (a corda puxa, nada sai). Ligado: para o toque da própria soltura, uma habilidade no A que não é de arco é lida como o Ataque comum, a flecha do próprio arco; uma habilidade de arco no A (Disparo Múltiplo, Rajada...) permanece, e uma habilidade armada pela aljava vem primeiro. O botão A em si, outras armas e os outros espaços são do jogo como sempre. Desligado: a soltura lança o que o espaço A contém. Ao vivo.
 bow.arrow_flight.label = Arco: desenhar nós mesmos a flecha disparada, do arco ao longo da linha do tiro
 bow.arrow_flight.tip = Primeira pessoa (F4). O jogo desenha a flecha dele plana, a partir do peito do herói. Ligado: a flecha (ou virote) que você atira sai do arco e voa ao longo da linha do tiro - com "mirar para cima e para baixo" ligado, para cima ou para baixo até o que a linha encontrou: o corpo de um monstro, ou o chão (onde ela fica cravada quando algo está por perto). Ela chega quando a flecha do próprio jogo chega. É o modelo de flecha do próprio jogo, posto onde a desenhamos; o projétil do jogo - voo, acerto, dano - é do jogo. As flechas laterais do Disparo Múltiplo, a Rajada e a Flecha Guiada saem do arco e se juntam ao próprio caminho delas. Desligado: o jogo desenha as flechas dele. Ao vivo.
+bow.arrow_flight_flat.label = Plano: a flecha voa para a mira
+bow.arrow_flight_flat.tip = Primeira e terceira pessoa, com um arco ou uma besta: a flecha (ou virote) que você atira é desenhada saindo de logo abaixo do seu olho (primeira pessoa) ou do peito do herói (terceira pessoa) e voando para o que a mira aponta - o corpo de um monstro, ou o chão, onde fica cravada. Chega quando chega a flecha do jogo; o projétil do jogo - o voo, o acerto, o dano - é do jogo. As flechas laterais do Tiro múltiplo, as da Estratégia e da Flecha guiada seguem o próprio caminho. Desmarcado: o jogo desenha as flechas dele planas, a partir do corpo do herói.
 bow.arrow_flight_straight.label = Arco: a flecha desenhada voa reta ao longo da linha do tiro
 bow.arrow_flight_straight.tip = Com "desenhar nós mesmos a flecha disparada": uma flecha cuja linha não encontrou nada (mirar para cima e para baixo desligado, um tiro para o ar) voa reta ao longo da linha em que foi desenhada, a partir do arco - sem curva. Desligado: ela sai do arco e se curva para o caminho do próprio jogo, que parte do seu corpo ao lado da linha, ao longo dos primeiros 2.5 m. As flechas laterais do Disparo Múltiplo e da Rajada, e a Flecha Guiada, se curvam para os próprios caminhos de qualquer jeito. Ao vivo.
 bow.shot_line_hold.label = Puxada do arco: o tiro mantém a linha ao longo da qual foi puxado até o jogo pegá-lo
@@ -3755,6 +3850,8 @@ multiplayer.pose_share_legs.label = As pernas deles andam para onde eles vão
 multiplayer.pose_share_legs.tip = Com a caixa acima: as pernas deles andam conforme o deslocamento - para frente, para trás, para o lado - enquanto a pélvis aponta para onde olham; a caminhada do próprio jogo dentro de "a caminhada do jogo dentro de +- isto" (Body). Os pés ficam firmes enquanto sustentam o corpo; os joelhos só dobram para a frente. Precisa da biblioteca de passos d2r_vr_gait.dll em d2rloader\d2r_vr_libs (senão a caminhada do jogo). Qualquer vista. Na hora.
 multiplayer.pose_share_held.label = Ver o que as mãos deles seguram (poções, itens, objetos do cenário) e o que arremessam
 multiplayer.pose_share_held.tip = O que suas mãos têm vai para os outros com sua pose, e o deles é desenhado para você: uma poção do cinto na mão, solta ou esvaziada, um item pego do chão, um objeto do cenário - um jarro, um livro, um copo - na mão, voando como foi arremessado, e onde parou. As poções e itens deles são cópias dos próprios modelos do jogo; os objetos do cenário são os do próprio nível, movidos para onde eles os têm (com os objetos derrubados, perto de você, em F4). Apenas visual: o uso da poção, os itens e os objetos continuam sendo de cada jogo. Imediato.
+multiplayer.pose_share_grab.label = Ver os corpos que eles seguram, derrubam e arremessam - e deixá-los ver os meus
+multiplayer.pose_share_grab.tip = Um corpo que a sua mão segura ("Levantar e arremessar um humanoide que você agarra": pego, levantado, carregado) vai para os outros com a sua pose - qual monstro, o membro e o ponto que a sua mão pegou, a sua palma, e o arremesso ao soltar - e os deles ficam pendurados nas mãos deles para você, desenhados pelo seu próprio ragdoll no mesmo membro e ponto e arremessados quando eles soltam. Um golpe seu que derruba, atordoa ou empurra um humanoide também vai (o membro e o ponto que atingiu, com que velocidade mandou o corpo), e os deles derrubam o seu próprio desenho dele do mesmo jeito. Precisa de "Levantar e arremessar um humanoide que você agarra" ou "Um golpe forte derruba um humanoide" ligado aqui e da biblioteca de peso; um monstro de que o seu jogo não se aproximou não é desenhado. Só visual: o lugar real do monstro e o jogo continuam sendo de cada jogo. Ao vivo. Só F4.
 
 # ===== Tab: Debug =====
 tab.debug = Depuração
@@ -3810,6 +3907,8 @@ debug.walk_start_log.label = Registrar cada início de andar do BodyWalk: analó
 debug.walk_start_log.tip = Uma linha no log ("walk start (BodyWalk): ...") cada vez que o analógico do BodyWalk sai do repouso depois de meio segundo parado: o momento em que saiu do repouso, depois os milissegundos até ele passar sozinho da zona morta do jogo, até o andar do jogo receber um vetor (mais cedo com "O andar do BodyWalk começa a partir de"), e até a posição do herói se mover. A metade do próprio BodyWalk é o "Walk Start Timing" da aba Debug dele ("STEP START: first step ..."), no mesmo relógio. Só leitura: nada é mudado no jogo. Ao vivo.
 debug.bow_latency.label = Registrar no log onde o tempo vai entre uma soltura e a sua flecha / projétil arremessado
 debug.bow_latency.tip = OpenXR nativo, "Arco: puxar a corda com as duas mãos" ou um gesto de arremesso ligado. Uma linha no log para cada tiro de arco e cada arremesso: os milissegundos depois da soltura até o acionamento do gesto, o botão do gamepad chegando ao jogo, o modo de ataque ou arremesso do herói, a virada do corpo em direção à mira, a linha de animação em que a ação roda (nome, quadros, o quadro de ação), o projétil do próprio jogo sendo criado (só leitura: a criação de projétil do jogo é observada, nada é alterado) e o cliente mostrando um projétil. Nada é desenhado e nada é alterado no jogo. Ao vivo.
+debug.missile_probe.label = Registrar todo projétil que o tiro ou arremesso de um jogador cria (a criação do servidor, só leitura)
+debug.missile_probe.tip = Uma linha no registro para cada projétil que o servidor do jogo cria para um jogador - uma flecha, um virote, cada flecha de um Tiro múltiplo, um dardo, uma faca ou machado de arremesso, uma poção: a classe, o ponto de chamada do jogo, as células de início e destino, o rumo, a unidade alvo se houver e cada número da criação, com o bloco inteiro em hexadecimal uma vez por tiro; depois uma linha por tiro (quantos projéteis, os ângulos do leque). Só offline e como anfitrião (o servidor de um jogador que entrou é o do anfitrião). Só leitura: nada muda no jogo. Ao vivo.
 debug.shot_trace.label = Registrar no log o que o jogo faz com cada ataque nosso
 debug.shot_trace.tip = Ligado: para cada ataque que o plugin aciona (um tiro de arco, um golpe, um arremesso), do acionamento até 1,5 s depois, o log informa cada clique no mapa (com as flags Stand Still e Run que ele leva), o comando que o clique do jogo monta a partir dele, e cada comando pelo funil do jogo com o caminho de volta pela pilha. Para descobrir por que o jogo às vezes manda o herói correr depois de um tiro. Só leitura. Precisa de "Ataques nunca movem o herói (ele fica parado)" ligado. Ao vivo.
 debug.game_sky_test.label = Céu do jogo: outro modelo para a cúpula (teste)
@@ -3838,6 +3937,8 @@ debug.log_async_auto.label = Gravar o log a partir de uma thread própria onde e
 debug.log_async_auto.tip = Com a opção acima desligada, a escrita de cada linha do log é cronometrada. Onde o arquivo do log é lento neste PC - 8 das últimas 16 linhas levaram 5 ms ou mais (um antivírus, um disco lento; o log de um jogador tinha 29 ms por linha, e cada lançamento de Orbe Congelante parava o jogo ~330 ms pelas suas onze linhas) - as linhas vão para essa thread pelo resto da execução, e o log avisa uma vez. Com cerca de 1 ms por linha nada muda. Desligado: a velocidade do log não é observada, como antes. Ao vivo.
 debug.dred.label = Dizer por que o dispositivo da GPU foi perdido (DRED)
 debug.dred.tip = O jogo termina - depois de uma verificação falha no próprio código DX12 dele, um instante antes de o runtime do headset registrar "HRESULT failure [887a0005]" - quando o dispositivo gráfico é removido (uma trava da GPU, uma falha de página, um reset do driver). Ligado: o DRED do Windows é solicitado antes de o jogo criar o dispositivo, e no instante em que o dispositivo some o log (d2r-vr-vrcam.log) e d2rloader\logs\d2r_vr_gpu_fault.txt dizem por quê: o motivo, o que cada lista de comandos tinha feito quando a GPU parou, o endereço de uma falha de página e o que foi alocado ou liberado ali, e os últimos eventos do próprio plugin que tocam a memória da GPU. Envie esse arquivo. Custa ao runtime um marcador entre comandos. Precisa reiniciar o jogo. Desligado: a perda do dispositivo ainda é informada, só com o motivo.
+debug.dred_events.label = ... e nomear os eventos do jogo onde a GPU parou
+debug.dred_events.tip = Com DRED: o relatório também nomeia os eventos do jogo abertos onde cada lista de comandos inacabada parou (o Windows guarda o texto de cada marca de evento do jogo - Windows 10 2004 e posteriores), então uma trava diz em qual desenho do jogo foi, e não só "DrawIndexedInstanced". Custa um pouco. Vale a partir da próxima inicialização do jogo.
 debug.d3d12_validation.label = Camada de depuração D3D12: erros no log (lento)
 debug.d3d12_validation.tip = Para achar o que derruba o dispositivo gráfico. Precisa do recurso opcional do Windows Ferramentas Gráficas (Graphics Tools). Ligado: antes de o jogo criar o dispositivo a camada de depuração do D3D12 é ligada, e os erros e avisos dela vão para o log (d2r-vr-vrcam.log) com as suas próprias palavras - uma barreira que nomeia o estado errado, uma cópia além do fim de um buffer, um recurso liberado enquanto uma lista que o nomeia não rodou. O jogo roda bem mais devagar: para um teste, não para jogar. Precisa reiniciar o jogo. (d2r_vr.ini: 2 também verifica cada acesso de shader na GPU, dez vezes mais lento ainda - só para uma reprodução plana.)
 debug.stall_guard.label = Liberar uma fila da GPU que parou de vez
@@ -4236,6 +4337,8 @@ vr.hset.direct.right_b.label = B direito
 vr.hset.direct.right_stick.label = Clique do analógico dir.
 vr.hset.direct.right_stick_hold.label = Analógico dir., toque longo
 vr.hset.direct.right_menu.label = Botão de menu direito
+vr.hset.hands.left_handed.label = Canhoto
+vr.hset.hands.left_handed.detail = Trocar os controles: o esquerdo segura a arma (F4)
 vr.hset.openxr.haptics.label = Vibração dos controles
 vr.hset.openxr.haptics.detail = Pulsos nos controles conforme o que acontece (F4)
 vr.hset.openxr.haptics_scale.label = Intensidade
@@ -4306,6 +4409,8 @@ vr.hset.hands.belt_models.label = Poções no cinto
 vr.hset.hands.belt_models.detail = Os modelos de poção do próprio jogo nos quadris do herói
 vr.hset.@preset.preset.label = Preset de qualidade
 vr.hset.@preset.preset.detail = Batata, Baixo, Médio - anéis de salas e modelos a partir da próxima inicialização
+vr.hset.@distance.stop.label = Distância de desenho
+vr.hset.@distance.stop.detail = Perto (1) - longe (7): anéis de salas, modelos, a neblina. 2 = a de Medium, o padrão
 vr.hset.stereo.pair_per_tick.label = Tipo de renderização
 vr.hset.stereo.pair_per_tick.detail = Nativo duas passadas / uma passada / olhos alternados, estéreo / profundidade FlatVR (uma passada: a partir da próxima inicialização do jogo)
 vr.hset.sky.game_sky.label = Céu desenhado por
@@ -4354,6 +4459,8 @@ vr.hset.render.game_outline.label = Contorno de destaque do jogo
 vr.hset.render.game_outline.detail = Uma chave do preset de qualidade ([render] game_outline)
 vr.hset.render.potato_light.label = Luz Batata
 vr.hset.render.potato_light.detail = Uma chave do preset de qualidade ([render] potato_light)
+vr.hset.render.potato_light_game.label = Luz Potato nas cores do jogo
+vr.hset.render.potato_light_game.detail = Uma chave do preset de qualidade ([render] potato_light_game)
 vr.hset.render.rings.label = Anéis de salas
 vr.hset.render.rings.detail = Uma chave do preset de qualidade ([render] rings)
 vr.hset.render.model_radius.label = Raio dos modelos
@@ -4362,16 +4469,16 @@ vr.hset.render.big_radius.label = Raio dos objetos grandes
 vr.hset.render.big_radius.detail = Uma chave do preset de qualidade ([render] big_radius)
 vr.hset.fog.light.label = Neblina leve
 vr.hset.fog.light.detail = Uma chave do preset de qualidade ([fog] light)
-vr.hset.fog.start.label = Início da neblina
-vr.hset.fog.start.detail = Uma chave do preset de qualidade ([fog] start)
-vr.hset.fog.end.label = Neblina total
-vr.hset.fog.end.detail = Uma chave do preset de qualidade ([fog] end)
-vr.hset.fog.caves.label = Neblina nas cavernas
-vr.hset.fog.caves.detail = Uma chave do preset de qualidade ([fog] caves)
-vr.hset.fog.caves_start.label = Início da neblina nas cavernas
-vr.hset.fog.caves_start.detail = Uma chave do preset de qualidade ([fog] caves_start)
-vr.hset.fog.caves_end.label = Neblina total nas cavernas
-vr.hset.fog.caves_end.detail = Uma chave do preset de qualidade ([fog] caves_end)
+vr.hset.fog.game_fog_start.label = Início da neblina
+vr.hset.fog.game_fog_start.detail = Uma chave do preset de qualidade ([fog] game_fog_start)
+vr.hset.fog.game_fog_end.label = Neblina total
+vr.hset.fog.game_fog_end.detail = Uma chave do preset de qualidade ([fog] game_fog_end)
+vr.hset.fog.game_fog_caves.label = Neblina nas cavernas
+vr.hset.fog.game_fog_caves.detail = Uma chave do preset de qualidade ([fog] game_fog_caves)
+vr.hset.fog.game_fog_caves_start.label = Início da neblina nas cavernas
+vr.hset.fog.game_fog_caves_start.detail = Uma chave do preset de qualidade ([fog] game_fog_caves_start)
+vr.hset.fog.game_fog_caves_end.label = Neblina total nas cavernas
+vr.hset.fog.game_fog_caves_end.detail = Uma chave do preset de qualidade ([fog] game_fog_caves_end)
 vr.hset.fog.game_fog_mist.label = A neblina do jogo sobre a bruma dele
 vr.hset.fog.game_fog_mist.detail = Uma chave do preset de qualidade ([fog] game_fog_mist)
 vr.hset.fog.game_fog_height.label = A neblina do jogo afinada com a altura
@@ -4390,6 +4497,10 @@ vr.hset.ceiling.steps.label = Relevo do teto das cavernas
 vr.hset.ceiling.steps.detail = Uma chave do preset de qualidade ([ceiling] steps)
 vr.hset.stereo.headset_rate.label = Taxa de atualização do headset
 vr.hset.stereo.headset_rate.detail = Uma chave do preset de qualidade ([stereo] headset_rate)
+vr.hset.render.monitor_eye.label = O monitor mostra um olho
+vr.hset.render.monitor_eye.detail = Uma chave do preset de qualidade ([render] monitor_eye)
+vr.hset.openxr.hands_over_panels.label = Suas mãos sobre a aba Gestos
+vr.hset.openxr.hands_over_panels.detail = Uma chave do preset de qualidade ([openxr] hands_over_panels)
 vr.hset.render.vr_resolution.label = Tamanho VR: modo
 vr.hset.render.vr_resolution.detail = 0 janela, 1 headset, 2-6 um quadrado antigo
 vr.hset.render.vr_resolution_px.label = Tamanho VR: lado
@@ -4589,9 +4700,9 @@ button.clear = Limpar
 status.vrs.none = Esta placa de vídeo não tem sombreamento de taxa variável (nível 2): a renderização foveada e a taxa da iluminação da grama não funcionam nela - o D2R VR as deixa desligadas, seja o que for que estiver marcado.
 status.draw_distance.stop = {n} de {count}:
 status.draw_distance.custom = Personalizado (um valor mudado à mão):
-status.draw_distance.values = {rings} anéis de salas, modelos até {model}, neblina de {fs} a {fe} (nas cavernas de {cs} a {ce}), a cúpula do céu do jogo a {sky} m. Tudo ao vivo - sem reiniciar.
+status.draw_distance.reach = {rings} anéis de salas, modelos até {model}, neblina de {fs} a {fe} (nas cavernas de {cs} a {ce}). Tudo ao vivo - sem reiniciar.
+status.draw_distance.default = O padrão (a distância do preset Medium).
 status.draw_distance.fog_off = A neblina está desligada (Desempenho): o mundo desenhado termina no vazio.
-status.draw_distance.no_game_sky = A cúpula do céu só conta enquanto o jogo desenha o céu (aba Céu).
 res.tip = O tamanho da imagem do jogo no headset: um quadrado, o lado dele em pixels, seja qual for o tamanho da janela do jogo - a janela mantém o seu tamanho. Arraste para qualquer tamanho de 1024 a 4096 (em passos de 64); a ponta esquerda, "tamanho da janela", é Desktop: a imagem é a da janela, como antes.\n\nMaior é mais nítido e mais caro, pelos pixels - em relação a 2048 x 2048:
 res.tip_headset_max = O seu headset{headset} recomenda {w} x {h} por olho e aceita até {mw} x {mh}; um tamanho acima disso é reduzido a ele. (Lido na última inicialização do jogo com um headset.)
 res.tip_headset = O seu headset{headset} recomenda {w} x {h} por olho. (Lido na última inicialização do jogo com um headset.)
@@ -5182,6 +5293,8 @@ vr.rules.move_while_attacking = Lança e arco: continuar andando após o golpe (
 vr.rules.melee_direct_client_cleave = Golpe de duas mãos acerta cada monstro (VR)
 vr.rules.quick_blow = Golpe rápido: o balanço nunca para o herói (VR)
 vr.rules.quick_blow_faster = Golpe rápido: mais que a animação
+vr.rules.share_hit_outcomes = Enviar aos jogadores que entraram o que os golpes deles fizeram
+vr.rules.shot_at_release = A flecha vai para onde você mira ao sair do arco
 vr.rules.walk = Andar
 vr.rules.walk_or_run = Andar ou correr
 vr.rules.spear_and_bow = Lança e arco
@@ -5276,6 +5389,7 @@ vr.preset.potato = Batata
 vr.preset.low = Baixo
 vr.preset.medium = Médio
 vr.preset.custom = Personalizado
+vr.distance.default = 2 (padrão)
 vr.party.map = O mapa do jogo mostra
 vr.party.map.off = Seu grupo está oculto: aliados em nenhum mapa (o Mostrar grupo do jogo)
 vr.party.map.unknown = O Mostrar grupo / Mostrar nomes do grupo do jogo (ainda não lido)
@@ -5526,6 +5640,38 @@ vr.map.on = Ligado
 vr.map.off = Desligado
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.floors_stay.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
+render.floors_stay.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, combinada com as salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos não batem em toda a volta, então uma sala à qual você volta por outro caminho (ou depois de outra área ou cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá de cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para o lado, o vazio aparecendo entre eles. Ligado: toda sala mantém a altura em que foi desenhada pela primeira vez até você sair do jogo. A troca: o jogo também conserta uma sala desenhada na altura errada (um degrau visto de longe, como no portão da Fortaleza do Pandemônio) quando a desenha de novo ao você se aproximar - com isto ligado, esse conserto não vem. Só a imagem; nada da luta ou dos caminhos muda. Ao vivo. Desligado (o padrão): as alturas do próprio jogo.
+fog.game_fog.label = Neblina desenhada por
+fog.game_fog.tip = Quem desenha a neblina de distância. A neblina do jogo (nova): a passada de neblina do próprio jogo com os nossos números (Início da neblina / Neblina total abaixo) - nenhum tempo de quadro nosso, desenhada com "Neblina de distância" marcada ou não (VR F4; o jogo plano também com "O jogo as desenha também no jogo plano"; as opções dele na aba Mundo). Nosso efeito (antigo): o shader de neblina põe a neblina pela profundidade. Qualquer um serve com qualquer céu ("Céu desenhado por"). Ao vivo.
+fog.game_fog.choice1 = A neblina do jogo (novo)
+fog.start.label = Início da neblina
+fog.start.tip = Onde a neblina começa. Unidades do mundo (o herói tem cerca de 7.5 de altura).
+fog.end.label = Neblina total
+fog.caves_start.label = Início da neblina nas cavernas
+fog.caves_start.tip = Onde a neblina começa em cavernas, masmorras e criptas. Unidades do mundo (o herói tem cerca de 7.5 de altura).
+fog.caves_end.label = Neblina total nas cavernas
+fog.caves_end.tip = Onde a neblina é total em cavernas, masmorras e criptas. Unidades do mundo (o herói tem cerca de 7.5 de altura).
+fog.enabled.tip#2 = Uma neblina de distância. Quem a desenha: "Neblina desenhada por" da aba Céu (nosso efeito ou o próprio jogo). Com o céu ligado, ela se funde ao céu.
+group.fog = Neblina
+group.fog.help = A neblina de distância, e correções para os efeitos de profundidade do jogo vistos da nossa câmera. Defina onde a neblina é total, sua atenuação, a neblina nas cavernas e a cor dela, se fogo e magias são poupados, e correções para as neblinas do próprio jogo, paredes diante do herói, telhados e a iluminação numa janela quadrada.
+fog.end.tip#2 = Onde a neblina é total. Unidades do mundo (o herói tem cerca de 7.5 de altura). Com a neblina do jogo, abaixo do Início da neblina os dois são tomados ao contrário (neblina do nosso efeito: total logo após o Início da neblina).
+fog.caves.label = Neblina em cavernas e masmorras
+fog.caves_strength.label = Intensidade da neblina nas cavernas
+fog.caves_strength.tip = Quanto a neblina total cobre nas cavernas: 1 = o fundo some na cor da neblina, menos = ele aparece através dela.
+group.arcane_sanctuary.help = A neblina no Santuário Arcano (ato 2), definida à parte da das cavernas: ele não é ao ar livre, então ele usa a neblina das cavernas até "A própria neblina" ser marcada. Se há neblina sob o próprio céu dele fica na aba Céu (Santuário Arcano: a neblina se dissolve no céu dele).
+vr.hset.fog.start.label = Início da neblina
+vr.hset.fog.start.detail = Uma chave do preset de qualidade ([fog] start)
+vr.hset.fog.end.label = Neblina total
+vr.hset.fog.end.detail = Uma chave do preset de qualidade ([fog] end)
+vr.hset.fog.caves.label = Neblina nas cavernas
+vr.hset.fog.caves.detail = Uma chave do preset de qualidade ([fog] caves)
+vr.hset.fog.caves_start.label = Início da neblina nas cavernas
+vr.hset.fog.caves_start.detail = Uma chave do preset de qualidade ([fog] caves_start)
+vr.hset.fog.caves_end.label = Neblina total nas cavernas
+vr.hset.fog.caves_end.detail = Uma chave do preset de qualidade ([fog] caves_end)
+status.draw_distance.values = {rings} anéis de salas, modelos até {model}, neblina de {fs} a {fe} (nas cavernas de {cs} a {ce}), a cúpula do céu do jogo a {sky} m. Tudo ao vivo - sem reiniciar.
+status.draw_distance.no_game_sky = A cúpula do céu só conta enquanto o jogo desenha o céu (aba Céu).
 vr.autotune.on = ligado
 vr.autotune.k.fog_before_fx = Neblina antes dos efeitos
 vr.autotune.k.sky = Céu

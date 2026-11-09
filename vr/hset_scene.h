@@ -310,9 +310,16 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         }
         // one line under the rows (five since the Potato light's two brightnesses): the size limit's warning, else - while a new size waits for
         // Apply - what Apply will do, else the cost (hset_model.h kVidCost / kVidLimit / kVidNote: one place)
+        // ... and, before the cost, when the render type takes effect - the type changed in the draft, or one pass waiting for a restart (its hooks
+        // not in at the game's start): the render type row's own line before (Serg 2026-11-09 "удали эти линии": the Video page's rows have no line
+        // under the name since its seventh row)
         const std::string limit = video::LimitText(pick, env);
+        const int type = rendertype::FromKeys(RenderTypeKeys(m.Get()));
+        const bool typeEdited = m.Edited(kKeyPairPerTick) || m.Edited(kKeyOpenXrOn) || m.Edited(kKeyAfr) || m.Edited(kKeyNativeReplay) || m.Edited(kKeySource);
+        const bool onePassWaits = type == rendertype::kNativeOne && !env.replayAtStart;
         if (!limit.empty()) b.Text(limit, kVidLimit, Face::Small, Role::Warn);
         else if (edited) b.Text(uitext::Tr("vr.video.note", "Apply rebuilds the picture: the game freezes a few seconds (about 7)."), kVidNote, Face::Small, Role::Warn);
+        else if ((typeEdited || onePassWaits) && !m.AutoShown()) b.Text(RenderTypeWhen(type, env.replayAtStart), kVidNote, Face::Small, Role::Warn);
         else b.Text(video::CostText(pick, env), kVidCost, Face::Small, Role::Quiet);
         if (m.Auto().on)   // [autotune]: measures and steps the settings down to the headset's rate (not with a size picked and not applied)
             b.Button(kAutoBtn, uitext::Tr("vr.autotune.button", "Auto"), {Kind::Auto, 0, 0}, false, canEdit && !m.Dirty(), Role::Accent);
@@ -504,26 +511,25 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         static const char* const names[kViews] = {"F1", "F2", "F3", "F4"};
         for (int i = 0; i < kViews; ++i) b.Button(kViewBtn(i), names[i], {Kind::View, i + 1, 0}, m.View() == i + 1, true, m.View() == i + 1 ? Role::Accent : Role::Text, Part::Choice);
     }
-    const int pg = m.page, step = RowStep(pg);
-    const bool close = CloseRows(pg);   // seven rows: the two lines of a row's name a little smaller and closer
-    const bool world = HasSubRow(pg) || pg == kPageVideo;   // under a tab's page buttons (World, Controls), the Video page's six: closer still, the name in the normal face
+    const int pg = m.page;   // (the rows' places: hset_model.h RowBand / RowLabel / RowDetailRect - seven rows closer, World's and Video's closer still)
+    const bool world = HasSubRow(pg) || pg == kPageVideo;   // under a tab's page buttons (World, Controls), the Video page's seven: closer still, the name in the normal face
     const int rowsMax = pg == kPageVideo && m.AutoShown() ? 0 : kRowsMax;   // (the Video page's rows hidden under the Auto run's lines)
     for (int r = 0; r < rowsMax; ++r) {
         const int key = KeyAt(pg, r, m.View());   // (the view's rows: VR F1 - F3 leave out F4's, hset_defs.h KeyShown)
         if (key < 0) break;
         const Def& d = kDefs[key];
-        const int y = RowY(r, pg);
         const bool noVrs = m.Env().vrs == 0 && NeedsVrs(key);   // (greyed: no variable rate shading on this card)
         const bool rowEdit = canEdit && !noVrs;
-        b.Fill({32, y - 5, 960, step - 2}, r % 2 ? Role::RowB : Role::RowA, Part::Row);
-        b.Text(DefLabel(key), world ? Rect{48, y - 5, 530, 27} : close ? Rect{48, y - 4, 520, 30} : Rect{48, y - 2, 520, 32}, world ? Face::Normal : Face::Bold, Role::Text);
-        // (the render type's line: when the type in the draft takes effect - one pass after a restart when it was off at the start, vr/hset_names.h)
+        b.Fill(RowBand(r, pg), r % 2 ? Role::RowB : Role::RowA, Part::Row);
+        b.Text(DefLabel(key), RowLabel(r, pg), world ? Face::Normal : Face::Bold, Role::Text);
+        // (the render type's line: when the type in the draft takes effect - one pass after a restart when it was off at the start, vr/hset_names.h;
+        // on the Video page, whose rows have no line under the name, it is the line under the rows)
         const bool onePassWaits = key == kKeyPairPerTick && rendertype::FromKeys(RenderTypeKeys(m.Get())) == rendertype::kNativeOne && !m.Env().replayAtStart;
-        b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
-               : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
-               : d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
-               world ? Rect{48, y + 21, 530, 24} : close ? Rect{48, y + 24, 530, 26} : Rect{48, y + 28, 530, 28}, Face::Small,
-               onePassWaits ? Role::Warn : Role::Quiet);
+        if (RowDetail(pg))
+            b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
+                   : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
+                   : d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
+                   RowDetailRect(r, pg), Face::Small, onePassWaits ? Role::Warn : Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
             const bool usable = m.PlayersUsable();

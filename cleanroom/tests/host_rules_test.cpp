@@ -25,7 +25,7 @@ static Values All(int a, int b, int c, int d) {
 
 static void Table() {
     // the Mechanics tab's "who hosts decides" keys, each once, ids unique and never 0, a default within its range
-    CHECK(kCount == 6);   // ... and quick_blow, quick_blow_faster (2026-11-05)
+    CHECK(kCount == 8);   // ... and quick_blow, quick_blow_faster (2026-11-05), shot_at_release (2026-11-06, id 8), share_hit_outcomes (2026-11-08, id 7)
     std::set<int> ids;
     std::set<std::wstring> keys;
     for (int i = 0; i < kCount; ++i) {

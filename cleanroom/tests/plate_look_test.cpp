@@ -314,6 +314,58 @@ int main() {
 		CHECK(!platelook::PlateNeedsBox(true, platelook::DepthForBox(true, 1.0f, same, 1.6f), 1.6f, 1.0f, 1.0f));
 	}
 
+	// ---- the other VR views: F1, F2, F3 (OtherView; martin039383's doubled bar in F3, 2026-11-09) ----
+	{
+		// DepthShift is DepthShiftZ at the eyes' distance (no change for F4)
+		CHECK(Near(platelook::DepthShift(300.0f, 400.0f, 1.2f, 3.0f, 0.0f, 1.0f), platelook::DepthShiftZ(500.0f, 1.2f, 3.0f, 0.0f, 1.0f)));
+		CHECK(Near(platelook::DepthShift(30.0f, 40.0f, 1.2f, 3.0f, 900.0f, 0.7f), platelook::DepthShiftZ(50.0f, 1.2f, 3.0f, 900.0f, 0.7f)));
+		// k = 1 is the real disparity: two parallel eyes h either side, a point z ahead, projected with m0 - the two pixels (uv) differ by twice the shift
+		const float m0 = 1.1f, h = 2.5f, z = 180.0f;
+		const float uL = 0.5f + 0.5f * m0 * (0.0f + h) / z, uR = 0.5f + 0.5f * m0 * (0.0f - h) / z;   // (the point straight ahead of the eyes' middle)
+		CHECK(Near(uL - uR, 2.0f * platelook::DepthShiftZ(z, m0, h, 0.0f, 1.0f)));
+		// off: nothing apart, nothing moved - the old picture
+		platelook::OtherViewIn in;
+		in.stereo = true; in.m0 = m0; in.halfGap = h; in.zUnits = z;
+		platelook::OtherViewOut o = platelook::OtherView(in);
+		CHECK(!o.own && o.shift == 0.0f && o.turnH == 0.0f);
+		// the view's monster_depth: apart, at its monster's depth by k
+		in.atMonster = 1.0f;
+		o = platelook::OtherView(in);
+		CHECK(o.own && Near(o.shift, platelook::DepthShiftZ(z, m0, h, 0.0f, 1.0f)) && o.turnH == 0.0f);
+		in.atMonster = 0.5f;
+		CHECK(Near(platelook::OtherView(in).shift, 0.5f * platelook::DepthShiftZ(z, m0, h, 0.0f, 1.0f)));
+		// a nearer monster stands nearer (a larger shift)
+		platelook::OtherViewIn nearer = in;
+		nearer.zUnits = 60.0f;
+		CHECK(platelook::OtherView(nearer).shift > platelook::OtherView(in).shift);
+		// each eye its own layout: the game's plate is already where that eye sees it - its half-disparity taken off (at k = 1 the two cancel)
+		in.atMonster = 1.0f; in.turns = true;
+		o = platelook::OtherView(in);
+		CHECK(Near(o.turnH, o.shift));
+		// no point over the head (no target, its body not read): apart only if ours is wanted, never moved
+		in.zUnits = -1.0f;
+		o = platelook::OtherView(in);
+		CHECK(o.own && o.shift == 0.0f && o.turnH == 0.0f);
+		// our plate alone: apart (its box: the game's not drawn under ours), the game's not moved
+		platelook::OtherViewIn ours;
+		ours.stereo = true; ours.ours = true; ours.m0 = m0; ours.halfGap = h; ours.zUnits = z; ours.turns = true;
+		o = platelook::OtherView(ours);
+		CHECK(o.own && o.shift == 0.0f && o.turnH == 0.0f);
+		// not a stereo pair of our camera (the game's own flat F1, F4 has its own rule): nothing
+		ours.stereo = false; ours.atMonster = 1.0f;
+		o = platelook::OtherView(ours);
+		CHECK(!o.own && o.shift == 0.0f);
+		// a broken projection: never a shift
+		in.zUnits = z; in.m0 = 0.0f;
+		CHECK(platelook::OtherView(in).shift == 0.0f);
+		in.m0 = m0; in.zUnits = std::nanf("");
+		CHECK(platelook::OtherView(in).shift == 0.0f);
+		// the depth along the view: a point to the side at the same depth has the same depth
+		const float eyes[3] = {10.0f, 20.0f, 30.0f}, fwd[3] = {0.0f, 0.0f, -1.0f};
+		const float ahead[3] = {10.0f, 20.0f, -70.0f}, side[3] = {60.0f, 5.0f, -70.0f}, behind[3] = {10.0f, 20.0f, 40.0f};
+		CHECK(Near(platelook::AheadOf(ahead, eyes, fwd), 100.0f) && Near(platelook::AheadOf(side, eyes, fwd), 100.0f) && platelook::AheadOf(behind, eyes, fwd) < 0.0f);
+	}
+
 	std::printf("plate_look_test: %d checks, %d failed\n", g_checks, g_fails);
 	return g_fails == 0 ? 0 : 1;
 }

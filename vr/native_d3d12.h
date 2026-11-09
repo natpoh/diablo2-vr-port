@@ -27,6 +27,7 @@ struct D3D12_PIPELINE_STATE_STREAM_DESC;
 struct D3D12_COMPUTE_PIPELINE_STATE_DESC;
 struct ID3D12PipelineState;
 struct ID3D12DescriptorHeap;
+struct ID3D12RootSignature;
 struct D3D12_SHADER_RESOURCE_VIEW_DESC;
 
 namespace natived3d {
@@ -77,6 +78,8 @@ struct Sinks {
     // (a draw's whole arguments: the effects' depth draws it again; `indexed` DrawIndexedInstanced, `base` its base vertex)
     void (*fxDraw)(ID3D12GraphicsCommandList* cl, bool indexed, unsigned vertices, unsigned instances, unsigned first, int base,
                    unsigned firstInstance) = nullptr;
+    // ... and an ExecuteIndirect of the game's (its arguments not known: the hair and foliage draws' targets swapped for it all the same)
+    void (*fxIndirect)(ID3D12GraphicsCommandList* cl) = nullptr;
     // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10's pipe trace (vr/pipe_hunt.h): a pipeline the game binds (SetPipelineState, the one it asked
     // for - before psoSwap; a Reset's, nullptr none), and each draw / dispatch / indirect call of the game's (kind 0 / 1 / 2): true = not made.
     // Given: SetPipelineState, DrawInstanced, Dispatch and ExecuteIndirect are hooked as well.
@@ -181,6 +184,17 @@ unsigned SrvIncrement();
 // Our recording on a list of the game's (the stand-in for ReShade's command list, vr/native_rsapi.h): what it calls does not reach the sinks,
 // as ReShade does not report an add-on's own calls. On this thread, until set back.
 void SetOurs(bool ours);
+// The native replay's camera hooks (camfix, vr/render/depth/depth_fix.cpp) on list functions hooked here already - [fog] game_fog_before_fx's
+// root signature / compute root CBV calls (MinHook takes one hook a function: until 0.209.9 camfix's did not go in and the replay was skipped
+// for the session, two passes a pair). HoldsHook: a function hooked here. SetRootChain: camfix's handlers, run first inside these hooks on
+// every call (as its own hooks ran): rootSig notes the list's root signature (which 0 graphics, 1 compute); cbv gives the address to bind
+// (0: the game's), and that one is what the fog step's sinks and the game's function see.
+bool HoldsHook(void* fn);
+struct RootChain {
+    void (*rootSig)(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs, int which) = nullptr;
+    uint64_t (*cbv)(ID3D12GraphicsCommandList* cl, unsigned param, uint64_t va, int which) = nullptr;
+};
+void SetRootChain(const RootChain& c);
 bool Ours();
 
 // [sky] game_sky: the game's indexed draws of exactly `indexCount` indices counted (the dome's mesh has a count of its own: 5952), 0 none

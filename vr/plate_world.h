@@ -422,6 +422,11 @@ struct State {
     Seen seen;
     Follow follow;                     // where the game hung the plate in its last frames (the hook), for the effect's box
     std::atomic<bool> followOn{false};   // [hud] monster_alpha, monster_size, monster_far...: a plate setting the effect needs the box for (vrcam)
+    std::atomic<bool> elsewhere{false};   // VR F1, F2, F3 too: the hook notes the target and where it hung the plate there (read only) - our plate there, F2 / F3 monster_depth
+    // [hud] monster_names_own in force now (vrcam's tick, labels.cpp MonsterNamesOwnNow): the game's plate is not drawn, and none of the old plate's
+    // ways touch it - no lift, height, steadying, room bar or pad layout asked for; the hook only notes the target (Serg, 2026-11-09: "их не надо
+    // обрабатывать вовсе, а просто прятать этот слой")
+    std::atomic<bool> ours{false};
     std::atomic<bool> active{false};   // vrcam's tick: the world bar is in force now (ticked, F4, native OpenXR, a game, no menu)
     std::atomic<float> gapCm{15.0f};
     std::atomic<float> sizePct{100.0f};
@@ -541,6 +546,12 @@ inline bool GetTarget(float* metres, float* units, uint64_t nowMs) {
 // The box follows the plate (FollowBox): the hook notes where it hung the plate while a plate setting needs the box; a note is fresh for kStaleMs.
 inline void SetFollow(bool on) { S().followOn.store(on); }
 inline bool Following() { return S().followOn.load(); }
+// [hud] monster_names_own_all_views, [hud_third] / [hud_floor] monster_depth (vrcam, with the ini): the notes above (Tracking's, Following's) are taken in VR F1,
+// F2, F3 as well - only noted there: the hook changes nothing of the game's answer outside F4 (vr/mob_bars.cpp).
+inline void SetElsewhere(bool on) { S().elsewhere.store(on); }
+inline void SetOurs(bool on) { S().ours.store(on, std::memory_order_relaxed); }
+inline bool Ours() { return S().ours.load(std::memory_order_relaxed); }
+inline bool Elsewhere() { return S().elsewhere.load(); }
 inline void NoteFollow(uintptr_t unit, const float px[2], float viewW, float viewH, uint64_t nowMs) {
     State& s = S();
     std::lock_guard<std::mutex> g(s.lock);

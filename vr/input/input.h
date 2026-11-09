@@ -14,6 +14,7 @@
 #include "../spell_aim_model.h"   // spellmodel::Out
 
 namespace skel { struct Input; }
+namespace throwborn { struct AimAsk; }
 
 namespace vrc {
 
@@ -92,6 +93,7 @@ bool HandsLineToRender(const StickFrame& f, const float s[3], const float d[3], 
 bool GestureCanAim();
 bool GestureHeroId(uint32_t* id);
 bool GestureHeroMode(uint32_t* mode);
+bool FlatReleaseAim(const throwborn::AimAsk& a, int* tx, int* ty);   // the shot at release, flat (flat_click.cpp; throw_born.cpp's create hook asks it)
 bool AskHeroFacingNow(float* deg) noexcept;
 extern std::atomic<LONGLONG> g_logicFacingAt;
 extern std::atomic<bool> g_walkSteady;

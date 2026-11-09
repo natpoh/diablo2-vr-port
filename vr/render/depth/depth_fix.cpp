@@ -440,13 +440,16 @@ uint64_t Note(int which, ID3D12GraphicsCommandList* cl, UINT param, uint64_t va)
     ReleaseSRWLockExclusive(&g_vaLock);
     return 0;
 }
+// which: 0 graphics, 1 compute
+void NoteRs(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs, int which) {
+    if (t_list != cl) { t_list = cl; t_rs[1 - which] = nullptr; }
+    t_rs[which] = rs;
+}
 template <int S> void STDMETHODCALLTYPE HookSetGfxRS(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs) {
-    if (t_list != cl) { t_list = cl; t_rs[1] = nullptr; }
-    t_rs[0] = rs; OrigSetGfxRS[S](cl, rs);
+    NoteRs(cl, rs, 0); OrigSetGfxRS[S](cl, rs);
 }
 template <int S> void STDMETHODCALLTYPE HookSetCompRS(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* rs) {
-    if (t_list != cl) { t_list = cl; t_rs[0] = nullptr; }
-    t_rs[1] = rs; OrigSetCompRS[S](cl, rs);
+    NoteRs(cl, rs, 1); OrigSetCompRS[S](cl, rs);
 }
 // [render] depth_fix (uitrace.cpp): the game's linear depth range in its b10, ours - here, before Note
 // copies the buffer into a camera slot; ReShade tells add-ons of a binding only after this hook ran,
@@ -456,6 +459,11 @@ void DepthRange(int which, ID3D12GraphicsCommandList* cl, UINT param, uint64_t v
     if (!rs || !va || !uitrace::DepthFixFor((uint64_t)(uintptr_t)rs, param)) return;
     uint64_t room = 0;
     if (uint8_t* cpu = Cpu(va, &room); cpu && room >= 54 * 16) uitrace::FixDepthRangeAt(cpu);
+}
+// The same run inside natived3d's hooks on a function it holds already ([fog] game_fog_before_fx's: natived3d::SetRootChain)
+uint64_t ChainCbv(ID3D12GraphicsCommandList* cl, unsigned p, uint64_t va, int which) {
+    DepthRange(which, cl, p, va);
+    return Note(which, cl, p, va);
 }
 template <int S> void STDMETHODCALLTYPE HookSetGfxCBV(ID3D12GraphicsCommandList* cl, UINT p, D3D12_GPU_VIRTUAL_ADDRESS va) {
     DepthRange(0, cl, p, va);
@@ -476,12 +484,26 @@ bool HookOne(void* fn, void* detour, void** orig) {
     if (ok) g_hookedFns.push_back(fn);
     return ok;
 }
+// A function natived3d hooked already ([fog] game_fog_before_fx's root calls, at the device's creation - before the first pair asks for
+// these): ours run inside its hook (natived3d::SetRootChain), not hooked a second time - MinHook refused that, the replay stayed off.
+std::atomic<int> g_chained{0};
+bool HookOrChain(void* fn, void* detour, void** orig) {
+    if (natived3d::HoldsHook(fn)) {
+        natived3d::RootChain c;
+        c.rootSig = &NoteRs;
+        c.cbv = &ChainCbv;
+        natived3d::SetRootChain(c);
+        g_chained.fetch_add(1);
+        return true;
+    }
+    return HookOne(fn, detour, orig);
+}
 template <int S> bool HookTable(void** vt) {
     bool ok = true;
-    ok &= HookOne(vt[29], (void*)&HookSetCompRS<S>, (void**)&OrigSetCompRS[S]);
-    ok &= HookOne(vt[30], (void*)&HookSetGfxRS<S>, (void**)&OrigSetGfxRS[S]);
-    ok &= HookOne(vt[37], (void*)&HookSetCompCBV<S>, (void**)&OrigSetCompCBV[S]);
-    ok &= HookOne(vt[38], (void*)&HookSetGfxCBV<S>, (void**)&OrigSetGfxCBV[S]);
+    ok &= HookOrChain(vt[29], (void*)&HookSetCompRS<S>, (void**)&OrigSetCompRS[S]);
+    ok &= HookOrChain(vt[30], (void*)&HookSetGfxRS<S>, (void**)&OrigSetGfxRS[S]);
+    ok &= HookOrChain(vt[37], (void*)&HookSetCompCBV<S>, (void**)&OrigSetCompCBV[S]);
+    ok &= HookOrChain(vt[38], (void*)&HookSetGfxCBV<S>, (void**)&OrigSetGfxCBV[S]);
     return ok;
 }
 bool g_slotDone[2] = {};
@@ -554,8 +576,9 @@ bool HookNative(ID3D12Device* dev) {
             done = slot == 0 ? HookTable<0>(vt) : HookTable<1>(vt);
             g_slotDone[slot] = true;
             ReleaseSRWLockExclusive(&g_hookLock);
-            LogF("vrcam: native replay - %s command list hooks (root signature, root CBV) %s, vtable %p", slot == 0 ? "direct" : "compute",
-                 done ? "in" : "FAILED (another hook holds one of them)", (void*)vt);
+            LogF("vrcam: native replay - %s command list hooks (root signature, root CBV) %s, vtable %p%s", slot == 0 ? "direct" : "compute",
+                 done ? "in" : "FAILED (another hook holds one of them)", (void*)vt,
+                 g_chained.load() ? " - the ones [fog] game_fog_before_fx hooks first run inside its hooks" : "");
         }
         if (l) l->Release();
         if (a) a->Release();

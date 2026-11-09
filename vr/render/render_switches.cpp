@@ -1,4 +1,4 @@
-// vr/render/render_switches.cpp - the game's render switched as the ini says: room heights ([render] floors_stay), the draw distance
+// vr/render/render_switches.cpp - the game's render switched as the ini says: room heights ([render] room_stitch), the draw distance
 // ([render] rings, model_radius, big_radius), the memory pools, the background sleep, solid walls, the roofs kept, the props once a
 // pair (cut from vr/vrcam.cpp, docs/plan_modules.md M13 - the render group). What it gives: vr/render/render_switches.h.
 #include "../vrcam_headers.h"
@@ -8,110 +8,298 @@ using namespace vrc;   // as in vrcam.cpp
 
 namespace vrc {
 
-// [render] floors_stay (vr/room_heights.h): LevelTranslationLayer::CalculateHeightOffset 0x6A2A40(layer, DRLG_ROOM*, const float edges[4])
-// -> the height a room is drawn at, stitched to the neighbours drawn at that moment; the record that keeps it is erased when the room is no longer
-// drawn, so a way back another way brings the room back a step up or down. A room keeps the height it was first drawn at, for the game - the
-// rooms of one preset as one (the game copies a drawn sibling's height to the others without asking), the rooms kept together as one island
-// placed where it meets the ground drawn now, a room drawn before its neighbours not kept. Every view (any camera but the game's own from
-// above shows it); visual only.
+// LevelTranslationLayer::CalculateHeightOffset 0x6A2A40(layer, DRLG_ROOM*, const float edges[4]) -> the height a room is drawn at, stitched
+// to ONE of the neighbours drawn at that moment. Hooked for [render] room_stitch and [ceiling] top_from_level (below). ([render] floors_stay,
+// which kept a room's first height for the game, was here until 0.209.9: room_stitch fixes the same step near the hero - Serg 2026-11-09,
+// "floors_stay отключи и удали".)
 constexpr uint64_t RVA_ROOM_HEIGHT = 0x6A2A40;
 // mov rax, rsp; push rbx; push rsi; push rdi; push r13; sub rsp, 58h; movaps [rax-48h], xmm7
 const uint8_t kSigRoomHeight[16] = {0x48,0x8B,0xC4,0x53,0x56,0x57,0x41,0x55,0x48,0x83,0xEC,0x58,0x0F,0x29,0x78,0xB8};
 using RoomHeightFn = float (*)(void* layer, const void* room, const float* edges);
 RoomHeightFn OrigRoomHeight = nullptr;
 std::atomic<int> g_roomHeightHook{0};   // 0 not in yet, 1 in, 2 not possible
-std::atomic<uintptr_t> g_roomLayer{0};   // the layer the game asked for (its records at +0x2B0)
-std::atomic<bool> g_roomHeightsClear{false};   // the main menu was seen: the next game's rooms are other rooms
-roomheights::Keeper g_roomKeeper;
-SRWLOCK g_roomKeeperLock = SRWLOCK_INIT;
-// The log's lines of each kind (kept off the game's / an island placed / an orphan / given a grounded neighbour's), at most 3 a level a
-// game - each level its own, so the area looked at is told even after others (game thread; cleared with the keeper).
-uint8_t g_roomHeightsTold[1025][4];
-bool RoomHeightsTell(int level, int kind) { return level > 0 && level <= 1024 && g_roomHeightsTold[level][kind]++ < 3; }
-std::atomic<uint32_t> g_roomTick{0};   // the level layer's ticks (the pending rooms' age)
+constexpr size_t kRoomLevel = 0x90;   // DRLG_ROOM -> its DRLG_LEVEL*
 
-bool RoomRead(void* d, uintptr_t s, size_t n) { return SafeRead(d, (const void*)s, n); }
+// [render] room_stitch and [ceiling] top_from_level - from D2R VR Unleashed (bearstonem/d2r-pcvr d416861, by Cal; the pure part MPL 2.0 in
+// vr/unleashed_room_stitch.h, this wiring ours). The game's pick of the built neighbour a room's height meets
+// (the hero's room outright, else the largest candidate - arbitrary for rooms several rings out) becomes the built neighbour nearest the
+// hero's room, so dungeon floors join along the way he comes instead of hanging over a void a step above or below the next room. Our copy
+// of the game's pick is checked against the game's answer every time; where they differ the game's answer stands (told once). On by
+// default since 0.209.9 (Serg: "оставляем код медведя включенным по умолчанию"). Every view - flat F1 - F3, VR F4 and the plain flat game
+// with the game's own camera (Serg: "сшивка должна работать везде", "и на 2д режиме тоже"): the HD renderer builds the same rooms in all of
+// them, and a room keeps the height it was built at whatever view comes next (from the game's own camera above a room's height only
+// slides it along the line of sight, so nothing shows there). Legacy graphics (G) draws the old sprites, not these rooms. Visual and the
+// HD client's floor only - the game's world, its paths, collision and the server are the 2D grid; units, missiles and items find their
+// drawn ground with a ray along the same line.
+// top_from_level: each room built reports its border floors by level; the game's ceiling stands over the level's highest floor, not the
+// lowest the hero stood on (up the stairs it stayed low until he walked on).
+namespace roomstitchwire {
+namespace rs = unleashed::roomstitch;
+std::atomic<bool> g_layoutOk{false};   // the table lookup 0x6B7450 is the one this reads (checked at the hook's install)
+std::atomic<uint32_t> g_built{0}, g_moved{0}, g_disagree{0};
+std::atomic<ULONGLONG> g_reportAt{0};
+unleashed::ceilingtop::LevelFloors g_floors;   // under g_floorsLock
+unleashed::ceilingtop::Top g_top;              // under g_floorsLock
+SRWLOCK g_floorsLock = SRWLOCK_INIT;
+std::atomic<uintptr_t> g_heroLevel{0};
+template <class T> bool Rd(uintptr_t a, T& out) { return a >= 0x10000 && SafeRead(&out, (const void*)a, sizeof(T)); }
 
+// The client's local hero (the game's LocalIndex and ClientPlayer), 0 when not there. (Its own function: __try beside no C++ objects.)
+uintptr_t HeroUnit() noexcept {
+    const uintptr_t indexFn = d2rsig::Addr(RVA_SEWER_LOCAL_INDEX), playerFn = d2rsig::Addr(RVA_SEWER_CLIENT_PLAYER);
+    if (!indexFn || !playerFn) return 0;
+    __try {
+        const int index = reinterpret_cast<int (*)()>(indexFn)();
+        if (index < 0 || index >= 8) return 0;
+        const uintptr_t unit = reinterpret_cast<uintptr_t (*)(int)>(playerFn)(index);
+        if (unit < 0x10000 || *reinterpret_cast<const volatile uint32_t*>(unit) != 0) return 0;   // a player's unit has type 0
+        return unit;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return 0;
+    }
+}
+// The hero's DRLG room (unit +0x38 path, +0x20 its room, +0x18 the DRLG room) and its place on the grid; its level as well.
+bool HeroRoom(uintptr_t* drlg, int32_t* x, int32_t* y) {
+    uintptr_t path = 0, room = 0, level = 0;
+    const uintptr_t hero = g_inWorld.load() ? HeroUnit() : 0;
+    if (!hero || !Rd(hero + 0x38, path) || !Rd(path + 0x20, room) || !Rd(room + 0x18, *drlg) || *drlg < 0x10000 ||
+        !Rd(*drlg + rs::PosX, *x) || !Rd(*drlg + rs::PosY, *y))
+        return false;
+    if (Rd(*drlg + kRoomLevel, level) && level >= 0x10000) g_heroLevel.store(level, std::memory_order_relaxed);
+    return true;
+}
+
+float Pick(void* layer, const void* room, const float* edges, float game) {
+    if (!g_set.roomStitch.load(std::memory_order_relaxed) || !g_layoutOk.load(std::memory_order_relaxed) || !room || !edges)
+        return game;
+    rs::Candidate c[4];
+    const auto read = [](uintptr_t a, auto& v) { return Rd(a, v); };
+    if (!rs::Candidates((uintptr_t)layer, (uintptr_t)room, edges, read, c)) return game;
+    uintptr_t hero = 0;
+    int32_t hx = 0, hy = 0;
+    const bool known = HeroRoom(&hero, &hx, &hy);
+    if (!known) hero = 0;
+    const int theirs = rs::GameChoice(c, hero);
+    if (std::fabs(rs::HeightOf(c, theirs) - game) > 0.01f) {   // our copy of the game's pick is off (a stale hero room, another layout)
+        if (g_disagree.fetch_add(1) == 0)
+            LogF("vrcam: room stitch - the game picked height %.2f, our copy of its pick %.2f; the game's stands where they differ ([render] room_stitch)",
+                 game, rs::HeightOf(c, theirs));
+        return game;
+    }
+    const int ours = rs::Choice(c, hero, known, hx, hy);
+    const float h = rs::HeightOf(c, ours);
+    g_built.fetch_add(1, std::memory_order_relaxed);
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_reportAt.load() >= 60000 && g_moved.load()) {
+        g_reportAt.store(now);
+        LogF("vrcam: room stitch - %u of %u rooms built met the way toward the hero instead of the game's pick ([render] room_stitch)", g_moved.load(),
+             g_built.load());
+    }
+    if (ours == theirs || std::fabs(h - game) < 0.01f) return game;
+    if (g_moved.fetch_add(1) == 0) {
+        int32_t x = 0, y = 0;
+        Rd((uintptr_t)room + rs::PosX, x);
+        Rd((uintptr_t)room + rs::PosY, y);
+        LogF("vrcam: room stitch - the first room moved: (%d, %d) at height %.2f from its %s neighbour (nearest the hero) instead of %.2f from its %s",
+             x, y, h, rs::DirName(ours), game, rs::DirName(theirs));
+    }
+    return h;
+}
+void NoteFloors(const void* room, float h, const float* edges) {
+    uintptr_t level = 0;
+    if (!g_set.ceilTopFromLevel.load(std::memory_order_relaxed) || !edges || !Rd((uintptr_t)room + kRoomLevel, level) || level < 0x10000)
+        return;
+    AcquireSRWLockExclusive(&g_floorsLock);
+    g_floors.Add(level, h, edges);
+    ReleaseSRWLockExclusive(&g_floorsLock);
+}
+}  // namespace roomstitchwire
+
+float CeilingTopLift(float heroY, float floorAt, unsigned areaGen) {
+    using namespace roomstitchwire;
+    if (!g_set.ceilTopFromLevel.load(std::memory_order_relaxed) || g_roomHeightHook.load() != 1 || !std::isfinite(heroY) || !std::isfinite(floorAt) ||
+        !viewgate::F4())
+        return 0.0f;
+    uintptr_t drlg = 0;
+    int32_t x = 0, y = 0;
+    HeroRoom(&drlg, &x, &y);   // (keeps the hero's level fresh)
+    const uintptr_t level = g_heroLevel.load(std::memory_order_relaxed);
+    const double now = (double)GetTickCount64() / 1000.0;
+    AcquireSRWLockExclusive(&g_floorsLock);
+    float built = 0.0f;
+    const bool have = g_floors.Highest(level, built);
+    const float top = g_top.Step(now, areaGen, level, heroY, have, built);
+    ReleaseSRWLockExclusive(&g_floorsLock);
+    return std::max(0.0f, top - floorAt);
+}
+
+// The game's room-height pick, hooked: the stitch's pick (every view); the room's floors noted for the ceiling.
 float HookRoomHeight(void* layer, const void* room, const float* edges) {
     const float game = OrigRoomHeight ? OrigRoomHeight(layer, room, edges) : 0.0f;
-    if (!g_set.keepRoomHeights.load(std::memory_order_relaxed) || !room) return game;
-    roomheights::Key k;
-    uint64_t uid = 0;
-    if (!roomheights::ReadRoom(&RoomRead, (uintptr_t)room, &k, &uid)) return game;
-    g_roomLayer.store((uintptr_t)layer, std::memory_order_relaxed);
-    roomheights::Side sides[4];
-    roomheights::Sides(&RoomRead, (uintptr_t)layer, (uintptr_t)room, edges, sides);
-    const bool drawn = roomheights::DrawnCount(&RoomRead, (uintptr_t)layer) > 0;
-    roomheights::Keeper::How how;
-    size_t joined = 0;
-    float kept = NAN;
-    AcquireSRWLockExclusive(&g_roomKeeperLock);
-    g_roomKeeper.Kept(k, &kept);
-    const float h = g_roomKeeper.Ask(k, uid, game, sides, drawn, g_roomTick.load(std::memory_order_relaxed), &how, &joined);
-    ReleaseSRWLockExclusive(&g_roomKeeperLock);
-    const char* what = k.preset ? "preset" : "room";
-    char around[96] = "";   // for the log: what the drawn sides ask of it, west north east south ("-" not drawn)
-    const auto Around = [&]() -> const char* {
-        int n = 0;
-        for (int d = 0; d < 4; ++d)
-            n += sides[d].drawn ? snprintf(around + n, sizeof around - n, "%s%.2f", d ? " " : "", sides[d].ask)
-                                : snprintf(around + n, sizeof around - n, "%s-", d ? " " : "");
-        return around;
-    };
-    using How = roomheights::Keeper::How;
-    // The first few of each a level: where, and what the game would have done.
-    if (how == How::Kept && std::fabs(h - game) > 0.01f && RoomHeightsTell(k.level, 0))
-        LogF("vrcam: room heights: level %d %s %d,%d asked again - the game worked out %.2f, given %.2f to stand as it did beside the rooms kept "
-             "with it; its sides ask W N E S %s ([render] floors_stay)", k.level, what, k.x, k.y, game, h, Around());
-    else if (how == How::Joined && RoomHeightsTell(k.level, 1))
-        LogF("vrcam: room heights: %zu kept room(s) placed by level %d %s %d,%d - the game worked out %.2f where %.2f was kept: they all move "
-             "by %.2f to meet the ground drawn now ([render] floors_stay)", joined, k.level, what, k.x, k.y, game, kept, game - kept);
-    else if (how == How::Orphan && RoomHeightsTell(k.level, 2))
-        LogF("vrcam: room heights: level %d %s %d,%d drawn before its neighbours or beside an orphan's ground (the game's %.2f; its sides ask "
-             "W N E S %s) - not kept ([render] floors_stay)", k.level, what, k.x, k.y, game, Around());
-    else if (how == How::Grounded && RoomHeightsTell(k.level, 3))
-        LogF("vrcam: room heights: level %d %s %d,%d - the game's %.2f is from an orphan's ground; given %.2f, its grounded neighbour's "
-             "(W N E S %s) ([render] floors_stay)", k.level, what, k.x, k.y, game, h, Around());
+    const float h = roomstitchwire::Pick(layer, room, edges, game);
+    if (room) roomstitchwire::NoteFloors(room, h, edges);
     return h;
 }
 
-// After each tick of the level layer (the game's thread, d2rcam::SetLevelTickCallback): the rooms asked for that are drawn now keep the height
-// they were drawn at; a game left for the main menu leaves nothing behind.
-void RoomHeightsTick(void*) {
-    const uint32_t tick = g_roomTick.fetch_add(1, std::memory_order_relaxed) + 1;
-    const bool clear = g_roomHeightsClear.exchange(false);
-    AcquireSRWLockExclusive(&g_roomKeeperLock);
-    if (clear) g_roomKeeper.Clear();
-    const size_t before = g_roomKeeper.KeptCount();
-    if (g_set.keepRoomHeights.load(std::memory_order_relaxed))
-        g_roomKeeper.Harvest(&RoomRead, g_roomLayer.load(std::memory_order_relaxed), tick);
-    const size_t kept = g_roomKeeper.KeptCount();
-    ReleaseSRWLockExclusive(&g_roomKeeperLock);
-    if (clear) memset(g_roomHeightsTold, 0, sizeof g_roomHeightsTold);
-    static bool told = false;
-    if (!told && before == 0 && kept > 0) {
-        told = true;
-        LogF("vrcam: room heights: the first %zu room(s) drawn keep their height for the game ([render] floors_stay)", kept);
-    }
-}
-
-// Once [render] floors_stay asks for it; tried with the other hooks until the bytes are there.
+// Once [render] room_stitch or [ceiling] top_from_level asks for it; tried with the other hooks until the bytes are there.
 void InstallRoomHeightHook() {
     static int misses = 0;
-    if (!g_ctx || g_roomHeightHook.load() != 0 || !g_set.keepRoomHeights.load()) return;
-    if (!d2rcam::GetStatus().roomHooks) return;   // the tick that keeps the heights comes from the render distance's hook
+    if (!g_ctx || g_roomHeightHook.load() != 0 || !(g_set.roomStitch.load() || g_set.ceilTopFromLevel.load())) return;
     if (!Matches(RVA_ROOM_HEIGHT, kSigRoomHeight, sizeof kSigRoomHeight)) {
         if (g_inWorld.load() && ++misses >= 20) {
             g_roomHeightHook.store(2);
-            Log("vrcam: room heights: hook NOT possible (0x6A2A40 not as expected - another build?) - a room may come back at another height");
+            Log("vrcam: room heights: hook NOT possible (0x6A2A40 not as expected - another build?) - no room stitch, the game's own pick");
         }
         return;
     }
-    d2rcam::SetLevelTickCallback(&RoomHeightsTick);
+    roomstitchwire::g_layoutOk.store(Matches(unleashed::roomstitch::FindRva, unleashed::roomstitch::FindSig, sizeof unleashed::roomstitch::FindSig));
     const bool in = d2rsig::Hook(RVA_ROOM_HEIGHT, kSigRoomHeight, sizeof kSigRoomHeight, (void*)&HookRoomHeight, (void**)&OrigRoomHeight);
     g_roomHeightHook.store(in ? 1 : 2);
-    Log(in ? "vrcam: room heights: hook in - a room of the level keeps the height it was first drawn at ([render] floors_stay)"
-           : "vrcam: room heights: hook FAILED - a room may come back at another height");
+    Log(in ? "vrcam: room heights: hook in - [render] room_stitch (every view) meets the built neighbour nearest the hero's room; [ceiling] top_from_level "
+             "notes each level's floors"
+           : "vrcam: room heights: hook FAILED - the game's own pick");
+    if (in && !roomstitchwire::g_layoutOk.load())
+        Log("vrcam: room stitch - the game's room table lookup 0x6B7450 not as expected (another build?): the game's own pick stays");
+}
+
+// [render] terrain_heights (vr/terrain_heights.h): the outdoor ground's tiles each at their own floor's height, stitched to the tiles round
+// them. LevelTranslationLayer::UpdateTerrainTiles 0x6B54C0 (layer, span<ROOM*>, bool) asks the floor under the hero (0x6B0350) and hands it to
+// TerrainSystem's origin 0xE79000 (const int2* corner tile, float height), which puts that one height in all 18 x 18 bins (0x34FCB10, the
+// height at +0x18); every tile, its stamps and decals are drawn at their bin's height. Right after the origin call (still inside the game's
+// UpdateTerrainTiles, before its culling job reads the bins) each bin gets its own tile's floor, by the ray the game casts for the hero's.
+// Visual only, every view, live.
+constexpr uint64_t RVA_TERRAIN_TILES = terrainheights::kRvaTerrainTiles, RVA_TERRAIN_ORIGIN = terrainheights::kRvaTerrainOrigin,
+                   RVA_PHYSICS = terrainheights::kRvaPhysics, RVA_RAYCAST = terrainheights::kRvaRayCast;
+constexpr uint64_t RVA_TERRAIN_BINS = terrainheights::kRvaBins, RVA_TERRAIN_CORNER = terrainheights::kRvaCorner;
+using terrainheights::kSigTerrainTiles;
+using terrainheights::kSigTerrainOrigin;
+using terrainheights::kSigPhysics;
+using terrainheights::kSigRayCast;
+using TerrainTilesFn = void (*)(void* layer, void* rooms, uint8_t flag);
+using TerrainOriginFn = void (*)(const int32_t* tile, float height);
+using PhysicsFn = void* (*)();
+using RayCastFn = bool (*)(void* mgr, void* out, const void* input, uint8_t world);
+TerrainTilesFn OrigTerrainTiles = nullptr;
+TerrainOriginFn OrigTerrainOrigin = nullptr;
+std::atomic<int> g_terrainHook{0};   // 0 not in yet, 1 in, 2 not possible
+std::atomic<bool> g_terrainHeightsClear{false};   // a game left: the next one's tiles are other tiles
+thread_local void* t_terrainLayer = nullptr;   // the layer of the UpdateTerrainTiles running on this thread
+thread_local int t_terrainDepth = 0;
+terrainheights::Keeper g_terrainKeeper;   // the game's thread only (inside UpdateTerrainTiles)
+
+// The game's floor ray through cell (x, y), as 0x6B0350 casts it for the hero's: out = the hit's point; false when nothing was hit (or
+// it faulted).
+bool TerrainFloor(void* layer, float x, float y, float out[3]) noexcept {
+    const uintptr_t phys = d2rsig::Addr(RVA_PHYSICS), cast = d2rsig::Addr(RVA_RAYCAST);
+    uint64_t filter = 0;
+    if (!phys || !cast || !layer || !SafeRead(&filter, (const uint8_t*)layer + terrainheights::kLayerFloorFilter, sizeof filter)) return false;
+    alignas(16) uint8_t in[terrainheights::kRayInputSize];
+    alignas(16) uint8_t res[terrainheights::kRayOutSize] = {};
+    terrainheights::RayInput(x, y, filter, in);
+    bool hit = false;
+    __try {
+        void* mgr = ((PhysicsFn)phys)();
+        hit = mgr && ((RayCastFn)cast)(mgr, res, in, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    memcpy(out, res, 3 * sizeof(float));
+    return hit;
+}
+
+// Each bin its own tile's floor, stitched (terrainheights::Stitch). hero: the game's height for all.
+void TerrainHeightsFill(void* layer, float hero) {
+    using namespace terrainheights;
+    static void* lastLayer = nullptr;
+    static uint32_t tick = 0;
+    static ULONGLONG toldAt = 0;
+    static bool toldFirst = false;
+    static LONGLONG spent = 0, spentTicks = 0;
+    static int offLine = 0;   // hits whose point is not on the ray's line (an out laid out otherwise: not used)
+    const uintptr_t bins = d2rsig::Addr(RVA_TERRAIN_BINS), cornerAt = d2rsig::Addr(RVA_TERRAIN_CORNER);
+    int32_t corner[2] = {};
+    if (!bins || !cornerAt || !SafeRead(corner, (const void*)cornerAt, sizeof corner) || !std::isfinite(hero)) return;
+    if (g_terrainHeightsClear.exchange(false) || layer != lastLayer) g_terrainKeeper.Clear();
+    lastLayer = layer;
+    g_terrainKeeper.Corner(corner[0], corner[1]);
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+    int idx[kBudget];
+    const int n = g_terrainKeeper.Pick(++tick, kBudget, idx);
+    for (int j = 0; j < n; ++j) {
+        const int i = idx[j];
+        Tile t;
+        t.asked = kSamples;
+        for (int k = 0; k < kSamples; ++k) {
+            float x, y, h;
+            float o[3] = {};
+            SampleCell(corner[0] + i % kBins, corner[1] + i / kBins, k, &x, &y);
+            if (TerrainFloor(layer, x, y, o)) {
+                if (Hit(o, x, y, &h)) t.h[t.n++] = h;
+                else ++offLine;
+            }
+        }
+        g_terrainKeeper.Put(i, t, tick);
+    }
+    static Tile win[kTiles];
+    static float out[kTiles];
+    g_terrainKeeper.Window(win);
+    const Stats s = Stitch(win, hero, out);
+    QueryPerformanceCounter(&t1);
+    spent += t1.QuadPart - t0.QuadPart;
+    ++spentTicks;
+    float* heights = (float*)bins;
+    if (!SafeWriteMem(heights, heights, sizeof(float))) return;   // the bins are the game's own .data; written as it writes them
+    for (int i = 0; i < kTiles; ++i) heights[i * (kBinStride / sizeof(float))] = out[i];
+    const ULONGLONG now = GetTickCount64();
+    if (!toldFirst || now - toldAt > 20000) {
+        LARGE_INTEGER f;
+        QueryPerformanceFrequency(&f);
+        LogF("vrcam: terrain heights: corner tile %d,%d, the hero's floor %.2f; %d of %d tiles' floors known, %d height(s) %.2f..%.2f, "
+             "%d across a ledge, %d lone, %d from neighbours, %d at the hero's; %.0f us a tick%s ([render] terrain_heights)", corner[0],
+             corner[1], hero, s.known, kTiles, s.levels, s.low, s.high, s.mixed, s.lone, s.filled, s.hero,
+             spentTicks ? double(spent) * 1e6 / double(f.QuadPart) / double(spentTicks) : 0.0,
+             offLine ? " - SOME HITS OFF THE RAY'S LINE, not used (the game's ray answers otherwise?)" : "");
+        offLine = 0;
+        toldFirst = true;
+        toldAt = now;
+        spent = spentTicks = 0;
+    }
+}
+
+void HookTerrainTiles(void* layer, void* rooms, uint8_t flag) {
+    t_terrainLayer = layer;
+    ++t_terrainDepth;
+    if (OrigTerrainTiles) OrigTerrainTiles(layer, rooms, flag);
+    --t_terrainDepth;
+}
+void HookTerrainOrigin(const int32_t* tile, float height) {
+    if (OrigTerrainOrigin) OrigTerrainOrigin(tile, height);
+    // only the level layer's call (the other caller, 0x67AB00, puts the menus' terrain at 0)
+    if (t_terrainDepth > 0 && g_set.terrainHeights.load(std::memory_order_relaxed)) TerrainHeightsFill(t_terrainLayer, height);
+}
+
+// Once [render] terrain_heights asks for it; tried with the other hooks until the bytes are there.
+void InstallTerrainHeightHook() {
+    static int misses = 0;
+    if (!g_ctx || g_terrainHook.load() != 0 || !g_set.terrainHeights.load()) return;
+    if (!Matches(RVA_TERRAIN_TILES, kSigTerrainTiles, sizeof kSigTerrainTiles) ||
+        !Matches(RVA_TERRAIN_ORIGIN, kSigTerrainOrigin, sizeof kSigTerrainOrigin) ||
+        !Matches(RVA_PHYSICS, kSigPhysics, sizeof kSigPhysics) || !Matches(RVA_RAYCAST, kSigRayCast, sizeof kSigRayCast) ||
+        !d2rsig::Addr(RVA_TERRAIN_BINS) ||
+        !d2rsig::Addr(RVA_TERRAIN_CORNER)) {
+        if (g_inWorld.load() && ++misses >= 20) {
+            g_terrainHook.store(2);
+            Log("vrcam: terrain heights: hook NOT possible (0x6B54C0 / 0xE79000 / 0x7E65A0 / 0x7E7DD0 not as expected - another build?) - the ground's "
+                "tiles stay at the hero's floor");
+        }
+        return;
+    }
+    const bool in = d2rsig::Hook(RVA_TERRAIN_TILES, kSigTerrainTiles, sizeof kSigTerrainTiles, (void*)&HookTerrainTiles,
+                                 (void**)&OrigTerrainTiles) &&
+                    d2rsig::Hook(RVA_TERRAIN_ORIGIN, kSigTerrainOrigin, sizeof kSigTerrainOrigin, (void*)&HookTerrainOrigin,
+                                 (void**)&OrigTerrainOrigin);
+    g_terrainHook.store(in ? 1 : 2);
+    Log(in ? "vrcam: terrain heights: hook in - each ground tile at its own floor's height, stitched to its neighbours ([render] terrain_heights)"
+           : "vrcam: terrain heights: hook FAILED - the ground's tiles stay at the hero's floor");
 }
 
 // [render] rings and model_radius into cleanroom/drawdist (the old

@@ -12,5 +12,8 @@ using Observer = void (*)(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* 
 // Hooks the ExecuteCommandLists of q's vtable (once for each of the three queue types, once for each function: the types may share one). The observer is
 // global (the last one set). True when the hook is in. MinHook must be initialised.
 bool Install(ID3D12CommandQueue* q, Observer obs);
+// A second observer beside that one ([fog] game_fog_before_fx's submission order, vr/fog_before_fx.h OnExecute), told after it; installs the
+// hook on q's type when it is not in yet (Install's observer left as it is).
+bool InstallTap(ID3D12CommandQueue* q, Observer tap);
 
 }  // namespace eclhook

@@ -186,6 +186,7 @@ const char* const kActKeys[7] = {"", "act1", "act2", "act3", "act4", "act5", "sn
 const char* const kActDefs[7] = {"", "ACT1", "ACT2", "ACT3", "ACT4", "ACT5", "SNOW"};
 SRWLOCK g_skyCfgLock = SRWLOCK_INIT;
 SkyAct g_skyAct[7];
+GameFogAct g_gameFogAct[7] = {};
 // [fog] color_caves: one colour for every area off the outdoor list - caves,
 // dungeons, crypts, towers. Empty = the act's own colour, as before.
 CaveFog g_caveFog{};
@@ -423,7 +424,17 @@ void LoadSkyActs() {
         GetPrivateProfileStringW(L"fog", key, kFogDef[a], buf, MAX_PATH, g_iniPath);
         float fog[3] = {};
         const bool fogSet = ParseHexColor(buf, fog);
+        // [fog] game_fog_<act>_dawn / _day / _dusk / _night (Settings > Game fog): the game's fog's own colours; empty = the defaults of
+        // vr/sky/fog_times.h (the old fog's, and the game's own change for dawn and dusk)
+        GameFogAct gf{};
+        static const wchar_t* const kGroupKeys[4] = {L"dawn", L"day", L"dusk", L"night"};
+        for (int g = 0; g < 4; ++g) {
+            swprintf_s(key, L"game_fog_%ls_%ls", act.c_str(), kGroupKeys[g]);
+            GetPrivateProfileStringW(L"fog", key, L"", buf, MAX_PATH, g_iniPath);
+            gf.set[g] = ParseHexColor(buf, gf.colour[g]);
+        }
         AcquireSRWLockExclusive(&g_skyCfgLock);
+        g_gameFogAct[a] = gf;
         SkyAct& s = g_skyAct[a];
         if (s.band != files[0] || s.cap != files[1] || s.bandOk != ok[0] || s.capOk != ok[1] ||
             s.nightBand != night[0] || s.nightCap != night[1] || s.nightOk != nightOk) changed = true;

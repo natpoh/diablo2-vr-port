@@ -33,9 +33,54 @@ inline float DistanceK(float groundM, float farFraction) {
 // "At their items" / "at its monster" ([hud] labels_depth_body / monster_depth_body): the shift per eye (uv, + nearer) that puts a picture at the depth of the thing
 // it belongs to instead of where the game leaves it (the convergence): k * 0.5 * M0 * half the eyes' gap * (1/z - 1/conv), z the eyes' distance to the thing (the
 // ground distance and the camera's height over the feet, game units). k = 1 is exactly there, 0 is where the game leaves it.
+// The same rule for a thing z ahead of the eyes (game units, any view): DepthShift is it with z from the ground distance and the eyes' height.
+inline float DepthShiftZ(float z, float m0, float halfGap, float conv, float k) {
+    return k * 0.5f * m0 * halfGap * (1.0f / z - (conv > 0.0f ? 1.0f / conv : 0.0f));
+}
 inline float DepthShift(float groundUnits, float eyeHeightUnits, float m0, float halfGap, float conv, float k) {
     const float z = std::max(1.0f, std::sqrt(groundUnits * groundUnits + eyeHeightUnits * eyeHeightUnits));
-    return k * 0.5f * m0 * halfGap * (1.0f / z - (conv > 0.0f ? 1.0f / conv : 0.0f));
+    return DepthShiftZ(z, m0, halfGap, conv, k);
+}
+
+// ---- the plate in the other VR views: F1, F2, F3 ([hud] monster_names_own_all_views, [hud_third] / [hud_floor] monster_depth) -------------------
+// Until now the plate stood apart only in F4. Everywhere else it stayed on the labels' plane: the game lays the interface out once (for the left eye,
+// the right one replayed from it) and both eyes showed the plate on the same pixels - at the picture's own depth, while its monster stood deeper. Looking
+// at the monster, the bar was doubled (martin039383 in F3, Serg 2026-11-09: "у нас должен быть на виде ф2 и ф3 специальные ползунки для настройки глубины
+// бара хп"). Now, in a stereo pair of our camera other than F4:
+//  - atMonster ([hud_third] monster_depth in F2, [hud_floor] monster_depth in F3; 1 = exactly at its monster, 0 = where the game leaves it, as before):
+//    the game's plate cut out of the layer and shifted per eye by the depth rule at the depth of the point over its monster's head, z ahead of the eyes'
+//    middle along the view - the model's answer, no offset of ours;
+//  - ours ([hud] monster_names_own with monster_names_own_all_views): the box is needed too - our own plate stands over the head, each eye projecting
+//    its point (the effect), and the game's under it is not drawn.
+// turns: each eye has its own layout of the layer (eyes by turns, a right pass drawn by the game) - the game's plate is then already where that eye
+// sees its monster, and its half-disparity is taken off first (as TurnsHalf in F4), only while atMonster moves it.
+struct OtherViewIn {
+    bool stereo = false;      // a stereo pair of our camera, not F4
+    float atMonster = 0.0f;   // the view's monster_depth / 100
+    bool ours = false;        // our own plate wanted in this view
+    float zUnits = -1.0f;     // the point over the target's head: its depth ahead of the eyes' middle along the view (game units; <= 0 not known)
+    float m0 = 0.0f, halfGap = 0.0f, conv = 0.0f;
+    bool turns = false;
+};
+struct OtherViewOut {
+    bool own = false;         // PlateOwn: the plate cut out of the labels' plane (its box needed)
+    float shift = 0.0f;       // PlateShift: uv per eye, + nearer
+    float turnH = 0.0f;       // PlateTurnH
+};
+inline bool OtherViewOwn(bool stereo, float atMonster, bool ours) { return stereo && (atMonster > 0.005f || ours); }
+inline OtherViewOut OtherView(const OtherViewIn& in) {
+    OtherViewOut o;
+    o.own = OtherViewOwn(in.stereo, in.atMonster, in.ours);
+    const bool depth = o.own && in.atMonster > 0.005f && in.zUnits > 0.0f && std::isfinite(in.zUnits) && in.m0 > 0.0f && in.halfGap > 0.0f;
+    if (!depth) return o;
+    const float z = std::max(in.zUnits, 0.01f);
+    o.shift = DepthShiftZ(z, in.m0, in.halfGap, in.conv, in.atMonster);
+    if (in.turns) o.turnH = DepthShiftZ(z, in.m0, in.halfGap, in.conv, 1.0f);
+    return o;
+}
+// The point's depth ahead of the eyes' middle along the view (game units): (p - eyes) . forward; <= 0 behind.
+inline float AheadOf(const float p[3], const float eyes[3], const float fwd[3]) {
+    return (p[0] - eyes[0]) * fwd[0] + (p[1] - eyes[1]) * fwd[1] + (p[2] - eyes[2]) * fwd[2];
 }
 
 // ---- the plate's stereo depth by its monster's distance ([hud] monster_stereo_by_distance) ----------------------------------------------------

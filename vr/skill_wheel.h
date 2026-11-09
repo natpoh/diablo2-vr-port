@@ -44,6 +44,8 @@ void SetTwoGripChord(bool on);
 void SetSettingsHost(const hset::video::Env& env);
 // xr.cpp ReadProfiles: the interaction profile path each hand runs now ("" / null = none). The tiles name the controller's own buttons by it.
 void SetProfiles(const char* left, const char* right);
+// [hands] left_handed traded the controllers (xr.cpp Publish, on a change): the tiles' hints name the controller that presses each slot
+void SetSwapped(bool swapped);
 bool Enabled();
 // [openxr] skill_rt_a: the right trigger casts the game's RT slot (else it is pad A: the A slot). Any thread.
 bool SlotControlsOn();

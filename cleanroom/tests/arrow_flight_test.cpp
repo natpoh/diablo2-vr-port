@@ -281,6 +281,13 @@ static void TestNotTheShotsOwn() {
     Step(guided, GameAt(g0, Heading(guided.shot.theta), 0.0f));
     const Pose q = Step(guided, GameAt(g0, Heading(guided.shot.theta), 1.0f));
     Expect(!q.aimed && !guided.aimed, "Guided Arrow follows the game");
+    // one arrow a shot (a plain arrow, a bolt, an elemental one): the shot's own even when its first centimetres wobble off the heading given
+    Track one;
+    one.shot = side.shot;
+    one.cls = kArrow;
+    Step(one, GameAt(g0, Heading(one.shot.theta), 0.0f));
+    const Pose w = Step(one, GameAt(g0, Heading(one.shot.theta + 9.0f * 0.0174533f), 0.2f));
+    Expect(one.decided && one.aimed && w.aimed, "a single arrow is the shot's own, its wobble at the start notwithstanding");
 }
 
 // The whole: [bow] pitch_aim's decision on a stairway scene, and our arrow sent to what it met.

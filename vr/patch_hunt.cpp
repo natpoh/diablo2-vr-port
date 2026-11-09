@@ -25,6 +25,7 @@
 #include "patch_hunt.h"
 #include "patch_hunt_wire.h"
 #include "pipe_hunt.h"
+#include "quality_presets.h"   // shared/: the Quality presets' game options ([render] preset_game_options)
 #include "sigscan.h"
 #include "ui_ticket.h"
 
@@ -190,6 +191,113 @@ void __cdecl Run(const PluginContext*, void* user) noexcept {
              ValueOf(g_set[kResScale], kResScale));
     Say("vrcam: patch_hunt %d - the game's settings %s%s; now %s (-1 not known)", step, changes[0] ? "set through its own setter: " : "unchanged",
         changes, vals);
+}
+
+// ---- the Quality preset's game options ([render] preset_game_options, shared/quality_presets.h kGameOptions) -----------------------------------
+// The same objects and setter as the steps above, put ONCE when the preset changes (or the box is ticked): the game's menu shows them and keeps
+// them in its Settings.json, and a change the player makes there afterwards stays - nothing here reads them back or puts them again until the
+// preset changes. `served` (the preset put last) lives in d2r_vr_game_options.txt beside the ini, so a game start puts nothing by itself.
+std::atomic<int> g_presetWant{-1};       // the preset to put (-1 none)
+std::atomic<bool> g_presetDue{false};
+std::atomic<ULONGLONG> g_presetRetryAt{0};
+std::atomic<int> g_presetTries{0};
+int g_presetServed = -2;                 // -2: not read yet (LoadSettings' thread and the UI run: under g_presetLock)
+std::mutex g_presetLock;
+uiticket::Ticket g_presetQueued;
+constexpr int kPresetTries = 30;         // the setter / an option not found: looked for again every 2 s, a minute at most
+
+std::wstring StateFile() {
+    if (g_ini.empty()) return L"";
+    std::wstring p = g_ini;
+    p.resize(p.find_last_of(L"\\/") + 1);
+    return p + L"d2r_vr_game_options.txt";
+}
+int ServedLocked() {   // under g_presetLock
+    if (g_presetServed == -2) {
+        const std::wstring f = StateFile();
+        g_presetServed = f.empty() ? -1 : (int)GetPrivateProfileIntW(L"preset_game_options", L"served", -1, f.c_str());
+    }
+    return g_presetServed;
+}
+void WriteServedLocked(int p) {
+    g_presetServed = p;
+    const std::wstring f = StateFile();
+    if (f.empty()) return;
+    if (p < 0) { DeleteFileW(f.c_str()); return; }
+    wchar_t b[16];
+    swprintf_s(b, L"%d", p);
+    WritePrivateProfileStringW(L"preset_game_options", L"; the Quality preset last put into the game's own Video options (0 Potato, 1 Low, 2 Medium) - "
+                               L"D2R VR puts them again only when the preset changes", nullptr, f.c_str());
+    if (!WritePrivateProfileStringW(L"preset_game_options", L"served", b, f.c_str()))
+        Say("vrcam: preset_game_options - %ls could not be written (error %lu): the preset is put again at the next start", f.c_str(), GetLastError());
+}
+
+void __cdecl RunPreset(const PluginContext*, void* user) noexcept {
+    if (!g_presetQueued.Claim(uiticket::FromUser(user))) return;
+    if (g_gameFault.load()) { g_presetDue.store(false); return; }
+    const int preset = g_presetWant.load();
+    if (preset < 0 || preset >= qualitypreset::kCount) { g_presetDue.store(false); return; }
+    std::lock_guard<std::mutex> lock(g_gameLock);
+    g_lastLook = 0;
+    Find();
+    bool missing = !g_setter;
+    for (const qualitypreset::GameOption& o : qualitypreset::kGameOptions) {
+        const int g = GfxByName(o.name);
+        missing = missing || g < 0 || !g_set[g].object;
+    }
+    if (missing) {
+        const int tries = g_presetTries.fetch_add(1) + 1;
+        if (tries >= kPresetTries) {
+            g_presetDue.store(false);
+            Say("vrcam: preset_game_options - the game's setter or one of its options (AO, shadows, lights) NOT found after %d looks (another game "
+                "build?): the %s preset left the game's own Video options alone - set them in the game's Options > Video", tries, qualitypreset::Name(preset));
+        } else {
+            g_presetRetryAt.store(GetTickCount64() + 2000);
+        }
+        return;
+    }
+    char changes[400] = "";
+    for (const qualitypreset::GameOption& o : qualitypreset::kGameOptions) {
+        const int g = GfxByName(o.name);
+        Setting& s = g_set[g];
+        void* obj = nullptr;
+        if (!CallAccessor(s.accessor, &obj)) {
+            g_gameFault.store(true);
+            g_presetDue.store(false);
+            Say("vrcam: preset_game_options - the game's accessor of \"%s\" faulted: the game's settings are left alone for this session", o.name);
+            return;
+        }
+        if ((uintptr_t)obj != s.object) {
+            Say("vrcam: preset_game_options - the game's accessor of \"%s\" gave another object (%p, not %p): not touched", o.name, obj, (void*)s.object);
+            s.object = 0;
+            continue;
+        }
+        s.called = true;
+        const int was = ValueOf(s, g), to = std::clamp(o.v[preset], kGfx[g].lo, kGfx[g].hi);
+        char one[110];
+        if (was == to) {
+            snprintf(one, sizeof one, "%s\"%s\" %d (kept)", changes[0] ? ", " : "", o.name, was);
+        } else {
+            if (!CallSetter(g_setter, obj, to)) {
+                g_gameFault.store(true);
+                g_presetDue.store(false);
+                Say("vrcam: preset_game_options - the game's setter faulted on \"%s\": the game's settings are left alone for this session", o.name);
+                return;
+            }
+            snprintf(one, sizeof one, "%s\"%s\" %d -> %d (reads %d)", changes[0] ? ", " : "", o.name, was, to, ValueOf(s, g));
+        }
+        strncat_s(changes, one, _TRUNCATE);
+        s.held = false;   // (a patch_hunt step left just now gives nothing back over the preset's value)
+        g_pubObj[g].store(s.object);
+    }
+    {
+        std::lock_guard<std::mutex> pl(g_presetLock);
+        WriteServedLocked(preset);
+    }
+    g_presetTries.store(0);
+    if (g_presetWant.load() == preset) g_presetDue.store(false);   // (another preset picked meanwhile: its own run follows)
+    Say("vrcam: preset_game_options - the %s preset put into the game's own Video options through its setter: %s; the game keeps them in its "
+        "Settings.json, a change in its menu stays until the preset changes", qualitypreset::Name(preset), changes);
 }
 
 // ---- the overlay line ------------------------------------------------------------------------------------------------------------------------
@@ -379,10 +487,42 @@ void KeyTick(bool focus) {
     Say("vrcam: patch_hunt - Ctrl%s+F8: %d (d2r_vr.ini)", shift ? "+Shift" : "", to);
 }
 
+void PresetGameOptions(bool on, int preset) {
+    std::lock_guard<std::mutex> pl(g_presetLock);
+    if (!on) {   // unticked: nothing put, and nothing remembered - ticking it again puts the preset then in force
+        g_presetDue.store(false);
+        g_presetWant.store(-1);
+        if (ServedLocked() != -1) WriteServedLocked(-1);
+        return;
+    }
+    const int want = g_presetDue.load() ? g_presetWant.load() : ServedLocked();
+    if (!qualitypreset::GameOptionsDue(preset, want)) return;
+    bool held = false;   // a [debug] patch_hunt step holding one of these options: the step's own, left alone (put when the step is left)
+    for (const qualitypreset::GameOption& o : qualitypreset::kGameOptions) held = held || Touches(g_step.load(), GfxByName(o.name));
+    if (held) {
+        static int told = -1;
+        if (told != preset) {
+            told = preset;
+            Say("vrcam: preset_game_options - the %s preset NOT put into the game's options while [debug] patch_hunt %d holds them", qualitypreset::Name(preset),
+                g_step.load());
+        }
+        return;
+    }
+    Say("vrcam: preset_game_options - the Quality preset is %s (put last: %d): its game options go in on the UI thread", qualitypreset::Name(preset), want);
+    g_presetTries.store(0);
+    g_presetRetryAt.store(0);
+    g_presetWant.store(preset);
+    g_presetDue.store(true);
+}
+
 void Tick() {
     if (!g_ctx || !g_threads || !g_threads->runOnUiThread || g_gameFault.load()) return;
+    const ULONGLONG now = GetTickCount64();
+    if (g_presetDue.load() && now >= g_presetRetryAt.load())
+        if (const uint32_t token = g_presetQueued.Start(now))
+            if (g_threads->runOnUiThread(g_ctx, &RunPreset, uiticket::ToUser(token)) != Threads::Result::Success) g_presetQueued.Claim(token);
     if (!g_gameDue.load()) return;
-    if (const uint32_t token = g_queued.Start(GetTickCount64()))
+    if (const uint32_t token = g_queued.Start(now))
         if (g_threads->runOnUiThread(g_ctx, &Run, uiticket::ToUser(token)) != Threads::Result::Success) g_queued.Claim(token);
 }
 

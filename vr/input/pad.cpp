@@ -1,6 +1,7 @@
 // vr/input/pad.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M10); what it gives: vr/input/input.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "../flat_keys_why.h"   // why W A S D do not walk in flat F2 / F3 (FlatPadTick)
+#include "../hand_swap.h"   // [hands] left_handed: FlatVR's raw controllers traded as native OpenXR's
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -488,6 +489,11 @@ void FlatRawTick() {
             D2RVR_XrInput in;
             flatraw::ToXrInput(t, flatraw::Step(clock, t.stamp), ++counter, D2RVRStampNow(), &in);
             directinput::ShapeSticks(&in);   // the thumbsticks' dead zones ([direct] stick_deadzone_*_pct, vr/stick_shape.h), as native OpenXR's
+            {   // [hands] left_handed (vr/hand_swap.h), F4 only: the controllers traded as native OpenXR's Publish trades them (the menu button stays put)
+                const bool swapped = handswap::Decide(handswap::Wanted(), viewgate::F4());
+                handswap::SetNow(swapped);
+                if (swapped) handswap::MirrorHands(in.hand, nullptr, BW_LINK_XRB_MENU);
+            }
             directinput::Feed(&in, gamestate::MenuOpen() || !g_inWorld.load());
         }
     }

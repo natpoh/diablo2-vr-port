@@ -123,9 +123,29 @@ inline const char* PresetName(int p) {
     }
 }
 
+// The Draw distance stop the values match (shared/draw_distance.h kReach), -1 Custom
+inline drawdistance::Reach ReachOf(const Values& v) {
+    return {(int)std::lround(v[kKeyRings]), v[kKeyModelRadius], v[kKeyFogStart], v[kKeyFogEnd], v[kKeyCavesStart], v[kKeyCavesEnd]};
+}
+inline int DistanceOf(const Values& v) { return drawdistance::MatchReach(ReachOf(v)); }
+inline const char* DistanceName(int stop) {
+    switch (stop) {
+        case 0: return "1";
+        case 1: return uitext::Tr("vr.distance.default", "2 (default)");
+        case 2: return "3";
+        case 3: return "4";
+        case 4: return "5";
+        case 5: return "6";
+        case 6: return "7";
+        default: return uitext::Tr("vr.preset.custom", "Custom");
+    }
+}
+static_assert(drawdistance::kReachCount == 7 && drawdistance::kReachDefault == 1, "DistanceName names each stop (2: the default)");
+
 // The name to show for a row's value, nullptr for a row that shows a number.
 inline const char* ValueName(const Values& v, int key) {
     if (key == kKeyPreset) return PresetName(PresetOf(v));
+    if (key == kKeyDistance) return DistanceName(DistanceOf(v));
     if (key == kKeyPairPerTick) return RenderTypeName(rendertype::FromKeys(RenderTypeKeys(v)));
     if (key == kKeyFoveatedStrength) return FoveatedStrengthName((int)std::lround(v[key]));
     if (key == kKeyFoveatedPasses) return FoveatedPassesName((int)std::lround(v[key]));

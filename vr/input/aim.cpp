@@ -565,10 +565,22 @@ extern float g_heroPosNow[3];   // (defined with the hero's facing, below)
 extern std::atomic<bool> g_skillHeld;   // (below)
 
 // [bow] arrow_flight (vr/arrow_flight_wire.h): the shot's line (render metres), the heading the game is given and what pitch_aim met - our arrow flies it
+// VR F4 only: the flat game notes its own shot at the click (flat_click.cpp, [bow] arrow_flight_flat) - this hand's line, asked every frame while the game reads
+// an aim, wrote over it there with a line of no hand (Serg's flat test of b95cc6b5: half the arrows took that heading for another's and joined the game's path).
 void NoteArrow(unsigned shot, const float o[3], const float w[3], float theta, const bowpitch::Result* met) {
-    if (!arrowflightwire::On()) return;
+    if (!arrowflightwire::On() || !viewgate::F4() || g_set.platform.load() != 1) return;
     const float hero[3] = {g_heroPosNow[0], g_heroPosNow[1], g_heroPosNow[2]};
     arrowflightwire::NoteShot(shot, o, w, theta, met, hero, std::max(1.0f, ViewHeight()) / UserEyeHeightM());
+    // ... and to the other players (vr/shot_share.h): a draw's shot once, as its press; a hand's line (a crossbow) as it moves, at most 20 a second
+    static unsigned sharedShot = 0;
+    static ULONGLONG sentAt = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (shot != 0 ? shot == sharedShot : now - sentAt < 50) return;
+    arrowflight::Shot s;
+    if (!arrowflightwire::Current(&s)) return;
+    sentAt = now;
+    if (shot) sharedShot = shot;
+    ShareShot(s, (uint16_t)shot, shot != 0);
 }
 
 // [hands] bow_draw: the line of a released draw (vr/bow_draw_wire.cpp), in the head's turn frame, on the ground in world

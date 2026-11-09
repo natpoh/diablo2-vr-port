@@ -76,7 +76,7 @@ namespace engitem { bool DomeShown(); int DomeBand(); bool DomeAtlasHasCap(); fl
 namespace fx { namespace noreshade { bool FxWaiting(); } }   // [render] native_effects: our effect not drawing yet (its build for this size not there) - the game's dome meanwhile
 namespace engitem { bool CeilingShown(); bool CeilingByGame(); bool CeilingLowestHere(float groundY, float* lowestY); }   // [ceiling] game_ceiling: the game draws the cave ceiling this frame; the ceiling is the game's here (the post pass's stays off)
 namespace fx { bool CeilWanted(); bool GameCeilWanted(); }   // (a ceiling wanted here: [ceiling] enabled, first person, a ceiling biome / a natural cave, no menu)
-namespace engitem { void SetWant(const std::wstring& path); void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, float across, float turn, float grabCm, bool grab, const float hold[6]); void SetBallColours(const float (*rgb)[3]); void Frame(bool fullBody); void InstallHook(); void WorldSeen(bool inWorld); float FistCap(int side); bool BeltBusy(int side); }   // [debug] engine_unit, [hands] belt_models, below
+namespace engitem { void SetWant(const std::wstring& path); void SetBelt(bool on, float up, float ahead, float arc, float scale, float side, float across, float turn, float grabCm, bool grab, const float hold[6]); void SetBallColours(const float (*rgb)[3]); void Frame(bool fullBody); void InstallHook(); void WorldSeen(bool inWorld); void DomeHeartbeat(bool inWorld); float FistCap(int side); bool BeltBusy(int side); }   // [debug] engine_unit, [hands] belt_models, below
 void StartMatrixWatch();   // [debug] matrix_writer, below PickHeroMatrix
 namespace drawprof { extern std::atomic<bool> g_want; }
 namespace cbcmp { extern std::atomic<bool> g_go; void NoteView(int eye, const float v[16]); }
@@ -132,6 +132,7 @@ void InstallBiomeHook();
 void InstallClientSize(bool on);
 void InstallLabelWidthGuard();
 void InstallRoomHeightHook();
+void InstallTerrainHeightHook();   // [render] terrain_heights (vr/render/render_switches.cpp)
 extern std::atomic<bool> g_renderDirty, g_bigDirty;
 namespace roofhook { void Install(); void Tick(); }   // [render] keep_roofs
 namespace prophook { void Install(); void Tick(); }   // [stereo] props_once_a_pair
@@ -169,6 +170,8 @@ constexpr int kCeilSlots = 8;
 extern const char* const kActDefs[7];
 extern SRWLOCK g_skyCfgLock;           // the acts' skies, the caves' fog colour
 extern SkyAct g_skyAct[7];
+struct GameFogAct { float colour[4][3]; bool set[4]; };   // [fog] game_fog_<act>_dawn / _day / _dusk / _night (vr/sky/fog_times.h Group), display colours
+extern GameFogAct g_gameFogAct[7];   // (under g_skyCfgLock)
 extern CaveFog g_caveFog;
 extern CaveFog g_arcaneFogColour;      // [fog] arcane_color: the Arcane Sanctuary's own fog colour (with arcane_own; unset: the caves')
 extern std::atomic<uint32_t> g_skyCfgGen;
@@ -287,6 +290,7 @@ extern SkyView g_skyView[2];
 extern SRWLOCK g_calLock;
 extern Calib g_cal;
 extern thread_local SpellCast g_spellCast;   // the resolution under way on this thread
+extern thread_local bool t_flatClickNoHover;   // [input] flat_shot_at_crosshair: the flat click under way sees nothing hovered (vr/input/flat_click.cpp)
 extern AttackPointFn OrigAttackPoint;
 extern const uint8_t kSigClientIndex[15];
 extern const uint8_t kSigHoverUnit[12];

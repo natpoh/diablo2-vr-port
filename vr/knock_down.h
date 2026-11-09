@@ -84,6 +84,30 @@ void LetGo(int side);
 bool HeldPart(int side, float a[3], float b[3], float* r);
 uint32_t Holding(int side);
 
+// [multiplayer] pose_share_grab (vr/grab_share.h): what hand `side` holds for the others to see - the body, its limb (a D2RF_* joint: the weapon's wrist for a body
+// taken by what it holds, else the limb nearest the point taken, grabshare::NearestLimb) and the point taken in that limb's frame (grabshare::ToLimb, limb
+// lengths), all as the body was drawn when the hand took it; the palm now (render world). False: it holds nothing (or no limb frame).
+struct Shared { uint32_t id = 0; int joint = -1; float local[3] = {}; float palm[3] = {}; };
+bool SharedHold(int side, Shared* out);
+// ... and the others' holds, here: another player's (holder, his hand `side`) took body id by limb `joint` at `local` (as above) - our library takes OUR drawing of
+// it there (the point from our own drawing of that limb) by its hand slot `side` (the other when that one is ours on that body), held at `palm` (render world,
+// where we draw his hand) each tick by RemoteHandAt, and let go by RemoteLetGo: the next step moves the palm on by `vel` (m/s, render world; may be null) and lets
+// go - the body flies on as his hand left it. F4, with knock_down or grab_throw on and the library there; the body must be one the touch read lately (a
+// humanoid near us): false otherwise, *why says (may be null). Visual only: a body only another player holds is never moved by our knockbacks.
+bool RemoteTake(uint32_t holder, int side, uint32_t id, int joint, const float local[3], const float palm[3], const char** why = nullptr);
+void RemoteHandAt(uint32_t holder, int side, const float palm[3]);
+void RemoteLetGo(uint32_t holder, int side, const float palm[3], const float vel[3]);
+int RemoteHolds();   // how many bodies the others' hands hold here now
+// ... and our blows (the author: «если один игрок толкнул или кинул монстра, другие тоже должны это видеть»): each knock-down, stagger or shove our weapon made
+// (and a leap's landing) lately - the body, the limb nearest the point it met and that point in the limb's frame (as SharedHold), the speed it gave the body
+// (render m/s: its impulse over its weight), its kind (D2RF_BLOW .. D2RF_STAGGER); each given once, none older than 0.3 s. How many.
+struct SharedKnock { uint32_t id = 0; int joint = -1; float local[3] = {}; float vel[3] = {}; int kind = 0; };
+int TakeSharedKnocks(SharedKnock* out, int max);
+// Another player's (striker) knock of body id here: our library knocks OUR drawing of it down (or staggers it) at the same limb and point, with the same
+// speed (render m/s, our world) times what it weighs here - on the next tick, as our own blows go. Not for a body down or held here already. Visual only:
+// never sent again, no knockback of ours for it. False: not taken, *why says (may be null).
+bool RemoteKnock(uint32_t striker, uint32_t id, int joint, const float local[3], const float vel[3], int kind, const char** why = nullptr);
+
 // The world-matrix hook's writer (headshadow::SetAttachWriter -> potion_hide's hook; the renderer's thread): what hangs on a body drawn out of the game's pose -
 // its weapon, its shield - goes with the bone it hangs on as drawn.
 void OnXform(uint32_t entity, uintptr_t component, uintptr_t out);

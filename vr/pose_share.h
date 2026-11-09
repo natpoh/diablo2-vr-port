@@ -58,7 +58,8 @@ constexpr uint32_t kMaxPayload = 224;                   // D2RLoader's Network::
 
 // kMsgBurst: [debug] pose_share_burst's measuring messages, sent back to back once a connection is up (a pose's size, the payload a ping's):
 // how many a sender gets out before RateLimited, how many of them arrive.
-enum MsgId : uint16_t { kMsgPose = 1, kMsgRelay = 2, kMsgPing = 3, kMsgPong = 4, kMsgBurst = 5 };
+// kMsgShot (vr/shot_share.h): a player's bow shot - its line in the world - to the host, and from the host to every other player as it came.
+enum MsgId : uint16_t { kMsgPose = 1, kMsgRelay = 2, kMsgPing = 3, kMsgPong = 4, kMsgBurst = 5, kMsgShot = 8 };   // (6, 7: vr/grab_share.h kMsgGrab, kMsgGrabRelay)
 
 constexpr int kSendHzDefault = 30;   // [debug] pose_share_hz: our pose to the host, and the host's relays to each peer
 constexpr int kRelayMax = 4;         // poses in one relay at most (four bare ones: 2 + 4 * 52 = 210 bytes; two with bodies and weapons)

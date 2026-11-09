@@ -32,6 +32,7 @@ std::atomic<int> g_skyPalette{0};
 std::atomic<bool> g_arcaneArea{false};   // (sky_tick.cpp's: [fog] arcane_own / caves=0 there)
 std::atomic<bool> g_arcaneSky{false}, g_underground{false}, g_noFogArea{false}, g_ceilBiome{false}, g_gameCeilBiome{false};
 bool GameDrawnView() { return w_gameView; }
+bool GameFogDrawnView() { return w_gameView; }   // (the game's fog's own flat switch: the same view here)
 namespace gamefogvr {
 std::atomic<bool> g_bad{false};
 bool Active() { return w_gameFogActive; }

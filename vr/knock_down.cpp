@@ -16,6 +16,7 @@
 
 #include "death_ragdoll.h"     // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell
 #include "fall_lib.h"
+#include "grab_share.h"       // [multiplayer] pose_share_grab: the touch point in the limb's frame, for the others and from them
 #include "walk_home.h"        // a body home again goes back to the game's own animation
 #include "grab_move.h"        // [weight] grab_moves_unit: a carried or thrown body moved by the game's own knockback
 #include "grab_move_wire.h"
@@ -32,6 +33,8 @@
 #include "view_gate.h"
 
 static_assert(dollpose::kKnockJoints == D2RF_JOINTS, "dollpose::Knock holds the knock-down's joints");
+static_assert(grabshare::kJoints == D2RF_JOINTS && grabshare::kRWrist == D2RF_R_WRIST && grabshare::kLHip == D2RF_L_HIP && grabshare::kRToe == D2RF_R_TOE,
+              "grabshare's joints are the knock-down's");
 
 namespace knockdown {
 
@@ -84,6 +87,7 @@ struct Pending {   // (leap: thrown by a leap's landing - distM its pelvis from 
     bool leap = false, asked = false;
     float distM = 0.0f;
     int cell[2] = {};
+    uint32_t remote = 0;   // [multiplayer] pose_share_grab: another player's blow (his unit; RemoteKnock) - drawn by our library, never shared again, no knockback of ours
 };
 Pending g_pending[8];
 int g_nPending = 0;
@@ -114,14 +118,31 @@ struct DownBody {
     int bones = 0;
     uint64_t diedMs = 0;
     float impulse[3] = {}, point[3] = {};   // the push it fell by (render world)
+    bool remote = false;   // [multiplayer] pose_share_grab: taken by another player's hand only - drawn by our library, never moved by our knockbacks
 };
 DownBody g_down[D2RF_MAX_DOWN];
 bool g_any = false;
 deathragdoll::Corpses g_corpses;   // (the timer's thread only: Tick, ResetLocked from it) the corpses kept as they lie
 deathragdoll::Told g_told;         // (the timer's thread only) the deaths decided
 constexpr int kMaxSelves = D2RF_MAX_DOWN + deathragdoll::kMaxCorpses;
-struct HandHold { uint32_t id = 0; float palm[3] = {}; uint64_t atMs = 0; float speed = 0.0f; uint64_t sinceMs = 0; };
+struct HandHold {
+    uint32_t id = 0; float palm[3] = {}; uint64_t atMs = 0; float speed = 0.0f; uint64_t sinceMs = 0;
+    int shareJoint = -1; float shareLocal[3] = {};   // [multiplayer] pose_share_grab: the limb and the point taken, for the others (SharedHold)
+};
 HandHold g_hold[2];
+// [multiplayer] pose_share_grab: another player's hand holding a body - our library holds our drawing of it by hand slot `slot` at the palm handed each tick
+// (RemoteHandAt); a let-go waits for the next step (the palm moved on by its velocity that step: the body flies on as his hand left it), then the slot is released.
+struct RemoteHold {
+    uint32_t holder = 0; int side = 0; uint32_t id = 0; int slot = 0;
+    float palm[3] = {}; bool letGo = false; float vel[3] = {}; uint64_t sinceMs = 0;
+};
+constexpr int kMaxRemote = 8;
+RemoteHold g_remote[kMaxRemote];
+// [multiplayer] pose_share_grab: our blows' knock-downs, staggers and shoves for the others (TakeSharedKnocks), as they were made
+struct KnockShare { SharedKnock k; uint64_t atMs = 0; };
+KnockShare g_knockShare[8];
+int g_knockShareAt = 0;
+constexpr uint64_t kKnockShareMs = 300;   // one not taken this soon is not sent (the box was off, or the pose share)
 // [weight] impale_drag: a body on the blade of hand `side` (the library's hand slot of that side; a hand holding a weapon holds no body by its grip)
 struct OnBlade { uint32_t id = 0; uint64_t sinceMs = 0, bladeAtMs = 0, slowSinceMs = 0; float tip[3] = {}; bool hadTip = false; float speed = 0.0f; };
 OnBlade g_blade[2];
@@ -298,6 +319,7 @@ void ResetLocked() {
     for (auto& d : g_down) d = DownBody{};
     for (auto& d : g_downIds) d.store(0);
     for (auto& h : g_hold) h = HandHold{};
+    for (auto& r : g_remote) r = RemoteHold{};
     for (auto& b : g_blade) b = OnBlade{};
     for (auto& b : g_bladeIds) b.store(0);
     g_any = false;
@@ -548,14 +570,25 @@ bool TakeOver(int side, uint32_t id, const float point[3], const float palm[3], 
         both = g_hold[1 - side].id == id;
         if (const DownBody* was = DownOf(id, now, false)) swap = was->swap;   // (one the library has: as it was handed over)
         if (swap) knockpose::SwapSides(k.joint, &k.have);
+        for (auto& rh : g_remote)   // [multiplayer] pose_share_grab: another player's hold on this hand slot of the body gives way to ours
+            if (rh.id == id && rh.slot == side) { falllib::Release(id, side); rh = RemoteHold{}; }
         r = falllib::Grab(k, side, at, knockpose::SwapJoint(part, swap));
         if (r == 1) {
             if (DownBody* d = DownOf(id, now, true)) {
                 d->swap = swap;
                 d->grabbed = true;
+                d->remote = false;
             }
             g_hold[side] = HandHold{};
             g_hold[side].id = id;
+            {   // [multiplayer] pose_share_grab: the limb and the point taken as the body is drawn now (the library's, when it has the body; else the game's)
+                const float (*jt)[3] = info.joint;
+                uint32_t have = info.have;
+                for (int i = 0; i < g_nPosesNow; ++i)
+                    if (g_posesNow[i].id == id) { jt = g_posesNow[i].joint; have = ~0u; }
+                const int limb = part >= 0 ? part : grabshare::NearestLimb(jt, have, point);
+                g_hold[side].shareJoint = limb >= 0 && grabshare::ToLimb(jt, limb, point, g_hold[side].shareLocal) ? limb : -1;
+            }
             std::memcpy(g_hold[side].palm, palm, sizeof g_hold[side].palm);
             g_hold[side].atMs = g_hold[side].sinceMs = now;
             g_any = true;
@@ -620,6 +653,184 @@ uint32_t Holding(int side) {
     if (side < 0 || side > 1) return 0;
     std::lock_guard<std::mutex> lock(g_lib);
     return g_hold[side].id;
+}
+
+bool SharedHold(int side, Shared* out) {
+    if (side < 0 || side > 1 || !out) return false;
+    std::lock_guard<std::mutex> lock(g_lib);
+    const HandHold& h = g_hold[side];
+    if (!h.id || h.shareJoint < 0) return false;
+    out->id = h.id;
+    out->joint = h.shareJoint;
+    std::memcpy(out->local, h.shareLocal, sizeof out->local);
+    std::memcpy(out->palm, h.palm, sizeof out->palm);
+    return true;
+}
+
+namespace {
+// (under g_lib) is hand slot s of body id ours (a hand, a blade) or another player's already?
+bool SlotTaken(uint32_t id, int s) {
+    if (g_hold[s].id == id || g_blade[s].id == id) return true;
+    for (const auto& r : g_remote)
+        if (r.id == id && r.slot == s) return true;
+    return false;
+}
+RemoteHold* RemoteOf(uint32_t holder, int side) {
+    for (auto& r : g_remote)
+        if (r.id && r.holder == holder && r.side == side) return &r;
+    return nullptr;
+}
+}  // namespace
+
+bool RemoteTake(uint32_t holder, int side, uint32_t id, int joint, const float local[3], const float palm[3], const char** why) {
+    const char* none = nullptr;
+    if (!why) why = &none;
+    *why = "";
+    if (side < 0 || side > 1 || !id || !holder || !local || !palm || joint < 0 || joint >= D2RF_JOINTS) { *why = "not a hold"; return false; }
+    if (!Wanted()) { *why = "neither [weight] knock_down nor grab_throw is on here"; return false; }
+    if (!viewgate::F4()) { *why = "not VR F4 here"; return false; }
+    if (!falllib::Loaded()) { *why = "no knock-down library here"; return false; }
+    const uint64_t now = GetTickCount64();
+    Info info;
+    float lieS = 1.5f;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        const Info* f = InfoOf(id);
+        if (!f || now - f->atMs > kInfoFreshMs) { *why = "that monster is not near here (not loaded, too far, or not a humanoid read lately)"; return false; }
+        info = *f;
+        lieS = g_set.lieMs * 0.001f;
+    }
+    D2rfKnock k{};
+    k.size = sizeof k;
+    k.id = id;
+    std::memcpy(k.joint, info.joint, sizeof k.joint);
+    k.have = info.have;
+    k.floorY = info.body.floorY;
+    k.massKg = info.body.massKg;
+    k.lieS = lieS;
+    FlipJoints(k.joint);
+    int r = 0, slot = -1;
+    float point[3] = {};
+    {
+        std::lock_guard<std::mutex> lock(g_lib);
+        if (RemoteHold* old = RemoteOf(holder, side)) {   // (his hand's hold before this one: let go)
+            falllib::Release(old->id, old->slot);
+            *old = RemoteHold{};
+        }
+        for (const int s : {side, 1 - side})
+            if (!SlotTaken(id, s)) { slot = s; break; }
+        if (slot < 0) { *why = "both of our library's hands on it are taken"; return false; }
+        const float (*jt)[3] = info.joint;   // the point on OUR drawing of that limb (the library's, when it has the body)
+        for (int i = 0; i < g_nPosesNow; ++i)
+            if (g_posesNow[i].id == id) jt = g_posesNow[i].joint;
+        if (!grabshare::FromLimb(jt, joint, local, point)) { *why = "no frame for that limb here"; return false; }
+        bool swap = info.swap;
+        if (const DownBody* was = DownOf(id, now, false)) swap = was->swap;
+        if (swap) knockpose::SwapSides(k.joint, &k.have);
+        float at[3] = {point[0], point[1], point[2]};
+        Flip(at);
+        r = falllib::Grab(k, slot, at, knockpose::SwapJoint(joint, swap));
+        if (r == 1) {
+            if (DownBody* d = DownOf(id, now, true)) {
+                d->swap = swap;
+                if (!d->grabbed) d->remote = true;
+            }
+            for (auto& rh : g_remote)
+                if (!rh.id) {
+                    rh = RemoteHold{};
+                    rh.holder = holder;
+                    rh.side = side;
+                    rh.id = id;
+                    rh.slot = slot;
+                    std::memcpy(rh.palm, palm, sizeof rh.palm);
+                    rh.sinceMs = now;
+                    break;
+                }
+            g_any = true;
+        }
+    }
+    if (r == 1) {
+        LogF("knock down: another player's (unit %u) %s hand took %s %u ('%s', %.0f kg) by joint %d - our library holds our drawing of it there (its hand %d), the "
+             "touch point %.0f cm from his palm as we draw it ([multiplayer] pose_share_grab; visual only)", holder, SideName(side), info.hostile ? "monster" : "NPC", id,
+             info.model, info.body.massKg, joint, slot, std::sqrt((point[0] - palm[0]) * (point[0] - palm[0]) + (point[1] - palm[1]) * (point[1] - palm[1]) +
+                                                                 (point[2] - palm[2]) * (point[2] - palm[2])) * 100.0f);
+        return true;
+    }
+    *why = r == 0 ? "the library did not take it (full, or not a humanoid)" : "the library refused it";
+    return false;
+}
+
+void RemoteHandAt(uint32_t holder, int side, const float palm[3]) {
+    if (!palm) return;
+    std::lock_guard<std::mutex> lock(g_lib);
+    RemoteHold* r = RemoteOf(holder, side);
+    if (!r || r->letGo) return;
+    std::memcpy(r->palm, palm, sizeof r->palm);
+    float at[3] = {palm[0], palm[1], palm[2]};
+    Flip(at);
+    if (falllib::Hand(r->id, r->slot, at) <= 0) *r = RemoteHold{};   // (the library let it go: died, gone)
+}
+
+void RemoteLetGo(uint32_t holder, int side, const float palm[3], const float vel[3]) {
+    std::lock_guard<std::mutex> lock(g_lib);
+    RemoteHold* r = RemoteOf(holder, side);
+    if (!r || r->letGo) return;
+    r->letGo = true;
+    if (palm) std::memcpy(r->palm, palm, sizeof r->palm);
+    for (int k = 0; k < 3; ++k) r->vel[k] = vel && std::isfinite(vel[k]) ? std::clamp(vel[k], -30.0f, 30.0f) : 0.0f;
+}
+
+int TakeSharedKnocks(SharedKnock* out, int max) {
+    if (!out || max <= 0) return 0;
+    const uint64_t now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_lib);
+    int n = 0;
+    for (auto& s : g_knockShare) {
+        if (!s.atMs) continue;
+        if (now - s.atMs <= kKnockShareMs && n < max) out[n++] = s.k;
+        s = KnockShare{};
+    }
+    return n;
+}
+
+bool RemoteKnock(uint32_t striker, uint32_t id, int joint, const float local[3], const float vel[3], int kind, const char** why) {
+    const char* none = nullptr;
+    if (!why) why = &none;
+    *why = "";
+    if (!striker || !id || !local || !vel || joint < 0 || joint >= D2RF_JOINTS || kind < D2RF_BLOW || kind > D2RF_STAGGER) { *why = "not a knock"; return false; }
+    if (!Wanted()) { *why = "neither [weight] knock_down nor grab_throw is on here"; return false; }
+    if (!viewgate::F4()) { *why = "not VR F4 here"; return false; }
+    for (int s = 0; s < D2RF_MAX_DOWN; ++s)   // (one falling, lying, getting up or held here takes no blow - as ours)
+        if (g_downIds[s].load(std::memory_order_relaxed) == id && Busy(g_downPhase[s].load(std::memory_order_relaxed))) { *why = "it is down or held here already"; return false; }
+    const uint64_t now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const Info* info = InfoOf(id);
+    if (!info || now - info->atMs > kInfoFreshMs) { *why = "that monster is not near here (not loaded, too far, or not a humanoid read lately)"; return false; }
+    Pending q{};
+    q.id = id;
+    q.remote = striker;
+    if (!grabshare::FromLimb(info->joint, joint, local, q.v.point)) { *why = "no frame for that limb here"; return false; }
+    q.v.knock = true;
+    q.v.kind = kind;
+    float sp = 0.0f;
+    for (int c = 0; c < 3; ++c) {
+        const float v = std::isfinite(vel[c]) ? std::clamp(vel[c], -30.0f, 30.0f) : 0.0f;
+        q.v.impulse[c] = v * info->body.massKg;   // (the speed his blow gave it, times what it weighs here)
+        sp += v * v;
+    }
+    q.v.gaveMs = std::sqrt(sp);
+    for (int i = 0; i < g_nPending; ++i)
+        if (g_pending[i].id == id) { *why = "a knock of it is on its way here already"; return false; }
+    if (g_nPending >= (int)std::size(g_pending)) { *why = "too many knocks at once here"; return false; }
+    g_pending[g_nPending++] = q;
+    return true;
+}
+
+int RemoteHolds() {
+    std::lock_guard<std::mutex> lock(g_lib);
+    int n = 0;
+    for (const auto& r : g_remote) n += r.id && !r.letGo ? 1 : 0;
+    return n;
 }
 
 namespace {
@@ -1026,11 +1237,29 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 d->moves = 0;
                 d->leap = pending[p].leap;
                 d->leapMs = pending[p].leap ? nowMs : 0;
+                d->remote = pending[p].remote != 0;
                 for (int m = 0; m < nUnits; ++m)
                     if (units[m].id == k.id && rigOf[m] >= 0 && static_cast<size_t>(rigOf[m]) < nr) std::memcpy(d->root, rigs[rigOf[m]].root, sizeof d->root);
             }
             g_any = true;
             const knocktrigger::Verdict& v = pending[p].v;
+            if (pending[p].remote) {   // [multiplayer] pose_share_grab: another player's blow, played on our ragdoll
+                LogF("knock down: %u ('%s', %.0f kg) %s by another player's (unit %u) %s - %.2f m/s to the body as his game had it ([multiplayer] pose_share_grab; "
+                     "visual only)", k.id, f->model, k.massKg, k.kind == D2RF_STAGGER ? "staggered" : "knocked down", pending[p].remote, KindName(k.kind), v.gaveMs);
+                continue;
+            }
+            if (k.massKg > 0.5f) {   // [multiplayer] pose_share_grab: ours, for the others - the limb and the point it met as the body stood, the speed it gave it
+                SharedKnock sk;
+                const int limb = grabshare::NearestLimb(f->joint, f->have, v.point);
+                if (limb >= 0 && grabshare::ToLimb(f->joint, limb, v.point, sk.local)) {
+                    sk.id = k.id;
+                    sk.joint = limb;
+                    sk.kind = k.kind;
+                    for (int c = 0; c < 3; ++c) sk.vel[c] = v.impulse[c] / k.massKg;
+                    g_knockShare[g_knockShareAt] = KnockShare{sk, GetTickCount64()};
+                    g_knockShareAt = (g_knockShareAt + 1) % (int)std::size(g_knockShare);
+                }
+            }
             if (pending[p].leap) {
                 LogF("leap scatter: %u ('%s', %.0f kg) %s - %.2f m from the landing, one cell %+d,%+d (thrown %.2f m/s across, %.2f up); its unit %s", k.id,
                      f->model, k.massKg, k.kind == D2RF_STAGGER ? "staggered (too heavy to fall)" : "thrown off its feet", pending[p].distM, pending[p].cell[0],
@@ -1210,7 +1439,21 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                 falllib::Home(d.id, home);
             }
     }
+    for (const RemoteHold& rh : g_remote) {   // [multiplayer] pose_share_grab: another player's let-go - this step's palm moved on by his hand's velocity
+        if (!rh.id || !rh.letGo || !(dt > 0.0f)) continue;
+        float at[3];
+        for (int k = 0; k < 3; ++k) at[k] = rh.palm[k] + rh.vel[k] * dt;
+        Flip(at);
+        falllib::Hand(rh.id, rh.slot, at);
+    }
     falllib::Step(dt);
+    for (RemoteHold& rh : g_remote) {   // ... then let go: the body flies on as his hand left it
+        if (!rh.id || !rh.letGo) continue;
+        falllib::Release(rh.id, rh.slot);
+        LogF("knock down: another player's (unit %u) %s hand let go of %u after %.1f s, the palm going %.1f m/s here ([multiplayer] pose_share_grab)", rh.holder,
+             SideName(rh.side), rh.id, (nowMs - rh.sinceMs) / 1000.0f, std::sqrt(rh.vel[0] * rh.vel[0] + rh.vel[1] * rh.vel[1] + rh.vel[2] * rh.vel[2]));
+        rh = RemoteHold{};
+    }
     grabmove::Tick(nowMs);   // [weight] grab_moves_unit: a knockback asked is looked at once it has run
     D2rfPose poses[D2RF_MAX_DOWN];
     const int nPoses = falllib::Poses(poses, D2RF_MAX_DOWN);
@@ -1397,7 +1640,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         // or one a weapon's blow knocked down (never a stagger's step back)
         // (a blow's: kKnockMoves knockbacks at most - where it lands and where it settles; past them the game's own walk is its walk, not ours to undo)
         const int source = d->grabbed ? grabmove::kGrab : d->leap ? grabmove::kLeap : grabmove::kKnock;
-        if (source != grabmove::kLeap && grabmove::KindMoves(d->grabbed, d->kind) && grabmove::WantedFor(source) && (d->grabbed || d->moves < grabmove::kKnockMoves)) {
+        if (!d->remote && source != grabmove::kLeap && grabmove::KindMoves(d->grabbed, d->kind) && grabmove::WantedFor(source) &&
+            (d->grabbed || d->moves < grabmove::kKnockMoves)) {   // ([multiplayer] pose_share_grab: never a body only another player holds - his game moves it, if any)
             for (int i = 0; i < nf && (grabmove::PhaseMoves(p.phase) || p.phase == walkhome::kWalking); ++i)   // (up again too: the unit brought under it before it is let go)
                 if (fresh[i].id == p.id) {
                     float dx = 0.0f, dy = 0.0f;
@@ -1552,6 +1796,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         if (!there) {
             for (auto& h : g_hold)
                 if (h.id == g_down[s].id) h = HandHold{};
+            for (auto& rh : g_remote)
+                if (rh.id == g_down[s].id) rh = RemoteHold{};
             for (int b = 0; b < 2; ++b)
                 if (g_blade[b].id == g_down[s].id) { g_blade[b] = OnBlade{}; g_bladeIds[b].store(0); }
             g_down[s] = DownBody{};

@@ -18,7 +18,8 @@
 // at our hero's attack start - its length in the server's frames, exact; with [gameplay] quick_blow_faster the green comes once its least wait
 // passed. Joined to another's game (no server here): our hero's client mode, the attack's length measured from the last one (as
 // meleedirectclient::AttackClock), the first one guessed. The outcomes: [debug] hit_outcome's two read-only observers (vr/hit_outcome.h), our
-// hero's blows only - on our server, so a joined player sees the timer and "too soon" but no numbers.
+// hero's blows only - on our server, so a joined player sees the timer and "too soon" but no numbers, unless the host sends them
+// ([multiplayer] share_hit_outcomes, vr/hit_share.h: the host's records of his hero's blows come into the same ring).
 //
 // [gameplay] swing_pace_joined (its own tick, Serg 2026-11-05: "расчёт на клиенте, регистрация на сервере"): joined to another's game, a touch
 // the host's gate would refuse is not sent, and one in its last moments is held and sent when the client's clock turns green (PaceAt). That

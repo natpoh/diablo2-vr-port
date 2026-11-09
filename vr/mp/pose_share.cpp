@@ -1,6 +1,7 @@
 // vr/mp/pose_share.cpp - [multiplayer] pose_share: our head, controllers, body and held things to the other players, and theirs drawn and
 // met (cut from vr/vrcam.cpp, docs/plan_modules.md M11; the network side is vr/pose_share_wire.cpp). What it gives: vr/mp/pose_share.h.
 #include "../vrcam_headers.h"
+#include "../shot_release.h"   // the host turns a joined player's arrow at its create (RemoteReleaseAim)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -25,7 +26,16 @@ std::atomic<bool> g_poseLegsSelf{false};   // [debug] pose_share_legs_self: the 
 // [multiplayer] pose_share_held: what our hands have (a potion, an item taken off the ground, a prop of the level) goes out with the pose - in the hand, flying, at rest -
 // and the other players' is drawn: copies of the items in their hands and in flight, their props put where they have them (visual only; live)
 std::atomic<bool> g_poseHeld{false};
+// [multiplayer] pose_share_grab (vr/grab_share.h): a body our hand holds for the knock-down library ([weight] grab_throw) goes out as a hold - the monster, the limb,
+// the touch point, the palm - and the others' holds are drawn by our own library: their held bodies hang from their hands here, thrown as they let go (F4; live)
+std::atomic<bool> g_poseGrab{false};
 void PoseShareConfigure() {
+    {
+        const bool grab = IniB(L"multiplayer", L"pose_share_grab", false);
+        if (g_poseGrab.exchange(grab) != grab)
+            LogF("vrcam: pose share - a body held in the hand (grab_throw) %s ([multiplayer] pose_share_grab)",
+                 grab ? "goes to the others, and theirs hang from their hands here, drawn by our own ragdoll (F4)" : "is not shared");
+    }
     {
         const bool self = IniB(L"debug", L"pose_share_legs_self", false);
         if (g_poseLegsSelf.exchange(self) != self)
@@ -72,6 +82,80 @@ void PoseShareConfigure() {
     pc.burst = IniB(L"debug", L"pose_share_burst", false);
     pc.delayMs = (uint32_t)std::clamp(IniF(L"debug", L"pose_share_delay_ms", (float)poseshare::kDelayMsDefault), 0.0f, 500.0f);
     posewire::Configure(pc);
+}
+
+// ---- bow shots to and from the other players (vr/shot_share.h, docs/notes/shot_at_release.md) -------------------------------------------------------------
+// Ours go out as they are noted (the flat click and the create, VR's draw); the others' come on D2RLoader's callback threads.
+SRWLOCK g_remoteAimsLock = SRWLOCK_INIT;
+shotshare::Owners g_remoteAims;   // the host's: each player's line, for the create of his arrows
+
+void ShareShot(const arrowflight::Shot& s, uint16_t seq, bool press) {
+    uint32_t me = 0;
+    if (!s.ok || !posewire::Registered() || !GestureHeroId(&me)) return;
+    shotshare::Shot o;
+    o.seq = seq;
+    o.flags = (uint8_t)((s.target ? shotshare::kTarget : 0) | (s.monster ? shotshare::kMonster : 0) | (s.stick ? shotshare::kStick : 0) | (press ? shotshare::kPress : 0));
+    o.theta = s.theta;
+    const float st[3] = {s.start.x, s.start.y, s.start.z}, d[3] = {s.dir.x, s.dir.y, s.dir.z}, at[3] = {s.at.x, s.at.y, s.at.z}, h[3] = {s.hero.x, s.hero.y, s.hero.z};
+    for (int i = 0; i < 3; ++i) { o.start[i] = st[i]; o.dir[i] = d[i]; o.at[i] = s.target ? at[i] : st[i]; o.hero[i] = h[i]; }
+    o.gridDist = s.gridDist;
+    o.upm = s.upm;
+    posewire::ShotOut(me, o);
+}
+
+void OnShot(uint32_t unit, const shotshare::Shot& s, bool asHost) {
+    if (asHost) {   // the host's copy: kept for the create of his arrows (RemoteReleaseAim)
+        AcquireSRWLockExclusive(&g_remoteAimsLock);
+        g_remoteAims.Note(unit, s, GetTickCount64());
+        ReleaseSRWLockExclusive(&g_remoteAimsLock);
+        return;
+    }
+    uint32_t me = 0;
+    if (GestureHeroId(&me) && me == unit) return;   // (ours, back: never)
+    arrowflight::Shot a;
+    a.ok = true;
+    a.theta = s.theta;
+    a.start = arrowflight::V3{s.start[0], s.start[1], s.start[2]};
+    a.dir = arrowflight::V3{s.dir[0], s.dir[1], s.dir[2]};
+    a.hero = arrowflight::V3{s.hero[0], s.hero[1], s.hero[2]};
+    a.upm = s.upm;
+    a.target = (s.flags & shotshare::kTarget) != 0;
+    a.monster = (s.flags & shotshare::kMonster) != 0;
+    a.stick = (s.flags & shotshare::kStick) != 0;
+    a.at = arrowflight::V3{s.at[0], s.at[1], s.at[2]};
+    a.gridDist = s.gridDist;
+    arrowflightwire::NoteRemote(unit, a);
+}
+
+void ShotShareInit() { posewire::SetShotSink(&OnShot); }
+
+bool RemoteReleaseAim(const throwborn::AimAsk& a, int* tx, int* ty) {
+    if (!shotrelease::Turns(a.cls)) return false;
+    shotshare::Line l;
+    AcquireSRWLockShared(&g_remoteAimsLock);
+    const bool have = g_remoteAims.Get(a.ownerId, GetTickCount64(), &l);
+    ReleaseSRWLockShared(&g_remoteAimsLock);
+    if (!have) return false;   // no line of his lately: the game's own aim (his click's point)
+    shotrelease::In si;
+    si.cls = a.cls;
+    si.sx = a.sx; si.sy = a.sy;
+    si.tx = a.tx; si.ty = a.ty;
+    si.hasTarget = a.hasTarget;
+    si.targetUnit = a.targetUnit;
+    si.pressKnown = l.pressKnown;
+    si.pressTheta = l.pressTheta;
+    si.releaseTheta = l.shot.theta;
+    const shotrelease::Out o = shotrelease::Decide(si);
+    if (!o.write) return false;
+    *tx = o.tx;
+    *ty = o.ty;
+    static ULONGLONG told = 0;
+    if (const ULONGLONG now = GetTickCount64(); now - told >= 2000) {
+        told = now;
+        LogF("vrcam: shot at release (host): player %u's arrow turned %+.1f deg - his line at the press %.1f deg, now %.1f deg; target %d, %d -> %d, %d", a.ownerId,
+             shotrelease::Wrap(o.toTheta - o.fromTheta) * 57.2957795f, l.pressTheta * 57.2957795f, l.shot.theta * 57.2957795f, a.tx, a.ty, o.tx, o.ty);
+    }
+    return true;
 }
 
 namespace fx {
@@ -445,6 +529,165 @@ void PoseShareHeldTick(ULONGLONG now) {
 }
 
 // The update thread, every round: our pose to the wire, the players' places for the draw (30 a second, while it may draw).
+// ---- [multiplayer] pose_share_grab (vr/grab_share.h): a body one player holds, seen held by everyone -----------------------------------------------------------
+// Ours: each hand's hold for the knock-down library (knockdown::SharedHold - the body, the limb, the touch point taken; the palm) as a hold, the palm in our hero's
+// frame as the pose's hands; a let-go as a release with the palm's velocity (grabshare::Sender). Theirs: each holder's hand as played back (posewire::RemoteGrabs, as
+// far behind as his poses), his palm put beside his hero in our world (FeetOf, as the markers), our own library holding our drawing of the body there
+// (grabshare::Viewer -> knockdown::RemoteTake / RemoteHandAt / RemoteLetGo). Knocks: each knock-down, stagger or shove our blows made (knockdown::TakeSharedKnocks) as
+// one event, sent a few ticks running (grabshare::KnockSender); theirs played once each, as far behind as the striker's poses (posewire::RemoteKnocks ->
+// knockdown::RemoteKnock: our own ragdoll falls the same way). VR F4 only, on the update thread (90 a second). Visual only.
+bool PoseShareGrabWanted() { return posewire::Registered() && g_poseGrab.load() && g_inWorld.load(); }
+
+struct GrabBodies final : grabshare::Bodies {
+    const char* why = "";   // the last take that missed: why
+    uint32_t whyMonster = 0, whyHolder = 0;
+    bool Take(uint32_t holder, int side, uint32_t monster, int joint, const float local[3], const float palm[3]) override {
+        const char* w = nullptr;
+        const bool ok = knockdown::RemoteTake(holder, side, monster, joint, local, palm, &w);
+        if (!ok) { why = w ? w : ""; whyMonster = monster; whyHolder = holder; }
+        return ok;
+    }
+    void Hand(uint32_t holder, int side, const float palm[3]) override { knockdown::RemoteHandAt(holder, side, palm); }
+    void Release(uint32_t holder, int side, const float palm[3], const float vel[3]) override { knockdown::RemoteLetGo(holder, side, palm, vel); }
+};
+
+void PoseShareGrabTick(ULONGLONG now, uint32_t unit) {
+    static ULONGLONG next = 0, missToldAt = 0;
+    static grabshare::Sender sender;
+    static grabshare::KnockSender knocks;
+    static uint16_t knockSeq = 0;
+    static grabshare::Viewer viewer;
+    static GrabBodies bodies;
+    static bool was = false;
+    static unsigned sentHolds = 0, took = 0, released = 0, lost = 0, ignored = 0, knocksOurs = 0, knocksTheirs = 0, knocksMissed = 0;
+    static ULONGLONG lineAt = 0;
+    if (now < next) return;
+    next = now + 11;
+    const bool on = PoseShareGrabWanted() && unit && FullBody() && !ThirdPerson() && viewgate::F4();
+    if (!on) {
+        if (was) {
+            const int k = viewer.ReleaseAll(bodies);
+            sender = grabshare::Sender{};
+            knocks = grabshare::KnockSender{};
+            posewire::SetOwnGrabs(nullptr, 0);
+            if (k) LogF("vrcam: pose share - %d bodies the other players held let go here (not F4, out of the game, or [multiplayer] pose_share_grab off)", k);
+        }
+        was = false;
+        return;
+    }
+    was = true;
+    float L[3];
+    AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
+    const float eyeUnits = std::max(1.0f, ViewHeight());
+    const float upmOurs = eyeUnits / UserEyeHeightM();
+    {   // ours
+        AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+        grabshare::Own own[2];
+        if (f.valid) {
+            const float heading = poseshare::HeadingOf(f.camF);
+            knockdown::SharedKnock sk[8];   // our blows' knocks: one event each (render metres a second are our hero frame's metres: both world units over ours)
+            const int nk = knockdown::TakeSharedKnocks(sk, 8);
+            for (int i = 0; i < nk; ++i) {
+                grabshare::Hold k;
+                k.monster = sk[i].id;
+                k.joint = (uint8_t)sk[i].joint;
+                k.kind = (uint8_t)sk[i].kind;
+                memcpy(k.local, sk[i].local, sizeof k.local);
+                poseshare::DirToHero(sk[i].vel, heading, k.vel);
+                k.heading = heading;
+                k.eyeM = UserEyeHeightM();
+                k.ms = (uint32_t)posewire::NowMs();
+                knocks.Add(k);
+                ++knocksOurs;
+            }
+            for (int side = 0; side < 2; ++side) {
+                knockdown::Shared sh;
+                if (!knockdown::SharedHold(side, &sh)) continue;
+                const float world[3] = {sh.palm[0] * upmOurs, sh.palm[1] * upmOurs, sh.palm[2] * upmOurs};   // (render metres -> world units)
+                grabshare::Own& o = own[side];
+                o.held = true;
+                o.monster = sh.id;
+                o.joint = sh.joint;
+                memcpy(o.local, sh.local, sizeof o.local);
+                poseshare::ToHero(world, L, heading, upmOurs, o.palm);
+                o.heading = heading;
+                o.eyeM = UserEyeHeightM();
+                for (int k = 0; k < 3; ++k) o.feet[k] = L[k] / upmOurs;   // (the palm's velocity is the world's: a head turned is no throw, a run carries on)
+            }
+        }
+        grabshare::Hold out[grabshare::kGrabMsgMax];
+        int n = sender.Feed(own, (uint32_t)posewire::NowMs(), out);
+        sentHolds += (unsigned)n;
+        n += knocks.Take(out + n, grabshare::kGrabMsgMax - n, &knockSeq);
+        if (n) posewire::SetOwnGrabs(out, n);
+    }
+    {   // theirs
+        posewire::RemoteGrab rg[16];
+        const size_t nr = posewire::RemoteGrabs(rg, 16);
+        AcquireSRWLockShared(&g_poseSpotsLock); const PoseSpots spots = g_poseSpots; ReleaseSRWLockShared(&g_poseSpotsLock);
+        grabshare::Seen seen[16];
+        int ns = 0;
+        for (size_t i = 0; i < nr && spots.ownOk; ++i) {
+            if (rg[i].unit == unit) continue;   // (our own, echoed back: our hand holds it already)
+            const meleetouch::PlayerSpot* at = nullptr;
+            for (size_t j = 0; j < spots.n; ++j) if (spots.p[j].id == rg[i].unit) at = &spots.p[j];
+            if (!at) continue;   // (not in our area: a hold of his we drew is let go)
+            float feet[3];
+            poseshare::FeetOf(L, spots.ownX, spots.ownZ, at->x, at->z, feet);
+            const grabshare::Hold& h = rg[i].hold;
+            const float upmTheirs = eyeUnits / std::clamp(h.eyeM, 0.5f, 2.5f);
+            grabshare::Seen& s = seen[ns++];
+            s.holder = rg[i].unit;
+            s.hold = h;
+            s.lost = rg[i].lost;
+            playerbodies::ToRender(h.palm, feet, h.heading, upmTheirs, upmOurs, s.palm);
+            float v[3];
+            poseshare::DirToWorld(h.vel, h.heading, v);   // (his metres a second -> our render metres a second)
+            for (int k = 0; k < 3; ++k) s.vel[k] = v[k] * upmTheirs / upmOurs;
+        }
+        posewire::RemoteKnock rk[16];   // their knocks, each once, on our own ragdoll
+        const size_t nrk = posewire::RemoteKnocks(rk, 16);
+        for (size_t i = 0; i < nrk; ++i) {
+            if (rk[i].unit == unit) continue;   // (our own, echoed back)
+            const grabshare::Hold& k = rk[i].knock;
+            const float upmTheirs = eyeUnits / std::clamp(k.eyeM, 0.5f, 2.5f);
+            float v[3];
+            poseshare::DirToWorld(k.vel, k.heading, v);
+            for (int c = 0; c < 3; ++c) v[c] *= upmTheirs / upmOurs;
+            const char* why = nullptr;
+            if (knockdown::RemoteKnock(rk[i].unit, k.monster, k.joint, k.local, v, k.kind, &why)) ++knocksTheirs;
+            else {
+                ++knocksMissed;
+                if (now - missToldAt >= 2000) {
+                    missToldAt = now;
+                    LogF("vrcam: pose share - another player (unit %u) knocked %u: not played here - %s", rk[i].unit, k.monster, why ? why : "");
+                }
+            }
+        }
+        const grabshare::Viewer::Counts c = viewer.Step(seen, ns, now, bodies);
+        took += (unsigned)c.took;
+        released += (unsigned)c.released;
+        lost += (unsigned)c.lost;
+        ignored += (unsigned)c.ignored;
+        if (c.missed && now - missToldAt >= 2000) {
+            missToldAt = now;
+            LogF("vrcam: pose share - another player (unit %u) holds %u: not taken here - %s (tried again while he holds it)", bodies.whyHolder, bodies.whyMonster, bodies.why);
+        }
+    }
+    if (now - lineAt >= 5000) {
+        if (lineAt && (sentHolds || took || released || lost || ignored || knocksOurs || knocksTheirs || knocksMissed))
+        {   // (LogF cuts at 256: this is longer)
+            char line[400];
+            snprintf(line, sizeof line, "vrcam: pose share - held and knocked bodies (5 s): %u holds and %u knocks of ours sent; theirs: %u taken here, %u let go (thrown), "
+                     "%u lost (no word from the holder), %u never here, %d held here now; %u knocks played here, %u not", sentHolds, knocksOurs, took, released, lost,
+                     ignored, knockdown::RemoteHolds(), knocksTheirs, knocksMissed);
+            Log(line);
+        }
+        lineAt = now;
+        sentHolds = took = released = lost = ignored = knocksOurs = knocksTheirs = knocksMissed = 0;
+    }
+}
+
 void PoseShareTick() {
     if (!posewire::Registered()) return;
     const ULONGLONG now = GetTickCount64();
@@ -457,10 +700,11 @@ void PoseShareTick() {
     PoseShareBodiesTick(now);   // [multiplayer] pose_share_bodies
     PoseShareHeroTick(now);     // [multiplayer] pose_share_hero
     PoseShareHeldTick(now);     // [multiplayer] pose_share_held
+    PoseShareGrabTick(now, unit);   // [multiplayer] pose_share_grab
     // ... and every other hero, whether he sends a pose or not: his legs stepped (with pose_share_hero and _legs), his body from his own bones for our weapon
     skel::SetOtherHeroes(PoseShareHeroWanted() && g_poseLegs.load() && gaitlib::Loaded());
     skel::SetSelfLegs(g_poseLegsSelf.load() && g_inWorld.load() && gaitlib::Ensure());   // [debug] pose_share_legs_self (the library loaded here, never in the hook)
-    if ((PoseShareDrawWanted() || PoseShareHeroWanted() || PoseShareHeldWanted()) && now >= nextSpots) {
+    if ((PoseShareDrawWanted() || PoseShareHeroWanted() || PoseShareHeldWanted() || PoseShareGrabWanted()) && now >= nextSpots) {
         nextSpots = now + 33;
         PoseSpots s;
         meleetouch::PlayerSpot all[16];

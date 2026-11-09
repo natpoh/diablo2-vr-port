@@ -104,7 +104,7 @@ void HsStep(D2RVR_XrInput& in, bool focused) {
     if (g_hsStoreOn) f.snapshot = hset::store::Read();
     if (wake) {
         PoseIn(g_viewSpace, &f.head);
-        for (int h = 0; h < 2; ++h) if (g_hs.Open() || f.present[h]) PoseIn(g_aimSpace[h], &f.aim[h]);
+        for (int h = 0; h < 2; ++h) if (g_hs.Open() || f.present[h]) PoseIn(g_aimSpace[handswap::Phys(h)], &f.aim[h]);   // ([hands] left_handed: hand h's controller)
     }
 
     const hset::FrameOut out = g_hs.Step(f);

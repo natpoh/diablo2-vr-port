@@ -10,7 +10,7 @@
 // It cannot say that the game then draws no plate: that needs the game (docs/ in the note).
 //
 //   mob_bars_hook_test <D2R_image.bin>          every case, each in a process of its own
-//   mob_bars_hook_test <D2R_image.bin> <case>   one case: hook, heightonly, worldonly, trackonly, liftonly, broken
+//   mob_bars_hook_test <D2R_image.bin> <case>   one case: hook, heightonly, worldonly, trackonly, liftonly, elsewhere, broken
 
 #include "sigscan.h"
 #include "../../vr/mob_bars.h"
@@ -541,6 +541,56 @@ void CaseHeightOnly() {
 	EXPECT(fromPlate(nullptr, champion.unit, out, 1) && Near(out[1], 222.0f + 200.0f) && g_originalCalls == 2, "height only: a champion's, moved (y %g)", out[1]);
 }
 
+void CaseElsewhere() {
+	// VR F1, F2, F3 ([hud] monster_names_own_all_views, [hud_third] / [hud_floor] monster_depth): the hook notes the target and where the game hung the
+	// plate - and leaves the game's answer exactly as it was, whatever F4's settings say (ordinary_mob_bars, monster_height on here).
+	d2rsig::Resolve(&g_ctx);
+	mobbars::SetEnabled(true);
+	mobbars::SetHeight(-10.0f);
+	plateworld::Configure(false, 15.0f, 100.0f);
+	plateworld::SetTrack(true);
+	plateworld::SetFollow(true);
+	plateworld::SetElsewhere(false);
+	static bool f4 = false;
+	static int view = 2;
+	viewgate::Set([] { return f4; });
+	viewgate::SetNumber([] { return view; });
+	mobbars::Install(&g_ctx);
+	EXPECT(g_hooks == 1 && mobbars::Hooked(), "hooks: %d", g_hooks);
+	if (g_hooks != 1 || !g_detour) return;
+	UnitToScreenFn fromPlate = PlateCaller(g_detour);
+	mobbars::NoteViewport(2000.0f, 2000.0f);
+	FakeMonster ordinary;
+	float out[2] = {};
+	plateworld::Follow f;
+	// the key off: F2 is the game's own, nothing noted (as before)
+	g_originalCalls = 0;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == 111.0f && out[1] == 222.0f && g_originalCalls == 1, "F2, off: the game's answer (out %g %g)", out[0], out[1]);
+	EXPECT(!plateworld::GetFollow(&f, GetTickCount64()), "F2, off: nothing noted");
+	// on: the game's answer untouched (no hiding of the ordinary monster, no height), the plate's place noted for the effect's box
+	plateworld::SetElsewhere(true);
+	g_originalCalls = 0;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == 111.0f && out[1] == 222.0f && g_originalCalls == 1, "F2, on: the game's answer (out %g %g, original %d)",
+	       out[0], out[1], g_originalCalls);
+	EXPECT(plateworld::GetFollow(&f, GetTickCount64()) && f.unit == reinterpret_cast<uintptr_t>(ordinary.unit) && f.px[0][0] == 111.0f && f.px[0][1] == 222.0f, "F2, on: the plate's place noted");
+	// F1 and F3 the same
+	view = 3;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == 111.0f && out[1] == 222.0f, "F3, on: the game's answer");
+	view = 1;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == 111.0f && out[1] == 222.0f, "F1, on: the game's answer");
+	// the flat game (no VR view): the game's, as ever
+	view = 0;
+	g_originalCalls = 0;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == 111.0f && out[1] == 222.0f && g_originalCalls == 1, "flat: the game's answer");
+	// back in F4: F4's own settings again (the ordinary monster's plate taken off)
+	f4 = true;
+	view = 4;
+	g_originalCalls = 0;
+	EXPECT(fromPlate(nullptr, ordinary.unit, out, 1) && out[0] == mobbars::kFarAway && g_originalCalls == 0, "F4: ordinary_mob_bars as ever (out %g)", out[0]);
+	viewgate::Set(nullptr);
+	viewgate::SetNumber(nullptr);
+}
+
 void CaseBroken() {
 	// UnitToScreen's first bytes are not the game's: not in this build, nothing hooked, nothing more asked.
 	DWORD old = 0;
@@ -563,7 +613,7 @@ int main(int argc, char** argv) {
 	}
 	if (argc == 2) {   // every case in a process of its own (the resolver and the hook keep their state)
 		int bad = 0;
-		for (const char* c : { "hook", "heightonly", "worldonly", "trackonly", "liftonly", "broken" }) {
+		for (const char* c : { "hook", "heightonly", "worldonly", "trackonly", "liftonly", "elsewhere", "broken" }) {
 			char exe[MAX_PATH];
 			GetModuleFileNameA(nullptr, exe, MAX_PATH);
 			std::string cmd = std::string("\"") + exe + "\" \"" + argv[1] + "\" " + c;
@@ -591,6 +641,7 @@ int main(int argc, char** argv) {
 	else if (c == "worldonly") CaseWorldOnly();
 	else if (c == "trackonly") CaseTrackOnly();
 	else if (c == "liftonly") CaseLiftOnly();
+	else if (c == "elsewhere") CaseElsewhere();
 	else if (c == "broken") CaseBroken();
 	else return 2;
 	std::printf(g_fails ? "== %s: %d FAILED\n" : "== %s: ok\n", c.c_str(), g_fails);

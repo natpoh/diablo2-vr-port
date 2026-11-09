@@ -80,10 +80,12 @@ render.menu_wide.tip = Natives OpenXR: Das Spiel legt seine Menüs für die Form
 # --- Quality preset ---
 group.quality_preset = Qualitätsvorgabe
 group.quality_preset.help = Wie viel das Spiel zeichnet, gegen wie schnell es läuft, in einer Wahl - dieselbe wie unter Leistung (eine Änderung in einer von beiden zeigt sich in beiden). Kartoffel und Niedrig für eine schwache Grafikkarte, Mittel für die fernsten Monster; bei Kartoffel die Helligkeit seines Lichts direkt darunter. Auto (mit angehaktem Auto-Grafikabstimmung) findet im laufenden Spiel die Einstellungen für deinen PC.
-@preset.preset.tip = Setzt die Einstellungen darunter auf einmal. Alle drei zeichnen dasselbe Bild der Welt um dich: die eigene Himmelskuppel des Spiels und der eigene Nebel des Spiels (55 bis 140, in Höhlen 65 bis 200, keine unserer Nebelanpassungen), 2 Raumringe, Nativ ein Durchgang, die Pixel, die die Linsen nie zeigen, übersprungen, die Schatten einmal für beide Augen, die Höhlendecke, das Headset mit 90 Hz, die Hover-Kontur des Spiels weggelassen. Kartoffel (die schwächste Grafikkarte): der Frame des Spiels ohne die Sonnenschatten und die Fackellichter, alles gleichmäßig vom Kartoffel-Licht beleuchtet (seine Helligkeit direkt darunter und unter Render-Kosten); Monster und Objekte bis 150 (der eigene Wert des Spiels), große Objekte 200. Niedrig (eine schwache Grafikkarte): nur die beleuchtete Welt des Spiels, die Sonnenschatten und das Tone Mapping (Render-Kosten: die eigenen Render-Stufen des Spiels); Monster und Objekte bis 150, große Objekte 200. Mittel: der ganze Frame des Spiels; Monster und Objekte bis 210, große Objekte 600 - der einzige andere Unterschied. Raumringe und der Radius der Modelle wirken ab dem nächsten Spielstart. Ändert man eines davon von Hand, zeigt sich Benutzerdefiniert.
+@preset.preset.tip = Setzt die Einstellungen darunter auf einmal. Alle drei zeichnen dasselbe Bild der Welt um dich: die eigene Himmelskuppel des Spiels und der eigene Nebel des Spiels (55 bis 140, in Höhlen 65 bis 200, keine Nebelkorrekturen von uns), 2 Raumringe, Native one pass, die Pixel übersprungen, die die Linsen nie zeigen, die Schatten einmal für beide Augen, die Höhlendecke, das Headset mit 90 Hz, die Hover-Umrandung des Spiels weggelassen. Potato (die schwächste Grafikkarte): das Bild des Spiels ohne die Schatten der Sonne und die Fackellichter, alles gleichmäßig vom Potato-Licht beleuchtet (seine Helligkeit direkt darunter und unter Render-Kosten); Monster und Objekte bis 150 (der Wert des Spiels), große Objekte 200. Low (eine schwache Grafikkarte): nur die beleuchtete Welt des Spiels, die Schatten der Sonne und das Tone Mapping (Render-Kosten: die eigenen Render-Stufen des Spiels); Monster und Objekte bis 150, große Objekte 200. Medium: das ganze Bild des Spiels; Monster und Objekte bis 200, große Objekte 600 - der einzige andere Unterschied. Der Regler Sichtweite (Start) stellt die Entfernung getrennt ein: 1 ist die von Low und Potato, 2 die von Medium, darüber weiter. Raumringe und der Radius der Modelle wirken ab dem nächsten Spielstart. Wenn du eines davon von Hand änderst, steht Custom da.
 @preset.preset.choice0 = Kartoffel
 @preset.preset.choice1 = Niedrig
 @preset.preset.choice3 = Benutzerdefiniert
+render.preset_game_options.label = ... das Preset setzt auch die eigenen Grafikoptionen des Spiels
+render.preset_game_options.tip = Angehakt: Ein Qualitäts-Preset ändert auch drei der eigenen Einstellungen des Spiels unter Options > Video, als hättest du sie in seinem Menü gesetzt (das Spiel speichert sie in seiner Settings.json): Potato - Ambient Occlusion aus, Shadow Quality niedrig, Light Quality niedrig; Low - alle drei mittel; Medium - Ambient Occlusion hoch, Shadow Quality hoch, Light Quality hoch. Sie werden einmal gesetzt, wenn sich das Preset ändert (oder wenn du dies anhakst): Was du danach im Menü des Spiels änderst, bleibt. Kantenglättung, DLSS und die Auflösungsskalierung werden nie angefasst. Das Log nennt die alten und neuen Werte. Sofort, in jeder Ansicht. Ohne Haken: Die Optionen des Spiels werden nie angefasst, wie bisher.
 autotune.run.label = Auto
 autotune.run.tip = Auto-Grafikabstimmung im laufenden Spiel: Steh still (am besten in der Stadt) mit aufgesetztem Headset. Das Spiel misst seine Bilder pro Sekunde mit deinen Einstellungen. Passt es zur Rate des Headsets: Nichts ändert sich, auf jeder Grafikkarte. Reicht es nicht, geht es in dieser Reihenfolge Schritt für Schritt herunter, misst jeden Schritt und hört beim ersten auf, der hält: die Rendergröße herunter auf 1600 x 1600, dann die Vorgabe Mittel -> Niedrig -> Kartoffel, dann die Größe herunter auf 1300, dann Foveated Rendering (Mittel, dann Maximal), dann die Größe herunter auf 1200, dann Augen im Wechsel. Reicht es auch dann nicht: Es sagt, dass der PC unter dem Minimum liegt, und ob der Prozessor oder die Grafikkarte bremst. Ein bis zwei Minuten; zwei Durchgänge, FlatVR und die Rate des Headsets werden nie gewählt. Die Schritte und das Ergebnis erscheinen auf der Seite Video des Headset-Panels (langer Druck auf den Klick des rechten Sticks), mit Behalten und Rückgängig dort oder unten. Nach Behalten zeigt die Vorgabe hier die, die zu den neuen Einstellungen passt, oder Benutzerdefiniert.
 render.potato_light_brightness.label = ... Kartoffel-Licht: Helligkeit
@@ -129,9 +131,9 @@ openxr.fov_override_centred.tip = An (Standard): Beide Augen werden als ein zent
 
 # --- Draw distance ---
 group.draw_distance = Sichtweite
-group.draw_distance.help = Wie weit um dich herum die Welt gezeichnet wird, mit einem Regler: die Raumringe, der Radius der Modelle, die Himmelskuppel des Spiels an ihrem Rand und der Nebel zusammen, sodass der Nebel voll ist, kurz bevor die gezeichnete Welt endet. Näher läuft schneller auf einem schwachen Prozessor oder einer schwachen Grafikkarte. Jeder einzelne Wert steht auf dem Reiter Sichtweite (und dort, wo er war: Leistung, Welt, Himmel); änderst du einen davon, zeigt dies hier Eigene.
+group.draw_distance.help = Wie weit um dich herum die Welt gezeichnet wird, mit einem Regler: die Raumringe, der Radius der Modelle und der Nebel zusammen, sodass der Nebel voll ist, bevor die gezeichnete Welt endet. 2 ist die Vorgabe - die Entfernung des Medium-Presets (1: die von Low und Potato); weiter zeigt mehr von der Welt und kostet Prozessorzeit. Wenn du ihn bewegst, steht im Qualitäts-Preset Custom.
 @distance.stop.label = Sichtweite (nah - fern)
-@distance.stop.tip = Stellt fünf Dinge auf einmal ein, von nah (1) bis fern (8): wie viele Ringe von Räumen um dich herum das Spiel zeichnet, wie weit hinaus es Monster und Objekte zeichnet (der Radius der Modelle: der Rand der gezeichneten Welt), die Himmelskuppel des Spiels an diesem Rand und wo der Nebel beginnt und voll ist - im Freien voll kurz vor der Kuppel (bei 0.9 des Radius), in Höhlen beim Radius -, sodass nichts aus der Leere auftaucht. 3: 2 Ringe, Modelle bis 200. Weiter kostet Prozessorzeit (mehr Räume und Modelle in jedem Frame); näher ist leichter. Die Zeile darunter sagt, was gerade eingestellt ist. Eigene: Einer der einzelnen Werte wurde von Hand geändert - den Regler bewegen stellt wieder alle ein. Sofort.
+@distance.stop.tip = Wie weit um dich herum die Welt gezeichnet wird, von nah (1) bis fern (7): wie viele Ringe von Räumen um dich herum das Spiel zeichnet, wie weit hinaus es Monster und Objekte zeichnet (der Radius der Modelle) und wo der Nebel beginnt und voll ist, im Freien und in Höhlen - so sieht man die fernere Welt, und nichts taucht aus der Leere auf. 1: die Entfernung der Presets Low und Potato (Modelle bis 150). 2, die Vorgabe: die von Medium - 2 Raumringe, Modelle bis 200, der Nebel des Spiels 55 bis 140 (in Höhlen 65 bis 200). 3 - 7 zeichnen weiter und öffnen den Nebel mit; sie kosten Prozessorzeit (mehr Räume und Modelle pro Bild). Die Zeile darunter sagt, was gerade eingestellt ist. Wenn du ihn bewegst, steht im Qualitäts-Preset Custom; ein Preset setzt den Regler wieder auf seine Stufe. Custom hier: einer der Werte wurde von Hand geändert - wenn du den Regler bewegst, werden alle neu gesetzt. Sofort.
 
 # --- The game and the mod ---
 group.the_game_and_the_mod = Das Spiel und die Mod
@@ -336,6 +338,8 @@ render.potato_light_colour.choice0 = Neutral (weiß)
 render.potato_light_colour.choice1 = Warm
 render.potato_light_colour.choice2 = Kühl
 render.potato_light_colour.choice3 = Die des Gebiets (seine Himmels- und Nebelfarbe)
+render.potato_light_game.label = ... Potato-Licht in den eigenen Farben des Spiels
+render.potato_light_game.tip = Angehakt: Das Potato-Licht ist nicht eine gleichmäßige Farbe, sondern das eigene Licht des Spiels, wie sein Beleuchtungsdurchgang es bekommt - das Himmelslicht des Gebiets (seine Farben und Stärke aus der Lichtdatei des Gebiets für diese Tageszeit) und die Sonne oder der Mond (Farbe, Stärke und die Seite, auf die sie scheinen) - weiterhin ohne Schatten, Fackeln, Lichtschleifen oder Reflexionen, daher bleibt es genauso günstig. Gras und Boden behalten die Farbe, die das Spiel ihnen gibt, bei Tag, in der Dämmerung und bei Nacht. Die Helligkeitsregler wirken weiterhin; die Farbauswahl wird nicht verwendet. Natives OpenXR, erste Person (F4). Sofort. Ohne Haken: ein gleichmäßiges Licht, wie bisher.
 
 # --- Quality ---
 group.quality = Qualität
@@ -357,24 +361,10 @@ render.rings.tip = Zusätzliche Raumringe um den Helden. Mit Nebel reichen 4-6.
 render.model_radius.label = Sichtradius der Modelle
 render.model_radius.tip = Der eigene Wert des Spiels ist 150.
 sky.game_sky.label = Wer den Himmel zeichnet
-sky.game_sky.tip = Wer den Himmel im Freien zeichnet. Die Kuppel des Spiels (neu): eine Himmelskuppel von uns, die das Spiel selbst in seiner eigenen Szene zeichnet - keine Frame-Zeit von uns (VR F4; das flache Spiel auch mit „Das Spiel zeichnet sie auch im flachen Spiel“). Unser Effekt (alt): Der Nebel-Shader malt den Himmel in die Leere. Beides geht mit jedem Nebel („Wer den Nebel zeichnet“): Der untere Teil des Himmels versinkt in beiden Fällen in der Farbe des Nebels. Sofort wirksam - die Dateien der Himmelskuppel des Spiels erzeugt dieses Programm bei seinem Start: Starte ein bereits laufendes Spiel beim ersten Mal nach einer Installation oder einem Update neu.
+sky.game_sky.tip = Wer den Himmel im Freien zeichnet. Die Kuppel des Spiels (neu): eine Himmelskuppel von uns, die das Spiel selbst in seiner eigenen Szene zeichnet - ohne Bildzeit von uns (VR F4; das flache Spiel auch mit "Das Spiel zeichnet den Himmel auch im flachen Spiel"). Unser Effekt (alt): Der Nebel-Shader malt den Himmel in die Leere. Beides passt zu beiden Nebeln ("Nebel gezeichnet von"): Der untere Teil des Himmels geht in beiden Fällen in die Farbe des Nebels über. Sofort - die Dateien der Himmelskuppel des Spiels erzeugt dieses Programm bei seinem Start: Starte ein bereits laufendes Spiel beim ersten Mal nach einer Installation oder einem Update neu.
 sky.game_sky.choice0 = Unser Effekt (alt)
 sky.game_sky.choice1 = Die Kuppel des Spiels (neu)
-fog.game_fog.label = Wer den Nebel zeichnet
-fog.game_fog.tip = Wer den Distanznebel zeichnet. Der Nebel des Spiels (neu): der eigene Nebeldurchgang des Spiels mit unseren Zahlen (Nebelbeginn / Voller Nebel unten) - keine Frame-Zeit von uns, gezeichnet, ob „Distanznebel“ angehakt ist oder nicht (VR F4; auch im flachen Spiel mit „Das Spiel zeichnet sie auch im flachen Spiel“; seine eigenen Optionen im Tab Welt). Unser Effekt (alt): Der Nebel-Shader legt den Nebel nach der Tiefe. Beides geht mit jedem Himmel („Himmel gezeichnet von“). Sofort.
-fog.game_fog.choice1 = Der Nebel des Spiels (neu)
-fog.enabled.label = Distanznebel
-fog.enabled.tip = Der Distanznebel unseres Effekts, mit „Nebel gezeichnet von: Unser Effekt (alt)“. Der Nebel des Spiels wird allein von „Nebel gezeichnet von: Der Nebel des Spiels“ gezeichnet - ihn hier abzuhaken nimmt ihn nie weg (die Vorgaben lassen es nicht angehakt: Das Spiel zeichnet den Nebel). Bei eingeschaltetem Himmel verblasst unserer im Himmel.
-fog.light.label = Leichter Nebel (schwache Grafikkarten)
-fog.light.tip = Der Nebel unseres Effekts auf dem kurzen Weg: die Tiefe einmal je Pixel gelesen, der Nebel danach, der Himmel in der Leere weiter gezeichnet - keine Tiefenunschärfe, kein Nebel über Leuchten und Funken vor dem Himmel, keine Höhlendecke. Ein Bruchteil der Kosten des vollen Nebels auf der Grafikkarte (die 10-s-Zeile im Protokoll sagt es). Aus: der volle Nebel, wie bisher.
-fog.start.label = Nebelbeginn
-fog.start.tip = Wo der Nebel beginnt. Welteinheiten (der Held ist ~7,5 groß).
-fog.end.label = Voller Nebel
-fog.end.tip = Wo der Nebel voll ist. Welteinheiten (der Held ist ~7.5 groß). Naher Nebel verbirgt, was eine kurze Sichtweite weglässt. Mit dem Nebel des Spiels werden unterhalb von Nebelbeginn die zwei andersherum genommen (Nebel unseres Effekts: voll gleich hinter Nebelbeginn).
-fog.caves_start.label = Nebelbeginn in Höhlen
-fog.caves_start.tip = Wo der Nebel in Höhlen, Verliesen und Krypten beginnt. Welteinheiten (der Held ist ~7,5 groß).
-fog.caves_end.label = Voller Nebel in Höhlen
-fog.caves_end.tip = Wo der Nebel in Höhlen, Verliesen und Krypten vollständig ist. Welteinheiten (der Held ist ~7,5 groß).
+@status.fog_moved_perf.label = Der Nebel - wer ihn zeichnet, seine Entfernungen, Höhlen und Farben - steht auf dem Tab Nebel.
 sky.enabled.label = Himmel im Freien
 sky.enabled.tip = Ein gemalter Himmel über der schwarzen Leere im Freien. Wer ihn zeichnet, steht oben unter „Wer den Himmel zeichnet“ (unser Effekt oder die Kuppel des Spiels).
 ceiling.enabled.label = Decke in Höhlen und Verliesen
@@ -399,7 +389,16 @@ render.big_radius.label = Große Objekte: Bäume, Häuser, Mauern weiter (0 = au
 render.big_radius.tip = Bäume, Häuser und Mauern werden weiter gezeichnet als der Sichtradius der Modelle - je größer, desto weiter (das 30-Fache ihrer Höhe oder ihrer halben Breite), bis zu so vielen Einheiten (300 - 1000; 100 und 200 zählen als 300). Steine, Gras und Monster behalten den Sichtradius der Modelle. Braucht 3 oder mehr Raumringe (jenseits der Räume, die das Spiel dort baut, gibt es nichts zu zeichnen) und dahinter den vollen Nebel und die Himmelskuppel, damit man es sieht. Kostet Frames in Wäldern und Städten. Aus D2R VR Unleashed (bearstonem). Nur optisch. Sofort. 0 = aus, wie bisher.
 sky.game_sky_radius_m.label = Himmel des Spiels: Kuppelradius, m
 sky.game_sky_radius_m.tip = Wie weit um dich herum die Himmelskuppel des Spiels gelegt wird, in Metern (4 Einheiten des Spiels pro Meter; sofort). 50 m: ein naher Horizont - die Kuppel schneidet die ferne Welt in einem sauberen Kreis ab, der Nebel des Spiels darüber. Weiter kommt der Himmel aus dem Nebel heraus. Das Log nennt bei jeder Änderung den benutzten Radius.
-fog.enabled.tip#2 = Ein Distanznebel. Wer ihn zeichnet, steht im Tab Himmel unter „Wer den Nebel zeichnet“ (unser Effekt oder das Spiel selbst). Mit dem Himmel an geht er in den Himmel über.
+fog.enabled.label = Distanznebel
+fog.enabled.tip = Ein Distanznebel. Wer ihn zeichnet: "Nebel gezeichnet von" auf dem Tab Himmel (unser Effekt oder das Spiel selbst). Bei eingeschaltetem Himmel geht er in den Himmel über.
+fog.game_fog_start.label = Nebelanfang
+fog.game_fog_start.tip = Wo der Nebel beginnt. Welteinheiten (der Held ist ~7,5 groß).
+fog.game_fog_end.label = Voller Nebel
+fog.game_fog_end.tip = Wo der Nebel vollständig ist. Welteinheiten (der Held ist ~7,5 groß). Naher Nebel verdeckt, was eine kurze Sichtweite auslässt. Beim Nebel des Spiels werden die beiden unterhalb von Nebelanfang andersherum genommen (der Nebel unseres Effekts: voll kurz hinter Nebelanfang).
+fog.game_fog_caves_start.label = Nebelanfang in Höhlen
+fog.game_fog_caves_start.tip = Wo der Nebel in Höhlen, Verliesen und Krypten beginnt. Welteinheiten (der Held ist ~7,5 groß).
+fog.game_fog_caves_end.label = Voller Nebel in Höhlen
+fog.game_fog_caves_end.tip = Wo der Nebel in Höhlen, Verliesen und Krypten vollständig ist. Welteinheiten (der Held ist ~7,5 groß).
 sky.game_dome_caves.label = Eine schwarze Kuppel um dich in Höhlen
 sky.game_dome_caves.tip = Unter der Erde zeichnet das Spiel eine schwarze Kuppel um deinen Kopf im Sichtradius der Modelle: keine Leere hinter dem Rand einer Decke, der Nebel des Spiels geht in schwarze Wände über - kein Leuchten hinter den Feuern. Die eigenen Dateien der Himmelskuppel (von diesem Programm bei seinem Start erzeugt). VR F4. Live.
 sky.game_dome_caves_radius_m.label = Höhlenkuppel: Radius, m
@@ -673,6 +672,12 @@ render.own_auras_side_cm.tip = Positiv = zu deiner Rechten, negativ = zu deiner 
 # ===== Tab: Controls =====
 tab.controls = Steuerung
 
+# --- Hands ---
+group.hands = Hände
+group.hands.help = Welcher VR-Controller die Waffenhand ist.
+hands.left_handed.label = Linkshänder: Controller tauschen
+hands.left_handed.tip = Der LINKE Controller hält die Hauptwaffe und schlägt damit zu, der rechte ist die Nebenhand (Schild, zweite Waffe, die Hand, die den Bogen hält). Auch Tasten, Stick und Trigger werden getauscht: Was der rechte Controller tat, tut der linke. Das Inventar und die Karte in der Hand, die Handgelenk-Kugeln, der Gürtel, Würfe, der Bogen und die Vibration folgen. Die Menütaste bleibt, wo sie ist. Nur erste Person (F4); die Waffen des Spiels selbst werden nicht verändert. Ohne Haken = wie bisher. Sofort.
+
 # --- Walking (left stick) ---
 group.walking_left_stick = Gehen (linker Stick)
 group.walking_left_stick.help = Wie der linke Stick den Helden gehen lässt: dorthin gehen, wohin du schaust, und Korrekturen, wenn das Gehen falsch herum geht oder Diagonalen nach einer Drehung abdriften.
@@ -732,6 +737,8 @@ input.flat_aim_ground.label = Flat: auf erhöhtem Boden (Treppen, Absätze) dort
 input.flat_aim_ground.tip = Mit unserer Kamera (erste oder dritte Person) gehen ein Klick, das Überfahren und der Punkt einer Fertigkeit auf den Boden, der unter dem Fadenkreuz gezeichnet ist, auch auf erhöhte Böden. Nicht angehakt: der eigene Punkt des Spiels, für seine Ansicht von oben gemacht - aus der ersten Person landet er auf Treppen und Absätzen Felder daneben.
 input.flat_body_pick.label = Flat: ein Monster, einen NPC oder eine Truhe am Körper anklicken
 input.flat_body_pick.tip = Dritte und erste Person: Monster, NPCs, Türen, Schreine, Truhen und Portale in deiner Nähe werden an ihrem Körper angeklickt, nicht nur an ihren Füßen (aus dem Flat-Fork von sajmonsoft). Nicht angehakt: an den Füßen, wie es die eigene Ansicht des Spiels von oben vorsieht.
+input.flat_shot_at_crosshair.label = Flach: Bogen oder Wurf geht genau ins Fadenkreuz (kein Auto-Zielen)
+input.flat_shot_at_crosshair.tip = Mit Bogen, Armbrust, Wurfspeer oder Wurfwaffe in der Hand, in erster und dritter Person: Ein Klick auf ein Monster geht dorthin, wo das Fadenkreuz ist, als Schuss an Ort und Stelle - nicht auf das Monster, das das Spiel in der Nähe des Fadenkreuzes findet, der Held läuft nicht hin, und eine gehaltene Taste schießt nicht weiter darauf, wenn du wegschaust. Gegenstände, NPCs, Söldner, Truhen, Türen und Portale werden wie immer angeklickt. Ohne Haken: der eigene Angriff des Spiels auf das Monster unter dem Zeiger.
 input.vr_body_pick.label = VR: ein Monster, einen NPC oder eine Truhe am Körper anvisieren
 input.vr_body_pick.tip = Der Mauszeiger (F1, F3), das Fadenkreuz (F2 mit Mausblick) und das Zielen der Hand mit Shift + Klick wählen Monster, NPCs, Türen, Schreine, Truhen und Portale in deiner Nähe an ihrem Körper, nicht nur an ihren Füßen. Den Treffer entscheidet weiterhin das Spiel. Nicht angehakt: an den Füßen.
 input.vr_body_pick_hand.label = VR F4: Angriff und Interaktion gehen an das, worauf deine Hand zeigt
@@ -897,7 +904,7 @@ gameplay.quick_blow_min_ms.tip = Schneller zuschlagen als die Animation: kein n�
 group.swing_timer = Angriffs-Timer
 group.swing_timer.help = Nach jedem Angriff: wie lange, bis das Spiel den nächsten annimmt, und was der Hieb bewirkt hat. Es wird nur angezeigt: Angriffsgeschwindigkeit und Trefferwurf des Spiels bleiben unverändert.
 hud.swing_timer.label = Angriffs-Timer: wann der nächste Angriff zählt
-hud.swing_timer.tip = VR erste Person (F4) und F2 / F3 am Monitor. Nichts wird angezeigt, bis du angreifst: kein Ring heißt los. Sobald das Spiel einen Angriff startet, füllt sich ein Ring in der Bildmitte, bis das Spiel den nächsten Angriff zulässt. Rot: Das Spiel lehnt jetzt einen neuen Angriff ab - eine Berührung geht dann verloren und zeigt "zu früh". Bernstein: die letzten Momente der Animation des Spiels - ein Angriff jetzt wird gehalten und landet, wenn die Animation endet. Grün: rein. Danach löst sich der Ring auf. In ihm steht, was der Hieb bewirkt hat: das genommene Leben (ein kritischer Treffer in Gold und größer; ein Schwung durch mehrere Monster summiert, mit x2, x3 ...) oder Fehlschlag, geblockt, ausgewichen, vermieden. Nichts davon ändert das Spiel: Angriffsgeschwindigkeit, Wurf und Schaden bleiben seine eigenen - der Ring zeigt nur sein Timing, damit du mit ihm schwingst und nicht dagegen. Einzelspieler oder ein von dir gehostetes Spiel: exakt. Einem TCP/IP-Spiel beigetreten: der Ring aus der Animation deines Helden (nah, nicht exakt) und ohne Zahlen. Der Monitor braucht D2R_DepthFog.fx an in ReShade. Abgehakt aus: nichts angezeigt. Sofort.
+hud.swing_timer.tip = VR erste Person (F4) und F2 / F3 des Monitors. Nichts wird gezeigt, bis du angreifst: kein Ring heißt los. Sobald das Spiel einen Angriff beginnt, füllt sich ein Ring in der Mitte der Sicht, bis das Spiel den nächsten Angriff zulässt. Rot: Das Spiel lehnt jetzt einen neuen Angriff ab - ein Schlag dann geht verloren und meldet "too soon". Bernstein: die letzten Momente der Animation des Spiels - ein Angriff jetzt wird behalten und trifft, wenn die Animation endet. Grün: frei. Dann löst sich der Ring auf. In ihm steht, was der Hieb bewirkt hat: das Leben, das er genommen hat (ein kritischer Treffer in Gold und größer; ein Schwung durch mehrere Monster summiert, mit x2, x3 ...), oder miss, blocked, dodged, avoided. Nichts hier verändert das Spiel: Angriffsgeschwindigkeit, Wurf und Schaden sind seine eigenen - der Ring zeigt nur sein Timing, damit du mit ihm schwingst, nicht dagegen. Einzelspieler oder ein Spiel, das du hostest: exakt. In einem fremden TCP/IP-Spiel: der Ring aus der Animation deines Helden (nah dran, nicht exakt), die Zahlen nur, wenn der Host sie sendet (sein "Host: Mitspielern senden, was ihre Hiebe bewirkt haben"). Der Monitor braucht D2R_DepthFog.fx eingeschaltet in ReShade. Ohne Haken: nichts wird gezeigt. Sofort.
 hud.swing_timer_style.label = Angriffs-Timer: wo
 hud.swing_timer_style.tip = Ring in der Mitte: ein kleiner Ring um die Bildmitte (in VR vor den Augen, am Monitor um das Fadenkreuz), die Zahl darin. Balken oben: ein Balken quer über den oberen Bildrand, der sich von links nach rechts füllt, die Zahlen steigen darüber auf und verblassen. Sofort.
 hud.swing_timer_style.choice0 = Ring in der Mitte
@@ -905,9 +912,13 @@ hud.swing_timer_style.choice1 = Balken oben
 gameplay.swing_pace_joined.label = Beigetreten: Berührung senden, wenn der Host sie annimmt (VR)
 gameplay.swing_pace_joined.tip = Einem fremden TCP/IP-Spiel beigetreten, VR erste Person (F4). Das Spiel des Hosts entscheidet, wann dein Held wieder angreifen darf, und eine abgelehnte Berührung geht verloren. An: Dein PC zählt den Angriff deines Helden wie der Angriffs-Timer (aus der Animation deines Helden) und sendet eine Berührung nur, wenn der Host sie annimmt - eine Berührung, die er ablehnen würde, wird nicht gesendet ("zu früh"), eine in den letzten Momenten des Angriffs wird gehalten und gesendet, wenn er endet, sodass sie unterwegs nie verloren geht. Der Angriff, seine Geschwindigkeit und sein Wurf bleiben die des Spiels des Hosts. Funktioniert ab deinem zweiten Angriff (der erste wird gemessen). Einzelspieler oder ein von dir gehostetes Spiel: nichts ändert sich (dein eigenes Spiel entscheidet sofort). Aus: Jede Berührung wird gesendet, wie sie kommt. Sofort.
 hud.swing_timer_numbers.label = Angriffs-Timer: zeigen, was der Hieb bewirkt hat
-hud.swing_timer_numbers.tip = Das vom Hieb genommene Leben oder Fehlschlag / geblockt / ausgewichen / vermieden, im Ring oder über dem Balken. Aus: nur der Timer ("zu früh" erscheint weiterhin). Nur Einzelspieler oder ein von dir gehostetes Spiel: die Hiebe eines beigetretenen Spielers werden auf dem Rechner des Hosts gewürfelt. Sofort.
+hud.swing_timer_numbers.tip = Das Leben, das der Hieb genommen hat, oder miss / blocked / dodged / avoided, im Ring oder über der Leiste. Ohne Haken: nur der Timer ("too soon" wird weiterhin gezeigt). In einem fremden TCP/IP-Spiel: nur wenn der Host sie sendet (die Hiebe eines Mitspielers werden auf dem Rechner des Hosts gewürfelt). Sofort.
+multiplayer.share_hit_outcomes.label = Host: Mitspielern senden, was ihre Hiebe bewirkt haben
+multiplayer.share_hit_outcomes.tip = Du hostest ein TCP/IP-Spiel: Jeder Mitspieler mit dieser Mod-Version erhält, was seine eigenen Hiebe bewirkt haben - Treffer, miss, blocked, dodged, avoided, das genommene Leben, ein kritischer Treffer - und sein Angriffs-Timer zeigt es wie deiner (er muss "Angriffs-Timer: zeigen, was der Hieb bewirkt hat" angehakt haben). Der Wurf und der Schaden passieren nur auf dem Rechner des Hosts, daher hat der Timer eines Mitspielers ohne dies keine Zahlen. Nur die Box des Hosts zählt: In einem fremden Spiel bedeutet deine dort nichts. Ein paar Bytes pro Hieb; im Spiel ändert sich nichts. Sofort.
 hud.swing_timer_reasons.label = Angriffs-Timer: sagen, warum eine Berührung kein Angriff war
 hud.swing_timer_reasons.tip = Eine Berührung mit der Waffe, die kein Angriff wurde, sagt warum, im Ring oder über dem Balken (VR erste Person): Schaft oder Griff - sie traf den Körper hinter dem Waffenkopf oder hinter deiner vorderen Hand, ein Schieben; nicht die Spitze - außerhalb des Teils der Klinge, der trifft; langsam - dein Schwung gegen die nötige Geschwindigkeit (3.1/5.0, m/s); schwach - ein Hieb, zu schwach für die Waffe; kurz - der Schwung oder Stoß war zu kurz, um zu zählen; Schub - ein Stoß mit zu wenig Wucht; falsche Richtung - die Klinge bewegte sich vom Monster weg oder rückwärts; Schild - sein Schild oder seine Waffe hielt den Hieb auf. Nichts davon ändert das Spiel oder was als Treffer zählt: Es sagt es dir nur. Sofort.
+gameplay.shot_at_release.label = Der Pfeil geht dorthin, wohin du beim Verlassen des Bogens zielst
+gameplay.shot_at_release.tip = Ein Bogen oder eine Armbrust. Das Spiel zielt einen Schuss beim Klick und lässt den Pfeil eine halbe Sekunde oder mehr später los, im Aktionsframe der Animation; wenn du die Kamera dazwischen gedreht hast, ging der Pfeil dorthin, wohin du beim Klick gezielt hast. An: Der Pfeil, der den Bogen verlässt, wird dorthin gedreht, wo das Fadenkreuz in diesem Moment ist (2D erste und dritte Person); der Fächer eines Multiple Shot dreht sich als Ganzes. Strafe und Guided Arrow wählen ihre Ziele selbst und bleiben, wie das Spiel sie gemacht hat. Nur die Richtung des Pfeils ändert sich - Geschwindigkeit, Reichweite, Treffer und Schaden sind die des Spiels. Ein TCP/IP-Spiel: Wer hostet, entscheidet - der Server des Hosts dreht die Pfeile aller Spieler um das Ziel, das die Mod jedes Spielers sendet (dieselbe Version der Mod); die eigene Box eines Mitspielers bedeutet dort nichts. Ohne Haken: Der Pfeil geht dorthin, wohin der Klick gezielt hat. Sofort.
 
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = Einstellungen im Spiel und die Regeln des Hosts
@@ -1042,6 +1053,8 @@ stereo.pair_per_tick.label = Beide Augen aus einem Spiel-Frame
 stereo.pair_per_tick.tip = Der Frame wird zweimal gezeichnet (links, dann rechts mit angehaltener Spielzeit) statt eines Auges pro Frame im Wechsel. Dieselben Paare pro Sekunde; das Spiel selbst aktualisiert sich halb so oft.
 stereo.native_replay.label = ... einmal gezeichnet, das rechte Auge noch einmal auf der Grafikkarte
 stereo.native_replay.tip = Mit Beide Augen aus einem Spiel-Frame: Das Spiel zeichnet den Frame einmal, und das rechte Auge wird aus derselben Arbeit mit eigener Kamera noch einmal auf der Grafikkarte gezeichnet, statt den ganzen Frame zweimal zu zeichnen. Der Thread des Spiels leistet etwa die halbe Arbeit: auf einem PC, den der Prozessor bremst, deutlich mehr Bilder pro Sekunde; ein PC, den die Grafikkarte bremst, gewinnt wenig. Nur natives OpenXR, erste Person (F4). Nach einem Gebietswechsel, einem Ladevorgang oder einer Änderung der Videooptionen wird das rechte Auge allein gezeichnet, bis sich das Bild beruhigt hat (ein paar Sekunden) - dann zwei Durchgänge, nie ein schwarzes Auge. Standardmäßig an („Nativ: ein Durchgang“ bei 3D im Headset). Wirkt ab dem nächsten Spielstart. Aus: zwei Durchgänge („Nativ: zwei Durchgänge“).
+stereo.replay_reset_guard.label = ... nie wieder eine Liste, die das Spiel schon neu belegt hat
+stereo.replay_reset_guard.tip = Bei erneut gezeichnetem rechtem Auge auf der Grafikkarte: Das Spiel kann in einer seiner Listen eine neue Aufzeichnung beginnen, sobald es sie gesendet hat, und bis das rechte Auge dieselbe Liste erneut sendet, enthält sie andere Befehle - ein unfertiger nimmt das Grafikgerät weg, ein späterer lässt die Karte von etwas zeichnen, das noch nicht da ist (sie hängt). An: Das rechte Auge eines solchen Bildes ist einmal das linke Bild, und das Log sagt es. Aus: im Log gemeldet, trotzdem erneut gesendet (wie bisher). Sofort.
 stereo.turn_warp.label = Augen im Wechsel: das andere Auge aus der Tiefe bilden
 stereo.turn_warp.tip = Natives OpenXR mit Augen im Wechsel: Das in diesem Frame nicht gezeichnete Auge wird auf der Grafikkarte für den Ort gebildet, an dem der Kopf jetzt ist - sein eigenes letztes Bild, mit der Tiefe verschoben, mit der es gezeichnet wurde (was der Held hält, geht mit ihm), in der Pose dieses Frames. Nicht angehakt: Es geht so zum Headset, wie es zuletzt gezeichnet wurde, und das Headset dreht es (nur Rotation: Ein Schritt oder ein sich bewegendes Monster zeigt sich in diesem Auge einen Frame zurück). Nur erste Person (F4). Sofort. Idee: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... mit dem in diesem Frame gezeichneten Auge darüber
@@ -1215,6 +1228,14 @@ group.item_labels_on_the_ground.help#2 = Die Namen der Gegenstände, die in der 
 hud_third.labels_alpha.tip = Wie viel von dem dunklen Kasten hinter den Namen der Gegenstände am Boden in der dritten Person (F2) gezeichnet wird: 1 = wie das Spiel es zeichnet, 0 = kein Kasten, nur die Namen. Die Namen bleiben hell. Über den Beschriftungscode des Spiels (das Log von vrcam sagt „item-label hook in“); bei einer anderen Spielversion tut es hier nichts.
 hud_third.labels_size.tip = Die Namen der Gegenstände am Boden und ihre Kästen in der dritten Person (F2), kleiner oder größer, jeweils um den Punkt darunter. 100 = die eigene Größe des Spiels. Gegenstands-Tooltips und aller andere Text behalten ihre Größe.
 
+# --- Monster plate, third person ---
+group.monster_plate_third_person = Monster-Plakette, dritte Person
+group.monster_plate_third_person.help = Der Name und die Lebensleiste über dem Monster, das du in der dritten Person (F2) anvisierst: in der Tiefe seines Monsters, damit sie nicht doppelt aussieht.
+hud_third.monster_depth.label = Monster-Plakette: bei ihrem Monster, %
+hud_third.monster_depth.tip = Der Name und die Lebensleiste, die das Spiel über das anvisierte Monster hängt, in der dritten Person (F2): In Stereo zeichnet das Spiel sie in beiden Augen an derselben Stelle, daher schwebt sie in der Tiefe des Bildschirms und sieht doppelt aus, wenn du das Monster ansiehst. Hier wird sie in die eigene Tiefe ihres Monsters verschoben, nach dem Punkt über dem Kopf des Monsters: 100 = genau dort, 0 = wo das Spiel sie lässt. Unsere eigene Plakette (Name über einem Monster: eigener, in jeder Ansicht) steht dort von selbst; dies ist für die des Spiels. Sofort.
+hud.npc_dialog_keep_view.label = Gespräch mit einem NPC behält die Ansicht (Test)
+hud.npc_dialog_keep_view.tip = Im Headset (natives OpenXR) öffnete das Gespräch mit einem NPC sein kleines Feld Reden / Handeln / Abbrechen als Menü, und in F1, F2 und F3 stellt ein Menü das flache Bild des Spiels weit nach vorn: Die Ansicht flog weg. An: Solange dieses Feld (oder seine Sprechrolle) das einzige offene Menü ist, bleibt die Ansicht, wie sie war, das Feld im Bild des Spiels gezeichnet wie die Leiste; wähle Reden / Handeln mit dem Controller. Handeln, die Truhe und jeder andere Bildschirm gehen weiterhin ins flache Bild. F1, F2, F3; F4 behält seinen eigenen Weg (Menüs als Panel). Sofort. Aus: das flache Bild, wie bisher.
+
 # ===== Tab: UI: F3 floor =====
 tab.ui_f3_floor = UI: F3 Boden
 
@@ -1240,6 +1261,11 @@ hud_floor.map_y.tip = Die Karte auf dem Bildschirm nach oben verschoben, in % de
 group.item_labels_on_the_ground.help#3 = Die Namen der Gegenstände, die am Boden liegen, wenn das Spiel auf deinem Boden ist (F3): wie viel von dem dunklen Kasten dahinter zu sehen ist und wie groß sie sind. Gegenstands-Tooltips und aller andere Text behalten ihre Größe.
 hud_floor.labels_alpha.tip = Wie viel von dem dunklen Kasten hinter den Namen der Gegenstände am Boden gezeichnet wird: 1 = wie das Spiel es zeichnet, 0 = kein Kasten, nur die Namen. Die Namen selbst bleiben hell. Wird der Beschriftungscode des Spiels nicht gefunden (andere Spielversion), werden die Beschriftungen stattdessen von D2R_DepthFog.fx als Bild abgeblendet: Die Kästen verblassen, die Namen bleiben. Nur auf dem Boden (F3).
 hud_floor.labels_size.tip = Die Namen der Gegenstände am Boden und ihre Kästen, kleiner oder größer, jeweils um den Punkt darunter; das Spiel macht in dieser Größe Platz für sie. 100 = die eigene Größe des Spiels. Über den Beschriftungscode des Spiels: Bei einer anderen Spielversion tut es nichts (das Log von vrcam sagt es). Nur auf dem Boden (F3); Gegenstands-Tooltips und jeder andere Text behalten ihre Größe.
+
+# --- Monster plate, the game on your floor ---
+group.monster_plate_the_game_on_your_floor = Monster-Plakette, das Spiel auf deinem Boden
+group.monster_plate_the_game_on_your_floor.help = Der Name und die Lebensleiste über dem Monster, das du auf dem Boden (F3) anvisierst: in der Tiefe seines Monsters, damit sie nicht doppelt aussieht.
+hud_floor.monster_depth.tip = Der Name und die Lebensleiste, die das Spiel über das anvisierte Monster hängt, in F3, dem Spiel auf deinem Boden: In Stereo zeichnet das Spiel sie in beiden Augen an derselben Stelle, daher schwebt sie in der Tiefe des Bildschirms und sieht doppelt aus, wenn du das Monster ansiehst. Hier wird sie in die eigene Tiefe ihres Monsters verschoben, nach dem Punkt über dem Kopf des Monsters: 100 = genau dort, 0 = wo das Spiel sie lässt. Unsere eigene Plakette (Name über einem Monster: eigener, in jeder Ansicht) steht dort von selbst; dies ist für die des Spiels. Sofort.
 
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = UI: F3 Augen
@@ -1354,6 +1380,8 @@ openxr.menu_zoom.label = Rechter Griff + rechter Stick: ein Fenster näher / wei
 openxr.menu_zoom.tip = Natives OpenXR, F4: Mit einem Fenster des Spiels vor dir (dem Inventar, der Truhe, einem Händler, den Wegpunkten...) halte den rechten Griff und schiebe den rechten Stick nach vorn, um es näher zu holen, nach hinten, um es weiter weg zu schicken; lass los, und es bleibt dort - geschrieben nach „Flaches Bild bei offenem Fenster (Inventar, Handel...): Abstand, m“ ([screen] menu_distance_m). Es hört dort auf, wo das Fenster nicht mehr lesbar ist: näher wäre ein Teil davon außer Sicht, weiter weg würden die Pixel des Headsets den Text des Spiels überspringen. Solange der Griff gehalten wird, gehört das Vor / Zurück des Sticks nicht dem Spiel, und der eigene Druck des Griffs (die rechte Schultertaste des Menüs, wo der Laser sie nicht hat) kommt, wenn du loslässt, ohne das Fenster zu bewegen. Aus: wie bisher.
 openxr.menu_zoom_speed_mps.label = Fenster näher / weiter: Tempo, m/s
 openxr.menu_zoom_speed_mps.tip = Wie schnell sich das Fenster bewegt, wenn der rechte Stick ganz gedrückt ist. Sofort.
+openxr.panel_grab.label = Ein Panel mit dem Griff greifen: bewegen, näher ziehen, weiter wegschieben
+openxr.panel_grab.tip = Natives OpenXR, F4: Mit einem Panel des Spiels vor dir (das Inventar, die Truhe, ein Händler, der Würfel ...) richte eine Hand darauf (oder lege die Hand darauf) und drücke den Griff: Das Panel ist in deiner Hand. Bewege die Hand, und es folgt; ziehe die Hand heran, und es kommt näher, schiebe sie hinaus, und es geht weiter weg (das Dreifache des Wegs der Hand, sodass ein Zug es auf Armlänge bringt); der Stick dieser Hand vor / zurück tut dasselbe. Lass los, und es bleibt, wo es ist; dort öffnet es sich beim nächsten Mal. Näher als dort, wo es ganz im Blick ist, behält es seine Größe im Blick, sodass es dort ein Tablet ist, auf das du aus ein paar Zentimetern zeigst. Nur ein Griff, der auf dem Panel beginnt, nimmt es: Ein zuerst gedrückter Trigger ist weiterhin der Rechtsklick (oder Shift-Klick), ein Griff, der ohne Bewegung losgelassen wird, ist weiterhin die Seitentaste des Menüs, und Waffen- oder Trank-Griffe anderswo bleiben unberührt. Solange es an ist, tritt die Entfernung oben (rechter Griff + rechter Stick) zur Seite (der Stick des Greifens übernimmt das). Aus: wie bisher.
 openxr.hand_inventory.label = Inventar an der linken Hand außerhalb der Stadt
 openxr.hand_inventory.tip = Natives OpenXR, F4, mit eingeschaltetem Laser: Außerhalb der Stadt hängt das ganze Inventarfenster des Spiels an deiner LINKEN Hand statt vor dir - aus der Oberfläche ausgeschnitten, über dem linken Controller gehalten wie ein Tablet, zu deinen Augen gedreht -, und der linke Stick lenkt den Helden weiter, solange es offen ist: Er bewegt den Cursor des Inventars nicht mehr (der Laser der RECHTEN Hand ist darauf die Maus) und geht an das eigene Gehen des Spiels. Der kleine Knopf daneben setzt das Inventar vor dich, in voller Größe, und zurück an die Hand. Zieh einen Gegenstand davon weg und lass los: Das Inventar schließt sich und das Spiel lässt ihn fallen. Langes Drücken des linken Sticks öffnet und schließt es, auch während du gehst. In der Stadt oder mit einem anderen Menü (ein Wegpunkt, das Spielmenü) vor dir, wie bisher. Das Spiel sperrt sein eigenes Gehen, solange sein Inventar offen ist; der linke Stick sendet dann stattdessen den eigenen Gehbefehl des Sticks, mit den Rennregeln des Spiels. Aus: wie bisher.
 openxr.hand_inventory_width_m.label = Inventar an der Hand: Breite, m
@@ -1519,7 +1547,9 @@ input.point_pickup_label_pct.tip = Der Name des Gegenstands, auf den deine Hand 
 # --- Monster plates ---
 group.monster_plates.help#3 = Der Name und die Lebensleiste über dem Monster, das du anvisierst: Deckkraft, Größe, in der Ferne kleiner, Höhe und Stereotiefe, sodass sie in F4 bei ihrem Monster sitzt. „Leiste über dem Kopf des Monsters (Prototyp)“ hält sie in jeder Entfernung in einem festen Abstand über dem Kopf.
 hud.monster_names_own.label = Name über einem Monster: eigener, scharf (Test)
-hud.monster_names_own.tip = Der Name in der Plakette über dem anvisierten Monster, von der Mod statt der Kopie des Spiels gezeichnet: scharf bei jeder Renderauflösung, in den Farben des Spiels (Unique gold, Champion blau). Die Leiste, ihr Rahmen und das Anvisieren bleiben die des Spiels. Er hat eigene Größe, Größe in der Ferne und Hintergrund ("Unsere Namen" unten) und steht in der eigenen Tiefe seines Monsters; die Regler der Plakette bleiben die der Plakette des Spiels. Erste Person (F4); nicht bei im Raum aufgehängter Plakette. Braucht die D2R_DepthFog.fx desselben Builds. Sofort. Aus: der Name des Spiels, wie bisher.
+hud.monster_names_own.tip = Der Name in der Plakette über dem anvisierten Monster, von der Mod statt der Kopie des Spiels gezeichnet: scharf bei jeder Renderauflösung, in den Farben des Spiels (Unique gold, Champion blau). Die Leiste, ihr Rahmen und das Anvisieren bleiben die des Spiels. Er hat eigene Größe, Größe in der Ferne und Hintergrund ("Unsere Namen" unten) und steht in der eigenen Tiefe seines Monsters; die Regler der Plakette bleiben die der Plakette des Spiels. Erste Person (F4), und F1 - F3 mit dem Haken unten; nicht mit der im Raum hängenden Plakette. Braucht die D2R_DepthFog.fx desselben Builds. Sofort. Ohne Haken: der Name des Spiels, wie bisher.
+hud.monster_names_own_all_views.label = Name über einem Monster: eigener, in jeder Ansicht (Test)
+hud.monster_names_own_all_views.tip = Die Plakette oben (unser eigener Name auf der roten Leiste, Typ, Immunitäten) auch in F1, F2 und F3, überall wo die Kamera der Mod die Ansicht in Stereo zeichnet: Sie steht über dem Kopf des Monsters in der eigenen Tiefe in jedem Auge, und die Plakette des Spiels darunter wird nicht gezeichnet - keine doppelte Leiste. Die eigene Kamera des Spiels von oben (flaches F1) behält die Plakette des Spiels. Braucht den Haken oben. Sofort. Ohne Haken: nur F4, wie bisher.
 hud.npc_names_own.label = Namen über NPCs und Objekten: eigene, scharf (Test)
 hud.npc_names_own.tip = Die Namen, die das Spiel über den NPCs (Warriv, Kashya, Akara ...), Objekten, Portalen und Ausgängen zeigt, auf die du zeigst, von der Mod statt der Kopie des Spiels gezeichnet: scharf bei jeder Renderauflösung, wo das Spiel sie hinsetzt, auf dem eigenen dunklen Kasten des Spiels, mit Größe und Hintergrund von "Unsere Namen" unten. Erste Person (F4). Braucht die D2R_DepthFog.fx desselben Builds. Sofort. Aus: die Namen des Spiels, wie bisher.
 hud.own_labels_drop_game.label = Unsere Beschriftungen und Namen: die des Spiels gar nicht gezeichnet (Test)
@@ -1982,54 +2012,6 @@ hud.map_width.label = Kartenbreite, m
 # ===== Tab: World =====
 tab.world = Welt
 
-# --- Fog ---
-group.fog = Nebel
-group.fog.help = Der Distanznebel und Korrekturen für die Tiefeneffekte des Spiels, von unserer Kamera aus gesehen. Stelle ein, wo der Nebel vollständig ist, seinen Abfall, den Nebel in Höhlen und seine Farbe, ob Feuer und Zauber verschont werden, und Korrekturen für die eigenen Nebel des Spiels, Wände vor dem Helden, Dächer und Licht bei einem quadratischen Fenster.
-fog.game_fog_mist.label = Der Nebel des Spiels auch über seinem Dunst
-fog.game_fog_mist.tip = Der eigene Nebel-Pass des Spiels fügt nach dem Nebel seinen volumetrischen Dunst hinzu (von Fackeln und Ähnlichem beleuchtet), der nie von der Entfernung benebelt wird: In einer Höhle machte unser dunkler Nebel die fernen Wände schwarz, und der Dunst blieb - ein helles Band hinter den Feuern. Angehakt: Der Dunst verblasst mit der Entfernung wie alles andere. Nur ohne ReShade. Live.
-fog.game_fog_caves_black.label = Der Nebel des Spiels wird in Höhlen schwarz
-fog.game_fog_caves_black.tip = Unter der Erde verblasst der Nebel des Spiels zu Schwarz, was auch immer die Nebelfarbe der Höhlen sagt, und die Leere hinter dem Rand einer Höhlendecke bleibt unberührt - der Nebel-Pass des Spiels legte seinen fackelbeleuchteten Dunst ganz darüber, ein helles Band hinter den Feuern. Die Entfernung dunkelt ab, nie leuchtet sie. Nur ohne ReShade. Live.
-fog.game_fog_our_curve.label = Der Nebel des Spiels nach unserer Kurve
-fog.game_fog_our_curve.tip = Der eigene Nebeldurchgang des Spiels blendet den Nebel so ein wie unser Effekt - von Nebelbeginn bis Voller Nebel nach dem Abfall unten (in Höhlen deren eigener Beginn, Ende und Stärke) - statt nach seiner eigenen Exponentialkurve, die fast den ganzen Nebel direkt hinter den Beginn legt und den fernen Bereich einheitlich grau lässt. Ein paar Anweisungen in seinem Durchgang, nichts hinzugefügt. Nur ohne ReShade. Sofort.
-fog.fog_keeps_colour.label = Der Nebel des Spiels behält nachts die Farbe des Akts
-fog.fog_keeps_colour.tip = Solange das Spiel den Nebel zeichnet: seine Farbe ist die eigene des Akts (die Farben oben) zu jeder Stunde - die Ferne verblasst in einen hellen Dunst davon, nie Richtung Schwarz. Der Nebel unseres eigenen Effekts wird nicht geändert. Aus: er dunkelt mit dem Licht des Spiels wie der Himmel - nachts zu "Himmel bei Nacht" und nach der Helligkeit des Himmels für jede Tageszeit. Mit der Farbe des Himmels ("Die Farbe des Nebels: aus dem Spiel gemessen" nicht angehakt): die des Taghimmels am Horizont zu jeder Stunde; aus, nachts die des Nachthimmels - fast schwarz. Sofort.
-fog.fog_into_sky.label = Der Nebel des Spiels lässt die Ferne im Himmel dahinter verblassen
-fog.fog_into_sky.tip = Im Freien ist die Farbe des Nebels an jedem Punkt der Himmel direkt dahinter, wie im Arkanen Heiligtum: Das ferne Land, der Rand der Welt und hohe ferne Gebäude verblassen im Himmel, nicht in einer flachen Farbe (der untere Teil des Himmels ist die Nebelfarbe des Akts, wie gezeichnet). Ferne Objekte zeigen den Himmel durch sich hindurch. Es funktionierte über „Der Nebel des Spiels so dick und so farbig wie unserer“, entfernt (es zerstörte den Nebel): Vorerst ändert es nichts. Sofort. Aus: eine Nebelfarbe, wie bisher.
-fog.fog_colour_measured.label = Die Farbe des Nebels: aus dem Spiel gemessen
-fog.fog_colour_measured.tip = Angehakt: Die Farbe des Nebels ist die eigene Farbe des Akts, wie eingestellt (ihre Messung aus dem Spiel ging mit dem entfernten „Der Nebel des Spiels so dick und so farbig wie unserer“ weg). Nicht angehakt: Die Farbe des Nebels ist die eigene des Himmels am Horizont - das dort eingebrannte Bild mit seinem Helligkeitsregler - sodass das ferne Land ohne Naht in den Himmel übergeht; eine Zahl, gesetzt, wenn sich die Tageszeit oder ein Regler ändert: keine Messung, nichts davon im Effekt. Unter der Erde, im Arkanen Heiligtum und mit dem getönten Himmel: die Farbe des Akts oder der Höhle, wie eingestellt. Sofort.
-fog.game_fog_before_fx.label = Der Nebel vor Rauch und Feuer
-fog.game_fog_before_fx.tip = Der Nebel wird auf die Szene gelegt, bevor das Spiel Rauch, Dunst, Feuer und Zauber hinzufügt, sodass sie unvernebelt über der vernebelten Welt liegen - ohne das wird der Nebel nach der Wand hinter ihnen über sie gelegt (Dunst als schwarze Löcher vor fernen Wänden ausgeschnitten, ein Feuerzauber, der verblasst, wenn er an einer fernen Wand vorbeifliegt). Der Nebel des Spiels oder der unseres Effekts, wer ihn auch zeichnet. Ein Durchgang von uns auf der Grafikkarte (seine Kosten in der 10-s-Zeile des Logs). Mit ReShade: nur der Nebel unseres Effekts, nur VR-Ich-Perspektive. Gilt, wenn das Spiel neu gestartet wird.
-fog.game_fog_fx_depth.label = Ferner Rauch und fernes Feuer verblassen im Nebel
-fog.game_fog_fx_depth.tip = Mit dem Nebel vor Rauch und Feuer: Rauch, Dunst, Feuer und Zauber werden auch vernebelt, jedes nach seiner eigenen Entfernung - nahe, wie sie sind, ferne verblassen mit der Welt hinter ihnen im Nebel. Ohne das steht ein fernes Lagerfeuer in vollem Licht im vollen Nebel, und die durchsichtigen Ränder ferner Zäune erscheinen als Flecken am Horizont. Die Effekte des Spiels werden für ihre Tiefe allein noch einmal gezeichnet: TEUER - auf einer Quest 3 bei 2048 x 2048 pro Auge kostete es etwa 30 Frames pro Sekunde (72 -> 42); die Kosten in den 10-s-Zeilen des Logs. Nur ohne ReShade. Sofort. Aus: die Effekte nie vernebelt.
-fog.game_fog_height.label = Der Nebel des Spiels wird mit der Höhe dünner
-fog.game_fog_height.tip = Der eigene Nebel-Pass des Spiels lässt den Himmel frei: der Nebel wie er ist bis zur Obergrenze des Nebels abzüglich seiner Weichheit, darüber ausblendend, über der Obergrenze keiner (Welteinheiten über deinen Augen). Für die Himmelskuppel des Spiels, damit sein Himmel über dem benebelten Horizont zu sehen ist. Sein eigener Pass, nichts Zusätzliches. Nur im Freien (unter der Erde gibt es keinen Himmel freizuhalten). Nur ohne ReShade. Aus: der Nebel des Spiels wie er ist. Live.
-fog.game_fog_top.label = Der Nebel des Spiels: Obergrenze, Einheiten über den Augen
-fog.game_fog_top.tip = Wie hoch der Nebel des Spiels reicht: darüber keiner, in Welteinheiten über deinen Augen (der Held ist ~7,5 groß; die Himmelskuppel in ihrem Radius). Live.
-fog.game_fog_soft.label = Der Nebel des Spiels: Weichheit der Obergrenze, Einheiten
-fog.game_fog_soft.tip = Wie weit unterhalb seiner Obergrenze der Nebel des Spiels ausblendet: klein, eine scharfe Kante; groß, ein langer weicher Übergang. Live.
-fog.game_fog_top_from_floor.label = Der Nebel des Spiels: seine Obergrenze ab dem Boden des Helden
-fog.game_fog_top_from_floor.tip = Die Obergrenze oben wird ab dem Boden gezählt, auf dem der Held steht, nicht ab deinen Augen: Eine Kamera hoch über dem Helden (dritte Person, die Ansicht von oben) verschiebt nicht mehr, wo der Nebel endet, und Land unter deinen Augen ist nicht ganz vernebelt, mit einer Linie auf Augenhöhe. Aus: ab den Augen, wie bisher. „Der Nebel des Spiels wird mit der Höhe dünner“ ohne Haken gibt stattdessen den Nebel allein nach Entfernung, wie unser eigener Nebel. Sofort.
-fog.end.tip#2 = Wo der Nebel voll ist. Welteinheiten (der Held ist ~7.5 groß). Mit dem Nebel des Spiels werden unterhalb von Nebelbeginn die zwei andersherum genommen (Nebel unseres Effekts: voll gleich hinter Nebelbeginn).
-fog.curve.label = Abfall
-fog.curve.tip = 1 = linear; mehr = eine klarere mittlere Entfernung.
-fog.blur.label = Tiefenunschärfe, px (0 = aus)
-fog.blur.tip = Der Nebel über einem 5x5-Raster mit so vielen Pixeln Abstand: Löcher und Flecken in der Tiefe verschwimmen.
-fog.spare_effects.label = Nebel verschont Feuer, Zauber und Rauch (Test)
-fog.spare_effects.tip = Feuer, Zauber, Rauch und Leuchten werden nur so stark benebelt, wie die Szene dahinter es nicht ist: Eine Fackel oder ein Feuerpfeil vor einer fernen Wand bleibt hell, statt wie die Wand benebelt zu werden. Die eigenen durchsichtigen Ebenen des Spiels in jedem Frame werden dafür kopiert (nur VR F4). Gilt, wenn das Spiel neu gestartet wird; aus = der Nebel wie bisher.
-render.fog_in_frame.label = Nebel im Frame des Spiels gezeichnet (Test)
-render.fog_in_frame.tip = Der Nebel wird in das eigene Bild des Spiels gezeichnet, vor seinem Feuer, seinen Zaubern und seinem Rauch, und das Spiel legt sie über die benebelte Szene: Eine Fackel, ein Feuerpfeil oder ein Inferno vor einer fernen Wand wird nicht wie die Wand benebelt. Der Himmel und das Schwarz jenseits der Welt behalten den Nebel wie bisher. Mit der eigenen Nebelfarbe eines Aktes (Welt > Himmel); nur VR F4. Gilt, wenn das Spiel neu gestartet wird; aus = der Nebel wie bisher. Hat Vorrang vor „Nebel verschont Feuer, Zauber und Rauch (Test)“, wenn beide an sind.
-fog.caves.label = Nebel in Höhlen und Verliesen
-fog.caves.tip = Aus: kein Nebel unter der Erde (jedes Gebiet, das nicht im Freien liegt) - weder der unseres Effekts noch der eigene Nebel des Spiels, und dort nichts vor Rauch und Feuer gelegt; die freie Luft behält ihn. Das Arkane Heiligtum hat seinen eigenen Schalter (Himmel > Arkanes Heiligtum: Nebel geht in seinen Himmel über): an, behält es seinen Nebel mit beiden Nebeln. Sofort.
-fog.ease_in.label = Nebel sanft eingeblendet, kein harter Ring
-fog.ease_in.tip = Der Nebel blendet sich über seine ersten 40 Einheiten nach seinem Beginn weich ein: keine scharfe Kante um den klaren Boden zu deinen Füßen. Überall, wo unsere Kurve den Nebel zeichnet: unser Effekt und der Nebel des Spiels mit „Der Nebel des Spiels nach unserer Kurve“ an (nicht die eigene Kurve des Spiels). Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel wie bisher.
-fog.no_fog_river.label = Kein Nebel im Flammenfluss
-fog.no_fog_river.tip = Kein zusätzlicher Nebel im Flammenfluss, obwohl er im Freien liegt: Das eigene Glühen und der Dunst seiner Lava bleiben die des Spiels. Der Nebel unseres Effekts und der des Spiels gleichermaßen. Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel dort wie überall im Freien.
-fog.caves_strength.label = Nebelstärke in Höhlen
-fog.caves_strength.tip = Wie stark der volle Nebel in Höhlen deckt: 1 = das ferne Ende ist im Nebel in der Nebelfarbe verschwunden, weniger = es scheint durch.
-fog.color_caves.label = Nebelfarbe in Höhlen
-fog.color_caves.tip = Höhlen, Verliese, Krypten: jedes Gebiet, das nicht im Freien liegt. Leer (x) = die Farbe des jeweiligen Aktes.
-fog.color_caves.empty = wie der Akt
-
 # --- Distance blur ---
 group.distance_blur = Fernunschärfe
 group.distance_blur.help = Das ferne Bild verschwommen, wie durch eine Milchglasscheibe, die in einiger Entfernung vor dir steht: nichts näher als die Scheibe wird berührt; dahinter verschwimmt die Welt umso mehr, je weiter sie weg ist. Stell ein, wo die Scheibe steht, wo die Unschärfe am breitesten ist und wie breit das ist. Getrennt vom Nebel: keine eigene Farbe, der Nebel behält sein Aussehen.
@@ -2042,30 +2024,9 @@ render.distance_blur_full_m.tip = Wo die Unschärfe am breitesten ist, Meter (mi
 render.distance_blur_strength.label = Stärke der Unschärfe
 render.distance_blur_strength.tip = Wie breit die Unschärfe an ihrer breitesten Stelle ist: 1 = 2.5 % der Bildhöhe (etwa 50 Pixel bei einem Auge mit 2000 Zeilen), 0.4 wie im Fraktalspiel. 0 = keine Unschärfe. Sofort.
 
-# --- Arcane Sanctuary ---
-group.arcane_sanctuary = Arkanes Heiligtum
-group.arcane_sanctuary.help = Der Nebel im Arkanen Heiligtum (Akt 2), getrennt von dem der Höhlen eingestellt: es liegt nicht im Freien, also nimmt es den Höhlennebel, bis "Eigener Nebel" angehakt ist. Ob es unter seinem eigenen Himmel überhaupt Nebel gibt, steht im Tab Himmel (Arkanes Heiligtum: Nebel geht in seinen Himmel über).
-fog.arcane_own.label = Arkanes Heiligtum: eigener Nebel
-fog.arcane_own.tip = Der Nebel im Arkanen Heiligtum für sich eingestellt, mit den Werten unten; die Höhlen behalten ihre. Sofort. Aus: es nimmt Beginn, Ende, Stärke und Farbe der Höhlen, wie bisher.
-fog.arcane_start.label = Arkanes Heiligtum: Nebelbeginn
-fog.arcane_start.tip = Wo der Nebel im Arkanen Heiligtum beginnt. Welteinheiten (der Held ist ~7.5 groß). Sofort.
-fog.arcane_end.label = Arkanes Heiligtum: voller Nebel
-fog.arcane_end.tip = Wo der Nebel im Arkanen Heiligtum voll ist. Welteinheiten (der Held ist ~7.5 groß). Sofort.
-fog.arcane_strength.label = Arkanes Heiligtum: Nebelstärke
-fog.arcane_strength.tip = Wie viel der volle Nebel dort verdeckt: 1 = die fernen Plattformen verschwinden im Nebel, weniger = sie scheinen durch. Sofort.
-fog.arcane_curve.label = Arkanes Heiligtum: Nebelkurve
-fog.arcane_curve.tip = Wie der Nebel von seinem Beginn bis voll wächst: 1 = gleichmäßig, mehr = er bleibt länger dünn und wird gegen Ende dichter, weniger = er wird bald nach dem Beginn dichter. Sofort.
-fog.arcane_color.label = Arkanes Heiligtum: Nebelfarbe
-fog.arcane_color.tip = Die Farbe des Nebels im Arkanen Heiligtum. Leer (x) = die Farbe der Höhlen (mit dem Nebel des Spiels dort nie schwarz). Sofort.
-fog.arcane_color.empty = wie Höhlen
-fog.arcane_into_sky.label = Arkanes Heiligtum: Nebel geht in den Himmel dahinter über
-fog.arcane_into_sky.tip = Unter seinem eigenen Himmel (Tab Himmel) ist der Nebel der Himmel direkt hinter jedem Punkt: die fernen Plattformen lösen sich in der Leere auf. Aus: sie verblassen stattdessen in der Nebelfarbe oben. Sofort.
-render.game_height_fog.label = Der eigene Höhennebel des Spiels
-render.game_height_fog.tip = Nur die Stadt in Akt 2 hat ihn. Von unserer Kamera aus ist sein Rand eine harte Linie quer durch das Bild mit einem blassen Schleier darüber (die Kamera des Spiels sieht diesen Rand nie). Aus: vrcam setzt ihn auf 0.
-render.game_depth_fog.label = Der eigene Tiefennebel des Spiels
-render.game_depth_fog.tip = Jedes Gebiet im Freien hat ihn, ab der Entfernung seiner Kamera: ein grauer Dunst in den vier Ecken des Bildes (auch von oben), über dem nahen Boden von unserer Kamera aus. Aus: vrcam setzt ihn auf 0.
-render.game_fog_scan_safe.label = Den Nebel des Spiels sicher finden
-render.game_fog_scan_safe.tip = Wie D2R VR den Höhen- und Tiefennebel des Spiels findet, um ihn abzuschalten: durch Lesen von Kopien des Spielspeichers, sodass ein Block, den das Spiel inzwischen freigibt, ohne Fehler übersprungen wird (D2RLoader hat diese als Absturzberichte gemeldet), nur Definitionen dort, wo die Bereiche des Spiels sie haben, und ein Wert wird nur geändert, solange er noch das gerade Gelesene ist. Aus: direktes Lesen, wie bisher. Sofort.
+# --- Depth and view ---
+group.depth_and_view = Tiefe und Ansicht
+group.depth_and_view.help = Wie die Tiefeneffekte des Spiels unsere Kamera sehen, und die Wände, Dächer und die Beleuchtung, von ihr aus gesehen. (Der Nebel des Arkanen Heiligtums und die eigenen Nebel des Spiels stehen auf dem Tab Nebel.)
 render.depth_fix.label = Effekte des Spiels messen die Tiefe von unserer Kamera aus
 render.depth_fix.tip = Das Spiel führt eine Kopie der Tiefe für seinen Nebel, Höhennebel, die Umgebungsverdeckung, Spiegelungen und das Wasser, erstellt für seine Kamera von oben (550 bis 1060 Einheiten entfernt). Von unserer aus ist alles näher und wird als eine flache Wand in 550 Entfernung gelesen: die gerade Linie der Stadt in Akt 2 mit einem blassen Schleier darüber, der Dunst in den Ecken. An: Diese Tiefe läuft von unserer Kamera aus. Aus: die eigene des Spiels.
 render.own_depth.label = Tiefe für die Effekte
@@ -2094,6 +2055,8 @@ render.light_bounds_fix.label = Licht des Spiels bei quadratischem oder breitem 
 render.light_bounds_fix.tip = Das Spiel zerlegt das Bild in 32 x 20 Kacheln und bestimmt den Tiefenbereich jeder Kachel für seine Lichter mit einem Shader, der nur bei einem 16:10-Fenster stimmt. Bei einem quadratischen oder breiten (dem VR-Fenster, 16:9) verfehlt er Zeilen: Lichter verschwinden in harten Rechtecken und die Schattierung eines Dachs flackert, wenn sich der Kopf bewegt. An: Unser eigener Shader erledigt genau diese eine Aufgabe richtig, solange VR rendert, mit ReShade oder ohne (bei 16:10 sind die Zahlen dieselben wie die des Spiels). Aus sofort; wieder angehakt wirkt es beim nächsten Start des Spiels. Aus: das Eigene des Spiels.
 render.light_bounds_flat.label = ... auch im Flat-Modus
 render.light_bounds_flat.tip = Dieselbe Korrektur im Flat-Modus (ein Monitor oder ein Fenster, auch das flache Bild von nativem OpenXR): Der Shader des Spiels stimmt bei 16:9 und auch bei einem quadratischen Fenster nicht, nicht nur in VR. Folgt dem Modus sofort. Aus: Der Flat-Modus behält den eigenen Shader des Spiels, wie bisher.
+render.symmetric_projection.label = Beleuchtung richtig bei außermittigen Augen (weicher)
+render.symmetric_projection.tip = Natives OpenXR: Das Spiel findet mit einem Shader, der das Bild als zentriert nimmt, heraus, welche Lichter jede seiner 32 x 20 Kacheln erreichen. Ein außermittig gezeichnetes Auge (Frame Generation an, "Jedes Auge genau, wie das Headset es gibt" aus oder auf den eigenen Winkeln des Headsets, Winkel von Hand ohne "Namen und Oberfläche einfach in beiden Augen", ein Headset, dessen Displays nach außen gedreht sind) bekommt seine Lichter in den Kacheln neben ihren eigenen: Flecken von Bodendetails, die auf einer Seite der Ansicht mit dem Helden gleiten und sich beim Drehen bewegen. An: Beide Augen werden gezeichnet und mit einer zentrierten Ansicht, die beide Augen umfasst, an das Headset gegeben (nach bearstonem/d2r-pcvr) - die Flecken sollten verschwinden; das Bild ist etwas weicher (dieselben Pixel über einen weiteren Winkel). Mit "Jedes Auge genau, wie das Headset es gibt" auf Zentriert (die Vorgabe) sind die Augen auf den meisten Headsets schon zentriert, und nichts ändert sich. Wenn das Headset mit Frame Generation schwarz wird, nimm den Haken weg. Sofort. Aus: jedes Auge, wie seine Wahl es zeichnet.
 render.reflections_per_eye.label = Spiegelungen in Pfützen und Blut in echter Tiefe (3D)
 render.reflections_per_eye.tip = Bei "Stereo - one pass, two pictures" wurden die Spiegelungen des Spiels in Wasser, Pfützen und Blutlachen im rechten Auge so gezeichnet, als sähe man sie aus dem doppelten Augenabstand: doppelte Parallaxe, halbe Tiefe - die Spiegelung schien über der Pfütze zu schweben und strengte die Augen an. An: Die beiden Spiegelungsdurchgänge des Spiels lesen die eigene Position jedes Auges (ein Wert in seinem eigenen Shader geändert; keine Mehrarbeit für die Grafikkarte), so liegt jede Spiegelung im Wasser. Die anderen 3D-Modi und der Flachmodus sehen so oder so gleich aus. Beim Spielstart angewendet: eingeschaltet wirkt es ab dem nächsten Start; danach folgt es diesem Häkchen sofort. Aus: das des Spiels.
 
@@ -2103,11 +2066,15 @@ group.render_distance.help = Wie weit um den Helden die Welt gezeichnet wird: me
 
 # --- Scenery ---
 group.scenery = Kulisse
-group.scenery.help = Korrekturen an der Kulisse des Spiels für die erste Person: Böden, die ihre Höhe behalten, wenn du in einen Raum zurückkehrst, und das Kanu der Kurast-Docks, das auf das Wasser gelegt wird, statt am Himmel zu hängen. Nur das Bild ändert sich.
-render.floors_stay.label = Böden bleiben, wo sie waren (kein Boden, der auf dem Rückweg rutscht)
-render.floors_stay.tip = Das Spiel gibt jedem Raum eines Gebiets eine Höhe, wenn es beginnt, ihn zu zeichnen, passend zu den Räumen, die in diesem Moment um ihn gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln stimmen nicht ringsum überein, sodass ein Raum, zu dem du auf einem anderen Weg zurückkommst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen kann - aus der Kamera des Spiels oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Der Preis: Das Spiel repariert auch einen in falscher Höhe gezeichneten Raum (eine Stufe, von fern gesehen, wie am Tor der Festung des Pandämoniums), wenn es ihn beim Näherkommen neu zeichnet - mit dieser Option an kommt diese Reparatur nicht. Nur das Bild; nichts am Kampf oder an den Wegen ändert sich. Sofort. Aus (der Standard): die eigenen Höhen des Spiels.
+group.scenery.help = Korrekturen an der Kulisse des Spiels für die erste Person: Dungeon-Böden, die sich auf deinem Weg verbinden, Bodenkacheln in der Höhe ihres eigenen Bodens und das Kanu der Kurast-Docks, das auf das Wasser gelegt wird, statt am Himmel zu hängen. Nur das Bild ändert sich.
+render.room_stitch.label = Dungeon-Böden verbinden sich auf dem Weg, den du kommst
+render.room_stitch.tip = Das Spiel gibt jedem Raum beim Bauen eine Höhe und trifft dabei EINEN der schon gebauten Räume um ihn - den eigenen Raum des Helden, wenn es einer ist, sonst den, der den größten Schritt verlangt. Aus seiner Kamera von oben fällt das nie auf; aus unserer hängen ein paar Ringe weiter draußen gebaute Räume eine Stufe über oder unter dem nächsten mit einer schwarzen Leere dazwischen und rasten an der Schwelle ein. An: Jeder Raum trifft seinen gebauten Nachbarn, der dir am nächsten ist, sodass sich die Böden auf deinem Weg verbinden; was eine Schleife des Levels nicht schließen kann, bleibt an den Rändern von dir weg. Wo unsere Kopie der Wahl des Spiels je vom Spiel abweicht, gilt die Antwort des Spiels. Nur das Bild; Monster, Geschosse und Gegenstände folgen dem Boden von selbst. Ein Raum, in den du auf anderem Weg zurückkehrst, trifft ebenfalls deinen Weg. Jede Ansicht: flach F1 - F3, VR F4 und das flache Spiel mit eigener Kamera (von oben fällt es nie auf, daher ändert sich dort nichts); ein Raum behält seine Höhe, wenn du die Ansicht wechselst. Legacy-Grafik zeichnet solche Räume nicht. Aus D2R VR Unleashed (Cal, Team von bearstonem). Standardmäßig an. Aus: die eigene Wahl des Spiels.
+render.terrain_heights.label = Bodenkacheln in der Höhe ihres eigenen Bodens (Treppen, Absätze)
+render.terrain_heights.tip = Das Spiel zeichnet jede Kachel des Bodens im Freien (Sand, Gras, Schnee und das Pflaster darüber) in der Höhe des Bodens unter dem Helden. Aus seiner Kamera von oben fällt das nie auf; aus unserer, wo der Boden zwei Ebenen hat - die Plateaus der Wüste in Akt 2 und ihre Treppen, Absätze -, liegt der Boden der anderen Ebene auf der Höhe des Helden, zur Seite geschoben, und der ganze Boden springt mit jeder Treppenstufe hoch oder runter. An: Jede Kachel wird in der Höhe ihres eigenen Bodens gezeichnet und an die Kacheln um sie genäht - eine Kachel jenseits eines Absatzes schließt an die Ebene an, auf der ihre Nachbarn stehen, sodass zwischen Kacheln eines Bodens keine Stufen oder Lücken entstehen; echte Abbrüche (Klippen, Absätze, Treppen) bleiben. Nur das Bild; am Kampf oder an den Wegen ändert sich nichts. Sofort. Aus (die Vorgabe): die eine Höhe des Spiels für alle.
 world.kurast_boat.label = Kurast-Docks: das Kanu am Himmel sitzt auf dem Wasser
 world.kurast_boat.tip = Die HD-Kulisse der Stadt setzt ein Kanu 50 Einheiten hoch, wo die Ansicht von oben nie hinsieht; in der ersten Person hängt es über den Hütten. An: Es liegt auf dem Wasser an den westlichen Docks, wo sein Prefab gebaut wurde - eine Zahl der Kulissendatei der Stadt geändert (gefunden von bearstonem/d2r-pcvr). Dieses Programm erzeugt diese Datei aus der eigenen des Spiels, wenn es sich öffnet (Start: Kurast-Docks, Kanu), und bewahrt sie im Mod auf (mods\D2R-VR\D2R-VR.mpq); am Spiel selbst ändert sich nichts, ebenso wenig an allem, womit du spielst. Gilt ab dem nächsten Start des Spiels (ein bereits laufendes Spiel behält das Kanu, wo es war). Aus: Die Datei wird wieder entfernt, das Kanu so, wie das Spiel es hat.
+holes.patch_world.label = Löcher in der Welt geflickt (ein Test: die Brücke aus dem Lager der Jägerinnen)
+holes.patch_world.tip = Das Spiel wurde für eine Kamera gebaut, die von oben herabschaut: Manche Stellen wurden dort nie modelliert, wo diese Kamera nie hinschaut - die Brücke aus dem Lager der Jägerinnen hat entlang ihres Decks einen Streifen ohne Boden, zwischen dem Deck und seiner Brüstung, durch den man in erster und dritter Person den Fluss weit unten sieht. Angehakt, macht dieses Programm für jede solche Stelle einen Flicken aus den eigenen Dateien deines Spiels (das eigene Bodenmaterial des Decks, seine Kanten bis zur Brüstung weitergeführt - nichts von Hand platziert), und das Spiel zeichnet ihn als eigenes Stück, beleuchtet und beschattet wie das Deck. Jede Ansicht: flach F1, F2, F3 und VR. Wirkt ab dem nächsten Start des Spiels. Aus: Die Dateien werden wieder entfernt, die Brücke, wie das Spiel sie hat.
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = Monster (flaches Spiel)
@@ -2121,8 +2088,9 @@ tab.sky = Himmel
 # --- Sky and fog ---
 group.sky_and_fog = Himmel und Nebel
 group.sky_and_fog.help = Wer den Himmel und wer den Distanznebel zeichnet: das Spiel selbst (neu) oder unser Effekt (alt) - je eine Wahl, zwei beliebige zusammen (die Kuppel des Spiels mit unserem Nebel, unser Himmel mit dem Nebel des Spiels).
-render.game_drawn_flat.label = Das Spiel zeichnet sie auch im flachen Spiel
-render.game_drawn_flat.tip = Die Himmelskuppel, die Höhlenkuppel und -decke und der Nebel, die das Spiel selbst zeichnet, auch wenn du ohne Headset am Monitor spielst (die flachen Ansichten in erster und dritter Person; von oben bleibt, wie es ist). Aus: nur in VR in der ersten Person (F4). Sofort.
+render.game_drawn_flat.label = Das Spiel zeichnet den Himmel auch im flachen Spiel
+render.game_drawn_flat.tip = Die Himmelskuppel, die Höhlenkuppel und die Decke, die das Spiel selbst zeichnet, auch wenn du am Monitor ohne Headset spielst (die flachen Ansichten in erster und dritter Person; von oben bleibt, wie es ist). Aus: nur in VR erste Person (F4). Der Nebel hat seinen eigenen auf dem Tab Nebel. Sofort.
+@status.fog_moved_sky.label = Wer den Nebel zeichnet, die Farben des Nebels und der untere Teil des Himmels in der Farbe des Nebels stehen auf dem Tab Nebel.
 
 # --- Sky ---
 group.sky.help = Ein Himmel in der schwarzen Leere jenseits der Welt, nur im Freien. Stelle die Wolken ein, ob sich der Himmel langsam dreht, den Himmel über dem dunklen Rand um Dächer und Bäume sowie die eigenen Sterne des Arkanen Heiligtums ringsum und seinen Nebel.
@@ -2141,12 +2109,6 @@ sky.dome_gain_once.label = Himmel des Spiels: seine Farben einmal gemessen
 sky.dome_gain_once.tip = Mit "seine Farben vom Spiel gezeichnet": die Messung des Himmels des Spiels gegen unseren wird einmal pro Gebiet und Tageszeit gemacht und in d2r_vr_dome_gain.txt neben den Einstellungen behalten (lösch sie, um neu zu messen). Danach wird der Himmel aus diesen Zahlen nur gebacken, wenn sich Licht, Tageszeit oder ein Regler ändert - nichts wird beim Spielen neu gemessen oder gebacken. Sofort. Aus: ständig gemessen, wie bisher.
 sky.dome_in_game_colour.label = Himmel des Spiels: seine Farben vom Spiel gezeichnet
 sky.dome_in_game_colour.tip = Unser Effekt färbte den vom Spiel gezeichneten Himmel um, nachdem das Spiel Bäume, Palisade und Dächer darüber gezeichnet hatte: ihre Ränder, in den Himmel gemischt, wie das Spiel ihn zeichnete, behielten seine alte Farbe - nachts ein heller Umriss um jeden Ast. Angehakt zeichnet das Spiel den Himmel stattdessen aus einem Bild von uns, gemacht aus seinem eigenen mit dem Nachtbild, der Tag- und Nachtabdunklung, der Helligkeit jeder Tageszeit und den gemessenen Farben darin - jeder Rand mischt sich in den richtigen Himmel. Nur ohne ReShade (unsere eigenen Effekte). Gilt ab dem nächsten Spielstart; nicht angehakt sofort, der Himmel geht auf einmal zu den eigenen Farben des Spiels zurück, und unser Effekt färbt ihn wie bisher um.
-sky.dome_fog_horizon.label = Himmel des Spiels: sein Horizont im Nebel
-sky.dome_fog_horizon.tip = Der untere Teil des vom Spiel gezeichneten Himmels sinkt in die Nebelfarbe des Akts, wie es der unseres eigenen Himmels tat: Das vernebelte Land trifft ohne harte Kante auf den Himmel, und die Farben passen, wo sie sich treffen. Nur solange ein Nebel gezeichnet wird. Aus: der Himmel, wie das Spiel ihn zeichnet. Sofort.
-sky.dome_fog_baked.label = Himmel des Spiels: sein unterer Teil in der Farbe des Nebels
-sky.dome_fog_baked.tip = Mit dem Nebel des Spiels wird der untere Teil des Himmels im Bild des Himmels selbst in die eigene Farbe des Nebels gelegt, so wie der untere Teil unseres alten Himmels in den Nebel übergeht: Bäume und Büsche vor dem Horizont stehen auf der Farbe des Nebels, ohne hellen Rand vom Horizont des Bilds um sie. Der Übergang des Himmelshorizonts in den Nebel oben tritt währenddessen beiseite. Aus: das Bild, wie es ist. Sofort.
-sky.dome_fog_baked_strength.label = Himmel des Spiels: wie viel von der Farbe des Nebels
-sky.dome_fog_baked_strength.tip = 1: der Horizont ganz in der Farbe des Nebels, bis 11 Grad zum Bild hin verblassend; weniger: etwas vom Bild scheint durch. Sofort.
 sky.game_sky_closed.label = Himmel des Spiels: eine ganze Kugel, unten einfarbig
 sky.game_sky_closed.tip = Der vom Spiel gezeichnete Himmel endete 12 Grad unter dem Horizont: Hinter dem Rand einer Klippe stand sein Saum als harte Linie mit einem Loch darunter, durch das die Leere und der Nebel schienen. Angehakt schließt er sich zu einer ganzen Kugel, und seine untere Hälfte ist einfarbig - in der eigenen Farbe des Himmels am Horizont (mit gezeichnetem Nebel in der des Nebels: Sie treffen sich in einer Farbe). In jedem Akt, VR und flach. Dieses Programm erzeugt die Modelle der Kuppel sofort neu; das Spiel übernimmt sie bei seinem nächsten Start. Aus: die offene Kuppel, wie bisher.
 sky.game_skybox.label = Arreat-Gipfel: die Himmelskuppel weit draußen
@@ -2160,8 +2122,6 @@ sky.weather_first_person.choice1 = Ausgeblendet
 sky.weather_first_person.choice2 = Um dich
 sky.arcane_sky.label = Arkanes Heiligtum: eigene Sterne ringsum
 sky.arcane_sky.tip = Im Arkanen Heiligtum zeigt die Leere um die Plattformen die eigenen Sternenschichten und Wolken des Spiels in jede Richtung, auch unterhalb der Plattformen (nach bearstonem/d2r-pcvr). Die Bilder werden aus den Dateien deines Spiels erzeugt, wenn sich dieses Programm öffnet (Start: Himmel des Arkanen Heiligtums), und liegen im Mod (mods\D2R-VR); am Spiel wird nichts geändert. Nicht in den Ansichten von oben. Funktioniert auch bei ausgeschaltetem Himmel im Freien. Aus: die Leere, wie das Spiel sie zeichnet.
-sky.arcane_fog.label = Arkanes Heiligtum: Nebel geht in seinen Himmel über
-sky.arcane_fog.tip = Der Distanznebel ([fog] on, Welt > Nebel) auch im Arkanen Heiligtum: Die fernen Plattformen lösen sich in dem Himmel hinter ihnen auf - in seinem Dunkel und seinem Nebel, nicht in seinen Sternen. Aus: kein Nebel unter diesem Himmel, die Plattformen bleiben bis zum Ende scharf.
 
 # --- Day and night ---
 group.day_and_night = Tag und Nacht
@@ -2214,9 +2174,6 @@ sky.brightness_act1.label = Helligkeit
 sky.texture_act1.label = Himmelspanorama
 sky.texture_act1.tip = Ein bloßer Name wird in reshade-shaders\Textures gesucht; ein voller Pfad geht auch. Leer (x) = der Shader zeichnet diesen Himmel selbst.
 sky.cap_act1.label = Zenit
-fog.color_act1.label = Nebelfarbe
-fog.color_act1.tip = Die Nebelfarbe dieses Aktes, seine Höhlen eingeschlossen; der untere Teil des Himmels versinkt darin. Leer (x) = die Horizontfarbe des Himmels, oder dunkel ohne Himmel.
-fog.color_act1.empty = vom Himmel
 
 # --- Act 2 (desert) ---
 group.act_2_desert = Akt 2 (Wüste)
@@ -2238,6 +2195,140 @@ group.act_5_ruins.help = Der Himmel über den Ruinen von Akt 5: seine Helligkeit
 group.act_5_snow = Akt 5 (Schnee)
 group.act_5_snow.help = Der Himmel über dem Schnee von Akt 5: seine Helligkeit, das Panoramabild, der Zenit und die Nebelfarbe, wie bei Akt 1.
 
+# ===== Tab: Fog =====
+tab.fog = Nebel
+
+# --- Fog drawn by ---
+group.fog_drawn_by = Nebel gezeichnet von
+group.fog_drawn_by.help = Wer den Distanznebel zeichnet: niemand, der eigene Nebeldurchgang des Spiels (neu, die Vorgabe) oder unser alter Effekt. Der Block des nicht gewählten bleibt ausgegraut.
+@fogby.way.tip = Wer den Distanznebel zeichnet. Der Nebel des Spiels: der eigene Nebeldurchgang des Spiels mit unseren Entfernungen und Farben (der Block darunter) - ohne Bildzeit von uns. Alter Nebel (unser Effekt): Unser Nebel-Shader legt den Nebel nach der Tiefe, wie bisher (sein eigener Block). Keiner: kein Distanznebel. Sofort.
+@fogby.way.choice1 = Der Nebel des Spiels
+@fogby.way.choice2 = Alter Nebel (unser Effekt)
+@fogby.way.choice3 = Nebelebenen vor dem Spieler
+
+# --- The game's fog ---
+group.the_game_s_fog.help = Der eigene Nebeldurchgang des Spiels: wo er beginnt und wo er vollständig ist, im Freien und in Höhlen, seine Farbe nach der Tageszeit des Spiels, und der untere Teil des Himmels in diese Farbe eingebacken. Eigene Regler - die des alten Nebels stehen darunter.
+fog.game_fog_flat.label = Der Nebel des Spiels auch im flachen Spiel
+fog.game_fog_flat.tip = Das Spiel zeichnet seinen Nebel auch, wenn du am Monitor ohne Headset spielst (die flachen Ansichten in erster und dritter Person). Aus: nur in VR erste Person (F4). Leer: wie "Das Spiel zeichnet den Himmel auch im flachen Spiel" (der eine Schalter von vorher). Sofort.
+fog.game_fog_before_fx.label = Der Nebel vor Rauch und Feuer
+fog.game_fog_before_fx.tip = Der Nebel wird auf die Welt gelegt, bevor das Spiel Rauch, Feuer, Dunst und Zauber hinzufügt, sodass sie hell über der vernebelten Welt bleiben. Aus: die eigene Reihenfolge des Spiels - der Nebel geht nach dem, was weit hinter ihnen liegt, über sie, und die Flamme und der Rauch einer Fackel vor einem fernen, vernebelten Hintergrund werden ausgelöscht. Ein Durchgang von uns auf der Grafikkarte (seine Kosten in der 10-s-Zeile des Logs). Gilt, wenn das Spiel neu gestartet wird.
+fog.game_fog_planes_count.label = Wie viele Ebenen
+fog.game_fog_planes_count.tip = Mit "Nebel gezeichnet von: Nebelebenen vor dem Spieler": der Nebel als Ebenen, die dir zugewandt von Nebelanfang bis Voller Nebel stehen, jede eine Schicht in der Farbe des Nebels; was hinter einer Ebene liegt, wird von ihr verdeckt, was vor ihr liegt (die Flamme einer Fackel), bleibt hell. Mehr Ebenen: weicher, dieselben Kosten. Sofort.
+fog.game_fog_planes_soft.label = Wie weich jede Ebene ist
+fog.game_fog_planes_soft.tip = 0: harte Ebenen - eine Linie, wo jede den Boden schneidet; 1: jede blendet über den Abstand zur nächsten ein, keine Linien. Sofort.
+group.caves_and_dungeons = Höhlen und Dungeons
+fog.game_fog_caves.label = Nebel in Höhlen und Dungeons
+fog.game_fog_caves.tip = Der Nebel des Spiels auch in Höhlen, Dungeons und Krypten (jedes Gebiet, das nicht im Freien liegt). Sofort.
+fog.game_fog_caves_strength.label = Nebelstärke in Höhlen
+fog.game_fog_caves_strength.tip = Wie stark der volle Nebel in Höhlen deckt: 1 = das ferne Ende ist in der Nebelfarbe verschwunden, weniger = es scheint durch.
+fog.game_fog_caves_black.label = Der Nebel des Spiels wird in Höhlen schwarz
+fog.game_fog_caves_black.tip = Unter der Erde verblasst der Nebel des Spiels zu Schwarz, was auch immer die Nebelfarbe der Höhlen sagt, und die Leere hinter dem Rand einer Höhlendecke bleibt unberührt - der Nebel-Pass des Spiels legte seinen fackelbeleuchteten Dunst ganz darüber, ein helles Band hinter den Feuern. Die Entfernung dunkelt ab, nie leuchtet sie. Nur ohne ReShade. Live.
+group.its_colour_by_the_time_of_day = Seine Farbe nach der Tageszeit
+fog.game_fog_colour.label = Die Rohfarbe des Spiels
+fog.game_fog_colour.tip = Ohne Haken (die Vorgabe): Der Nebel hat die Farben von Morgengrauen, Tag, Abenddämmerung und Nacht unten, überblendet nach der eigenen Uhr des Spiels. Angehakt: die Farbe, die die eigenen Lichtdateien des Spiels enthalten, wie sie ist - mit unserem nahen, dichten Nebel eine blasse Wand über dem fernen Land bei Tag und eine lavendelfarbene bei Nacht. Sofort.
+fog.game_fog_act1_dawn.label = Farbe im Morgengrauen
+fog.game_fog_act1_dawn.tip = Die Nebelfarbe des Spiels im Morgengrauen im Freien dieses Akts (das Licht des Spiels: beide Teile des Morgengrauens). Leer = die Tagfarbe im eigenen Morgengrauen-Ton des Spiels - die Tagfarbe mal der eigenen Änderung des Spiels von seinem Tagnebel zu seinem Morgengrauen-Nebel, pro Farbe, jeder Teil des Morgengrauens sein eigener (aus den Lichtdateien des Akts). Sofort.
+fog.game_fog_act1_dawn.empty = die des Tages im Morgengrauen-Ton des Spiels
+fog.game_fog_act1_day.label = Farbe am Tag
+fog.game_fog_act1_day.tip = Die Nebelfarbe des Spiels am Tag im Freien dieses Akts (das Licht des Spiels: der Tag). Leer = die Farbe des alten Nebels dieses Akts (Welt > Nebelfarbe des Akts), wie sie jetzt ist. Sofort.
+fog.game_fog_act1_day.empty = die des alten Nebels
+fog.game_fog_act1_dusk.label = Farbe in der Abenddämmerung
+fog.game_fog_act1_dusk.tip = Die Nebelfarbe des Spiels in der Abenddämmerung im Freien dieses Akts (das Licht des Spiels: beide Teile der Abenddämmerung). Leer = die Tagfarbe im eigenen Abenddämmerungs-Ton des Spiels - die Tagfarbe mal der eigenen Änderung des Spiels von seinem Tagnebel zu seinem Abenddämmerungs-Nebel, pro Farbe, jeder Teil der Abenddämmerung sein eigener (aus den Lichtdateien des Akts). Sofort.
+fog.game_fog_act1_dusk.empty = die des Tages im Abenddämmerungs-Ton des Spiels
+fog.game_fog_act1_night.label = Farbe bei Nacht
+fog.game_fog_act1_night.tip = Die Nebelfarbe des Spiels bei Nacht im Freien dieses Akts (das Licht des Spiels: die Nacht). Leer = die Farbe des alten Nebels dieses Akts mal "Himmel bei Nacht", so wie der alte Nebel bei Nacht dunkler wurde. Sofort.
+fog.game_fog_act1_night.empty = die des alten Nebels bei Nacht
+group.the_sky_s_low_part_in_the_fog_s_colour_baked_into_the_dome = Der untere Teil des Himmels in der Nebelfarbe (in die Kuppel eingebacken)
+sky.dome_fog_horizon.label = Himmel des Spiels: sein Horizont im Nebel
+sky.dome_fog_horizon.tip = Der untere Teil des vom Spiel gezeichneten Himmels sinkt in die Nebelfarbe des Akts, wie es der unseres eigenen Himmels tat: Das vernebelte Land trifft ohne harte Kante auf den Himmel, und die Farben passen, wo sie sich treffen. Nur solange ein Nebel gezeichnet wird. Aus: der Himmel, wie das Spiel ihn zeichnet. Sofort.
+sky.dome_fog_baked.label = Himmel des Spiels: sein unterer Teil in der Farbe des Nebels
+sky.dome_fog_baked.tip = Mit dem Nebel des Spiels wird der untere Teil des Himmels im Bild des Himmels selbst in die eigene Farbe des Nebels gelegt, so wie der untere Teil unseres alten Himmels in den Nebel übergeht: Bäume und Büsche vor dem Horizont stehen auf der Farbe des Nebels, ohne hellen Rand vom Horizont des Bilds um sie. Der Übergang des Himmelshorizonts in den Nebel oben tritt währenddessen beiseite. Aus: das Bild, wie es ist. Sofort.
+sky.dome_fog_baked_strength.label = Himmel des Spiels: wie viel von der Farbe des Nebels
+sky.dome_fog_baked_strength.tip = 1: der Horizont ganz in der Farbe des Nebels, bis 11 Grad zum Bild hin verblassend; weniger: etwas vom Bild scheint durch. Sofort.
+
+# --- Old fog (our effect) ---
+group.old_fog_our_effect.help = Der Distanznebel unseres eigenen Effekts, wie er war (eingefroren) - nur mit "Nebel gezeichnet von: Alter Nebel", sonst ausgegraut. Eigene Regler.
+fog.end.tip = Wo der Nebel vollständig ist. Welteinheiten (der Held ist ~7,5 groß). Beim Nebel des Spiels werden die beiden unterhalb von Nebelanfang andersherum genommen (der Nebel unseres Effekts: voll kurz hinter Nebelanfang).
+fog.light.label = Leichter Nebel (schwache Grafikkarten)
+fog.light.tip = Der Nebel unseres Effekts auf dem kurzen Weg: die Tiefe einmal je Pixel gelesen, der Nebel danach, der Himmel in der Leere weiter gezeichnet - keine Tiefenunschärfe, kein Nebel über Leuchten und Funken vor dem Himmel, keine Höhlendecke. Ein Bruchteil der Kosten des vollen Nebels auf der Grafikkarte (die 10-s-Zeile im Protokoll sagt es). Aus: der volle Nebel, wie bisher.
+fog.curve.label = Abfall
+fog.curve.tip = 1 = linear; mehr = eine klarere mittlere Entfernung.
+fog.blur.label = Tiefenunschärfe, px (0 = aus)
+fog.blur.tip = Der Nebel über einem 5x5-Raster mit so vielen Pixeln Abstand: Löcher und Flecken in der Tiefe verschwimmen.
+fog.ease_in.label = Nebel sanft eingeblendet, kein harter Ring
+fog.ease_in.tip = Der Nebel blendet sich über seine ersten 40 Einheiten nach seinem Beginn weich ein: keine scharfe Kante um den klaren Boden zu deinen Füßen. Überall, wo unsere Kurve den Nebel zeichnet: unser Effekt und der Nebel des Spiels mit „Der Nebel des Spiels nach unserer Kurve“ an (nicht die eigene Kurve des Spiels). Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel wie bisher.
+fog.spare_effects.label = Nebel verschont Feuer, Zauber und Rauch (Test)
+fog.spare_effects.tip = Feuer, Zauber, Rauch und Leuchten werden nur so stark benebelt, wie die Szene dahinter es nicht ist: Eine Fackel oder ein Feuerpfeil vor einer fernen Wand bleibt hell, statt wie die Wand benebelt zu werden. Die eigenen durchsichtigen Ebenen des Spiels in jedem Frame werden dafür kopiert (nur VR F4). Gilt, wenn das Spiel neu gestartet wird; aus = der Nebel wie bisher.
+render.fog_in_frame.label = Nebel im Frame des Spiels gezeichnet (Test)
+render.fog_in_frame.tip = Der Nebel wird in das eigene Bild des Spiels gezeichnet, vor seinem Feuer, seinen Zaubern und seinem Rauch, und das Spiel legt sie über die benebelte Szene: Eine Fackel, ein Feuerpfeil oder ein Inferno vor einer fernen Wand wird nicht wie die Wand benebelt. Der Himmel und das Schwarz jenseits der Welt behalten den Nebel wie bisher. Mit der eigenen Nebelfarbe eines Aktes (Welt > Himmel); nur VR F4. Gilt, wenn das Spiel neu gestartet wird; aus = der Nebel wie bisher. Hat Vorrang vor „Nebel verschont Feuer, Zauber und Rauch (Test)“, wenn beide an sind.
+fog.caves.tip = Aus: kein Nebel unter der Erde (jedes Gebiet, das nicht im Freien liegt) - weder der unseres Effekts noch der eigene Nebel des Spiels, und dort nichts vor Rauch und Feuer gelegt; die freie Luft behält ihn. Das Arkane Heiligtum hat seinen eigenen Schalter (Himmel > Arkanes Heiligtum: Nebel geht in seinen Himmel über): an, behält es seinen Nebel mit beiden Nebeln. Sofort.
+group.fog_colour_of_each_act = Nebelfarbe jedes Akts
+fog.color_act1.label = Nebelfarbe: Akt 1 (Nacht, Sturm)
+fog.color_act1.tip = Die Nebelfarbe dieses Aktes, seine Höhlen eingeschlossen; der untere Teil des Himmels versinkt darin. Leer (x) = die Horizontfarbe des Himmels, oder dunkel ohne Himmel.
+fog.color_act1.empty = vom Himmel
+fog.color_act2.label = Nebelfarbe: Akt 2 (Wüste)
+fog.color_act3.label = Nebelfarbe: Akt 3 (Dschungel)
+fog.color_act4.label = Nebelfarbe: Akt 4 (Hölle)
+fog.color_act5.label = Nebelfarbe: Akt 5 (Ruinen)
+fog.color_snow.label = Nebelfarbe: Akt 5 (Schnee)
+fog.arcane_curve.label = Arkanes Heiligtum: Nebelkurve
+fog.arcane_curve.tip = Wie der Nebel von seinem Beginn bis voll wächst: 1 = gleichmäßig, mehr = er bleibt länger dünn und wird gegen Ende dichter, weniger = er wird bald nach dem Beginn dichter. Sofort.
+
+# --- Both fogs ---
+group.both_fogs = Beide Nebel
+group.both_fogs.help = Was der Nebel des Spiels und der alte beide übernehmen, wer auch zeichnet.
+fog.no_fog_river.label = Kein Nebel im Flammenfluss
+fog.no_fog_river.tip = Kein zusätzlicher Nebel im Flammenfluss, obwohl er im Freien liegt: Das eigene Glühen und der Dunst seiner Lava bleiben die des Spiels. Der Nebel unseres Effekts und der des Spiels gleichermaßen. Aus D2R VR Unleashed (bearstonem). Sofort. Aus: der Nebel dort wie überall im Freien.
+fog.color_caves.label = Nebelfarbe in Höhlen
+fog.color_caves.tip = Höhlen, Verliese, Krypten: jedes Gebiet, das nicht im Freien liegt. Leer (x) = die Farbe des jeweiligen Aktes.
+fog.color_caves.empty = wie der Akt
+group.arcane_sanctuary = Arkanes Heiligtum
+fog.arcane_own.label = Arkanes Heiligtum: eigener Nebel
+fog.arcane_own.tip = Der Nebel im Arkanen Heiligtum für sich eingestellt, mit den Werten unten; die Höhlen behalten ihre. Sofort. Aus: es nimmt Beginn, Ende, Stärke und Farbe der Höhlen, wie bisher.
+fog.arcane_start.label = Arkanes Heiligtum: Nebelbeginn
+fog.arcane_start.tip = Wo der Nebel im Arkanen Heiligtum beginnt. Welteinheiten (der Held ist ~7.5 groß). Sofort.
+fog.arcane_end.label = Arkanes Heiligtum: voller Nebel
+fog.arcane_end.tip = Wo der Nebel im Arkanen Heiligtum voll ist. Welteinheiten (der Held ist ~7.5 groß). Sofort.
+fog.arcane_strength.label = Arkanes Heiligtum: Nebelstärke
+fog.arcane_strength.tip = Wie viel der volle Nebel dort verdeckt: 1 = die fernen Plattformen verschwinden im Nebel, weniger = sie scheinen durch. Sofort.
+fog.arcane_color.label = Arkanes Heiligtum: Nebelfarbe
+fog.arcane_color.tip = Die Farbe des Nebels im Arkanen Heiligtum. Leer (x) = die Farbe der Höhlen (mit dem Nebel des Spiels dort nie schwarz). Sofort.
+fog.arcane_color.empty = wie Höhlen
+fog.arcane_into_sky.label = Arkanes Heiligtum: Nebel geht in den Himmel dahinter über
+fog.arcane_into_sky.tip = Unter seinem eigenen Himmel (Tab Himmel) ist der Nebel der Himmel direkt hinter jedem Punkt: die fernen Plattformen lösen sich in der Leere auf. Aus: sie verblassen stattdessen in der Nebelfarbe oben. Sofort.
+sky.arcane_fog.label = Arkanes Heiligtum: Nebel geht in seinen Himmel über
+sky.arcane_fog.tip = Der Distanznebel ([fog] on, Welt > Nebel) auch im Arkanen Heiligtum: Die fernen Plattformen lösen sich in dem Himmel hinter ihnen auf - in seinem Dunkel und seinem Nebel, nicht in seinen Sternen. Aus: kein Nebel unter diesem Himmel, die Plattformen bleiben bis zum Ende scharf.
+
+# --- Advanced ---
+group.advanced = Erweitert
+group.advanced.help = Die eingebauten Nebel des Spiels selbst, die unsere Zahlen ersetzen, und wie sie gefunden werden.
+render.game_depth_fog.label = Der eigene Tiefennebel des Spiels
+render.game_depth_fog.tip = Jedes Gebiet im Freien hat ihn, ab der Entfernung seiner Kamera: ein grauer Dunst in den vier Ecken des Bildes (auch von oben), über dem nahen Boden von unserer Kamera aus. Aus: vrcam setzt ihn auf 0.
+render.game_fog_scan_safe.label = Den Nebel des Spiels sicher finden
+render.game_fog_scan_safe.tip = Wie D2R VR den Höhen- und Tiefennebel des Spiels findet, um ihn abzuschalten: durch Lesen von Kopien des Spielspeichers, sodass ein Block, den das Spiel inzwischen freigibt, ohne Fehler übersprungen wird (D2RLoader hat diese als Absturzberichte gemeldet), nur Definitionen dort, wo die Bereiche des Spiels sie haben, und ein Wert wird nur geändert, solange er noch das gerade Gelesene ist. Aus: direktes Lesen, wie bisher. Sofort.
+render.game_height_fog.label = Der eigene Höhennebel des Spiels
+render.game_height_fog.tip = Nur die Stadt in Akt 2 hat ihn. Von unserer Kamera aus ist sein Rand eine harte Linie quer durch das Bild mit einem blassen Schleier darüber (die Kamera des Spiels sieht diesen Rand nie). Aus: vrcam setzt ihn auf 0.
+fog.game_fog_mist.label = Der Nebel des Spiels auch über seinem Dunst
+fog.game_fog_mist.tip = Der eigene Nebel-Pass des Spiels fügt nach dem Nebel seinen volumetrischen Dunst hinzu (von Fackeln und Ähnlichem beleuchtet), der nie von der Entfernung benebelt wird: In einer Höhle machte unser dunkler Nebel die fernen Wände schwarz, und der Dunst blieb - ein helles Band hinter den Feuern. Angehakt: Der Dunst verblasst mit der Entfernung wie alles andere. Nur ohne ReShade. Live.
+fog.game_fog_our_curve.label = Der Nebel des Spiels nach unserer Kurve
+fog.game_fog_our_curve.tip = Der eigene Nebeldurchgang des Spiels blendet den Nebel so ein wie unser Effekt - von Nebelbeginn bis Voller Nebel nach dem Abfall unten (in Höhlen deren eigener Beginn, Ende und Stärke) - statt nach seiner eigenen Exponentialkurve, die fast den ganzen Nebel direkt hinter den Beginn legt und den fernen Bereich einheitlich grau lässt. Ein paar Anweisungen in seinem Durchgang, nichts hinzugefügt. Nur ohne ReShade. Sofort.
+fog.fog_keeps_colour.label = Der Nebel des Spiels behält nachts die Farbe des Akts
+fog.fog_keeps_colour.tip = Solange das Spiel den Nebel zeichnet: seine Farbe ist die eigene des Akts (die Farben oben) zu jeder Stunde - die Ferne verblasst in einen hellen Dunst davon, nie Richtung Schwarz. Der Nebel unseres eigenen Effekts wird nicht geändert. Aus: er dunkelt mit dem Licht des Spiels wie der Himmel - nachts zu "Himmel bei Nacht" und nach der Helligkeit des Himmels für jede Tageszeit. Mit der Farbe des Himmels ("Die Farbe des Nebels: aus dem Spiel gemessen" nicht angehakt): die des Taghimmels am Horizont zu jeder Stunde; aus, nachts die des Nachthimmels - fast schwarz. Sofort.
+fog.fog_into_sky.label = Der Nebel des Spiels lässt die Ferne im Himmel dahinter verblassen
+fog.fog_into_sky.tip = Im Freien ist die Farbe des Nebels an jedem Punkt der Himmel direkt dahinter, wie im Arkanen Heiligtum: Das ferne Land, der Rand der Welt und hohe ferne Gebäude verblassen im Himmel, nicht in einer flachen Farbe (der untere Teil des Himmels ist die Nebelfarbe des Akts, wie gezeichnet). Ferne Objekte zeigen den Himmel durch sich hindurch. Es funktionierte über „Der Nebel des Spiels so dick und so farbig wie unserer“, entfernt (es zerstörte den Nebel): Vorerst ändert es nichts. Sofort. Aus: eine Nebelfarbe, wie bisher.
+fog.fog_colour_measured.label = Die Farbe des Nebels: aus dem Spiel gemessen
+fog.fog_colour_measured.tip = Angehakt: Die Farbe des Nebels ist die eigene Farbe des Akts, wie eingestellt (ihre Messung aus dem Spiel ging mit dem entfernten „Der Nebel des Spiels so dick und so farbig wie unserer“ weg). Nicht angehakt: Die Farbe des Nebels ist die eigene des Himmels am Horizont - das dort eingebrannte Bild mit seinem Helligkeitsregler - sodass das ferne Land ohne Naht in den Himmel übergeht; eine Zahl, gesetzt, wenn sich die Tageszeit oder ein Regler ändert: keine Messung, nichts davon im Effekt. Unter der Erde, im Arkanen Heiligtum und mit dem getönten Himmel: die Farbe des Akts oder der Höhle, wie eingestellt. Sofort.
+fog.game_fog_fx_depth.label = Ferner Rauch und fernes Feuer verblassen im Nebel
+fog.game_fog_fx_depth.tip = Mit dem Nebel vor Rauch und Feuer: Rauch, Dunst, Feuer und Zauber werden auch vernebelt, jedes nach seiner eigenen Entfernung - nahe, wie sie sind, ferne verblassen mit der Welt hinter ihnen im Nebel. Ohne das steht ein fernes Lagerfeuer in vollem Licht im vollen Nebel, und die durchsichtigen Ränder ferner Zäune erscheinen als Flecken am Horizont. Die Effekte des Spiels werden für ihre Tiefe allein noch einmal gezeichnet: TEUER - auf einer Quest 3 bei 2048 x 2048 pro Auge kostete es etwa 30 Frames pro Sekunde (72 -> 42); die Kosten in den 10-s-Zeilen des Logs. Nur ohne ReShade. Sofort. Aus: die Effekte nie vernebelt.
+fog.game_fog_height.label = Der Nebel des Spiels wird mit der Höhe dünner
+fog.game_fog_height.tip = Der eigene Nebel-Pass des Spiels lässt den Himmel frei: der Nebel wie er ist bis zur Obergrenze des Nebels abzüglich seiner Weichheit, darüber ausblendend, über der Obergrenze keiner (Welteinheiten über deinen Augen). Für die Himmelskuppel des Spiels, damit sein Himmel über dem benebelten Horizont zu sehen ist. Sein eigener Pass, nichts Zusätzliches. Nur im Freien (unter der Erde gibt es keinen Himmel freizuhalten). Nur ohne ReShade. Aus: der Nebel des Spiels wie er ist. Live.
+fog.game_fog_top.label = Der Nebel des Spiels: Obergrenze, Einheiten über den Augen
+fog.game_fog_top.tip = Wie hoch der Nebel des Spiels reicht: darüber keiner, in Welteinheiten über deinen Augen (der Held ist ~7,5 groß; die Himmelskuppel in ihrem Radius). Live.
+fog.game_fog_soft.label = Der Nebel des Spiels: Weichheit der Obergrenze, Einheiten
+fog.game_fog_soft.tip = Wie weit unterhalb seiner Obergrenze der Nebel des Spiels ausblendet: klein, eine scharfe Kante; groß, ein langer weicher Übergang. Live.
+fog.game_fog_top_from_floor.label = Der Nebel des Spiels: seine Obergrenze ab dem Boden des Helden
+fog.game_fog_top_from_floor.tip = Die Obergrenze oben wird ab dem Boden gezählt, auf dem der Held steht, nicht ab deinen Augen: Eine Kamera hoch über dem Helden (dritte Person, die Ansicht von oben) verschiebt nicht mehr, wo der Nebel endet, und Land unter deinen Augen ist nicht ganz vernebelt, mit einer Linie auf Augenhöhe. Aus: ab den Augen, wie bisher. „Der Nebel des Spiels wird mit der Höhe dünner“ ohne Haken gibt stattdessen den Nebel allein nach Entfernung, wie unser eigener Nebel. Sofort.
+
 # ===== Tab: Ceiling =====
 tab.ceiling = Decke
 
@@ -2249,6 +2340,8 @@ ceiling.game_ceiling_wall.label = Die Decke des Spiels: an ihrem Rand zur Wand h
 ceiling.game_ceiling_wall.tip = Ein Ring aus demselben beleuchteten Fels um dich, wo die Decke des Spiels endet (etwa 215 Einheiten entfernt bei Kachelgröße 10), von der Decke bis unter den Boden (die Tiefe des Bodens darunter): Die schwarze Leere hinter dem Rand der Decke - ein Band zwischen ihr und dem fernen Boden, vom Nebel hinter den Feuern beleuchtet - wird von Stein geschlossen, wie es die ferne Wand unseres Effekts tat. Aus: die flache Decke. Live.
 ceiling.game_ceiling_beams.label = Die Decke des Spiels: die eigenen Holzbalken der Kaserne
 ceiling.game_ceiling_beams.tip = Das Spiel liefert für die Kaserne (und ihr Gefängnis) einen hölzernen Deckenrahmen mit, den es nie platziert: ein Gitter aus Balken, deren Unterseite auf der Oberkante der Kasernenwände sitzt. Angehakt zeichnet das Spiel diesen Rahmen über dir in einem Gitter aus ganzen Rahmen, fest in der Welt - sein eigenes Modell, Holz und Maß, von seinen Fackeln beleuchtet - mit dem Stein der Kaserne über den Balken, um die Lücken zwischen ihnen zu schließen. Aus den Dateien deines Spiels erzeugt. Nur VR F4. Aus: die flache Steindecke. Sofort.
+ceiling.top_from_level.label = Die Decke über dem höchsten Boden des Levels
+ceiling.top_from_level.tip = Die Decke stand auf dem niedrigsten Boden, auf dem du im Gebiet gestanden hattest, sodass sie eine Treppe hinauf niedrig blieb, bis du weitergingst. Angehakt: Ihre Höhe wird vom höchsten Boden des Levels gemessen, in dem du bist - jeder Raum, den das Spiel dort baut, nennt seine Böden -, ganz genommen 2 s nach dem Betreten eines Levels, sanft angehoben, wenn später ein höherer Raum gebaut wird, nie gesenkt. Die Decke des Spiels und das Gewölbe unseres Effekts gleichermaßen. Die eigene Höhe jedes Raums (oben) wird weiterhin von dort gemessen. Aus D2R VR Unleashed (Cal, Team von bearstonem). Nur VR F4. Aus: wie bisher. Sofort.
 ceiling.game_ceiling_dome.label = Die Decke des Spiels: die Kuppel der Kathedrale über der Kapelle
 ceiling.game_ceiling_dome.tip = In der Kathedrale steigt die Decke des Spiels in einer Kuppel über der Kapelle auf, wie es das Gewölbe unseres Effekts dort tat: eine gleichmäßige Kuppel auf den vier Säulen um den Altar, gerade hoch genug, um über den Baldachin des Altars zu reichen. Wo, wie breit und wie hoch, kommt aus den eigenen Teilen des Spiels (gemessen aus den Dateien deines Spiels, der Baldachin im Spiel gefunden, so wie er gezeichnet wird); der eigene Stein der Kathedrale, von ihren Kerzen beleuchtet. Der Rest der Kathedrale behält die flache Decke in ihrer Höhe. Nur VR F4. Aus: die flache Decke. Sofort.
 ceiling.game_ceiling_dome_size.label = Die Kuppel der Kathedrale: Größe
@@ -2473,6 +2566,8 @@ bow.draw_shoots_arrow.label = Bogen spannen: das Loslassen schießt den eigenen 
 bow.draw_shoots_arrow.tip = Das Loslassen des Bogenspannens drückt den Angriff des Spiels - das A des Pads. Das Spiel wirkt, welche Fertigkeit sein A-Platz auch hält: Ein Zauber, ein Kriegsruf oder eine Nahkampffertigkeit dort wird stattdessen gewirkt, und kein Pfeil fliegt (die Sehne spannt, nichts kommt heraus). An: Für den eigenen Druck des Loslassens wird eine Fertigkeit auf A, die keine Bogenfertigkeit ist, als einfacher Angriff gelesen, der eigene Pfeil des Bogens; eine Bogenfertigkeit auf A (Mehrfachschuss, Streufeuer...) bleibt, und eine aus dem Köcher scharfgestellte Fertigkeit hat Vorrang. Die A-Taste selbst, andere Waffen und die anderen Plätze sind wie immer die des Spiels. Aus: Das Loslassen wirkt, was der A-Platz hält. Sofort.
 bow.arrow_flight.label = Bogen: den abgeschossenen Pfeil selbst zeichnen, vom Bogen entlang der Schusslinie
 bow.arrow_flight.tip = Erste Person (F4). Das Spiel zeichnet seinen Pfeil flach, von der Brust des Helden. An: Der Pfeil (oder Bolzen), den du schießt, verlässt den Bogen und fliegt entlang der Linie des Schusses - mit „hoch und runter zielen“ an, hinauf oder hinunter zu dem, was die Linie getroffen hat: der Körper eines Monsters oder der Boden (wo er stecken bleibt, wenn etwas in der Nähe steht). Er kommt an, wenn der eigene Pfeil des Spiels ankommt. Es ist das eigene Pfeilmodell des Spiels, dorthin gesetzt, wo wir zeichnen; das Geschoss des Spiels - sein Flug, sein Treffer, sein Schaden - ist das des Spiels. Die Seitenpfeile des Mehrfachschusses, die des Streufeuers und der Gelenkte Pfeil verlassen den Bogen und schließen sich ihrem eigenen Pfad an. Aus: Das Spiel zeichnet seine Pfeile. Sofort.
+bow.arrow_flight_flat.label = Flach: Der Pfeil fliegt ins Fadenkreuz
+bow.arrow_flight_flat.tip = Erste und dritte Person, mit Bogen oder Armbrust: Der Pfeil (oder Bolzen), den du schießt, wird so gezeichnet, dass er knapp unter deinem Auge (erste Person) oder der Brust des Helden (dritte Person) startet und zu dem fliegt, worauf das Fadenkreuz liegt - der Körper eines Monsters oder der Boden, wo er stecken bleibt. Er kommt an, wenn der eigene Pfeil des Spiels ankommt; das Geschoss des Spiels - sein Flug, sein Treffer, sein Schaden - ist das des Spiels. Die Seitenpfeile von Multiple Shot, die von Strafe und Guided Arrow gehen auf ihrem eigenen Weg. Ohne Haken: Das Spiel zeichnet seine Pfeile flach, vom Körper des Helden.
 bow.arrow_flight_straight.label = Bogen: der gezeichnete Pfeil fliegt gerade entlang der Schusslinie
 bow.arrow_flight_straight.tip = Mit „den abgeschossenen Pfeil selbst zeichnen“: Ein Pfeil, dessen Linie nichts getroffen hat (Zielen hoch und runter aus, ein Schuss in die Luft), fliegt geradeaus entlang der Linie, entlang der er gezeichnet wurde, vom Bogen - ohne Knick. Aus: Er verlässt den Bogen und schwenkt auf den eigenen Pfad des Spiels ein, der von deinem Körper neben der Linie verläuft, über die ersten 2,5 m. Seitenpfeile des Mehrfachschusses und des Streufeuers sowie der Gelenkte Pfeil schwenken in beiden Fällen auf ihre eigenen Pfade ein. Sofort.
 bow.shot_line_hold.label = Bogen spannen: der Schuss behält die Linie, entlang der gespannt wurde, bis das Spiel ihn übernimmt
@@ -3755,6 +3850,8 @@ multiplayer.pose_share_legs.label = Ihre Beine gehen in ihre Bewegungsrichtung
 multiplayer.pose_share_legs.tip = Mit dem Kästchen oben: ihre Beine schreiten entlang ihrer Bewegung - vorwärts, rückwärts, seitwärts - während ihr Becken dorthin zeigt, wohin sie schauen; das eigene Gehen des Spiels innerhalb von „das eigene Gehen des Spiels innerhalb +- davon“ (Body). Die Füße bleiben stehen, solange sie den Körper tragen; die Knie beugen sich nur nach vorn. Braucht die Gangbibliothek d2r_vr_gait.dll in d2rloader\d2r_vr_libs (sonst das eigene Gehen des Spiels). Jede Ansicht. Sofort.
 multiplayer.pose_share_held.label = Sehen, was ihre Hände halten (Tränke, Gegenstände, Objekte) und was sie werfen
 multiplayer.pose_share_held.tip = Was deine Hände halten, geht mit deiner Haltung an die anderen, und ihres wird für dich gezeichnet: ein Gürteltrank in der Hand, fallen gelassen oder geleert, ein vom Boden aufgehobener Gegenstand, ein Objekt des Levels - ein Krug, ein Buch, ein Becher - in der Hand, im Flug, wie es geworfen wurde, und wo es liegen blieb. Ihre Tränke und Gegenstände sind Kopien der eigenen Modelle des Spiels; ihre Objekte sind die des Levels selbst, dorthin bewegt, wo sie sie haben (mit dem Umherstoßen der Objekte, in deiner Nähe, in F4). Nur Darstellung: die Benutzung des Tranks, die Gegenstände und die Objekte bleiben die des jeweiligen Spiels. Sofort.
+multiplayer.pose_share_grab.label = Die Körper sehen, die sie halten, niederschlagen und werfen - und sie meine sehen lassen
+multiplayer.pose_share_grab.tip = Ein Körper, den deine Hand hält ("Einen gegriffenen Humanoiden heben und werfen": genommen, gehoben, getragen), geht mit deiner Pose an die anderen - welches Monster, das Glied und der Punkt, den deine Hand genommen hat, deine Handfläche und der Wurf beim Loslassen - und ihre hängen für dich an ihren Händen, von deinem eigenen Ragdoll an demselben Glied und Punkt gezeichnet und geworfen, wenn sie loslassen. Ein Hieb von dir, der einen Humanoiden niederschlägt, ins Taumeln bringt oder wegstößt, geht ebenfalls mit (das Glied und der Punkt, den er traf, wie schnell er den Körper schickte), und ihre schlagen deine eigene Darstellung davon genauso nieder. Braucht "Einen gegriffenen Humanoiden heben und werfen" oder "Ein harter Hieb schlägt einen Humanoiden von den Füßen" hier an und die Gewichtsbibliothek; ein Monster, dem dein Spiel nicht nahe gekommen ist, wird nicht gezeichnet. Nur visuell: Der echte Ort des Monsters und das Spiel bleiben jeweils die des eigenen Spiels. Sofort. Nur F4.
 
 # ===== Tab: Debug =====
 tab.debug = Debug
@@ -3810,6 +3907,8 @@ debug.walk_start_log.label = Jeden Gehbeginn von BodyWalk loggen: Stick, Totzone
 debug.walk_start_log.tip = Eine Zeile im Log („walk start (BodyWalk): ...“) jedes Mal, wenn der Stick von BodyWalk nach einer halben Sekunde Stehen die Ruhe verlässt: die Zeit, zu der er die Ruhe verließ, dann die Millisekunden, bis er von selbst die Totzone des Spiels passiert, bis das Gehen des Spiels einen Vektor bekommt (früher mit „Das Gehen von BodyWalk beginnt ab“) und bis sich die Position des Helden bewegt. Die eigene Hälfte von BodyWalk ist „Walk Start Timing“ auf seinem Debug-Reiter („STEP START: first step ...“), auf derselben Uhr. Nur lesend: Im Spiel wird nichts geändert. Sofort.
 debug.bow_latency.label = Loggen, wohin die Zeit zwischen Loslassen und Pfeil / geworfenem Geschoss geht
 debug.bow_latency.tip = Natives OpenXR, "Bogen: die Sehne mit beiden Händen spannen" oder eine Wurfgeste an. Eine Zeile im Log für jeden Bogenschuss und jeden Wurf: die Millisekunden nach dem Loslassen bis zum Druck der Geste, bis die Pad-Taste das Spiel erreicht, bis zum Angriffs- oder Wurfmodus des Helden, bis zur Drehung des Körpers zum Ziel, bis zur Animationszeile, auf der die Aktion läuft (Name, Frames, der Aktionsframe), bis das eigene Geschoss des Spiels erzeugt wird (nur lesend: Das Erzeugen des Geschosses des Spiels wird beobachtet, nichts wird geändert) und bis der Client ein Geschoss zeigt. Nichts wird gezeichnet, und nichts wird im Spiel geändert. Sofort.
+debug.missile_probe.label = Jedes Geschoss protokollieren, das der Schuss oder Wurf eines Spielers erzeugt (das Erzeugen des Servers, nur lesen)
+debug.missile_probe.tip = Eine Zeile im Log für jedes Geschoss, das der Server des Spiels für einen Spieler erzeugt - ein Pfeil, ein Bolzen, jeder Pfeil eines Multiple Shot, ein Wurfspeer, ein Wurfmesser oder eine Wurfaxt, ein Trank: seine Klasse, die Aufrufstelle des Spiels, die Start- und Zielzellen, die Richtung, die Zieleinheit falls vorhanden und jede Zahl seines Erzeugens, mit dem ganzen Block in Hex einmal pro Schuss; dann eine Zeile pro Schuss (wie viele Geschosse, die Winkel des Fächers). Nur offline und als Host (der Server eines Mitspielers ist der des Hosts). Nur lesen: Im Spiel wird nichts geändert. Sofort.
 debug.shot_trace.label = Loggen, was das Spiel mit jedem unserer Angriffe tut
 debug.shot_trace.tip = An: Für jeden Angriff, den das Plugin drückt (ein Bogenschuss, ein Schlag, ein Wurf), nennt das Log von seinem Druck bis 1,5 s danach jeden Kartenklick (mit den Flags Stehen bleiben und Rennen, die er trägt), den Befehl, den der Klick des Spiels daraus baut, und jeden Befehl durch den Trichter des Spiels mit seinem Weg zurück den Stack hinauf. Um herauszufinden, warum das Spiel den Helden manchmal nach einem Schuss davonlaufen lässt. Nur lesend. Braucht "Angriffe bewegen den Helden nie (stehen bleiben)" an. Sofort.
 debug.game_sky_test.label = Himmel des Spiels: ein anderes Modell für die Kuppel (Test)
@@ -3838,6 +3937,8 @@ debug.log_async_auto.label = Das Log aus einem eigenen Thread schreiben, wo es l
 debug.log_async_auto.tip = Bei ausgeschaltetem Obigen wird das Schreiben jeder Logzeile gemessen. Wo die Datei des Logs auf diesem PC langsam ist - 8 der letzten 16 Zeilen brauchten 5 ms oder mehr (ein Virenscanner, eine langsame Platte; das Log eines Spielers hatte 29 ms pro Zeile, und jeder Zauber von Gefrorene Kugel hielt das Spiel für seine elf Zeilen ~330 ms an) - gehen die Zeilen für den Rest des Laufs an diesen Thread, und das Log sagt es einmal. Bei etwa 1 ms pro Zeile ändert sich nichts. Aus: Die Geschwindigkeit des Logs wird nicht beachtet, wie zuvor. Sofort.
 debug.dred.label = Sagen, warum das GPU-Gerät verloren ging (DRED)
 debug.dred.tip = Das Spiel endet - nach einer fehlgeschlagenen Prüfung in seinem eigenen DX12-Code, einen Moment bevor die Runtime des Headsets "HRESULT failure [887a0005]" loggt -, wenn das Grafikgerät entfernt wird (ein GPU-Hänger, ein Seitenfehler, ein Treiber-Reset). An: Windows' DRED wird angefordert, bevor das Spiel sein Gerät erzeugt, und in dem Moment, in dem das Gerät weg ist, sagen das Log (d2r-vr-vrcam.log) und d2rloader\logs\d2r_vr_gpu_fault.txt warum: der Grund, was jede Befehlsliste getan hatte, als die GPU stehen blieb, die Adresse eines Seitenfehlers und was dort zugewiesen oder freigegeben wurde, und die letzten eigenen Ereignisse des Plugins, die den Speicher der GPU berühren. Sende diese Datei ein. Es kostet die Runtime eine Marke zwischen den Befehlen. Braucht einen Spielneustart. Aus: Der Geräteverlust wird weiterhin gemeldet, nur mit seinem Grund.
+debug.dred_events.label = ... und die Ereignisse des Spiels nennen, wo die GPU stehen blieb
+debug.dred_events.tip = Mit DRED: Der Bericht nennt auch die offenen Ereignisse des Spiels, wo jede unfertige Befehlsliste stehen blieb (Windows behält den Text jeder Ereignismarke des Spiels - Windows 10 2004 und neuer), sodass ein Hänger sagt, in welchem Zeichenaufruf des Spiels er war, nicht nur "DrawIndexedInstanced". Kostet ein wenig. Wirkt ab dem nächsten Spielstart.
 debug.d3d12_validation.label = D3D12-Debug-Layer: Fehler im Log (langsam)
 debug.d3d12_validation.tip = Um herauszufinden, was das Grafikgerät herunterreißt. Braucht das optionale Windows-Feature Graphics Tools. An: Bevor das Spiel sein Gerät erzeugt, wird der D3D12-Debug-Layer eingeschaltet, und seine Fehler und Warnungen gehen in seinen eigenen Worten ins Log (d2r-vr-vrcam.log) - eine Barriere, die den falschen Zustand nennt, eine Kopie über das Ende eines Puffers hinaus, eine freigegebene Ressource, während eine Liste, die sie nennt, noch nicht lief. Das Spiel läuft viel langsamer: für einen Test, nicht zum Spielen. Braucht einen Spielneustart. (d2r_vr.ini: 2 prüft außerdem jeden Shader-Zugriff auf der GPU, nochmal zehnmal langsamer - nur für eine flache Reproduktion.)
 debug.stall_guard.label = Eine dauerhaft stehende GPU-Queue freigeben
@@ -4236,6 +4337,8 @@ vr.hset.direct.right_b.label = Rechts B
 vr.hset.direct.right_stick.label = Klick rechter Stick
 vr.hset.direct.right_stick_hold.label = Rechter Stick, lang
 vr.hset.direct.right_menu.label = Rechte Menütaste
+vr.hset.hands.left_handed.label = Linkshänder
+vr.hset.hands.left_handed.detail = Controller tauschen: der linke hält die Waffe (F4)
 vr.hset.openxr.haptics.label = Controller-Vibration
 vr.hset.openxr.haptics.detail = Impulse in den Controllern bei dem, was passiert (F4)
 vr.hset.openxr.haptics_scale.label = Stärke
@@ -4306,6 +4409,8 @@ vr.hset.hands.belt_models.label = Tränke am Gürtel
 vr.hset.hands.belt_models.detail = Die eigenen Trankmodelle des Spiels an den Hüften des Helden
 vr.hset.@preset.preset.label = Qualitätsvorgabe
 vr.hset.@preset.preset.detail = Kartoffel, Niedrig, Mittel - Raumringe und Modelle ab dem nächsten Start
+vr.hset.@distance.stop.label = Sichtweite
+vr.hset.@distance.stop.detail = Nah (1) - fern (7): Raumringe, Modelle, der Nebel. 2 = die von Medium, die Vorgabe
 vr.hset.stereo.pair_per_tick.label = Rendertyp
 vr.hset.stereo.pair_per_tick.detail = Nativ zwei Durchgänge / ein Durchgang / Augen im Wechsel, FlatVR-Stereo / -Tiefe (ein Durchgang: ab dem nächsten Spielstart)
 vr.hset.sky.game_sky.label = Himmel gezeichnet von
@@ -4354,6 +4459,8 @@ vr.hset.render.game_outline.label = Die Hover-Kontur des Spiels
 vr.hset.render.game_outline.detail = Ein Schlüssel der Qualitätsvorgabe ([render] game_outline)
 vr.hset.render.potato_light.label = Kartoffel-Licht
 vr.hset.render.potato_light.detail = Ein Schlüssel der Qualitätsvorgabe ([render] potato_light)
+vr.hset.render.potato_light_game.label = Potato-Licht in den Farben des Spiels
+vr.hset.render.potato_light_game.detail = Ein Schlüssel des Qualitäts-Presets ([render] potato_light_game)
 vr.hset.render.rings.label = Raumringe
 vr.hset.render.rings.detail = Ein Schlüssel der Qualitätsvorgabe ([render] rings)
 vr.hset.render.model_radius.label = Radius der Modelle
@@ -4362,16 +4469,16 @@ vr.hset.render.big_radius.label = Radius großer Objekte
 vr.hset.render.big_radius.detail = Ein Schlüssel der Qualitätsvorgabe ([render] big_radius)
 vr.hset.fog.light.label = Leichter Nebel
 vr.hset.fog.light.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] light)
-vr.hset.fog.start.label = Nebelbeginn
-vr.hset.fog.start.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] start)
-vr.hset.fog.end.label = Voller Nebel
-vr.hset.fog.end.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] end)
-vr.hset.fog.caves.label = Nebel in Höhlen
-vr.hset.fog.caves.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves)
-vr.hset.fog.caves_start.label = Nebelbeginn in Höhlen
-vr.hset.fog.caves_start.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves_start)
-vr.hset.fog.caves_end.label = Voller Nebel in Höhlen
-vr.hset.fog.caves_end.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves_end)
+vr.hset.fog.game_fog_start.label = Nebelanfang
+vr.hset.fog.game_fog_start.detail = Ein Schlüssel des Qualitäts-Presets ([fog] game_fog_start)
+vr.hset.fog.game_fog_end.label = Voller Nebel
+vr.hset.fog.game_fog_end.detail = Ein Schlüssel des Qualitäts-Presets ([fog] game_fog_end)
+vr.hset.fog.game_fog_caves.label = Nebel in Höhlen
+vr.hset.fog.game_fog_caves.detail = Ein Schlüssel des Qualitäts-Presets ([fog] game_fog_caves)
+vr.hset.fog.game_fog_caves_start.label = Nebelanfang in Höhlen
+vr.hset.fog.game_fog_caves_start.detail = Ein Schlüssel des Qualitäts-Presets ([fog] game_fog_caves_start)
+vr.hset.fog.game_fog_caves_end.label = Voller Nebel in Höhlen
+vr.hset.fog.game_fog_caves_end.detail = Ein Schlüssel des Qualitäts-Presets ([fog] game_fog_caves_end)
 vr.hset.fog.game_fog_mist.label = Der Nebel des Spiels über seinem Dunst
 vr.hset.fog.game_fog_mist.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] game_fog_mist)
 vr.hset.fog.game_fog_height.label = Der Nebel des Spiels mit der Höhe gelichtet
@@ -4390,6 +4497,10 @@ vr.hset.ceiling.steps.label = Relief der Höhlendecke
 vr.hset.ceiling.steps.detail = Ein Schlüssel der Qualitätsvorgabe ([ceiling] steps)
 vr.hset.stereo.headset_rate.label = Bildwiederholrate des Headsets
 vr.hset.stereo.headset_rate.detail = Ein Schlüssel der Qualitätsvorgabe ([stereo] headset_rate)
+vr.hset.render.monitor_eye.label = Monitor zeigt ein Auge
+vr.hset.render.monitor_eye.detail = Ein Schlüssel des Qualitäts-Presets ([render] monitor_eye)
+vr.hset.openxr.hands_over_panels.label = Deine Hände über dem Tab Gesten
+vr.hset.openxr.hands_over_panels.detail = Ein Schlüssel des Qualitäts-Presets ([openxr] hands_over_panels)
 vr.hset.render.vr_resolution.label = VR-Renderformat: Modus
 vr.hset.render.vr_resolution.detail = 0 Fenster, 1 Headset, 2-6 ein älteres Quadrat
 vr.hset.render.vr_resolution_px.label = VR-Renderformat: Seite
@@ -4589,9 +4700,9 @@ button.clear = Leeren
 status.vrs.none = Diese Grafikkarte hat kein Variable Rate Shading (Tier 2): Foveated Rendering und die Rate der Grasbeleuchtung können darauf nicht funktionieren - D2R VR lässt sie aus, was auch immer angehakt ist.
 status.draw_distance.stop = {n} von {count}:
 status.draw_distance.custom = Eigene (ein Wert von Hand geändert):
-status.draw_distance.values = {rings} Raumringe, Modelle bis {model}, Nebel {fs} bis {fe} (in Höhlen {cs} bis {ce}), die Himmelskuppel des Spiels bei {sky} m. Alles sofort - kein Neustart.
+status.draw_distance.reach = {rings} Raumringe, Modelle bis {model}, Nebel {fs} bis {fe} (in Höhlen {cs} bis {ce}). Alles sofort - kein Neustart.
+status.draw_distance.default = Die Vorgabe (die Entfernung des Medium-Presets).
 status.draw_distance.fog_off = Der Nebel ist aus (Leistung): Die gezeichnete Welt endet in der Leere.
-status.draw_distance.no_game_sky = Die Himmelskuppel zählt nur, solange das Spiel den Himmel zeichnet (Reiter Himmel).
 res.tip = Die Größe des Spielbilds im Headset: ein Quadrat, seine Seite in Pixeln, egal wie groß das Spielfenster ist - das Fenster behält seine Größe. Zieh auf eine beliebige Größe von 1024 bis 4096 (in Schritten von 64); das linke Ende, "Fenstergröße", ist Desktop: Das Bild ist das des Fensters, wie zuvor.\n\nGrößer ist schärfer und teurer, nach den Pixeln - gegenüber 2048 x 2048:
 res.tip_headset_max = Dein Headset{headset} empfiehlt {w} x {h} pro Auge und nimmt bis zu {mw} x {mh}; eine Größe darüber wird darauf verkleinert. (Beim letzten Spielstart mit Headset gelesen.)
 res.tip_headset = Dein Headset{headset} empfiehlt {w} x {h} pro Auge. (Beim letzten Spielstart mit Headset gelesen.)
@@ -5182,6 +5293,8 @@ vr.rules.move_while_attacking = Speer und Bogen: nach dem Schlag weitergehen (VR
 vr.rules.melee_direct_client_cleave = Zweihändiger Hieb trifft jedes Monster (VR)
 vr.rules.quick_blow = Schneller Hieb: der Schwung hält den Helden nie an (VR)
 vr.rules.quick_blow_faster = Schneller Hieb: schneller als die Animation
+vr.rules.share_hit_outcomes = Mitspielern senden, was ihre Hiebe bewirkt haben
+vr.rules.shot_at_release = Der Pfeil geht dorthin, wohin du beim Verlassen des Bogens zielst
 vr.rules.walk = Gehen
 vr.rules.walk_or_run = Gehen oder Laufen
 vr.rules.spear_and_bow = Speer und Bogen
@@ -5276,6 +5389,7 @@ vr.preset.potato = Kartoffel
 vr.preset.low = Niedrig
 vr.preset.medium = Mittel
 vr.preset.custom = Benutzerdefiniert
+vr.distance.default = 2 (Vorgabe)
 vr.party.map = Die Karte des Spiels zeigt
 vr.party.map.off = Deine Gruppe ist verborgen: Verbündete auf keiner Karte (Gruppe anzeigen des Spiels)
 vr.party.map.unknown = Gruppe anzeigen / Gruppennamen anzeigen des Spiels (noch nicht gelesen)
@@ -5526,6 +5640,38 @@ vr.map.on = An
 vr.map.off = Aus
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.floors_stay.label = Böden bleiben, wo sie waren (kein Boden, der auf dem Rückweg rutscht)
+render.floors_stay.tip = Das Spiel gibt jedem Raum eines Gebiets eine Höhe, wenn es beginnt, ihn zu zeichnen, passend zu den Räumen, die in diesem Moment um ihn gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln stimmen nicht ringsum überein, sodass ein Raum, zu dem du auf einem anderen Weg zurückkommst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen kann - aus der Kamera des Spiels oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Der Preis: Das Spiel repariert auch einen in falscher Höhe gezeichneten Raum (eine Stufe, von fern gesehen, wie am Tor der Festung des Pandämoniums), wenn es ihn beim Näherkommen neu zeichnet - mit dieser Option an kommt diese Reparatur nicht. Nur das Bild; nichts am Kampf oder an den Wegen ändert sich. Sofort. Aus (der Standard): die eigenen Höhen des Spiels.
+fog.game_fog.label = Wer den Nebel zeichnet
+fog.game_fog.tip = Wer den Distanznebel zeichnet. Der Nebel des Spiels (neu): der eigene Nebeldurchgang des Spiels mit unseren Zahlen (Nebelbeginn / Voller Nebel unten) - keine Frame-Zeit von uns, gezeichnet, ob „Distanznebel“ angehakt ist oder nicht (VR F4; auch im flachen Spiel mit „Das Spiel zeichnet sie auch im flachen Spiel“; seine eigenen Optionen im Tab Welt). Unser Effekt (alt): Der Nebel-Shader legt den Nebel nach der Tiefe. Beides geht mit jedem Himmel („Himmel gezeichnet von“). Sofort.
+fog.game_fog.choice1 = Der Nebel des Spiels (neu)
+fog.start.label = Nebelbeginn
+fog.start.tip = Wo der Nebel beginnt. Welteinheiten (der Held ist ~7,5 groß).
+fog.end.label = Voller Nebel
+fog.caves_start.label = Nebelbeginn in Höhlen
+fog.caves_start.tip = Wo der Nebel in Höhlen, Verliesen und Krypten beginnt. Welteinheiten (der Held ist ~7,5 groß).
+fog.caves_end.label = Voller Nebel in Höhlen
+fog.caves_end.tip = Wo der Nebel in Höhlen, Verliesen und Krypten vollständig ist. Welteinheiten (der Held ist ~7,5 groß).
+fog.enabled.tip#2 = Ein Distanznebel. Wer ihn zeichnet, steht im Tab Himmel unter „Wer den Nebel zeichnet“ (unser Effekt oder das Spiel selbst). Mit dem Himmel an geht er in den Himmel über.
+group.fog = Nebel
+group.fog.help = Der Distanznebel und Korrekturen für die Tiefeneffekte des Spiels, von unserer Kamera aus gesehen. Stelle ein, wo der Nebel vollständig ist, seinen Abfall, den Nebel in Höhlen und seine Farbe, ob Feuer und Zauber verschont werden, und Korrekturen für die eigenen Nebel des Spiels, Wände vor dem Helden, Dächer und Licht bei einem quadratischen Fenster.
+fog.end.tip#2 = Wo der Nebel voll ist. Welteinheiten (der Held ist ~7.5 groß). Mit dem Nebel des Spiels werden unterhalb von Nebelbeginn die zwei andersherum genommen (Nebel unseres Effekts: voll gleich hinter Nebelbeginn).
+fog.caves.label = Nebel in Höhlen und Verliesen
+fog.caves_strength.label = Nebelstärke in Höhlen
+fog.caves_strength.tip = Wie stark der volle Nebel in Höhlen deckt: 1 = das ferne Ende ist im Nebel in der Nebelfarbe verschwunden, weniger = es scheint durch.
+group.arcane_sanctuary.help = Der Nebel im Arkanen Heiligtum (Akt 2), getrennt von dem der Höhlen eingestellt: es liegt nicht im Freien, also nimmt es den Höhlennebel, bis "Eigener Nebel" angehakt ist. Ob es unter seinem eigenen Himmel überhaupt Nebel gibt, steht im Tab Himmel (Arkanes Heiligtum: Nebel geht in seinen Himmel über).
+vr.hset.fog.start.label = Nebelbeginn
+vr.hset.fog.start.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] start)
+vr.hset.fog.end.label = Voller Nebel
+vr.hset.fog.end.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] end)
+vr.hset.fog.caves.label = Nebel in Höhlen
+vr.hset.fog.caves.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves)
+vr.hset.fog.caves_start.label = Nebelbeginn in Höhlen
+vr.hset.fog.caves_start.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves_start)
+vr.hset.fog.caves_end.label = Voller Nebel in Höhlen
+vr.hset.fog.caves_end.detail = Ein Schlüssel der Qualitätsvorgabe ([fog] caves_end)
+status.draw_distance.values = {rings} Raumringe, Modelle bis {model}, Nebel {fs} bis {fe} (in Höhlen {cs} bis {ce}), die Himmelskuppel des Spiels bei {sky} m. Alles sofort - kein Neustart.
+status.draw_distance.no_game_sky = Die Himmelskuppel zählt nur, solange das Spiel den Himmel zeichnet (Reiter Himmel).
 vr.autotune.on = an
 vr.autotune.k.fog_before_fx = Nebel vor Effekten
 vr.autotune.k.sky = Himmel

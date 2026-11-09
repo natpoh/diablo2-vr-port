@@ -10,12 +10,12 @@
 //      by twins of their pipelines, and fogged by it at the step - near ones barely, far ones nearly whole, over the void faded out; off:
 //      as they are.
 #include "fog_before_fx.h"
-#include "native_d3d12.h"
 
 #include <d3d12.h>
 #include <d3dcompiler.h>
 #include <dxgi1_4.h>
 #include <windows.h>
+#include "native_d3d12.h"   // (after <d3d12.h>: it names D3D12 types without including it)
 
 #include <cmath>
 #include <cstdio>
@@ -34,7 +34,7 @@ void SetOurs(bool) {}
 ID3D12Resource* RtvResource(uint64_t h) { const auto it = g_rtvs.find(h); return it != g_rtvs.end() ? it->second : nullptr; }
 void TrackSceneViews(bool) {}
 ID3D12Resource* SrvResource(uint64_t h) { const auto it = g_srvs.find(h); return it != g_srvs.end() ? it->second : nullptr; }
-unsigned SrvIncrement() { return g_srvInc; }
+unsigned SrvIncrement() { return g_srvInc; } unsigned RtvIncrement() { return 32; }   // (the sinks' handles are the test's own: a call with `single` steps by this)
 ID3D12CommandQueue* GameQueue() { return g_q; }
 }  // namespace natived3d
 
@@ -209,6 +209,14 @@ int main(int argc, char** argv) {
     ID3D12Resource* frameTarget = Tex(dev, DXGI_FORMAT_R11G11B10_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvFrame{0xF4A3E000ull};   // (a handle for the sinks only)
     g_rtvs[rtvFrame.ptr] = frameTarget;
+    // ... and a real view of it, to fill it with a lit picture (2d': the scene the resolve's tables name read black, the lit world in that target)
+    ID3D12DescriptorHeap* frameRtvHeap = nullptr;
+    {
+        D3D12_DESCRIPTOR_HEAP_DESC fh{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 1};
+        dev->CreateDescriptorHeap(&fh, __uuidof(ID3D12DescriptorHeap), (void**)&frameRtvHeap);
+    }
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvFrameReal = frameRtvHeap->GetCPUDescriptorHandleForHeapStart();
+    dev->CreateRenderTargetView(frameTarget, nullptr, rtvFrameReal);
     D3D12_DEPTH_STENCIL_VIEW_DESC dvd{DXGI_FORMAT_D24_UNORM_S8_UINT, D3D12_DSV_DIMENSION_TEXTURE2D};
     dev->CreateDepthStencilView(depth, &dvd, dsv);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvHalf{0xF4A3F000ull};   // (a handle for the sinks only)
@@ -217,6 +225,10 @@ int main(int argc, char** argv) {
     ID3D12Resource* decoy = Tex(dev, DXGI_FORMAT_R11G11B10_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvDecoy{0xDEC0F000ull};
     g_rtvs[rtvDecoy.ptr] = decoy;
+    // the effects' weighted colour target (RGBA16F): bound in one call with the decoy, the decoy is the effects' additive target (2e'')
+    ID3D12Resource* accumTarget = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, nullptr);
+    const D3D12_CPU_DESCRIPTOR_HANDLE rtvAccumFx{0xACC0F000ull};
+    g_rtvs[rtvAccumFx.ptr] = accumTarget;
     D3D12_SHADER_RESOURCE_VIEW_DESC sv{DXGI_FORMAT_R11G11B10_FLOAT, D3D12_SRV_DIMENSION_TEXTURE2D, D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING};
     sv.Texture2D.MipLevels = 1;
     dev->CreateShaderResourceView(scene, &sv, srvHeap->GetCPUDescriptorHandleForHeapStart());
@@ -246,6 +258,7 @@ int main(int argc, char** argv) {
     ID3D12PipelineState* resolve = nullptr;
     CHECK(gRoot && SUCCEEDED(dev->CreateGraphicsPipelineState(&pd, __uuidof(ID3D12PipelineState), (void**)&resolve)));
     fogfx::MarkResolve(resolve);
+    fogfx::ResetSceneCheck(0);   // (the game starts with nothing written until a lit picture is proven: here the scenes are lit grey)
     // the game's compute: a root constant (b0) and a root UAV (u0)
     D3D12_ROOT_PARAMETER cp[2] = {};
     cp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -260,6 +273,23 @@ int main(int argc, char** argv) {
     const float nearPlane = 0.05f, plane = 30.0f, density = 0.5f, fog[3] = {0.25f, 0.125f, 0.0625f}, grey = 0.5f;
     bool sceneElsewhere = false;   // the scene bound on another list than the resolve's (the game records on several threads)
     bool frameIsR11 = false;       // the resolve's own target R11G11B10, bound with the same depth
+    // [the submission order] 0.209.15's flat game: the scene drawn and made readable on another list (A, submitted first), the resolve's list
+    // setting nothing on it, and a list recorded BEFORE the resolve's but submitted after it (D: the next frame's, recorded early) putting it
+    // back to a render target - "the last barrier recorded" says RENDER_TARGET, the GPU runs it as a shader resource. hideD: D's barrier made
+    // but not told (a transition the step cannot see)
+    bool chainMode = false, hideD = false;
+    ID3D12CommandAllocator* allocA = nullptr;
+    ID3D12CommandAllocator* allocD = nullptr;
+    ID3D12GraphicsCommandList* listA = nullptr;
+    ID3D12GraphicsCommandList* listD = nullptr;
+    dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)&allocA);
+    dev->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, __uuidof(ID3D12CommandAllocator), (void**)&allocD);
+    dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocA, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&listA);
+    dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, allocD, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&listD);
+    listA->Close();
+    listD->Close();
+    bool sceneBlack = false;       // the scene cleared black ...
+    bool frameLit = false;         // ... and the resolve's own target holding a lit picture before it draws (Serg's 0.209.11 probe)
     bool halfLayer = false;        // the game's half-size effects target (R11G11B10 too) bound with the same depth after the scene
     bool decoyAfter = false;       // a full-size R11G11B10 target the resolve does not read, bound with the same depth after the scene
     bool holes = false;            // holes in the depth: one pixel (10, 10); a line of three at (20 - 22, 40)
@@ -272,6 +302,8 @@ int main(int argc, char** argv) {
     bool curveOn = false;   // [fog] game_fog_our_curve: our effect's curve (20 - 80, curve 1.5, strength 0.9) in place of the exponential
     const float cStart = 20.0f, cEnd = 80.0f, cCurve = 1.5f, cStrength = 0.9f;
     bool ours = false;      // our effect's fog ([fog] game_fog=0): that curve by the view's depth (D2R_DepthFog.fx FogAmount), not the length
+    int planesN = 0;        // [fog] game_fog_planes: that many planes from 20 to 80 (strength 1), softness planesSoft
+    float planesSoft = 0.0f;
     // rectangles painted over the cleared frame: their depth and their colour (a silhouette against the sky)
     struct Patch { D3D12_RECT r; float depth; float rgb[3]; };
     std::vector<Patch> patches;
@@ -288,18 +320,46 @@ int main(int argc, char** argv) {
         p.start = cStart; p.end = cEnd; p.curve = cCurve; p.strength = cStrength;
         p.fxDepth = holeKey;   // (the holes go with the step now, not with this - holeKey off checks a hole with it off)
         p.skyDepth = skyDepth;
+        p.planes = planesN;
+        p.planesStart = 20.0f;
+        p.planesEnd = 80.0f;
+        p.planesStrength = 1.0f;
+        p.planesSoft = planesSoft;
         fogfx::Configure(p);
         fogfx::Frame();   // (a present between frames)
         alloc->Reset();
         cl->Reset(alloc, nullptr);
         k.fxReset(cl);
+        const float c[4] = {sceneBlack ? 0.0f : grey, sceneBlack ? 0.0f : grey, sceneBlack ? 0.0f : grey, 1};
+        if (chainMode) {   // the scene drawn on A and made readable there; D recorded now (before the resolve's list), submitted after it
+            allocA->Reset();
+            listA->Reset(allocA, nullptr);
+            k.fxReset(listA);
+            k.fxTargets(listA, 1, &rtvScene, false, depth, &dsv);
+            listA->ClearRenderTargetView(rtvScene, c, 0, nullptr);
+            D3D12_RESOURCE_BARRIER ba = Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            k.fxBarrier(listA, 1, &ba);
+            listA->ResourceBarrier(1, &ba);
+            CHECK(SUCCEEDED(listA->Close()));
+            allocD->Reset();
+            listD->Reset(allocD, nullptr);
+            k.fxReset(listD);
+            D3D12_RESOURCE_BARRIER bd = Tr(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
+            // (hideD: told as if on a list never submitted - the recorded order still says a render target, the submissions never see D move it)
+            k.fxBarrier(hideD ? (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE90 : listD, 1, &bd);
+            listD->ResourceBarrier(1, &bd);
+            CHECK(SUCCEEDED(listD->Close()));
+        }
         // the scene drawn (cleared) with the depth bound
-        k.fxTargets(sceneElsewhere ? (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7E : cl, 1, &rtvScene, false, depth, &dsv);
+        if (!chainMode) k.fxTargets(sceneElsewhere ? (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7E : cl, 1, &rtvScene, false, depth, &dsv);
         if (halfLayer) k.fxTargets(sceneElsewhere ? (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7E : cl, 1, &rtvHalf, false, depth, &dsv);
         if (decoyAfter) k.fxTargets(sceneElsewhere ? (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7E : cl, 1, &rtvDecoy, false, depth, &dsv);
-        cl->OMSetRenderTargets(1, &rtvScene, FALSE, &dsv);
-        const float c[4] = {grey, grey, grey, 1};
-        cl->ClearRenderTargetView(rtvScene, c, 0, nullptr);
+        if (!chainMode) {
+            cl->OMSetRenderTargets(1, &rtvScene, FALSE, &dsv);
+            cl->ClearRenderTargetView(rtvScene, c, 0, nullptr);
+        }
+        const float lit[4] = {frameLit ? 0.6f : 0.0f, frameLit ? 0.5f : 0.0f, frameLit ? 0.4f : 0.0f, 1};
+        cl->ClearRenderTargetView(rtvFrameReal, lit, 0, nullptr);
         cl->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, depthValue, 0, 0, nullptr);
         if (holes) {
             const D3D12_RECT hr[2] = {{10, 10, 11, 11}, {20, 40, 23, 41}};
@@ -312,8 +372,8 @@ int main(int argc, char** argv) {
         }
         auto* other = (ID3D12GraphicsCommandList*)(uintptr_t)0x5CE7F;
         D3D12_RESOURCE_BARRIER b = Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        if (sceneElse != 3) k.fxBarrier(sceneElse ? other : cl, 1, &b);   // (3: told last frame, below)
-        cl->ResourceBarrier(1, &b);
+        if (sceneElse != 3 && !chainMode) k.fxBarrier(sceneElse ? other : cl, 1, &b);   // (3: told last frame, below)
+        if (!chainMode) cl->ResourceBarrier(1, &b);
         if (sceneElse == 2) {
             D3D12_RESOURCE_BARRIER nx = Tr(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET);
             k.fxBarrier(other, 1, &nx);
@@ -362,7 +422,7 @@ int main(int argc, char** argv) {
         D3D12_RESOURCE_BARRIER bb[3] = {Tr(out, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                         Tr(gameOut, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                         Tr(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)};
-        cl->ResourceBarrier(3, bb);
+        cl->ResourceBarrier(chainMode ? 2 : 3, bb);   // (the submission order: D puts the scene back)
         D3D12_TEXTURE_COPY_LOCATION dst{readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT}, src{out, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
         dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, 64, 64, 1, 64 * 16};
         src.SubresourceIndex = 0;
@@ -374,7 +434,18 @@ int main(int argc, char** argv) {
         cl->ResourceBarrier(depthUntold ? 2 : 3, bb);
         CHECK(SUCCEEDED(cl->Close()));
         ID3D12CommandList* lists[1] = {cl};
+        if (chainMode) {   // A, then the resolve's, then D - each told to the step's tap first, as the hook tells it
+            ID3D12CommandList* la[1] = {listA};
+            fogfx::OnExecute(g_q, 1, la);
+            g_q->ExecuteCommandLists(1, la);
+            fogfx::OnExecute(g_q, 1, lists);
+        }
         g_q->ExecuteCommandLists(1, lists);
+        if (chainMode) {
+            ID3D12CommandList* ld[1] = {listD};
+            fogfx::OnExecute(g_q, 1, ld);
+            g_q->ExecuteCommandLists(1, ld);
+        }
         g_q->Signal(fence, ++fv);
         while (fence->GetCompletedValue() < fv) Sleep(1);
         CHECK(SUCCEEDED(dev->GetDeviceRemovedReason()));
@@ -418,6 +489,15 @@ int main(int argc, char** argv) {
                     got[0], got[1], got[2], want[0], want[1], want[2], word);
         CHECK(near3(got, want) && std::fabs(got[0] - grey) > 0.02f);
         CHECK(word == 0x5EED1234u);
+        if (at[0] == 32) {   // the probe at the middle: what the step itself read and made (Serg 2026-11-09: its fog thin in the game)
+            float pr[80] = {};
+            const bool have = fogfx::LastProbe(pr);
+            const float wantT = std::fmin(1.0f, std::exp(-density * (std::sqrt(45.0f * 45.0f * (1.0f + 2.0f * (0.5f / 32.0f) * (0.5f / 32.0f)) + 1.0f) / plane - 1.0f)));
+            std::printf("  the probe at the middle: depth %.3g -> view depth %.2f, distance %.2f, fog %.3f (want %.3f), scene %.3f -> %.3f\n", pr[0], pr[1],
+                        pr[2], 1.0f - pr[3], 1.0f - wantT, pr[4], pr[8]);
+            CHECK(have && std::fabs(pr[0] - d) < 1e-6f && std::fabs(pr[1] - 45.0f) < 0.05f && std::fabs(pr[2] - 45.0f) < 0.1f);
+            CHECK(std::fabs(pr[3] - wantT) < 0.01f && std::fabs(pr[4] - grey) < 0.01f && std::fabs(pr[8] - got[0]) < 0.03f && pr[7] < 0.5f);
+        }
     }
     // 2b: our curve
     curveOn = true;
@@ -430,6 +510,36 @@ int main(int argc, char** argv) {
         CHECK(near3(got, want) && word == 0x5EED1234u);
     }
     curveOn = false;
+    // 2b'': [fog] game_fog_planes - 4 planes at view depths 35, 50, 65, 80 (each adding a quarter of the fog): the middle pixel at 45 units is
+    // behind the first only - hard: a quarter of the fog (what is left 0.75); soft (each fading in over the 15 in front of it): the first
+    // whole, the second (a third of what is left) 10 of its 15 in - 0.75 x (1 - 1/3 x 2/3); at 100 units behind all four: the fog's colour
+    // whole; the void: as it is
+    {
+        planesN = 4;
+        auto planesWant = [&](float keep, float out[3]) { for (int i = 0; i < 3; ++i) out[i] = fog[i] + (grey - fog[i]) * keep; };
+        const float d = nearPlane / 45.0f;
+        planesSoft = 0.0f;
+        frame(true, d, 32, 32, got, &word);
+        planesWant(0.75f, want);
+        std::printf("  4 hard planes, the middle at 45 units: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want) && word == 0x5EED1234u);
+        planesSoft = 1.0f;
+        frame(true, d, 32, 32, got, &word);
+        planesWant(0.75f * (1.0f - (1.0f / 3.0f) * (10.0f / 15.0f)), want);
+        std::printf("  4 soft planes, the middle at 45 units: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want));
+        frame(true, nearPlane / 100.0f, 32, 32, got, &word);
+        std::printf("  4 soft planes, the middle at 100 units: %.4f %.4f %.4f (the fog's colour %.4f %.4f %.4f)\n", got[0], got[1], got[2], fog[0], fog[1], fog[2]);
+        CHECK(near3(got, fog));
+        frame(true, 0.0f, 32, 32, got, &word);
+        const float g3[3] = {grey, grey, grey};
+        std::printf("  4 soft planes, the void: %.4f %.4f %.4f (as it is)\n", got[0], got[1], got[2]);
+        CHECK(near3(got, g3));
+        CHECK(std::fabs(fogfx::PlaneAlpha(0, 4, 1.0f) - 0.25f) < 1e-5f && std::fabs(fogfx::PlaneAlpha(3, 4, 1.0f) - 1.0f) < 1e-5f &&
+              std::fabs(fogfx::PlaneAt(1, 4, 20.0f, 80.0f) - 50.0f) < 1e-4f);
+        planesN = 0;
+        planesSoft = 0.0f;
+    }
     // 2b': our effect's fog - its curve by the view's depth: at the corner (the view's depth 45, the point's length about 1.6 times that) the
     // two differ by far; the post pass is told to leave the drawn pixels to the step (OursDrawn), and not with the game's fog in it
     CHECK(fogfx::Drawn() && !fogfx::OursDrawn());
@@ -470,6 +580,106 @@ int main(int argc, char** argv) {
                     want[1], want[2]);
         CHECK(near3(got, want) && word == 0x5EED1234u);
     }
+    // 2d': the scene the resolve's tables name reads black at the probe's points while the resolve's own target holds the lit picture (Serg's
+    // 0.209.11 probe): after 20 probes in a row nothing is written into it (the resolve reads it black, not the fog's colour) and the game's
+    // pass keeps its fog (Drawn false); a lit scene again - fogged again
+    {
+        const float d = nearPlane / 45.0f;
+        sceneBlack = frameLit = true;
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        float pr[80] = {};
+        fogfx::LastProbe(pr);
+        std::printf("  the scene black, the resolve's target lit: the probe's scene %.3f %.3f %.3f, the target %.3f %.3f %.3f; the resolve wrote %.4f %.4f "
+                    "%.4f; the step drawn for the game's pass: %d\n", pr[4], pr[5], pr[6], pr[12], pr[13], pr[14], got[0], got[1], got[2], fogfx::Drawn() ? 1 : 0);
+        CHECK(pr[4] < 0.01f && std::fabs(pr[12] - 0.6f) < 0.02f && std::fabs(pr[13] - 0.5f) < 0.02f);
+        CHECK(!fogfx::Drawn() && got[0] < 0.01f && got[1] < 0.01f && got[2] < 0.01f);
+        sceneBlack = false;   // (the target still lit: last frame's picture, as the game's would be)
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        frameLit = false;
+        expect(d, 32, 32, want);
+        std::printf("  the scene lit again: %.4f %.4f %.4f (the formula %.4f %.4f %.4f), drawn %d\n", got[0], got[1], got[2], want[0], want[1], want[2],
+                    fogfx::Drawn() ? 1 : 0);
+        CHECK(fogfx::Drawn() && near3(got, want));
+        // 2d'': the same, and the resolve blends into its own target (weighted OIT over the lit picture there): the step fogs that target -
+        // the probe's first read is the target (lit), what it made the target fogged, the second read the tables' scene (black); drawn
+        fogfx::MarkResolve(resolve, 1);
+        sceneBlack = frameLit = true;
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        fogfx::LastProbe(pr);
+        const float tc[3] = {0.6f, 0.5f, 0.4f};
+        float wantT[3];
+        {
+            float e[3];
+            expect(d, 32, 32, e);   // (grey fogged: e = fog + (grey - fog) t - the same t for the target's colour)
+            const float t = (e[0] - fog[0]) / (grey - fog[0]);
+            for (int c = 0; c < 3; ++c) wantT[c] = fog[c] + (tc[c] - fog[c]) * t;
+        }
+        std::printf("  the resolve blends into its lit target: the probe read %.3f %.3f %.3f, made %.3f %.3f %.3f (want %.3f %.3f %.3f), the tables' "
+                    "scene %.3f %.3f %.3f; drawn %d\n", pr[4], pr[5], pr[6], pr[8], pr[9], pr[10], wantT[0], wantT[1], wantT[2], pr[12], pr[13], pr[14],
+                    fogfx::Drawn() ? 1 : 0);
+        CHECK(std::fabs(pr[4] - 0.6f) < 0.02f && std::fabs(pr[5] - 0.5f) < 0.02f && pr[12] < 0.01f);
+        CHECK(near3(pr + 8, wantT) && fogfx::Drawn());
+        fogfx::MarkResolve(resolve, -1);
+        sceneBlack = false;
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        frameLit = false;
+        CHECK(fogfx::Drawn());
+        // 2d''': both dark - the tables' scene and the resolve's own target black at the probe's points (Serg's 0.209.13, flat with DLSS: the
+        // lit world laid in after the resolve, what we wrote ended up over the flame): no lit picture proven -> after 20 probes nothing written,
+        // the game's pass keeps its fog; the scene lit again -> fogged again. A scene once proven lit stays so through dark views (0.209.21, VR F4:
+        // the step flipped off and on): both dark after it was proven - still drawing; at the game's start (nothing proven) - nothing written
+        sceneBlack = true;
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        std::printf("  both dark after a lit picture was proven: drawn %d (stays)\n", fogfx::Drawn() ? 1 : 0);
+        CHECK(fogfx::Drawn());
+        fogfx::ResetSceneCheck(2);   // (the game's start: nothing proven, nothing written)
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        std::printf("  both dark from the start: the resolve wrote %.4f %.4f %.4f (nothing of ours), drawn %d\n", got[0], got[1], got[2], fogfx::Drawn() ? 1 : 0);
+        CHECK(!fogfx::Drawn() && got[0] < 0.01f && got[1] < 0.01f && got[2] < 0.01f);
+        sceneBlack = false;
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);
+        expect(d, 32, 32, want);
+        CHECK(fogfx::Drawn() && near3(got, want));
+        // 2g: the submission order (0.209.15's flat game: "the scene's state 0x4 (set on another list this frame) ... not drawn"): the scene made
+        // readable on A, the resolve's list setting nothing, D (recorded before it, submitted after) putting it back to a render target. At first
+        // nothing of ours (the state not proven: the scene as drawn); once the submissions have shown the same state at the resolve 60 times in
+        // a row the step draws from it (the debug layer checks every barrier of ours); D's barrier made unseen - the chain lost, nothing again
+        chainMode = true;
+        frame(true, d, 32, 32, got, &word);
+        const float g3[3] = {grey, grey, grey};
+        std::printf("  the submission order, its first frame: %.4f %.4f %.4f (the scene as drawn %.4f: not proven yet)\n", got[0], got[1], got[2], grey);
+        CHECK(near3(got, g3));
+        for (int i = 0; i < 70; ++i) frame(true, d, 32, 32, got, &word);
+        std::printf("  ... after 71 frames: %.4f %.4f %.4f (the formula %.4f %.4f %.4f: drawn from the state the submissions proved)\n", got[0], got[1],
+                    got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want) && word == 0x5EED1234u);
+        hideD = true;
+        for (int i = 0; i < 5; ++i) frame(true, d, 32, 32, got, &word);
+        std::printf("  ... D's barrier unseen, 5 frames on: %.4f %.4f %.4f (the scene as drawn: the order lost)\n", got[0], got[1], got[2]);
+        CHECK(near3(got, g3));
+        hideD = false;
+        chainMode = false;
+        // 2h: a view of the sky only (every probe point on the void - 0.209.16: the middle on the dome, "no lit picture" and the step went off):
+        // the sky does not vote - after 30 such frames the step is still drawing
+        for (int i = 0; i < 40; ++i) frame(true, d, 32, 32, got, &word);   // (the order lost above: back to the resolve's own states)
+        CHECK(fogfx::Drawn());
+        for (int i = 0; i < 30; ++i) frame(true, 0.0f, 32, 32, got, &word);
+        std::printf("  30 frames of sky only: drawn %d (the sky does not vote)\n", fogfx::Drawn() ? 1 : 0);
+        CHECK(fogfx::Drawn());
+        // 2i: watching (Serg 2026-11-09: the sinks cost ~0.5 ms of CPU a present): 130 steps in a row with the same scene and depth - only they are
+        // watched, the step still fogs as the formula; then the scene's state not known (the layout of 2g, the order not proven) - the full
+        // search again at once
+        for (int i = 0; i < 130; ++i) frame(true, d, 32, 32, got, &word);
+        expect(d, 32, 32, want);
+        std::printf("  130 steps in a row: watching %d, %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", fogfx::Watching() ? 1 : 0, got[0], got[1], got[2],
+                    want[0], want[1], want[2]);
+        CHECK(fogfx::Watching() && near3(got, want) && word == 0x5EED1234u);
+        chainMode = true;
+        frame(true, d, 32, 32, got, &word);
+        chainMode = false;
+        std::printf("  ... the scene's state not known: watching %d (the full search again)\n", fogfx::Watching() ? 1 : 0);
+        CHECK(!fogfx::Watching());
+    }
     // 2e: and the game's half-size effects target bound with the same depth after the scene (PC1 2026-10-28: that layer was taken for the
     // scene and fogged - no fog at all): the scene, of the depth's own size, still
     halfLayer = true;
@@ -503,6 +713,22 @@ int main(int argc, char** argv) {
         frame(true, nearPlane / 45.0f, 32, 32, got, &word);
         std::printf("  ... the views not known: %.4f %.4f %.4f (the scene's %.4f - the decoy taken)\n", got[0], got[1], got[2], grey);
         CHECK(std::fabs(got[0] - grey) < 0.01f && word == 0x5EED1234u);
+        g_srvs = keep;
+    }
+    // 2e'': the decoy is the effects' additive target - bound in one call with the effects' RGBA16F target (0.209.14's flat trace: R11G11B10F
+    // of the scene's size, so it passed for the scene, was fogged and laid over the flame): never taken - with the views not known the scene,
+    // the last one bound with the depth that is not it, is fogged
+    {
+        const D3D12_CPU_DESCRIPTOR_HANDLE pair[2] = {rtvAccumFx, rtvDecoy};
+        k.fxTargets((ID3D12GraphicsCommandList*)(uintptr_t)0x5CE80, 2, pair, false, nullptr, nullptr);
+        const auto keep = g_srvs;
+        g_srvs.clear();
+        const float d = nearPlane / 45.0f;
+        frame(true, d, 32, 32, got, &word);
+        expect(d, 32, 32, want);
+        std::printf("  the decoy is the effects' additive target, the views not known: %.4f %.4f %.4f (the scene fogged, the formula %.4f %.4f %.4f)\n",
+                    got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want) && word == 0x5EED1234u);
         g_srvs = keep;
     }
     decoyAfter = false;
@@ -676,6 +902,8 @@ int main(int argc, char** argv) {
         const float fxColour[3] = {0.8f, 0.4f, 0.1f}, fxGlow[3] = {1.0f, 0.5f, 0.25f};
         D3D12_CLEAR_VALUE zero16{DXGI_FORMAT_R16G16B16A16_FLOAT};
         ID3D12Resource* accum = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &zero16);
+        D3D12_CLEAR_VALUE one16{DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 1, 1, 1}};
+        ID3D12Resource* reveal = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &one16);
         ID3D12Resource* glow = nullptr;
         {
             D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
@@ -691,13 +919,16 @@ int main(int argc, char** argv) {
         }
         CHECK(accum && glow);
         ID3D12DescriptorHeap *fxRtvHeap = nullptr, *fxSrvHeap = nullptr;
-        D3D12_DESCRIPTOR_HEAP_DESC fh{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2};
+        D3D12_DESCRIPTOR_HEAP_DESC fh{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 3};
         dev->CreateDescriptorHeap(&fh, __uuidof(ID3D12DescriptorHeap), (void**)&fxRtvHeap);
         fh = {D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 3, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};
         dev->CreateDescriptorHeap(&fh, __uuidof(ID3D12DescriptorHeap), (void**)&fxSrvHeap);
         const D3D12_CPU_DESCRIPTOR_HANDLE rtvAccum = fxRtvHeap->GetCPUDescriptorHandleForHeapStart(), rtvGlow{rtvAccum.ptr + rtvInc};
         dev->CreateRenderTargetView(accum, nullptr, rtvAccum);
         dev->CreateRenderTargetView(glow, nullptr, rtvGlow);
+        const D3D12_CPU_DESCRIPTOR_HANDLE rtvReveal{rtvAccum.ptr + 2 * rtvInc};
+        dev->CreateRenderTargetView(reveal, nullptr, rtvReveal);
+        g_rtvs[rtvReveal.ptr] = reveal;
         g_rtvs[rtvAccum.ptr] = accum;
         g_rtvs[rtvGlow.ptr] = glow;
         const D3D12_CPU_DESCRIPTOR_HANDLE srv0 = fxSrvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -750,6 +981,42 @@ int main(int argc, char** argv) {
         ID3D12PipelineState *fxAccum = nullptr, *fxGlowPso = nullptr, *fxResolve = nullptr;
         CHECK(fxRoot && SUCCEEDED(dev->CreateGraphicsPipelineState(&ed, __uuidof(ID3D12PipelineState), (void**)&fxAccum)));
         fogfx::OnGraphicsPso(dev, &ed, fxAccum);
+        // a hair / foliage pipeline of the effects pass (a leaf card's see-through part): the same targets, its own colour - taken as one of the
+        // lit / hair pipelines (in the game: by its pixel shader's hash)
+        const float leafColour[3] = {0.2f, 0.6f, 0.2f};
+        const float leafAlpha = 0.8f, leafZ = 44.0f, leafW = 1e6f / (1e5f + leafZ * leafZ * leafZ);
+        char leafSrc[320];
+        std::snprintf(leafSrc, sizeof leafSrc, "struct O { float4 c : SV_Target0; float4 r : SV_Target1; }; O main() { O o; float a = %.6f, w = %.6f; "
+                      "o.c = float4(float3(0.2, 0.6, 0.2) * a * w, a * w); o.r = float4(1, 1, 1, a); return o; }", leafAlpha, leafW);
+        const std::vector<uint8_t> lps = Compile(leafSrc, "ps_5_0");
+        ID3D12PipelineState* fxLeaf = nullptr;
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC ld = ed;
+            ld.PS = {lps.data(), lps.size()};
+            ld.NumRenderTargets = 2;
+            ld.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            ld.BlendState.IndependentBlendEnable = TRUE;
+            ld.BlendState.RenderTarget[1] = {TRUE, FALSE, D3D12_BLEND_ZERO, D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_BLEND_ZERO,
+                                             D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_LOGIC_OP_NOOP, D3D12_COLOR_WRITE_ENABLE_ALL};
+            CHECK(SUCCEEDED(dev->CreateGraphicsPipelineState(&ld, __uuidof(ID3D12PipelineState), (void**)&fxLeaf)));
+        }
+        fogfx::MarkFogBehind(fxLeaf);
+        const float fireZ = 60.0f, fireW = 1e6f / (1e5f + fireZ * fireZ * fireZ);
+        char fireSrc[320];
+        std::snprintf(fireSrc, sizeof fireSrc, "struct O { float4 c : SV_Target0; float4 r : SV_Target1; }; O main() { O o; float a = %.6f, w = %.6f; "
+                      "o.c = float4(float3(0.8, 0.4, 0.1) * a * w, a * w); o.r = float4(1, 1, 1, a); return o; }", leafAlpha, fireW);
+        const std::vector<uint8_t> fps = Compile(fireSrc, "ps_5_0");
+        ID3D12PipelineState* fxFarFire = nullptr;
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC fd = ed;
+            fd.PS = {fps.data(), fps.size()};
+            fd.NumRenderTargets = 2;
+            fd.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            fd.BlendState.IndependentBlendEnable = TRUE;
+            fd.BlendState.RenderTarget[1] = {TRUE, FALSE, D3D12_BLEND_ZERO, D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_BLEND_ZERO,
+                                             D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_LOGIC_OP_NOOP, D3D12_COLOR_WRITE_ENABLE_ALL};
+            CHECK(SUCCEEDED(dev->CreateGraphicsPipelineState(&fd, __uuidof(ID3D12PipelineState), (void**)&fxFarFire)));
+        }
         ed.PS = {gps.data(), gps.size()};
         ed.DepthStencilState.DepthEnable = FALSE;   // (the half-size layer: the full-size depth bound, not tested)
         ed.RTVFormats[0] = DXGI_FORMAT_R11G11B10_FLOAT;
@@ -769,9 +1036,14 @@ int main(int argc, char** argv) {
         dev->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, alloc2, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&cl2);
         cl2->Close();
         bool apart = false;   // the scene and the effects on cl2, the resolve on cl (run in that order)
+        bool pairTold = false;   // the weighted colour bound in one call with the additive target (the game's binding: the effects' pair noted)
+        bool flameOn = true;     // the particle (the flame) drawn
+        float leafD = 0.0f;      // the leaf card drawn at this depth (0: not)
+        float farFireD = 0.0f;   // a far fire drawn as the game's particles are (its weight and revealage) at this depth (0: not)
+        bool stepOn = true;   // (off: the step not asked - the game's fog alone)
         auto fxFrame = [&](bool fxDepth, float wallD, float effD, float px, float py, float rgb[3]) {
             fogfx::Params p;
-            p.on = true;
+            p.on = stepOn;
             p.fxDepth = fxDepth;
             p.plane = plane;
             p.density = density;
@@ -795,6 +1067,8 @@ int main(int argc, char** argv) {
             ec->ClearRenderTargetView(rtvScene, c, 0, nullptr);
             ec->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, wallD, 0, 0, nullptr);
             ec->ClearRenderTargetView(rtvAccum, none, 0, nullptr);
+            const float ones[4] = {1, 1, 1, 1};
+            ec->ClearRenderTargetView(rtvReveal, ones, 0, nullptr);
             ec->ClearRenderTargetView(rtvGlow, none, 0, nullptr);
             // the effects
             natived3d::RootCall rc{natived3d::RootCall::kGraphicsRootSignature, 0, (uint64_t)(uintptr_t)fxRoot};
@@ -808,12 +1082,42 @@ int main(int argc, char** argv) {
             const D3D12_RECT fullR{0, 0, 64, 64}, halfR{0, 0, 32, 32};
             ec->RSSetViewports(1, &full);
             ec->RSSetScissorRects(1, &fullR);
+            if (pairTold) {
+                const D3D12_CPU_DESCRIPTOR_HANDLE pr[3] = {rtvAccum, rtvReveal, rtvGlow};
+                k.fxTargets(ec, 3, pr, false, nullptr, nullptr);
+            }
             k.fxTargets(ec, 1, &rtvAccum, false, depth, &dsv);
             ec->OMSetRenderTargets(1, &rtvAccum, FALSE, &dsv);
-            ec->SetPipelineState(fxAccum);
-            k.fxBound(ec, fxAccum);
-            k.fxDraw(ec, false, 3, 1, 0, 0, 0);
-            ec->DrawInstanced(3, 1, 0, 0);
+            if (flameOn) {
+                ec->SetPipelineState(fxAccum);
+                k.fxBound(ec, fxAccum);
+                k.fxDraw(ec, false, 3, 1, 0, 0, 0);
+                ec->DrawInstanced(3, 1, 0, 0);
+            }
+            if (farFireD > 0.0f) {   // (a particle: never sent - fogged by its own distance in the game's own targets)
+                const D3D12_CPU_DESCRIPTOR_HANDLE fr2[2] = {rtvAccum, rtvReveal};
+                k.fxTargets(ec, 2, fr2, false, depth, &dsv);
+                ec->OMSetRenderTargets(2, fr2, FALSE, &dsv);
+                uint32_t fz = 0;
+                std::memcpy(&fz, &farFireD, 4);
+                ec->SetGraphicsRoot32BitConstant(0, fz, 0);
+                ec->SetPipelineState(fxFarFire);
+                k.fxBound(ec, fxFarFire);
+                k.fxDraw(ec, false, 3, 1, 0, 0, 0);
+                ec->DrawInstanced(3, 1, 0, 0);
+            }
+            if (leafD > 0.0f) {   // (told as the game's draw: the step may send it into its own targets)
+                const D3D12_CPU_DESCRIPTOR_HANDLE lr[2] = {rtvAccum, rtvReveal};
+                k.fxTargets(ec, 2, lr, false, depth, &dsv);
+                ec->OMSetRenderTargets(2, lr, FALSE, &dsv);
+                uint32_t lz = 0;
+                std::memcpy(&lz, &leafD, 4);
+                ec->SetGraphicsRoot32BitConstant(0, lz, 0);
+                ec->SetPipelineState(fxLeaf);
+                k.fxBound(ec, fxLeaf);
+                k.fxDraw(ec, false, 3, 1, 0, 0, 0);
+                ec->DrawInstanced(3, 1, 0, 0);
+            }
             ec->RSSetViewports(1, &half);
             ec->RSSetScissorRects(1, &halfR);
             k.fxTargets(ec, 1, &rtvGlow, false, depth, &dsv);
@@ -824,12 +1128,13 @@ int main(int argc, char** argv) {
             ec->DrawInstanced(3, 1, 0, 0);
             // the resolve reads them all
             const D3D12_RESOURCE_STATES depthRead = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-            D3D12_RESOURCE_BARRIER rb[4] = {Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+            D3D12_RESOURCE_BARRIER rb[5] = {Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(accum, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(glow, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-                                            Tr(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, depthRead)};
-            k.fxBarrier(ec, 4, rb);
-            ec->ResourceBarrier(4, rb);
+                                            Tr(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, depthRead),
+                                            Tr(reveal, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+            k.fxBarrier(ec, 5, rb);
+            ec->ResourceBarrier(5, rb);
             if (apart) CHECK(SUCCEEDED(cl2->Close()));
             cl->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);   // (the resolve's list: its own input state)
             ID3D12DescriptorHeap* heaps[1] = {fxSrvHeap};
@@ -849,12 +1154,13 @@ int main(int argc, char** argv) {
             cl->RSSetScissorRects(1, &fullR);
             k.fxDraw(cl, false, 3, 1, 0, 0, 0);
             cl->DrawInstanced(3, 1, 0, 0);
-            D3D12_RESOURCE_BARRIER bb[5] = {Tr(out, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
+            D3D12_RESOURCE_BARRIER bb[6] = {Tr(out, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                             Tr(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
                                             Tr(accum, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
                                             Tr(glow, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-                                            Tr(depth, depthRead, D3D12_RESOURCE_STATE_DEPTH_WRITE)};
-            cl->ResourceBarrier(5, bb);
+                                            Tr(depth, depthRead, D3D12_RESOURCE_STATE_DEPTH_WRITE),
+                                            Tr(reveal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+            cl->ResourceBarrier(6, bb);
             D3D12_TEXTURE_COPY_LOCATION dst{readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT}, src{out, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
             dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, 64, 64, 1, 64 * 16};
             src.SubresourceIndex = 0;
@@ -913,6 +1219,83 @@ int main(int argc, char** argv) {
             CHECK(near3(got, want));
             if (c.fxDepth && c.effD < nearPlane / 30.0f) CHECK(!near3(got, plain));   // (past the plane's 30 units: visibly fogged)
         }
+        // 5b: the effects' own depth off, their pair known. Serg 2026-11-09 on 0.209.16: branches, bushes and hair (the effects pass) escaped the
+        // fog; on 0.209.17, with the whole weighted colour fogged by the depth behind it, "затененный забор перекрывает огонь" - the flame took
+        // the fogged fence's colour. Now per draw: a hair / foliage draw goes into the step's own target and is fogged by the depth behind it;
+        // a particle (the flame) stays as drawn. R = S (1 - 0.5) + 0.5 (flame + leaf fogged) / count + G
+        pairTold = true;
+        {
+            const float u = 32.5f / 64.0f;
+            const float tl = keepAt(nearPlane / leafZ, u, u);   // (the leaf by its own distance, from its weight and opacity)
+            const float lw = leafAlpha * leafW;                 // (its share in the weighted average)
+            auto want5b = [&](bool flame, bool leaf, float wallD, float out[3]) {
+                const float ts = wallD > 0 ? keepAt(wallD, u, u) : 1.0f;
+                // (the additive light: where a particle is, by its distance - the test's flame writes no revealage: unreadable, as drawn; where
+                // none is, by the depth behind it - the glow's pixel (16, 16) seen from the full-size pixel (33, 33))
+                const float ug = 33.5f / 64.0f;
+                const float tg = flame ? 1.0f : wallD > 0 ? keepAt(wallD, ug, ug) : 1.0f;
+                for (int i = 0; i < 3; ++i) {
+                    const float s = fog[i] + (grey - fog[i]) * ts;
+                    const float leafFogged = leafColour[i] * tl + fog[i] * (1.0f - tl);
+                    const float n = (flame ? 1.0f : 0.0f) + (leaf ? lw : 0.0f);
+                    const float t = n > 0 ? ((flame ? fxColour[i] : 0.0f) + (leaf ? leafFogged * lw : 0.0f)) / n : 0.0f;
+                    out[i] = (n > 0 ? s * 0.5f + t * 0.5f : s) + fxGlow[i] * tg;
+                }
+            };
+            struct C5 { const char* what; bool flame; float leaf, wallD; };
+            const C5 cs[] = {
+                {"the flame alone at 10 units before the wall at 45: as drawn (bright)", true, 0.0f, wall},
+                {"a leaf card at 44 before the wall alone: fogged by its own distance", false, nearPlane / leafZ, wall},
+                {"the flame at 10 and a leaf at 44: the leaf fogged, the flame as drawn", true, nearPlane / leafZ, wall},
+                {"a leaf card at 44 against the sky (the void behind it): fogged by its own distance all the same", false, nearPlane / leafZ, 0.0f},
+            };
+            for (const C5& c : cs) {
+                flameOn = c.flame;
+                leafD = c.leaf;
+                for (int f = 0; f < 3; ++f) fxFrame(false, c.wallD, nearPlane / 10.0f, 32, 32, got);   // (frames first: the leaf sent to the step's targets once they fold)
+                want5b(c.flame, c.leaf > 0.0f, c.wallD, want);
+                std::printf("  %s: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", c.what, got[0], got[1], got[2], want[0], want[1], want[2]);
+                CHECK(near3(got, want));
+            }
+            // standing aside (no lit picture proven - mode 2): nothing of ours at all - the flame and the leaf drawn into the game's targets as
+            // they are, the picture pixel-identical to the step not asked (0.209.21, VR F4: with the step flipping off, the leaves were lost)
+            {
+                flameOn = true;
+                leafD = nearPlane / leafZ;
+                fogfx::ResetSceneCheck(2);
+                float aside[3], off[3];
+                for (int f = 0; f < 3; ++f) fxFrame(false, wall, nearPlane / 10.0f, 32, 32, aside);
+                stepOn = false;
+                for (int f = 0; f < 2; ++f) fxFrame(false, wall, nearPlane / 10.0f, 32, 32, off);
+                stepOn = true;
+                std::printf("  standing aside: %.5f %.5f %.5f, the step not asked: %.5f %.5f %.5f (identical)\n", aside[0], aside[1], aside[2], off[0],
+                            off[1], off[2]);
+                CHECK(aside[0] == off[0] && aside[1] == off[1] && aside[2] == off[2] && !fogfx::Drawn());
+                fogfx::ResetSceneCheck(0);
+                leafD = 0.0f;
+                for (int f = 0; f < 3; ++f) fxFrame(false, wall, nearPlane / 10.0f, 32, 32, got);   // (back: the fold, then the leaf sent again)
+            }
+            // a far fire (60 units, the sky behind it) drawn as the game's particles are: fogged by its own distance, its additive light
+            // faded by it (Serg's A/B on 0.209.18: "far fires show as red / orange blobs with halos through the fog")
+            flameOn = false;
+            leafD = 0.0f;
+            farFireD = nearPlane / fireZ;
+            for (int f = 0; f < 3; ++f) fxFrame(false, 0.0f, nearPlane / 10.0f, 32, 32, got);
+            {
+                const float tf = keepAt(nearPlane / fireZ, u, u), ug = 33.5f / 64.0f, tg = keepAt(nearPlane / fireZ, ug, ug);
+                for (int i = 0; i < 3; ++i) want[i] = grey * 0.5f + (fxColour[i] * tf + fog[i] * (1.0f - tf)) * 0.5f + fxGlow[i] * tg;
+            }
+            std::printf("  a far fire (60 units, the sky behind): %.4f %.4f %.4f (want %.4f %.4f %.4f: fogged by its own distance, its light faded)\n",
+                        got[0], got[1], got[2], want[0], want[1], want[2]);
+            CHECK(near3(got, want));
+            farFireD = 0.0f;
+            flameOn = true;
+            fxFrame(false, 0.0f, nearPlane / 10.0f, 32, 32, got);
+            fxWant(false, 0.0f, nearPlane / 10.0f, want);
+            std::printf("  ... the flame over the void: %.4f %.4f %.4f (want %.4f %.4f %.4f: as it is)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+            CHECK(near3(got, want));
+        }
+        pairTold = false;
         // twice in a row on one list's recording: the second frame's depth starts clean (a near effect before, a far one now)
         fxFrame(true, wall, nearPlane / 10.0f, 32, 32, got);
         fxFrame(true, wall, nearPlane / 40.0f, 32, 32, got);

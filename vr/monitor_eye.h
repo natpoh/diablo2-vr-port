@@ -36,4 +36,21 @@ void Made(int eye, ID3D12Resource* made);
 // done), the window it goes to (its client size: the crop). After every copy of this present to the headset.
 void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye);
 
+// [render] monitor_eye_fit: what the headset shows of eye `eye` (vrcam, the draw thread, before Present): the runtime's hidden-area mesh
+// (XR_KHR_visibility_mask: xy tangent pairs on the view's z = -1 plane, triangle indices; `gen` moves when it is fetched again; none: nVerts
+// 0), the frustum the eye's picture is drawn with and the part of it the headset is given (tangents l r u d, left and down negative). The
+// window then gets the biggest box of its own shape inside what the lens shows, not the masked edges (monitor_eye_math.h VisibleBox).
+// nullptr: not known (no first-person pair, canted displays) - the whole picture as before.
+struct Lens {
+    const float* xy = nullptr;
+    uint32_t nVerts = 0;
+    const uint32_t* idx = nullptr;
+    uint32_t nIdx = 0;
+    uint32_t gen = 0;
+    float drawn[4] = {};
+    float seen[4] = {};
+    bool seenOk = false;
+};
+void SetLens(int eye, const Lens* lens);
+
 }  // namespace monitoreye

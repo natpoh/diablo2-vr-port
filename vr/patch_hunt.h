@@ -92,6 +92,16 @@ constexpr bool LightBoundsOff(int s) { return Clamp(s) == kLightBounds || Clamp(
 constexpr bool OwnEffectsOff(int s) { return Clamp(s) == kOwnEffects || Clamp(s) == kAllAtOnce; }
 constexpr bool PipelineSkip(int s) { return Clamp(s) == kPipeline; }
 
+// A setting by the game's own name (the Quality presets' game options name theirs: shared/quality_presets.h kGameOptions), -1 none.
+constexpr int GfxByName(const char* n) {
+    for (int g = 0; g < kGfxCount; ++g) {
+        const char *a = kGfx[g].name, *b = n;
+        while (*a && *a == *b) { ++a; ++b; }
+        if (*a == *b) return g;
+    }
+    return -1;
+}
+
 // A value read from the game, in its range or not known (-1: garbage, the setting not made yet).
 constexpr int Sane(int g, int32_t raw) { return g >= 0 && g < kGfxCount && raw >= kGfx[g].lo && raw <= kGfx[g].hi ? raw : -1; }
 

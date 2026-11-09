@@ -326,6 +326,20 @@ static void TestLabels() {
     CHECK(hint(0, Profile::Touch, Profile::None) == "-" && hint(3, Profile::Touch, Profile::None) == "-" && hint(8, Profile::Touch, Profile::None) == "-");
     CHECK(hint(1, Profile::Touch, Profile::None) == "Left X" && hint(2, Profile::Touch, Profile::None) == "Left Y");
     CHECK(hint(0, Profile::None, Profile::Touch) == "Right B" && hint(1, Profile::None, Profile::Touch) == "-");
+    // [hands] left_handed (vr/hand_swap.h): the layout's right hand is the LEFT controller - each hint names the controller that presses it
+    auto hintSw = [&](int slot, Profile l, Profile r, bool slotControls = false) {
+        return tiles::HandHint(slot, l, r, h, sizeof h, slotControls, true) ? std::string(h) : std::string("-");
+    };
+    CHECK(hintSw(0, Profile::Touch, Profile::Touch) == "Left Y" && hintSw(1, Profile::Touch, Profile::Touch) == "Right A");
+    CHECK(hintSw(2, Profile::Touch, Profile::Touch) == "Right B" && hintSw(3, Profile::Touch, Profile::Touch) == "L grip + Y");
+    CHECK(hintSw(5, Profile::Touch, Profile::Touch) == "RT + Right A" && hintSw(8, Profile::Touch, Profile::Touch) == "L trigger");
+    CHECK(hintSw(10, Profile::Touch, Profile::Touch) == "RT + L trigger" && hintSw(9, Profile::Touch, Profile::Touch) == "-");
+    CHECK(hintSw(8, Profile::Touch, Profile::Touch, true) == "Left X" && hintSw(9, Profile::Touch, Profile::Touch, true) == "L trigger");
+    // each controller by its own profile: the left one is Touch (X / Y), the right one Index (A / B)
+    CHECK(hintSw(0, Profile::Touch, Profile::Index) == "Left Y" && hintSw(1, Profile::Touch, Profile::Index) == "Right A");
+    CHECK(hintSw(0, Profile::None, Profile::Touch) == "-" && hintSw(1, Profile::None, Profile::Touch) == "Right A");   // (no left controller: no "right hand")
+    { const Hints sw = tiles::BuildHints(Profile::Touch, Profile::Touch, true, false, true); CHECK(std::string(sw.text[0]) == "Left Y"); }
+    for (int s = 0; s < kSlotCount; ++s) { tiles::HandHint(s, Profile::Frame, Profile::Frame, h, sizeof h, true, true); CHECK(std::strlen(h) < (size_t)kHintLen); }
     CHECK(!tiles::HandHint(-1, Profile::Touch, Profile::Touch, h, sizeof h) && h[0] == 0);
     CHECK(!tiles::HandHint(12, Profile::Touch, Profile::Touch, h, sizeof h) && !tiles::HandHint(0, Profile::Touch, Profile::Touch, nullptr, 0));
     // the longest hint fits the buffer the view carries

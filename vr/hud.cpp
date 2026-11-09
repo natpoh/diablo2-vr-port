@@ -1104,6 +1104,7 @@ bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv) {
 }
 // The effect that draws them back is running; until it is, nothing is taken out for it.
 void SetPictureReady(bool ready) { g_picReady.store(ready); }
+bool PictureReady() { return g_picReady.load(); }
 
 // For D2R_DepthFog.fx: piece i (0 toolbar, 1 map) - whether to draw it, where
 // (uv l, t, r, b) and from which view. Off once no interface came for a while.

@@ -227,7 +227,7 @@ void SetWanted(bool on, int style, bool numbers, bool reasons) {
         snprintf(b, sizeof b, "vrcam: swing timer - [hud] swing_timer=1: after an attack the game started, a %s fills until the game lets the next one in (red "
                  "refused, amber kept for the end, green in), then melts away; numbers %s; why a touch was no attack (shaft, slow, short, wrong way ...) %s. "
                  "Only shown (VR first person, the monitor's F2 / F3)",
-                 g_style.load() == 1 ? "bar at the top" : "ring in the middle", numbers ? "on (our server's blows: single player or the host)" : "off",
+                 g_style.load() == 1 ? "bar at the top" : "ring in the middle", numbers ? "on (our server's blows: single player or the host; joined: when the host sends them, [multiplayer] share_hit_outcomes)" : "off",
                  reasons ? "on" : "off");
         Log(b);
     }

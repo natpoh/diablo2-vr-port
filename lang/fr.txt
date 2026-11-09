@@ -80,10 +80,12 @@ render.menu_wide.tip = OpenXR natif : le jeu compose ses menus pour la forme de 
 # --- Quality preset ---
 group.quality_preset = Préréglage de qualité
 group.quality_preset.help = Ce que le jeu dessine par rapport à sa vitesse, en un seul choix - identique à Performances (un changement dans l'un se voit dans l'autre). Pomme de terre et Minimale pour une carte graphique faible, Moyenne pour les monstres les plus lointains ; avec Pomme de terre, la luminosité de sa lumière juste en dessous. Auto (avec Réglage graphique automatique coché) trouve les réglages de votre PC dans le jeu en cours.
-@preset.preset.tip = Règle d'un coup les réglages ci-dessous. Les trois dessinent la même image du monde autour de vous : le dôme céleste propre au jeu et le brouillard propre au jeu (55 à 140, en grotte 65 à 200, aucun de nos réglages de brouillard), 2 anneaux de salles, Natif une passe, les pixels que les lentilles ne montrent jamais sautés, les ombres une fois pour les deux yeux, le plafond des grottes, le casque à 90 Hz, le contour de survol du jeu omis. Pomme de terre (la carte graphique la plus faible) : l'image du jeu sans les ombres du soleil et les lumières des torches, tout éclairé uniformément par la lumière Pomme de terre (sa luminosité juste en dessous et dans Coût du rendu) ; monstres et objets jusqu'à 150 (la valeur du jeu), grands objets 200. Minimale (une carte graphique faible) : seulement le monde éclairé du jeu, les ombres du soleil et le mappage tonal (Coût du rendu : les étapes de rendu propres au jeu) ; monstres et objets jusqu'à 150, grands objets 200. Moyenne : toute l'image du jeu ; monstres et objets jusqu'à 210, grands objets 600 - la seule autre différence. Les anneaux de salles et le rayon des modèles prennent effet au prochain lancement du jeu. En changer un à la main affiche Personnalisé.
+@preset.preset.tip = Règle d'un coup les réglages en dessous. Les trois dessinent la même image du monde autour de vous : le dôme céleste propre du jeu et le brouillard propre du jeu (55 à 140, dans les grottes 65 à 200, aucun de nos réglages de brouillard), 2 anneaux de salles, Native one pass, les pixels que les lentilles ne montrent jamais ignorés, les ombres une seule fois pour les deux yeux, le plafond des grottes, le casque à 90 Hz, le contour de survol du jeu omis. Potato (la carte graphique la plus faible) : l'image du jeu sans les ombres du soleil ni les lumières des torches, le tout éclairé uniformément par la lumière Potato (sa luminosité juste en dessous et dans Coût du rendu) ; monstres et objets jusqu'à 150 (la valeur du jeu), gros objets 200. Low (une carte graphique faible) : seulement le monde éclairé du jeu, les ombres du soleil et le tone mapping (Coût du rendu : les étapes de rendu propres du jeu) ; monstres et objets jusqu'à 150, gros objets 200. Medium : toute l'image du jeu ; monstres et objets jusqu'à 200, gros objets 600 - la seule autre différence. Le curseur Distance d'affichage (Accueil) règle la distance à part : 1 est celle de Low et Potato, 2 celle de Medium, au-delà plus loin. Les anneaux de salles et le rayon des modèles prennent effet au prochain démarrage du jeu. Si vous en changez un à la main, Custom s'affiche.
 @preset.preset.choice0 = Pomme de terre
 @preset.preset.choice1 = Minimale
 @preset.preset.choice3 = Personnalisé
+render.preset_game_options.label = ... le préréglage règle aussi les options graphiques du jeu
+render.preset_game_options.tip = Coché : choisir un préréglage de qualité change aussi trois réglages du jeu dans Options > Video, comme si vous les aviez réglés dans son menu (le jeu les garde dans son Settings.json) : Potato - Ambient Occlusion désactivé, Shadow Quality basse, Light Quality basse ; Low - les trois moyens ; Medium - Ambient Occlusion haut, Shadow Quality haute, Light Quality haute. Ils sont réglés une fois, quand le préréglage change (ou quand vous cochez ceci) : ce que vous changez ensuite dans le menu du jeu reste. L'anticrénelage, le DLSS et l'échelle de résolution ne sont jamais touchés. Le journal indique les anciennes et nouvelles valeurs. Immédiat, dans toutes les vues. Décoché : les options du jeu ne sont jamais touchées, comme avant.
 autotune.run.label = Auto
 autotune.run.tip = Réglage graphique automatique, dans le jeu en cours : restez immobile (en ville, c'est le mieux) avec le casque sur la tête. Le jeu mesure ses images par seconde avec vos réglages. Correct à la fréquence du casque : rien ne change, sur n'importe quelle carte graphique. Sinon, il descend dans cet ordre, en mesurant chaque étape, et s'arrête à la première qui tient : la taille du rendu jusqu'à 1600 x 1600, puis le préréglage Moyenne -> Minimale -> Pomme de terre, puis la taille jusqu'à 1300, puis le rendu fovéal (Moyenne, puis Maximale), puis la taille jusqu'à 1200, puis yeux en alternance. Toujours insuffisant : il indique que le PC est sous le minimum, et si c'est le processeur ou la carte graphique qui le freine. Une minute ou deux ; deux passes, FlatVR et la fréquence du casque ne sont jamais choisis. Les étapes et le résultat s'affichent sur la page Vidéo du panneau du casque (un appui long sur le clic du stick droit), avec Garder et Annuler là ou en dessous. Après Garder, le préréglage ici montre celui qui correspond aux nouveaux réglages, ou Personnalisé.
 render.potato_light_brightness.label = ... lumière Pomme de terre : luminosité
@@ -129,9 +131,9 @@ openxr.fov_override_centred.tip = Activé (par défaut) : les deux yeux sont des
 
 # --- Draw distance ---
 group.draw_distance = Distance d'affichage
-group.draw_distance.help = Jusqu'où le monde est dessiné autour de vous, en un seul curseur : les anneaux de salles, le rayon des modèles, le dôme céleste du jeu à sa limite et le brouillard ensemble, de sorte que le brouillard est total juste avant la fin du monde dessiné. Plus proche est plus rapide sur un processeur ou une carte graphique faibles. Chaque valeur isolée se trouve dans l'onglet Distance d'affichage (et là où elle était : Performances, Monde, Ciel) ; en changer une affiche Personnalisé ici.
+group.draw_distance.help = Jusqu'où le monde est dessiné autour de vous, en un seul curseur : les anneaux de salles, le rayon des modèles et le brouillard ensemble, de sorte que le brouillard est total avant la fin du monde dessiné. 2 est la valeur par défaut - la distance du préréglage Medium (1 : celle de Low et Potato) ; plus loin montre plus du monde et coûte du temps de processeur. Le déplacer affiche Custom dans le préréglage de qualité.
 @distance.stop.label = Distance d'affichage (proche - loin)
-@distance.stop.tip = Règle cinq choses à la fois, de proche (1) à loin (8) : combien d'anneaux de salles autour de vous le jeu dessine, jusqu'où il dessine monstres et objets (le rayon des modèles : la limite du monde dessiné), le dôme céleste du jeu à cette limite, et où le brouillard commence et devient total - en extérieur, total juste avant le dôme (à 0.9 du rayon), en grotte au rayon - pour que rien ne surgisse du vide. 3 : 2 anneaux, modèles jusqu'à 200. Plus loin coûte du temps processeur (plus de salles et de modèles à chaque image) ; plus proche est plus léger. La ligne en dessous indique ce qui est réglé maintenant. Personnalisé : une des valeurs isolées a été changée à la main - déplacer le curseur les règle toutes à nouveau. En direct.
+@distance.stop.tip = Jusqu'où le monde est dessiné autour de vous, de proche (1) à loin (7) : combien d'anneaux de salles autour de vous le jeu dessine, jusqu'où il dessine monstres et objets (le rayon des modèles), et où le brouillard commence et devient total, en extérieur et dans les grottes - ainsi le monde plus lointain est vu et rien ne surgit du vide. 1 : la distance des préréglages Low et Potato (modèles jusqu'à 150). 2, la valeur par défaut : celle de Medium - 2 anneaux de salles, modèles jusqu'à 200, le brouillard du jeu 55 à 140 (dans les grottes 65 à 200). 3 - 7 dessinent plus loin et ouvrent le brouillard avec eux ; ils coûtent du temps de processeur (plus de salles et de modèles à chaque image). La ligne en dessous indique ce qui est réglé maintenant. Le déplacer affiche Custom dans le préréglage de qualité ; choisir un préréglage remet le curseur sur son cran. Custom ici : une des valeurs a été changée à la main - déplacer le curseur les règle toutes à nouveau. Immédiat.
 
 # --- The game and the mod ---
 group.the_game_and_the_mod = Le jeu et le mod
@@ -336,6 +338,8 @@ render.potato_light_colour.choice0 = Neutre (blanc)
 render.potato_light_colour.choice1 = Chaude
 render.potato_light_colour.choice2 = Froide
 render.potato_light_colour.choice3 = Celle de la zone (couleur de son ciel et de son brouillard)
+render.potato_light_game.label = ... lumière Potato aux couleurs propres du jeu
+render.potato_light_game.tip = Coché : la lumière Potato n'est pas une couleur uniforme mais la lumière propre du jeu telle que sa passe d'éclairage la reçoit - la lumière du ciel de la zone (ses couleurs et sa force d'après le fichier d'éclairage de la zone pour cette heure du jour) et le soleil ou la lune (sa couleur, sa puissance et le côté qu'il éclaire) - toujours sans ombres, torches, boucles de lumière ni reflets, donc toujours aussi peu coûteuse. L'herbe et le sol gardent la couleur que le jeu leur donne, de jour, au crépuscule et de nuit. Les curseurs de luminosité fonctionnent toujours ; le choix de couleur n'est pas utilisé. OpenXR natif, première personne (F4). Immédiat. Décoché : une lumière uniforme, comme avant.
 
 # --- Quality ---
 group.quality = Qualité
@@ -357,24 +361,10 @@ render.rings.tip = Anneaux de salles supplémentaires autour du héros. Avec le 
 render.model_radius.label = Rayon de visibilité des modèles
 render.model_radius.tip = Celui du jeu est 150.
 sky.game_sky.label = Qui dessine le ciel
-sky.game_sky.tip = Qui dessine le ciel en extérieur. Le dôme du jeu (nouveau) : un dôme céleste à nous que le jeu dessine lui-même dans sa propre scène - sans temps d'image de notre part (RV F4 ; le jeu à plat aussi avec « Le jeu les dessine aussi dans le jeu à plat »). Notre effet (ancien) : le shader de brouillard peint le ciel dans le vide. L'un ou l'autre va avec l'un ou l'autre brouillard (« Qui dessine le brouillard ») : la partie basse du ciel se fond dans la couleur du brouillard dans les deux cas. Immédiat - les fichiers du dôme céleste du jeu sont créés par ce programme à son démarrage : la première fois après une installation ou une mise à jour, relancez un jeu déjà en cours.
+sky.game_sky.tip = Qui dessine le ciel en extérieur. Le dôme du jeu (nouveau) : un dôme céleste à nous que le jeu dessine lui-même dans sa propre scène - aucun temps d'image de notre part (RV F4 ; le jeu à plat aussi avec « Le jeu dessine le ciel aussi dans le jeu à plat »). Notre effet (ancien) : le shader de brouillard peint le ciel dans le vide. L'un ou l'autre va avec l'un ou l'autre brouillard (« Brouillard dessiné par ») : la partie basse du ciel se fond dans la couleur du brouillard dans les deux cas. Immédiat - les fichiers du dôme céleste du jeu sont créés par ce programme à son démarrage : la première fois après une installation ou une mise à jour, redémarrez un jeu déjà lancé.
 sky.game_sky.choice0 = Notre effet (ancien)
 sky.game_sky.choice1 = Le dôme du jeu (nouveau)
-fog.game_fog.label = Qui dessine le brouillard
-fog.game_fog.tip = Qui dessine le brouillard de distance. Le brouillard du jeu (nouveau) : la passe de brouillard propre au jeu avec nos valeurs (Début du brouillard / Brouillard total ci-dessous) - aucun temps d'image de notre part, dessiné que « Brouillard de distance » soit coché ou non (RV F4 ; le jeu plat aussi avec « Le jeu les dessine aussi en jeu plat » ; ses propres options dans l'onglet Monde). Notre effet (ancien) : le shader de brouillard pose le brouillard selon la profondeur. L'un ou l'autre va avec l'un ou l'autre ciel (« Ciel dessiné par »). Effet immédiat.
-fog.game_fog.choice1 = Le brouillard du jeu (nouveau)
-fog.enabled.label = Brouillard de distance
-fog.enabled.tip = Le brouillard de distance de notre effet, avec « Brouillard dessiné par : Notre effet (ancien) ». Le brouillard du jeu est dessiné par « Brouillard dessiné par : Le brouillard du jeu » seul - décocher ceci ne le supprime jamais (les préréglages le laissent décoché : le jeu dessine le brouillard). Avec le ciel activé, le nôtre se fond dans le ciel.
-fog.light.label = Brouillard léger (cartes graphiques faibles)
-fog.light.tip = Le brouillard de notre effet par le court chemin : la profondeur lue une fois par pixel, le brouillard d'après elle, le ciel toujours dessiné dans le vide - sans flou de profondeur, sans brouillard sur les lueurs et étincelles devant le ciel, sans plafond des grottes. Une fraction du coût du brouillard complet sur la carte graphique (la ligne de 10 s du journal le dit). Désactivé : le brouillard complet, comme avant.
-fog.start.label = Début du brouillard
-fog.start.tip = Là où le brouillard commence. Unités du monde (le héros mesure ~7,5).
-fog.end.label = Brouillard total
-fog.end.tip = Là où le brouillard est total. Unités du monde (le héros mesure ~7,5). Un brouillard proche cache ce qu'une courte distance d'affichage laisse de côté. Avec le brouillard du jeu, sous Début du brouillard les deux sont pris dans l'autre sens (brouillard de notre effet : total juste après Début du brouillard).
-fog.caves_start.label = Début du brouillard en grotte
-fog.caves_start.tip = Là où le brouillard commence dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
-fog.caves_end.label = Brouillard total en grotte
-fog.caves_end.tip = Là où le brouillard est total dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
+@status.fog_moved_perf.label = Le brouillard - qui le dessine, ses distances, les grottes et les couleurs - se trouve dans l'onglet Brouillard.
 sky.enabled.label = Ciel en extérieur
 sky.enabled.tip = Un ciel peint sur le vide noir en extérieur. Qui le dessine : « Qui dessine le ciel » ci-dessus (notre effet, ou le dôme du jeu).
 ceiling.enabled.label = Plafond dans les grottes et donjons
@@ -399,7 +389,16 @@ render.big_radius.label = Grands objets : arbres, maisons, murs plus loin (0 = d
 render.big_radius.tip = Les arbres, les maisons et les murs restent dessinés plus loin que le rayon de visibilité des modèles - plus ils sont grands, plus loin (30 fois leur hauteur ou la moitié de leur largeur), jusqu'à ce nombre d'unités (300 - 1000 ; 100 et 200 comptent pour 300). Les pierres, l'herbe et les monstres gardent le rayon de visibilité des modèles. Demande 3 anneaux de salles ou plus (au-delà des salles que le jeu construit, il n'y a rien à dessiner), et le brouillard total et le dôme céleste au-delà pour être vus. Coûte des images dans les forêts et les villes. D'après D2R VR Unleashed (bearstonem). Visuel seulement. En direct. 0 = désactivé, comme avant.
 sky.game_sky_radius_m.label = Le ciel du jeu : rayon du dôme, m
 sky.game_sky_radius_m.tip = À quelle distance autour de vous le dôme de ciel du jeu est posé, en mètres (4 unités du jeu par mètre ; immédiat). 50 m : un horizon proche - le dôme coupe le monde lointain en un cercle net, le brouillard du jeu par-dessus. Plus loin, le ciel sort du brouillard. Le journal donne le rayon utilisé à chaque changement.
-fog.enabled.tip#2 = Un brouillard de distance. Qui le dessine : « Qui dessine le brouillard » de l'onglet Ciel (notre effet, ou le jeu lui-même). Avec le ciel activé, il se fond dans le ciel.
+fog.enabled.label = Brouillard de distance
+fog.enabled.tip = Un brouillard de distance. Qui le dessine : « Brouillard dessiné par » de l'onglet Ciel (notre effet, ou le jeu lui-même). Avec le ciel activé, il se fond dans le ciel.
+fog.game_fog_start.label = Début du brouillard
+fog.game_fog_start.tip = Où le brouillard commence. Unités du monde (le héros mesure ~7,5).
+fog.game_fog_end.label = Brouillard total
+fog.game_fog_end.tip = Où le brouillard est total. Unités du monde (le héros mesure ~7,5). Un brouillard proche cache ce qu'une courte distance de rendu laisse de côté. Avec le brouillard du jeu, en dessous de Début du brouillard les deux sont pris à l'envers (le brouillard de notre effet : total juste après Début du brouillard).
+fog.game_fog_caves_start.label = Début du brouillard dans les grottes
+fog.game_fog_caves_start.tip = Où le brouillard commence dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
+fog.game_fog_caves_end.label = Brouillard total dans les grottes
+fog.game_fog_caves_end.tip = Où le brouillard est total dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
 sky.game_dome_caves.label = Un dôme noir autour de vous dans les grottes
 sky.game_dome_caves.tip = Sous terre, le jeu dessine un dôme noir autour de votre tête au rayon de visibilité des modèles : pas de vide au-delà du bord d'un plafond, le brouillard du jeu se fond dans des murs noirs - aucune lueur derrière les feux. Les fichiers propres du dôme de ciel (faits par ce programme à son démarrage). VR F4. En direct.
 sky.game_dome_caves_radius_m.label = Le dôme des grottes : rayon, m
@@ -673,6 +672,12 @@ render.own_auras_side_cm.tip = Positif = à votre droite, négatif = à votre ga
 # ===== Tab: Controls =====
 tab.controls = Commandes
 
+# --- Hands ---
+group.hands = Mains
+group.hands.help = Quelle manette RV est la main de l'arme.
+hands.left_handed.label = Gaucher : échanger les manettes
+hands.left_handed.tip = La manette GAUCHE tient l'arme principale et frappe avec, la droite est la main secondaire (bouclier, seconde arme, la main qui tient l'arc). Les boutons, le stick et la gâchette sont échangés aussi : ce que faisait la manette droite, la gauche le fait. L'inventaire et la carte dans la main, les orbes du poignet, la ceinture, les lancers, l'arc et la vibration suivent. Le bouton de menu reste où il est. Première personne (F4) seulement ; les armes du jeu ne sont pas modifiées. Décoché = comme avant. Immédiat.
+
 # --- Walking (left stick) ---
 group.walking_left_stick = Marche (stick gauche)
 group.walking_left_stick.help = Comment le stick gauche fait marcher le héros : marcher là où vous regardez, et des correctifs quand la marche part dans le mauvais sens ou que les diagonales dérivent après un virage.
@@ -732,6 +737,8 @@ input.flat_aim_ground.label = Écran plat : viser sur un sol surélevé (escalie
 input.flat_aim_ground.tip = Avec notre caméra (première ou troisième personne), un clic, le survol et le point d'une compétence vont vers le sol dessiné sous le viseur, sols surélevés compris. Décoché : le point propre au jeu, conçu pour sa vue du dessus - depuis la première personne il tombe à des cases de distance sur les escaliers et les rebords.
 input.flat_body_pick.label = Plat : cliquer un monstre, un PNJ ou un coffre par son corps
 input.flat_body_pick.tip = Troisième et première personne : les monstres, PNJ, portes, autels, coffres et portails près de vous se cliquent par leur corps, pas seulement par leurs pieds (du fork plat de sajmonsoft). Décoché : par les pieds, comme dans la vue de dessus du jeu.
+input.flat_shot_at_crosshair.label = À plat : un arc ou un lancer va exactement dans le réticule (pas de visée auto)
+input.flat_shot_at_crosshair.tip = Avec un arc, une arbalète, un javelot ou une arme de jet en main, en première et troisième personne : un clic sur un monstre va là où est le réticule, comme un tir sur place - pas vers le monstre que le jeu trouve près du réticule, le héros ne marche pas vers lui, et un bouton maintenu ne continue pas à tirer dessus quand vous regardez ailleurs. Objets, PNJ, mercenaires, coffres, portes et portails se cliquent comme toujours. Décoché : l'attaque propre du jeu sur le monstre sous le pointeur.
 input.vr_body_pick.label = RV : viser un monstre, un PNJ ou un coffre par son corps
 input.vr_body_pick.tip = Le pointeur de la souris (F1, F3), le viseur (F2 avec la souris) et la visée de la main avec Maj + clic choisissent les monstres, PNJ, portes, autels, coffres et portails près de vous par leur corps, pas seulement par leurs pieds. Le jeu décide toujours du coup. Décoché : par les pieds.
 input.vr_body_pick_hand.label = RV F4 : l'attaque et l'interaction vont à ce que votre main désigne
@@ -897,7 +904,7 @@ gameplay.quick_blow_min_ms.tip = Frapper plus vite que l'animation : aucun coup 
 group.swing_timer = Minuteur d'attaque
 group.swing_timer.help = Après chaque attaque, combien de temps avant que le jeu accepte la suivante, et ce qu'a fait le coup. Affichage seulement : la vitesse d'attaque et le jet du jeu restent tels quels.
 hud.swing_timer.label = Minuteur d'attaque : quand la prochaine attaque compte
-hud.swing_timer.tip = VR première personne (F4) et F2 / F3 du moniteur. Rien ne s'affiche tant que vous n'attaquez pas : pas d'anneau signifie allez-y. Dès que le jeu lance une attaque, un anneau au milieu de la vue se remplit jusqu'à ce que le jeu admette l'attaque suivante. Rouge : le jeu refuse maintenant une nouvelle attaque - un contact est alors perdu et dit "trop tôt". Ambre : les derniers instants de l'animation du jeu - une attaque maintenant est gardée et part à la fin de l'animation. Vert : c'est bon. Puis l'anneau s'efface. Dedans, ce qu'a fait le coup : la vie retirée (un coup critique en doré et plus grand ; un balayage à travers plusieurs monstres additionné, avec x2, x3 ...), ou raté, bloqué, esquivé, évité. Rien ici ne change le jeu : sa vitesse d'attaque, son jet et ses dégâts sont les siens - l'anneau ne montre que son rythme pour que vous frappiez avec lui, pas contre lui. Solo ou partie que vous hébergez : exact. Rejoint à une partie TCP/IP d'un autre : l'anneau vient de l'animation de votre héros (proche, pas exact) et sans chiffres. Le moniteur demande D2R_DepthFog.fx activé dans ReShade. Décoché : rien d'affiché. Immédiat.
+hud.swing_timer.tip = RV première personne (F4) et F2 / F3 du moniteur. Rien n'est affiché tant que vous n'attaquez pas : pas d'anneau veut dire go. Dès que le jeu commence une attaque, un anneau au milieu de la vue se remplit jusqu'à ce que le jeu laisse passer l'attaque suivante. Rouge : le jeu refuse une nouvelle attaque maintenant - un coup alors est perdu et affiche « too soon ». Ambre : les derniers instants de l'animation du jeu - une attaque maintenant est gardée et part à la fin de l'animation. Vert : c'est bon. Puis l'anneau s'efface. À l'intérieur, ce que le coup a fait : la vie qu'il a prise (un coup critique en or et plus grand ; un coup à travers plusieurs monstres additionné, avec x2, x3 ...), ou miss, blocked, dodged, avoided. Rien ici ne change le jeu : sa vitesse d'attaque, son jet et ses dégâts sont les siens - l'anneau montre seulement son rythme pour que vous frappiez avec lui, pas contre lui. Solo ou partie que vous hébergez : exact. Dans la partie TCP/IP de quelqu'un : l'anneau d'après l'animation de votre héros (proche, pas exact), les chiffres seulement quand l'hôte les envoie (son « Hôte : envoyer aux joueurs connectés ce que leurs coups ont fait »). Le moniteur a besoin de D2R_DepthFog.fx activé dans ReShade. Décoché : rien n'est affiché. Immédiat.
 hud.swing_timer_style.label = Minuteur d'attaque : où
 hud.swing_timer_style.tip = Anneau au milieu : un petit anneau autour du milieu de la vue (en VR devant les yeux, sur le moniteur autour du viseur), le nombre à l'intérieur. Barre en haut : une barre en travers du haut de la vue qui se remplit de gauche à droite, les nombres montant dessus et s'effaçant. Immédiat.
 hud.swing_timer_style.choice0 = Anneau au milieu
@@ -905,9 +912,13 @@ hud.swing_timer_style.choice1 = Barre en haut
 gameplay.swing_pace_joined.label = Rejoint : envoyer un contact quand l'hôte l'accepte (VR)
 gameplay.swing_pace_joined.tip = Rejoint à une partie TCP/IP d'un autre, VR première personne (F4). Le jeu de l'hôte décide quand votre héros peut attaquer de nouveau, et un contact qu'il refuse est perdu. Coché : votre PC compte l'attaque de votre héros comme le minuteur d'attaque (d'après l'animation de votre héros) et n'envoie un contact que lorsque l'hôte l'accepte - un contact qu'il refuserait n'est pas envoyé ("trop tôt"), un contact dans les derniers instants de l'attaque est retenu et envoyé à sa fin, de sorte qu'il n'est jamais jeté en chemin. L'attaque, sa vitesse et son jet restent ceux du jeu de l'hôte. Fonctionne dès votre deuxième attaque (la première est mesurée). Solo ou partie que vous hébergez : rien ne change (votre propre jeu décide aussitôt). Décoché : chaque contact est envoyé tel qu'il vient. Immédiat.
 hud.swing_timer_numbers.label = Minuteur d'attaque : montrer ce qu'a fait le coup
-hud.swing_timer_numbers.tip = La vie retirée par le coup, ou raté / bloqué / esquivé / évité, dans l'anneau ou au-dessus de la barre. Décoché : le minuteur seul ("trop tôt" s'affiche toujours). Solo ou partie que vous hébergez seulement : les coups d'un joueur qui a rejoint sont tirés sur la machine de l'hôte. Immédiat.
+hud.swing_timer_numbers.tip = La vie que le coup a prise, ou miss / blocked / dodged / avoided, dans l'anneau ou au-dessus de la barre. Décoché : le minuteur seul (« too soon » s'affiche toujours). Dans la partie TCP/IP de quelqu'un : seulement quand l'hôte les envoie (les coups d'un joueur connecté sont jetés sur la machine de l'hôte). Immédiat.
+multiplayer.share_hit_outcomes.label = Hôte : envoyer aux joueurs connectés ce que leurs coups ont fait
+multiplayer.share_hit_outcomes.tip = Vous hébergez une partie TCP/IP : chaque joueur connecté avec cette version du mod reçoit ce que ses propres coups ont fait - touché, miss, blocked, dodged, avoided, la vie prise, un coup critique - et son minuteur d'attaque l'affiche comme le vôtre (il doit avoir coché « Minuteur d'attaque : montrer ce que le coup a fait »). Le jet et les dégâts se passent uniquement sur la machine de l'hôte, donc sans ceci le minuteur d'un joueur connecté n'a pas de chiffres. Seule la case de l'hôte compte : dans la partie de quelqu'un d'autre, la vôtre ne signifie rien. Quelques octets par coup ; rien ne change dans le jeu. Immédiat.
 hud.swing_timer_reasons.label = Minuteur d'attaque : dire pourquoi un contact n'était pas une attaque
 hud.swing_timer_reasons.tip = Un contact de l'arme qui n'est pas devenu une attaque dit pourquoi, dans l'anneau ou au-dessus de la barre (RV première personne) : hampe ou manche - il a touché le corps derrière la tête de l'arme ou derrière votre main avant, une poussée ; pas la pointe - hors de la partie de la lame qui frappe ; lent - votre coup face à la vitesse requise (3.1/5.0, m/s) ; faible - un coup trop faible pour l'arme ; court - le coup ou l'estoc était trop court pour compter ; poussée - un estoc avec trop peu d'élan ; mauvais sens - la lame s'est éloignée du monstre ou est allée en arrière ; bouclier - son bouclier ou son arme a arrêté le coup. Rien ici ne change le jeu ni ce qui compte comme un coup porté : cela vous l'indique seulement. Immédiat.
+gameplay.shot_at_release.label = La flèche va là où vous visez quand elle quitte l'arc
+gameplay.shot_at_release.tip = Un arc ou une arbalète. Le jeu vise un tir au clic et lâche la flèche une demi-seconde ou plus plus tard, à l'image d'action de l'animation ; si vous avez tourné la caméra entre-temps, la flèche allait là où vous aviez visé au clic. Activé : la flèche qui quitte l'arc est tournée vers l'endroit où se trouve le réticule à cet instant (2D première et troisième personne) ; l'éventail d'un Multiple Shot tourne d'un bloc. Strafe et Guided Arrow choisissent leurs cibles eux-mêmes et restent comme le jeu les a faits. Seule la direction de la flèche change - sa vitesse, sa portée, son impact et ses dégâts sont ceux du jeu. Une partie TCP/IP : celui qui héberge décide - le serveur de l'hôte tourne les flèches de chaque joueur selon la visée que le mod de chaque joueur envoie (la même version du mod) ; la case d'un joueur connecté ne signifie rien là. Décoché : la flèche va là où le clic a visé. Immédiat.
 
 # --- In-game settings and the host's rules ---
 group.in_game_settings_and_the_host_s_rules = Réglages en jeu et règles de l'hôte
@@ -1042,6 +1053,8 @@ stereo.pair_per_tick.label = Les deux yeux depuis une seule image du jeu
 stereo.pair_per_tick.tip = L'image est dessinée deux fois (gauche, puis droite avec le temps du jeu figé) au lieu d'un œil par image en alternance. Les mêmes paires par seconde ; le jeu lui-même se met à jour deux fois moins souvent.
 stereo.native_replay.label = ... dessinée une fois, l'œil droit redessiné sur la carte graphique
 stereo.native_replay.tip = Avec Les deux yeux depuis une seule image du jeu : le jeu dessine l'image une fois, et l'œil droit est redessiné sur la carte graphique à partir du même travail avec sa propre caméra, au lieu de dessiner deux fois toute l'image. Le fil du jeu fait environ la moitié du travail : sur un PC freiné par son processeur, beaucoup plus d'images par seconde ; un PC freiné par sa carte graphique y gagne peu. OpenXR natif, première personne (F4) seulement. Après un changement de zone, un chargement ou un changement des options vidéo, l'œil droit est dessiné seul jusqu'à ce que l'image se stabilise (quelques secondes) - deux passes alors, jamais un œil noir. Activé par défaut (« Natif, une passe » en 3D dans le casque). Prend effet au prochain lancement du jeu. Désactivé : deux passes (« Natif, deux passes »).
+stereo.replay_reset_guard.label = ... plus jamais une liste que le jeu a déjà reprise
+stereo.replay_reset_guard.tip = Avec l'œil droit redessiné sur la carte graphique : le jeu peut commencer un nouvel enregistrement dans une de ses listes dès qu'il l'a envoyée, et quand l'œil droit renvoie la même liste, elle contient d'autres commandes - une inachevée retire le périphérique graphique, une plus tardive fait dessiner la carte à partir de ce qui n'est pas encore là (elle se bloque). Activé : l'œil droit d'une telle image est une fois l'image gauche, et le journal le dit. Désactivé : signalé dans le journal, renvoyé quand même (comme avant). Immédiat.
 stereo.turn_warp.label = Yeux en alternance : créer l'autre œil à partir de la profondeur
 stereo.turn_warp.tip = OpenXR natif avec les yeux en alternance : l'œil non dessiné à cette image est fabriqué sur la carte graphique pour là où est la tête maintenant - sa propre dernière image déplacée avec la profondeur avec laquelle elle a été dessinée (ce que tient le héros va avec lui), à la pose de cette image. Décoché : il part au casque tel qu'il a été dessiné en dernier, et le casque le tourne (rotation seulement : un pas ou un monstre en mouvement paraît une image en retard dans cet œil). Première personne (F4) seulement. Effet immédiat. Idée : bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... avec l'œil dessiné cette image par-dessus
@@ -1215,6 +1228,14 @@ group.item_labels_on_the_ground.help#2 = Les noms des objets posés au sol à la
 hud_third.labels_alpha.tip = Quelle part de la boîte sombre derrière les noms des objets au sol est dessinée à la troisième personne (F2) : 1 = comme le jeu la dessine, 0 = pas de boîte, les noms seuls. Les noms restent clairs. Par le code d'étiquettes du jeu (le journal de vrcam dit « item-label hook in ») ; sur une autre version du jeu il ne fait rien ici.
 hud_third.labels_size.tip = Les noms des objets au sol et leurs boîtes à la troisième personne (F2), plus petits ou plus grands, chacun autour du point en dessous. 100 = celui du jeu. Les infobulles d'objets et tout autre texte gardent leur taille.
 
+# --- Monster plate, third person ---
+group.monster_plate_third_person = Plaque de monstre, troisième personne
+group.monster_plate_third_person.help = Le nom et la barre de vie au-dessus du monstre que vous ciblez en troisième personne (F2) : à la profondeur de son monstre, pour ne pas paraître doublé.
+hud_third.monster_depth.label = Plaque de monstre : à son monstre, %
+hud_third.monster_depth.tip = Le nom et la barre de vie que le jeu accroche au-dessus du monstre ciblé, en troisième personne (F2) : en stéréo le jeu les dessine au même endroit dans les deux yeux, donc ils flottent à la profondeur de l'écran et paraissent doublés quand vous regardez le monstre. Ici ils sont déplacés à la profondeur propre de leur monstre, d'après le point au-dessus de la tête du monstre : 100 = exactement là, 0 = là où le jeu les laisse. Notre propre plaque (Nom au-dessus d'un monstre : le nôtre, dans toutes les vues) s'y place d'elle-même ; ceci est pour celle du jeu. Immédiat.
+hud.npc_dialog_keep_view.label = Parler à un PNJ garde la vue (test)
+hud.npc_dialog_keep_view.tip = Dans le casque (OpenXR natif), parler à un PNJ ouvrait sa petite boîte Parler / Commercer / Annuler comme un menu, et en F1, F2 et F3 un menu place l'image à plat du jeu loin devant : la vue s'envolait. Activé : tant que cette boîte (ou son parchemin de dialogue) est le seul menu ouvert, la vue reste comme elle était, la boîte dessinée dans l'image du jeu comme la barre d'outils ; choisissez Parler / Commercer avec la manette. Commerce, le coffre et tout autre écran vont toujours à l'image à plat. F1, F2, F3 ; F4 garde sa propre voie (Menus en panneau). Immédiat. Désactivé : l'image à plat, comme avant.
+
 # ===== Tab: UI: F3 floor =====
 tab.ui_f3_floor = Interface : F3 sol
 
@@ -1240,6 +1261,11 @@ hud_floor.map_y.tip = La carte déplacée vers le haut de l'écran, en % de la h
 group.item_labels_on_the_ground.help#3 = Les noms des objets posés au sol quand le jeu est sur votre sol (F3) : quelle part de la boîte sombre derrière eux se voit et leur taille. Les infobulles d'objets et tout autre texte gardent leur taille.
 hud_floor.labels_alpha.tip = Quelle part de la boîte sombre derrière les noms des objets au sol est dessinée : 1 = comme le jeu la dessine, 0 = pas de boîte, les noms seuls. Les noms eux-mêmes restent clairs. Si le code d'étiquettes du jeu est introuvable (autre version du jeu), les étiquettes sont estompées comme une image par D2R_DepthFog.fx à la place : les boîtes s'estompent, les noms restent. Seulement sur le sol (F3).
 hud_floor.labels_size.tip = Les noms des objets au sol et leurs boîtes, plus petits ou plus grands, chacun autour du point en dessous ; le jeu leur fait de la place à cette taille. 100 = celui du jeu. Par le code d'étiquettes du jeu : sur une autre version du jeu il ne fait rien (le journal de vrcam le dit). Seulement sur le sol (F3) ; les infobulles d'objets et tout autre texte gardent leur taille.
+
+# --- Monster plate, the game on your floor ---
+group.monster_plate_the_game_on_your_floor = Plaque de monstre, le jeu sur votre sol
+group.monster_plate_the_game_on_your_floor.help = Le nom et la barre de vie au-dessus du monstre que vous ciblez sur le sol (F3) : à la profondeur de son monstre, pour ne pas paraître doublé.
+hud_floor.monster_depth.tip = Le nom et la barre de vie que le jeu accroche au-dessus du monstre ciblé, en F3, le jeu sur votre sol : en stéréo le jeu les dessine au même endroit dans les deux yeux, donc ils flottent à la profondeur de l'écran et paraissent doublés quand vous regardez le monstre. Ici ils sont déplacés à la profondeur propre de leur monstre, d'après le point au-dessus de la tête du monstre : 100 = exactement là, 0 = là où le jeu les laisse. Notre propre plaque (Nom au-dessus d'un monstre : le nôtre, dans toutes les vues) s'y place d'elle-même ; ceci est pour celle du jeu. Immédiat.
 
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = Interface : F3 yeux
@@ -1354,6 +1380,8 @@ openxr.menu_zoom.label = Poignée droite + stick droit : panneau plus près / pl
 openxr.menu_zoom.tip = OpenXR natif, F4 : avec un panneau du jeu devant (l'inventaire, le coffre, un marchand, les portails...), maintenez la poignée droite et poussez le stick droit vers l'avant pour le rapprocher, vers l'arrière pour l'éloigner ; lâchez et il reste là - écrit dans « Image plate avec un panneau ouvert (inventaire, échange...) : distance, m » ([screen] menu_distance_m). Il s'arrête là où le panneau cesse d'être lisible : plus près, une partie serait hors de vue ; plus loin, les pixels du casque sauteraient le texte du jeu. Tant que la poignée est maintenue, l'avant / arrière du stick n'est pas celui du jeu, et l'appui propre de la poignée (le bumper droit du menu, là où le laser ne l'a pas) vient quand vous lâchez sans avoir déplacé le panneau. Désactivé : comme avant.
 openxr.menu_zoom_speed_mps.label = Panneau plus près / plus loin : vitesse, m/s
 openxr.menu_zoom_speed_mps.tip = À quelle vitesse le panneau bouge avec le stick droit poussé à fond. Effet immédiat.
+openxr.panel_grab.label = Saisir un panneau avec la prise : le déplacer, le rapprocher, l'éloigner
+openxr.panel_grab.tip = OpenXR natif, F4 : avec un panneau du jeu devant vous (l'inventaire, le coffre, un marchand, le cube ...), pointez l'une ou l'autre main dessus (ou posez la main dessus) et serrez la prise : le panneau est dans votre main. Bougez la main et il suit ; ramenez la main et il se rapproche, poussez-la et il s'éloigne (trois fois le déplacement de la main, si bien qu'une traction l'amène à bout de bras) ; le stick de cette main vers l'avant / l'arrière fait pareil. Relâchez et il reste où il est ; il s'ouvre là la prochaine fois. Plus près que l'endroit où il est entièrement en vue, il garde sa taille dans la vue, si bien que de près c'est une tablette que vous pointez à quelques centimètres. Seule une prise qui commence sur le panneau le saisit : une gâchette pressée d'abord reste le clic droit (ou clic Shift), une prise relâchée sans bouger reste le bouton de page du menu, et les prises d'arme ou de potion ailleurs ne sont pas touchées. Tant que c'est activé, la distance ci-dessus (prise droite + stick droit) s'efface (le stick de la saisie s'en charge). Désactivé : comme avant.
 openxr.hand_inventory.label = Inventaire sur la main gauche hors de la ville
 openxr.hand_inventory.tip = OpenXR natif, F4, avec le laser activé : loin de la ville, toute la fenêtre d'inventaire du jeu est suspendue à votre main GAUCHE au lieu d'être devant vous - découpée de l'interface, tenue au-dessus de la manette gauche comme une tablette, tournée vers vos yeux - et le stick gauche continue de faire marcher le héros pendant qu'il est ouvert : il ne déplace plus le curseur de l'inventaire (le laser de la main DROITE y sert de souris) et passe à la marche propre du jeu. Le petit bouton à côté met l'inventaire devant vous, en pleine taille, puis le remet sur la main. Faites glisser un objet hors de lui et lâchez-le : l'inventaire se ferme et le jeu le pose au sol. L'appui long sur le clic du stick gauche l'ouvre et le ferme même pendant que vous marchez. En ville, ou avec un autre menu (un point de passage, le menu du jeu), devant vous comme avant. Le jeu bloque sa propre marche tant que son inventaire est ouvert ; le stick gauche envoie alors à sa place la commande de marche du stick, avec les règles de course du jeu. Désactivé : comme avant.
 openxr.hand_inventory_width_m.label = Inventaire sur la main : largeur, m
@@ -1519,7 +1547,9 @@ input.point_pickup_label_pct.tip = Le nom de l'objet que votre main désigne (Co
 # --- Monster plates ---
 group.monster_plates.help#3 = Le nom et la barre de vie au-dessus du monstre que vous ciblez : opacité, taille, plus petit au loin, hauteur et profondeur stéréo, pour qu'en F4 il se tienne à son monstre. Plaque au-dessus de la tête du monstre la garde à un écart fixe au-dessus de la tête à toute distance.
 hud.monster_names_own.label = Nom au-dessus d'un monstre : le nôtre, net (test)
-hud.monster_names_own.tip = Le nom dans la plaque au-dessus du monstre que vous ciblez, dessiné par le mod au lieu de la copie du jeu : net à toute taille de rendu, aux couleurs du jeu (unique doré, champion bleu). La barre, son cadre et le ciblage restent ceux du jeu. Il a sa propre taille, taille au loin et fond ("Nos noms" ci-dessous) et se tient à la profondeur de son monstre ; les curseurs de la plaque restent ceux de la plaque du jeu. Première personne (F4) ; pas avec la plaque accrochée dans la pièce. Demande le D2R_DepthFog.fx de la même version. Immédiat. Décoché : le nom du jeu, comme avant.
+hud.monster_names_own.tip = Le nom dans la plaque au-dessus du monstre que vous ciblez, dessiné par le mod au lieu de la copie du jeu : net à toute taille de rendu, aux couleurs du jeu (unique doré, champion bleu). La barre, son cadre et le ciblage restent ceux du jeu. Il a sa propre taille, sa taille au loin et son fond (« Nos noms » ci-dessous) et se place à la profondeur propre de son monstre ; les curseurs de la plaque restent ceux de la plaque du jeu. Première personne (F4), et F1 - F3 avec la case ci-dessous ; pas avec la plaque suspendue dans la pièce. Nécessite le D2R_DepthFog.fx de la même version. Immédiat. Décoché : le nom du jeu, comme avant.
+hud.monster_names_own_all_views.label = Nom au-dessus d'un monstre : le nôtre, dans toutes les vues (test)
+hud.monster_names_own_all_views.tip = La plaque ci-dessus (notre propre nom sur la barre rouge, type, immunités) aussi en F1, F2 et F3, partout où la caméra du mod dessine la vue en stéréo : elle se place au-dessus de la tête du monstre à sa profondeur propre dans chaque œil, et la plaque du jeu en dessous n'est pas dessinée - pas de barre doublée. La caméra propre du jeu vue de dessus (F1 à plat) garde la plaque du jeu. Nécessite la case ci-dessus. Immédiat. Décoché : F4 seulement, comme avant.
 hud.npc_names_own.label = Noms au-dessus des PNJ et objets : les nôtres, nets (test)
 hud.npc_names_own.tip = Les noms que le jeu montre au-dessus des PNJ (Warriv, Kashya, Akara...), objets, portails et sorties que vous visez, dessinés par le mod au lieu de la copie du jeu : nets à toute taille de rendu, là où le jeu les met, sur la propre boîte sombre du jeu, avec la taille et le fond de "Nos noms" ci-dessous. Première personne (F4). Demande le D2R_DepthFog.fx de la même version. Immédiat. Décoché : les noms du jeu, comme avant.
 hud.own_labels_drop_game.label = Nos étiquettes et noms : ceux du jeu pas dessinés du tout (test)
@@ -1982,54 +2012,6 @@ hud.map_width.label = Largeur de la carte, m
 # ===== Tab: World =====
 tab.world = Monde
 
-# --- Fog ---
-group.fog = Brouillard
-group.fog.help = Le brouillard de distance, et des corrections pour les effets de profondeur du jeu vus depuis notre caméra. Réglez où le brouillard est total, son atténuation, le brouillard dans les grottes et sa couleur, si le feu et les sorts sont épargnés, ainsi que les corrections pour les brouillards propres du jeu, les murs devant le héros, les toits et l'éclairage avec une fenêtre carrée.
-fog.game_fog_mist.label = Le brouillard du jeu aussi sur sa brume
-fog.game_fog_mist.tip = La passe de brouillard propre au jeu ajoute sa brume volumétrique (éclairée par les torches et autres) après le brouillard, jamais embrumée par la distance : dans une grotte, notre brouillard sombre rendait les murs lointains noirs et la brume restait, une bande claire derrière les feux. Coché : la brume s'estompe avec la distance comme tout le reste. Sans ReShade seulement. En direct.
-fog.game_fog_caves_black.label = Le brouillard du jeu noircit dans les grottes
-fog.game_fog_caves_black.tip = Sous terre, le brouillard du jeu vire au noir, quelle que soit la couleur du brouillard des grottes, et le vide au-delà du bord d'un plafond de grotte est laissé tel quel - la passe de brouillard du jeu y posait toute sa brume éclairée par les torches, une bande claire derrière les feux. La distance assombrit, sans jamais éclairer. Sans ReShade seulement. En direct.
-fog.game_fog_our_curve.label = Le brouillard du jeu selon notre courbe
-fog.game_fog_our_curve.tip = La passe de brouillard du jeu lui-même fait monter le brouillard comme notre effet - de Début du brouillard à Brouillard total selon l'Atténuation ci-dessous (en grotte, leurs propres début, fin et force) - au lieu de sa propre exponentielle, qui met presque tout le brouillard juste après le début et laisse la plage lointaine d'un seul gris. Quelques instructions dans sa passe, rien d'ajouté. Sans ReShade seulement. En direct.
-fog.fog_keeps_colour.label = Le brouillard du jeu garde la couleur de l'acte la nuit
-fog.fog_keeps_colour.tip = Tant que le jeu dessine le brouillard : sa couleur est celle de l'acte (les couleurs ci-dessus) à toute heure - le lointain se fond dans une brume claire de cette couleur, jamais vers le noir. Le brouillard de notre propre effet n'est pas changé. Désactivé : il s'assombrit avec la lumière du jeu comme le ciel - la nuit vers « Ciel la nuit » et selon la luminosité du ciel à chaque moment de la journée. Avec la couleur du ciel (« La couleur du brouillard : mesurée dans le jeu » décoché) : celle du ciel de jour à l'horizon à toute heure ; désactivé, celle du ciel de nuit la nuit - presque noire. Immédiat.
-fog.fog_into_sky.label = Le brouillard du jeu fond le lointain dans le ciel derrière lui
-fog.fog_into_sky.tip = À l'air libre, la couleur du brouillard en chaque point est celle du ciel juste derrière, comme dans le Sanctuaire des Arcanes : les terres lointaines, le bord du monde et les grands bâtiments lointains se fondent dans le ciel, et non dans une couleur unie (la partie basse du ciel est la couleur de brouillard de l'acte, telle qu'elle est dessinée). Les objets lointains laissent voir le ciel à travers eux. Cela passait par « Le brouillard du jeu aussi épais et coloré que le nôtre », supprimé (il abîmait le brouillard) : pour l'instant cela ne change rien. Effet immédiat. Désactivé : une seule couleur de brouillard, comme avant.
-fog.fog_colour_measured.label = La couleur du brouillard : mesurée dans le jeu
-fog.fog_colour_measured.tip = Coché : la couleur du brouillard est la couleur propre de l'acte, telle que réglée (sa mesure dans le jeu est partie avec « Le brouillard du jeu aussi épais et coloré que le nôtre », supprimé). Décoché : la couleur du brouillard est celle du ciel à l'horizon - l'image précalculée à cet endroit à son curseur de luminosité - si bien que les terres lointaines se fondent dans le ciel sans raccord ; un nombre, fixé quand l'heure du jour ou un curseur change : aucune mesure, rien dans l'effet. Sous terre, dans le Sanctuaire des Arcanes et avec le ciel teinté : la couleur de l'acte ou de la grotte telle que réglée. Effet immédiat.
-fog.game_fog_before_fx.label = Le brouillard avant la fumée et le feu
-fog.game_fog_before_fx.tip = Le brouillard posé sur la scène avant que le jeu ajoute sa fumée, sa brume, son feu et ses sorts, pour qu'ils se posent sur le monde embrumé sans être embrumés - sans cela, le brouillard est posé sur eux selon le mur derrière eux (une brume découpée en trous noirs devant les murs lointains, un sort de feu qui s'estompe en passant devant un mur lointain). Le brouillard du jeu ou celui de notre effet, quel que soit celui qui le dessine. Une passe à nous sur la carte graphique (son coût dans la ligne 10 s du journal). Avec ReShade : seulement le brouillard de notre effet, seulement en première personne RV. S'applique au prochain lancement du jeu.
-fog.game_fog_fx_depth.label = Fumée et feu lointains se fondent dans le brouillard
-fog.game_fog_fx_depth.tip = Avec le brouillard avant la fumée et le feu : la fumée, la brume, le feu et les sorts embrumés aussi, chacun selon sa propre distance - les proches tels quels, les lointains s'estompant dans le brouillard avec le monde derrière eux. Sans cela, un feu de camp lointain brille à pleine lumière dans un brouillard total et les bords transparents des clôtures lointaines apparaissent comme des points sur l'horizon. Les effets du jeu sont dessinés une fois de plus pour leur seule profondeur : COÛTEUX - sur un Quest 3 à 2048 x 2048 par œil, cela a pris environ 30 images par seconde (72 -> 42) ; le coût dans les lignes 10 s du journal. Sans ReShade seulement. Immédiat. Désactivé : les effets ne sont jamais embrumés.
-fog.game_fog_height.label = Le brouillard du jeu s'amincit avec la hauteur
-fog.game_fog_height.tip = La passe de brouillard propre au jeu laisse le ciel dégagé : le brouillard tel quel jusqu'au sommet du brouillard moins sa douceur, s'estompant au-dessus, nul au-dessus du sommet (unités du monde au-dessus de vos yeux). Pour le dôme de ciel du jeu, afin que son ciel se voie au-dessus de l'horizon embrumé. Sa propre passe, rien d'ajouté. En extérieur seulement (sous terre, pas de ciel à dégager). Sans ReShade seulement. Désactivé : le brouillard du jeu tel quel. En direct.
-fog.game_fog_top.label = Brouillard du jeu : son sommet, unités au-dessus des yeux
-fog.game_fog_top.tip = Jusqu'où monte le brouillard du jeu : nul au-dessus, en unités du monde au-dessus de vos yeux (le héros mesure ~7,5 ; le dôme de ciel est à son rayon). En direct.
-fog.game_fog_soft.label = Brouillard du jeu : douceur de son sommet, unités
-fog.game_fog_soft.tip = Sur quelle hauteur sous son sommet le brouillard du jeu s'estompe : petit, un bord net ; grand, un long fondu doux. En direct.
-fog.game_fog_top_from_floor.label = Brouillard du jeu : son sommet compté depuis le sol du héros
-fog.game_fog_top_from_floor.tip = Le sommet ci-dessus est compté depuis le sol où se tient le héros, pas depuis vos yeux : une caméra haut au-dessus du héros (troisième personne, la vue du dessus) ne déplace plus l'endroit où le brouillard s'arrête, et le terrain sous vos yeux n'est pas tout embrumé avec une ligne à hauteur des yeux. Désactivé : depuis les yeux, comme avant. Décocher « s'amincit avec la hauteur » donne plutôt le brouillard selon la seule distance, comme notre propre brouillard. En direct.
-fog.end.tip#2 = Là où le brouillard est total. Unités du monde (le héros mesure ~7,5). Avec le brouillard du jeu, sous Début du brouillard les deux sont pris dans l'autre sens (brouillard de notre effet : total juste après Début du brouillard).
-fog.curve.label = Atténuation
-fog.curve.tip = 1 = linéaire ; plus = une distance moyenne plus nette.
-fog.blur.label = Flou de profondeur, px (0 = désactivé)
-fog.blur.tip = Le brouillard sur une grille 5x5 dont les points sont espacés d'autant de pixels : les trous et les points parasites dans la profondeur s'estompent.
-fog.spare_effects.label = Le brouillard épargne feu, sorts et fumée (test)
-fog.spare_effects.tip = Le feu, les sorts, la fumée et les lueurs ne sont embrumés qu'autant que la scène derrière eux ne l'est pas : une torche ou un Trait de feu devant un mur lointain reste vive au lieu d'être embrumée comme le mur. Les couches transparentes propres du jeu à chaque image sont copiées pour cela (RV F4 seulement). S'applique au prochain démarrage du jeu ; désactivé = le brouillard comme avant.
-render.fog_in_frame.label = Brouillard dessiné dans l'image du jeu (test)
-render.fog_in_frame.tip = Le brouillard est dessiné dans l'image propre du jeu avant son feu, ses sorts et sa fumée, et le jeu les pose par-dessus la scène embrumée : une torche, un Trait de feu ou un Brasier devant un mur lointain n'est pas embrumé comme le mur. Le ciel et le noir au-delà du monde gardent le brouillard comme avant. Avec la couleur de brouillard propre à un acte (Monde > Ciel) ; RV F4 seulement. S'applique au prochain démarrage du jeu ; désactivé = le brouillard comme avant. Prioritaire sur « Le brouillard épargne feu, sorts et fumée (test) » quand les deux sont activés.
-fog.caves.label = Brouillard dans les grottes et donjons
-fog.caves.tip = Désactivé : pas de brouillard sous terre (toute zone qui n'est pas en extérieur) - ni celui de notre effet ni le brouillard propre au jeu, et rien n'est posé avant la fumée et le feu là-bas ; le plein air le garde. Le Sanctuaire des Arcanes a son propre interrupteur (Ciel > Sanctuaire des Arcanes : le brouillard se fond dans son ciel) : activé, il garde son brouillard avec l'un ou l'autre brouillard. Immédiat.
-fog.ease_in.label = Brouillard fondu à son début, sans anneau net
-fog.ease_in.tip = Le brouillard apparaît doucement sur ses 40 premières unités après son début : pas de bord net autour du sol dégagé à vos pieds. Partout où notre courbe dessine le brouillard : notre effet, et le brouillard du jeu avec « Le brouillard du jeu selon notre courbe » activé (pas la courbe propre du jeu). D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard comme avant.
-fog.no_fog_river.label = Pas de brouillard dans la Rivière de flammes
-fog.no_fog_river.tip = Pas de brouillard ajouté dans la Rivière de flammes, bien qu'elle soit en plein air : la lueur et la brume propres de sa lave restent celles du jeu. Le brouillard de notre effet comme celui du jeu. D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard là comme partout en extérieur.
-fog.caves_strength.label = Intensité du brouillard en grotte
-fog.caves_strength.tip = À quel point le brouillard total couvre dans les grottes : 1 = le fond disparaît dans la couleur du brouillard, moins = il reste visible au travers.
-fog.color_caves.label = Couleur du brouillard en grotte
-fog.color_caves.tip = Grottes, donjons, cryptes : toute zone qui n'est pas en extérieur. Vide (x) = la couleur de l'acte.
-fog.color_caves.empty = comme l'acte
-
 # --- Distance blur ---
 group.distance_blur = Flou de distance
 group.distance_blur.help = L'image lointaine floutée, comme à travers une vitre de verre dépoli dressée à distance devant vous : rien de plus proche que la vitre n'est touché ; derrière elle, le monde est d'autant plus flou qu'il est loin. Réglez où se dresse la vitre, où le flou est à son maximum, et quelle est sa largeur. À part du brouillard : aucune couleur propre, le brouillard garde son aspect.
@@ -2042,30 +2024,9 @@ render.distance_blur_full_m.tip = Où le flou est à son maximum, en mètres (au
 render.distance_blur_strength.label = Intensité du flou
 render.distance_blur_strength.tip = La largeur du flou à son maximum : 1 = 2,5 % de la hauteur de l'image (environ 50 pixels sur un œil de 2000 lignes), 0,4 comme dans le jeu fractal. 0 = aucun flou. Immédiat.
 
-# --- Arcane Sanctuary ---
-group.arcane_sanctuary = Sanctuaire des Arcanes
-group.arcane_sanctuary.help = Le brouillard dans le Sanctuaire des Arcanes (acte 2), à part de celui des grottes : ce n'est pas l'extérieur, il prend donc le brouillard des grottes jusqu'à ce que « Son propre brouillard » soit coché. S'il y a du brouillard sous son propre ciel, cela se règle dans l'onglet Ciel (Sanctuaire des Arcanes : le brouillard se fond dans son ciel).
-fog.arcane_own.label = Sanctuaire des Arcanes : son propre brouillard
-fog.arcane_own.tip = Le brouillard du Sanctuaire des Arcanes réglé à part, avec les valeurs ci-dessous ; les grottes gardent les leurs. Immédiat. Désactivé : il prend le début, la fin, l'intensité et la couleur des grottes, comme avant.
-fog.arcane_start.label = Sanctuaire des Arcanes : début du brouillard
-fog.arcane_start.tip = Là où le brouillard commence dans le Sanctuaire des Arcanes. Unités du monde (le héros mesure ~7,5). Immédiat.
-fog.arcane_end.label = Sanctuaire des Arcanes : brouillard total
-fog.arcane_end.tip = Là où le brouillard est total dans le Sanctuaire des Arcanes. Unités du monde (le héros mesure ~7,5). Immédiat.
-fog.arcane_strength.label = Sanctuaire des Arcanes : intensité du brouillard
-fog.arcane_strength.tip = Combien le brouillard total couvre là-bas : 1 = les plateformes lointaines disparaissent dans le brouillard, moins = elles transparaissent. Immédiat.
-fog.arcane_curve.label = Sanctuaire des Arcanes : courbe du brouillard
-fog.arcane_curve.tip = Comment le brouillard croît de son début au total : 1 = régulièrement, plus = il reste mince plus longtemps et s'épaissit vers la fin, moins = il s'épaissit peu après le début. Immédiat.
-fog.arcane_color.label = Sanctuaire des Arcanes : couleur du brouillard
-fog.arcane_color.tip = La couleur du brouillard dans le Sanctuaire des Arcanes. Vide (x) = la couleur des grottes (avec le brouillard du jeu, jamais noire là-bas). Immédiat.
-fog.arcane_color.empty = comme les grottes
-fog.arcane_into_sky.label = Sanctuaire des Arcanes : le brouillard se fond dans le ciel derrière
-fog.arcane_into_sky.tip = Sous son propre ciel (onglet Ciel), le brouillard est le ciel juste derrière chaque point : les plateformes lointaines se dissolvent dans le vide. Désactivé : elles s'estompent plutôt dans la couleur de brouillard ci-dessus. Immédiat.
-render.game_height_fog.label = Le brouillard de hauteur du jeu
-render.game_height_fog.tip = Seule la ville de l'acte 2 en a. Depuis notre caméra, son bord est une ligne dure en travers de l'image avec un voile pâle au-dessus (la caméra du jeu ne voit jamais ce bord). Désactivé : vrcam le met à 0.
-render.game_depth_fog.label = Le brouillard de profondeur du jeu
-render.game_depth_fog.tip = Toutes les zones en extérieur en ont, à partir de la distance de sa caméra : une brume grise aux quatre coins de l'image (aussi en vue du dessus), sur le sol proche depuis notre caméra. Désactivé : vrcam le met à 0.
-render.game_fog_scan_safe.label = Trouver le brouillard du jeu sans risque
-render.game_fog_scan_safe.tip = Comment D2R VR trouve le brouillard de hauteur et de profondeur du jeu pour les désactiver : en lisant des copies de la mémoire du jeu, donc un bloc que le jeu libère entre-temps est sauté sans erreur (D2RLoader les signalait comme rapports de plantage), seulement les définitions là où les zones du jeu en ont, et une valeur n'est changée que tant qu'elle est encore celle qui vient d'être lue. Désactivé : lectures directes, comme avant. Immédiat.
+# --- Depth and view ---
+group.depth_and_view = Profondeur et vue
+group.depth_and_view.help = Comment les effets de profondeur du jeu voient notre caméra, et les murs, toits et l'éclairage vus depuis elle. (Le brouillard du Sanctuaire arcanique et les brouillards propres du jeu sont dans l'onglet Brouillard.)
 render.depth_fix.label = Les effets du jeu mesurent la profondeur depuis notre caméra
 render.depth_fix.tip = Le jeu garde une copie de la profondeur pour son brouillard, son brouillard de hauteur, son occlusion ambiante, ses reflets et son eau, faite pour sa caméra vue du dessus (à 550 - 1060 unités). Depuis la nôtre, tout est plus proche et lu comme un mur plat unique à 550 : la ligne droite avec un voile pâle au-dessus dans la ville de l'acte 2, la brume aux coins. Activé : cette profondeur part de notre caméra. Désactivé : celle du jeu.
 render.own_depth.label = Profondeur pour les effets
@@ -2094,6 +2055,8 @@ render.light_bounds_fix.label = Corriger l'éclairage du jeu avec une fenêtre c
 render.light_bounds_fix.tip = Le jeu découpe l'image en 32 x 20 tuiles et trouve la plage de profondeur de chaque tuile pour ses lumières avec un shader qui n'est juste qu'avec une fenêtre en 16:10. Avec une fenêtre carrée ou large (la fenêtre RV, 16:9), il rate des lignes : des lumières disparaissent en rectangles durs et l'ombrage d'un toit scintille quand la tête bouge. Activé : notre propre shader fait ce travail correctement pendant le rendu RV, avec ReShade ou sans (en 16:10 les nombres sont les mêmes que ceux du jeu). Désactivé aussitôt ; recoché, il prend effet au prochain démarrage du jeu. Désactivé : celui du jeu.
 render.light_bounds_flat.label = ... en écran plat aussi
 render.light_bounds_flat.tip = La même correction en mode écran plat (un moniteur ou une fenêtre, l'image plate de l'OpenXR natif aussi) : le shader du jeu est faux aussi en 16:9 et avec une fenêtre carrée, pas seulement en RV. Suit le mode aussitôt. Désactivé : le mode écran plat garde le shader propre du jeu, comme avant.
+render.symmetric_projection.label = Éclairage correct avec des yeux décentrés (plus doux)
+render.symmetric_projection.tip = OpenXR natif : le jeu détermine quelles lumières atteignent chacune de ses 32 x 20 tuiles avec un shader qui prend l'image comme centrée. Un œil dessiné décentré (génération d'images activée, « Chaque œil exactement comme le casque le donne » désactivé ou sur les angles propres du casque, angles à la main sans « Noms et interface uniques dans les deux yeux », un casque dont les écrans sont tournés vers l'extérieur) reçoit ses lumières dans les tuiles à côté des siennes : des plaques de détails du sol qui glissent avec le héros d'un côté de la vue et bougent quand vous tournez. Activé : les deux yeux sont dessinés et remis au casque avec une vue centrée qui contient les deux (d'après bearstonem/d2r-pcvr) - les plaques devraient disparaître ; l'image est un peu plus douce (les mêmes pixels sur un angle plus large). Avec « Chaque œil exactement comme le casque le donne » sur Centré (la valeur par défaut), sur la plupart des casques les yeux sont déjà centrés et rien ne change. Si le casque devient noir avec la génération d'images, décochez-la. Immédiat. Désactivé : chaque œil comme son choix le dessine.
 render.reflections_per_eye.label = Reflets dans les flaques et le sang à leur vraie profondeur (3D)
 render.reflections_per_eye.tip = Avec "Stereo - one pass, two pictures", les reflets du jeu dans l'eau, les flaques et les mares de sang étaient dessinés dans l'oeil droit comme vus depuis le double de la distance entre les yeux : parallaxe double, profondeur moitié - le reflet semblait flotter au-dessus de la flaque et fatiguait les yeux. Activé : les deux passes de reflets du jeu lisent la position propre de chaque oeil (une valeur changée dans son propre shader ; aucun travail en plus pour la carte graphique), donc chaque reflet repose dans l'eau. Les autres modes 3D et le mode plat sont identiques dans les deux cas. Appliqué au démarrage du jeu : activé, il agit dès le prochain lancement ; ensuite il suit cette case aussitôt. Désactivé : celui du jeu.
 
@@ -2103,11 +2066,15 @@ group.render_distance.help = Jusqu'où autour du héros le monde est dessiné : 
 
 # --- Scenery ---
 group.scenery = Décors
-group.scenery.help = Corrections du décor du jeu pour la première personne : des sols qui gardent leur hauteur quand vous revenez dans une salle, et la pirogue des Quais de Kurast posée sur l'eau au lieu de pendre dans le ciel. Seule l'image change.
-render.floors_stay.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
-render.floors_stay.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être une marche plus haut ou plus bas - depuis la caméra du jeu au-dessus, personne ne le voit ; depuis la nôtre, le sol glisse : des blocs poussés vers le haut, vers le bas et sur le côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée la première fois jusqu'à ce que vous quittiez la partie. La contrepartie : le jeu corrige aussi une salle dessinée à la mauvaise hauteur (une marche vue de loin, comme près de la porte de la Forteresse du Pandémonium) quand il la redessine à votre approche - avec ceci activé, cette correction ne vient pas. L'image seulement ; rien du combat ni des chemins ne change. En direct. Désactivé (par défaut) : les hauteurs propres du jeu.
+group.scenery.help = Corrections du décor du jeu pour la première personne : des sols de donjon qui se raccordent le long de votre chemin, des tuiles de sol à la hauteur de leur propre sol, et la pirogue des Quais de Kurast posée sur l'eau au lieu de pendre dans le ciel. Seule l'image change.
+render.room_stitch.label = Les sols de donjon se raccordent le long du chemin parcouru
+render.room_stitch.tip = Le jeu donne à chaque salle une hauteur quand il la construit, en rejoignant UNE des salles déjà construites autour d'elle - la salle du héros si c'en est une, sinon celle qui demande la plus grande marche. Depuis sa caméra de dessus cela ne se voit jamais ; depuis la nôtre, des salles construites quelques anneaux plus loin pendent une marche au-dessus ou au-dessous de la suivante avec un vide noir entre, et s'enclenchent au seuil. Activé : chaque salle rejoint son voisin construit le plus proche de vous, si bien que les sols se raccordent le long de votre chemin ; ce qu'une boucle du niveau ne peut pas fermer est laissé aux bords loin de vous. Quand notre copie du choix du jeu diverge du jeu, la réponse du jeu l'emporte. Seule l'image ; monstres, projectiles et objets suivent le sol d'eux-mêmes. Une salle où vous revenez par un autre chemin rejoint aussi votre chemin. Toutes les vues : à plat F1 - F3, RV F4 et le jeu à plat avec sa propre caméra (de dessus cela ne se voit jamais, donc rien ne change là) ; une salle garde sa hauteur quand vous changez de vue. Les graphismes classiques ne dessinent pas de telles salles. De D2R VR Unleashed (Cal, équipe de bearstonem). Activé par défaut. Désactivé : le choix propre du jeu.
+render.terrain_heights.label = Tuiles de sol à la hauteur de leur propre sol (escaliers, rebords)
+render.terrain_heights.tip = Le jeu dessine chaque tuile du sol extérieur (sable, herbe, neige et le pavage par-dessus) à la hauteur du sol sous le héros. Depuis sa caméra de dessus cela ne se voit jamais ; depuis la nôtre, là où le sol a deux niveaux - les plateaux du désert de l'acte 2 et leurs escaliers, rebords -, le sol de l'autre niveau se trouve à la hauteur du héros, poussé de côté, et tout le sol saute vers le haut ou le bas à chaque marche d'escalier. Activé : chaque tuile est dessinée à la hauteur de son propre sol et raccordée aux tuiles autour - une tuile de l'autre côté d'un rebord rejoint le niveau sur lequel se tiennent ses voisines, si bien qu'aucune marche ni aucun trou ne s'ouvre entre les tuiles d'un même sol ; les vraies dénivellations (falaises, rebords, escaliers) restent. Seule l'image ; rien du combat ni des chemins ne change. Immédiat. Désactivé (par défaut) : la hauteur unique du jeu pour tout.
 world.kurast_boat.label = Quais de Kurast : la pirogue dans le ciel repose sur l'eau
 world.kurast_boat.tip = Le décor HD de la ville place une pirogue 50 unités plus haut, là où la vue du dessus ne regarde jamais ; en première personne, elle pend au-dessus des huttes. Activé : elle repose sur l'eau près des quais de l'ouest, là où son préfabriqué a été construit - un seul nombre du fichier de décor de la ville est changé (trouvé par bearstonem/d2r-pcvr). Ce programme fait ce fichier à partir de celui de votre jeu à son ouverture (Accueil : Pirogue des Quais de Kurast) et le garde dans le mod (mods\D2R-VR\D2R-VR.mpq) ; rien du jeu lui-même ne change, ni rien de ce avec quoi vous jouez. Prend effet au prochain démarrage du jeu (un jeu déjà lancé garde la pirogue où elle était). Désactivé : le fichier est retiré, la pirogue comme le jeu l'a.
+holes.patch_world.label = Trous du monde rebouchés (un test : le pont hors du Camp des Rôdeuses)
+holes.patch_world.tip = Le jeu a été construit pour une caméra qui regarde d'en haut : certains endroits n'ont jamais été modélisés là où cette caméra ne regarde jamais - le pont hors du Camp des Rôdeuses a le long de son tablier une bande sans sol, entre le tablier et son parapet, par laquelle la première et la troisième personne voient la rivière bien en dessous. Coché, ce programme fabrique un correctif pour chacun de ces endroits à partir des fichiers propres de votre jeu (le matériau de sol propre du tablier, ses bords prolongés jusqu'au parapet - rien de placé à la main) et le jeu le dessine comme sa propre pièce, éclairée et ombrée comme le tablier. Toutes les vues : à plat F1, F2, F3 et RV. Prend effet au prochain démarrage du jeu. Désactivé : les fichiers sont retirés à nouveau, le pont tel que le jeu l'a.
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = Monstres (jeu à plat)
@@ -2121,8 +2088,9 @@ tab.sky = Ciel
 # --- Sky and fog ---
 group.sky_and_fog = Ciel et brouillard
 group.sky_and_fog.help = Qui dessine le ciel et qui dessine le brouillard de distance : le jeu lui-même (nouveau) ou notre effet (ancien) - un choix chacun, deux au choix ensemble (le dôme du jeu avec notre brouillard, notre ciel avec le brouillard du jeu).
-render.game_drawn_flat.label = Le jeu les dessine aussi dans le jeu plat
-render.game_drawn_flat.tip = Le dôme céleste, le dôme et le plafond de grotte et le brouillard que le jeu dessine lui-même, aussi quand vous jouez sur l'écran sans casque (les vues plates à la première et à la troisième personne ; la vue de dessus reste comme elle est). Désactivé : seulement en première personne VR (F4). En direct.
+render.game_drawn_flat.label = Le jeu dessine le ciel aussi dans le jeu à plat
+render.game_drawn_flat.tip = Le dôme céleste, le dôme des grottes et le plafond que le jeu dessine lui-même, aussi quand vous jouez sur le moniteur sans casque (les vues à plat en première et troisième personne ; de dessus reste comme il est). Désactivé : seulement en RV première personne (F4). Le brouillard a le sien dans l'onglet Brouillard. Immédiat.
+@status.fog_moved_sky.label = Qui dessine le brouillard, les couleurs du brouillard et la partie basse du ciel à la couleur du brouillard se trouvent dans l'onglet Brouillard.
 
 # --- Sky ---
 group.sky.help = Un ciel dans le vide noir au-delà du monde, seulement en plein air. Réglez les nuages, si le ciel tourne lentement, le ciel sur le bord sombre autour des toits et des arbres, ainsi que les étoiles propres du Sanctuaire des Arcanes tout autour et son brouillard.
@@ -2141,12 +2109,6 @@ sky.dome_gain_once.label = Le ciel du jeu : ses couleurs mesurées une fois
 sky.dome_gain_once.tip = Avec « ses couleurs dessinées par le jeu » : la mesure du ciel du jeu par rapport au nôtre est prise une fois pour chaque zone et moment de la journée, et gardée dans d2r_vr_dome_gain.txt à côté des réglages (supprimez-le pour mesurer de nouveau). Ensuite, le ciel est précalculé à partir de ces valeurs seulement quand la lumière, le moment de la journée ou un curseur change - rien n'est mesuré ni précalculé de nouveau pendant que vous jouez. Immédiat. Désactivé : mesuré en permanence, comme avant.
 sky.dome_in_game_colour.label = Le ciel du jeu : ses couleurs dessinées par le jeu
 sky.dome_in_game_colour.tip = Notre effet recolorait le ciel dessiné par le jeu après que le jeu avait dessiné les arbres, la palissade et les toits par-dessus : leurs bords, fondus dans le ciel tel que le jeu l'avait dessiné, gardaient son ancienne couleur - un contour clair autour de chaque branche la nuit. Coché, le jeu dessine le ciel à partir d'une image à nous à la place, faite de la sienne avec l'image de nuit, l'assombrissement du jour et de la nuit, la luminosité de chaque période de la journée et les couleurs mesurées - chaque bord se fond dans le bon ciel. Sans ReShade seulement (nos propres effets). Compte à partir du prochain lancement du jeu ; décoché, immédiat : le ciel revient tout de suite aux couleurs propres du jeu et notre effet le recolore comme avant.
-sky.dome_fog_horizon.label = Ciel du jeu : son horizon dans le brouillard
-sky.dome_fog_horizon.tip = Le bas du ciel dessiné par le jeu se fond dans la couleur de brouillard de l'acte, comme le faisait notre propre ciel : la terre embrumée rejoint le ciel sans bord net, et les couleurs s'accordent là où elles se rejoignent. Seulement quand un brouillard est dessiné. Désactivé : le ciel tel que le jeu le dessine. En direct.
-sky.dome_fog_baked.label = Le ciel du jeu : sa partie basse dans la couleur du brouillard
-sky.dome_fog_baked.tip = Avec le brouillard du jeu, la partie basse du ciel est posée dans la couleur propre du brouillard dans l'image même du ciel, comme la partie basse de notre ancien ciel passe dans le brouillard : les arbres et les buissons contre l'horizon se dressent sur la couleur du brouillard, sans bord clair de l'horizon de l'image autour d'eux. L'horizon du ciel dans le brouillard ci-dessus se met de côté en attendant. Désactivé : l'image telle quelle. Immédiat.
-sky.dome_fog_baked_strength.label = Le ciel du jeu : quelle part de la couleur du brouillard
-sky.dome_fog_baked_strength.tip = 1 : l'horizon entièrement de la couleur du brouillard, revenant à l'image vers 11 degrés ; moins : un peu de l'image au travers. Immédiat.
 sky.game_sky_closed.label = Ciel du jeu : une sphère entière, une seule couleur en bas
 sky.game_sky_closed.tip = Le ciel dessiné par le jeu s'arrêtait 12 degrés sous l'horizon : au-delà du bord d'une falaise, son rebord formait une ligne nette avec un trou en dessous, le vide et le brouillard visibles à travers. Coché, il se ferme en une sphère entière et sa moitié basse est d'une seule couleur - celle du ciel à l'horizon (avec un brouillard dessiné, celle du brouillard : ils se rejoignent en une seule couleur). Dans tous les actes, en RV et en plat. Ce programme refait aussitôt les modèles du dôme ; le jeu les prend à son prochain démarrage. Désactivé : le dôme ouvert, comme avant.
 sky.game_skybox.label = Sommet d'Arreat : le dôme céleste au loin
@@ -2160,8 +2122,6 @@ sky.weather_first_person.choice1 = Masquées
 sky.weather_first_person.choice2 = Autour de vous
 sky.arcane_sky.label = Sanctuaire des Arcanes : ses propres étoiles tout autour
 sky.arcane_sky.tip = Dans le Sanctuaire des Arcanes, le vide autour des plateformes montre les couches d'étoiles et les nuages propres du jeu dans toutes les directions, sous les plateformes aussi (d'après bearstonem/d2r-pcvr). Les images sont faites à partir des fichiers de votre jeu à l'ouverture de ce programme (Accueil : Ciel du Sanctuaire des Arcanes) et vivent dans le mod (mods\D2R-VR) ; rien du jeu n'est modifié. Pas dans les vues du dessus. Fonctionne aussi avec le ciel en extérieur désactivé. Désactivé : le vide tel que le jeu le dessine.
-sky.arcane_fog.label = Sanctuaire des Arcanes : le brouillard se fond dans son ciel
-sky.arcane_fog.tip = Le brouillard de distance ([fog] on, Monde > Brouillard) aussi dans le Sanctuaire des Arcanes : les plateformes lointaines se dissolvent dans le ciel derrière elles - son obscurité et sa nébuleuse, pas ses étoiles. Désactivé : pas de brouillard sous ce ciel, les plateformes restent nettes jusqu'au bout.
 
 # --- Day and night ---
 group.day_and_night = Jour et nuit
@@ -2214,9 +2174,6 @@ sky.brightness_act1.label = Luminosité
 sky.texture_act1.label = Panorama du ciel
 sky.texture_act1.tip = Un nom seul est cherché dans reshade-shaders\Textures ; un chemin complet fonctionne aussi. Vide (x) = le shader dessine lui-même ce ciel.
 sky.cap_act1.label = Zénith
-fog.color_act1.label = Couleur du brouillard
-fog.color_act1.tip = La couleur de brouillard de cet acte, grottes comprises ; la partie basse du ciel s'y enfonce. Vide (x) = la couleur d'horizon du ciel, ou sombre sans ciel.
-fog.color_act1.empty = du ciel
 
 # --- Act 2 (desert) ---
 group.act_2_desert = Acte 2 (désert)
@@ -2238,6 +2195,140 @@ group.act_5_ruins.help = Le ciel au-dessus des ruines de l'acte 5 : sa luminosit
 group.act_5_snow = Acte 5 (neige)
 group.act_5_snow.help = Le ciel au-dessus de la neige de l'acte 5 : sa luminosité, son image panoramique, son zénith et sa couleur de brouillard, comme pour l'acte 1.
 
+# ===== Tab: Fog =====
+tab.fog = Brouillard
+
+# --- Fog drawn by ---
+group.fog_drawn_by = Brouillard dessiné par
+group.fog_drawn_by.help = Qui dessine le brouillard de distance : personne, la passe de brouillard propre du jeu (nouveau, par défaut) ou notre ancien effet. Le bloc de celui qui n'est pas choisi reste grisé.
+@fogby.way.tip = Qui dessine le brouillard de distance. Le brouillard du jeu : la passe de brouillard propre du jeu avec nos distances et nos couleurs (le bloc en dessous) - aucun temps d'image de notre part. Ancien brouillard (notre effet) : notre shader de brouillard pose le brouillard selon la profondeur, comme avant (son propre bloc). Aucun : pas de brouillard de distance. Immédiat.
+@fogby.way.choice1 = Le brouillard du jeu
+@fogby.way.choice2 = Ancien brouillard (notre effet)
+@fogby.way.choice3 = Plans de brouillard devant le joueur
+
+# --- The game's fog ---
+group.the_game_s_fog.help = La passe de brouillard propre du jeu : où elle commence et où elle est totale, en extérieur et dans les grottes, sa couleur selon l'heure du jour du jeu, et la partie basse du ciel intégrée à cette couleur. Ses propres curseurs - ceux de l'ancien brouillard sont en dessous.
+fog.game_fog_flat.label = Le brouillard du jeu aussi dans le jeu à plat
+fog.game_fog_flat.tip = Le jeu dessine son brouillard aussi quand vous jouez sur le moniteur sans casque (les vues à plat en première et troisième personne). Désactivé : seulement en RV première personne (F4). Vide : comme « Le jeu dessine le ciel aussi dans le jeu à plat » (le même interrupteur qu'avant). Immédiat.
+fog.game_fog_before_fx.label = Le brouillard avant la fumée et le feu
+fog.game_fog_before_fx.tip = Le brouillard est posé sur le monde avant que le jeu ajoute sa fumée, son feu, sa brume et ses sorts, pour qu'ils restent lumineux sur le monde embrumé. Désactivé : l'ordre propre du jeu - le brouillard passe sur eux selon ce qui est loin derrière, et la flamme et la fumée d'une torche devant un arrière-plan lointain et embrumé sont effacées. Une passe de notre part sur la carte graphique (son coût dans la ligne de 10 s du journal). S'applique au prochain démarrage du jeu.
+fog.game_fog_planes_count.label = Combien de plans
+fog.game_fog_planes_count.tip = Avec « Brouillard dessiné par : Plans de brouillard devant le joueur » : le brouillard en plans qui vous font face, étagés de Début du brouillard à Brouillard total, chacun une couche de la couleur du brouillard ; ce qui est derrière un plan est couvert par lui, ce qui est devant (la flamme d'une torche) reste lumineux. Plus de plans : plus doux, même coût. Immédiat.
+fog.game_fog_planes_soft.label = Douceur de chaque plan
+fog.game_fog_planes_soft.tip = 0 : plans durs - une ligne là où chacun coupe le sol ; 1 : chacun apparaît en fondu sur l'écart jusqu'au suivant, sans lignes. Immédiat.
+group.caves_and_dungeons = Grottes et donjons
+fog.game_fog_caves.label = Brouillard dans les grottes et donjons
+fog.game_fog_caves.tip = Le brouillard du jeu aussi dans les grottes, donjons et cryptes (toute zone qui n'est pas en extérieur). Immédiat.
+fog.game_fog_caves_strength.label = Force du brouillard dans les grottes
+fog.game_fog_caves_strength.tip = Combien le brouillard total couvre dans les grottes : 1 = le fond a disparu dans la couleur du brouillard, moins = il transparaît.
+fog.game_fog_caves_black.label = Le brouillard du jeu noircit dans les grottes
+fog.game_fog_caves_black.tip = Sous terre, le brouillard du jeu vire au noir, quelle que soit la couleur du brouillard des grottes, et le vide au-delà du bord d'un plafond de grotte est laissé tel quel - la passe de brouillard du jeu y posait toute sa brume éclairée par les torches, une bande claire derrière les feux. La distance assombrit, sans jamais éclairer. Sans ReShade seulement. En direct.
+group.its_colour_by_the_time_of_day = Sa couleur selon l'heure du jour
+fog.game_fog_colour.label = La couleur brute du jeu
+fog.game_fog_colour.tip = Décoché (par défaut) : le brouillard prend les couleurs de l'aube, du jour, du crépuscule et de la nuit ci-dessous, mélangées selon l'horloge propre du jeu. Coché : la couleur que contiennent les fichiers d'éclairage propres du jeu, telle quelle - avec notre brouillard proche et dense, un mur pâle sur les terres lointaines de jour et un mur lavande de nuit. Immédiat.
+fog.game_fog_act1_dawn.label = Couleur de l'aube
+fog.game_fog_act1_dawn.tip = La couleur du brouillard du jeu à l'aube en extérieur dans cet acte (la lumière du jeu : les deux parties de l'aube). Vide = la couleur du jour dans la teinte d'aube propre du jeu - la couleur du jour multipliée par le changement propre du jeu de son brouillard de jour à son brouillard d'aube, par couleur, chaque partie de l'aube la sienne (d'après les fichiers d'éclairage de l'acte). Immédiat.
+fog.game_fog_act1_dawn.empty = celle du jour dans la teinte d'aube du jeu
+fog.game_fog_act1_day.label = Couleur du jour
+fog.game_fog_act1_day.tip = La couleur du brouillard du jeu de jour en extérieur dans cet acte (la lumière du jeu : le jour). Vide = la couleur de l'ancien brouillard de cet acte (Monde > Couleur du brouillard de l'acte), telle qu'elle est maintenant. Immédiat.
+fog.game_fog_act1_day.empty = celle de l'ancien brouillard
+fog.game_fog_act1_dusk.label = Couleur du crépuscule
+fog.game_fog_act1_dusk.tip = La couleur du brouillard du jeu au crépuscule en extérieur dans cet acte (la lumière du jeu : les deux parties du crépuscule). Vide = la couleur du jour dans la teinte de crépuscule propre du jeu - la couleur du jour multipliée par le changement propre du jeu de son brouillard de jour à son brouillard de crépuscule, par couleur, chaque partie du crépuscule la sienne (d'après les fichiers d'éclairage de l'acte). Immédiat.
+fog.game_fog_act1_dusk.empty = celle du jour dans la teinte de crépuscule du jeu
+fog.game_fog_act1_night.label = Couleur de la nuit
+fog.game_fog_act1_night.tip = La couleur du brouillard du jeu de nuit en extérieur dans cet acte (la lumière du jeu : la nuit). Vide = la couleur de l'ancien brouillard de cet acte multipliée par « Ciel la nuit », comme l'ancien brouillard s'assombrissait la nuit. Immédiat.
+fog.game_fog_act1_night.empty = celle de l'ancien brouillard de nuit
+group.the_sky_s_low_part_in_the_fog_s_colour_baked_into_the_dome = La partie basse du ciel à la couleur du brouillard (intégrée au dôme)
+sky.dome_fog_horizon.label = Ciel du jeu : son horizon dans le brouillard
+sky.dome_fog_horizon.tip = Le bas du ciel dessiné par le jeu se fond dans la couleur de brouillard de l'acte, comme le faisait notre propre ciel : la terre embrumée rejoint le ciel sans bord net, et les couleurs s'accordent là où elles se rejoignent. Seulement quand un brouillard est dessiné. Désactivé : le ciel tel que le jeu le dessine. En direct.
+sky.dome_fog_baked.label = Le ciel du jeu : sa partie basse dans la couleur du brouillard
+sky.dome_fog_baked.tip = Avec le brouillard du jeu, la partie basse du ciel est posée dans la couleur propre du brouillard dans l'image même du ciel, comme la partie basse de notre ancien ciel passe dans le brouillard : les arbres et les buissons contre l'horizon se dressent sur la couleur du brouillard, sans bord clair de l'horizon de l'image autour d'eux. L'horizon du ciel dans le brouillard ci-dessus se met de côté en attendant. Désactivé : l'image telle quelle. Immédiat.
+sky.dome_fog_baked_strength.label = Le ciel du jeu : quelle part de la couleur du brouillard
+sky.dome_fog_baked_strength.tip = 1 : l'horizon entièrement de la couleur du brouillard, revenant à l'image vers 11 degrés ; moins : un peu de l'image au travers. Immédiat.
+
+# --- Old fog (our effect) ---
+group.old_fog_our_effect.help = Le brouillard de distance de notre propre effet, tel qu'il était (figé) - seulement avec « Brouillard dessiné par : Ancien brouillard », grisé sinon. Ses propres curseurs.
+fog.end.tip = Où le brouillard est total. Unités du monde (le héros mesure ~7,5). Avec le brouillard du jeu, en dessous de Début du brouillard les deux sont pris à l'envers (le brouillard de notre effet : total juste après Début du brouillard).
+fog.light.label = Brouillard léger (cartes graphiques faibles)
+fog.light.tip = Le brouillard de notre effet par le court chemin : la profondeur lue une fois par pixel, le brouillard d'après elle, le ciel toujours dessiné dans le vide - sans flou de profondeur, sans brouillard sur les lueurs et étincelles devant le ciel, sans plafond des grottes. Une fraction du coût du brouillard complet sur la carte graphique (la ligne de 10 s du journal le dit). Désactivé : le brouillard complet, comme avant.
+fog.curve.label = Atténuation
+fog.curve.tip = 1 = linéaire ; plus = une distance moyenne plus nette.
+fog.blur.label = Flou de profondeur, px (0 = désactivé)
+fog.blur.tip = Le brouillard sur une grille 5x5 dont les points sont espacés d'autant de pixels : les trous et les points parasites dans la profondeur s'estompent.
+fog.ease_in.label = Brouillard fondu à son début, sans anneau net
+fog.ease_in.tip = Le brouillard apparaît doucement sur ses 40 premières unités après son début : pas de bord net autour du sol dégagé à vos pieds. Partout où notre courbe dessine le brouillard : notre effet, et le brouillard du jeu avec « Le brouillard du jeu selon notre courbe » activé (pas la courbe propre du jeu). D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard comme avant.
+fog.spare_effects.label = Le brouillard épargne feu, sorts et fumée (test)
+fog.spare_effects.tip = Le feu, les sorts, la fumée et les lueurs ne sont embrumés qu'autant que la scène derrière eux ne l'est pas : une torche ou un Trait de feu devant un mur lointain reste vive au lieu d'être embrumée comme le mur. Les couches transparentes propres du jeu à chaque image sont copiées pour cela (RV F4 seulement). S'applique au prochain démarrage du jeu ; désactivé = le brouillard comme avant.
+render.fog_in_frame.label = Brouillard dessiné dans l'image du jeu (test)
+render.fog_in_frame.tip = Le brouillard est dessiné dans l'image propre du jeu avant son feu, ses sorts et sa fumée, et le jeu les pose par-dessus la scène embrumée : une torche, un Trait de feu ou un Brasier devant un mur lointain n'est pas embrumé comme le mur. Le ciel et le noir au-delà du monde gardent le brouillard comme avant. Avec la couleur de brouillard propre à un acte (Monde > Ciel) ; RV F4 seulement. S'applique au prochain démarrage du jeu ; désactivé = le brouillard comme avant. Prioritaire sur « Le brouillard épargne feu, sorts et fumée (test) » quand les deux sont activés.
+fog.caves.tip = Désactivé : pas de brouillard sous terre (toute zone qui n'est pas en extérieur) - ni celui de notre effet ni le brouillard propre au jeu, et rien n'est posé avant la fumée et le feu là-bas ; le plein air le garde. Le Sanctuaire des Arcanes a son propre interrupteur (Ciel > Sanctuaire des Arcanes : le brouillard se fond dans son ciel) : activé, il garde son brouillard avec l'un ou l'autre brouillard. Immédiat.
+group.fog_colour_of_each_act = Couleur du brouillard de chaque acte
+fog.color_act1.label = Couleur du brouillard : acte 1 (nuit, orage)
+fog.color_act1.tip = La couleur de brouillard de cet acte, grottes comprises ; la partie basse du ciel s'y enfonce. Vide (x) = la couleur d'horizon du ciel, ou sombre sans ciel.
+fog.color_act1.empty = du ciel
+fog.color_act2.label = Couleur du brouillard : acte 2 (désert)
+fog.color_act3.label = Couleur du brouillard : acte 3 (jungle)
+fog.color_act4.label = Couleur du brouillard : acte 4 (Enfer)
+fog.color_act5.label = Couleur du brouillard : acte 5 (ruines)
+fog.color_snow.label = Couleur du brouillard : acte 5 (neige)
+fog.arcane_curve.label = Sanctuaire des Arcanes : courbe du brouillard
+fog.arcane_curve.tip = Comment le brouillard croît de son début au total : 1 = régulièrement, plus = il reste mince plus longtemps et s'épaissit vers la fin, moins = il s'épaissit peu après le début. Immédiat.
+
+# --- Both fogs ---
+group.both_fogs = Les deux brouillards
+group.both_fogs.help = Ce que le brouillard du jeu et l'ancien prennent tous les deux, quel que soit celui qui dessine.
+fog.no_fog_river.label = Pas de brouillard dans la Rivière de flammes
+fog.no_fog_river.tip = Pas de brouillard ajouté dans la Rivière de flammes, bien qu'elle soit en plein air : la lueur et la brume propres de sa lave restent celles du jeu. Le brouillard de notre effet comme celui du jeu. D'après D2R VR Unleashed (bearstonem). En direct. Désactivé : le brouillard là comme partout en extérieur.
+fog.color_caves.label = Couleur du brouillard en grotte
+fog.color_caves.tip = Grottes, donjons, cryptes : toute zone qui n'est pas en extérieur. Vide (x) = la couleur de l'acte.
+fog.color_caves.empty = comme l'acte
+group.arcane_sanctuary = Sanctuaire des Arcanes
+fog.arcane_own.label = Sanctuaire des Arcanes : son propre brouillard
+fog.arcane_own.tip = Le brouillard du Sanctuaire des Arcanes réglé à part, avec les valeurs ci-dessous ; les grottes gardent les leurs. Immédiat. Désactivé : il prend le début, la fin, l'intensité et la couleur des grottes, comme avant.
+fog.arcane_start.label = Sanctuaire des Arcanes : début du brouillard
+fog.arcane_start.tip = Là où le brouillard commence dans le Sanctuaire des Arcanes. Unités du monde (le héros mesure ~7,5). Immédiat.
+fog.arcane_end.label = Sanctuaire des Arcanes : brouillard total
+fog.arcane_end.tip = Là où le brouillard est total dans le Sanctuaire des Arcanes. Unités du monde (le héros mesure ~7,5). Immédiat.
+fog.arcane_strength.label = Sanctuaire des Arcanes : intensité du brouillard
+fog.arcane_strength.tip = Combien le brouillard total couvre là-bas : 1 = les plateformes lointaines disparaissent dans le brouillard, moins = elles transparaissent. Immédiat.
+fog.arcane_color.label = Sanctuaire des Arcanes : couleur du brouillard
+fog.arcane_color.tip = La couleur du brouillard dans le Sanctuaire des Arcanes. Vide (x) = la couleur des grottes (avec le brouillard du jeu, jamais noire là-bas). Immédiat.
+fog.arcane_color.empty = comme les grottes
+fog.arcane_into_sky.label = Sanctuaire des Arcanes : le brouillard se fond dans le ciel derrière
+fog.arcane_into_sky.tip = Sous son propre ciel (onglet Ciel), le brouillard est le ciel juste derrière chaque point : les plateformes lointaines se dissolvent dans le vide. Désactivé : elles s'estompent plutôt dans la couleur de brouillard ci-dessus. Immédiat.
+sky.arcane_fog.label = Sanctuaire des Arcanes : le brouillard se fond dans son ciel
+sky.arcane_fog.tip = Le brouillard de distance ([fog] on, Monde > Brouillard) aussi dans le Sanctuaire des Arcanes : les plateformes lointaines se dissolvent dans le ciel derrière elles - son obscurité et sa nébuleuse, pas ses étoiles. Désactivé : pas de brouillard sous ce ciel, les plateformes restent nettes jusqu'au bout.
+
+# --- Advanced ---
+group.advanced = Avancé
+group.advanced.help = Les brouillards intégrés du jeu lui-même, que nos nombres remplacent, et comment ils sont trouvés.
+render.game_depth_fog.label = Le brouillard de profondeur du jeu
+render.game_depth_fog.tip = Toutes les zones en extérieur en ont, à partir de la distance de sa caméra : une brume grise aux quatre coins de l'image (aussi en vue du dessus), sur le sol proche depuis notre caméra. Désactivé : vrcam le met à 0.
+render.game_fog_scan_safe.label = Trouver le brouillard du jeu sans risque
+render.game_fog_scan_safe.tip = Comment D2R VR trouve le brouillard de hauteur et de profondeur du jeu pour les désactiver : en lisant des copies de la mémoire du jeu, donc un bloc que le jeu libère entre-temps est sauté sans erreur (D2RLoader les signalait comme rapports de plantage), seulement les définitions là où les zones du jeu en ont, et une valeur n'est changée que tant qu'elle est encore celle qui vient d'être lue. Désactivé : lectures directes, comme avant. Immédiat.
+render.game_height_fog.label = Le brouillard de hauteur du jeu
+render.game_height_fog.tip = Seule la ville de l'acte 2 en a. Depuis notre caméra, son bord est une ligne dure en travers de l'image avec un voile pâle au-dessus (la caméra du jeu ne voit jamais ce bord). Désactivé : vrcam le met à 0.
+fog.game_fog_mist.label = Le brouillard du jeu aussi sur sa brume
+fog.game_fog_mist.tip = La passe de brouillard propre au jeu ajoute sa brume volumétrique (éclairée par les torches et autres) après le brouillard, jamais embrumée par la distance : dans une grotte, notre brouillard sombre rendait les murs lointains noirs et la brume restait, une bande claire derrière les feux. Coché : la brume s'estompe avec la distance comme tout le reste. Sans ReShade seulement. En direct.
+fog.game_fog_our_curve.label = Le brouillard du jeu selon notre courbe
+fog.game_fog_our_curve.tip = La passe de brouillard du jeu lui-même fait monter le brouillard comme notre effet - de Début du brouillard à Brouillard total selon l'Atténuation ci-dessous (en grotte, leurs propres début, fin et force) - au lieu de sa propre exponentielle, qui met presque tout le brouillard juste après le début et laisse la plage lointaine d'un seul gris. Quelques instructions dans sa passe, rien d'ajouté. Sans ReShade seulement. En direct.
+fog.fog_keeps_colour.label = Le brouillard du jeu garde la couleur de l'acte la nuit
+fog.fog_keeps_colour.tip = Tant que le jeu dessine le brouillard : sa couleur est celle de l'acte (les couleurs ci-dessus) à toute heure - le lointain se fond dans une brume claire de cette couleur, jamais vers le noir. Le brouillard de notre propre effet n'est pas changé. Désactivé : il s'assombrit avec la lumière du jeu comme le ciel - la nuit vers « Ciel la nuit » et selon la luminosité du ciel à chaque moment de la journée. Avec la couleur du ciel (« La couleur du brouillard : mesurée dans le jeu » décoché) : celle du ciel de jour à l'horizon à toute heure ; désactivé, celle du ciel de nuit la nuit - presque noire. Immédiat.
+fog.fog_into_sky.label = Le brouillard du jeu fond le lointain dans le ciel derrière lui
+fog.fog_into_sky.tip = À l'air libre, la couleur du brouillard en chaque point est celle du ciel juste derrière, comme dans le Sanctuaire des Arcanes : les terres lointaines, le bord du monde et les grands bâtiments lointains se fondent dans le ciel, et non dans une couleur unie (la partie basse du ciel est la couleur de brouillard de l'acte, telle qu'elle est dessinée). Les objets lointains laissent voir le ciel à travers eux. Cela passait par « Le brouillard du jeu aussi épais et coloré que le nôtre », supprimé (il abîmait le brouillard) : pour l'instant cela ne change rien. Effet immédiat. Désactivé : une seule couleur de brouillard, comme avant.
+fog.fog_colour_measured.label = La couleur du brouillard : mesurée dans le jeu
+fog.fog_colour_measured.tip = Coché : la couleur du brouillard est la couleur propre de l'acte, telle que réglée (sa mesure dans le jeu est partie avec « Le brouillard du jeu aussi épais et coloré que le nôtre », supprimé). Décoché : la couleur du brouillard est celle du ciel à l'horizon - l'image précalculée à cet endroit à son curseur de luminosité - si bien que les terres lointaines se fondent dans le ciel sans raccord ; un nombre, fixé quand l'heure du jour ou un curseur change : aucune mesure, rien dans l'effet. Sous terre, dans le Sanctuaire des Arcanes et avec le ciel teinté : la couleur de l'acte ou de la grotte telle que réglée. Effet immédiat.
+fog.game_fog_fx_depth.label = Fumée et feu lointains se fondent dans le brouillard
+fog.game_fog_fx_depth.tip = Avec le brouillard avant la fumée et le feu : la fumée, la brume, le feu et les sorts embrumés aussi, chacun selon sa propre distance - les proches tels quels, les lointains s'estompant dans le brouillard avec le monde derrière eux. Sans cela, un feu de camp lointain brille à pleine lumière dans un brouillard total et les bords transparents des clôtures lointaines apparaissent comme des points sur l'horizon. Les effets du jeu sont dessinés une fois de plus pour leur seule profondeur : COÛTEUX - sur un Quest 3 à 2048 x 2048 par œil, cela a pris environ 30 images par seconde (72 -> 42) ; le coût dans les lignes 10 s du journal. Sans ReShade seulement. Immédiat. Désactivé : les effets ne sont jamais embrumés.
+fog.game_fog_height.label = Le brouillard du jeu s'amincit avec la hauteur
+fog.game_fog_height.tip = La passe de brouillard propre au jeu laisse le ciel dégagé : le brouillard tel quel jusqu'au sommet du brouillard moins sa douceur, s'estompant au-dessus, nul au-dessus du sommet (unités du monde au-dessus de vos yeux). Pour le dôme de ciel du jeu, afin que son ciel se voie au-dessus de l'horizon embrumé. Sa propre passe, rien d'ajouté. En extérieur seulement (sous terre, pas de ciel à dégager). Sans ReShade seulement. Désactivé : le brouillard du jeu tel quel. En direct.
+fog.game_fog_top.label = Brouillard du jeu : son sommet, unités au-dessus des yeux
+fog.game_fog_top.tip = Jusqu'où monte le brouillard du jeu : nul au-dessus, en unités du monde au-dessus de vos yeux (le héros mesure ~7,5 ; le dôme de ciel est à son rayon). En direct.
+fog.game_fog_soft.label = Brouillard du jeu : douceur de son sommet, unités
+fog.game_fog_soft.tip = Sur quelle hauteur sous son sommet le brouillard du jeu s'estompe : petit, un bord net ; grand, un long fondu doux. En direct.
+fog.game_fog_top_from_floor.label = Brouillard du jeu : son sommet compté depuis le sol du héros
+fog.game_fog_top_from_floor.tip = Le sommet ci-dessus est compté depuis le sol où se tient le héros, pas depuis vos yeux : une caméra haut au-dessus du héros (troisième personne, la vue du dessus) ne déplace plus l'endroit où le brouillard s'arrête, et le terrain sous vos yeux n'est pas tout embrumé avec une ligne à hauteur des yeux. Désactivé : depuis les yeux, comme avant. Décocher « s'amincit avec la hauteur » donne plutôt le brouillard selon la seule distance, comme notre propre brouillard. En direct.
+
 # ===== Tab: Ceiling =====
 tab.ceiling = Plafond
 
@@ -2249,6 +2340,8 @@ ceiling.game_ceiling_wall.label = Plafond du jeu : recourbé en mur à son bord
 ceiling.game_ceiling_wall.tip = Un anneau de la même roche éclairée autour de vous là où s'arrête le plafond du jeu (environ 215 unités plus loin à la taille de tuile 10), du plafond jusque sous le sol (la profondeur du sol) : le vide noir au-delà du bord du plafond - une bande entre lui et le sol lointain, éclairée par le brouillard derrière les feux - est fermé par de la pierre, comme le mur lointain de notre effet le fermait. Désactivé : le plafond plat. En direct.
 ceiling.game_ceiling_beams.label = Plafond du jeu : les poutres en bois de la caserne
 ceiling.game_ceiling_beams.tip = Le jeu contient une charpente de plafond en bois pour la caserne (et sa prison) qu'il ne place jamais : une grille de poutres dont le bas repose sur le haut des murs de la caserne. Coché, le jeu dessine cette charpente au-dessus de vous en une grille de charpentes entières fixée dans le monde - son propre modèle, son bois et sa taille, éclairée par ses torches - avec la pierre de la caserne au-dessus des poutres pour fermer les espaces entre elles. Faite à partir des fichiers de votre jeu. VR F4 seulement. Désactivé : le plafond de pierre plat. En direct.
+ceiling.top_from_level.label = Le plafond au-dessus du sol le plus haut du niveau
+ceiling.top_from_level.tip = Le plafond se posait sur le sol le plus bas où vous vous étiez tenu dans la zone, si bien que dans un escalier il restait bas jusqu'à ce que vous avanciez. Coché : sa hauteur est mesurée depuis le sol le plus haut du niveau où vous êtes - chaque salle que le jeu construit là indique ses sols -, prise en entier 2 s après votre entrée dans un niveau, relevée doucement si une salle plus haute est construite plus tard, jamais abaissée. Le plafond du jeu et la voûte de notre effet pareillement. La hauteur propre de chaque salle (ci-dessus) est toujours mesurée depuis là. De D2R VR Unleashed (Cal, équipe de bearstonem). RV F4 seulement. Désactivé : comme avant. Immédiat.
 ceiling.game_ceiling_dome.label = Plafond du jeu : le dôme de la cathédrale au-dessus de la chapelle
 ceiling.game_ceiling_dome.tip = Dans la Cathédrale, le plafond du jeu monte en dôme au-dessus de la chapelle, comme le faisait là la voûte de notre effet : un seul dôme régulier posé sur les quatre colonnes autour de l'autel, juste assez haut pour passer au-dessus du baldaquin de l'autel. Où, quelle largeur et quelle hauteur viennent des pièces propres du jeu (mesurées à partir des fichiers de votre jeu, le baldaquin trouvé dans le jeu tel qu'il est dessiné) ; la pierre propre de la cathédrale, éclairée par ses bougies. Le reste de la cathédrale garde le plafond plat à sa hauteur. VR F4 seulement. Désactivé : le plafond plat. En direct.
 ceiling.game_ceiling_dome_size.label = Dôme de la cathédrale : taille
@@ -2473,6 +2566,8 @@ bow.draw_shoots_arrow.label = Corde tendue : le relâchement tire la flèche pro
 bow.draw_shoots_arrow.tip = Le relâchement de la traction appuie l'attaque du jeu - le A de la manette. Le jeu lance la compétence que contient son emplacement A : un sort, un cri de guerre ou une compétence de mêlée y est lancé à la place, et aucune flèche ne vole (la corde se tend, rien ne sort). Activé : pour l'appui propre du relâchement, une compétence sur A qui n'est pas une compétence d'arc est lue comme l'Attaque simple, la flèche propre de l'arc ; une compétence d'arc sur A (Tir multiple, Fusillade...) reste, et une compétence armée depuis le carquois passe en premier. Le bouton A lui-même, les autres armes et les autres emplacements restent ceux du jeu. Désactivé : le relâchement lance ce que contient l'emplacement A. Immédiat.
 bow.arrow_flight.label = Arc : dessiner nous-mêmes la flèche tirée, de l'arc le long de la ligne du tir
 bow.arrow_flight.tip = Première personne (F4). Le jeu dessine sa flèche à plat, depuis la poitrine du héros. Activé : la flèche (ou le carreau) que vous tirez quitte l'arc et vole le long de la ligne du tir - avec « viser en haut et en bas » activé, en haut ou en bas vers ce que la ligne a rencontré : le corps d'un monstre, ou le sol (où elle reste plantée quand quelque chose se trouve près). Elle arrive quand arrive la flèche propre du jeu. C'est le modèle de flèche propre du jeu, posé là où nous le dessinons ; le projectile du jeu - son vol, son impact, ses dégâts - est celui du jeu. Les flèches latérales de Tir multiple, celles de Fusillade et la Flèche guidée quittent l'arc et rejoignent leur propre trajectoire. Désactivé : le jeu dessine ses flèches. Immédiat.
+bow.arrow_flight_flat.label = À plat : la flèche vole dans le réticule
+bow.arrow_flight_flat.tip = Première et troisième personne, avec un arc ou une arbalète : la flèche (ou le carreau) que vous tirez est dessinée partant de juste sous votre œil (première personne) ou de la poitrine du héros (troisième personne) et volant vers ce que vise le réticule - le corps d'un monstre, ou le sol, où elle reste plantée. Elle arrive quand la flèche propre du jeu arrive ; le projectile du jeu - son vol, son impact, ses dégâts - est celui du jeu. Les flèches latérales de Multiple Shot, celles de Strafe et de Guided Arrow suivent leur propre trajet. Décoché : le jeu dessine ses flèches à plat, depuis le corps du héros.
 bow.arrow_flight_straight.label = Arc : la flèche tirée vole droit le long de la ligne du tir
 bow.arrow_flight_straight.tip = Avec « dessiner nous-mêmes la flèche tirée » : une flèche dont la ligne n'a rien rencontré (visée haut et bas désactivée, un tir en l'air) vole droit le long de la ligne sur laquelle elle a été dessinée, depuis l'arc - sans courbe. Désactivé : elle quitte l'arc et bascule sur la trajectoire propre du jeu, qui part de votre corps à côté de la ligne, sur les premiers 2,5 m. Les flèches latérales de Tir multiple et de Fusillade, et la Flèche guidée, basculent sur leurs propres trajectoires dans les deux cas. Immédiat.
 bow.shot_line_hold.label = Corde tendue : le tir garde la ligne de tension jusqu'à ce que le jeu le prenne
@@ -3755,6 +3850,8 @@ multiplayer.pose_share_legs.label = Leurs jambes marchent dans le sens où ils v
 multiplayer.pose_share_legs.tip = Avec la case ci-dessus : leurs jambes marchent selon leur déplacement - en avant, en arrière, de côté - tandis que leur bassin fait face à où ils regardent ; la marche du jeu dans les limites de « la marche du jeu à +- ceci » (Body). Les pieds restent posés tant qu'ils portent le corps ; les genoux ne plient que vers l'avant. Il faut la bibliothèque de marche d2r_vr_gait.dll dans d2rloader\d2r_vr_libs (sinon la marche du jeu). Toute vue. Immédiat.
 multiplayer.pose_share_held.label = Voir ce que tiennent leurs mains (potions, objets, accessoires) et ce qu'ils lancent
 multiplayer.pose_share_held.tip = Ce que vos mains tiennent part vers les autres avec votre pose, et le leur est dessiné pour vous : une potion de ceinture en main, lâchée ou vidée, un objet ramassé au sol, un accessoire du niveau - une jarre, un livre, une tasse - en main, en vol tel qu'il a été lancé, et là où il s'est arrêté. Leurs potions et objets sont des copies des modèles du jeu lui-même ; leurs accessoires sont ceux du niveau, déplacés là où ils les ont (avec les accessoires renversés, près de vous, en F4). Visuel uniquement : l'usage de la potion, les objets et les accessoires restent ceux de chaque jeu. Immédiat.
+multiplayer.pose_share_grab.label = Voir les corps qu'ils tiennent, renversent et lancent - et leur laisser voir les miens
+multiplayer.pose_share_grab.tip = Un corps que votre main tient (« Soulever et lancer un humanoïde saisi » : pris, soulevé, porté) va aux autres avec votre pose - quel monstre, le membre et le point que votre main a pris, votre paume, et le lancer au moment où vous lâchez - et les leurs pendent à leurs mains pour vous, dessinés par votre propre ragdoll au même membre et au même point et lancés quand ils lâchent. Un coup de vous qui renverse, fait chanceler ou repousse un humanoïde part aussi (le membre et le point touchés, la vitesse à laquelle il a envoyé le corps), et les leurs renversent votre propre dessin de lui de la même façon. Nécessite « Soulever et lancer un humanoïde saisi » ou « Un coup violent renverse un humanoïde » activé ici et la bibliothèque de poids ; un monstre dont votre jeu ne s'est pas approché n'est pas dessiné. Visuel seulement : la vraie place du monstre et le jeu restent ceux de chaque jeu. Immédiat. F4 seulement.
 
 # ===== Tab: Debug =====
 tab.debug = Débogage
@@ -3810,6 +3907,8 @@ debug.walk_start_log.label = Journaliser chaque démarrage de marche de BodyWalk
 debug.walk_start_log.tip = Une ligne dans le journal ("walk start (BodyWalk): ...") chaque fois que le stick de BodyWalk quitte le repos après une demi-seconde à l'arrêt : le moment où il a quitté le repos, puis les millisecondes jusqu'à ce qu'il dépasse de lui-même la zone morte du jeu, jusqu'à ce que la marche du jeu reçoive un vecteur (plus tôt avec « La marche de BodyWalk démarre à partir de »), et jusqu'à ce que la position du héros bouge. La moitié propre à BodyWalk est le « Walk Start Timing » de son onglet Debug ("STEP START: first step ..."), sur la même horloge. Lecture seule : rien n'est changé dans le jeu. En direct.
 debug.bow_latency.label = Journaliser où passe le temps entre un relâchement et sa flèche / son projectile lancé
 debug.bow_latency.tip = OpenXR natif, « Arc : tendre la corde à deux mains » ou un geste de lancer activé. Une ligne dans le journal pour chaque tir d'arc et chaque lancer : les millisecondes après le lâcher jusqu'à l'appui du geste, au bouton de la manette qui atteint le jeu, au mode d'attaque ou de lancer du héros, à la rotation du corps vers la visée, à la ligne d'animation sur laquelle tourne l'action (nom, images, l'image d'action), à la création du projectile propre du jeu (lecture seule : la création de projectile du jeu est surveillée, rien n'est changé) et au client qui montre un projectile. Rien n'est dessiné et rien n'est changé dans le jeu. Immédiat.
+debug.missile_probe.label = Journaliser chaque projectile que le tir ou le lancer d'un joueur crée (la création du serveur, lecture seule)
+debug.missile_probe.tip = Une ligne dans le journal pour chaque projectile que le serveur du jeu crée pour un joueur - une flèche, un carreau, chaque flèche d'un Multiple Shot, un javelot, un couteau ou une hache de jet, une potion : sa classe, le site d'appel du jeu, les cellules de départ et de cible, le cap, l'unité cible s'il y en a une et chaque nombre de sa création, avec tout le bloc en hexadécimal une fois par tir ; puis une ligne par tir (combien de projectiles, les angles de l'éventail). Hors ligne et en tant qu'hôte seulement (le serveur d'un joueur connecté est celui de l'hôte). Lecture seule : rien n'est changé dans le jeu. Immédiat.
 debug.shot_trace.label = Journaliser ce que fait le jeu de chacune de nos attaques
 debug.shot_trace.tip = Activé : pour chaque attaque que le plugin presse (un tir d'arc, un coup, un lancer), de son appui jusqu'à 1,5 s après, le journal dit chaque clic de carte (avec les drapeaux Rester immobile et Courir qu'il porte), la commande que le clic du jeu en construit, et chaque commande passant par l'entonnoir du jeu avec son chemin de retour dans la pile. Pour comprendre pourquoi le jeu fait parfois courir le héros après un tir. Lecture seule. Demande « Les attaques ne font jamais marcher le héros » activé. Immédiat.
 debug.game_sky_test.label = Ciel du jeu : un autre modèle pour le dôme (test)
@@ -3838,6 +3937,8 @@ debug.log_async_auto.label = Écrire le journal depuis un thread dédié là où
 debug.log_async_auto.tip = Avec celle du dessus désactivée, l'écriture de chaque ligne du journal est chronométrée. Là où le fichier du journal est lent sur ce PC - 8 des 16 dernières lignes ont pris 5 ms ou plus (un antivirus, un disque lent ; le journal d'un joueur avait 29 ms par ligne, et chaque lancer d'Orbe gelé arrêtait le jeu ~330 ms pour ses onze lignes) - les lignes vont à ce thread pour le reste de la session, et le journal le dit une fois. À environ 1 ms par ligne rien ne change. Désactivé : la vitesse du journal n'est pas surveillée, comme avant. Immédiat.
 debug.dred.label = Dire pourquoi le périphérique du GPU a été perdu (DRED)
 debug.dred.tip = Le jeu se termine - après une vérification échouée dans son propre code DX12, un instant avant que le runtime du casque journalise « HRESULT failure [887a0005] » - quand le périphérique graphique est retiré (un blocage du GPU, un défaut de page, une réinitialisation du pilote). Activé : le DRED de Windows est demandé avant que le jeu crée son périphérique, et à l'instant où le périphérique part le journal (d2r-vr-vrcam.log) et d2rloader\logs\d2r_vr_gpu_fault.txt disent pourquoi : la raison, ce que chaque liste de commandes avait fait quand le GPU s'est arrêté, l'adresse d'un défaut de page et ce qui y était alloué ou libéré, et les derniers événements du plugin qui touchent à la mémoire du GPU. Envoyez ce fichier. Cela coûte au runtime un repère entre les commandes. Demande de relancer le jeu. Désactivé : la perte du périphérique est toujours signalée, avec sa seule raison.
+debug.dred_events.label = ... et nommer les événements du jeu où le GPU s'est arrêté
+debug.dred_events.tip = Avec DRED : le rapport nomme aussi les événements du jeu ouverts là où chaque liste de commandes inachevée s'est arrêtée (Windows garde le texte de chaque marqueur d'événement du jeu - Windows 10 2004 et plus récent), si bien qu'un blocage dit dans quel dessin du jeu il était, pas seulement « DrawIndexedInstanced ». Coûte un peu. Prend effet au prochain démarrage du jeu.
 debug.d3d12_validation.label = Couche de débogage D3D12 : erreurs dans le journal (lent)
 debug.d3d12_validation.tip = Pour trouver ce qui fait tomber le périphérique graphique. Demande la fonctionnalité optionnelle de Windows Outils graphiques. Activé : avant que le jeu crée son périphérique, la couche de débogage D3D12 est activée, et ses erreurs et avertissements vont dans le journal (d2r-vr-vrcam.log) dans ses propres mots - une barrière qui nomme le mauvais état, une copie au-delà de la fin d'un tampon, une ressource libérée alors qu'une liste qui la nomme n'a pas tourné. Le jeu tourne bien plus lentement : pour un test, pas pour jouer. Demande de relancer le jeu. (d2r_vr.ini : 2 vérifie aussi chaque accès de shader sur le GPU, dix fois plus lent encore - pour une reproduction à plat seulement.)
 debug.stall_guard.label = Libérer une file GPU définitivement immobile
@@ -4236,6 +4337,8 @@ vr.hset.direct.right_b.label = B droit
 vr.hset.direct.right_stick.label = Clic du stick droit
 vr.hset.direct.right_stick_hold.label = Stick droit, appui long
 vr.hset.direct.right_menu.label = Bouton menu droit
+vr.hset.hands.left_handed.label = Gaucher
+vr.hset.hands.left_handed.detail = Échanger les manettes : la gauche tient l'arme (F4)
 vr.hset.openxr.haptics.label = Vibration des manettes
 vr.hset.openxr.haptics.detail = Des impulsions dans les manettes selon ce qui se passe (F4)
 vr.hset.openxr.haptics_scale.label = Intensité
@@ -4306,6 +4409,8 @@ vr.hset.hands.belt_models.label = Potions sur la ceinture
 vr.hset.hands.belt_models.detail = Les modèles de potion du jeu sur les hanches du héros
 vr.hset.@preset.preset.label = Préréglage de qualité
 vr.hset.@preset.preset.detail = Pomme de terre, Minimale, Moyenne - anneaux de salles et modèles dès le prochain démarrage
+vr.hset.@distance.stop.label = Distance d'affichage
+vr.hset.@distance.stop.detail = Proche (1) - loin (7) : anneaux de salles, modèles, le brouillard. 2 = celle de Medium, par défaut
 vr.hset.stereo.pair_per_tick.label = Type de rendu
 vr.hset.stereo.pair_per_tick.detail = Natif deux passes / une passe / yeux en alternance, FlatVR stéréo / profondeur (une passe : dès le prochain lancement du jeu)
 vr.hset.sky.game_sky.label = Ciel dessiné par
@@ -4354,6 +4459,8 @@ vr.hset.render.game_outline.label = Contour de survol du jeu
 vr.hset.render.game_outline.detail = Une clé du Préréglage de qualité ([render] game_outline)
 vr.hset.render.potato_light.label = Lumière Pomme de terre
 vr.hset.render.potato_light.detail = Une clé du Préréglage de qualité ([render] potato_light)
+vr.hset.render.potato_light_game.label = Lumière Potato aux couleurs du jeu
+vr.hset.render.potato_light_game.detail = Une clé du préréglage de qualité ([render] potato_light_game)
 vr.hset.render.rings.label = Anneaux de salles
 vr.hset.render.rings.detail = Une clé du Préréglage de qualité ([render] rings)
 vr.hset.render.model_radius.label = Rayon des modèles
@@ -4362,16 +4469,16 @@ vr.hset.render.big_radius.label = Rayon des grands objets
 vr.hset.render.big_radius.detail = Une clé du Préréglage de qualité ([render] big_radius)
 vr.hset.fog.light.label = Brouillard léger
 vr.hset.fog.light.detail = Une clé du Préréglage de qualité ([fog] light)
-vr.hset.fog.start.label = Début du brouillard
-vr.hset.fog.start.detail = Une clé du Préréglage de qualité ([fog] start)
-vr.hset.fog.end.label = Brouillard total
-vr.hset.fog.end.detail = Une clé du Préréglage de qualité ([fog] end)
-vr.hset.fog.caves.label = Brouillard en grotte
-vr.hset.fog.caves.detail = Une clé du Préréglage de qualité ([fog] caves)
-vr.hset.fog.caves_start.label = Début du brouillard en grotte
-vr.hset.fog.caves_start.detail = Une clé du Préréglage de qualité ([fog] caves_start)
-vr.hset.fog.caves_end.label = Brouillard total en grotte
-vr.hset.fog.caves_end.detail = Une clé du Préréglage de qualité ([fog] caves_end)
+vr.hset.fog.game_fog_start.label = Début du brouillard
+vr.hset.fog.game_fog_start.detail = Une clé du préréglage de qualité ([fog] game_fog_start)
+vr.hset.fog.game_fog_end.label = Brouillard total
+vr.hset.fog.game_fog_end.detail = Une clé du préréglage de qualité ([fog] game_fog_end)
+vr.hset.fog.game_fog_caves.label = Brouillard dans les grottes
+vr.hset.fog.game_fog_caves.detail = Une clé du préréglage de qualité ([fog] game_fog_caves)
+vr.hset.fog.game_fog_caves_start.label = Début du brouillard dans les grottes
+vr.hset.fog.game_fog_caves_start.detail = Une clé du préréglage de qualité ([fog] game_fog_caves_start)
+vr.hset.fog.game_fog_caves_end.label = Brouillard total dans les grottes
+vr.hset.fog.game_fog_caves_end.detail = Une clé du préréglage de qualité ([fog] game_fog_caves_end)
 vr.hset.fog.game_fog_mist.label = Le brouillard du jeu sur sa brume
 vr.hset.fog.game_fog_mist.detail = Une clé du Préréglage de qualité ([fog] game_fog_mist)
 vr.hset.fog.game_fog_height.label = Le brouillard du jeu éclairci avec la hauteur
@@ -4390,6 +4497,10 @@ vr.hset.ceiling.steps.label = Relief du plafond des grottes
 vr.hset.ceiling.steps.detail = Une clé du Préréglage de qualité ([ceiling] steps)
 vr.hset.stereo.headset_rate.label = Fréquence du casque
 vr.hset.stereo.headset_rate.detail = Une clé du Préréglage de qualité ([stereo] headset_rate)
+vr.hset.render.monitor_eye.label = Le moniteur montre un œil
+vr.hset.render.monitor_eye.detail = Une clé du préréglage de qualité ([render] monitor_eye)
+vr.hset.openxr.hands_over_panels.label = Vos mains au-dessus de l'onglet Gestes
+vr.hset.openxr.hands_over_panels.detail = Une clé du préréglage de qualité ([openxr] hands_over_panels)
 vr.hset.render.vr_resolution.label = Rendu RV : mode
 vr.hset.render.vr_resolution.detail = 0 fenêtre, 1 casque, 2-6 un ancien carré
 vr.hset.render.vr_resolution_px.label = Rendu RV : côté
@@ -4589,9 +4700,9 @@ button.clear = Effacer
 status.vrs.none = Cette carte graphique n'a pas d'ombrage à cadence variable (niveau 2) : le rendu fovéal et la cadence de l'éclairage de l'herbe ne peuvent pas y fonctionner - D2R VR les laisse désactivés, quoi qu'il y ait de coché.
 status.draw_distance.stop = {n} sur {count} :
 status.draw_distance.custom = Personnalisé (une valeur changée à la main) :
-status.draw_distance.values = {rings} anneaux de salles, modèles jusqu'à {model}, brouillard de {fs} à {fe} (dans les grottes de {cs} à {ce}), le dôme de ciel du jeu à {sky} m. Tout est immédiat - aucun redémarrage.
+status.draw_distance.reach = {rings} anneaux de salles, modèles jusqu'à {model}, brouillard {fs} à {fe} (dans les grottes {cs} à {ce}). Tout immédiat - pas de redémarrage.
+status.draw_distance.default = La valeur par défaut (la distance du préréglage Medium).
 status.draw_distance.fog_off = Le brouillard est désactivé (Performances) : le monde dessiné finit dans le vide.
-status.draw_distance.no_game_sky = Le dôme céleste ne compte que tant que le jeu dessine le ciel (onglet Ciel).
 res.tip = La taille de l'image du jeu dans le casque : un carré, son côté en pixels, quelle que soit la taille de la fenêtre du jeu - la fenêtre garde sa taille. Faites glisser jusqu'à n'importe quelle taille de 1024 à 4096 (par pas de 64) ; l'extrémité gauche, « taille de la fenêtre », est Bureau : l'image est celle de la fenêtre, comme avant.\n\nPlus grand est plus net et plus coûteux, en pixels - face à 2048 x 2048 :
 res.tip_headset_max = Votre casque{headset} recommande {w} x {h} par œil et accepte jusqu'à {mw} x {mh} ; une taille au-delà est réduite à celle-ci. (Lu au dernier démarrage du jeu avec un casque.)
 res.tip_headset = Votre casque{headset} recommande {w} x {h} par œil. (Lu au dernier démarrage du jeu avec un casque.)
@@ -5182,6 +5293,8 @@ vr.rules.move_while_attacking = Lance et arc : continuer à marcher après le co
 vr.rules.melee_direct_client_cleave = Un coup à deux mains touche chaque monstre (RV)
 vr.rules.quick_blow = Coup rapide : l'élan n'arrête jamais le héros (RV)
 vr.rules.quick_blow_faster = Coup rapide : plus vite que l'animation
+vr.rules.share_hit_outcomes = Envoyer aux joueurs connectés ce que leurs coups ont fait
+vr.rules.shot_at_release = La flèche va là où vous visez quand elle quitte l'arc
 vr.rules.walk = Marche
 vr.rules.walk_or_run = Marche ou course
 vr.rules.spear_and_bow = Lance et arc
@@ -5276,6 +5389,7 @@ vr.preset.potato = Pomme de terre
 vr.preset.low = Minimale
 vr.preset.medium = Moyenne
 vr.preset.custom = Personnalisé
+vr.distance.default = 2 (par défaut)
 vr.party.map = La carte du jeu montre
 vr.party.map.off = Votre groupe est caché : alliés sur aucune carte (Afficher le groupe du jeu)
 vr.party.map.unknown = Afficher le groupe / Afficher les noms du groupe du jeu (pas encore lu)
@@ -5526,6 +5640,38 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+render.floors_stay.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
+render.floors_stay.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être une marche plus haut ou plus bas - depuis la caméra du jeu au-dessus, personne ne le voit ; depuis la nôtre, le sol glisse : des blocs poussés vers le haut, vers le bas et sur le côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée la première fois jusqu'à ce que vous quittiez la partie. La contrepartie : le jeu corrige aussi une salle dessinée à la mauvaise hauteur (une marche vue de loin, comme près de la porte de la Forteresse du Pandémonium) quand il la redessine à votre approche - avec ceci activé, cette correction ne vient pas. L'image seulement ; rien du combat ni des chemins ne change. En direct. Désactivé (par défaut) : les hauteurs propres du jeu.
+fog.game_fog.label = Qui dessine le brouillard
+fog.game_fog.tip = Qui dessine le brouillard de distance. Le brouillard du jeu (nouveau) : la passe de brouillard propre au jeu avec nos valeurs (Début du brouillard / Brouillard total ci-dessous) - aucun temps d'image de notre part, dessiné que « Brouillard de distance » soit coché ou non (RV F4 ; le jeu plat aussi avec « Le jeu les dessine aussi en jeu plat » ; ses propres options dans l'onglet Monde). Notre effet (ancien) : le shader de brouillard pose le brouillard selon la profondeur. L'un ou l'autre va avec l'un ou l'autre ciel (« Ciel dessiné par »). Effet immédiat.
+fog.game_fog.choice1 = Le brouillard du jeu (nouveau)
+fog.start.label = Début du brouillard
+fog.start.tip = Là où le brouillard commence. Unités du monde (le héros mesure ~7,5).
+fog.end.label = Brouillard total
+fog.caves_start.label = Début du brouillard en grotte
+fog.caves_start.tip = Là où le brouillard commence dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
+fog.caves_end.label = Brouillard total en grotte
+fog.caves_end.tip = Là où le brouillard est total dans les grottes, donjons et cryptes. Unités du monde (le héros mesure ~7,5).
+fog.enabled.tip#2 = Un brouillard de distance. Qui le dessine : « Qui dessine le brouillard » de l'onglet Ciel (notre effet, ou le jeu lui-même). Avec le ciel activé, il se fond dans le ciel.
+group.fog = Brouillard
+group.fog.help = Le brouillard de distance, et des corrections pour les effets de profondeur du jeu vus depuis notre caméra. Réglez où le brouillard est total, son atténuation, le brouillard dans les grottes et sa couleur, si le feu et les sorts sont épargnés, ainsi que les corrections pour les brouillards propres du jeu, les murs devant le héros, les toits et l'éclairage avec une fenêtre carrée.
+fog.end.tip#2 = Là où le brouillard est total. Unités du monde (le héros mesure ~7,5). Avec le brouillard du jeu, sous Début du brouillard les deux sont pris dans l'autre sens (brouillard de notre effet : total juste après Début du brouillard).
+fog.caves.label = Brouillard dans les grottes et donjons
+fog.caves_strength.label = Intensité du brouillard en grotte
+fog.caves_strength.tip = À quel point le brouillard total couvre dans les grottes : 1 = le fond disparaît dans la couleur du brouillard, moins = il reste visible au travers.
+group.arcane_sanctuary.help = Le brouillard dans le Sanctuaire des Arcanes (acte 2), à part de celui des grottes : ce n'est pas l'extérieur, il prend donc le brouillard des grottes jusqu'à ce que « Son propre brouillard » soit coché. S'il y a du brouillard sous son propre ciel, cela se règle dans l'onglet Ciel (Sanctuaire des Arcanes : le brouillard se fond dans son ciel).
+vr.hset.fog.start.label = Début du brouillard
+vr.hset.fog.start.detail = Une clé du Préréglage de qualité ([fog] start)
+vr.hset.fog.end.label = Brouillard total
+vr.hset.fog.end.detail = Une clé du Préréglage de qualité ([fog] end)
+vr.hset.fog.caves.label = Brouillard en grotte
+vr.hset.fog.caves.detail = Une clé du Préréglage de qualité ([fog] caves)
+vr.hset.fog.caves_start.label = Début du brouillard en grotte
+vr.hset.fog.caves_start.detail = Une clé du Préréglage de qualité ([fog] caves_start)
+vr.hset.fog.caves_end.label = Brouillard total en grotte
+vr.hset.fog.caves_end.detail = Une clé du Préréglage de qualité ([fog] caves_end)
+status.draw_distance.values = {rings} anneaux de salles, modèles jusqu'à {model}, brouillard de {fs} à {fe} (dans les grottes de {cs} à {ce}), le dôme de ciel du jeu à {sky} m. Tout est immédiat - aucun redémarrage.
+status.draw_distance.no_game_sky = Le dôme céleste ne compte que tant que le jeu dessine le ciel (onglet Ciel).
 vr.autotune.on = activé
 vr.autotune.k.fog_before_fx = Brouillard avant les effets
 vr.autotune.k.sky = Ciel

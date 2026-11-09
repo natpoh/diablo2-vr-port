@@ -1,6 +1,10 @@
 // vr/input/flat_click.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M10); what it gives: vr/input/input.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "../death_ragdoll.h"   // UnitRowFlags: a monster's MonStats row flags (an NPC: [input] vr_body_pick_hand)
+#include "../client_verdict.h"  // a monster's owner field ([input] flat_shot_at_crosshair)
+#include "../flat_arrow.h"      // [bow] arrow_flight_flat
+#include "../flat_shot.h"       // [input] flat_shot_at_crosshair
+#include "../shot_release.h"    // the shot at release: the hero's arrow turned at the server's create
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -505,6 +509,30 @@ bool FlatAimBody(float world[3], ULONGLONG maxAgeMs, int* ageMs) {
     return true;
 }
 
+// [bow] arrow_flight_flat (vr/flat_arrow.h): the crosshair's ray as the game's mouse code last asked for it, and what it met - the shot click notes its line
+// from this. The game's thread writes it (the mouse's point, every frame) and reads it (the click).
+struct CrossSeen {
+    bool ok = false;
+    float o[3] = {}, d[3] = {};
+    bool floor = false;
+    float floorAt[3] = {};
+    bool body = false, bodyMonster = false;
+    float bodyAt[3] = {}, cellX = 0.0f, cellZ = 0.0f;
+    ULONGLONG at = 0;
+};
+SRWLOCK g_crossRayLock = SRWLOCK_INIT;
+CrossSeen g_crossSeen;
+void StoreCross(const CrossSeen& c) {
+    AcquireSRWLockExclusive(&g_crossRayLock);
+    g_crossSeen = c;
+    ReleaseSRWLockExclusive(&g_crossRayLock);
+}
+
+bool RangedInHand();   // (below, by the map click)
+// [input] flat_shot_at_crosshair: a ray into the sky meets no ground, and the game, with no point, made no shot at all - with a ranged weapon in hand the
+// point goes this far out along the ray's own heading instead (the shot click puts it flatarrow::kFarCells out again)
+constexpr float kSkyCells = 20.0f;
+
 bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool gameOk = OrigMouseGround(mgr, x, y, pixel);
     if (g_portalForce.load(std::memory_order_acquire) && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
@@ -517,22 +545,41 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     // (unticked, [debug] flat_pick still works it out for its lines; only the tick hands it to the game)
     const bool apply = g_set.flatAimGround.load();
     const bool bodyPick = g_set.flatBodyPick.load() && !gamestate::MenuOpen();
-    if (!x || !y || !mgr || !(apply || bodyPick || g_set.flatPickLog.load()) || g_set.platform.load() != 0 || !g_enabled.load()) return gameOk;
+    const bool arrow = arrowflightwire::On() && ShooterActive();   // [bow] arrow_flight_flat: what the crosshair met, for the shot click
+    // [input] flat_shot_at_crosshair: the same, for the heading of the shot click's point (and the sky's point below)
+    const bool shotAim = g_set.flatShotAtCrosshair.load() && KeyMoveMode() && ShooterActive() && !gamestate::MenuOpen() && RangedInHand();
+    const bool keep = arrow || shotAim;
+    if (!x || !y || !mgr || !(apply || bodyPick || keep || g_set.flatPickLog.load()) || g_set.platform.load() != 0 || !g_enabled.load()) return gameOk;
     uint64_t filter = 0;
     float floor[3] = {NAN, NAN, NAN};
     const bool floorOk = FloorFilter(&filter) && MouseRayHit(mgr, &filter, pixel, 0, floor);
     const float game[3] = {gameOk ? *x * flatground::kRenderPerCell : NAN, 0.0f, gameOk ? *y * flatground::kRenderPerCell : NAN};
     const flatground::Pick p = flatground::Choose(gameOk, game, floorOk, floor);
     if (apply && p.ours) { *x = p.gx; *y = p.gz; }
-    if (bodyPick) {   // [input] flat_body_pick: a body or an object met before the ground - the cell its body stands for goes to the game
-        float px[2], o[3], d[3];
-        memcpy(px, &pixel, sizeof px);
-        if (d2rcam::PickRay(px[0], px[1], o, d)) {
+    float px[2], o[3], d[3];
+    memcpy(px, &pixel, sizeof px);
+    CrossSeen cross;   // [bow] arrow_flight_flat
+    if ((bodyPick || keep) && d2rcam::PickRay(px[0], px[1], o, d)) {
+        cross.ok = true;
+        cross.floor = floorOk;
+        cross.at = GetTickCount64();
+        for (int i = 0; i < 3; ++i) { cross.o[i] = o[i]; cross.d[i] = d[i]; cross.floorAt[i] = floor[i]; }
+    }
+    if (bodyPick && cross.ok) {   // [input] flat_body_pick: a body or an object met before the ground - the cell its body stands for goes to the game
+        {
             const float tFloor = floorOk ? (floor[0] - o[0]) * d[0] + (floor[1] - o[1]) * d[1] + (floor[2] - o[2]) * d[2] : INFINITY;
             flatbody::Hit hit;
             flatbody::Cap c;
             int n = 0;
             if (BodyCell(o, d, tFloor, &hit, &c, &n)) {
+                if (keep) {   // [bow] arrow_flight_flat / flat_shot_at_crosshair: the body met (a monster's or an NPC's: the arrow flies on past it; an object's: it does not stick)
+                    cross.body = true;
+                    cross.bodyMonster = c.body;
+                    for (int i = 0; i < 3; ++i) cross.bodyAt[i] = o[i] + d[i] * hit.t;
+                    cross.cellX = hit.cellX;
+                    cross.cellZ = hit.cellZ;
+                    StoreCross(cross);
+                }
                 *x = hit.cellX;
                 *y = hit.cellZ;
                 if (c.body && !c.npc) NoteFlatAimBody(o, d, hit.t);   // [body] flat_aim_tilt_target: the swing's arms come to this point
@@ -546,6 +593,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
             }
         }
     }
+    if (keep && cross.ok) StoreCross(cross);   // [bow] arrow_flight_flat / flat_shot_at_crosshair: the floor met, or nothing
     {   // once: that it acts, and the first time it moves the point by over a cell
         static int told = 0;
         if (told == 0 && floorOk && apply) { told = 1; Log("vrcam: flat: the mouse's point is the ground drawn under it - raised floors too ([input] flat_aim_ground)"); }
@@ -569,7 +617,21 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     AcquireSRWLockExclusive(&g_mouseGroundLock);
     g_mouseGroundSeen = s;
     ReleaseSRWLockExclusive(&g_mouseGroundLock);
-    return apply ? p.ok : gameOk;
+    const bool ok = apply ? p.ok : gameOk;
+    if (!ok && shotAim && cross.ok && !floorOk && d[0] * d[0] + d[2] * d[2] > 1e-6f) {   // the sky: along the ray's heading, so the bow shoots
+        float feet[3], hx, hz, sx, sz;
+        AcquireSRWLockShared(&g_lookLock);
+        memcpy(feet, g_lookAt, sizeof feet);
+        ReleaseSRWLockShared(&g_lookLock);
+        if (flatarrow::HeroCell(feet, &hx, &hz) && aimpoint::Point(hx, hz, d[0], d[2], kSkyCells, &sx, &sz)) {
+            *x = sx;
+            *y = sz;
+            static bool told = false;
+            if (!told) { told = true; Log("vrcam: flat: the crosshair is in the sky - with a ranged weapon the shot goes along its heading ([input] flat_shot_at_crosshair)"); }
+            return true;
+        }
+    }
+    return ok;
 }
 
 // Flat only, with the camera's own hooks; tried twice a second until the bytes are there (the physics code may decrypt late).
@@ -734,6 +796,143 @@ void FlatPickClick(void* unit, int type, int x, int y, uint64_t flags) {
         LogF("vrcam: flat pick:   the ray met no floor of the game's (the sky, the void) - the game's own point %.1f, %.1f%s", s.pick.gameGx, s.pick.gameGz, w1);
 }
 
+// [bow] arrow_flight_flat (vr/flat_arrow.h): a flat shot click with a bow or crossbow - its line from the release point to what the crosshair met, noted for
+// the drawn arrow (vr/arrow_flight_wire.h). The aim is the one at the click (the shot at release comes later: docs/notes/shot_at_release.md).
+// The shot's line from what the crosshair met lately (the release point, the line, the heading), with its input (the feet, upm). False: none lately.
+bool FlatShotLine(flatarrow::Line* out, flatarrow::LineIn* inOut) {
+    AcquireSRWLockShared(&g_crossRayLock);
+    const CrossSeen cs = g_crossSeen;
+    ReleaseSRWLockShared(&g_crossRayLock);
+    if (!cs.ok || GetTickCount64() - cs.at > 300) return false;   // the mouse's point was not asked for lately: no line to give
+    flatarrow::LineIn& in = *inOut;
+    for (int i = 0; i < 3; ++i) { in.o[i] = cs.o[i]; in.d[i] = cs.d[i]; in.floorAt[i] = cs.floorAt[i]; in.bodyAt[i] = cs.bodyAt[i]; }
+    in.floor = cs.floor;
+    in.body = cs.body;
+    in.bodyMonster = cs.bodyMonster;
+    in.bodyCellX = cs.cellX;
+    in.bodyCellZ = cs.cellZ;
+    AcquireSRWLockShared(&g_lookLock);
+    memcpy(in.feet, g_lookAt, sizeof in.feet);
+    ReleaseSRWLockShared(&g_lookLock);
+    in.third = ThirdPerson();
+    // world units a metre: the first-person eye's height over the player's (third person's camera height is its own: the first person's is taken)
+    in.upm = std::max(1.0f, ThirdPerson() ? g_set.height.load() : ViewHeight()) / UserEyeHeightM();
+    *out = flatarrow::MakeLine(in);
+    return out->ok;
+}
+void NoteFlatShot(const flatarrow::Line& l, const flatarrow::LineIn& in) {
+    const float upm = in.upm;
+    const float start[3] = {l.start[0] / upm, l.start[1] / upm, l.start[2] / upm};
+    bowpitch::Result met;
+    if (l.target) {
+        met.hit = l.monster ? bowpitch::Hit::Monster : bowpitch::Hit::Floor;
+        met.at = bowpitch::V3{l.at[0] / upm, l.at[1] / upm, l.at[2] / upm};
+        met.groundKnown = l.stick;
+        met.gridDist = l.gridDist / upm;
+        met.theta = l.theta;
+        met.turned = true;
+    }
+    arrowflightwire::NoteShot(0, start, l.dir, l.theta, l.target ? &met : nullptr, in.feet, upm);
+}
+
+// The shot at release (vr/shot_release.h, docs/notes/shot_at_release.md): the server's create of the hero's arrow - its action frame, the arrow leaving the
+// bow - turns it to the crosshair of that moment (throw_born.cpp's create hook asks this on the server's thread; offline and as the host). The heading the
+// click that started the attack gave, so a Multiple Shot's fan turns as a whole; and the drawn arrow's line, noted again at the create.
+std::atomic<float> g_pressTheta{0.0f};
+std::atomic<ULONGLONG> g_pressAt{0};
+std::atomic<unsigned> g_pressSeq{0}, g_releaseNotedSeq{0};
+constexpr ULONGLONG kPressToCreateMs = 3000;   // a create this long after the click that started the attack is no shot of that click's (a slow bow: ~1 s)
+
+// The line of a flat shot as arrow_flight's shot (world units, the window from now): what NoteShot makes of it - for the other players without noting it here.
+arrowflight::Shot FlatShotOf(const flatarrow::Line& l, const flatarrow::LineIn& in) {
+    arrowflight::Shot s;
+    s.ok = true;
+    s.atMs = GetTickCount64();
+    s.start = arrowflight::V3{l.start[0], l.start[1], l.start[2]};
+    s.dir = arrowflight::V3{l.dir[0], l.dir[1], l.dir[2]};
+    s.theta = l.theta;
+    s.hero = arrowflight::V3{in.feet[0], in.feet[1], in.feet[2]};
+    s.upm = in.upm;
+    s.target = l.target;
+    s.monster = l.monster;
+    s.stick = l.stick;
+    s.at = arrowflight::V3{l.at[0], l.at[1], l.at[2]};
+    s.gridDist = l.gridDist;
+    return s;
+}
+bool BowInHandFlat() { const uint32_t w = gamestate::WeaponClass(); return w == D2RVR_WEAPON_BOW || w == D2RVR_WEAPON_CROSSBOW; }
+
+bool FlatReleaseAim(const throwborn::AimAsk& a, int* tx, int* ty) {
+    if (!g_enabled.load() || !g_set.shotAtRelease.load()) return false;   // [gameplay] shot_at_release (who hosts decides: the create is the host's)
+    uint32_t hero = 0;
+    if (!GestureHeroId(&hero) || hero != a.ownerId) return RemoteReleaseAim(a, tx, ty);   // another player's, in a game we host: by his line (vr/shot_share.h)
+    if (g_set.platform.load() != 0 || !shotrelease::Turns(a.cls)) return false;
+    const ULONGLONG at = g_pressAt.load(), now = GetTickCount64();
+    if (!at || now - at > kPressToCreateMs || !KeyMoveMode() || !ShooterActive() || gamestate::MenuOpen()) return false;   // no flat shot click of ours lately
+    flatarrow::Line line;
+    flatarrow::LineIn in;
+    if (!FlatShotLine(&line, &in)) return false;   // the crosshair now
+    shotrelease::In si;
+    si.cls = a.cls;
+    si.sx = a.sx; si.sy = a.sy;
+    si.tx = a.tx; si.ty = a.ty;
+    si.hasTarget = a.hasTarget;
+    si.targetUnit = a.targetUnit;
+    si.pressKnown = true;
+    si.pressTheta = g_pressTheta.load();
+    si.releaseTheta = line.theta;
+    const shotrelease::Out o = shotrelease::Decide(si);
+    if (!o.write) return false;
+    *tx = o.tx;
+    *ty = o.ty;
+    // the drawn arrow: the release's line, once a shot (the first create; a fan's side arrows join their own paths)
+    const unsigned seq = g_pressSeq.load();
+    if (g_releaseNotedSeq.exchange(seq) != seq) {
+        if (arrowflightwire::On()) NoteFlatShot(line, in);
+        ShareShot(FlatShotOf(line, in), (uint16_t)seq, false);   // the others draw it along the release's line too
+    }
+    static ULONGLONG told = 0;
+    if (now - told >= 2000) {
+        told = now;
+        LogF("vrcam: flat shot at release: the hero's %s turned %+.1f deg - the crosshair at the press %.1f deg, at the release %.1f deg; target %d, %d -> %d, %d (%u ms after the press)",
+             a.cls == (int32_t)arrowflight::kMultiArrow || a.cls == (int32_t)arrowflight::kMultiBolt ? "Multiple Shot arrow" : "arrow",
+             shotrelease::Wrap(o.toTheta - o.fromTheta) * 57.2957795f, si.pressTheta * 57.2957795f, line.theta * 57.2957795f, a.tx, a.ty, o.tx, o.ty, (unsigned)(now - at));
+    }
+    return true;
+}
+
+// [input] flat_shot_at_crosshair (vr/flat_shot.h): while the game's click runs, its own lookup of the unit under the pointer answers nothing (HookSpellHover
+// reads this) - a hostile monster hovered with a ranged weapon in hand is shot at the crosshair, not at the unit.
+thread_local bool t_flatClickNoHover = false;
+struct NoHoverScope {
+    bool was;
+    explicit NoHoverScope(bool on) : was(t_flatClickNoHover) { if (on) t_flatClickNoHover = true; }
+    ~NoHoverScope() { t_flatClickNoHover = was; }
+    NoHoverScope(const NoHoverScope&) = delete;
+    NoHoverScope& operator=(const NoHoverScope&) = delete;
+};
+bool RangedInHand() {
+    const uint32_t w = gamestate::WeaponClass(), t = gamestate::WeaponType();
+    return w == D2RVR_WEAPON_BOW || w == D2RVR_WEAPON_CROSSBOW || t == D2RVR_TYPE_JAVELIN || t == D2RVR_TYPE_THROWING;
+}
+// The hovered unit's facts for the decision (a monster: its mode and its owner's id, client_verdict.h's fields); the hero's area.
+void HoverFacts(void* hero, void* hover, flatshot::ClickIn* in) {
+    in->hover = hover != nullptr;
+    if (!hover) return;
+    uint32_t head[4] = {};
+    if (!SafeRead(head, hover, sizeof head)) return;
+    in->type = head[0];
+    in->mode = head[3];
+    if (in->type == flatshot::kTypeMonster) {
+        uintptr_t data = 0;
+        if (!SafeRead(&data, (const uint8_t*)hover + clientverdict::kMonsterData, sizeof data) || data < 0x10000 ||
+            !SafeRead(&in->owner, (const uint8_t*)data + clientverdict::kOwnerId, sizeof in->owner))
+            return;
+    }
+    in->hoverRead = true;
+    in->heroLevel = SewerLevel(reinterpret_cast<uintptr_t>(hero));
+}
+
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     // [gameplay] flat_move_while_attacking: after W A S D cut an attack's rest, the mouse's next attack waits until that animation would have
     // ended (the game's attack rate) - answered 1 as the game answers a click it took, so a held button goes on repeating (vr/move_attack.h ClickHold)
@@ -751,6 +950,42 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
         }
         return bareKnown == 1;
     };
+    // [input] flat_shot_at_crosshair: a hostile monster hovered with a ranged weapon in hand - the click as on bare ground, Stand Still, the hover hidden from it
+    bool noHover = false;
+    if (unit && mouseType && g_set.platform.load() == 0 && g_set.flatShotAtCrosshair.load() && g_enabled.load()) {
+        flatshot::ClickIn in;
+        in.flat = true;
+        in.shooter = KeyMoveMode() && ShooterActive();
+        in.portal = g_portalForce.load();
+        in.menu = gamestate::MenuOpen();
+        in.mouseType = true;
+        in.ranged = RangedInHand();
+        if (in.shooter && in.ranged && !in.portal && !in.menu) {
+            const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(unit);
+            void* hover = idx >= 0 && idx < 8 ? ((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) : nullptr;
+            HoverFacts(unit, hover, &in);
+            bareKnown = hover ? 0 : 1;
+        }
+        const flatshot::ClickOut o = flatshot::DecideClick(in);
+        if (o.click == flatshot::Click::Bare) {
+            if (g_hoverHooked.load()) {
+                noHover = true;
+                bareKnown = 1;
+                flags |= 1;
+                static ULONGLONG told = 0;
+                if (const ULONGLONG now = GetTickCount64(); now - told >= 2000) {
+                    told = now;
+                    LogF("vrcam: flat click type %d on a hostile monster - a shot at the crosshair, not at the unit ([input] flat_shot_at_crosshair)", type);
+                }
+            } else {
+                static bool told = false;
+                if (!told) {
+                    told = true;
+                    Log("vrcam: flat: a hostile monster hovered, but the game's hover lookup is not hooked - the click keeps the game's target ([input] flat_shot_at_crosshair)");
+                }
+            }
+        }
+    }
     if (unit && mouseType && !(flags & 0xFF)) {
         const bool shooter = g_set.flatClickShoot.load() && KeyMoveMode() && ShooterActive() && !g_portalForce.load();   // ([input] portal_auto's click is no shot)
         // VR first person ([gameplay] attack_in_place): a click on bare ground - from a mouse, the laser or a program - is a skill in
@@ -769,6 +1004,62 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
         }
     }
     if (g_set.flatPickLog.load() && unit && (type == 0 || type == 3) && KeyMoveMode() && ShooterActive()) FlatPickClick(unit, type, x, y, flags);
+    // a ranged weapon's shot click in flat mouse look (nothing hovered, or a hostile monster's hover hidden from it): its line from what the crosshair met
+    const bool rangedShot = unit && mouseType && g_set.platform.load() == 0 && g_enabled.load() && KeyMoveMode() && ShooterActive() && !g_portalForce.load() &&
+                            !gamestate::MenuOpen() && RangedInHand() && (noHover || bare());
+    flatarrow::Line line;
+    flatarrow::LineIn lineIn;
+    const bool lineOk = rangedShot && FlatShotLine(&line, &lineIn);
+    // [input] flat_shot_at_crosshair: the point goes flatarrow::kFarCells out along the crosshair's heading (the hero's cell to where it met a body or the
+    // floor, else the ray's own) - not the middle of a body's cell (an aim at the monster), and far enough that whole cells are no staircase of headings
+    if (lineOk && g_set.flatShotAtCrosshair.load()) {
+        float hx, hz, fx, fz;
+        if (flatarrow::HeroCell(lineIn.feet, &hx, &hz) && aimpoint::Point(hx, hz, cosf(line.theta), sinf(line.theta), flatarrow::kFarCells, &fx, &fz)) {
+            const int nx = (int)lroundf(fx), ny = (int)lroundf(fz);
+            static ULONGLONG told = 0;
+            if (const ULONGLONG now = GetTickCount64(); now - told >= 2000) {
+                told = now;
+                LogF("vrcam: flat shot: the point %d, %d -> %d, %d (%.0f cells out along the crosshair, heading %.1f deg, %s)", x, y, nx, ny, flatarrow::kFarCells,
+                     line.theta * 57.2957795f, line.monster ? "it met a body" : line.stick ? "it met the floor" : line.target ? "it met an object" : "it met nothing");
+            }
+            x = nx;
+            y = ny;
+        }
+    }
+    // [bow] arrow_flight_flat: a bow's or crossbow's shot notes the same line for the drawn arrow - only the click that starts an attack: a held button's
+    // click comes every frame, and one in the middle of the hero's attack starts nothing, yet wrote its own crosshair over the line of the click that did
+    // (Serg's test of 12190d86: the crosshair moved a few degrees during the animation, the game's arrow no longer matched and ours bent away to the side)
+    if (lineOk && arrowflightwire::On()) {
+        const uint32_t w = gamestate::WeaponClass();
+        if (w == D2RVR_WEAPON_BOW || w == D2RVR_WEAPON_CROSSBOW) {
+            g_heroUnit.store(unit);   // (the hero's id for arrow_flight: the controller's aim, which sets it in VR, may never run in flat)
+            uint32_t mode = 0;
+            if (!(GestureHeroMode(&mode) && bowlatency::IsActionMode((int)mode))) NoteFlatShot(line, lineIn);
+        }
+    }
+    // the shot at release (vr/shot_release.h): the heading the click that starts an attack gave - the server's create turns the arrows by how far the
+    // crosshair has turned since (FlatReleaseAim) - and the line to the other players (whatever this PC's own boxes: the host's decide the turn)
+    if (lineOk) {
+        uint32_t mode = 0;
+        const bool attacking = GestureHeroMode(&mode) && bowlatency::IsActionMode((int)mode);
+        if (!attacking) {
+            g_heroUnit.store(unit);
+            g_pressTheta.store(line.theta);
+            g_pressAt.store(GetTickCount64());
+            const unsigned seq = g_pressSeq.fetch_add(1) + 1;
+            if (BowInHandFlat()) ShareShot(FlatShotOf(line, lineIn), (uint16_t)seq, true);   // the press to the other players (vr/shot_share.h)
+        } else if (BowInHandFlat() && GetTickCount64() - g_pressAt.load() < kPressToCreateMs) {
+            // the attack goes on and the crosshair with it: the line again (the host turns our arrow by it at the create; the others draw it), at most 20 a second.
+            // A joined player's own arrow is created by the host's server, from that line: ours is drawn along it here too
+            static ULONGLONG sent = 0;
+            if (const ULONGLONG now = GetTickCount64(); now - sent >= 50) {
+                sent = now;
+                ShareShot(FlatShotOf(line, lineIn), (uint16_t)g_pressSeq.load(), false);
+                if (arrowflightwire::On() && posewire::Joined()) NoteFlatShot(line, lineIn);
+            }
+        }
+    }
+    NoHoverScope noHoverScope(noHover);   // [input] flat_shot_at_crosshair: the game's click sees nothing under the pointer
     shottrace::ClickTrace shotTrace(unit, type, x, y, flags);   // [debug] shot_trace: the click, and when it returns (nothing when no shot is watched)
     // [gameplay] block_stray_walk (F4): a walk or run to a point that comes out of this click is told by the click's type and by
     // whether anything is under the pointer (vr/stray_walk.h); the guard itself sits on the game's command funnel

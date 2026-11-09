@@ -6,6 +6,7 @@
 #include "../../flatvr_feed.h"   // [render] flatvr_feed: FlatVR's picture and depth without ReShade
 #include "../../resize_drain.h"   // [render] resize_drain: the GPU drained before the game resizes or releases DLSS, no stale replay
 #include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 at the load (shared/)
+#include "../../ecl_hook.h"   // [fog] game_fog_before_fx: the submission order seen (fogfx::OnExecute, the tap)
 #include "../../phantom_rect.h"   // [render] phantom_rects: the vignette pass only where its carriers are
 
 using namespace D2RL;
@@ -17,6 +18,8 @@ namespace gamefogvr {
 using namespace ::gamefogvr;
 bool Active();
 Fog Current();
+void ColourNow(float rgb[3]);
+bool Written(Fog* out);
 void Update();
 }  // namespace gamefogvr
 // (vrcam.cpp and vr/input/aim.cpp; declared here only: their defaults are their definitions')
@@ -266,8 +269,9 @@ void PlateWorldTick(ULONGLONG nowMs) {
     else if (!FullBody()) off = 4;
     else if (gamestate::MenuOpen()) off = 5;
     else if (!NativeEyes(&xe)) off = 6;
+    else if (plateworld::Ours()) off = 7;   // [hud] monster_names_own: ours instead, the game's plate not drawn at all
     static const char* const kOff[] = {"in force", "", "the mod is off", "no game yet (a menu or the title)", "not the F4 view (the game's own plate in every other view)",
-                                       "a panel is open", "no native OpenXR eyes this frame"};
+                                       "a panel is open", "no native OpenXR eyes this frame", "our own plate is on (monster_names_own): the game's is not drawn"};
     const bool active = off == 0;
     if (wanted && toldState.Should(0, off, nowMs)) LogF("vrcam: monster_bar_room - %s%s", off ? "not in force now: " : "", kOff[off]);
     plateworld::SetActive(active);
@@ -1407,7 +1411,9 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             curve.ease = g_set.fogEaseIn.load();   // [fog] ease_in (D2R VR Unleashed's)
         }
         fogfx::Params fp;
-        const bool beforeFx = g_set.fogBeforeFx.load() && GameDrawnView() && !TableFull() && fogfx::Hooked();   // (VR F3 full width: no fog tweak)   // (its hooks: no ReShade, the key on at the start)
+        // ([fog] game_fog_planes: the planes are drawn by the same step - with the game's fog only)
+        const bool planesOn = g_set.gameFogPlanes.load() && g_set.gameFog.load();
+        const bool beforeFx = (g_set.fogBeforeFx.load() || planesOn) && GameFogDrawnView() && !TableFull() && fogfx::Hooked();   // (VR F3 full width: no fog tweak)   // (its hooks: no ReShade, the key on at the start)
         fp.on = beforeFx && gamefogvr::Active();
         fp.fxDepth = g_set.fogFxDepth.load();   // [fog] game_fog_fx_depth: the effects fogged by their own distance (either fog)
         fp.ourCurve = curve.on;
@@ -1431,10 +1437,37 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.sx = g_projSx.load();
             fp.sy = g_projSy.load();
         } else if (fp.on) {
-            const gamefogvr::Fog gf = gamefogvr::Current();
+            // exactly the five floats the game's fog pass got this frame (its colour by the game's time with [fog] game_fog_colour=0, the
+            // game's own with 1) - until 0.209.10 the step took our colour as set (Current), a lighter grey than the pass's: "только легкий
+            // серый оттенок" (Serg 2026-11-09). None written yet: ours, the colour as the pass will get it
+            gamefogvr::Fog gf = gamefogvr::Current();
+            gamefogvr::Fog wrote{};
+            const bool written = gamefogvr::Written(&wrote);
+            if (written) gf = wrote;
+            else {
+                float rgb[3];
+                gamefogvr::ColourNow(rgb);
+                gf.r = rgb[0]; gf.g = rgb[1]; gf.b = rgb[2];
+            }
             fp.plane = gf.plane;
             fp.density = gf.density;
             fp.colour[0] = gf.r; fp.colour[1] = gf.g; fp.colour[2] = gf.b;
+            // the proof, once a change: the game's pass's numbers and the step's (the same floats), the share both reach at Full fog
+            static gamefogvr::Fog told{-1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
+            static float toldNear = -1.0f;
+            const float nearNow = g_lastNear.load();
+            if (std::fabs(gf.plane - told.plane) > 0.05f || std::fabs(gf.density - told.density) > 1e-4f || std::fabs(gf.r - told.r) > 1e-4f ||
+                std::fabs(gf.g - told.g) > 1e-4f || std::fabs(gf.b - told.b) > 1e-4f || std::fabs(nearNow - toldNear) > 1e-4f) {
+                told = gf;
+                toldNear = nearNow;
+                const FogNumbers n = GameFogNumbersNow();
+                LogF("vrcam: fog before the effects - the same fog as the game's pass: the game's pass got plane %.1f, density %.4f, colour %.4f %.4f "
+                     "%.4f (%s); the step draws plane %.1f, density %.4f, colour %.4f %.4f %.4f; both reach %.0f%% at Full fog %.0f (from %.0f) - "
+                     "the step's distance from the depth with near %.3f (the depth range's far end %.0f)",
+                     wrote.plane, wrote.density, wrote.r, wrote.g, wrote.b, written ? "as written into its frame settings" : "none written yet",
+                     fp.plane, fp.density, fp.colour[0], fp.colour[1], fp.colour[2],
+                     100.0f * gamefogvr::GameFogAmount(gf, n.end), n.end, n.start, nearNow, depthsrc::LastFar());
+            }
             fp.nearPlane = g_lastNear.load();
             fp.sx = g_projSx.load();
             fp.sy = g_projSy.load();
@@ -1445,10 +1478,27 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         // ([sky] game_sky: the game's dome left as the void is - its depth band, as the post pass's SkyDomeDepth)
         fp.skyDepth = engitem::DomeShown() ? skydome::DomeDepth(engitem::DomeRadius(), g_lastNear.load()) : 0.0f;
+        if (planesOn && !fp.ours) {   // the planes from the game's fog's start to its Full fog ([fog] game_fog_start / _end; underground the caves')
+            const FogNumbers n = GameFogNumbersNow();
+            fp.planes = g_set.gameFogPlanesCount.load();
+            fp.planesStart = n.start;
+            fp.planesEnd = n.end;
+            fp.planesStrength = n.strength;
+            fp.planesSoft = g_set.gameFogPlanesSoft.load();
+        }
         fogfx::Configure(fp);
         fogfx::Frame();
+        {   // the submission order: the scene's state followed through the game's direct queue (the tap beside the replay's observer), once
+            static bool tapped = false;
+            if (!tapped && fogfx::Hooked())
+                if (ID3D12CommandQueue* q = natived3d::GameQueue()) {
+                    tapped = eclhook::InstallTap(q, &fogfx::OnExecute);
+                    Log(tapped ? "vrcam: fog before the effects - the game's submissions followed (the scene's state in the order the lists run)"
+                               : "vrcam: fog before the effects - the game's submissions could NOT be followed: drawn only from states the resolve's list sets");
+                }
+        }
         const bool noFog = fogfx::Drawn() && !fogfx::OursDrawn();   // (our effect's fog in the step: the game's pass has none of ours to leave out)
-        fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameDrawnView() && !TableFull(), height ? FogTopNow() : 1.0e9f,
+        fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameFogDrawnView() && !TableFull(), height ? FogTopNow() : 1.0e9f,
                          height ? g_set.fogSoft.load() : 1.0f, mist, voidAlone, noFog, curve);
     }
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
@@ -1785,9 +1835,18 @@ void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandLi
     in.mul = g_domeBake.mul;
     in.capOn = g_domeBake.capOn;
     for (int i = 0; i < 3; ++i) in.zenith[i] = g_domeBake.zenith[i];
-    if (DomeFogBaked()) {   // [sky] dome_fog_baked: the low part into the game's fog's own colour (scene units, as the game lays it on the land)
-        const gamefogvr::Fog gf = gamefogvr::Current();
-        in.fog[0] = gf.r; in.fog[1] = gf.g; in.fog[2] = gf.b;
+    // [sky] dome_fog_baked: the low part baked into the colour the game's fog draws now (scene units, as the game lays it on the land) - the
+    // baked skies too (Serg 2026-11-09: "надо красить и запекать", "прямо в купол", "в текстуру": the dome's low band in the fog's colour,
+    // in the texture the game samples, not a tint each frame; the game's own fog over it where it reaches). The colour follows the game's
+    // time (the Fog tab's colours); a new bake only once it has moved 2 % - not each step of a dusk
+    if (DomeFogBaked()) {
+        static float baked[3] = {-1.0f, -1.0f, -1.0f};
+        float now[3];
+        gamefogvr::ColourNow(now);
+        bool moved = false;
+        for (int c = 0; c < 3; ++c) moved = moved || std::fabs(now[c] - baked[c]) > 0.02f * std::max(std::fabs(baked[c]), 0.01f);
+        if (moved) memcpy(baked, now, sizeof baked);
+        in.fog[0] = baked[0]; in.fog[1] = baked[1]; in.fog[2] = baked[2];
         in.fogBand = g_set.domeFogBakedStrength.load();
     }
     if (ready && g_domeBake.slot > 0) {
@@ -1965,7 +2024,12 @@ void HoldEye(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     g_cpuUs += UsNow() - t0;
     ++g_timed;   // (a picture of its own: "ms a present" stays per eye's picture, as with two passes)
 }
-void SwapChainChanged() { scenedepth::g_cache.SwapChainChanged(); }
+// (also into the GPU fault report's flight recorder: crash report 292 lost its device ~4 ms after the game's HDR Calibration "SaveAndClose",
+// with a page fault where a "Swap Chain" was freed - this line says next time whether the game resized or made its swap chain anew just before)
+void SwapChainChanged() {
+    scenedepth::g_cache.SwapChainChanged();
+    gpufault::Note("game: its swap chain resized or made anew (its old buffers freed)");
+}
 // [render] resize_drain: the game's swap chain is about to be resized (its old buffers still alive) - vr/resize_drain.h
 void BeforeResize() { resizedrain::Event(resizedrain::Why::kResize); }
 void BindDepth(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colour) {
@@ -2059,7 +2123,7 @@ void Install() {
     // [fog] game_fog_before_fx: the lists' bindings followed and the step recorded before the transparent resolve - its hooks only when the key
     // is on at the start (a list's state is followed from its first Reset); switched on later, from the next start
     fogfx::SetLog(&Log);
-    if (IniB(L"fog", L"game_fog_before_fx", false)) {
+    if (IniB(L"fog", L"game_fog_before_fx", true) || IniB(L"fog", L"game_fog_planes", false)) {   // (on by default since 0.209.10: Serg 2026-11-09 "туман до эффектов"; the planes are drawn by it too)
         fogfx::FillSinks(k);
         Log("vrcam: fog before the effects - [fog] game_fog_before_fx on: the game's lists followed for the step before its transparent resolve");
     }
@@ -2580,7 +2644,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             float height, bright, light, relief;
             int slot;
             CeilingNow(&height, &bright, &light, &relief, &slot);
-            SetFloat(rt, "CeilHeight", height);
+            // [ceiling] top_from_level (from D2R VR Unleashed, Cal - its shader vault and its game slab alike): over the level's highest built
+            // floor, not the lowest he stood on (F4; 0 when off)
+            SetFloat(rt, "CeilHeight", height + CeilingTopLift(sv[0].hero[1], floorY, g_biomeGen.load()));
             SetFloat(rt, "CeilScale", scale);
             SetFloat(rt, "CeilBrightness", bright);
             SetFloat(rt, "CeilRelief", relief);
@@ -2684,34 +2750,69 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             }
             pin.m0 = g_projSx.load(); pin.halfGap = 0.5f * g_stereoIpd.load(); pin.conv = g_stereoConv.load(); pin.eyeHeightUnits = std::max(1.0f, ViewHeight());
             pin.stereo = AfrOn() && g_enabled.load() && FullBody() && pin.m0 > 0.0f && pin.halfGap > 0.0f;   // as LabelDepthWanted
-            const platelook::PlateUniforms pu = platelook::Plate(pin);   // (the game's plate keeps its own sliders; our names have theirs: OwnNamesUniforms)
+            // The target's body and the point over its head (render metres): our plate stands there ([hud] monster_names_own), and in F2 / F3 the game's
+            // plate is put at its depth ([hud_third] / [hud_floor] monster_depth)
+            const bool otherStereo = !pin.firstPerson && PlateOtherStereo();
+            const float otherK = otherStereo ? PlateDepthOtherView() : 0.0f;
+            float foot[2] = {}, head[3] = {};
+            uint8_t row[3] = {};
+            const float upmNow = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+            const int why = MonsterNamesOwnNow() || otherK > 0.005f ? NamesTargetBody(foot, row) : -1;
+            const bool anchored = (why == ownnames::kBodyOk || why == ownnames::kBodyRowOff) &&
+                                  ownnames::HeadAnchor(meleetouch::MonsterRow{row[0], row[1], row[2]}, foot[0], foot[1], g_heroPosNow[1] / upmNow, upmNow, head);
+            platelook::PlateUniforms pu = platelook::Plate(pin);   // (the game's plate keeps its own sliders; our names have theirs: OwnNamesUniforms)
             // eyes by turns: the plate's half-disparity at its target's depth - each eye then shows it the same every frame (0: no target, not by turns)
-            SetFloat(rt, "PlateTurnH", PlateTurnsWanted() && pin.groundM >= 0.0f
-                                           ? platelook::TurnsHalf(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv) : 0.0f);
+            float plateTurnH = PlateTurnsWanted() && pin.groundM >= 0.0f ? platelook::TurnsHalf(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv) : 0.0f;
+            // VR F1 / F2 / F3 (vr/plate_look.h OtherView): the plate apart from the labels' plane while our plate is wanted there or the view's monster_depth
+            // moves the game's - by the depth of the point over its head ahead of the eyes, along the view
+            bool otherDepth = false;
+            if (otherStereo) {
+                platelook::OtherViewIn ov;
+                ov.stereo = true;
+                ov.ours = MonsterNamesOwnNow();
+                // (ours: our name in the plate's box at its monster's depth, whatever the game plate's monster_depth says - the game's plate is not
+                // drawn, its depth key is for it alone and only with ours off)
+                ov.atMonster = ov.ours ? 1.0f : otherK;
+                if (anchored) {
+                    const float p[3] = {head[0] * upmNow, head[1] * upmNow, head[2] * upmNow};
+                    const float eyes[3] = {g_headCentre[0].load(), g_headCentre[1].load(), g_headCentre[2].load()};
+                    const float fwd[3] = {g_gazeFwd[0].load(), g_gazeFwd[1].load(), g_gazeFwd[2].load()};
+                    ov.zUnits = platelook::AheadOf(p, eyes, fwd);
+                }
+                ov.m0 = pin.m0;
+                ov.halfGap = pin.halfGap;
+                ov.conv = pin.conv;
+                ov.turns = replay::OverlaysWanted() || LayerOwnEye();
+                const platelook::OtherViewOut oo = platelook::OtherView(ov);
+                pu.own = oo.own;
+                pu.shift = oo.shift;
+                plateTurnH = oo.turnH;
+                otherDepth = otherK > 0.005f && ov.zUnits > 0.0f;
+                static int toldOther = -1;   // (each change: whether the game's plate stands at its monster's depth in this view)
+                const int tellNow = otherK > 0.005f ? (otherDepth ? 2 : 1) : 0;
+                if (tellNow != toldOther && (tellNow == 2 || toldOther == 2)) {
+                    toldOther = tellNow;
+                    LogF("vrcam: monster plate in F%d - %s", g_set.vrView.load(), tellNow == 2 ? "the game's plate at its monster's depth (monster_depth)" : "the game's plate where the game leaves it");
+                }
+            }
+            SetFloat(rt, "PlateTurnH", plateTurnH);
             // [hud] monster_names_own / npc_names_own: our names, each at its own depth - the plate's at its monster's (as each item label at its item's)
             NameDepth nd;
             {
                 nd.base = lu.base;
                 nd.groundM = pin.groundM;
-                float foot[2];
-                uint8_t row[3];
-                const float upmNow = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
-                float head[3];
-                const int why = MonsterNamesOwnNow() ? NamesTargetBody(foot, row) : -1;
-                const bool anchored = (why == ownnames::kBodyOk || why == ownnames::kBodyRowOff) &&
-                                      ownnames::HeadAnchor(meleetouch::MonsterRow{row[0], row[1], row[2]}, foot[0], foot[1], g_heroPosNow[1] / upmNow, upmNow, head);
-                nd.why = why;
+                nd.why = MonsterNamesOwnNow() ? why : -1;
                 nd.foot[0] = foot[0]; nd.foot[1] = foot[1];
                 nd.floorM = g_heroPosNow[1] / upmNow;
                 nd.upm = upmNow;
                 for (int c = 0; c < 3; ++c) { nd.row[c] = row[c]; nd.eyesM[c] = g_eyeWorld[c].load() / upmNow; }
-                if (anchored) {
+                if (anchored && MonsterNamesOwnNow()) {
                     nd.head = true;   // (render metres -> world units from where the hands hang: the frame the effect's cameras project, as the capsules')
                     for (int c = 0; c < 3; ++c) { nd.at[c] = head[c] * upmNow - g_eyeWorld[c].load(); nd.headM[c] = head[c]; }
                 }
                 static int toldWhy = -2, toldWhyN = 0;   // (each change of the reason, a few lines: why the name is or is not over the head)
                 int32_t plateNow[4];
-                if (why >= 0 && gamestate::PlateRect(plateNow) && (why != toldWhy) && toldWhyN < 6) {
+                if (nd.why >= 0 && gamestate::PlateRect(plateNow) && (why != toldWhy) && toldWhyN < 6) {
                     toldWhy = why;
                     ++toldWhyN;
                     LogF("vrcam: [hud] monster_names_own - over the head: %s; the target's body %s (row %u,%u,%u, place %.0f,%.0f); %s", anchored ? "yes" : "NO",
@@ -2722,13 +2823,20 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                     nd.have = true;
                     nd.shift = platelook::DepthShift(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv, 1.0f);
                     nd.turnH = (replay::OverlaysWanted() || LayerOwnEye()) ? platelook::TurnsHalf(pin.groundUnits, pin.eyeHeightUnits, pin.m0, pin.halfGap, pin.conv) : 0.0f;
+                } else if (otherDepth) {   // F2 / F3: a name left in the plate's box stands where the game's plate is put
+                    nd.have = true;
+                    nd.shift = pu.shift;
+                    nd.turnH = plateTurnH;
                 }
             }
             // Our name over its monster's head stands at the monster's depth: the game's plate (its bar) there too, or the two slid against each other from
             // one eye to the other (Serg, 0.205.11: "in one eye the text is against the plate's left edge, in the other against its right") - its own stereo
             // keys (monster_near_body, monster_stereo_*) give way while ours is there; its size, opacity and place stay its own.
-            const float plateShift = nd.head && nd.have && pu.own ? nd.shift : pu.shift;
-            SetBool(rt, "PlateOwn", pu.own);   // first person: the plate at its own depth, none of the item labels'
+            // (ours on: our own depth only - none of the game plate's depth keys, monster_near_body / monster_depth_body / monster_stereo_*, which are
+            // the old plate's and apply only with ours off; Serg 2026-11-09)
+            const bool oursOn = MonsterNamesOwnNow();
+            const float plateShift = nd.have && (oursOn || (nd.head && pu.own)) ? nd.shift : pu.shift;
+            SetBool(rt, "PlateOwn", pu.own);   // the plate at its own depth, none of the item labels' (F4; F1 - F3 with our plate or monster_depth there)
             SetFloat(rt, "PlateShift", plateShift);
             SetFloat(rt, "PlateAlpha", pu.alpha);
             SetFloat(rt, "PlateScale", pu.scale);
@@ -2747,7 +2855,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                          hasAt ? "" : " - an older D2R_DepthFog.fx: copy the new one in with the DLL");
                 }
             }
-            OwnNamesUniforms(rt, srv, pu.own ? box : kNoBox, pu.scale, nd);
+            // (our plate gets the game plate's box whatever that plate's own depth keys say: the box is where the game laid its plate out, the
+            // texts ours stands in for are in it - the game's plate itself is not drawn)
+            OwnNamesUniforms(rt, srv, pu.own || MonsterNamesOwnNow() ? box : kNoBox, pu.scale, nd);
             if (!MonsterNamesOwnNow()) g_namesFrameOn = false;
             float allies[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             if (alliesHidden && sw && sh) AlliesBoxUv(sw, sh, allies, hideUnits);   // (moved off the picture below: its place left empty)
@@ -3681,16 +3791,31 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         }
     }
     if (three) {   // the baked skies: the picture by the game's time of day (whatever [sky] day_night says), each at its own brightness
-        int light = 0, period = -1;
-        static periodbright::State threeState;
+        // ... its LIGHTING's time of day (cavelight::VisTime, vr/sky/three_skies.h VisShares), what the HD world is drawn with - not the
+        // world clock (env::Now), which only the classic picture and the rules follow: by the clock the night picture stood over a world
+        // the game lit as day (Serg on 0.208.2, act 2 town, "end of dusk, night" at the light 128: "в игре день а небо темное")
+        int light = 0, period = -1;   // (the clock: for the log)
+        env::Now(&light, &period);
+        int visPeriod = -1;
+        float visFrac = 0.0f;
+        int visEvent = -1;
+        const bool visKnown = cavelight::VisTime(&visPeriod, &visFrac, &visEvent);
         const bool hell = p.act == threeskies::kHellAct;   // (act 4: one sky, "там ночи нет" - the time of day does nothing)
-        const bool fade = g_set.skyCrossfade.load();
-        threeskies::Shares sh;   // (act 4, or the time not known: the day's)
-        if (env::Now(&light, &period) && !hell) sh = fade ? threeskies::SharesNow(threeState, period, (float)light) : threeskies::SwapShares(period);
+        // Nothing coloured (Serg 2026-11-08: "у нас же должно быть два купола дневной и ночной мы не должны его красить", "мы же
+        // договорились не красить ничего"): the dome is ONE picture as it is - the day's, or the night's where the act has one - never
+        // two blended ([sky] sky_crossfade not on the dome), never times a brightness ([sky] three_bright_* not on the dome). No dawn /
+        // dusk picture exists: the day's stands for it as it is. An act with no night picture: the day's as it is.
+        threeskies::Shares sh;   // (act 4, or the lighting's time not read: the day's - the game starts its lighting at day)
+        if (!hell) sh = threeskies::VisShares(visKnown ? visPeriod : -1, visFrac, false);
+        // the eclipse (the Tainted Sun: the lighting's event 2 - Act 2's open air under its event file, the sun gone, whatever the time): the
+        // night picture as it is (Serg on 0.209.2, act 2 town at the light 32: "у меня тут ночь а не день")
+        const bool eclipse = visKnown && visEvent == 2 && !hell;
+        if (eclipse) sh = threeskies::Whole(threeskies::kNight);
         float b[threeskies::kPics];
         for (int i = 0; i < threeskies::kPics; ++i) b[i] = g_set.threeBright[hell ? 3 : i].load();
-        const threeskies::Bake bake = threeskies::BakeOf(sh, b, !hell && act.nightOk && act.bandOk);
-        periodMul = threeskies::Brightness(sh, b);   // (our own sky by the same, in place of bright_<period>)
+        const float asIs[threeskies::kPics] = {1.0f, 1.0f, 1.0f};
+        const threeskies::Bake bake = threeskies::BakeOf(sh, asIs, !hell && act.nightOk && act.bandOk);   // (night 0 or 1, x1)
+        periodMul = threeskies::Brightness(sh, b);   // (our own sky and the effect's fog as before - not the dome: frozen)
         g_domeBake.night = bake.night;
         g_domeBake.mul = bake.mul;
         g_domeBake.capOn = act.capOk;
@@ -3702,22 +3827,29 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         // ([fog] fog_keeps_colour: the day picture's at its own slider - act 4's slider there - at every hour)
         threeskies::HorizonScene(threeskies::BakeOf(threeskies::Whole(threeskies::kDay), b, false), act.dayHorizon, act.nightHorizon, dayHorizon);
         SetSkyFog(act.bandOk && act.dayHorizonOk && (bake.night <= 0.0f || act.nightHorizonOk), horizon, dayHorizon);
-        static int toldPeriod = -2, toldAct = -1;
+        static int toldPeriod = -2, toldVis = -3, toldAct = -1;
         static float toldMul = -1.0f, toldNight = -1.0f;
-        if (period != toldPeriod || p.act != toldAct || std::fabs(bake.mul - toldMul) > 0.002f || std::fabs(bake.night - toldNight) > 0.002f) {
-            const bool turned = period != toldPeriod || p.act != toldAct;
+        const int visSeen = visKnown ? (eclipse ? 100 : visPeriod) : -1;
+        if (period != toldPeriod || visSeen != toldVis || p.act != toldAct || std::fabs(bake.mul - toldMul) > 0.002f ||
+            std::fabs(bake.night - toldNight) > 0.002f) {
             toldPeriod = period;
+            toldVis = visSeen;
             toldAct = p.act;
             toldMul = bake.mul;
             toldNight = bake.night;
             static const char* const kNames[6] = {"end of night, dawn", "end of dawn, day", "day", "end of day, dusk", "end of dusk, night", "night"};
-            if (turned || !fade)   // (the crossfade's steps not each written)
-                LogF("vrcam: game sky - the baked skies: act %d, %s, the game's light %d - day %.2f, night %.2f, dawn / dusk %.2f (the day's "
+            static const char* const kVis[6] = {"dawn1", "dawn2", "day", "dusk1", "dusk2", "night"};
+            char lit[128];
+            if (eclipse) snprintf(lit, sizeof lit, "the game's lighting under the eclipse (its event 2 - the Tainted Sun): the night picture");
+            else if (visKnown) snprintf(lit, sizeof lit, "the game's lighting at %s, %.2f into it", kVis[visPeriod], visFrac);
+            else snprintf(lit, sizeof lit, "the game's lighting's time of day not read - the day's");
+            LogF("vrcam: game sky - the baked skies: act %d, %s (the world clock: %s, the game's light %d - the classic picture's, not what "
+                     "the HD world is lit by) - day %.2f, night %.2f, dawn / dusk %.2f (the day's "
                      "picture until the act has one of its own)%s; baked as night picture %.2f x%.2f; the fog %s %.4f %.4f %.4f (scene), the day "
                      "sky's %.4f %.4f %.4f%s; nothing measured or recoloured", p.act,
-                     hell ? "one sky (no night in act 4)" : period >= 0 && period < 6 ? kNames[period] : "the time of day not known",
+                     hell ? "one sky (no night in act 4)" : lit, period >= 0 && period < 6 ? kNames[period] : "not known",
                      light, sh.pic[threeskies::kDay], sh.pic[threeskies::kNight], sh.pic[threeskies::kDawnDusk],
-                     fade ? ", crossfaded by the light ([sky] sky_crossfade)" : ", the period's whole", bake.night, bake.mul,
+                     ", one picture as it is - nothing coloured", bake.night, bake.mul,
                      g_set.fogMeasured.load() ? "measured ([fog] fog_colour_measured) - the sky's would be" : "the sky's at the horizon", horizon[0],
                      horizon[1], horizon[2], dayHorizon[0], dayHorizon[1], dayHorizon[2],
                      g_set.fogKeepsColour.load() ? " (taken while the game draws the fog: [fog] fog_keeps_colour)" : "");

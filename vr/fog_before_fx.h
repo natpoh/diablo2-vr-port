@@ -28,6 +28,8 @@
 
 struct ID3D12Device;
 struct ID3D12PipelineState;
+struct ID3D12CommandQueue;
+struct ID3D12CommandList;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 struct D3D12_PIPELINE_STATE_STREAM_DESC;
 namespace natived3d { struct Sinks; }
@@ -38,12 +40,16 @@ using LogFn = void (*)(const char*);
 void SetLog(LogFn log);
 // natived3d's list sinks (fxReset ... fxDraw) for the step
 void FillSinks(natived3d::Sinks& k);
+// Every ExecuteCommandLists of the game's queues, before the real call (vr/ecl_hook.h's tap): the scene's state followed in the order the
+// lists run - the step draws from it only once proven (fog_before_fx.cpp, "the submission order")
+void OnExecute(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* lists);
 bool Hooked();   // FillSinks was called (the key on at the game's start, no ReShade): the step can be drawn at all
 // The game's pipelines as made: the resolve's found by its pixel shader; one that may draw an effect (blended into its first target, no
 // depth written) kept for its twin (Params::fxDepth)
 void OnGraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso);
 void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso);
-void MarkResolve(ID3D12PipelineState* pso);   // (the test: a pipeline taken as the resolve's)
+void MarkResolve(ID3D12PipelineState* pso, int blends = -1);
+void MarkFogBehind(ID3D12PipelineState* pso);   // (the test: a pipeline taken as a hair / foliage one - fogged by the depth behind it)   // (the test: a pipeline taken as the resolve's; blends: 1 into its target, 0 not, -1 not known)
 
 // The fog as the present has it, each frame
 struct Params {
@@ -78,13 +84,37 @@ struct Params {
     // [sky] game_sky: the game's dome shown - a pixel at or under this depth (reverse-Z; D2R_DepthFog.fx SkyDomeDepth) is its sky and left
     // as the void is (the game's pass leaves it: past its linear depth's far end); 0 = no dome
     float skyDepth = 0.0f;
+    // [fog] game_fog_planes - "Fog planes before the player" (Serg 2026-11-09, his drawing: "новый вид тумана плоскости перед игроком с
+    // затуманиванием"): `planes` camera-facing planes across the whole view at view depths from planesStart to planesEnd, evenly spaced, the
+    // last at planesEnd; each covers what lies behind it (its opaque depth farther than the plane - the depth test), and they add up to
+    // planesStrength there (the fog's share after plane i: strength x (i + 1) / planes). planesSoft 0: hard planes; 1: each fades in over the
+    // spacing in front of it (soft particles: no line where a plane cuts the ground; the fog still from planesStart, whole at planesEnd). In
+    // place of the game's exponential; 0 = none (as before).
+    int planes = 0;
+    float planesStart = 55.0f, planesEnd = 140.0f, planesStrength = 1.0f, planesSoft = 1.0f;
 };
 void Configure(const Params& p);
+// The fog's share each plane adds (the fog after plane i: strength x (i + 1) / n), and its view depth - the shader's PlanesKeep, the log
+inline float PlaneAlpha(int i, int n, float strength) {
+    const float s = strength < 0.0f ? 0.0f : strength > 1.0f ? 1.0f : strength;
+    const float before = s * (float)i / (float)n, after = s * (float)(i + 1) / (float)n;
+    return 1.0f - (1.0f - after) / (1.0f - before > 1e-4f ? 1.0f - before : 1e-4f);
+}
+inline float PlaneAt(int i, int n, float start, float end) { return start + (end - start) * (float)(i + 1) / (float)n; }
 // The step ran within the last quarter second: the game's pass is to leave the fog's colour out (fog_height noFog)
 bool Drawn();
 // ... with our effect's fog, and still set so: the post pass is to leave a drawn pixel's fog to it (D2R_DepthFog.fx FogInFrame)
 bool OursDrawn();
 // The present, every frame: the 10 s line
 void Frame();
+// The probe of the last step recorded (its GPU work done - the test waits; the 10 s line reads one 8 steps back): at the shader's five points
+// (the middle, then 15 / 35 / 65 / 85 % across at 45 % down) 16 floats each - the depth, the view depth, the distance, what the fog leaves,
+// the scene's colour before (3), the sky test (1 / 0), the colour after (3), 1, the resolve's own target's colour before it draws (3), 0.
+// False: no step yet.
+bool LastProbe(float out[80]);
+// The test: the scene check started again in `mode` (0 the tables' scene, 1 the resolve's target, 2 nothing written - the game's start)
+void ResetSceneCheck(int mode);
+// Only the found scene, depth and effects' targets watched (the sinks no longer search): the test, the 10 s line
+bool Watching();
 
 }  // namespace fogfx

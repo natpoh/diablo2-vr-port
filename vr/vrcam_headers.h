@@ -111,7 +111,8 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "portal_auto.h"   // [input] portal_look_horizon / portal_auto: flat, after a portal and into one (pure part, tested)
 #include "../shared/unleashed_fog.h"           // [fog] ease_in / no_fog_river: D2R VR Unleashed's fog ease and no fog in the River of Flame (MPL 2.0)
 #include "../shared/unleashed_far_objects.h"   // [render] big_radius: D2R VR Unleashed's Big objects (MPL 2.0, bearstonem) - the setting's steps
-#include "room_heights.h"  // [render] floors_stay: a room keeps the height the game first drew it at (pure part, tested)
+#include "unleashed_room_stitch.h"  // [render] room_stitch, [ceiling] top_from_level: D2R VR Unleashed's room stitch (Cal; MPL 2.0, pure part, tested)
+#include "terrain_heights.h"  // [render] terrain_heights: each ground tile at its own floor's height (pure part, tested)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
 #include "turn_mode.h"     // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (shared/, pure, tested)
@@ -161,7 +162,7 @@ namespace uitrace { void Register(bool trace, bool skip, bool depthViaReShade); 
 namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void (*log)(const char*)); void Reset(void (*log)(const char*)); }
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
-                void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready);
+                void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready); bool PictureReady();
                 bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(bool on); bool PictureCompass(float box[4], float* crop); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
@@ -180,7 +181,7 @@ namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is 
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
 namespace gamestate { void PollCursor(); }      // ... whether an item is on the game's cursor, read on the UI thread (CursorHeld, for xr.cpp's drop)
 namespace gamestate { bool QueueHandWalk(void (*fn)()); }   // ... and the stick's own walk with the inventory up, run on the game's UI thread
-namespace gamestate { bool NpcDialogOnly(); }   // an NPC's dialogue box (Talk / Trade / Cancel) is the only menu open (gamestate.cpp)
+namespace gamestate { bool NpcDialogOnly(); bool NpcTalkOnly(); }   // an NPC's dialogue box (Talk / Trade / Cancel) is the only menu open (gamestate.cpp)
 namespace hud { void SetPanelNoBar(bool on); }   // [hud] npc_dialog_no_bar: that box's panel without the toolbar (hud.cpp)
 namespace gamestate { uint32_t CodeOfItemClass(uint32_t classId); }   // [weight] grab_items: an item class's code, 0 not known (gamestate.cpp)
 namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot a Necromancer's head (ItemTypes head) is in: 1 left, 0 right, -1 none (gamestate.cpp)
@@ -260,6 +261,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "spell_aim_model.h"
 #include "shot_trace_wire.h"
 #include "hit_outcome_wire.h"   // [debug] hit_outcome: the hero's blows on monsters told in the log (vr/hit_outcome.h)
+#include "hit_share_wire.h"   // [multiplayer] share_hit_outcomes: the host sends each joined player his blows' outcomes for the swing timer (vr/hit_share.h)
 #include "throw_aim.h"
 #include "throw_hand.h"
 #include "throw_cast.h"

@@ -515,6 +515,7 @@ void* SpellHoverFor(int index, uintptr_t ret) {
     return HandAnswer(ret, -1, OrigSpellHover(index));   // [input] vr_body_pick_hand
 }
 void* HookSpellHover(int index) {
+    if (t_flatClickNoHover) return nullptr;   // [input] flat_shot_at_crosshair: the flat click under way is a shot at the crosshair (vr/input/flat_click.cpp)
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
     t_touchAnswer = false;
     void* t = SpellHoverFor(index, ret);
@@ -683,7 +684,8 @@ void InstallSlotSkillHook() {
 }
 
 void InstallSpellAimHooks() {
-    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (g_set.platform.load() == 0 && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load())) || !OrigAttackPoint) return;   // the point's hook in first ([input] flat_body_target: flat, the map click's lookup answered)
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (g_set.platform.load() == 0 && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load()) ||
+                                                   (g_set.flatShotAtCrosshair.load() && g_set.platform.load() == 0)) || !OrigAttackPoint) return;   // the point's hook in first ([input] flat_body_target: flat, the map click's lookup answered; [input] flat_shot_at_crosshair: for the hover lookup)
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||
         !Matches(RVA_CTRL_HANDLER, kSigCtrlHandler, sizeof kSigCtrlHandler) || !Matches(RVA_CTRL_SKILL, kSigCtrlSkill, sizeof kSigCtrlSkill) ||

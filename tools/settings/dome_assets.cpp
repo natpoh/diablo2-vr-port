@@ -287,6 +287,22 @@ bool FirstPrototype(const std::string& data) {
     grannyremesh::File f;
     return grannyremesh::Read(data, &f, nullptr) && f.sec.size() == 1 && data.find("tools/game_sky/make_sky_dome.py") != std::string::npos;
 }
+// [ceiling] game_ceiling's slab of an earlier build at a dome's path: on 2026-10-28 (87bd94f3, minutes after d6068c32 gave the same paths
+// to the act 2 - 4 domes) the jungle's and the ice caves' slabs went to Tests/pillar01, Pillar_02, Pillar_03 and testy; 2026-10-29 the
+// ceiling moved off, but its files stayed, in neither receipt - taken for the player's own and left there. The game then built the act 2
+// dome from the jungle slab: a giant rock round the eye, laid every frame (the test PC, 0.208.2, 2026-11-08 21:40: "the game built for
+// tests/pillar01: material rocks03"). Ours by what it holds: act 1's cave rock (the slab's source, gameceiling::kSource - its art file
+// stays in the copy) with the tiling maps of one of the ceiling's kinds.
+bool OldCeilingSlab(const std::string& data) {
+    grannyremesh::File f;
+    if (data.find("X:/assets/env/model/act1/caves/act1_caves_rocks/act1_caves_rocks.ma") == std::string::npos || !grannyremesh::Read(data, &f, nullptr))
+        return false;
+    for (const gameceiling::Kind& k : gameceiling::kKinds)
+        if (data.find(k.maps) != std::string::npos) return true;
+    return false;
+}
+// A file at a dome's path that an earlier make of ours left without a receipt line: replaced (or taken out) as ours
+bool EarlierOurs(const std::string& data) { return FirstPrototype(data) || OldCeilingSlab(data); }
 
 }  // namespace
 
@@ -494,7 +510,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
                 for (wchar_t& c : path) if (c == L'/') c = L'\\';
                 std::string old;
                 const std::string lastHash = arcanesky::ReceiptValue(last, "mods/D2R-VR/D2R-VR.mpq/" + rel);
-                if (ReadFile(path, &old) && ((!lastHash.empty() && arcanesky::Hash(old.data(), old.size()) == lastHash) || FirstPrototype(old)) &&
+                if (ReadFile(path, &old) && ((!lastHash.empty() && arcanesky::Hash(old.data(), old.size()) == lastHash) || EarlierOurs(old)) &&
                     DeleteFileW(path.c_str()))
                     ++out;
             }
@@ -623,7 +639,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
             for (wchar_t& c : path) if (c == L'/') c = L'\\';
             std::string old;
             const bool exists = ReadFile(path, &old);
-            if (!arcanesky::MayReplace(exists, old, made, arcanesky::ReceiptValue(last, name)) && !FirstPrototype(old)) {
+            if (!arcanesky::MayReplace(exists, old, made, arcanesky::ReceiptValue(last, name)) && !EarlierOurs(old)) {
                 ++kept;   // the player's own: left as it is
                 continue;
             }
@@ -638,7 +654,8 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
             written.push_back({name, arcanesky::Hash(made.data(), made.size())});
         }
     for (const Data& x : kData) {   // the units and the plain textures
-        std::string made = x.make();
+        const std::string beforeAtlas = x.make();   // (as made before the atlas - an earlier make of ours, its receipt line lost: the act 2 - 5 units on the test PC)
+        std::string made = beforeAtlas;
         for (int b = 0; atlasOk && b < skyatlas::kBandCount; ++b) {   // a live dome's unit names the atlas (its model does)
             if (std::string(x.rel) != std::string("data/hd/env/model/d2r_vr/sky/sky_dome_") + skyatlas::kBands[b] + "_unit.json") continue;
             const std::string own = std::string("data/hd/env/texture/d2r_vr/sky/sky_") + skyatlas::kBands[b] + "_day_HDR.dds";
@@ -651,7 +668,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, b
         std::string old;
         const bool exists = ReadFile(path, &old);
         // (one the staging copied in, the same bytes, is ours; another one the player's)
-        if (exists && old != made && !arcanesky::MayReplace(exists, old, made, arcanesky::ReceiptValue(last, name))) {
+        if (exists && old != made && old != beforeAtlas && !arcanesky::MayReplace(exists, old, made, arcanesky::ReceiptValue(last, name))) {
             ++kept;
             continue;
         }

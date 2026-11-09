@@ -66,6 +66,15 @@ bool LabelsTilted() {
 // comes out for that too, drawn back where the game puts it.
 // In first person (F4) the plate has its own depth, apart from the item labels' (labels_near_body): then the effect needs its box to tell it from the labels (vr/plate_look.h).
 bool PlateOwnDepth() { return g_enabled.load() && FullBody(); }
+// The other VR views with a stereo pair of our camera (F1 in perspective, F2, F3): the plate may stand apart there too (vr/plate_look.h OtherView) -
+// our own plate over the head ([hud] monster_names_own_all_views), or the game's at its monster's depth (F2 / F3 monster_depth).
+bool PlateOtherStereo() { return g_set.platform.load() == 1 && !FullBody() && g_enabled.load() && AfrOn(); }
+// [hud_third] monster_depth in F2, [hud_floor] monster_depth in F3 (by the view's key: VR F1 in perspective runs as g_view 2 too); 0 elsewhere.
+float PlateDepthOtherView() {
+    if (g_set.platform.load() != 1) return 0.0f;
+    const int v = g_set.vrView.load();
+    return v == 2 ? g_set.plateDepthThird.load() : v == 3 ? g_set.plateDepthFloor.load() : 0.0f;
+}
 // [hud] monster_stereo_by_distance: the plate's depth by its monster's distance - the settings, and the depth that decides whether the box is needed.
 platelook::DepthByDistance PlateDepthByDistance() {
     platelook::DepthByDistance d;
@@ -79,6 +88,7 @@ float PlateDepthForBox() {
     return platelook::DepthForBox(g_set.plateStereoByDistance.load(), g_set.plateNearBody.load(), PlateDepthByDistance(), g_set.labelsNearBody.load());
 }
 bool PlateWanted() {
+    if (PlateOtherStereo() && PlateDepthOtherView() > 0.005f) return true;   // F2 / F3 monster_depth: the plate cut out and moved to its monster's depth
     return platelook::PlateNeedsBox(PlateOwnDepth(), PlateDepthForBox(), g_set.labelsNearBody.load(), g_set.plateAlpha.load(), g_set.plateSize.load(),
                                     g_set.plateFar.load(), g_set.plateDepthBody.load());
 }

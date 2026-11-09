@@ -13,6 +13,7 @@
 
 #include "native_d3d12.h"   // natived3d::RtvResource: a render target's resource by its view
 #include "pso_stream.h"
+#include "fog_in_frame_math.h"   // fogframe::IsResolve: the game's ps_transparent_resolve (the trace's pass-order line)
 #include "render_bench.h"   // [render] bench_skip_*: the game's stages by their shaders' hashes
 #include "view_gate.h"     // ... left out only in VR first person (F4)
 
@@ -37,7 +38,16 @@ uint64_t Fnv(const void* p, size_t n) {   // (vr/uitrace.cpp's: the same "ps" nu
 }
 uint64_t HashOf(const D3D12_SHADER_BYTECODE& b) { return b.pShaderBytecode && b.BytecodeLength ? Fnv(b.pShaderBytecode, b.BytecodeLength) : 0; }
 
-struct Info { uint64_t hash = 0, vs = 0; char kind = 'g'; uint8_t stage = 0; };   // stage: [render] bench_skip_* (vr/render_bench.h)
+// stage: [render] bench_skip_* (vr/render_bench.h). The trace's pass order (Serg 2026-11-09, "огонь туман перекрывает": does the game's fog
+// apply come after the flames, and what depth do they leave it?): resolve = the game's transparent resolve; zw = the depth written (1), not
+// (0), - a compute pipeline (-1); blend = a render target blended (the effects: additive / alpha, no depth written)
+struct Info { uint64_t hash = 0, vs = 0; char kind = 'g'; uint8_t stage = 0; bool resolve = false; int8_t zw = -1; bool blend = false; };
+int8_t DepthWrites(const D3D12_DEPTH_STENCIL_DESC& d) { return d.DepthEnable && d.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL ? 1 : 0; }
+bool Blends(const D3D12_BLEND_DESC& b) {
+    for (int i = 0; i < (b.IndependentBlendEnable ? 8 : 1); ++i)
+        if (b.RenderTarget[i].BlendEnable) return true;
+    return false;
+}
 SRWLOCK g_infoLock = SRWLOCK_INIT;
 std::unordered_map<ID3D12PipelineState*, Info> g_info;
 // [render] bench_skip_* (vr/render_bench.h): the pipelines of each stage the game made (recognised by their hashes)
@@ -76,11 +86,14 @@ std::wstring g_recPath;
 struct Rec {
     uint64_t hash = 0, vs = 0; char kind = 'g'; uint32_t order = 0, binds = 0, draws = 0, dispatches = 0, indirect = 0;
     std::string targets;   // what its first draw drew into (render targets' formats and sizes, depth, viewport)
+    uint8_t stage = 0; bool resolve = false; int8_t zw = -1; bool blend = false;   // (the first pipeline bound with this hash)
+    bool mixed = false;           // pipelines of this hash with another depth / blend state bound too
+    uint32_t firstCall = 0, lastCall = 0;   // the frame's call count at its first and last call (1-based; 0 none)
 };
 std::wstring g_lastPath;
 bool g_lastOk = false;
 std::unordered_map<uint64_t, Rec> g_rec;   // by hash (0: a pipeline not seen made - kept by its pointer, | 1)
-uint32_t g_recOrder = 0;
+uint32_t g_recOrder = 0, g_recCalls = 0;
 struct Entry { uint64_t hash; char kind; uint32_t calls; };
 std::vector<Entry> g_list;                 // the last trace's pipelines that drew, in order (g_recLock)
 
@@ -184,12 +197,13 @@ const char* FormatName(DXGI_FORMAT f) {
     }
 }
 void Describe(std::string& s, ID3D12Resource* r) {
-    char b[64];
+    char b[96];
     if (!r) { s += "?"; return; }
     const D3D12_RESOURCE_DESC d = r->GetDesc();
     const char* n = FormatName(d.Format);
-    if (n) snprintf(b, sizeof b, "%s %llux%u", n, (unsigned long long)d.Width, d.Height);
-    else snprintf(b, sizeof b, "fmt%d %llux%u", (int)d.Format, (unsigned long long)d.Width, d.Height);
+    // (with the resource: the rows can be matched with the fog step's lines - which target the lit pass draws into, Serg 2026-11-09)
+    if (n) snprintf(b, sizeof b, "%s %llux%u @%p", n, (unsigned long long)d.Width, d.Height, (void*)r);
+    else snprintf(b, sizeof b, "fmt%d %llux%u @%p", (int)d.Format, (unsigned long long)d.Width, d.Height, (void*)r);
     s += b;
 }
 
@@ -212,6 +226,43 @@ void ResolveHunt() {   // (g_recLock held) K of the list -> the hash skipped
     Recount();
 }
 
+// The pass-order line: where the game's transparent resolve and its fog apply (the atmosphere stage's full-screen graphics pass) drew in the
+// frame, and the effects (blended, no depth written, not the bench's lit / water / atmosphere / tonemap ...) before and after the fog apply.
+// The order is the order the calls were recorded in (one list a thread: the frame's lists may be recorded side by side - the game submits them
+// in its pass order; a count, never a decision).
+struct PassOrder { char line[400]; };
+PassOrder OrderOf(const std::vector<Rec>& v) {
+    PassOrder o{};
+    uint32_t resolveFirst = 0, resolveLast = 0, fogFirst = 0, fogLast = 0, fogPipes = 0;
+    for (const Rec& r : v) {
+        if (!r.firstCall) continue;
+        if (r.resolve) { resolveFirst = resolveFirst ? std::min(resolveFirst, r.firstCall) : r.firstCall; resolveLast = std::max(resolveLast, r.lastCall); }
+        if (r.stage == renderbench::kAtmosphere && r.kind == 'g' && r.draws) {
+            ++fogPipes;
+            fogFirst = fogFirst ? std::min(fogFirst, r.firstCall) : r.firstCall;
+            fogLast = std::max(fogLast, r.lastCall);
+        }
+    }
+    uint32_t fxBefore = 0, fxBeforeCalls = 0, fxAfter = 0, fxAfterCalls = 0, fxBetween = 0, fxDepth = 0;
+    for (const Rec& r : v) {
+        if (!r.firstCall || r.kind != 'g' || !r.blend || r.zw != 0 || r.resolve || r.stage != renderbench::kNone) continue;
+        const uint32_t calls = r.draws + r.indirect;
+        if (fogFirst && r.lastCall < fogFirst) { ++fxBefore; fxBeforeCalls += calls; }
+        else if (fogLast && r.firstCall > fogLast) { ++fxAfter; fxAfterCalls += calls; }
+        else ++fxBetween;
+        if (r.targets.find("| -") == std::string::npos && r.targets.find("| ?") == std::string::npos) ++fxDepth;   // (a depth bound to test against)
+    }
+    snprintf(o.line, sizeof o.line,
+             "pass order: transparent resolve calls %u-%u, the game's fog apply (%u pipelines) calls %u-%u -> %s; effects without depth written: %u "
+             "drew before the fog apply (%u calls: fogged by the depth behind them), %u after it (%u calls), %u across it; %u of them test a depth",
+             resolveFirst, resolveLast, fogPipes, fogFirst, fogLast,
+             !resolveFirst || !fogFirst ? "one of them not seen this frame"
+             : fogFirst > resolveLast ? "the fog after the resolve (the flames fogged by the opaque depth behind them)"
+             : fogLast < resolveFirst ? "the fog before the resolve" : "interleaved",
+             fxBefore, fxBeforeCalls, fxAfter, fxAfterCalls, fxBetween, fxDepth);
+    return o;
+}
+
 void Write() {   // (g_recLock held) the frame recorded to the file, its list kept
     std::vector<Rec> v;
     v.reserve(g_rec.size());
@@ -223,7 +274,10 @@ void Write() {   // (g_recLock held) the frame recorded to the file, its list ke
     if (f) {
         fprintf(f, "# D2R VR - one frame of the game's pipelines, in the order of their first bind (Ctrl+F10 without ReShade, vr/pipe_hunt.h)\n");
         fprintf(f, "# K = [debug] patch_hunt_pipe (patch_hunt = 8); hash = [debug] skip_pipeline / [render] skip_shaders (g: its pixel shader, c: its compute shader)\n");
-        fprintf(f, "#   K  kind  hash              vs                binds  draws  dispatches  indirect  targets of its first call | depth | viewport\n");
+        fprintf(f, "# stage: the bench's (vr/render_bench.h), resolve = the game's transparent resolve; zw: the depth written (1) or not (0), * = this "
+                   "hash bound with another state too; bl: blended; calls: the frame's call numbers of its first and last call\n");
+        fprintf(f, "#   K  kind  hash              vs                binds  draws  dispatches  indirect  stage             zw  bl  calls          "
+                   "targets of its first call | depth | viewport\n");
     }
     for (const Rec& r : v) {
         const uint32_t calls = r.draws + r.dispatches + r.indirect;
@@ -235,13 +289,22 @@ void Write() {   // (g_recLock held) the frame recorded to the file, its list ke
         if (f) {
             char ks[8] = "  -";
             if (k) snprintf(ks, sizeof ks, "%3d", k);
-            fprintf(f, "  %s  %c     %016llx  %016llx  %5u  %5u  %10u  %8u  %s\n", ks, r.kind, (unsigned long long)r.hash, (unsigned long long)r.vs,
-                    r.binds, r.draws, r.dispatches, r.indirect, r.targets.c_str());
+            char zw[4] = " -";
+            if (r.zw >= 0) snprintf(zw, sizeof zw, "%d%s", (int)r.zw, r.mixed ? "*" : " ");
+            fprintf(f, "  %s  %c     %016llx  %016llx  %5u  %5u  %10u  %8u  %-16s  %-2s  %-2s  %6u-%-6u  %s\n", ks, r.kind, (unsigned long long)r.hash,
+                    (unsigned long long)r.vs, r.binds, r.draws, r.dispatches, r.indirect, r.resolve ? "resolve" : renderbench::StageName(r.stage), zw,
+                    r.kind == 'g' && r.blend ? "1" : "-", r.firstCall, r.lastCall, r.targets.c_str());
         }
     }
-    if (f) fclose(f);
+    const PassOrder po = OrderOf(v);
+    if (f) {
+        fprintf(f, "# %s\n", po.line);
+        fclose(f);
+    }
+    LogF("vrcam: pipe trace - %s", po.line);
     LogF("vrcam: pipe trace - %zu pipelines bound in one frame, %zu of them drew (the list patch_hunt_pipe counts in)%s", v.size(), g_list.size(),
          f ? " - written" : " - the file could NOT be written");
+    g_recCalls = 0;
     g_lastPath = g_recPath;
     g_lastOk = f != nullptr;
     g_rec.clear();
@@ -254,7 +317,11 @@ void SetLog(void (*log)(const char*)) { g_log = log; }
 
 void OnGraphicsPso(const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     if (!d || !pso) return;
-    Keep(pso, {HashOf(d->PS), HashOf(d->VS), 'g'});
+    Info i{HashOf(d->PS), HashOf(d->VS), 'g'};
+    i.resolve = fogframe::IsResolve(d->PS.pShaderBytecode, d->PS.BytecodeLength);
+    i.zw = DepthWrites(d->DepthStencilState);
+    i.blend = Blends(d->BlendState);
+    Keep(pso, i);
 }
 void OnComputePso(const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     if (!d || !pso) return;
@@ -271,8 +338,29 @@ void OnStreamPso(const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState*
         i.hash = HashOf(b);
         i.kind = 'c';
     } else {
-        if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, &at)) { std::memcpy(&b, s + at, sizeof b); i.hash = HashOf(b); }
+        if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, &at)) {
+            std::memcpy(&b, s + at, sizeof b);
+            i.hash = HashOf(b);
+            i.resolve = fogframe::IsResolve(b.pShaderBytecode, b.BytecodeLength);
+        }
         if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS, &at)) { std::memcpy(&b, s + at, sizeof b); i.vs = HashOf(b); }
+        // the depth (a stream without one: enabled and written, D3D12's default) and the blend (none: not blended)
+        D3D12_DEPTH_STENCIL_DESC ds{};
+        ds.DepthEnable = TRUE;
+        ds.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, &at)) std::memcpy(&ds, s + at, sizeof ds);
+        else if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL1, &at)) {
+            D3D12_DEPTH_STENCIL_DESC1 d1{};
+            std::memcpy(&d1, s + at, sizeof d1);
+            ds.DepthEnable = d1.DepthEnable;
+            ds.DepthWriteMask = d1.DepthWriteMask;
+        }
+        i.zw = DepthWrites(ds);
+        if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, &at)) {
+            D3D12_BLEND_DESC bd{};
+            std::memcpy(&bd, s + at, sizeof bd);
+            i.blend = Blends(bd);
+        }
     }
     Keep(pso, i);
 }
@@ -291,7 +379,10 @@ void OnBound(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
         std::lock_guard<std::mutex> l(g_recLock);
         const uint64_t key = known && i.hash ? i.hash : ((uint64_t)(uintptr_t)pso | 1ull << 63);
         Rec& r = g_rec[key];
-        if (!r.binds) { r.order = ++g_recOrder; r.hash = key; r.vs = i.vs; r.kind = known ? i.kind : '?'; }
+        if (!r.binds) {
+            r.order = ++g_recOrder; r.hash = key; r.vs = i.vs; r.kind = known ? i.kind : '?';
+            r.stage = i.stage; r.resolve = i.resolve; r.zw = known ? i.zw : (int8_t)-1; r.blend = i.blend;
+        } else if (known && (r.zw != i.zw || r.blend != i.blend)) r.mixed = true;
         ++r.binds;
         t_recKey = key;
     }
@@ -313,6 +404,8 @@ bool Skip(ID3D12GraphicsCommandList* cl, int kind) {
                 }
             }
             (kind == 0 ? r.draws : kind == 1 ? r.dispatches : r.indirect)++;
+            r.lastCall = ++g_recCalls;
+            if (!r.firstCall) r.firstCall = r.lastCall;
         }
     }
     if (t_skip) {

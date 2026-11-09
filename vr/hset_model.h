@@ -123,12 +123,35 @@ constexpr int kWorldRowY0 = 200, kWorldRowStep = 52, kWorldRowH = 46;
 // The Video page's rows (3D in the headset, Sky drawn by, Fog drawn by) stand under its render size slider, as close as the Melee page's.
 // The Video page's rows (six since the Quality preset on top, Serg 2026-11-08 - the Potato light's two brightnesses before it): from just under
 // the slider, as close as World's rows (their name in the normal face, hset_scene.h), so one line still fits above the status line - the size
-// limit's warning, the Apply note while a size waits, or the cost
-constexpr int kVidRowY0 = 268, kVidRowStep = 44, kVidRowH = 40;
+// limit's warning, the Apply note while a size waits, or the cost. Seven since the Draw distance under the preset (2026-11-09): 39 apart (44 / 40
+// before), the first from just under the slider's track, the last above that line - too close for a row's grey line under its name (Serg's
+// 0.209.18 shot: each name sat on the line above it), so the Video page's rows are its name alone, centred on its buttons (RowDetail); the render
+// type's "after a restart" goes to the line under the rows instead (hset_scene.h)
+constexpr int kVidRowY0 = 264, kVidRowStep = 39, kVidRowH = 36;
 constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || HasSubRow(page) || page == kPageVideo); }
 constexpr int RowStep(int page) { return HasSubRow(page) ? kWorldRowStep : page == kPageVideo ? kVidRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
 constexpr int RowH(int page) { return HasSubRow(page) ? kWorldRowH : page == kPageVideo ? kVidRowH : CloseRows(page) ? kRowHClose : kRowH; }
 constexpr int RowY(int row, int page) { return (HasSubRow(page) ? kWorldRowY0 : page == kPageVideo ? kVidRowY0 : kRowY0) + row * RowStep(page); }
+// A row's parts on the left: its band, its name and the grey line under the name (none on the Video page: RowDetail). The next row's name never
+// reaches the line above it (hset_test).
+constexpr bool RowDetail(int page) { return page != kPageVideo; }
+constexpr Rect RowBand(int row, int page) {
+    return page == kPageVideo ? Rect{32, RowY(row, page) - 1, 960, RowStep(page) - 2} : Rect{32, RowY(row, page) - 5, 960, RowStep(page) - 2};
+}
+constexpr Rect RowLabel(int row, int page) {
+    const int y = RowY(row, page);
+    return page == kPageVideo ? Rect{48, y, 530, kVidRowH}
+           : HasSubRow(page)  ? Rect{48, y - 5, 530, 27}
+           : CloseRows(page)  ? Rect{48, y - 4, 520, 30}
+                              : Rect{48, y - 2, 520, 32};
+}
+constexpr Rect RowDetailRect(int row, int page) {
+    const int y = RowY(row, page);
+    return !RowDetail(page) ? Rect{48, y, 0, 0}
+           : HasSubRow(page) ? Rect{48, y + 21, 530, 24}
+           : CloseRows(page) ? Rect{48, y + 24, 530, 26}
+                             : Rect{48, y + 28, 530, 28};
+}
 constexpr Rect kDec(int row, int page = -1) { return {584, RowY(row, page), 72, RowH(page)}; }
 constexpr Rect kVal(int row, int page = -1) { return {664, RowY(row, page), 248, RowH(page)}; }
 constexpr Rect kInc(int row, int page = -1) { return {920, RowY(row, page), 72, RowH(page)}; }
@@ -809,6 +832,21 @@ public:
                         const int i = IndexOf(k.section, k.key);
                         if (i >= 0) draft_[i] = Normalize(i, k.v[to]);
                     }
+                    if (Changed(was, draft_)) { result = Result::None; ++revision; }
+                    return a;
+                }
+                if (hit.index == kKeyDistance) {   // the Draw distance: the next stop's six keys into the draft, as D2R VR Settings' slider writes them
+                    const int now = DistanceOf(draft_);
+                    const int to = drawdistance::StepReach(now, draft_[kKeyModelRadius], hit.delta == 0 ? 1 : hit.delta);
+                    if (to == now) return a;   // (at an end)
+                    const drawdistance::Reach& s = drawdistance::kReach[to];
+                    const Values was = draft_;
+                    draft_[kKeyRings] = Normalize(kKeyRings, (float)s.rings);
+                    draft_[kKeyModelRadius] = Normalize(kKeyModelRadius, s.modelRadius);
+                    draft_[kKeyFogStart] = Normalize(kKeyFogStart, s.fogStart);
+                    draft_[kKeyFogEnd] = Normalize(kKeyFogEnd, s.fogEnd);
+                    draft_[kKeyCavesStart] = Normalize(kKeyCavesStart, s.cavesStart);
+                    draft_[kKeyCavesEnd] = Normalize(kKeyCavesEnd, s.cavesEnd);
                     if (Changed(was, draft_)) { result = Result::None; ++revision; }
                     return a;
                 }

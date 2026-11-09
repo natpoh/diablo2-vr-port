@@ -15,6 +15,7 @@ extern std::atomic<bool> g_noFogArea;      // [fog] no_fog_river: the River of F
 extern std::atomic<bool> g_ceilBiome;      // the area's biome is on [ceiling] biomes
 extern std::atomic<bool> g_gameCeilBiome;  // ... on [ceiling] game_ceiling_biomes
 bool GameDrawnView();                      // a view the game's own dome, slab and fog are drawn in (vrcam.cpp)
+bool GameFogDrawnView();                   // ... the game's fog: the flat game by its own [fog] game_fog_flat (vrcam.cpp)
 
 namespace fx {
 bool FogHere();               // a fog here at all, whoever draws it ([fog] caves, the River of Flame, first person...)
@@ -27,6 +28,7 @@ bool FogWanted();             // our post pass's fog
 struct FogNumbers { float start, end, curve, strength; };
 FogNumbers FogNumbersNow();
 FogNumbers GameFogNumbersNow();   // the same for the game's fog ([fog] game_fog=1): a full fog below its start taken the other way round
+bool NoGameFogUnderground();  // ... the game's fog: [fog] game_fog_caves=0 there
 bool NoFogUnderground();      // [fog] caves=0 and the area off the outdoor list (not the Arcane Sanctuary with [sky] arcane_fog): no fog at all
 bool ArcaneOwnFog();          // [fog] arcane_own, in the Arcane Sanctuary: its own numbers and colour, not the caves'
 bool ArcaneHazeFog();         // the fog's colour is the Arcane Sanctuary's sky behind each point (its sky shown; arcane_into_sky with its own fog)

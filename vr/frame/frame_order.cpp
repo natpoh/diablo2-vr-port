@@ -144,7 +144,15 @@ bool PairWorld() {
 }
 
 bool NativePairBegin() {
-    const bool menu = gamestate::MenuOpen();
+    const bool keep = gamestate::MenuOpen() && NpcDialogKeepsView();   // [hud] npc_dialog_keep_view: an NPC's talk in F1 - F3 keeps the pair
+    const bool menu = gamestate::MenuOpen() && !keep;
+    {
+        static bool told = false;
+        if (keep != told) {
+            told = keep;
+            if (keep) Log("vrcam: an NPC's talk open - the stereo view kept, its box in the picture ([hud] npc_dialog_keep_view)");
+        }
+    }
     xr::SetViewsMode(NativeMode());   // F1 / F3 in 3D (views_3d): what this pair is drawn as
     const bool world = PairWorld();   // (every pair: its begin is the next one's "last pair")
     const bool native = NativeView() && (!menu || MenuAs3d()) && world && replay::XrBegin();
@@ -620,6 +628,7 @@ static DWORD UpdateThreadBody() {
             if (ClassicNow()) BarOffsetNow(&bx, &by);
             hud::SetPictureBarOffset(bx, by);
         }
+        plateworld::SetOurs(MonsterNamesOwnNow());   // our own plate in force: the old plate's ways stand aside (vr/plate_world.h ours)
         fx::PlateWorldTick(nowMs);   // [hud] monster_bar_room
         fx::NoticeCardTick(nowMs);   // [hud] notice_card
         HandInventoryTick(nowMs);    // [openxr] hand_inventory
@@ -632,6 +641,7 @@ static DWORD UpdateThreadBody() {
             if (nowMs >= nextDur) { nextDur = nowMs + 100; gamestate::PollDurability(); }
         }
         hud::SetLabels(LabelsWanted() || replay::OverlaysWanted());   // eyes by turns: the game's labels laid back by the overlays, per eye
+        MonsterPlateWhichTick();   // the log: ours or the game's plate now, in this view and preset, and why
         {   // [openxr] menu_3d on FlatVR: is a FlatVR there that hangs a menu panel, where it hangs it, and
             // Game Link keeps FlatVR's screen and Head Lock as with no menu while it does
             hud::PollMenuReader();
@@ -697,6 +707,7 @@ static DWORD UpdateThreadBody() {
             MeleeTouchTick();   // [gameplay] melee_touch
         }
         flatmenu::Tick(nowMs, g_inWorld.load());   // [hud] game_menu_settings: the overlay's callback with the key, the host's rules asked in a game
+        hitshare::Tick(nowMs, g_inWorld.load(), moveattack::HeroId());   // [multiplayer] share_hit_outcomes: the host's sends; joined, the hello for our blows' outcomes
 #if D2RVR_FIRST_PERSON
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
@@ -816,7 +827,7 @@ static DWORD UpdateThreadBody() {
                 roofsides::Install(&Log, +[]() { return g_set.roofsTwoSided.load(std::memory_order_relaxed) && g_set.platform.load() == 1; });
             }
             prophook::Install();   // only once [stereo] props_once_a_pair asks for it
-            cavelight::Install();   // only once [cave_light] enabled asks for it
+            cavelight::Install();   // only once [cave_light] enabled, [fog] game_fog or [sky] game_sky (the lighting's time of day) asks for it
             InstallLabelHooks();
             InstallLabelArea();   // only once [hud] labels_whole_eye asks for it
             mobbars::Install(g_ctx);   // only once [hud] ordinary_mob_bars asks for it
@@ -825,7 +836,8 @@ static DWORD UpdateThreadBody() {
             InstallMapClickHook();
             InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_body_pick (VR)
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
-            InstallRoomHeightHook();    // [render] floors_stay, once asked for
+            InstallRoomHeightHook();    // [render] room_stitch / [ceiling] top_from_level, once asked for
+            InstallTerrainHeightHook(); // [render] terrain_heights, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
             attackpath::Install();   // [gameplay] flat_attack_path: once asked for
             moveattack::Install();   // [gameplay] move_while_attacking: the server's attack gate and frame trigger, the controller's update - once asked for

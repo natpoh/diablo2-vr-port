@@ -11,6 +11,7 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <intrin.h>
 
 #include <algorithm>
 #include <atomic>
@@ -23,6 +24,8 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "log_async.h"
+#include "missile_probe.h"
 #include "sigscan.h"
 #include "throw_born.h"
 #include "view_gate.h"
@@ -170,9 +173,161 @@ void NoteCreate(uintptr_t params) noexcept {
     ReleaseSRWLockExclusive(&g_madeLock);
 }
 
+// [debug] missile_probe (vr/missile_probe.h): every create of a player's missile - the block decoded, the units it names, the game's call site - and the
+// creates of one shot summed up (a Multiple Shot's fan). Read only; the lines go through the async log (the game's thread does not wait for the file).
+std::atomic<bool> g_probe{false}, g_probeFaulted{false};   // (a fault of the probe's turns the probe off, not [hands] throw_direct)
+bool (*g_heroId)(uint32_t*) = nullptr;
+SRWLOCK g_probeLock = SRWLOCK_INIT;
+missileprobe::Grouper g_probeGroups;
+unsigned g_probeInShot = 0;   // the creates of the open shot so far (the first kProbeLines get a line each; the shot's line counts them all)
+constexpr unsigned kProbeLines = 6;
+
+void ProbeLog(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
+
+// A unit's type, id and (a player or a monster: its path) cell; false: not readable.
+bool UnitFacts(uintptr_t unit, uint32_t* type, uint32_t* id, int* cx, int* cy, bool* cellOk) noexcept {
+    uint32_t head[4] = {};
+    if (!ReadMem(head, unit, sizeof head)) return false;
+    *type = head[0];
+    *id = head[2];
+    *cellOk = (head[0] == 0 || head[0] == 1) && UnitCell(unit, cx, cy);
+    return true;
+}
+void DescribeUnit(uintptr_t unit, char* out, size_t n) noexcept {
+    if (!unit) { snprintf(out, n, "none"); return; }
+    uint32_t type = 0, id = 0;
+    int cx = 0, cy = 0;
+    bool cellOk = false;
+    if (!UnitFacts(unit, &type, &id, &cx, &cy, &cellOk)) { snprintf(out, n, "%p (not readable)", reinterpret_cast<void*>(unit)); return; }
+    static const char* const kTypes[] = {"player", "monster", "object", "missile", "item", "tile"};
+    const char* name = type < 6 ? kTypes[type] : "a unit of another type";
+    if (cellOk) snprintf(out, n, "%s %u at %d %d", name, id, cx, cy);
+    else snprintf(out, n, "%s %u (type %u)", name, id, type);
+}
+
+// The shot at release (vr/shot_release.h): a player's missile create is put to the caller (vrcam's flat shot), which may answer another target cell. Only the
+// block's two target words are written; a fault turns this off for the session (the game's own aim again), not [hands] throw_direct or the probe.
+std::atomic<bool> g_aim{false}, g_aimFaulted{false};
+bool (*g_aimFn)(const AimAsk&, int*, int*) = nullptr;
+
+void TryAim(uintptr_t params) noexcept {
+    uint8_t block[missileprobe::kSize];
+    if (!g_aimFn || !ReadMem(block, params, sizeof block)) return;
+    const missileprobe::Params p = missileprobe::Decode(block);
+    uint32_t ownerType = 0, ownerId = 0;
+    int ox = 0, oy = 0;
+    bool ownerCell = false;
+    if (!p.owner || !UnitFacts(static_cast<uintptr_t>(p.owner), &ownerType, &ownerId, &ox, &oy, &ownerCell) || ownerType != 0) return;   // a player's only
+    if (!(p.flags & (missileprobe::kFlagTargetRel | missileprobe::kFlagTargetAbs))) return;   // no target of its own: nothing to turn
+    AimAsk a;
+    a.ownerId = ownerId;
+    a.cls = p.cls;
+    int sx = p.sx, sy = p.sy;   // the start the create takes: the block's cell (0x1), else the source unit's place (as the probe reads it)
+    if (!(p.flags & missileprobe::kFlagStart)) {
+        uint32_t t = 0, i = 0;
+        bool ok = false;
+        if (!(p.source && UnitFacts(static_cast<uintptr_t>(p.source), &t, &i, &sx, &sy, &ok) && ok)) {
+            if (!ownerCell) return;
+            sx = ox;
+            sy = oy;
+        }
+    }
+    a.sx = sx;
+    a.sy = sy;
+    a.hasTarget = true;
+    missileprobe::TargetCell(p, sx, sy, &a.tx, &a.ty);
+    a.targetUnit = p.targetUnit != 0;
+    int tx = 0, ty = 0;
+    if (!g_aimFn(a, &tx, &ty)) return;
+    const int32_t w[2] = {(p.flags & missileprobe::kFlagTargetRel) ? tx - sx : tx, (p.flags & missileprobe::kFlagTargetRel) ? ty - sy : ty};
+    if (!WriteMem(params + missileprobe::kOffTargetX, w, sizeof w) && !g_aimFaulted.exchange(true))
+        Log("shot at release: the create's target could not be written - off for this session, the game's own aim");
+}
+
+// The game's thread, inside the create's hook: the lines for one create of a player's missile. Nothing is written to the game.
+void ProbeCreate(uintptr_t params, uint64_t caller) noexcept {
+    uint8_t block[missileprobe::kSize];
+    if (!ReadMem(block, params, sizeof block)) return;
+    const missileprobe::Params p = missileprobe::Decode(block);
+    uint32_t ownerType = 0, ownerId = 0;
+    int ox = 0, oy = 0;
+    bool ownerCell = false;
+    if (!p.owner || !UnitFacts(static_cast<uintptr_t>(p.owner), &ownerType, &ownerId, &ox, &oy, &ownerCell) || ownerType != 0) return;   // a player's only
+    // the start the create takes: the block's cell (0x1), else the source unit's place
+    int sx = p.sx, sy = p.sy;
+    const char* startFrom = "the block's";
+    if (!(p.flags & missileprobe::kFlagStart)) {
+        uint32_t t = 0, i = 0;
+        bool ok = false;
+        if (p.source && UnitFacts(static_cast<uintptr_t>(p.source), &t, &i, &sx, &sy, &ok) && ok) startFrom = "the source unit's";
+        else if (ownerCell) { sx = ox; sy = oy; startFrom = "the owner's (the source's not read)"; }
+        else { sx = sy = 0; startFrom = "not known"; }
+    }
+    int tx = 0, ty = 0;
+    missileprobe::TargetCell(p, sx, sy, &tx, &ty);
+    const float heading = missileprobe::HeadingDeg(sx, sy, tx, ty);
+    const float cells = std::sqrt((float)(tx - sx) * (tx - sx) + (float)(ty - sy) * (ty - sy));
+    uint32_t hero = 0;
+    const bool heroKnown = g_heroId && g_heroId(&hero);
+    missileprobe::Create c;
+    c.t = NowS();
+    c.ownerId = ownerId;
+    c.caller = caller;
+    c.cls = p.cls;
+    c.headingDeg = heading;
+    c.targetUnit = p.targetUnit != 0;
+    missileprobe::Shot done;
+    AcquireSRWLockExclusive(&g_probeLock);
+    const bool flushed = g_probeGroups.Flush(c.t, &done);   // (the tick flushes too; whichever comes first)
+    const bool wasOpen = g_probeGroups.Open();
+    const bool cut = g_probeGroups.Add(c, &done);           // another owner, call site or a gap: the open shot finished (after a flush none is open)
+    const bool finished = flushed || cut;
+    const bool first = !wasOpen || cut;                     // this create opened a shot
+    if (first) g_probeInShot = 0;
+    const unsigned index = ++g_probeInShot;
+    ReleaseSRWLockExclusive(&g_probeLock);
+    char line[900];
+    if (finished) {
+        missileprobe::ShotLine(done, line, sizeof line);
+        ProbeLog(line);
+    }
+    if (index > kProbeLines) return;   // (the shot's line counts it)
+    char flags[160], target[96], source[96];
+    missileprobe::FlagNames(p.flags, flags, sizeof flags);
+    DescribeUnit(static_cast<uintptr_t>(p.targetUnit), target, sizeof target);
+    DescribeUnit(static_cast<uintptr_t>(p.source), source, sizeof source);
+    const char* name = missileprobe::ClassName(p.cls);
+    snprintf(line, sizeof line,
+             "missile probe: create %u of a shot by player %u%s (at %d %d) from 0x%llX: class %d%s%s%s, flags 0x%X (%s); start %d %d (%s) -> target %d %d "
+             "(the block's %d %d), heading %.1f deg, %.1f cells; target unit %s; source %s; velocity %d, level %d, range per level %d, range off %d / %d, "
+             "range %d; +0x3C %d, +0x58 %d, +0x64 %d, +0x68 %d, +0x70 %d",
+             index, ownerId, heroKnown ? (hero == ownerId ? " (the hero)" : " (another player)") : "", ox, oy, (unsigned long long)caller, p.cls,
+             name ? " (" : "", name ? name : "", name ? ")" : "", p.flags, flags, sx, sy, startFrom, tx, ty, p.tx, p.ty, heading, cells, target, source,
+             p.velocity, p.level, p.rangeLevel, p.rangeOff, p.rangeOffOwn, p.range, p.f3c, p.f58, p.f64, p.f68, p.f70);
+    ProbeLog(line);
+    if (!first) return;   // the whole block once a shot: what the decode does not name
+    for (size_t at = 0; at < missileprobe::kSize; at += 0x20) {
+        char hex[160];
+        missileprobe::HexLine(block, at, 0x20, hex, sizeof hex);
+        snprintf(line, sizeof line, "missile probe:   %s", hex);
+        ProbeLog(line);
+    }
+}
+
 __declspec(noinline) uintptr_t HookCreate(uintptr_t game, uintptr_t params) {
+    if (g_aim.load(std::memory_order_relaxed) && !g_aimFaulted.load(std::memory_order_relaxed)) {   // first: the probe and the look see what goes to the game
+        __try { TryAim(params); } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (!g_aimFaulted.exchange(true)) Log("shot at release: a fault in the create's look - off for this session, the game's own aim");
+        }
+    }
     if (g_observe.load(std::memory_order_relaxed) && !g_faulted.load(std::memory_order_relaxed)) {
         __try { NoteCreate(params); } __except (EXCEPTION_EXECUTE_HANDLER) { Fault("the create look"); }
+    }
+    if (g_probe.load(std::memory_order_relaxed) && !g_probeFaulted.load(std::memory_order_relaxed)) {
+        const uint64_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+        __try { ProbeCreate(params, caller); } __except (EXCEPTION_EXECUTE_HANDLER) {
+            if (!g_probeFaulted.exchange(true)) Log("missile probe: a fault in the look - off for this session (nothing of the game's was changed)");
+        }
     }
     if (g_wanted.load(std::memory_order_relaxed) && !g_faulted.load(std::memory_order_relaxed) && g_window.Armed(GetTickCount64())) {
         __try { TryRelocate(params); } __except (EXCEPTION_EXECUTE_HANDLER) { Fault("the create hook"); }
@@ -197,6 +352,30 @@ void Observe(bool on) {
     if (g_observe.exchange(on) != on) Log(on ? "bow latency: the server's missile create is watched, read only ([debug] bow_latency)" : "bow latency: off");
 }
 bool Observing() { return g_observe.load() && g_state.load() == 1 && !g_faulted.load(); }
+
+void Probe(bool on) {
+    if (g_probe.exchange(on) == on) return;
+    Log(on ? "missile probe: on ([debug] missile_probe) - every create of a player's missile is logged with its params, read only (the server's create: offline and as the host)"
+           : "missile probe: off");
+}
+void SetHeroIdSource(bool (*fn)(uint32_t* id)) { g_heroId = fn; }
+void SetAimSource(bool (*fn)(const AimAsk& ask, int* tx, int* ty)) { g_aimFn = fn; }
+void Aim(bool on) {
+    if (g_aim.exchange(on) == on) return;
+    Log(on ? "shot at release: on - the hero's arrow is turned at the server's create to the crosshair of that moment ([input] flat_shot_at_crosshair; offline and as the host)"
+           : "shot at release: off");
+}
+void ProbeTick() {
+    if (!g_probe.load(std::memory_order_relaxed)) return;
+    missileprobe::Shot done;
+    AcquireSRWLockExclusive(&g_probeLock);
+    const bool finished = g_probeGroups.Flush(NowS(), &done);
+    ReleaseSRWLockExclusive(&g_probeLock);
+    if (!finished) return;
+    char line[900];
+    missileprobe::ShotLine(done, line, sizeof line);
+    ProbeLog(line);
+}
 size_t CreatesSince(double sinceS, Made* out, size_t max) {
     size_t n = 0;
     AcquireSRWLockShared(&g_madeLock);
@@ -214,7 +393,7 @@ bool Ready() { return g_wanted.load() && g_state.load() == 1 && !g_faulted.load(
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_observe.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
+    if ((!g_wanted.load() && !g_observe.load() && !g_probe.load() && !g_aim.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     if (!d2rsig::Addr(RVA_CREATE) || !d2rsig::Addr(RVA_ROOM_OF) || !d2rsig::Addr(RVA_ROOM_POINT)) return;   // not all found (yet)
     if (!d2rsig::Check(RVA_CREATE, kSigCreate, sizeof kSigCreate)) {
@@ -225,7 +404,7 @@ void Install() {
     if (in) {
         g_state.store(1);
         Log(g_wanted.load() ? "throw direct: ready - the server's missile create is hooked (it touches one call: the armed throw's potion)"
-                            : "bow latency: ready - the server's missile create is hooked, read only (it rewrites nothing)");
+                            : "bow latency / missile probe: ready - the server's missile create is hooked, read only (it rewrites nothing)");
     } else if (++tries == 30) {
         g_state.store(2);
         Log("throw direct: the hook could not be put in - a thrown potion flies the game's own way");

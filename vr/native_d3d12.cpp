@@ -21,6 +21,7 @@
 
 #include "MinHook.h"
 #include "native_d3d12.h"
+#include "render/stereo/replay_list_gen.h"   // [stereo] native_replay: each list's resets, for the replay's check before it submits a list again
 
 namespace natived3d {
 namespace {
@@ -293,6 +294,13 @@ void STDMETHODCALLTYPE HookCopyDescSimple(ID3D12Device* d, UINT n, D3D12_CPU_DES
 HRESULT STDMETHODCALLTYPE HookCreateList(ID3D12Device* d, UINT mask, D3D12_COMMAND_LIST_TYPE type, ID3D12CommandAllocator* a, ID3D12PipelineState* ps,
                                          REFIID riid, void** out) {
     const HRESULT hr = g_origCreateList(d, mask, type, a, ps, riid, out);
+    if (SUCCEEDED(hr) && out && *out) {   // [stereo] replay_reset_guard: a list made where a freed one was (D3D12 gives the address again) is a new recording too
+        ID3D12GraphicsCommandList* l = nullptr;
+        if (SUCCEEDED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12GraphicsCommandList), (void**)&l)) && l) {
+            listgen::Lists().NoteReset(l);
+            l->Release();
+        }
+    }
     if (SUCCEEDED(hr) && out && *out && !t_ours && (g_sinks.listReset || g_sinks.fxReset || g_sinks.vrsReset) && type == D3D12_COMMAND_LIST_TYPE_DIRECT) {
         ID3D12GraphicsCommandList* l = nullptr;
         if (SUCCEEDED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12GraphicsCommandList), (void**)&l)) && l) {
@@ -486,9 +494,23 @@ ResetFn g_origReset = nullptr;
 ScissorsFn g_origScissors = nullptr;
 ClearRtvFn g_origClearRtv = nullptr;
 
+// [stereo] native_replay (vr/render/stereo/replay_list_gen.h, crash batch 2026-11-09): the compute and copy lists' Reset, counted for the replay.
+// D3D12 gives each list type its own vtable; where the compute or copy list's Reset is another function than the direct one's, it gets this hook.
+ResetFn g_origResetC = nullptr, g_origResetY = nullptr;
+HRESULT STDMETHODCALLTYPE HookResetC(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
+    const HRESULT hr = g_origResetC(cl, a, ps);
+    if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);
+    return hr;
+}
+HRESULT STDMETHODCALLTYPE HookResetY(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
+    const HRESULT hr = g_origResetY(cl, a, ps);
+    if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);
+    return hr;
+}
 HRESULT STDMETHODCALLTYPE HookReset(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const InList in;
     const HRESULT hr = g_origReset(cl, a, ps);
+    if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);   // (every Reset, outer or not: the replay compares counts, never adds them up)
     if (in.outer && !t_ours) Count(kCensusReset);
     if (in.outer && !t_ours && g_sinks.huntBound && SUCCEEDED(hr)) g_sinks.huntBound(cl, ps);   // (a list starts with its Reset's pipeline)
     if (in.outer && !t_ours && g_sinks.vrsReset && SUCCEEDED(hr)) g_sinks.vrsReset(cl);   // [render] foveated: a new recording, no rate image
@@ -654,6 +676,9 @@ ConstFn g_origCConst = nullptr;
 ConstsFn g_origCConsts = nullptr;
 ViewFn g_origCCbv = nullptr, g_origCSrv = nullptr, g_origCUav = nullptr;
 DrawFn g_origDraw = nullptr;
+// camfix's handlers on these functions (SetRootChain; nullptr: none) - before the fog step's sink, on every call as camfix's own hooks were
+std::atomic<void (*)(ID3D12GraphicsCommandList*, ID3D12RootSignature*, int)> g_chainRs{nullptr};
+std::atomic<uint64_t (*)(ID3D12GraphicsCommandList*, unsigned, uint64_t, int)> g_chainCbv{nullptr};
 void Root(ID3D12GraphicsCommandList* cl, const InList& in, RootCall c) {
     if (in.outer && !t_ours && g_sinks.fxRoot) g_sinks.fxRoot(cl, c);
 }
@@ -663,11 +688,13 @@ void STDMETHODCALLTYPE HookHeaps(ID3D12GraphicsCommandList* cl, UINT n, ID3D12De
     g_origHeaps(cl, n, h);
 }
 void STDMETHODCALLTYPE HookCRootSig(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* r) {
+    if (const auto f = g_chainRs.load(std::memory_order_relaxed)) f(cl, r, 1);
     const InList in;
     Root(cl, in, {RootCall::kComputeRootSignature, 0, (uint64_t)(uintptr_t)r});
     g_origCRootSig(cl, r);
 }
 void STDMETHODCALLTYPE HookGRootSig(ID3D12GraphicsCommandList* cl, ID3D12RootSignature* r) {
+    if (const auto f = g_chainRs.load(std::memory_order_relaxed)) f(cl, r, 0);
     const InList in;
     Root(cl, in, {RootCall::kGraphicsRootSignature, 0, (uint64_t)(uintptr_t)r});
     g_origGRootSig(cl, r);
@@ -693,6 +720,8 @@ void STDMETHODCALLTYPE HookCConsts(ID3D12GraphicsCommandList* cl, UINT i, UINT n
     g_origCConsts(cl, i, n, d, at);
 }
 void STDMETHODCALLTYPE HookCCbv(ID3D12GraphicsCommandList* cl, UINT i, D3D12_GPU_VIRTUAL_ADDRESS a) {
+    if (const auto f = g_chainCbv.load(std::memory_order_relaxed))
+        if (const uint64_t to = f(cl, i, a, 1)) a = to;
     const InList in;
     Root(cl, in, {RootCall::kComputeCbv, i, a});
     g_origCCbv(cl, i, a);
@@ -739,6 +768,7 @@ void STDMETHODCALLTYPE HookIndirect(ID3D12GraphicsCommandList* cl, ID3D12Command
         if (in.outer && !t_ours) Count(kCensusIndirect);
         if (in.outer && !t_ours && g_sinks.huntSkip && g_sinks.huntSkip(cl, 2)) return;
         if (in.outer && !t_ours && g_sinks.vrsIndirect) g_sinks.vrsIndirect(cl);   // [render] foveated: an indirect call is not known - whole
+        if (in.outer && !t_ours && g_sinks.fxIndirect) g_sinks.fxIndirect(cl);     // [fog] game_fog_before_fx: the hair / foliage targets
         if (in.outer && !t_ours && g_sinks.soWork) g_sinks.soWork(cl, 2);
     }
     g_origIndirect(cl, sig, n, args, argsAt, count, countAt);
@@ -962,6 +992,30 @@ void STDMETHODCALLTYPE HookViewports(ID3D12GraphicsCommandList* cl, UINT n, cons
     g_origViewports(cl, n, vp);
 }
 
+// [stereo] native_replay: a list of each other type made on the game's device, its Reset hooked unless it is the direct list's function (hooked
+// already). Told in the log; a hook that does not go in leaves those lists uncounted (the replay then cannot see them reset - as before).
+void HookOtherResets(ID3D12Device* dev, void* directReset) {
+    const D3D12_COMMAND_LIST_TYPE types[2] = {D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_LIST_TYPE_COPY};
+    for (int k = 0; k < 2; ++k) {
+        ID3D12CommandAllocator* a = nullptr;
+        ID3D12GraphicsCommandList* l = nullptr;
+        const char* what = k == 0 ? "compute" : "copy";
+        if (SUCCEEDED(dev->CreateCommandAllocator(types[k], __uuidof(ID3D12CommandAllocator), (void**)&a)) &&
+            SUCCEEDED(dev->CreateCommandList(0, types[k], a, nullptr, __uuidof(ID3D12GraphicsCommandList), (void**)&l))) {
+            void* fn = (*(void***)l)[10];
+            const bool same = fn == directReset;
+            const bool ok = same || HookOne(fn, k == 0 ? (void*)&HookResetC : (void*)&HookResetY, k == 0 ? (void**)&g_origResetC : (void**)&g_origResetY,
+                                            k == 0 ? "ID3D12GraphicsCommandList::Reset (compute lists)" : "ID3D12GraphicsCommandList::Reset (copy lists)");
+            LogF("vrcam: native replay - the %s lists' resets counted for the replay's check (%s)", what,
+                 same ? "the direct lists' Reset: one hook" : ok ? "their own Reset hooked" : "NOT: the hook did not go in");
+            l->Close();
+        } else {
+            LogF("vrcam: native replay - no %s list could be made: its lists' resets are not counted", what);
+        }
+        if (l) l->Release();
+        if (a) a->Release();
+    }
+}
 // The device's views and, from a list of our own made on it, the lists' functions (every graphics list shares them). Once.
 void HookDevice(ID3D12Device* dev, const char* when) {
     if (!dev || g_deviceHooked.exchange(true)) return;
@@ -1009,6 +1063,7 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         // [render] foveated: DrawInstanced 12 (each draw may take the rate image), ExecuteIndirect 59 (it is taken off before one)
         if (g_sinks.vrsDraw) ok &= HookOne(lt[12], (void*)&HookDraw, (void**)&g_origDraw, "ID3D12GraphicsCommandList::DrawInstanced");
         if (g_sinks.vrsIndirect) ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
+        if (g_sinks.fxIndirect) ok &= HookOne(lt[59], (void*)&HookIndirect, (void**)&g_origIndirect, "ID3D12GraphicsCommandList::ExecuteIndirect");
         // [fog] game_fog_before_fx: DrawInstanced 12, SetDescriptorHeaps 28, SetComputeRootSignature 29, SetComputeRootDescriptorTable 31,
         // SetGraphicsRootSignature 30, SetGraphicsRootDescriptorTable 32, SetComputeRoot32BitConstant 33, ...Constants 35, SetComputeRootConstantBufferView 37,
         // ...ShaderResourceView 39, ...UnorderedAccessView 41
@@ -1033,6 +1088,7 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         ok &= HookOne(lt[26], (void*)&HookBarrier, (void**)&g_origBarrier, "ID3D12GraphicsCommandList::ResourceBarrier");
         ok &= HookOne(lt[46], (void*)&HookOmSet, (void**)&g_origOmSet, "ID3D12GraphicsCommandList::OMSetRenderTargets");
         if (g_sinks.soReset) ok &= HookShadowsOnce(l, lt);   // [render] shadows_once_a_pair: everything else a list writes with
+        if (g_sinks.uploadMade) HookOtherResets(dev, lt[10]);   // [stereo] native_replay: the compute and copy lists' resets counted too
         l->Close();
     } else {
         ok = false;
@@ -1073,10 +1129,12 @@ Resize1Fn g_origResize1 = nullptr;
 // one). Only compared, and used inside its own Present, while the game holds it.
 std::atomic<IDXGISwapChain*> g_sc{nullptr};
 std::atomic<ID3D12CommandQueue*> g_queue{nullptr};
+std::atomic<DWORD> g_presentTid{0};   // the thread of the game's last present (TellResize)
 
 void BeforePresent(IDXGISwapChain* sc, UINT flags) {
     if (t_present || (flags & DXGI_PRESENT_TEST) || sc != g_sc.load(std::memory_order_relaxed)) return;
     g_presents.fetch_add(1, std::memory_order_relaxed);
+    g_presentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     if (!g_sinks.present) return;
     IDXGISwapChain3* sc3 = nullptr;
     if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&sc3)) || !sc3) return;
@@ -1099,16 +1157,31 @@ HRESULT STDMETHODCALLTYPE HookPresent1(IDXGISwapChain1* sc, UINT sync, UINT flag
     --t_present;
     return hr;
 }
+// The game's resizes told (rare: a video option, the render size, a mode change): the size and format before and after, and whether the call is on
+// the thread that presents. Crash report 292 (2026-11-08) lost its device ~4 ms after the game's HDR Calibration "SaveAndClose" with a page fault
+// where a "Swap Chain" was freed; these lines say next time whether a resize came there, and from which thread.
+std::atomic<uint32_t> g_resizesTold{0};
+void TellResize(IDXGISwapChain* sc, UINT w, UINT h, DXGI_FORMAT f, UINT n) {
+    if (g_resizesTold.fetch_add(1) >= 24) return;
+    DXGI_SWAP_CHAIN_DESC d{};
+    sc->GetDesc(&d);
+    const DWORD tid = GetCurrentThreadId(), present = g_presentTid.load();
+    LogF("vrcam: no ReShade - the game resizes its swap chain: %ux%u format %u, %u buffers -> %ux%u format %u, %u buffers (0 = kept); on thread %lu, "
+         "%s", d.BufferDesc.Width, d.BufferDesc.Height, (unsigned)d.BufferDesc.Format, d.BufferCount, w, h, (unsigned)f, n, (unsigned long)tid,
+         !present ? "no present yet" : present == tid ? "the one that presents" : "NOT the one that presents");
+}
 void BeforeResize(IDXGISwapChain* sc) {
     if (sc != g_sc.load()) return;
     if (g_sinks.beforeResize) g_sinks.beforeResize();
     if (g_sinks.swapChainChanged) g_sinks.swapChainChanged();
 }
 HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags) {
+    if (sc == g_sc.load()) TellResize(sc, w, h, f, n);
     BeforeResize(sc);
     return g_origResize(sc, n, w, h, f, flags);
 }
 HRESULT STDMETHODCALLTYPE HookResize1(IDXGISwapChain3* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags, const UINT* mask, IUnknown* const* qs) {
+    if (sc == g_sc.load()) TellResize(sc, w, h, f, n);
     BeforeResize(sc);
     return g_origResize1(sc, n, w, h, f, flags, mask, qs);
 }
@@ -1226,6 +1299,14 @@ ID3D12Resource* SrvResource(uint64_t handle) { return SrvAt((SIZE_T)handle); }
 unsigned SrvIncrement() { return g_srvInc.load(); }
 ID3D12CommandQueue* GameQueue() { return g_queue.load(); }
 void SetOurs(bool ours) { t_ours = ours; }
+bool HoldsHook(void* fn) {
+    std::lock_guard<std::mutex> l(g_hookMx);
+    return fn && std::find(g_hooked.begin(), g_hooked.end(), fn) != g_hooked.end();
+}
+void SetRootChain(const RootChain& c) {
+    g_chainRs.store(c.rootSig);
+    g_chainCbv.store(c.cbv);
+}
 bool Ours() { return t_ours; }
 
 void WatchIndexCount(uint32_t indexCount) { g_watchCount.store(indexCount, std::memory_order_relaxed); }

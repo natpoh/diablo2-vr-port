@@ -14,7 +14,9 @@
 #include <atomic>
 #include <cstdarg>
 #include <deque>
+#include <algorithm>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 
 #include "native_d3d12.h"   // natived3d::SetOurs
@@ -28,7 +30,7 @@ namespace {
 void (*g_log)(const char*) = nullptr;
 void Say(const char* fmt, ...) {
     if (!g_log) return;
-    char b[512];
+    char b[1024];
     va_list a;
     va_start(a, fmt);
     vsnprintf(b, sizeof b, fmt, a);
@@ -50,6 +52,7 @@ struct Entry {
     ID3D12PipelineState* game = nullptr;
     ID3D12Device* dev = nullptr;
     Family family = kNotOurs;
+    int variant = kVarPlain;                     // the game's cut / blending, copied (Variant; the terrain: plain)
     bool stream = false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};   // (a graphics description, its pointers into the copies below)
     std::vector<uint8_t> bytes;                  // (a stream: its bytes)
@@ -68,19 +71,25 @@ std::deque<std::unique_ptr<Entry>> g_entries;                      // (under g_l
 std::unordered_map<ID3D12PipelineState*, Entry*> g_byGame;         // (under g_lock; read shared by Swap)
 std::atomic<int> g_count{0};
 std::atomic<uint32_t> g_familyCount[3] = {};
+std::atomic<uint32_t> g_variantCount[kVariants] = {};   // the models' kept, by their cut
+std::atomic<uint32_t> g_leftGame{0};                      // lit pipelines with a cut or blending we do not copy: left the game's
+// our shaders' slots: 0 the terrain's, 1 + v the models' variant v
+constexpr int kSlots = 1 + kVariants;
+inline int SlotOf(Family f, int variant) { return f == kTerrain ? 0 : 1 + variant; }
 
 std::atomic<bool> g_on{false};
 std::atomic<uint32_t> g_gen[2] = {1, 1};      // [0] the open, [1] underground
 std::atomic<float> g_level[2] = {1.0f, 1.0f};
 bool (*g_undergroundFn)() = nullptr;          // which light is in force now (the fog's own split: caves and dungeons, vr/sky/sky_choice.cpp)
 std::atomic<uint32_t> g_rgb{0xFFFFFF};
+std::atomic<bool> g_gameLight{false};        // [render] potato_light_game: the game's ambient + key light, no shadows (kGameLight)
 std::atomic<bool> g_area{false};             // the colour follows the area's (g_areaFn), read every 2 s on the present's thread
 bool (*g_areaFn)(float rgb[3]) = nullptr;
 ULONGLONG g_areaAt = 0;
-// the present's: our two shaders for each light's g_gen
-uint32_t g_codeGen[2] = {};
-std::vector<uint8_t> g_code[2][3];
-bool g_compileFailed[2] = {};
+// the present's: our shaders for each light's g_gen, one a slot (compiled when a kept pipeline first needs it)
+uint32_t g_codeGen[2][kSlots] = {};
+std::vector<uint8_t> g_code[2][kSlots];
+bool g_compileFailed[2][kSlots] = {};
 struct Retired { ID3D12PipelineState* p; ULONGLONG at; };
 std::vector<Retired> g_retired;
 std::atomic<uint32_t> g_swapped{0}, g_notYet{0}, g_notF4{0}, g_builds{0}, g_buildFails{0};
@@ -99,12 +108,46 @@ Family Take(const D3D12_SHADER_BYTECODE& ps) {
     if (renderbench::StageOf(Fnv(ps.pShaderBytecode, ps.BytecodeLength)) != renderbench::kLit) return kNotOurs;
     return FamilyOf((const uint8_t*)ps.pShaderBytecode, ps.BytecodeLength);
 }
+// Its cut and blending (Variant), checked against the pipeline's own blending (Accept). kVarUnknown: left the game's. Each distinct blended
+// lit pipeline is told once (its shader's kind and the first target's blend), so a log says what draws a decal (up to 24 lines a session).
+std::mutex g_blendLock;
+std::vector<uint64_t> g_blendSeen;
+int VariantFor(Family f, const D3D12_SHADER_BYTECODE& ps, const D3D12_BLEND_DESC& bd) {
+    const int v = VariantOf((const uint8_t*)ps.pShaderBytecode, ps.BytecodeLength);
+    const D3D12_RENDER_TARGET_BLEND_DESC& r0 = bd.RenderTarget[0];
+    bool other = r0.LogicOpEnable != FALSE;
+    for (int i = 1; i < 8 && bd.IndependentBlendEnable; ++i)
+        other |= bd.RenderTarget[i].BlendEnable != FALSE || bd.RenderTarget[i].LogicOpEnable != FALSE;
+    const bool rt0 = r0.BlendEnable != FALSE;
+    const bool ok = Accept(f, v, rt0, other);
+    if (rt0 || other) {
+        const uint64_t key = (uint64_t)f | (uint64_t)(v + 1) << 4 | (uint64_t)r0.SrcBlend << 8 | (uint64_t)r0.DestBlend << 16 | (uint64_t)r0.BlendOp << 24 |
+                             (uint64_t)r0.SrcBlendAlpha << 32 | (uint64_t)r0.DestBlendAlpha << 40 | (uint64_t)other << 48 | (uint64_t)bd.AlphaToCoverageEnable << 49;
+        std::lock_guard<std::mutex> g(g_blendLock);
+        if (g_blendSeen.size() < 24 && std::find(g_blendSeen.begin(), g_blendSeen.end(), key) == g_blendSeen.end()) {
+            g_blendSeen.push_back(key);
+            Say("vrcam: render bench - lit flat: a blended lit pipeline - %s, its cut %s; first target blend %s src %d dst %d op %d, alpha src %d dst %d; "
+                "other targets / logic op %s, alpha to coverage %s: %s",
+                f == kModels ? "models' family" : "terrain", VariantName(v), rt0 ? "on" : "off", (int)r0.SrcBlend, (int)r0.DestBlend, (int)r0.BlendOp,
+                (int)r0.SrcBlendAlpha, (int)r0.DestBlendAlpha, other ? "blend" : "no", bd.AlphaToCoverageEnable ? "on" : "off",
+                ok ? "ours copies it (the game's weighted transparency)" : "it stays the game's");
+        }
+    }
+    if (!ok) {
+        if (g_leftGame.fetch_add(1) < 4 && !rt0 && !other)
+            Say("vrcam: render bench - lit flat: a lit pipeline (%s) with a cut we do not copy (%s): it stays the game's", f == kModels ? "models" : "terrain",
+                VariantName(v));
+        return kVarUnknown;
+    }
+    return v;
+}
 void Add(std::unique_ptr<Entry> e, ID3D12Device* dev, ID3D12PipelineState* pso) {
     dev->AddRef();
     pso->AddRef();   // (its address stays its own while we compare against it)
     e->dev = dev;
     e->game = pso;
     g_familyCount[e->family].fetch_add(1, std::memory_order_relaxed);
+    if (e->family == kModels) g_variantCount[e->variant].fetch_add(1, std::memory_order_relaxed);
     AcquireSRWLockExclusive(&g_lock);
     g_byGame[pso] = e.get();
     g_entries.push_back(std::move(e));
@@ -112,39 +155,43 @@ void Add(std::unique_ptr<Entry> e, ID3D12Device* dev, ID3D12PipelineState* pso) 
     ReleaseSRWLockExclusive(&g_lock);
 }
 
-bool CompileFor(int set, uint32_t gen) {   // (the present's thread)
-    if (g_codeGen[set] == gen) return !g_compileFailed[set];
-    g_codeGen[set] = gen;
-    g_compileFailed[set] = false;
+// One slot's shader for a light (the present's thread). `compiled` counts the compiles this present (a few at most: each ~10-30 ms).
+bool CompileFor(int set, int slot, uint32_t gen, int* compiled) {
+    if (g_codeGen[set][slot] == gen) return !g_compileFailed[set][slot];
+    if (*compiled >= 3) return false;   // (the next present)
+    ++*compiled;
+    g_codeGen[set][slot] = gen;
+    g_compileFailed[set][slot] = false;
+    g_code[set][slot].clear();
     HMODULE lib = LoadLibraryExW(L"d3dcompiler_47.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto compile = lib ? reinterpret_cast<pD3DCompile>(GetProcAddress(lib, "D3DCompile")) : nullptr;
-    const std::string light = LightDefine(g_rgb.load(), g_level[set].load());
-    const D3D_SHADER_MACRO macros[] = {{"LIGHT", light.c_str()}, {nullptr, nullptr}};
-    const char* const src[3] = {nullptr, kModelsShader, kTerrainShader};
-    const size_t len[3] = {0, sizeof kModelsShader - 1, sizeof kTerrainShader - 1};
-    for (int f = kModels; f <= kTerrain; ++f) {
-        g_code[set][f].clear();
-        ID3DBlob* blob = nullptr;
-        ID3DBlob* errors = nullptr;
-        if (compile && SUCCEEDED(compile(src[f], len[f], "vrcam-lit-flat", macros, nullptr, "main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
-                                         &blob, &errors))) {
-            const uint8_t* p = (const uint8_t*)blob->GetBufferPointer();
-            g_code[set][f].assign(p, p + blob->GetBufferSize());
-        }
-        if (g_code[set][f].empty()) {
-            g_compileFailed[set] = true;
-            Say("vrcam: render bench - lit flat: our %s shader did not compile (%s)", f == kModels ? "models'" : "terrain's",
-                !lib ? "no d3dcompiler_47.dll" : !compile ? "no D3DCompile" : errors ? (const char*)errors->GetBufferPointer() : "unknown");
-        }
-        if (blob) blob->Release();
-        if (errors) errors->Release();
+    const bool game = g_gameLight.load();
+    const std::string light = LightDefine(game ? 0xFFFFFFu : g_rgb.load(), g_level[set].load());
+    const Family f = slot == 0 ? kTerrain : kModels;
+    const int variant = slot == 0 ? kVarPlain : slot - 1;
+    const D3D_SHADER_MACRO macros[] = {{"LIGHT", light.c_str()}, {"GAME_LIGHT", game ? "1" : "0"}, {"CLIP", ClipMacro(variant)},
+                                       {"BLEND", BlendMacro(variant)}, {nullptr, nullptr}};
+    ID3DBlob* blob = nullptr;
+    ID3DBlob* errors = nullptr;
+    const std::string src = Source(f);
+    if (compile && SUCCEEDED(compile(src.data(), src.size(), "vrcam-lit-flat", macros, nullptr, "main", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                                     &blob, &errors))) {
+        const uint8_t* p = (const uint8_t*)blob->GetBufferPointer();
+        g_code[set][slot].assign(p, p + blob->GetBufferSize());
     }
+    if (g_code[set][slot].empty()) {
+        g_compileFailed[set][slot] = true;
+        Say("vrcam: render bench - lit flat: our %s shader (%s) did not compile (%s)", f == kModels ? "models'" : "terrain's", VariantName(variant),
+            !lib ? "no d3dcompiler_47.dll" : !compile ? "no D3DCompile" : errors ? (const char*)errors->GetBufferPointer() : "unknown");
+    }
+    if (blob) blob->Release();
+    if (errors) errors->Release();
     if (lib) FreeLibrary(lib);
-    return !g_compileFailed[set];
+    return !g_compileFailed[set][slot];
 }
 
 void Build(Entry& e, int set, uint32_t gen) {
-    const std::vector<uint8_t>& ps = g_code[set][e.family];
+    const std::vector<uint8_t>& ps = g_code[set][SlotOf(e.family, e.variant)];
     ID3D12PipelineState* p = nullptr;
     HRESULT hr = E_FAIL;
     const bool was = natived3d::Ours();
@@ -186,8 +233,11 @@ void OnGraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* 
     if (!dev || !d || !pso || d->StreamOutput.NumEntries) return;
     const Family f = Take(d->PS);
     if (f == kNotOurs) return;
+    const int v = VariantFor(f, d->PS, d->BlendState);
+    if (v == kVarUnknown) return;
     auto e = std::make_unique<Entry>();
     e->family = f;
+    e->variant = v;
     e->stream = false;
     e->desc = *d;
     e->codes.reserve(4);
@@ -210,8 +260,15 @@ void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, I
     std::memcpy(&ps, s + psAt, sizeof ps);
     const Family f = Take(ps);
     if (f == kNotOurs) return;
+    size_t blendAt = 0;   // (no blend subobject: the default, nothing blends)
+    D3D12_BLEND_DESC bd{};
+    if (psostream::Find(s, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, &blendAt) && blendAt + sizeof(D3D12_BLEND_DESC) <= d->SizeInBytes)
+        std::memcpy(&bd, s + blendAt, sizeof bd);
+    const int variant = VariantFor(f, ps, bd);
+    if (variant == kVarUnknown) return;
     auto e = std::make_unique<Entry>();
     e->family = f;
+    e->variant = variant;
     e->stream = true;
     e->bytes.assign(s, s + d->SizeInBytes);
     e->psAt = psAt;
@@ -260,14 +317,16 @@ void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, I
 void SetAreaColour(bool (*fn)(float rgb[3])) { g_areaFn = fn; }
 void SetUnderground(bool (*fn)()) { g_undergroundFn = fn; }
 
-void Configure(bool on, float level, uint32_t rgb, bool area, float levelCaves) {
+void Configure(bool on, float level, uint32_t rgb, bool area, float levelCaves, bool gameLight) {
     auto clampL = [](float v) { return v < 0.0f ? 0.0f : v > 16.0f ? 16.0f : v; };
     level = clampL(level);
     levelCaves = clampL(levelCaves < 0.0f ? level : levelCaves);   // (no caves' level given: the open's)
     rgb &= 0xFFFFFF;
+    if (gameLight) area = false;   // (the game's own light: no colour of ours)
+    const bool wasGame = g_gameLight.exchange(gameLight);
     const bool wasArea = g_area.exchange(area);
     // (with the area's colour the colour is Frame's to set: only the levels and the switch to it count here)
-    const bool colourChanged = area != wasArea || (!area && rgb != g_rgb.load());
+    const bool colourChanged = gameLight != wasGame || area != wasArea || (!area && rgb != g_rgb.load());
     const bool changed[2] = {colourChanged || level != g_level[0].load(), colourChanged || levelCaves != g_level[1].load()};
     g_level[0].store(level);
     g_level[1].store(levelCaves);
@@ -277,11 +336,18 @@ void Configure(bool on, float level, uint32_t rgb, bool area, float levelCaves) 
     const bool was = g_on.exchange(on);
     if (on != was || (on && (changed[0] || changed[1])))
         Say("vrcam: render bench - lit flat %s (the Potato light): %s; light #%06X x %.2f in the open, x %.2f underground; the game's lit pipelines "
-            "kept: %u models', %u terrain (a copy for each light, made a few a frame)%s", on ? "ON" : "off",
-            on ? "the ground, walls, objects, monsters and the hero drawn in their own colour times one light, evenly - no sun, shadows, torches or "
-                 "light loops in the lit pass (VR first person only)"
-               : "the game's own lit pass again",
-            g_rgb.load(), level, levelCaves, g_familyCount[kModels].load(), g_familyCount[kTerrain].load(),
+            "kept: %u models' (their cut copied: %u plain, %u albedo, %u opacity, %u both, %u foliage blended, %u grunge blended; %u left the "
+            "game's), %u terrain (a copy for each light, made a few a frame)%s", on ? "ON" : "off",
+            !on ? "the game's own lit pass again"
+            : gameLight ? "the ground, walls, objects, monsters and the hero drawn in their own colour times the GAME'S OWN light - the area's "
+                          "ambient (its probe's sky colours x the vis file's iblIntensity) and its key light (sun / moon colour x power x N.L) as the "
+                          "game hands them to its lit pass, no shadows, torches, light loops or reflections ([render] potato_light_game; VR first "
+                          "person only)"
+                        : "the ground, walls, objects, monsters and the hero drawn in their own colour times one light, evenly - no sun, shadows, "
+                          "torches or light loops in the lit pass (VR first person only)",
+            gameLight ? 0xFFFFFFu : g_rgb.load(), level, levelCaves, g_familyCount[kModels].load(), g_variantCount[kVarPlain].load(),
+            g_variantCount[kVarAlbedoRef].load(), g_variantCount[kVarOpacityRef].load(), g_variantCount[kVarBothRef].load(),
+            g_variantCount[kVarFoliage].load(), g_variantCount[kVarGrunge].load(), g_leftGame.load(), g_familyCount[kTerrain].load(),
             area ? "; its colour the area's own, followed every 2 s" : "");
 }
 
@@ -316,16 +382,16 @@ void Frame() {
     // the light in force first, then the other (so an area change finds it ready); 24 copies a present in all
     const int first = SetNow();
     const int n = g_count.load(std::memory_order_acquire);
-    int built = 0;
+    int built = 0, compiled = 0;
     for (int pass = 0; pass < 2 && built < 24; ++pass) {
         const int set = pass == 0 ? first : 1 - first;
         const uint32_t gen = g_gen[set].load();
-        if (!CompileFor(set, gen)) continue;
         for (int step = 0; step < n && built < 24; ++step) {
             AcquireSRWLockShared(&g_lock);
             Entry* e = (size_t)step < g_entries.size() ? g_entries[(size_t)step].get() : nullptr;
             ReleaseSRWLockShared(&g_lock);
             if (!e || e->failed || e->gen[set].load(std::memory_order_relaxed) == gen) continue;
+            if (!CompileFor(set, SlotOf(e->family, e->variant), gen, &compiled)) continue;   // (its shader did not compile, or not yet)
             Build(*e, set, gen);
             ++built;
         }
@@ -368,11 +434,12 @@ std::string Line() {
     for (const auto& e : g_entries) { made[0] += e->gen[0].load() == gen0 ? 1 : 0; made[1] += e->gen[1].load() == gen1 ? 1 : 0; }
     const int n = (int)g_entries.size();
     ReleaseSRWLockShared(&g_lock);
-    char b[480];
-    snprintf(b, sizeof b, "vrcam: render bench, 10 s: LIT FLAT (the Potato light #%06X, x %.2f in the open, x %.2f underground; now %s) - binds given "
+    char b[560];
+    snprintf(b, sizeof b, "vrcam: render bench, 10 s: LIT FLAT (the Potato light %s #%06X, x %.2f in the open, x %.2f underground; now %s) - binds given "
              "ours %u, still the game's: %u (no copy yet) %u (not F4); copies made for the lights now: open %d, underground %d of %d (%u in these 10 s, "
              "%u refused in all)",
-             g_rgb.load(), g_level[0].load(), g_level[1].load(), SetNow() ? "underground" : "in the open", sw, notYet, notF4, made[0], made[1], n, builds,
+             g_gameLight.load() ? "in the game's own colours" : "of one colour", g_gameLight.load() ? 0xFFFFFFu : g_rgb.load(), g_level[0].load(),
+             g_level[1].load(), SetNow() ? "underground" : "in the open", sw, notYet, notF4, made[0], made[1], n, builds,
              g_buildFails.load());
     return b;
 }

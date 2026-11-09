@@ -1,5 +1,6 @@
 // vr/hud/labels.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../own_plate_why.h"
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -324,7 +325,14 @@ double NamesNowMs() {
     QueryPerformanceCounter(&c);
     return (double)c.QuadPart / perMs;
 }
-bool MonsterNamesOwnNow() { return g_set.monsterNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4() && !plateworld::Active(); }
+// F4 as ever; with [hud] monster_names_own_all_views (Serg, 2026-11-09: "новые плашки над монстрами включались на всех видах") also VR F1, F2, F3 while
+// our camera draws a stereo pair there (AfrOn: its eyes project our plate over the head; the game's own camera's flat F1 keeps the game's plate).
+// (Not given way to the room bar, monster_bar_room, since 2026-11-09: with ours on that bar stands aside - PlateWorldTick - as every old plate way does.)
+bool MonsterNamesOwnNow() {
+    if (!g_set.monsterNamesOwn.load() || !g_enabled.load()) return false;
+    if (FullBody() && viewgate::F4()) return true;
+    return g_set.monsterNamesOwnAllViews.load() && g_set.platform.load() == 1 && !FullBody() && AfrOn();
+}
 // [hud] npc_names_own: the hover tooltip's names (ownnames::kHoverSites) - recorded like the plate's texts, skipped once ours is shown.
 bool NpcNamesOwnNow() { return g_set.npcNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
 std::atomic<bool> g_hoverOn{false};
@@ -342,7 +350,7 @@ bool NamesTargetPlate(float* life, bool* unique) {
     return *life >= 0.0f;
 }
 bool NamesTargetHidden() {
-    if (!mobbars::Enabled()) return false;
+    if (!mobbars::Enabled() || !viewgate::F4()) return false;   // (the hook hides ordinary monsters' plates in F4 only: elsewhere ours shows, as the game's)
     uintptr_t unit = 0;
     plateworld::Follow f;
     float px[2];
@@ -439,7 +447,7 @@ void NotePlateInfo(const uint8_t* msg) {
     }
 }
 uintptr_t HookPlateInfo(void* self, const uint8_t* msg, void* panel, uint8_t flag) {
-    if (g_namesOn.load(std::memory_order_relaxed)) NotePlateInfo(msg);
+    if (MonsterNamesOwnNow()) NotePlateInfo(msg);   // (ours on: what the plate is told, whether or not ours reached the picture yet)
     return OrigPlateInfo(self, msg, panel, flag);
 }
 // [hud] monster_names_own: the game's plate never drawn - not hidden, moved or painted over (Serg, 2026-11-07: "the old plates' layer removed fully").
@@ -463,9 +471,14 @@ PictureDrawFn OrigPictureDraw = nullptr;
 Fill7Fn OrigFill7 = nullptr;
 Fill6Fn OrigFill6 = nullptr;
 std::atomic<bool> g_plateDrawIn{false};
+std::atomic<bool> g_textDrawIn{false};   // the game's TextDraw hooked (InstallLabelHooks): the plate's texts reach ours
 std::atomic<uint32_t> g_plateDrawsSkipped{0};
 uintptr_t HookPlateDraw(void* self, void* a, void* b, void* c) {
-    if (!DropGameLayer() || !ownnames::GamePlateHidden(g_namesOn.load(std::memory_order_relaxed), true)) return g_widgetDraw(self, a, b, c);
+    // Ours on, the game's plate never drawn - not waiting for the effect to say ours made it to the picture this frame (Serg, 2026-11-09: "их не
+    // надо обрабатывать вовсе, а просто прятать этот слой"; until then a frame the effect had not taken the interface out drew the game's plate).
+    // Still behind own_labels_drop_game: this hook is the 0.206.6 - 0.206.8 lost-device suspect (59584aad). Its Draw still runs with its pictures and
+    // fills drawing nothing: its texts pass TextDraw to be recorded for ours.
+    if (!DropGameLayer() || !ownnames::GamePlateHidden(MonsterNamesOwnNow(), true)) return g_widgetDraw(self, a, b, c);
     t_inPlate = true;   // (its pictures and fills draw nothing, its texts are recorded and skipped)
     const uintptr_t r = g_widgetDraw(self, a, b, c);
     t_inPlate = false;
@@ -530,6 +543,40 @@ void InstallPlateInfoHook() {
     g_plateInfoIn.store(in);
     Log(in ? "vrcam: [hud] monster_names_own - the plate's SetInfo hook in (read only: what the plate is told)"
            : "vrcam: [hud] monster_names_own - the plate's SetInfo hook FAILED: the game's names stay");
+}
+// Which plate is in use now, ours or the game's, and why: a line each change, with the view and the Quality preset's render stages (Serg,
+// 2026-11-09: on Potato "старые таблички" over the monsters instead of ours) - vr/own_plate_why.h. From the frame tick, a few times a second.
+void MonsterPlateWhichTick() {
+    if (!g_inWorld.load()) return;
+    ownplatewhy::In s;
+    s.own = g_set.monsterNamesOwn.load();
+    s.allViews = g_set.monsterNamesOwnAllViews.load();
+    s.firstPerson = FullBody() && viewgate::F4();
+    s.vrOurs = g_enabled.load() && g_set.platform.load() == 1;
+    s.stereo = AfrOn();
+    s.dropGame = DropGameLayer();
+    s.drawHook = g_plateDrawIn.load();
+    s.textHook = g_textDrawIn.load();
+    s.effectReady = hud::PictureReady();
+    float keepBar[4], keepMap[4];
+    uint64_t srv = 0;
+    s.layerOut = hud::LabelsNow(keepBar, keepMap, &srv);
+    s.namesOn = g_namesOn.load(std::memory_order_relaxed);
+    const ownplatewhy::Why why = ownplatewhy::Of(s);
+    const int view = s.vrOurs ? g_set.vrView.load() : 0, stages = g_set.gameStages.load();
+    static int toldWhy = -1, toldView = -1, toldStages = -1;
+    static ULONGLONG since = 0;
+    const ULONGLONG now = GetTickCount64();
+    if ((int)why == toldWhy && view == toldView && stages == toldStages) { since = 0; return; }
+    // (a change held for half a second: a menu's frame or a view switch's first frames do not fill the log)
+    if (!since) since = now;
+    if (now - since < 500) return;
+    since = 0;
+    toldWhy = (int)why; toldView = view; toldStages = stages;
+    char m[400];
+    snprintf(m, sizeof m, "vrcam: monster plate in %s%d, %s preset ([render] game_stages %d): %s", view ? "VR F" : "the flat game, view ", view ? view : g_set.vrView.load(),
+             ownplatewhy::StagesName(stages), stages, ownplatewhy::Text(why));
+    Log(m);
 }
 // The plate's text boxes give TextDraw a point, not a box (0.205.6, Serg's log: "  Zombie" at 867,956 0x0, the middle of the plate's box
 // 786,914-945,997): the text is laid out about it. Its size is the game's own measure with the same style and scale (TextMeasure 0x909560, as
@@ -666,6 +713,12 @@ int NamesTargetBody(float foot[2], uint8_t row[3]) {
     row[0] = b[8]; row[1] = b[9]; row[2] = b[13];
     return ownnames::kBodyOk;
 }
+// The plate's texts left out: with its layer dropped (own_labels_drop_game) as soon as ours is on - as the plate's frame (HookPlateDraw), not
+// waiting for the effect (Serg, 2026-11-09: "просто прятать этот слой"); without the drop, only once the effect drew ours (as before: never the
+// frame left with no name in it).
+bool PlateTextsHidden() {
+    return MonsterNamesOwnNow() && (DropGameLayer() || g_namesOn.load(std::memory_order_relaxed));
+}
 // True: the game's drawing of this text is skipped (ours is on the screen in its place).
 bool NoteNameText(const char* text, const int32_t* box, const void* style, float scale) {
     if (ownlabels::IconIn(text, 0x80)) return false;   // (a game icon in it: the game draws it, never our box)
@@ -697,7 +750,7 @@ bool NoteNameText(const char* text, const int32_t* box, const void* style, float
     AcquireSRWLockExclusive(&g_namesLock);
     g_namesRecord.Add(text, b, now, which, known ? rgb : nullptr, ownlabels::FontOfStyle(first));
     // every copy of a told text, every frame our names are on (0.206.5: the game's text flashed on the frames ours was not marked yet) - ours or nothing
-    const bool skip = ownnames::SkipGameText(g_namesOn.load(std::memory_order_relaxed), which, g_namesShown.Lately(ownnames::KeyOf(text), now));
+    const bool skip = ownnames::SkipGameText(PlateTextsHidden(), which, g_namesShown.Lately(ownnames::KeyOf(text), now));
     ReleaseSRWLockExclusive(&g_namesLock);
     return skip;
 }
@@ -713,7 +766,7 @@ uintptr_t HookTextDraw(const char* text, const int32_t* box, const void* style, 
         if (NoteHoverText(text, box, style, scale)) return OrigTextDraw("", box, style, scale);
         return OrigTextDraw(text, box, style, scale);
     }
-    if (k <= 0.0f && text && box && text[0] && g_namesOn.load(std::memory_order_relaxed) && NoteNameText(text, box, style, scale))
+    if (k <= 0.0f && text && box && text[0] && PlateTextsHidden() && NoteNameText(text, box, style, scale))
         return OrigTextDraw("", box, style, scale);   // [hud] monster_names_own: ours is drawn in its place (an empty text, as LabelPaint's rim strips)
     return OrigTextDraw(text, box, style, k > 0.0f ? scale * k : scale);
 }
@@ -770,6 +823,7 @@ void InstallLabelHooks() {
     }
     // The name drawn at the other scale first: a smaller box round a name at the old size would wrap it.
     if (!drawIn) drawIn = d2rsig::Hook(RVA_TEXT_DRAW, kSigTextDraw, sizeof kSigTextDraw, (void*)&HookTextDraw, (void**)&OrigTextDraw);
+    g_textDrawIn.store(drawIn, std::memory_order_relaxed);
     const bool in = drawIn && d2rsig::Hook(RVA_LABEL_LAYOUT, kSigLabelLayout, sizeof kSigLabelLayout, (void*)&HookLabelLayout, (void**)&OrigLabelLayout);
     sizeFailed = !in;
     g_labelSizeIn.store(in);

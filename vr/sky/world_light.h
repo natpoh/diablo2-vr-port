@@ -31,6 +31,9 @@ namespace cavelight {
 void Load();
 void Install();
 void Tick(const std::string& biome, bool underground);
+// The game's own lighting's time of day (its VisualDataSystem's period 0..5 and fraction 0..1 - what the HD world is lit by, not the
+// world clock env::Now); false: not read (the hook not in, no game) or another layout
+bool VisTime(int* period, float* frac, int* event = nullptr);   // event: the lighting's event look (2 the eclipse), -1 none
 }  // namespace cavelight
 
 }  // namespace vrc

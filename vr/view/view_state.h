@@ -24,6 +24,7 @@ bool NativeView();
 bool MenuAs3d();          // [openxr] menu_3d
 bool FlatVrMenuPanel();   // ... on FlatVR
 bool FlatVrLaserWanted();
+bool NpcDialogKeepsView();   // [hud] npc_dialog_keep_view: an NPC's talk keeps the pair in native VR F1 - F3 (vr/npc_dialog_view.h)
 bool MenuFlat();          // a menu open that the picture shows
 bool EffectsPaused();     // the sky, the fog and the cave ceiling stop for it in VR
 bool TableView();         // VR F3, the game on the floor

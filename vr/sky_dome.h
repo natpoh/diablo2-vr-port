@@ -123,6 +123,47 @@ inline const char* UnitFileProblem(const std::string& text) {
     return nullptr;
 }
 
+// ---- the model the unit names, checked before the game gets the unit ----
+// The game builds whatever file stands at the model's path: the domes sit at its developers' test paths, so a file there not ours - an
+// earlier build's ceiling slab the Settings window took for the player's own, or none at all (the game's own test model then) - is drawn
+// as the dome, laid round the eye every frame: a giant rock (the test PC, 0.208.2, 2026-11-08: "the game built for tests/pillar01:
+// material rocks03"; playful_pony, 0.202.0: the grey pillar). So the act domes' and the cave's models are read first, every LOD file.
+// The model's path in a dome's unit (D2R_VR_Settings' UnitJson: the ModelDefinitionComponent's "filename"); "" when none
+inline std::string UnitModel(const std::string& unit) {
+    const std::string key = "\"filename\":\"";
+    const size_t at = unit.find(key);
+    if (at == std::string::npos) return std::string();
+    const size_t from = at + key.size(), end = unit.find('"', from);
+    return end == std::string::npos ? std::string() : unit.substr(from, end - from);
+}
+// "x.model" -> "x_lod<n>.model" (the files the game reads); "" when not a model's path
+inline std::string LodFile(const std::string& model, int lod) {
+    if (model.size() < 7 || model.compare(model.size() - 6, 6, ".model") != 0) return std::string();
+    return model.substr(0, model.size() - 6) + "_lod" + std::to_string(lod) + ".model";
+}
+// The dome's name in its unit's path (".../sky_dome_act2_unit.json" -> "act2"); "" when not a dome's unit
+inline std::string DomeName(const std::string& unitPath) {
+    const std::string head = "sky_dome_", tail = "_unit.json";
+    const size_t at = unitPath.rfind(head);
+    if (at == std::string::npos || unitPath.size() < at + head.size() + tail.size() ||
+        unitPath.compare(unitPath.size() - tail.size(), tail.size(), tail) != 0)
+        return std::string();
+    return unitPath.substr(at + head.size(), unitPath.size() - tail.size() - at - head.size());
+}
+// Whose model is checked: the domes D2R_VR_Settings makes at the game's test paths ([debug] game_sky_test's units name the game's own
+// Summit model, or the magenta test, on purpose)
+inline bool ChecksModel(const std::string& name) {
+    return name == "act1" || name == "act2" || name == "act3" || name == "act4" || name == "act5" || name == "cave";
+}
+// One LOD file of the dome's model as read from the mod's data: nullptr = ours (the Settings window names each dome's material
+// "d2rvr_sky_<name>_material"), else why not
+inline const char* ModelFileProblem(const std::string& data, const std::string& name) {
+    if (data.empty()) return "the file is not there (the game would draw its own test model at that path)";
+    if (data.find("d2rvr_sky_" + name + "_material") == std::string::npos)
+        return "not this dome's model (another file at that path - an earlier build's, which the Settings window replaces, or the player's)";
+    return nullptr;
+}
+
 // The radius it is laid at: the one asked for ([sky] game_sky_radius), at most where the depth buffer still holds it (kDepthSteps steps
 // above the far plane, near / radius = kDepthSteps / 2^24); a near plane not known yet: 25000.
 inline float DrawableRadius(float wanted, float nearPlane) {

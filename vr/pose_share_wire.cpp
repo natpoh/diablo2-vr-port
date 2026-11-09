@@ -24,6 +24,7 @@
 using namespace D2RL;
 namespace nw = D2RL::Network;
 namespace ps = poseshare;
+namespace gs = grabshare;
 
 namespace posewire {
 namespace {
@@ -41,6 +42,7 @@ std::atomic<int> g_hz{ps::kSendHzDefault};
 std::atomic<uint32_t> g_delayMs{ps::kDelayMsDefault};
 std::atomic<bool> g_inGame{false};
 uiticket::Ticket g_job;
+std::atomic<ShotSink> g_shotSink{nullptr};   // (vr/shot_share.h) the shots that come
 
 LARGE_INTEGER g_qpf{};
 
@@ -104,6 +106,10 @@ struct Client {
     uint32_t burstGot = 0;   // the host's burst messages that came
     uint32_t relaysGot = 0;  // relay messages from the host, all along (the ping's receipt: the host knows what arrives)
     uint16_t pongsGot = 0;
+    shotshare::Shot shot;    // our latest bow shot (ShotOut), sent once
+    uint32_t shotUnit = 0;
+    bool shotFresh = false;
+    uint32_t shotsOut = 0, shotsIn = 0;   // for the 5 s line
 };
 Client g_cl;
 
@@ -121,6 +127,20 @@ struct RemoteSlot {
 };
 std::array<RemoteSlot, ps::kMaxPeers> g_remotes;
 
+// [multiplayer] pose_share_grab (vr/grab_share.h): our holds to send (SetOwnGrabs), each holder's hand as it came (played back by RemoteGrabs), the counts
+struct OwnGrabs { gs::Hold h[gs::kGrabMsgMax]; int n = 0; bool fresh = false; };
+gs::KnockQueue g_knocks;   // [multiplayer] pose_share_grab: the others' knocks, each played once (RemoteKnocks)
+OwnGrabs g_ownGrabs;
+struct GrabSlot {
+    uint32_t unit = 0;   // 0 = free
+    uint8_t side = 0;
+    gs::GrabTrack track;
+};
+std::array<GrabSlot, 2 * ps::kMaxPeers> g_grabSlots;
+constexpr uint64_t kGrabForgetMs = 4000;   // a holder's hand heard of no more this long: its slot is free (its hold played out long before)
+struct GrabCounts { uint32_t sent = 0, got = 0, relayed = 0, refused = 0; };
+GrabCounts g_grabCounts;   // (since the last 5 s line)
+
 int SeenSlot(uint64_t peer, bool add);   // (below)
 struct Host {
     bool is = false;   // a hostMessage came: we are the host
@@ -132,6 +152,7 @@ struct Host {
     std::array<uint64_t, ps::kMaxPeers> seen{};       // every peer ever heard of (each is resolved once)
     std::array<uint32_t, ps::kMaxPeers> burstGot{};   // the burst messages each peer's burst got through, by seen[] slot
     std::array<ps::RelayPace, ps::kMaxPeers> pace{};  // the relays' pace to each peer by its receipts, by seen[] slot
+    gs::HostGrabs grabs;                              // [multiplayer] pose_share_grab: each peer's hands' latest holds, for the others
     // what D2RLoader answered our sends to each peer since the last 5 s line (relays and pongs), by seen[] slot: ok, RateLimited, Busy, other (the last other's code)
     struct Sends { uint32_t ok = 0, limited = 0, busy = 0, other = 0; nw::Result lastOther = nw::Result::Success; };
     std::array<Sends, ps::kMaxPeers> sends{};
@@ -140,6 +161,11 @@ struct Host {
     struct Pong { uint64_t peer = 0; uint16_t seq = 0; uint32_t clientMs = 0; uint64_t at = 0; };
     std::array<Pong, 16> pongQ{};
     int nPong = 0;
+    // the players' shots to hand on to all the others, from the UI job (vr/shot_share.h): as they came, with the peer they came from
+    struct ShotFwd { uint64_t from = 0; uint32_t n = 0; uint8_t b[shotshare::kShotMsgBytes] = {}; };
+    std::array<ShotFwd, 16> shotQ{};
+    int nShot = 0;
+    uint32_t shotsIn = 0, shotsOut = 0;
 };
 Host g_host;
 void CountSend(uint64_t peer, nw::Result r) {   // (under g_lock)
@@ -270,6 +296,21 @@ void __cdecl OnHost(const PluginContext* ctx, nw::ChannelHandle, nw::PeerHandle 
         (void)sent;
         return;
     }
+    if (id == ps::kMsgShot) {   // a player's bow shot (vr/shot_share.h): ours for the create of his arrows, and handed on to every other player
+        uint32_t unit = 0;
+        shotshare::Shot s;
+        if (!shotshare::ParseShotMsg(data, size, &unit, &s)) { std::lock_guard<std::mutex> lock(g_lock); ++g_host.inBad; return; }
+        if (const ShotSink sink = g_shotSink.load()) sink(unit, s, true);
+        std::lock_guard<std::mutex> lock(g_lock);
+        ++g_host.shotsIn;
+        if (g_host.nShot < (int)g_host.shotQ.size()) {
+            Host::ShotFwd& f = g_host.shotQ[g_host.nShot++];
+            f.from = peer;
+            f.n = std::min<uint32_t>(size, shotshare::kShotMsgBytes);
+            std::memcpy(f.b, data, f.n);
+        }
+        return;
+    }
     bool newPeer = false;
     const char* refused = nullptr;
     uint32_t unit = 0;
@@ -284,6 +325,16 @@ void __cdecl OnHost(const PluginContext* ctx, nw::ChannelHandle, nw::PeerHandle 
         }
         if (id == ps::kMsgBurst) {
             if (slot >= 0) ++g_host.burstGot[slot];
+            return;
+        }
+        if (id == gs::kMsgGrab) {   // [multiplayer] pose_share_grab: a peer's holds, for the others (only as the hero its poses say it is)
+            gs::Hold h[gs::kGrabMsgMax];
+            uint32_t gu = 0;
+            const int nh = gs::ParseGrabMsg(data, size, &gu, h, gs::kGrabMsgMax);
+            const ps::HostPeer* hp = g_host.table.Find(peer);
+            if (!nh || !hp || !hp->unit || hp->unit != gu) { ++g_grabCounts.refused; return; }
+            for (int i = 0; i < nh; ++i)
+                if (!g_host.grabs.Take(peer, gu, h[i])) ++g_grabCounts.refused;
             return;
         }
         if (id != ps::kMsgPose) { ++g_host.inBad; return; }
@@ -314,6 +365,34 @@ void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, cons
         return;
     }
     if (id == ps::kMsgBurst) { std::lock_guard<std::mutex> lock(g_lock); ++g_cl.burstGot; return; }
+    if (id == gs::kMsgGrabRelay) {   // [multiplayer] pose_share_grab: the others' holds, into each holder's hand's track
+        gs::RelayEntry e[gs::kGrabRelayMax];
+        const int n = gs::ParseGrabRelay(data, size, e, gs::kGrabRelayMax);
+        std::lock_guard<std::mutex> lock(g_lock);
+        for (int i = 0; i < n; ++i) {
+            if (e[i].hold.state == gs::kKnock) {   // a knock: played once, not a hand's track
+                if (g_knocks.Add(now, e[i].unit, e[i].hold)) ++g_grabCounts.got;
+                continue;
+            }
+            GrabSlot* free = nullptr;
+            GrabSlot* at = nullptr;
+            for (auto& s : g_grabSlots) {
+                if (s.unit == e[i].unit && s.side == e[i].hold.side) { at = &s; break; }
+                if (!s.unit && !free) free = &s;
+            }
+            if (!at && free) { *free = GrabSlot{}; free->unit = e[i].unit; free->side = e[i].hold.side; at = free; }
+            if (at && at->track.Add(now, e[i].hold)) ++g_grabCounts.got;
+        }
+        return;
+    }
+    if (id == ps::kMsgShot) {   // another player's bow shot, handed on by the host (vr/shot_share.h)
+        uint32_t unit = 0;
+        shotshare::Shot s;
+        if (!shotshare::ParseShotMsg(data, size, &unit, &s)) return;
+        { std::lock_guard<std::mutex> lock(g_lock); ++g_cl.shotsIn; }
+        if (const ShotSink sink = g_shotSink.load()) sink(unit, s, false);
+        return;
+    }
     if (id != ps::kMsgRelay) return;
     { std::lock_guard<std::mutex> lock(g_lock); ++g_cl.relaysGot; }
     ps::RelayEntry e[ps::kRelayMax];
@@ -359,6 +438,7 @@ void __cdecl OnConnection(const PluginContext*, const nw::ConnectionEvent* ev, v
     if (ev->peer != nw::InvalidPeerHandle && (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected)) {
         std::lock_guard<std::mutex> lock(g_lock);
         g_host.table.Remove(ev->peer);
+        g_host.grabs.Remove(ev->peer);
     }
 }
 
@@ -443,6 +523,8 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
     // ours to the host, a ping a second, a burst once
     uint8_t b[ps::kMaxPayload];
     uint32_t n = 0;
+    uint8_t gb[gs::kGrabMsgMaxBytes];   // [multiplayer] pose_share_grab: our holds, beside the pose
+    uint32_t gn = 0;
     bool ping = false, burst = false;
     uint16_t pingSeq = 0;
     uint32_t relaysGot = 0;
@@ -456,8 +538,27 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
                 n = ps::BuildPoseMsg(g_cl.ownUnit, g_cl.own, b, sizeof b);
                 g_cl.ownFresh = false;
             }
+            if (g_ownGrabs.fresh && g_ownGrabs.n && g_cl.ownUnit) gn = gs::BuildGrabMsg(g_cl.ownUnit, g_ownGrabs.h, g_ownGrabs.n, gb, sizeof gb);
+            g_ownGrabs.fresh = false;
             if (now - g_cl.pingAt >= 1000) { ping = true; g_cl.pingAt = now; pingSeq = ++g_cl.pingSeq; }
             if (g_burst.load() && !g_cl.burstDone && now - g_cl.connectedAt >= 2000) { burst = true; g_cl.burstDone = true; }
+        }
+    }
+    {   // our latest bow shot, once (vr/shot_share.h)
+        uint8_t sb[shotshare::kShotMsgBytes];
+        uint32_t sn = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            if (g_cl.state == nw::ConnectionState::Connected && g_cl.shotFresh) {
+                sn = shotshare::BuildShotMsg(g_cl.shotUnit, g_cl.shot, sb, sizeof sb);
+                g_cl.shotFresh = false;
+            }
+        }
+        if (sn) {
+            const nw::Result r = g_net->sendToHost(ctx, g_channel, ps::kMsgShot, sb, sn);
+            std::lock_guard<std::mutex> lock(g_lock);
+            if (r == nw::Result::Success) ++g_cl.shotsOut;
+            else if (g_toldSend.Once(r)) Line("sendToHost (shot): %s", ResultName(r));
         }
     }
     if (n) {
@@ -469,6 +570,11 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
             else ++g_cl.sends.other;
         }
         if (r != nw::Result::Success && g_toldSend.Once(r)) Line("sendToHost (pose): %s", ResultName(r));
+    }
+    if (gn) {
+        const nw::Result r = g_net->sendToHost(ctx, g_channel, gs::kMsgGrab, gb, gn);
+        if (r == nw::Result::Success) { std::lock_guard<std::mutex> lock(g_lock); ++g_grabCounts.sent; }
+        else if (g_toldSend.Once(r)) Line("sendToHost (grab): %s", ResultName(r));
     }
     if (ping) {
         uint8_t pb[ps::kPingBytes + ps::kReceiptBytes];
@@ -485,7 +591,10 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
     std::array<uint64_t, ps::kMaxPeers> dests{};
     int nEntries[ps::kMaxPeers] = {};
     static ps::RelayEntry perDest[ps::kMaxPeers][ps::kMaxPeers];   // (the UI thread only)
-    int nd = 0;
+    static gs::RelayEntry grabsTo[ps::kMaxPeers][gs::HostGrabs::kMax];   // [multiplayer] pose_share_grab: the others' fresh holds for each peer (the UI thread only)
+    std::array<uint64_t, ps::kMaxPeers> grabDests{};
+    int nGrabs[ps::kMaxPeers] = {};
+    int nd = 0, ngd = 0;
     {
         std::lock_guard<std::mutex> lock(g_lock);
         if (g_host.is) {
@@ -500,6 +609,14 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
                 dests[nd++] = s.peer;
             }
             g_host.table.Flush();
+            if (g_host.grabs.AnyFresh()) {   // the holds go to every peer heard, at once (a few while a hand holds; not paced as the poses are)
+                for (const auto& s : g_host.table.p) {
+                    if (!s.peer || ngd >= ps::kMaxPeers) continue;
+                    nGrabs[ngd] = g_host.grabs.Build(s.peer, g_echo.load(), grabsTo[ngd], gs::HostGrabs::kMax);
+                    if (nGrabs[ngd]) grabDests[ngd++] = s.peer;
+                }
+                g_host.grabs.Flush();
+            }
         }
     }
     {   // the pongs queued by the host callback (their host time now: the round trip is still the transport's within a frame or two)
@@ -519,6 +636,30 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
             if (r != nw::Result::Success && g_toldPong.Once(r)) Line("host: a pong to peer %llu - %s", (unsigned long long)q[i].peer, ResultName(r));
         }
     }
+    {   // the players' shots, each to every other player (not back to the one it came from), as they came - before the poses: a shot is wanted at once
+        Host::ShotFwd q[16];
+        int nq = 0;
+        std::array<uint64_t, ps::kMaxPeers> to{};
+        int nt = 0;
+        {
+            std::lock_guard<std::mutex> lock(g_lock);
+            nq = g_host.nShot;
+            for (int i = 0; i < nq; ++i) q[i] = g_host.shotQ[i];
+            g_host.nShot = 0;
+            if (nq)
+                for (const auto& s : g_host.table.p)
+                    if (s.peer && nt < ps::kMaxPeers) to[nt++] = s.peer;
+        }
+        for (int i = 0; i < nq; ++i)
+            for (int t = 0; t < nt; ++t) {
+                if (to[t] == q[i].from) continue;
+                const nw::Result res = g_net->sendToClient(ctx, g_channel, to[t], ps::kMsgShot, q[i].b, q[i].n);
+                std::lock_guard<std::mutex> lock(g_lock);
+                CountSend(to[t], res);
+                if (res == nw::Result::Success) ++g_host.shotsOut;
+                else if (g_toldRelay.Once(res)) Line("host: sendToClient (shot) to peer %llu: %s", (unsigned long long)to[t], ResultName(res));
+            }
+    }
     for (int d = 0; d < nd; ++d)
         for (int at = 0; at < nEntries[d];) {   // as few relays as the poses fit (two with bodies and weapons, four bare)
             int taken = 0;
@@ -535,6 +676,17 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
                 else ++g_host.relays.other;
             }
             if (res != nw::Result::Success && g_toldRelay.Once(res)) Line("host: sendToClient (relay) to peer %llu: %s", (unsigned long long)dests[d], ResultName(res));
+        }
+    for (int d = 0; d < ngd; ++d)
+        for (int at = 0; at < nGrabs[d];) {
+            int taken = 0;
+            const uint32_t sz = gs::BuildGrabRelay(grabsTo[d] + at, nGrabs[d] - at, b, sizeof b, &taken);
+            if (!sz || !taken) break;
+            at += taken;
+            const nw::Result res = g_net->sendToClient(ctx, g_channel, grabDests[d], gs::kMsgGrabRelay, b, sz);
+            std::lock_guard<std::mutex> lock(g_lock);
+            CountSend(grabDests[d], res);
+            if (res == nw::Result::Success) ++g_grabCounts.relayed;
         }
     for (const uint64_t peer : resolve) {
         if (!peer) continue;
@@ -584,6 +736,11 @@ void Report() {
             r.ageMin = INT64_MAX; r.ageMax = INT64_MIN;
         }
         if (!players) add("; no other player's pose");
+        if (g_grabCounts.sent + g_grabCounts.got + g_grabCounts.relayed + g_grabCounts.refused)   // [multiplayer] pose_share_grab
+            add("; holds sent %u, got %u, relayed %u, refused %u", g_grabCounts.sent, g_grabCounts.got, g_grabCounts.relayed, g_grabCounts.refused);
+        g_grabCounts = GrabCounts{};
+        if (g_cl.shotsOut || g_cl.shotsIn) add("; bow shots: %u ours sent, %u of the others' came (all along)", g_cl.shotsOut, g_cl.shotsIn);
+        if (g_host.is && (g_host.shotsIn || g_host.shotsOut)) add(" | host: %u shots came, %u handed on", g_host.shotsIn, g_host.shotsOut);
         if (g_host.is) {
             add(" | host: %d peers (%d sending poses), relays sent %u/s, RateLimited %u/s, other %u/s; poses in ok %u old %u wrong-unit %u full %u bad %u", g_host.table.Count(), g_host.table.Senders(),
                 g_host.relays.lastOk, g_host.relays.lastLimited, g_host.relays.lastOther, g_host.inOk, g_host.inOld, g_host.inWrongUnit, g_host.inFull, g_host.inBad);
@@ -674,6 +831,9 @@ void Configure(const Config& c) {
     if (!g_on.load()) {
         std::lock_guard<std::mutex> lock(g_lock);
         for (auto& r : g_remotes) r = RemoteSlot{};
+        for (auto& s : g_grabSlots) s = GrabSlot{};
+        g_ownGrabs = OwnGrabs{};
+        g_knocks = gs::KnockQueue{};
     }
 }
 
@@ -689,7 +849,13 @@ void Tick(bool inGame, const ps::Pose* own, uint32_t ownUnit) {
         {
             std::lock_guard<std::mutex> lock(g_lock);
             g_cl = Client{};   // (disconnected, asked again at once)
-            if (!inGame) { g_host = Host{}; for (auto& r : g_remotes) r = RemoteSlot{}; }
+            if (!inGame) {
+                g_host = Host{};
+                for (auto& r : g_remotes) r = RemoteSlot{};
+                for (auto& s : g_grabSlots) s = GrabSlot{};
+                g_ownGrabs = OwnGrabs{};
+                g_knocks = gs::KnockQueue{};
+            }
         }
         Line("%s", inGame ? "in a game: the channel is asked for" : "out of the game: the connection let go, its numbers start afresh");
     }
@@ -739,6 +905,66 @@ size_t Remotes(Remote* out, size_t max) {
         ++k;
     }
     return k;
+}
+
+void SetOwnGrabs(const gs::Hold* h, int n) {
+    if (!g_on.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lock(g_lock);
+    g_ownGrabs.n = h ? std::clamp(n, 0, gs::kGrabMsgMax) : 0;
+    for (int i = 0; i < g_ownGrabs.n; ++i) g_ownGrabs.h[i] = h[i];
+    g_ownGrabs.fresh = g_ownGrabs.n > 0;
+}
+
+size_t RemoteGrabs(RemoteGrab* out, size_t max) {
+    if (!out || !max || !g_on.load(std::memory_order_relaxed)) return 0;
+    const uint64_t now = NowMs();
+    const uint32_t floor = g_delayMs.load();
+    size_t k = 0;
+    std::lock_guard<std::mutex> lock(g_lock);
+    for (auto& s : g_grabSlots) {
+        if (!s.unit) continue;
+        if (now > s.track.NewestRecv() && now - s.track.NewestRecv() > kGrabForgetMs) { s = GrabSlot{}; continue; }   // (one that came after `now` was read is fresh)
+        if (k >= max) continue;
+        uint32_t delay = floor;   // as far behind as the holder's poses are played (its hand drawn there)
+        for (const auto& r : g_remotes)
+            if (r.unit == s.unit && r.delayMs > 0.0f) delay = (uint32_t)std::lround(r.delayMs);
+        RemoteGrab g;
+        if (!s.track.Sample(now, delay, &g.hold, &g.lost)) continue;
+        g.unit = s.unit;
+        out[k++] = g;
+    }
+    return k;
+}
+
+size_t RemoteKnocks(RemoteKnock* out, size_t max) {
+    if (!out || !max || !g_on.load(std::memory_order_relaxed)) return 0;
+    const uint64_t now = NowMs();
+    const uint32_t floor = g_delayMs.load();
+    std::lock_guard<std::mutex> lock(g_lock);
+    gs::KnockQueue::Knock k[16];
+    const int n = g_knocks.Due(now, [&](uint32_t unit) {   // as far behind as the striker's poses are played (his swing drawn there)
+        for (const auto& r : g_remotes)
+            if (r.unit == unit && r.delayMs > 0.0f) return (uint32_t)std::lround(r.delayMs);
+        return floor;
+    }, k, (int)std::min<size_t>(max, 16));
+    for (int i = 0; i < n; ++i) { out[i].unit = k[i].unit; out[i].knock = k[i].h; }
+    return (size_t)n;
+}
+
+void ShotOut(uint32_t ownUnit, const shotshare::Shot& s) {
+    if (!ownUnit || !g_on.load(std::memory_order_relaxed)) return;
+    std::lock_guard<std::mutex> lock(g_lock);
+    const bool press = g_cl.shotFresh && (g_cl.shot.flags & shotshare::kPress) && g_cl.shot.seq == s.seq;   // (a press not sent yet keeps its flag)
+    g_cl.shot = s;
+    if (press) g_cl.shot.flags |= shotshare::kPress;
+    g_cl.shotUnit = ownUnit;
+    g_cl.shotFresh = true;
+}
+void SetShotSink(ShotSink fn) { g_shotSink.store(fn); }
+bool Joined() {
+    if (!g_on.load(std::memory_order_relaxed)) return false;
+    std::lock_guard<std::mutex> lock(g_lock);
+    return g_cl.state == nw::ConnectionState::Connected && !g_host.is;
 }
 
 void Shutdown() {

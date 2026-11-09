@@ -123,6 +123,35 @@ inline Window WindowOf(const Angles& drawn, const Angles& want) {
     return Inside(FromAngles(drawn.l, drawn.r, drawn.u, drawn.d), FromAngles(want.l, want.r, want.u, want.d));
 }
 
+// True when a frustum has no off-axis term on either axis (as wide left as right, as tall up as down) to within `tol` of its size.
+inline bool IsCentred(const Tan& t, float tol = 1e-4f) {
+    return std::fabs(t.l + t.r) <= tol * (t.r - t.l) && std::fabs(t.u + t.d) <= tol * (t.u - t.d);
+}
+
+// [render] symmetric_projection (off): whatever route drew the pair (symmetric_fov / fov_crop - also forced by frame generation -, canted
+// displays reframed into the head's frame, runtime_fov=2, fov_override without fov_override_centred), both eyes drawn AND submitted with one
+// centred frustum that holds both - every ray either eye showed is still in it, no off-axis term. The game's light binning (light_bin_c,
+// 32 x 20 tiles) rebuilds each tile's rays and projects each light's bounds from the projection's x and y scales alone: off-axis, the lights
+// land in tiles beside their own - lit patches of ground detail that ride with the hero on one side of the view (the 0.206 stream). After
+// bearstonem/d2r-pcvr's [render] symmetric_projection (MIT): the same idea, our own code. A route already centred (runtime_fov=1 on parallel
+// displays, fov_override_centred) comes back as it was: the pair is the same frustum twice. Angles in, angles out (OpenXR's XrFovf, radians).
+struct PairAngles {
+    Angles e[2];
+    bool changed = false;   // the pair was not centred before (it is now)
+};
+inline PairAngles CentredPair(const Angles& left, const Angles& right) {
+    const Tan a = FromAngles(left.l, left.r, left.u, left.d), b = FromAngles(right.l, right.r, right.u, right.d), c = Centred(a, b);
+    PairAngles p;
+    const Angles ca{std::atan(c.l), std::atan(c.r), std::atan(c.u), std::atan(c.d)};
+    p.e[0] = p.e[1] = ca;
+    auto same = [](const Angles& x, const Angles& y) {
+        constexpr float k = 1e-5f;
+        return std::fabs(x.l - y.l) <= k && std::fabs(x.r - y.r) <= k && std::fabs(x.u - y.u) <= k && std::fabs(x.d - y.d) <= k;
+    };
+    p.changed = !same(left, ca) || !same(right, ca);
+    return p;
+}
+
 // The other way: the runtime's left eye's fov (radians) as the sliders' numbers (degrees), for D2R VR Settings to show and to copy.
 inline HandAngles ToHand(float l, float r, float u, float d) {
     constexpr float k = 180.0f / 3.14159265f;

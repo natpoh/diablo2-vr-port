@@ -184,6 +184,18 @@ inline constexpr Sig kSigs[] = {
     {"MeshMaterials", 0xFA1700, Kind::Code, "48 8B C4 4C 89 40 18 48 89 50 10 55 41 54 41 56 48 83 EC 70 49 8B E9", 0xFA1700, 0, 0, 0, 0, "48 8B C4 4C 89 40 18 48 89 50 10 55 41 54 41 56 48 83 EC 70", nullptr, "flat: no town portal oval", "Chat, walking, clicks"},
     // LevelTranslationLayer::CalculateHeightOffset (layer, DRLG_ROOM*, const float edges[4]) -> float, hooked
     {"RoomHeight", 0x6A2A40, Kind::Code, "48 8B C4 53 56 57 41 55 48 83 EC 58 0F 29 78 B8 48 8B DA", 0x6A2A40, 0, 0, 0, 0, "48 8B C4 53 56 57 41 55 48 83 EC 58 0F 29 78 B8", nullptr, "rooms keep their first height", "Chat, walking, clicks"},
+    // LevelTranslationLayer::UpdateTerrainTiles (layer, span<ROOM*>, bool), hooked (its layer for the floor query)
+    {"TerrainTiles", 0x6B54C0, Kind::Code, "4C 8B DC 55 53 56 57 49 8D AB D8 FB FF FF 48 81 EC 08 05 00 00 48 8B 05 ?? ?? ?? ??", 0x6B54C0, 0, 0, 0, 0, "4C 8B DC 55 53 56 57 49 8D AB D8 FB FF FF 48 81 EC 08 05 00 00", nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
+    // TerrainSystem's origin (const int2* corner tile, float height): one height into all 18 x 18 bins, hooked
+    {"TerrainOrigin", 0xE79000, Kind::Code, "48 89 5C 24 18 55 56 57 48 83 EC 50 48 83 3D ?? ?? ?? ?? 00 48 8B F1", 0xE79000, 0, 0, 0, 0, "48 89 5C 24 18 55 56 57 48 83 EC 50", nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
+    // the physics manager (its thread-safe static), called
+    {"PhysicsMgr", 0x7E65A0, Kind::Ref, "E8 ?? ?? ?? ?? 45 33 C9 4C 8D 45 80 48 8D 55 00 48 8B C8", 0x6B0477, 0, 1, 5, 0, "40 53 48 83 EC 20 65 48 8B 04 25 58 00 00 00", nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
+    // D2PhysicsManager closest ray (manager, out, input, world) -> hit, called (the floor ray of 0x6B0350)
+    {"RayCastClosest", 0x7E7DD0, Kind::Code, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 20 4C 8B F1 41 0F B6 F9 48 81 C1 38 01 00 00", 0x7E7DD0, 0, 0, 0, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56", nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
+    // the terrain's 18 x 18 bins (0x20 bytes each), bin 0's height (+0x18; the tile's data at +0x10)
+    {"TerrainBins", 0x34FCB28, Kind::Ref, "48 8D 0D ?? ?? ?? ?? 48 C1 E0 05 F3 0F 10 14 08 48 8D 4D B0", 0xE7762B, 0, 3, 7, 0, nullptr, nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
+    // the terrain window's corner tile (int x, y)
+    {"TerrainCorner", 0x34FF608, Kind::Ref, "2B 0D ?? ?? ?? ?? 2B 05 ?? ?? ?? ?? 83 F9 11 77 1D 83 F8 11 77 18 8D 04 C0 8D 04 41 48 98 48 8D 0D ?? ?? ?? ?? 48 C1 E0 05 F3 0F 10 14 08 48 8D 4D B0", 0xE7760D, 0, 2, 6, 0, nullptr, nullptr, "ground tiles at their own floor's height", "Chat, walking, clicks"},
     // ControllerInputHandler walking stick (handler, float2* out, player), hooked
     {"StickGet", 0x13CF10, Kind::Ref, "E8 ?? ?? ?? ?? F3 0F 10 58 04 F3 0F 10 38 0F 28 C3 0F 28 CF", 0x2AD6BD, 0, 1, 5, 0, "48 89 5C 24 08 48 89 74 24 18 57 48 83 EC 20", nullptr, "VR walk straight from BodyWalk", "Chat, walking, clicks"},
     // return address of the walk's StickGet call in the per-player update

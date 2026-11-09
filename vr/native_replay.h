@@ -55,7 +55,7 @@ inline const char* WhyText(Why w) {
         case Why::kOn: return "one pass, two pictures without ReShade ([stereo] native_replay=1): the right eye is the left pass's lists again with its own camera";
         case Why::kKeyOff: return "two passes a pair ([stereo] native_replay=0, as since 0.203)";
         case Why::kNotAtStart: return "two passes a pair - [stereo] native_replay was switched on after the game's start: its hooks go in at the next start";
-        case Why::kRootHooks: return "two passes a pair - the replay is SKIPPED: the camera's root hooks did not go in (another hook holds them - [fog] game_fog_before_fx=1 does)";
+        case Why::kRootHooks: return "two passes a pair - the replay is SKIPPED: the camera's root hooks did not go in (another hook holds them)";
         case Why::kNotXr: return "two passes a pair - native OpenXR is not running (the replay is made for it; FlatVR takes each present)";
         case Why::kNotF4: return "two passes a pair - not VR first person (F4)";
         case Why::kReShade: return "the replay through ReShade's events ([stereo] replay_right)";

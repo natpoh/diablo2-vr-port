@@ -281,6 +281,52 @@ int wmain(int argc, wchar_t** argv) {
     std::string unit;
     CHECK(ReadAll(scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\ceiling\\cave_ceiling_unit.json", &unit) && unit.find("cliffside01.model") != std::string::npos);
     CHECK(ReadAll(scratch + L"cave_ceiling.json", &receipt) && receipt.find("cave_ceiling_unit.json") != std::string::npos);
+    {   // an earlier build's ceiling slab at a dome's path, and its unit as made before the atlas, neither in the receipt (the test PC
+        // 2026-11-08: act 2's dome drawn from the jungle slab at Tests/pillar01 - a giant rock round the eye): replaced as ours. With the
+        // game folder's own mod holding such files, those very files are tried too.
+        auto rs = Prepare(game, scratch, true);
+        CHECK(rs.state == kMade);
+        int jungle = -1;
+        for (int k = 0; k < gameceiling::kKindCount; ++k) if (std::string(gameceiling::kKinds[k].name) == "jungle_cave") jungle = k;
+        CHECK(jungle >= 0);
+        const std::wstring unitAct2 = scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\sky\\sky_dome_act2_unit.json";
+        std::string atlasUnit;
+        CHECK(ReadAll(unitAct2, &atlasUnit) && atlasUnit.find(skyatlas::kAtlas) != std::string::npos);
+        std::string oldUnit = atlasUnit;
+        const std::string own = "data/hd/env/texture/d2r_vr/sky/sky_act2_day_HDR.dds";
+        for (size_t p = oldUnit.find(skyatlas::kAtlas); p != std::string::npos; p = oldUnit.find(skyatlas::kAtlas))
+            oldUnit.replace(p, std::strlen(skyatlas::kAtlas), own);
+        const std::wstring real = game + L"\\mods\\D2R-VR\\D2R-VR.mpq\\data\\hd\\env\\model\\";
+        for (int pass = 0; pass < 2; ++pass) {
+            int put = 0;
+            for (int lod = 0; lod < 5; ++lod) {
+                std::string slab;
+                const std::string slabRel = gameceiling::LodPath(gameceiling::kKinds[jungle].slab, lod);
+                std::wstring from = pass == 0 ? scratch + L"D2R-VR.mpq\\" + std::wstring(slabRel.begin(), slabRel.end())
+                                              : real + L"Tests\\pillar01_lod" + std::to_wstring(lod) + L".model";
+                for (wchar_t& c : from) if (c == L'/') c = L'\\';
+                if (!ReadAll(from, &slab) || slab.find("d2rvr_sky_") != std::string::npos) continue;   // (the game's mod already ours: nothing to try)
+                WriteAll(at(L"act2", lod), slab);
+                ++put;
+            }
+            std::string realUnit;
+            const bool unitPut = pass == 0 || (ReadAll(real + L"d2r_vr\\sky\\sky_dome_act2_unit.json", &realUnit) && realUnit.find(skyatlas::kAtlas) == std::string::npos);
+            if (unitPut) WriteAll(unitAct2, pass == 0 ? oldUnit : realUnit);
+            if (pass == 1 && !put && !unitPut) continue;
+            if (pass == 1) std::printf("  the game's mod: %d old slab file(s) at act 2's dome and %s tried\n", put, unitPut ? "its old unit" : "no old unit");
+            CHECK(pass == 1 || put == 5);
+            rs = Prepare(game, scratch, true);
+            std::wprintf(L"  old slab at act 2's dome: %ls\n", rs.text.c_str());
+            CHECK(rs.state == kMade && rs.wrote);
+            for (int lod = 0; lod < 5; ++lod) {
+                std::string now;
+                CHECK(ReadAll(at(L"act2", lod), &now) && now.find("d2rvr_sky_act2_material") != std::string::npos);
+            }
+            std::string unitNow;
+            CHECK(ReadAll(unitAct2, &unitNow) && unitNow == atlasUnit);
+            CHECK(rs.text.find(L"changed by you") == std::wstring::npos || rs.text.find(L"1 of them") != std::wstring::npos);   // (the act 1 change the test made stays)
+        }
+    }
     // the wall at its rim ([ceiling] game_ceiling_wall), made with it: its tick is live in the game
     const std::wstring wallAt = scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\Tests\\test_detailnormal\\decal01_lod";
     for (int lod = 0; lod < 5; ++lod) {

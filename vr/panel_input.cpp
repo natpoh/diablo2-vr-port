@@ -355,7 +355,8 @@ void WantCompareHold(bool on) { g_compareHold.store(on); }
 // with no panel open and the laser not the mouse, the pad's layout is asked for (the same request as below; no oftener than every 3 s).
 static void KeepPadForPlate(bool inGame, bool menu) {
     static uint64_t since = 0, last = 0;
-    if (!plateworld::ShouldAskPad(plateworld::Active() || (plateworld::LiftWanted() && viewgate::F4()), inGame, menu, Owns(), g_padLayout.load(), GetTickCount64(), &since, &last)) return;
+    // (not with our own plate on: it hangs on the target itself - the game's plate is not drawn, its layout nothing of ours to ask for)
+    if (!plateworld::ShouldAskPad(!plateworld::Ours() && (plateworld::Active() || (plateworld::LiftWanted() && viewgate::F4())), inGame, menu, Owns(), g_padLayout.load(), GetTickCount64(), &since, &last)) return;
     static std::atomic<int> told{0};
     if (told.fetch_add(1) < 6) Log("vrcam: monster_over_head - the game has been in its mouse layout (the plate would sit at the top, ignoring its anchor): the controller layout asked for");
     g_origRequest(1);

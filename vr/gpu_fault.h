@@ -20,6 +20,7 @@
 
 struct ID3D12Device;
 struct D3D12_AUTO_BREADCRUMB_NODE;
+struct D3D12_AUTO_BREADCRUMB_NODE1;
 
 namespace gpufault {
 
@@ -29,6 +30,10 @@ void Init(void (*log)(const char*), const wchar_t* iniPath);
 // Before the game makes its D3D12 device (the plugin's load is early enough: D2RLoader loads plugins before the window exists).
 // Asks the runtime for DRED, forced on. Once.
 void EnableDred(bool on);
+// With DRED, before the game makes its device too: the breadcrumbs' event names ([debug] dred_events; DRED 1.2, Windows 10 2004 and later). Each
+// BeginEvent / SetMarker the game records keeps its text, and a report names the events open where a list stopped ("Forward Pass > Terrain") -
+// crash batch 2026-11-09: seven hangs inside one of the game's early Forward Pass draws, and the report could only say "DrawIndexedInstanced". Once.
+void EnableDredEvents(bool on);
 
 // Before the game makes its device, like EnableDred: the D3D12 DEBUG LAYER ([debug] d3d12_validation): 0 off, 1 the layer on and its messages (errors,
 // corruption, warnings - a bad barrier, a copy past a buffer, a resource released under a list) in the log with the call's own words, 2 also GPU-based
@@ -54,6 +59,15 @@ bool VideoMemory(uint64_t* usage, uint64_t* budget);
 
 // The breadcrumb list as a report tells it, to the log (tools/gpu_fault_test.cpp builds a list by hand: a hand-made device loss has none).
 void DescribeBreadcrumbs(const D3D12_AUTO_BREADCRUMB_NODE* head);
+// The same with the event names (DRED 1.2's nodes; tools/gpu_fault_test.cpp builds them by hand too).
+void DescribeBreadcrumbs1(const D3D12_AUTO_BREADCRUMB_NODE1* head);
+
+// A breadcrumb's text: the command at `index` of a list (its BeginEvent or SetMarker) and what it said.
+struct EventName { uint32_t index; const wchar_t* text; };
+// The events open at command `at` of a list - every BeginEvent before it whose EndEvent had not come - outermost first, written "A > B > C" into
+// out (cut to outLen, always ended). ops: the list's commands (D3D12_AUTO_BREADCRUMB_OP values), names: the texts DRED kept, by rising index (an
+// event with no text is "?"). Returns how many are open. Pure (tools/gpu_fault_test.cpp).
+int OpenEvents(const int* ops, uint32_t count, uint32_t at, const EventName* names, uint32_t nNames, wchar_t* out, size_t outLen);
 
 // The words (pure; tools/xr_hardening_test.cpp).
 const char* ReasonName(int32_t hr);     // GetDeviceRemovedReason's result

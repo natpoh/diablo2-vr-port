@@ -18,9 +18,11 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "fog_height.h"           // StreamPixelShader
+#include "render_bench.h"   // the hair / foliage pipelines by their pixel shader (the bench's stages)
 #include "fog_in_frame_math.h"    // IsResolve: the game's ps_transparent_resolve by its size and hash
 #include "native_d3d12.h"
 #include "pso_stream.h"           // the effects' pipelines made from a stream
@@ -75,6 +77,22 @@ struct CpuTime {
         to.fetch_add((uint64_t)(t1.QuadPart - t0.QuadPart), std::memory_order_relaxed);
     }
 };
+// The sinks' calls (tens of thousands a frame): one in kSinkSample timed, counted kSinkSample times - the clock read twice a call was itself a
+// good part of what it measured (Serg 2026-11-09 on 0.209.16: 0.42 - 0.53 ms a present "in the followed lists' calls")
+constexpr uint32_t kSinkSample = 16;
+thread_local uint32_t t_sinkTick = 0;
+struct SinkTime {
+    std::atomic<uint64_t>& to;
+    LARGE_INTEGER t0{};
+    bool on;
+    explicit SinkTime(std::atomic<uint64_t>& a) : to(a), on((++t_sinkTick % kSinkSample) == 0) { if (on) QueryPerformanceCounter(&t0); }
+    ~SinkTime() {
+        if (!on) return;
+        LARGE_INTEGER t1;
+        QueryPerformanceCounter(&t1);
+        to.fetch_add((uint64_t)(t1.QuadPart - t0.QuadPart) * kSinkSample, std::memory_order_relaxed);
+    }
+};
 constexpr uint32_t kTwinStamps = 4096;   // twins timed in a sampled present (pairs)
 struct TwinTimes {
     ID3D12QueryHeap* heap = nullptr;
@@ -98,19 +116,109 @@ TwinTimes g_twinTimes;
 // the step was off), its draws seen, and of them on lists not followed
 std::atomic<uint32_t> g_boundSeen{0}, g_boundUntracked{0}, g_drawSeen{0}, g_drawUntracked{0};
 
+// Which picture the step fogs (SceneCheck, each present; Serg 2026-11-09 on 0.209.11 - the probe: the scene the resolve's tables name read
+// black at every point, the lit world in the resolve's own target before it drew). 0 the tables' scene; 1 the resolve's own target - the
+// tables' scene black where that target is lit, and the resolve blends into its target (weighted OIT: the target times the revealage plus
+// the effects - fogging the target is fogging under the effects); 2 neither: nothing of ours written, the game's pass keeps its own fog.
+// kWrongRuns probes in a row decide, either way.
+// Starts at 2 (Serg 2026-11-09 on 0.209.13, flat with DLSS: the tables' scene AND the resolve's own target read black at the probe's points,
+// the resolve writes its target whole - the lit world is laid in after it, and what we wrote ended up over the flame): nothing is written
+// until the probe has PROVEN a lit picture, 20 probes in a row
+std::atomic<int> g_sceneMode{2};
+constexpr int kWrongRuns = 20;
+uint8_t g_slotMode[64] = {};             // (kSlots) 1: that step slot fogged the resolve's own target (the probe's two reads swapped)
+std::atomic<int> g_lastResolveBlends{-1};   // the last resolve drawn: 1 it blends into its target, 0 it writes it whole, -1 not known
+std::atomic<bool> g_lastWrote{false};       // the last step wrote its fog into the picture (Drawn)
+std::atomic<int> g_planesDrawnInto{0};
+// Watching (Serg 2026-11-09: "такое ощущение что это все в реальном времени пересчитывается и ищется"): once the step has drawn kWatchAfter
+// times in a row with the same scene, depth and resolve's target, the sinks stop looking for them - the barriers of other resources are not
+// followed, a target binding is not classified (no descriptions, no notes) - only the found ones are watched. Re-armed (the full search
+// again) the moment the step meets anything else: another depth or scene at the resolve (a resize, a device change, a menu), a state not
+// known, the submission order in doubt.
+constexpr uint32_t kWatchAfter = 120;
+std::atomic<bool> g_watching{false};
+std::atomic<ID3D12Resource*> g_watchRes[4] = {};   // the scene, the depth, the effects' weighted colour, the effects' additive target
+std::atomic<uint32_t> g_watchRun{0};
+bool Watched(ID3D12Resource* r) {
+    for (const auto& w : g_watchRes)
+        if (w.load(std::memory_order_relaxed) == r) return true;
+    return false;
+}
+void ReArm(const char* why) {
+    if (!g_watching.exchange(false)) return;
+    g_watchRun.store(0);
+    for (auto& w : g_watchRes) w.store(nullptr);
+    Line("vrcam: fog before the effects - the full search again (%s)", why);
+}      // [fog] game_fog_planes, the last step: 0 nothing written, 1 the tables' scene, 2 the resolve's own target
+
+// ---- the hair and foliage pipelines (Serg 2026-11-09 on 0.209.17: "затененный забор перекрывает огонь" - 13201776 fogged the effects' whole
+// weighted colour by the depth behind it, the flames' weighted part too: a bonfire's lower flame took the fogged palisade's colour). The
+// effects pass draws particles (popcorn - left as drawn) and, into the same weighted targets, the see-through parts of models: hair strands,
+// leaf and branch cards (their pixel shaders the bench's lit and water / glass / hair stages). Those draws are sent into a weighted colour
+// target of ours (the game's revealage target kept), and at the step ours is fogged by the depth behind it and added into the game's.
+SRWLOCK g_fbLock = SRWLOCK_INIT;
+std::unordered_set<ID3D12PipelineState*> g_fogBehind;
+std::atomic<uint32_t> g_fogBehindN{0}, g_redirected{0};
+uint64_t Fnv64(const void* p, size_t n) {   // (vr/pipe_hunt.cpp's - the bench's hashes)
+    uint64_t h = 1469598103934665603ull;
+    for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
+    return h;
+}
+void NoteFogBehind(ID3D12PipelineState* pso) {
+    AcquireSRWLockExclusive(&g_fbLock);
+    const bool added = g_fogBehind.insert(pso).second;
+    ReleaseSRWLockExclusive(&g_fbLock);
+    if (added) g_fogBehindN.fetch_add(1, std::memory_order_relaxed);
+}
+void NoteIfFogBehind(ID3D12PipelineState* pso, const void* ps, size_t n) {
+    if (!pso || !ps || !n) return;
+    const uint8_t st = renderbench::StageOf(Fnv64(ps, n));
+    if (st == renderbench::kLit || st == renderbench::kWaterGlassHair) NoteFogBehind(pso);
+}
+bool IsFogBehind(ID3D12PipelineState* pso) {
+    if (!pso) return false;
+    AcquireSRWLockShared(&g_fbLock);
+    const bool is = g_fogBehind.count(pso) != 0;
+    ReleaseSRWLockShared(&g_fbLock);
+    return is;
+}
+std::atomic<bool> g_foldOk{false};   // the last step folded ours into the game's weighted colour: the hair / foliage draws may be sent there
+std::atomic<bool> g_foldReveal{false};   // ... and our revealage into the game's: their revealage may be sent to ours too (their own distance)
+
 // ---- the game's resolve pipelines
 constexpr int kResolves = 16;
 std::atomic<ID3D12PipelineState*> g_resolve[kResolves] = {};
+std::atomic<int> g_resolveBlend[kResolves] = {};   // 1 its target blended, 0 written whole, -1 not known (as g_resolve)
 std::atomic<int> g_resolveN{0};
-void AddResolve(ID3D12PipelineState* p) {
-    for (auto& r : g_resolve) {
+// (blend: its first target's blend as made - Serg 2026-11-09 on 0.209.11, the probe: the scene the resolve's tables name read black at every
+// point while the picture had the lit world; whether the resolve blends into its own target - the lit scene there - says where the fog goes)
+void AddResolve(ID3D12PipelineState* p, const D3D12_RENDER_TARGET_BLEND_DESC* blend = nullptr, int blends = -1) {
+    for (int i = 0; i < kResolves; ++i)   // (one known already: its blend as told now)
+        if (g_resolve[i].load() == p) {
+            g_resolveBlend[i].store(blend ? (blend->BlendEnable ? 1 : 0) : blends);
+            return;
+        }
+    for (int i = 0; i < kResolves; ++i) {
+        auto& r = g_resolve[i];
         ID3D12PipelineState* none = nullptr;
         if (r.compare_exchange_strong(none, p)) {
+            g_resolveBlend[i].store(blend ? (blend->BlendEnable ? 1 : 0) : blends);
             const int n = g_resolveN.fetch_add(1) + 1;
-            Line("vrcam: fog before the effects - the game's transparent resolve pipeline %d found (%p)", n, (void*)p);
+            if (blend)
+                Line("vrcam: fog before the effects - the game's transparent resolve pipeline %d found (%p); its target's blend: %s (colour %d x src "
+                     "+ %d x dst, op %d; alpha %d / %d, op %d; write mask %u)", n, (void*)p, blend->BlendEnable ? "ON - it blends into its target" : "off - "
+                     "it writes its target whole", (int)blend->SrcBlend, (int)blend->DestBlend, (int)blend->BlendOp, (int)blend->SrcBlendAlpha,
+                     (int)blend->DestBlendAlpha, (int)blend->BlendOpAlpha, (unsigned)blend->RenderTargetWriteMask);
+            else Line("vrcam: fog before the effects - the game's transparent resolve pipeline %d found (%p)", n, (void*)p);
             return;
         }
     }
+}
+int ResolveBlends(ID3D12PipelineState* p) {
+    if (!p) return -1;
+    for (int i = 0; i < kResolves; ++i)
+        if (g_resolve[i].load(std::memory_order_relaxed) == p) return g_resolveBlend[i].load(std::memory_order_relaxed);
+    return -1;
 }
 bool IsResolvePso(ID3D12PipelineState* p) {
     if (!p) return false;
@@ -131,6 +239,8 @@ struct Known {   // a resource's last barrier on a list: its subresource 0's sta
     D3D12_RESOURCE_STATES s;
     bool whole;
     uint32_t frame;   // (any list's record: the present count when it was recorded)
+    D3D12_RESOURCE_STATES first = D3D12_RESOURCE_STATE_COMMON;   // (a list's record: the state its first barrier on it came from - the chain)
+    bool firstWhole = false;                                       // ... that first barrier was on all its subresources
 };
 std::atomic<uint32_t> g_frame{0};   // the game's presents (Frame)
 struct FxDepth;
@@ -150,6 +260,13 @@ struct List {
     ID3D12Resource* scene = nullptr;     // the last R11G11B10 target bound with a depth-stencil
     ID3D12Resource* sceneDs = nullptr;
     std::vector<Known> states;   // the list's last barrier on each
+    // The step at this list's resolve (the submission order's proof, OnExecute): the scene it took, whether this list set its state before
+    // the draw, and - when the step drew on the chain's state - the state it took
+    bool redirected = false;   // our weighted colour target bound in the game's (a hair / foliage draw) - given back before the next other draw
+    ID3D12Resource* stepRes[4] = {};   // (0 the scene, 1 the effects' weighted colour, 2 their revealage, 3 their additive light - the chains)
+    bool stepOwn[4] = {};
+    bool stepOnChain[4] = {};
+    D3D12_RESOURCE_STATES stepState[4] = {};
     // the targets as bound (bound again after an effect's twin): how many, the handles (`single`: one, n in a row), the depth-stencil view's
     unsigned nRt = 0;
     bool single = false, hasDsv = false;
@@ -169,6 +286,11 @@ struct List {
         pso = nullptr;
         ds = rt0 = scene = sceneDs = nullptr;
         states.clear();
+        for (int i = 0; i < 4; ++i) {
+            stepRes[i] = nullptr;
+            stepOwn[i] = stepOnChain[i] = false;
+        }
+        redirected = false;
         nRt = 0;
         single = hasDsv = false;
         FxDone();
@@ -188,6 +310,53 @@ List* Of(ID3D12GraphicsCommandList* cl) {
     t_cl = cl;
     t_list = got;
     return got;
+}
+// ---- The scene's state in the order the GPU runs the lists (Serg 2026-11-09 on 0.209.15, flat with DLSS: the scene the resolve reads is
+// never given a barrier on the resolve's own list; the last one recorded anywhere this frame puts it in RENDER_TARGET - the game records its
+// lists on several threads, so "the last recorded" is not the order they run in, and a state guessed hung the GPU once, 0be5454f). At every
+// ExecuteCommandLists of the game's direct queue (OnExecute, before the real call): the lists in their order, each one's first barrier on the
+// scene must come from the state the chain holds (else a transition we do not see - another queue, a list not followed, an enhanced barrier:
+// the chain is lost until the next whole one), its last becomes the chain's. At the resolve's list the chain's state there (its own barriers
+// before the draw: none) is noted; kChainRuns submissions in a row with the same one and nothing lost = proven: the step may draw from that
+// state (Insert). Each submission checks a step drawn on it against the chain - any doubt and nothing is drawn on it again until proven anew.
+// Two followed: 0 the scene, 1 the effects' weighted colour target (fogged by the depth behind it - Serg 2026-11-09 on 0.209.16: branches,
+// bushes and hair escaped the fog; the game's effects pass draws them, and its colour target is read by the resolve as the scene is).
+constexpr int kChainRuns = 60;
+constexpr int kChains = 4;
+SRWLOCK g_chainLock = SRWLOCK_INIT;
+struct Chain {
+    ID3D12Resource* res = nullptr;                              // followed (the step's latest)
+    D3D12_RESOURCE_STATES state = D3D12_RESOURCE_STATE_COMMON;
+    bool known = false;
+    D3D12_RESOURCE_STATES at = D3D12_RESOURCE_STATE_COMMON;    // the chain's state at the resolve's list, the last time
+    int runs = 0;                                              // ... the same this many submissions in a row
+};
+Chain g_chain[kChains];
+std::atomic<uint32_t> g_chainLost{0}, g_chainDoubts{0};
+void ChainWatch(int i, ID3D12Resource* r) {   // (Insert: what the step took - a new one is followed from the start)
+    AcquireSRWLockExclusive(&g_chainLock);
+    Chain& c = g_chain[i];
+    if (c.res != r) {
+        c.res = r;
+        c.known = false;
+        c.runs = 0;
+    }
+    ReleaseSRWLockExclusive(&g_chainLock);
+}
+bool ChainProven(int i, ID3D12Resource* r, D3D12_RESOURCE_STATES* s) {
+    AcquireSRWLockShared(&g_chainLock);
+    const Chain& c = g_chain[i];
+    const bool ok = c.res == r && c.runs >= kChainRuns;
+    if (ok) *s = c.at;
+    ReleaseSRWLockShared(&g_chainLock);
+    return ok;
+}
+List* Find(ID3D12CommandList* cl) {
+    AcquireSRWLockShared(&g_listLock);
+    const auto it = g_lists.find((ID3D12GraphicsCommandList*)cl);
+    List* l = it != g_lists.end() ? it->second : nullptr;
+    ReleaseSRWLockShared(&g_listLock);
+    return l;
 }
 // The state THIS list's own last barrier left a resource in (false: none on this list) - certain at the resolve's draw. Another list's are
 // recorded in no order with this one's (g_states, below): taken only where the resolve's own draw vouches for them (Insert). PC1
@@ -221,7 +390,7 @@ void Note(Known& k, const D3D12_RESOURCE_TRANSITION_BARRIER& t) {
 // ---- the sinks (the game's calls, before the real ones)
 bool Wanted() { return g_on.load(std::memory_order_relaxed); }
 void OnReset(ID3D12GraphicsCommandList* cl) {
-    const CpuTime cpuTime(g_cpuSinks);
+    const SinkTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     if (Wanted()) l->Clear();
     else l->tracked = false;
@@ -229,6 +398,54 @@ void OnReset(ID3D12GraphicsCommandList* cl) {
 // The scene's target by its depth-stencil, from ANY list: the game draws its opaque scene on another list than the resolve's (PC1
 // 2026-10-28: the resolve's draw seen 897 times in 10 s, "no R11G11B10 scene target bound with the resolve's depth before it" - looked
 // for on the resolve's own list only). The last few pairs, each target held (a reference of ours: no destroy event here), the oldest let go.
+// The game's additive effects target: R11G11B10 of the scene's size in the flat game with DLSS (0.209.14's Ctrl+F10 trace, Serg 2026-11-09:
+// R11G11B10F @D46288A0 bound with the effects' RGBA16F pair - the weighted colour and the revealage - and with the depth for the blended
+// draws into it), so it passed for the scene: the step fogged it - the resolve adds it over everything (the fog laid over the flame) and the
+// flame's own glow in it went down by the fog's share. In VR it was half the scene's size and the size check left it out. A R11G11B10 target
+// bound in one call with a RGBA16F one is that target: never the scene. The last few kept (held: no destroy event here).
+constexpr int kFxR11 = 8;
+ID3D12Resource* g_fxR11[kFxR11] = {};
+int g_fxR11Next = 0;
+SRWLOCK g_fxR11Lock = SRWLOCK_INIT;
+bool IsFxR11(ID3D12Resource* r) {
+    if (!r) return false;
+    AcquireSRWLockShared(&g_fxR11Lock);
+    bool is = false;
+    for (ID3D12Resource* x : g_fxR11) is |= x == r;
+    ReleaseSRWLockShared(&g_fxR11Lock);
+    return is;
+}
+void NoteFxR11(ID3D12Resource* r) {
+    if (!r || IsFxR11(r)) return;
+    r->AddRef();
+    AcquireSRWLockExclusive(&g_fxR11Lock);
+    ID3D12Resource* old = g_fxR11[g_fxR11Next];
+    g_fxR11[g_fxR11Next] = r;
+    g_fxR11Next = (g_fxR11Next + 1) % kFxR11;
+    ReleaseSRWLockExclusive(&g_fxR11Lock);
+    if (old) old->Release();
+    const D3D12_RESOURCE_DESC d = r->GetDesc();
+    Line("vrcam: fog before the effects - the effects' additive target %p (R11G11B10 %llux%u, bound with the effects' RGBA16F targets): never "
+         "taken for the scene", (void*)r, (unsigned long long)d.Width, d.Height);
+}
+// ... and the effects' weighted colour target bound in that call: the first RGBA16F one (the revealage the second - the particles write colour x
+// alpha x weight into SV_Target0, the revealage into 1; the resolve takes rgb / a). The latest held.
+std::atomic<ID3D12Resource*> g_fxAccum{nullptr};
+std::atomic<ID3D12Resource*> g_fxReveal{nullptr};   // ... and its revealage target (the pair's second RGBA16F), held
+void NoteFxReveal(ID3D12Resource* r) {
+    if (!r || g_fxReveal.load() == r) return;
+    r->AddRef();
+    if (ID3D12Resource* old = g_fxReveal.exchange(r)) old->Release();
+}
+void NoteFxAccum(ID3D12Resource* r) {
+    if (!r || g_fxAccum.load() == r) return;
+    r->AddRef();
+    if (ID3D12Resource* old = g_fxAccum.exchange(r)) old->Release();
+    const D3D12_RESOURCE_DESC d = r->GetDesc();
+    Line("vrcam: fog before the effects - the effects' weighted colour target %p (RGBA16F %llux%u): its hair and foliage draws (the lit and hair "
+         "pipelines, %u known) drawn into a target of ours, fogged by the depth behind them and added in; the particles (flames, smoke) as drawn",
+         (void*)r, (unsigned long long)d.Width, d.Height, g_fogBehindN.load());
+}
 struct ScenePair { ID3D12Resource* ds; ID3D12Resource* scene; };
 constexpr int kScenePairs = 8;   // (two eyes' scene and resolve targets, a menu's size besides)
 ScenePair g_scenes[kScenePairs] = {};
@@ -260,7 +477,7 @@ ID3D12Resource* SceneOf(ID3D12Resource* ds, ID3D12Resource* resolveTarget) {
     AcquireSRWLockShared(&g_sceneLock);
     for (int i = 1; i <= kScenePairs && !found; ++i) {
         const ScenePair& p = g_scenes[(g_sceneNext - i + kScenePairs) % kScenePairs];
-        if (p.ds != ds || p.scene == resolveTarget) continue;
+        if (p.ds != ds || p.scene == resolveTarget || IsFxR11(p.scene)) continue;
         const D3D12_RESOURCE_DESC sd = p.scene->GetDesc();
         if (sd.Width == dd.Width && sd.Height == dd.Height) found = p.scene;
     }
@@ -281,7 +498,7 @@ ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) 
     int nc = 0;
     AcquireSRWLockShared(&g_sceneLock);
     for (const ScenePair& p : g_scenes)
-        if (p.ds == depth && p.scene && p.scene != l.rt0) cand[nc++] = p.scene;
+        if (p.ds == depth && p.scene && p.scene != l.rt0 && !IsFxR11(p.scene)) cand[nc++] = p.scene;
     ReleaseSRWLockShared(&g_sceneLock);
     for (unsigned h = 0; h < l.nHeaps; ++h) {
         ID3D12DescriptorHeap* heap = l.heaps[h];
@@ -310,7 +527,7 @@ ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) 
 void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
                const D3D12_CPU_DESCRIPTOR_HANDLE* dsv) {
     if (!Wanted()) return;
-    const CpuTime cpuTime(g_cpuSinks);
+    const SinkTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     l->ds = ds;
     l->rt0 = n && rts ? natived3d::RtvResource(rts[0].ptr) : nullptr;
@@ -319,7 +536,35 @@ void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRI
     for (unsigned i = 0; i < (single ? std::min(l->nRt, 1u) : l->nRt); ++i) l->rts[i] = rts[i];
     l->hasDsv = dsv != nullptr;
     if (dsv) l->dsv = *dsv;
-    if (l->rt0 && ds) {
+    l->redirected = false;   // (the game's own targets bound now)
+    if (g_watching.load(std::memory_order_relaxed)) {   // (watching: the scene known by its pointer - no descriptions, no notes)
+        if (l->rt0 && ds && l->rt0 == g_watchRes[0].load(std::memory_order_relaxed) && ds == g_watchRes[1].load(std::memory_order_relaxed)) {
+            l->scene = l->rt0;
+            l->sceneDs = ds;
+        }
+        return;
+    }
+    {   // the effects' additive target: a R11G11B10 one bound with a RGBA16F one (the weighted colour / revealage) - never the scene
+        ID3D12Resource* rs[8] = {};
+        bool half = false;
+        const unsigned inc = natived3d::RtvIncrement();
+        for (unsigned i = 0; i < l->nRt && rts; ++i) {
+            rs[i] = natived3d::RtvResource(single ? rts[0].ptr + (uint64_t)i * inc : rts[i].ptr);
+            if (rs[i] && rs[i]->GetDesc().Format == DXGI_FORMAT_R16G16B16A16_FLOAT) half = true;
+        }
+        if (half) {
+            bool r11 = false;
+            for (unsigned i = 0; i < l->nRt; ++i)
+                if (rs[i] && rs[i]->GetDesc().Format == DXGI_FORMAT_R11G11B10_FLOAT) { NoteFxR11(rs[i]); r11 = true; }
+            int pairAt = 0;   // (with the additive one: the effects' pair - its first RGBA16F the weighted colour, the second the revealage)
+            for (unsigned i = 0; r11 && i < l->nRt; ++i)
+                if (rs[i] && rs[i]->GetDesc().Format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+                    if (pairAt++ == 0) NoteFxAccum(rs[i]);
+                    else { NoteFxReveal(rs[i]); break; }
+                }
+        }
+    }
+    if (l->rt0 && ds && !IsFxR11(l->rt0)) {
         const D3D12_RESOURCE_DESC d = l->rt0->GetDesc();
         if (d.Format == DXGI_FORMAT_R11G11B10_FLOAT && d.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
             l->scene = l->rt0;
@@ -330,18 +575,26 @@ void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRI
 }
 void OnBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_BARRIER* b) {
     if (!Wanted()) return;
-    const CpuTime cpuTime(g_cpuSinks);
+    const SinkTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
+    const bool watching = g_watching.load(std::memory_order_relaxed);
     for (unsigned i = 0; i < n; ++i) {
         if (b[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !b[i].Transition.pResource) continue;
         ID3D12Resource* r = b[i].Transition.pResource;
+        if (watching && !Watched(r)) continue;   // (watching: only the found ones' states)
         const D3D12_RESOURCE_TRANSITION_BARRIER& t = b[i].Transition;
         // (a first barrier on one subresource other than 0: subresource 0's state not known from it)
         const bool firstKnows = t.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES || t.Subresource == 0;
         Known* e = nullptr;
         for (auto& x : l->states)
             if (x.r == r) { e = &x; break; }
-        if (!e && firstKnows) { l->states.push_back({r, t.StateAfter, false, 0}); e = &l->states.back(); }
+        if (!e && firstKnows) {
+            l->states.push_back({r, t.StateAfter, false, 0, t.StateBefore, t.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES});
+            e = &l->states.back();
+        } else if (!e) {   // (a first barrier on another subresource: the chain cannot follow this list's resource - noted as not whole)
+            l->states.push_back({r, t.StateAfter, false, 0, t.StateBefore, false});
+            e = &l->states.back();
+        }
         if (e) Note(*e, t);
         const uint32_t frame = g_frame.load(std::memory_order_relaxed);
         AcquireSRWLockExclusive(&g_stateLock);
@@ -352,7 +605,7 @@ void OnBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_B
 }
 void OnBound(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
     if (!Wanted()) return;
-    const CpuTime cpuTime(g_cpuSinks);
+    const SinkTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     l->pso = pso;
     if (IsResolvePso(pso)) (l->tracked ? g_boundSeen : g_boundUntracked).fetch_add(1, std::memory_order_relaxed);
@@ -365,7 +618,7 @@ void OnHeaps(ID3D12GraphicsCommandList* cl, unsigned n, ID3D12DescriptorHeap* co
 }
 void OnRoot(ID3D12GraphicsCommandList* cl, const RootCall& c) {
     if (!Wanted()) return;
-    const CpuTime cpuTime(g_cpuSinks);
+    const SinkTime cpuTime(g_cpuSinks);
     List* l = Of(cl);
     switch (c.kind) {
     case RootCall::kGraphicsRootSignature:
@@ -411,6 +664,8 @@ cbuffer K : register(b0) {
     uint width, height; float cStart, cEnd;
     float cCurve, cStrength, easeOn, byDepth;
     uint glowW, glowH; float holes, skyDepth;
+    float planeN, pStart, pEnd, pStrength;
+    float pSoft, accumBehind, revealOn, pad2;
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
@@ -418,17 +673,48 @@ Texture2D<float> AccumDepth : register(t2);   // [fog] game_fog_fx_depth: the ne
 Texture2D<float4> Accum : register(t3);       // ... their colour target (rgb weighted, a the weights' sum)
 Texture2D<float> GlowDepth : register(t4);    // ... the nearest drawn into the half-size additive target
 Texture2D<float3> Glow : register(t5);
+Texture2D<float3> Target : register(t6);      // the probe: the resolve's own target before it draws (a black view when not readable)
+Texture2D<float4> Hair : register(t7);        // the hair / foliage draws' weighted colour (ours): fogged by their distance, added in
+Texture2D<float4> HairReveal : register(t8);  // ... their revealage (ours): their opacity, so their distance from the weight; multiplied back
+Texture2D<float4> Reveal : register(t9);      // the game's revealage (the particles')
 RWTexture2D<float3> Out : register(u0);
 RWTexture2D<float4> OutAccum : register(u1);
 RWTexture2D<float3> OutGlow : register(u2);
+RWTexture2D<float4> OutReveal : register(u4);   // the game's revealage with ours multiplied in
+// The probe (Serg 2026-11-09: "туман просто слегка затеняет" with density 33 - full fog by 60 units, yet the house at 100+ readable): at five
+// points of the picture what the step itself read and made - the depth, the view depth and distance it decoded, what the fog leaves, the
+// sky test, the scene's colour before and after. Read back with the timestamps (the 10 s line), so the decode is proven on the GPU.
+RWByteAddressBuffer Probe : register(u3);
+static const float2 kProbe[5] = {float2(0.5, 0.5), float2(0.15, 0.45), float2(0.35, 0.45), float2(0.65, 0.45), float2(0.85, 0.45)};
+// [fog] game_fog_planes: what the camera-facing planes in front of a point at view depth z leave of it - plane i at pStart + (pEnd - pStart)
+// (i + 1) / N covers it when z lies behind it (the depth test); soft (pSoft x the spacing): it fades in over that much in front of itself, so
+// the fog starts at pStart and is whole at pEnd either way (soft particles, no line where a plane cuts the ground; 0: hard planes),
+// each adding its share so the fog after plane i is pStrength (i + 1) / N (vr/fog_before_fx.h PlaneAlpha, PlaneAt)
+float PlanesKeep(float z) {
+    const int n = (int)(planeN + 0.5);
+    const float s = saturate(pStrength), gap = max((pEnd - pStart) / max(planeN, 1.0), 0.01), fade = gap * saturate(pSoft);
+    float keep = 1.0;
+    [loop] for (int i = 0; i < n; ++i) {
+        const float at = pStart + (pEnd - pStart) * (float)(i + 1) / (float)n;
+        if (z <= at - fade) break;   // (the planes farther on are behind the point)
+        const float before = s * (float)i / (float)n, after = s * (float)(i + 1) / (float)n;
+        const float a = 1.0 - (1.0 - after) / max(1.0 - before, 1e-4);
+        const float cover = fade > 1e-3 ? saturate((z - at) / fade + 1.0) : (z > at ? 1.0 : 0.0);
+        keep *= 1.0 - a * cover;
+    }
+    return keep;
+}
 // What the fog leaves of a point at the depth d (reverse-Z, > 0) seen at uv in the frame
-float Keep(float2 uv, float d) {
-    const float z = nearPlane / d;
+float KeepZ(float2 uv, float z);
+float Keep(float2 uv, float d) { return KeepZ(uv, nearPlane / d); }
+// ... of a point at the view depth z
+float KeepZ(float2 uv, float z) {
     const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
     const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
     // (the game's: its view position's w is 1; our effect's fog, Params::ours: the view's depth, as D2R_DepthFog.fx FogAmount)
     const float dist = byDepth > 0.5 ? z : sqrt(dot(v, v) + 1.0);
-    float t = curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
+    float t = planeN > 0.5 ? PlanesKeep(z)   // ([fog] game_fog_planes: the planes in front of the point's view depth)
+            : curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
                             : min(1.0, exp(-density * (dist / plane - 1.0)));
     if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
     return t;
@@ -467,7 +753,8 @@ float ShareOf(float3 c, float3 own, float3 o, float none) {
     const float l = dot(e, e);
     return l > 1e-6 ? saturate(dot(c - own, e) / l) : none;
 }
-// The game's fog (Params::ours off): a pixel on an edge between two fogs. The pixels along a silhouette hold the object and what is behind
+)"
+R"(// The game's fog (Params::ours off): a pixel on an edge between two fogs. The pixels along a silhouette hold the object and what is behind
 // it blended (the game's soft edges, leaves and planks drawn over the dome) but only one depth: fogged whole by the object's, the sky or the
 // far ground in it took the object's fog (a light line against the sky); left whole as the sky, the object in it stayed unfogged (a dark
 // line round the fogged object) - Serg on 0.192.34 - 0.192.40 (119, 121, 126.webp: "чтобы туман игры был без полос вокруг объектов"). Where
@@ -526,34 +813,93 @@ float3 GameFogPixel(uint2 p, float3 c) {
     kO /= nO;
     return lerp(fogColour, c, k0) + ShareOf(c, own, o, 0.0) * (kO - k0) * (o - fogColour);
 }
+void ProbeAt(uint2 p, float3 c, float3 o) {
+    [unroll] for (int i = 0; i < 5; ++i) {
+        const uint2 q = min(uint2(kProbe[i] * float2(width, height)), uint2(width - 1, height - 1));
+        if (q.x != p.x || q.y != p.y) continue;
+        const float d = Depth[p];
+        const float2 uv = (float2(p) + 0.5) / float2(width, height);
+        const float z = d > 1e-7 ? nearPlane / d : 0.0;
+        const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+        const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
+        const float dist = byDepth > 0.5 ? z : sqrt(dot(v, v) + 1.0);
+        Probe.Store4(i * 64, asuint(float4(d, z, dist, KeepAt(p, uv, d))));
+        Probe.Store4(i * 64 + 16, asuint(float4(c, SkyAt(p, d) ? 1.0 : 0.0)));
+        Probe.Store4(i * 64 + 32, asuint(float4(o, 1.0)));
+        Probe.Store4(i * 64 + 48, asuint(float4(Target[p], 0.0)));
+    }
+}
 [numthreads(8, 8, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
     const float3 c = Scene[id.xy];
-    if (byDepth < 0.5) { Out[id.xy] = GameFogPixel(id.xy, c); return; }   // (the game's fog; our effect's below, as it was)
+    if (byDepth < 0.5) {   // (the game's fog; our effect's below, as it was)
+        const float3 o = GameFogPixel(id.xy, c);
+        Out[id.xy] = o;
+        ProbeAt(id.xy, c, o);
+        return;
+    }
     const float d = GroundDepth(id.xy);
     // the void, and the game's dome ([sky] game_sky, Params::skyDepth: it stands past the game's linear depth's far end, and the game's
     // pass leaves it - Serg 2026-10-31 on 0.192.19, "обводка вокруг объектов": its low part right behind the trees fogged to the fog's
     // colour, a light band round every tree against the dark sky): left as they are
-    if (SkyAt(id.xy, d)) { Out[id.xy] = c; return; }
-    Out[id.xy] = lerp(fogColour, c, Keep((id.xy + 0.5) / float2(width, height), d));
+    const float3 o = SkyAt(id.xy, d) ? c : lerp(fogColour, c, Keep((id.xy + 0.5) / float2(width, height), d));
+    Out[id.xy] = o;
+    ProbeAt(id.xy, c, o);
 }
 // The effects at their own depth, never nearer than the scene behind them (an effect hidden there adds nothing); none drawn here (our
 // depth 0): as they are. The weighted-blended colour toward the fog's colour (its weight kept: the resolve divides by it), the additive
 // light down. Over the void (the sky goes there after) the colour fades out rather than into the fog's colour: a far fire's halo above
 // the palisade it stands on fades with its lower half (Serg's 0.192.1 shot: an orange disc on the horizon)
+// What the fog leaves of the particles at full-size pixel p (their weighted colour a): their view depth read from the game's weight
+// (1e6 / (1e5 + z^3)) over their opacity (1 - the game's revealage); none there or unreadable: 1
+float ParticleKeep(uint2 p, float2 uv, float4 a) {
+    const float op = 1.0 - saturate(Reveal[p].a);
+    const float w = op > 1e-4 && a.a > 0.0 ? a.a / op : 0.0;
+    const float z = w > 1e-6 ? pow(max(1e6 / w - 1e5, 0.0), 1.0 / 3.0) : 0.0;
+    return z > 0.0 ? KeepZ(uv, z) : 1.0;
+}
 [numthreads(8, 8, 1)]
 void fxAccum(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
     const float4 a = Accum[id.xy];
     const float e = AccumDepth[id.xy], o = GroundDepth(id.xy);   // (a blended edge on the rim against the void: as the ground it borders)
-    const float t = a.a > 0.0 && e > 1e-7 ? Keep((id.xy + 0.5) / float2(width, height), max(e, o)) : 1.0;
+    const float2 uv = (id.xy + 0.5) / float2(width, height);
+    if (accumBehind > 0.5) {   // the hair / foliage (ours) fogged, added in; the particles as drawn
+        const float4 h = Hair[id.xy];
+        if (revealOn > 0.5) {   // by their own distance: the opacity from our revealage, the weight 1e6 / (1e5 + z^3) from the weighted colour
+            const float4 hr = HairReveal[id.xy];
+            const float op = 1.0 - saturate(hr.a);
+            const float w = op > 1e-4 ? h.a / op : 0.0;
+            const float z = w > 1e-6 ? pow(max(1e6 / w - 1e5, 0.0), 1.0 / 3.0) : 0.0;
+            const float th = h.a > 0.0 ? (z > 0.0 ? KeepZ(uv, z) : KeepAt(id.xy, uv, o)) : 1.0;
+            // the particles (the game's own weighted colour) by their own distance as well - the same reading of the game's weight, their
+            // opacity from the game's revealage (theirs alone: the hair / foliage revealage is ours): a near flame as drawn, a far fire fading
+            // into the fog with the land round it (Serg 2026-11-09: "far fires show as red / orange blobs with halos through the fog")
+            const float tp = ParticleKeep(id.xy, uv, a);
+            OutAccum[id.xy] = float4(a.rgb * tp + fogColour * (a.a * (1.0 - tp)), a.a) + float4(h.rgb * th + fogColour * (h.a * (1.0 - th)), h.a);
+            OutReveal[id.xy] = Reveal[id.xy] * hr;
+            return;
+        }
+        const float th = h.a > 0.0 ? KeepAt(id.xy, uv, o) : 1.0;   // (their revealage not ours: by the opaque depth behind them)
+        OutAccum[id.xy] = a + float4(h.rgb * th + (!SkyAt(id.xy, o) ? fogColour * (h.a * (1.0 - th)) : 0.0), h.a);
+        return;
+    }
+    const float t = a.a > 0.0 && e > 1e-7 ? Keep(uv, max(e, o)) : 1.0;
     OutAccum[id.xy] = float4(a.rgb * t + (!SkyAt(id.xy, o) ? fogColour * (a.a * (1.0 - t)) : 0.0), a.a);   // (over the sky: fades out)
 }
 [numthreads(8, 8, 1)]
 void fxGlow(uint3 id : SV_DispatchThreadID) {
     if (id.x >= glowW || id.y >= glowH) return;
     const float3 g = Glow[id.xy];
+    if (accumBehind > 0.5 && revealOn > 0.5) {   // the additive light (no depth of its own): by the particles' distance there, else the depth behind
+        const uint2 fp = min(uint2((float2(id.xy) + 0.5) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
+        const float2 fuv = (float2(fp) + 0.5) / float2(width, height);
+        const float4 a = Accum[fp];
+        const float tp = a.a > 0.0 ? ParticleKeep(fp, fuv, a) : KeepAt(fp, fuv, Depth[fp]);
+        OutGlow[id.xy] = g * tp;   // (light fades out, it does not turn into the fog's colour)
+        return;
+    }
     const float e = GlowDepth[id.xy];
     // (the scene's depth under it: the nearest of the full-size pixels it covers)
     const uint2 f0 = min(uint2(float2(id.xy) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
@@ -573,11 +919,14 @@ struct Consts {
     float cCurve, cStrength, easeOn, byDepth;
     uint32_t glowW, glowH;
     float holes, skyDepth;
+    float planeN, pStart, pEnd, pStrength;
+    float pSoft, accumBehind, revealOn, pad2;
 };
-static_assert(sizeof(Consts) == 28 * 4, "twenty-eight root constants");
+static_assert(sizeof(Consts) == 36 * 4, "thirty-six root constants");
 
 constexpr int kSlots = 64;   // descriptor sets and timestamp pairs used in turn (the GPU is never that many steps behind)
-constexpr UINT kViews = 9;   // a step's views: t0 - t5, u0 - u2
+constexpr UINT kViews = 15;   // a step's views: t0 - t9, u0 - u4
+constexpr UINT kProbeBytes = 5 * 64;   // the probe's five points (the shader's ProbeAt)
 struct Gpu {
     ID3D12Device* dev = nullptr;
     ID3D12RootSignature* root = nullptr;
@@ -601,6 +950,20 @@ struct Gpu {
     ID3D12QueryHeap* queries = nullptr;
     ID3D12Resource* readback = nullptr;
     const uint64_t* stamps = nullptr;
+    ID3D12Resource* hairTex = nullptr;   // the hair / foliage draws' weighted colour (RGBA16F, the game's size; a render target but at the step)
+    UINT64 hairW = 0;
+    UINT hairH = 0;
+    ID3D12DescriptorHeap* rtvHeap = nullptr;   // its render-target view (0), the revealage's (1)
+    ID3D12Resource* hairReveal = nullptr;   // the hair / foliage draws' revealage (RGBA16F, 1 where none drawn; a render target but at the step)
+    bool hairFresh = false;                 // just made: both cleared at the next step before they are read
+    UINT rtvInc = 0;
+    ID3D12Resource* revealTex = nullptr;    // the game's revealage with ours multiplied in (copied back), as accumTex
+    UINT64 revealW = 0;
+    UINT revealH = 0;
+    DXGI_FORMAT revealF = DXGI_FORMAT_UNKNOWN;
+    ID3D12Resource* probe = nullptr;     // the probe's points (u3), copied after each step into its slot of probeRb
+    ID3D12Resource* probeRb = nullptr;
+    const float* probes = nullptr;
     bool failed = false;
 };
 Gpu g_gpu;
@@ -631,7 +994,7 @@ bool MakeGpu(ID3D12Device* dev) {
             return false;
         }
     }
-    D3D12_DESCRIPTOR_RANGE ranges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 6, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 3, 0, 0, 0}};
+    D3D12_DESCRIPTOR_RANGE ranges[2] = {{D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 10, 0, 0, 0}, {D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 5, 0, 0, 0}};
     D3D12_ROOT_PARAMETER params[3] = {};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     params[0].Constants = {0, 0, sizeof(Consts) / 4};
@@ -681,6 +1044,22 @@ bool MakeGpu(ID3D12Device* dev) {
     void* mapped = nullptr;
     ok = ok && SUCCEEDED(g.readback->Map(0, nullptr, &mapped));
     g.stamps = (const uint64_t*)mapped;
+    {   // the probe: a buffer the step writes, its readback a slot a step
+        D3D12_HEAP_PROPERTIES dh{D3D12_HEAP_TYPE_DEFAULT};
+        D3D12_RESOURCE_DESC pb = bd;
+        pb.Width = 512;
+        pb.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        ok = ok && SUCCEEDED(dev->CreateCommittedResource(&dh, D3D12_HEAP_FLAG_NONE, &pb, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, nullptr,
+                                                          __uuidof(ID3D12Resource), (void**)&g.probe));
+        D3D12_RESOURCE_DESC rbd = bd;
+        rbd.Width = (UINT64)kSlots * kProbeBytes;
+        ok = ok && SUCCEEDED(dev->CreateCommittedResource(&rb, D3D12_HEAP_FLAG_NONE, &rbd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr,
+                                                          __uuidof(ID3D12Resource), (void**)&g.probeRb));
+        void* pm = nullptr;
+        ok = ok && SUCCEEDED(g.probeRb->Map(0, nullptr, &pm));
+        g.probes = (const float*)pm;
+        if (g.probe) g.probe->SetName(L"d2rvr fog before fx probe");
+    }
     D3D12_FEATURE_DATA_FORMAT_SUPPORT fs{DXGI_FORMAT_R11G11B10_FLOAT};
     if (ok && (FAILED(dev->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof fs)) ||
                !(fs.Support2 & D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE))) {
@@ -693,6 +1072,44 @@ bool MakeGpu(ID3D12Device* dev) {
         Line("vrcam: fog before the effects - our step could not be made on the game's device: the game's fog as before");
         return false;
     }
+    return true;
+}
+// The hair / foliage target, as big as the game's weighted colour (made zeroed, in the render-target state; under g_gpuMx)
+bool MakeHair(ID3D12Device* dev, UINT64 w, UINT h) {
+    Gpu& g = g_gpu;
+    if (g.hairTex && g.hairW == w && g.hairH == h) return true;
+    if (g.hairTex) { g.hairTex->Release(); g.hairTex = nullptr; }   // (a new size: the old one's last use long done - a resize waits)
+    if (g.hairReveal) { g.hairReveal->Release(); g.hairReveal = nullptr; }
+    if (!g.rtvHeap) {
+        const D3D12_DESCRIPTOR_HEAP_DESC hd{D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_NONE, 0};
+        if (FAILED(dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&g.rtvHeap))) return false;
+        g.rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    }
+    D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
+    D3D12_RESOURCE_DESC d{};
+    d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    d.Width = w;
+    d.Height = h;
+    d.DepthOrArraySize = d.MipLevels = 1;
+    d.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    d.SampleDesc.Count = 1;
+    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    D3D12_CLEAR_VALUE cv{DXGI_FORMAT_R16G16B16A16_FLOAT};
+    natived3d::SetOurs(true);
+    const bool ok = SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &cv,
+                                                           __uuidof(ID3D12Resource), (void**)&g.hairTex));
+    if (ok) dev->CreateRenderTargetView(g.hairTex, nullptr, g.rtvHeap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_CLEAR_VALUE one{DXGI_FORMAT_R16G16B16A16_FLOAT, {1.0f, 1.0f, 1.0f, 1.0f}};
+    const bool okR = ok && SUCCEEDED(dev->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, D3D12_RESOURCE_STATE_RENDER_TARGET, &one,
+                                                                  __uuidof(ID3D12Resource), (void**)&g.hairReveal));
+    if (okR) dev->CreateRenderTargetView(g.hairReveal, nullptr, D3D12_CPU_DESCRIPTOR_HANDLE{g.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g.rtvInc});
+    natived3d::SetOurs(false);
+    if (!okR) return false;
+    g.hairReveal->SetName(L"d2rvr fog before fx hair foliage revealage");
+    g.hairFresh = true;
+    g.hairTex->SetName(L"d2rvr fog before fx hair foliage");
+    g.hairW = w;
+    g.hairH = h;
     return true;
 }
 bool MakeTexture(UINT64 w, UINT h) {   // the fogged scene, as big as the game's
@@ -1010,8 +1427,10 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     ID3D12Resource* scene = l.scene;
     ID3D12Resource* depth = l.ds;
     if (!depth) { Why(1, "the resolve's draw has no depth-stencil bound: its draw goes on alone"); return; }
+    // (watching: another depth at the resolve - a resize, a device change, a menu - the new scene is noted only by the full search)
+    if (g_watching.load(std::memory_order_relaxed) && depth != g_watchRes[1].load(std::memory_order_relaxed)) ReArm("another depth at the resolve");
     // (the scene drawn on another list, or the list's own note a smaller target bound with the same depth: by the depth they share and its size)
-    if (scene && (l.sceneDs != depth || scene == l.rt0 || scene->GetDesc().Width != depth->GetDesc().Width || scene->GetDesc().Height != depth->GetDesc().Height))
+    if (scene && (l.sceneDs != depth || scene == l.rt0 || IsFxR11(scene) || scene->GetDesc().Width != depth->GetDesc().Width || scene->GetDesc().Height != depth->GetDesc().Height))
         scene = nullptr;
     if (!scene) scene = SceneOf(depth, l.rt0);
     {   // the scene the resolve's own tables name, when they name one: it wins
@@ -1049,8 +1468,12 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
                  (unsigned long long)rd.Width, rd.Height, (void*)depth, (int)dd0.Format, (unsigned long long)dd0.Width, dd0.Height, pairs);
         }
         Why(2, "no R11G11B10 scene target bound with the resolve's depth (on any list): its draw goes on alone");
+        if (g_watching.load(std::memory_order_relaxed)) ReArm("no scene found");
         return;
     }
+    if (g_watching.load(std::memory_order_relaxed) &&
+        (scene != g_watchRes[0].load(std::memory_order_relaxed) || depth != g_watchRes[1].load(std::memory_order_relaxed)))
+        ReArm("another scene or depth at the resolve");
     const D3D12_RESOURCE_DESC sd = scene->GetDesc(), dd = depth->GetDesc();
     {   // each scene target found, once (a menu's size, the render size, the other eye's)
         static ID3D12Resource* toldScene = nullptr;
@@ -1102,21 +1525,69 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         sDepth = anyDepth ? kd.s : D3D12_RESOURCE_STATES{};
         const bool sceneRead = (sScene & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(sScene & ~readable);
         const bool depthRead = (sDepth & D3D12_RESOURCE_STATE_DEPTH_READ) && !(sDepth & ~depthOk);
-        const bool sceneOk = anyScene && sceneRead;
+        // (the resolve's list sets none: the scene's state as the submission order proved it at this draw - OnExecute)
+        l.stepRes[0] = scene;
+        l.stepOwn[0] = ownScene;
+        l.stepOnChain[0] = false;
+        ChainWatch(0, scene);
+        D3D12_RESOURCE_STATES chained{};
+        const bool onChain = !ownScene && ChainProven(0, scene, &chained);
+        if (onChain) {
+            sScene = chained;
+            l.stepOnChain[0] = true;
+            l.stepState[0] = chained;
+        }
+        const bool sceneOk = onChain || (anyScene && sceneRead);
         const bool depthGood = anyDepth && kd.whole && (depthRead || (ownDepth && sDepth == D3D12_RESOURCE_STATE_DEPTH_WRITE));
         static uint64_t toldWays = 0;   // (each way the states were found or refused, once: a line costs a millisecond)
-        const int which = (sceneOk ? 0 : 1) | (depthGood ? 0 : 2) | (ownScene ? 4 : 0) | (ownDepth ? 8 : 0) | (anyScene ? 16 : 0) | (anyDepth ? 32 : 0);
+        const int which = (sceneOk ? 0 : 1) | (depthGood ? 0 : 2) | (ownScene ? 4 : 0) | (ownDepth ? 8 : 0) | (anyScene ? 16 : 0) | (anyDepth ? 32 : 0) |
+                          (onChain ? 64 : 0);
         if (!(toldWays & (1ull << which))) {
             toldWays |= 1ull << which;
             Line("vrcam: fog before the effects - the scene's state 0x%X (%s), the depth's 0x%X (%s%s): %s", (unsigned)sScene,
-                 ownScene ? "set on the resolve's list" : anyScene ? "set on another list this frame" : "NOT known this frame", (unsigned)sDepth,
+                 ownScene ? "set on the resolve's list" : onChain ? "proven by the submission order" : anyScene ? "set on another list this frame" : "NOT known this frame", (unsigned)sDepth,
                  ownDepth ? "set on the resolve's list" : anyDepth ? "set on another list this frame" : "NOT known this frame",
                  anyDepth && !kd.whole ? ", not all its subresources" : "",
                  sceneOk && depthGood ? "drawn from them" : "not drawn - only states the resolve's list set, or read states set elsewhere, are taken");
         }
         if (!sceneOk || !depthGood) {
             Why(5, "the scene's or the depth's state not known as the resolve needs it: its draw goes on alone");
+            if (g_watching.load(std::memory_order_relaxed)) ReArm("the scene's or the depth's state not known");
+            g_watchRun.store(0, std::memory_order_relaxed);
             return;
+        }
+    }
+    // The resolve's own target (R11G11B10 of the scene's size, not the scene; bound as its render target at this draw): the probe's second
+    // read, and in mode 1 the picture fogged - the tables' scene is then the probe's second read
+    ID3D12Resource* target = l.rt0;
+    if (target) {
+        const D3D12_RESOURCE_DESC td = target->GetDesc();
+        if (target == scene || td.Format != DXGI_FORMAT_R11G11B10_FLOAT || td.Width != sd.Width || td.Height != sd.Height || td.MipLevels < 1 ||
+            td.DepthOrArraySize != 1 || td.SampleDesc.Count != 1)
+            target = nullptr;
+    }
+    const int blends = ResolveBlends(l.pso);
+    g_lastResolveBlends.store(blends, std::memory_order_relaxed);
+    const int mode = g_sceneMode.load(std::memory_order_relaxed);
+    const bool onTarget = mode == 1 && target && blends == 1;
+    ID3D12Resource* other = target;
+    D3D12_RESOURCE_STATES sOther = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    if (onTarget) {
+        other = scene;
+        sOther = sScene;
+        scene = target;
+        sScene = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    }
+    // mode 2, or mode 1 without its target: the step runs for the probe, nothing of it goes into the picture, the game's pass keeps its fog
+    const bool write = mode == 0 || onTarget;
+    g_lastWrote.store(write, std::memory_order_relaxed);
+    {
+        static int toldOn = -1;
+        if (toldOn != (int)onTarget) {
+            toldOn = (int)onTarget;
+            if (onTarget)
+                Line("vrcam: fog before the effects - fogging the resolve's own target %p (the lit picture; the resolve blends its effects over it), "
+                     "not the tables' scene %p", (void*)scene, (void*)other);
         }
     }
     std::lock_guard<std::mutex> one(g_gpuMx);
@@ -1128,7 +1599,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     // [fog] game_fog_fx_depth: the effects drawn on this list (their twins drew their depth): their targets as the scene's - one slice, one
     // sample, the weighted-blended colour the depth's size, the additive light smaller; each in a read state this list set or set elsewhere
     // this frame. Anything else: those effects as they are (a line, once each way)
-    FxPart fa, fg;
+    FxPart fa, fg, fr;   // (fr: the effects' revealage - our revealage multiplied in, copied back)
     ID3D12Resource* accum = l.accum;
     ID3D12Resource* glow = l.glow;
     FxDepth* accumZ = l.accumZ;
@@ -1180,12 +1651,120 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         }
         (fa.game || fg.game ? g_fxFogged : g_fxNotFogged).fetch_add(1, std::memory_order_relaxed);
     }
+    // Without the effects' own depth: their weighted colour target fogged by the depth behind it (the game's fog pass laid it over them so;
+    // the step makes it leave its colour out) - the additive light stays. Only while the step writes, with its state known.
+    if (!p.fxDepth && write && !p.ours && !fa.game) {
+        ID3D12Resource* acc = g_fxAccum.load();
+        const D3D12_RESOURCE_DESC ad = acc ? acc->GetDesc() : D3D12_RESOURCE_DESC{};
+        if (acc && ad.Width == sd.Width && ad.Height == sd.Height && ad.SampleDesc.Count == 1 && ad.DepthOrArraySize == 1 &&
+            ad.Format == DXGI_FORMAT_R16G16B16A16_FLOAT) {
+            const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            Known k{};
+            const bool own = OwnState(l, acc, &k);
+            l.stepRes[1] = acc;
+            l.stepOwn[1] = own;
+            l.stepOnChain[1] = false;
+            ChainWatch(1, acc);
+            D3D12_RESOURCE_STATES s{};
+            bool ok = false;
+            const char* how = "";
+            if (own) { s = k.s; ok = k.whole && (s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(s & ~readable); how = "set on the resolve's list"; }
+            else if (ChainProven(1, acc, &s)) { ok = true; l.stepOnChain[1] = true; l.stepState[1] = s; how = "proven by the submission order"; }
+            else if (ReadState(l, acc, &s)) { ok = true; how = "a read state set on another list this frame"; }
+            static int toldOk = -1;
+            if (toldOk != (int)ok) {
+                toldOk = (int)ok;
+                Line("vrcam: fog before the effects - the effects' weighted colour: %s", ok ? how : "its state not known yet - not fogged (the additive and the scene are)");
+            }
+            if (ok && !MakeHair(dev, ad.Width, ad.Height)) ok = false;   // (g_gpuMx held here)
+            ID3D12Resource* rev = ok ? g_fxReveal.load() : nullptr;   // the revealage: its state as the weighted colour's, else by the depth behind
+            const D3D12_RESOURCE_DESC rd2 = rev ? rev->GetDesc() : D3D12_RESOURCE_DESC{};
+            if (rev && rd2.Width == ad.Width && rd2.Height == ad.Height && rd2.Format == DXGI_FORMAT_R16G16B16A16_FLOAT && rd2.SampleDesc.Count == 1) {
+                Known kr{};
+                const bool ownR = OwnState(l, rev, &kr);
+                l.stepRes[2] = rev;
+                l.stepOwn[2] = ownR;
+                l.stepOnChain[2] = false;
+                ChainWatch(2, rev);
+                D3D12_RESOURCE_STATES sr{};
+                bool okR = false;
+                if (ownR) okR = kr.whole && (kr.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kr.s & ~readable), sr = kr.s;
+                else if (ChainProven(2, rev, &sr)) { okR = true; l.stepOnChain[2] = true; l.stepState[2] = sr; }
+                else if (ReadState(l, rev, &sr)) okR = true;
+                if (okR && MakeOwn(g.revealTex, g.revealW, g.revealH, g.revealF, rd2.Width, rd2.Height, rd2.Format, L"d2rvr fog before fx reveal")) {
+                    fr.game = rev;
+                    fr.s = sr;
+                    const D3D12_RESOURCE_STATES ro2 = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                    fr.r = (sr & ~ro2) == 0 && sr != D3D12_RESOURCE_STATE_COMMON ? (sr | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                                                                                : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                    fr.ours = g.revealTex;
+                    fr.z = nullptr;
+                    fr.d = rd2;
+                }
+                static int toldR = -1;
+                if (toldR != (int)okR) {
+                    toldR = (int)okR;
+                    Line("vrcam: fog before the effects - the effects' revealage %p: %s", (void*)rev, okR ? "its state known - the hair and foliage fogged by their own distance"
+                                                                                                    : "its state not known - the hair and foliage fogged by the depth behind them");
+                }
+            }
+            if (ok && MakeOwn(g.accumTex, g.accumW, g.accumH, g.accumF, ad.Width, ad.Height, ad.Format, L"d2rvr fog before fx accum")) {
+                fa.game = acc;
+                fa.s = s;
+                const D3D12_RESOURCE_STATES ro = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                fa.r = (s & ~ro) == 0 && s != D3D12_RESOURCE_STATE_COMMON ? (s | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                                                                          : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                fa.ours = g.accumTex;
+                fa.z = nullptr;
+                fa.d = ad;
+            }
+        }
+    }
+    // The additive light target (the one noted with the pair) faded by the particles' distance - only with the revealage known (the distance)
+    if (!p.fxDepth && fa.game && !fa.z && fr.game && !fg.game) {
+        ID3D12Resource* add = nullptr;
+        AcquireSRWLockShared(&g_fxR11Lock);
+        add = g_fxR11[(g_fxR11Next + kFxR11 - 1) % kFxR11];
+        ReleaseSRWLockShared(&g_fxR11Lock);
+        const D3D12_RESOURCE_DESC gd = add ? add->GetDesc() : D3D12_RESOURCE_DESC{};
+        if (add && gd.Format == DXGI_FORMAT_R11G11B10_FLOAT && gd.SampleDesc.Count == 1 && gd.DepthOrArraySize == 1 && gd.Width <= sd.Width &&
+            gd.Height <= sd.Height) {
+            const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            Known kg{};
+            const bool ownG = OwnState(l, add, &kg);
+            l.stepRes[3] = add;
+            l.stepOwn[3] = ownG;
+            l.stepOnChain[3] = false;
+            ChainWatch(3, add);
+            D3D12_RESOURCE_STATES sg{};
+            bool okG = false;
+            if (ownG) { okG = kg.whole && (kg.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kg.s & ~readable); sg = kg.s; }
+            else if (ChainProven(3, add, &sg)) { okG = true; l.stepOnChain[3] = true; l.stepState[3] = sg; }
+            else if (ReadState(l, add, &sg)) okG = true;
+            if (okG && MakeOwn(g.glowTex, g.glowW, g.glowH, g.glowF, gd.Width, gd.Height, gd.Format, L"d2rvr fog before fx glow")) {
+                fg.game = add;
+                fg.s = sg;
+                fg.r = (sg & ~readable) == 0 && sg != D3D12_RESOURCE_STATE_COMMON ? (sg | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                                                                                 : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+                fg.ours = g.glowTex;
+                fg.z = nullptr;
+                fg.d = gd;
+            }
+            static int toldG = -1;
+            if (toldG != (int)okG) {
+                toldG = (int)okG;
+                Line("vrcam: fog before the effects - the effects' additive light %p (%llux%u): %s", (void*)add, (unsigned long long)gd.Width, gd.Height,
+                     okG ? "faded by the particles' own distance (else the depth behind)" : "its state not known - as drawn");
+            }
+        }
+    }
     if (p.fxDepth) {   // (no step taking the effects' depth for long: the twins wait - OnDraw)
         if (fa.game || fg.game) g_fxIdle.store(0, std::memory_order_relaxed);
         else g_fxIdle.fetch_add(1, std::memory_order_relaxed);
     }
     const uint32_t step = g_slot++;
     const uint32_t k = step % kSlots;
+    g_slotMode[k] = onTarget ? 1 : 0;
     // this step's views: t0 the depth, t1 the scene, t2 - t5 the effects' depths and targets, u0 - u2 ours (the effects' none: empty views)
     const D3D12_CPU_DESCRIPTOR_HANDLE cpu{g.heap->GetCPUDescriptorHandleForHeapStart().ptr + (SIZE_T)k * kViews * g.inc};
     const D3D12_GPU_DESCRIPTOR_HANDLE gpu{g.heap->GetGPUDescriptorHandleForHeapStart().ptr + (UINT64)k * kViews * g.inc};
@@ -1199,25 +1778,46 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
     dev->CreateShaderResourceView(scene, &sv, at(1));
     sv.Format = DXGI_FORMAT_R32_FLOAT;
-    dev->CreateShaderResourceView(fa.game ? fa.z->tex : nullptr, &sv, at(2));
+    dev->CreateShaderResourceView(fa.game && fa.z ? fa.z->tex : nullptr, &sv, at(2));
     sv.Format = fa.game ? Typed(fa.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
     dev->CreateShaderResourceView(fa.game, &sv, at(3));
     sv.Format = DXGI_FORMAT_R32_FLOAT;
-    dev->CreateShaderResourceView(fg.game ? fg.z->tex : nullptr, &sv, at(4));
+    dev->CreateShaderResourceView(fg.game && fg.z ? fg.z->tex : nullptr, &sv, at(4));
     sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
     dev->CreateShaderResourceView(fg.game, &sv, at(5));
     D3D12_UNORDERED_ACCESS_VIEW_DESC uv{};
     uv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
     uv.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    dev->CreateUnorderedAccessView(g.tex, nullptr, &uv, at(6));
+    // t6: the probe's second read (the resolve's own target, or in mode 1 the tables' scene); none: a view of nothing (reads black)
+    sv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
+    dev->CreateShaderResourceView(other, &sv, at(6));
+    const bool hair = fa.game && !fa.z && g.hairTex;   // (the hair / foliage folded in: the weighted colour taken without the effects' depth)
+    sv.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dev->CreateShaderResourceView(hair ? g.hairTex : nullptr, &sv, at(7));
+    const bool revealOn = hair && fr.game && g.hairReveal;   // (their revealage ours too: their own distance)
+    dev->CreateShaderResourceView(revealOn ? g.hairReveal : nullptr, &sv, at(8));
+    sv.Format = revealOn ? Typed(fr.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dev->CreateShaderResourceView(revealOn ? fr.game : nullptr, &sv, at(9));
+    dev->CreateUnorderedAccessView(g.tex, nullptr, &uv, at(10));
     uv.Format = fa.game ? Typed(fa.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
-    dev->CreateUnorderedAccessView(fa.ours, nullptr, &uv, at(7));
+    dev->CreateUnorderedAccessView(fa.ours, nullptr, &uv, at(11));
     uv.Format = DXGI_FORMAT_R11G11B10_FLOAT;
-    dev->CreateUnorderedAccessView(fg.ours, nullptr, &uv, at(8));
+    dev->CreateUnorderedAccessView(fg.ours, nullptr, &uv, at(12));
+    D3D12_UNORDERED_ACCESS_VIEW_DESC pv{};
+    pv.Format = DXGI_FORMAT_R32_TYPELESS;
+    pv.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    pv.Buffer.NumElements = 128;
+    pv.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+    dev->CreateUnorderedAccessView(g.probe, nullptr, &pv, at(13));
+    uv.Format = revealOn ? Typed(fr.d.Format) : DXGI_FORMAT_R16G16B16A16_FLOAT;
+    dev->CreateUnorderedAccessView(revealOn ? fr.ours : nullptr, nullptr, &uv, at(14));
 
     const D3D12_RESOURCE_STATES readOnly = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     const D3D12_RESOURCE_STATES rScene =
         (sScene & ~readOnly) == 0 && sScene != D3D12_RESOURCE_STATE_COMMON ? (sScene | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
+                                                                             : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    const D3D12_RESOURCE_STATES rOther =
+        (sOther & ~readOnly) == 0 && sOther != D3D12_RESOURCE_STATE_COMMON ? (sOther | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE)
                                                                              : D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     const D3D12_RESOURCE_STATES rDepth = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE |
                                          (sDepth & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -1248,13 +1848,31 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     // our effect's fog: the post pass fogs such a pixel itself - FrameVoidFog)
     c.holes = p.ours ? 0.0f : 1.0f;
     c.skyDepth = std::max(p.skyDepth, 0.0f);
+    c.planeN = p.ours ? 0.0f : (float)std::clamp(p.planes, 0, 64);   // ([fog] game_fog_planes: the game's fog only)
+    c.pStart = p.planesStart;
+    c.pEnd = std::max(p.planesEnd, p.planesStart + 1.0f);
+    c.pStrength = std::clamp(p.planesStrength, 0.0f, 1.0f);
+    c.pSoft = std::clamp(p.planesSoft, 0.0f, 1.0f);
+    if (c.planeN > 0.0f) c.curveOn = 0.0f;   // (the planes in place of either curve)
+    c.accumBehind = hair ? 1.0f : 0.0f;   // (the hair / foliage folded in: no effects' depth)
+    c.revealOn = revealOn ? 1.0f : 0.0f;
+    g_planesDrawnInto.store(write ? (onTarget ? 2 : 1) : 0, std::memory_order_relaxed);
 
     natived3d::SetOurs(true);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k);
-    D3D12_RESOURCE_BARRIER b[3];
+    D3D12_RESOURCE_BARRIER b[6];
     UINT nb = 0;
     if (rScene != sScene) b[nb++] = Transition(scene, sScene, rScene, 0);
     if (rDepth != sDepth) b[nb++] = Transition(depth, sDepth, rDepth);
+    if (other && rOther != sOther) b[nb++] = Transition(other, sOther, rOther, 0);
+    if (hair && g.hairFresh) {   // (just made: zeroed - the revealage must start at 1)
+        const float zero[4] = {0, 0, 0, 0}, ones[4] = {1, 1, 1, 1};
+        cl->ClearRenderTargetView(g.rtvHeap->GetCPUDescriptorHandleForHeapStart(), zero, 0, nullptr);
+        cl->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{g.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g.rtvInc}, ones, 0, nullptr);
+        g.hairFresh = false;
+    }
+    if (hair) b[nb++] = Transition(g.hairTex, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if (revealOn) b[nb++] = Transition(g.hairReveal, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     if (nb) cl->ResourceBarrier(nb, b);
     ID3D12DescriptorHeap* heaps[1] = {g.heap};
     cl->SetDescriptorHeaps(1, heaps);
@@ -1262,16 +1880,16 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     cl->SetPipelineState(g.cs);
     cl->SetComputeRoot32BitConstants(0, sizeof(Consts) / 4, &c, 0);
     cl->SetComputeRootDescriptorTable(1, gpu);
-    cl->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{gpu.ptr + 6 * g.inc});
+    cl->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{gpu.ptr + 10 * g.inc});
     cl->Dispatch((UINT)((sd.Width + 7) / 8), (sd.Height + 7) / 8, 1);
-    FxPart* parts[2] = {&fa, &fg};
+    FxPart* parts[3] = {&fa, &fg, &fr};
     if (fa.game || fg.game) {   // the effects': their targets and our depths read
-        D3D12_RESOURCE_BARRIER fb[4];
+        D3D12_RESOURCE_BARRIER fb[6];
         UINT nf = 0;
         for (FxPart* f : parts) {
             if (!f->game) continue;
             if (f->r != f->s) fb[nf++] = Transition(f->game, f->s, f->r, 0);
-            fb[nf++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+            if (f->z) fb[nf++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         }
         if (nf) cl->ResourceBarrier(nf, fb);
         if (fa.game) {
@@ -1283,23 +1901,27 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
             cl->Dispatch((UINT)((fg.d.Width + 7) / 8), (fg.d.Height + 7) / 8, 1);
         }
     }
-    D3D12_RESOURCE_BARRIER bx[3 + 6];
+    D3D12_RESOURCE_BARRIER bx[5 + 9];
     nb = 0;
     bx[nb++] = Transition(g.tex, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
-    bx[nb++] = Transition(scene, rScene, D3D12_RESOURCE_STATE_COPY_DEST, 0);
+    bx[nb++] = Transition(g.probe, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    if (write) bx[nb++] = Transition(scene, rScene, D3D12_RESOURCE_STATE_COPY_DEST, 0);
+    else if (rScene != sScene) bx[nb++] = Transition(scene, rScene, sScene, 0);
+    if (other && rOther != sOther) bx[nb++] = Transition(other, rOther, sOther, 0);
     if (rDepth != sDepth) bx[nb++] = Transition(depth, rDepth, sDepth);
     for (FxPart* f : parts) {
         if (!f->game) continue;
         bx[nb++] = Transition(f->ours, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_SOURCE);
         bx[nb++] = Transition(f->game, f->r, D3D12_RESOURCE_STATE_COPY_DEST, 0);
-        bx[nb++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        if (f->z) bx[nb++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE);
     }
     cl->ResourceBarrier(nb, bx);
     {   // into the scene's first mip (CopyResource wants the same mips on both sides); the effects' targets the same way
         D3D12_TEXTURE_COPY_LOCATION dst{scene, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX}, src{g.tex, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
         dst.SubresourceIndex = 0;
         src.SubresourceIndex = 0;
-        cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        if (write) cl->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        cl->CopyBufferRegion(g.probeRb, (UINT64)k * kProbeBytes, g.probe, 0, kProbeBytes);
         for (FxPart* f : parts) {
             if (!f->game) continue;
             dst.pResource = f->game;
@@ -1308,8 +1930,9 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         }
     }
     nb = 0;
-    bx[nb++] = Transition(scene, D3D12_RESOURCE_STATE_COPY_DEST, sScene, 0);
+    if (write) bx[nb++] = Transition(scene, D3D12_RESOURCE_STATE_COPY_DEST, sScene, 0);
     bx[nb++] = Transition(g.tex, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    bx[nb++] = Transition(g.probe, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     for (FxPart* f : parts) {
         if (!f->game) continue;
         bx[nb++] = Transition(f->game, D3D12_RESOURCE_STATE_COPY_DEST, f->s, 0);
@@ -1317,6 +1940,16 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     }
     cl->ResourceBarrier(nb, bx);
     cl->EndQuery(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k + 1);
+    if (hair) {   // ours render targets again, cleared for the next frame's hair and foliage (the revealage to 1)
+        D3D12_RESOURCE_BARRIER hb[2] = {Transition(g.hairTex, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                                        Transition(g.hairReveal, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+        cl->ResourceBarrier(revealOn ? 2 : 1, hb);
+        const float zero[4] = {0, 0, 0, 0}, ones[4] = {1, 1, 1, 1};
+        cl->ClearRenderTargetView(g.rtvHeap->GetCPUDescriptorHandleForHeapStart(), zero, 0, nullptr);
+        if (revealOn) cl->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{g.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g.rtvInc}, ones, 0, nullptr);
+    }
+    g_foldOk.store(hair, std::memory_order_relaxed);   // (the next frame's hair / foliage may be sent there - folded at its step)
+    g_foldReveal.store(revealOn, std::memory_order_relaxed);
     cl->ResolveQueryData(g.queries, D3D12_QUERY_TYPE_TIMESTAMP, 2 * k, 2, g.readback, 2 * k * sizeof(uint64_t));
     // the game's state again: its heaps, its graphics tables (set again under them), its compute root signature and arguments, its pipeline
     if (l.nHeaps) cl->SetDescriptorHeaps(l.nHeaps, l.heaps);
@@ -1343,6 +1976,25 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     cl->SetPipelineState(l.pso);
     natived3d::SetOurs(false);
     g_draws.fetch_add(1, std::memory_order_relaxed);
+    // a step drawn with the same scene and depth: after kWatchAfter in a row, only they (and the effects' two targets) are watched
+    if (write && !g_watching.load(std::memory_order_relaxed)) {
+        static ID3D12Resource* runScene = nullptr;
+        static ID3D12Resource* runDepth = nullptr;
+        if (scene != runScene || depth != runDepth) { runScene = scene; runDepth = depth; g_watchRun.store(0); }
+        if (g_watchRun.fetch_add(1) + 1 >= kWatchAfter) {
+            g_watchRes[0].store(scene);
+            g_watchRes[1].store(depth);
+            g_watchRes[2].store(g_fxAccum.load());
+            ID3D12Resource* add = nullptr;
+            AcquireSRWLockShared(&g_fxR11Lock);
+            add = g_fxR11[(g_fxR11Next + kFxR11 - 1) % kFxR11];
+            ReleaseSRWLockShared(&g_fxR11Lock);
+            g_watchRes[3].store(add);
+            g_watching.store(true);
+            Line("vrcam: fog before the effects - watching only the scene %p, its depth %p and the effects' targets now (%u steps in a row): the "
+                 "other barriers and bindings are no longer looked at; the full search again on anything else", (void*)scene, (void*)depth, kWatchAfter);
+        }
+    }
     g_lastDraw.store(GetTickCount64(), std::memory_order_relaxed);
     static int toldOurs = -1;   // (again when the fog drawn changes: the game's, or our effect's)
     if (g_toldWhy.exchange(0) != 0 || toldOurs != (int)p.ours) {
@@ -1357,11 +2009,52 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
                  c.plane, c.density, c.fog[0], c.fog[1], c.fog[2], (unsigned long long)sd.Width, sd.Height);
     }
 }
+void Redirect(ID3D12GraphicsCommandList* cl, List& l) {
+    ID3D12Resource* acc = g_fxAccum.load(std::memory_order_relaxed);
+    const bool want = acc && l.rt0 == acc && g_foldOk.load(std::memory_order_relaxed) && g_sceneMode.load(std::memory_order_relaxed) != 2 &&
+                      g_lastWrote.load(std::memory_order_relaxed) && l.nRt >= 1 && IsFogBehind(l.pso);
+    if (want == l.redirected) return;
+    natived3d::SetOurs(true);
+    if (want) {
+        D3D12_CPU_DESCRIPTOR_HANDLE rts[8];
+        const unsigned inc = natived3d::RtvIncrement();
+        {
+            std::lock_guard<std::mutex> one(g_gpuMx);
+            const D3D12_RESOURCE_DESC ad = acc->GetDesc();
+            ID3D12Device* dev = nullptr;
+            if (!g_gpu.hairTex || g_gpu.hairW != ad.Width || g_gpu.hairH != ad.Height) {   // (made at the step; a size not matching: not sent)
+                natived3d::SetOurs(false);
+                return;
+            }
+            (void)dev;
+            rts[0] = g_gpu.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+        }
+        for (unsigned i = 1; i < l.nRt; ++i) rts[i] = l.single ? D3D12_CPU_DESCRIPTOR_HANDLE{l.rts[0].ptr + (SIZE_T)i * inc} : l.rts[i];
+        // their revealage to ours as well (folded back at the step): from the two, the step reads each one's own distance (the weight the
+        // game's shaders write, 1e6 / (1e5 + d^3), over the opacity) - a branch against the sky fogged by its own distance, not the sky's
+        if (l.nRt >= 2 && g_foldReveal.load(std::memory_order_relaxed) && natived3d::RtvResource(rts[1].ptr) == g_fxReveal.load(std::memory_order_relaxed)) {
+            std::lock_guard<std::mutex> one(g_gpuMx);
+            if (g_gpu.hairReveal) rts[1] = D3D12_CPU_DESCRIPTOR_HANDLE{g_gpu.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g_gpu.rtvInc};
+        }
+        cl->OMSetRenderTargets(l.nRt, rts, FALSE, l.hasDsv ? &l.dsv : nullptr);
+        g_redirected.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        cl->OMSetRenderTargets(l.nRt, l.rts, l.single ? TRUE : FALSE, l.hasDsv ? &l.dsv : nullptr);
+    }
+    natived3d::SetOurs(false);
+    l.redirected = want;
+}
+void OnIndirect(ID3D12GraphicsCommandList* cl) {
+    if (!Wanted()) return;
+    List* l = Of(cl);
+    if (l->tracked) Redirect(cl, *l);
+}
 void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned inst, unsigned first, int base, unsigned firstInst) {
     if (!Wanted()) return;
     List* l = Of(cl);
+    if (l->tracked && (l->redirected || l->rt0 == g_fxAccum.load(std::memory_order_relaxed))) Redirect(cl, *l);
     if (!IsResolvePso(l->pso)) {
-        const CpuTime cpuTime(g_cpuSinks);   // (the twin's own in g_cpuTwins as well)
+        const SinkTime cpuTime(g_cpuSinks);   // (the twin's own in g_cpuTwins as well)
         if (!g_fxDepth.load(std::memory_order_relaxed) || !l->tracked) return;
         if (Twin* t = TwinOf(l->pso)) {
             // no step took the effects' depth for kFxIdleSteps in a row: not drawn again, but for a quarter second every 5 s (to see
@@ -1382,7 +2075,64 @@ void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned in
 
 }  // namespace
 
+bool Watching() { return g_watching.load(std::memory_order_relaxed); }
 void SetLog(LogFn log) { g_log = log; }
+void OnExecute(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* lists) {
+    if (!Wanted() || !q || !lists) return;
+    const bool direct = q->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_DIRECT;
+    static uint32_t toldLost = 0;
+    const char* lostWhy = nullptr;
+    List* found[64];
+    const unsigned nf = n < 64 ? n : 64;
+    for (unsigned i = 0; i < nf; ++i) found[i] = Find(lists[i]);   // (each list looked up once)
+    AcquireSRWLockExclusive(&g_chainLock);
+    for (int ci = 0; ci < kChains; ++ci) {
+        Chain& ch = g_chain[ci];
+        ID3D12Resource* r = ch.res;
+        for (unsigned i = 0; r && i < n; ++i) {
+            List* l = i < nf ? found[i] : Find(lists[i]);
+            if (!direct) {   // (another queue: its lists run beside the direct queue's - one barrier on it there and the order is lost)
+                if (l) for (const Known& k : l->states) if (k.r == r) { ch.known = false; ch.runs = 0; lostWhy = "a list of another queue moves it"; }
+                continue;
+            }
+            if (!l || !l->tracked) { ch.known = false; ch.runs = 0; lostWhy = "a list not followed"; continue; }
+            if (l->stepRes[ci] == r && !l->stepOwn[ci]) {   // the resolve's list: the chain's state at its draw
+                if (l->stepOnChain[ci] && (!ch.known || l->stepState[ci] != ch.state)) {   // (a step drawn on it: the chain must agree)
+                    g_chainDoubts.fetch_add(1);
+                    ch.runs = 0;
+                    lostWhy = "a step drawn on it disagrees";
+                } else if (ch.known) {
+                    if (ch.runs > 0 && ch.at == ch.state) ++ch.runs;
+                    else { ch.at = ch.state; ch.runs = 1; }
+                } else ch.runs = 0;
+            }
+            for (const Known& k : l->states) {
+                if (k.r != r) continue;
+                if (!k.firstWhole || !k.whole) { ch.known = false; ch.runs = 0; lostWhy = "a barrier on part of it"; break; }
+                if (ch.known && k.first != ch.state) { ch.runs = 0; lostWhy = "a transition not seen"; }
+                ch.state = k.s;
+                ch.known = true;
+                break;
+            }
+        }
+    }
+    ReleaseSRWLockExclusive(&g_chainLock);
+    if (lostWhy) {
+        ReArm("the submission order in doubt");
+        const uint32_t lost = g_chainLost.fetch_add(1) + 1;
+        if (lost == 1 || lost - toldLost >= 1000) {
+            toldLost = lost;
+            Line("vrcam: fog before the effects - the scene's state in the submission order NOT proven (%s; %u times so far): drawn only from "
+                 "states its own list sets", lostWhy, lost);
+        }
+    }
+}
+bool LastProbe(float out[80]) {
+    std::lock_guard<std::mutex> one(g_gpuMx);
+    if (!g_gpu.probes || !g_slot) return false;
+    std::memcpy(out, g_gpu.probes + (size_t)((g_slot - 1) % kSlots) * (kProbeBytes / 4), kProbeBytes);
+    return true;
+}
 
 std::atomic<bool> g_hooked{false};
 bool Hooked() { return g_hooked.load(std::memory_order_relaxed); }
@@ -1396,10 +2146,12 @@ void FillSinks(natived3d::Sinks& k) {
     k.fxHeaps = &OnHeaps;
     k.fxRoot = &OnRoot;
     k.fxDraw = &OnDraw;
+    k.fxIndirect = &OnIndirect;
 }
 
 void OnGraphicsPso(ID3D12Device*, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
-    if (d && pso && fogframe::IsResolve(d->PS.pShaderBytecode, d->PS.BytecodeLength)) AddResolve(pso);
+    if (d && pso) NoteIfFogBehind(pso, d->PS.pShaderBytecode, d->PS.BytecodeLength);   // (the hair / foliage ones)
+    if (d && pso && fogframe::IsResolve(d->PS.pShaderBytecode, d->PS.BytecodeLength)) AddResolve(pso, &d->BlendState.RenderTarget[0]);
     else if (d && pso && Hooked() && d->VS.pShaderBytecode &&
              MayDrawEffect(d->BlendState, d->DepthStencilState, d->NumRenderTargets, d->RTVFormats[0], d->SampleDesc)) {
         Twin* t = new Twin();
@@ -1418,7 +2170,17 @@ void OnGraphicsPso(ID3D12Device*, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, I
 void OnStreamPso(ID3D12Device*, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     const void* code = nullptr;
     size_t size = 0;
-    if (pso && fogheight::StreamPixelShader(d, &code, &size) && fogframe::IsResolve(code, size)) { AddResolve(pso); return; }
+    if (pso && fogheight::StreamPixelShader(d, &code, &size)) NoteIfFogBehind(pso, code, size);   // (the hair / foliage ones)
+    if (pso && code && fogframe::IsResolve(code, size)) {
+        D3D12_BLEND_DESC bd{};   // (none in the stream: D3D12's default, no blend)
+        bd.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        size_t at = 0;
+        if (d && d->pPipelineStateSubobjectStream &&
+            psostream::Find((const uint8_t*)d->pPipelineStateSubobjectStream, d->SizeInBytes, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, &at))
+            std::memcpy(&bd, (const uint8_t*)d->pPipelineStateSubobjectStream + at, sizeof bd);
+        AddResolve(pso, &bd.RenderTarget[0]);
+        return;
+    }
     if (!pso || !d || !Hooked() || !d->pPipelineStateSubobjectStream || !d->SizeInBytes || d->SizeInBytes > 65536) return;
     // a stream's subobjects, each kind's defaults where it has none (no blend, the depth written: not an effect's)
     const uint8_t* s = (const uint8_t*)d->pPipelineStateSubobjectStream;
@@ -1504,7 +2266,8 @@ void OnStreamPso(ID3D12Device*, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D1
     t->nodeMask = nodeMask;
     Keep(pso, t, il);
 }
-void MarkResolve(ID3D12PipelineState* pso) { AddResolve(pso); }
+void MarkResolve(ID3D12PipelineState* pso, int blends) { AddResolve(pso, nullptr, blends); }
+void MarkFogBehind(ID3D12PipelineState* pso) { NoteFogBehind(pso); }
 
 void Configure(const Params& p) {
     AcquireSRWLockExclusive(&g_paramLock);
@@ -1515,7 +2278,10 @@ void Configure(const Params& p) {
     g_on.store(p.on, std::memory_order_relaxed);
 }
 
-bool Drawn() { return g_on.load(std::memory_order_relaxed) && GetTickCount64() - g_lastDraw.load(std::memory_order_relaxed) < 250; }
+bool Drawn() {
+    return g_on.load(std::memory_order_relaxed) && g_lastWrote.load(std::memory_order_relaxed) &&
+           GetTickCount64() - g_lastDraw.load(std::memory_order_relaxed) < 250;
+}
 bool OursDrawn() { return g_ours.load(std::memory_order_relaxed) && Drawn(); }
 
 // The twins' GPU time, one present a second (the present's thread): 1 its twins get timestamps; 2 two presents on (its lists surely
@@ -1611,7 +2377,92 @@ void TwinTimesTick() {
     }
 }
 
+// The probe's verdict on one step (16 floats a point): the scene at the five points vs the resolve's own target there. 1 wrong (the scene
+// black, the target lit), 0 right, -1 cannot say (the target dark too, or not read)
+// (swapped: the step fogged the resolve's target - its read is then the first, the tables' scene the second)
+// The mode the probe proves (16 floats a point; swapped: the step fogged the resolve's target - its read is then the first, the tables'
+// scene the second): 0 the tables' scene holds a lit picture (at 3 of the 5 points or more, not the sky: a colour over kLitAt) and the
+// resolve's target is not far brighter; 1 the tables' scene black where the resolve's target is lit at 3 points or more; 2 neither proven
+// (both dark - 0.209.13's night camp: the lit world is laid in after the resolve; or too few points off the sky)
+constexpr float kLitAt = 0.002f;
+int ProbeVerdict(const float* r, bool swapped) {
+    float scene = 0.0f, target = 0.0f;
+    int sceneLit = 0, targetLit = 0, voters = 0;
+    for (int i = 0; i < 5; ++i) {
+        const float* q = r + i * 16;
+        // (the sky does not vote - the void, the game's dome, anything past 2000 units: Serg 2026-11-09 on 0.209.16, a view of the sky - the
+        // middle on the dome at 4072 - read "no lit picture" and the step went off for a while)
+        // ... nor anything nearer than a unit (0.209.21, VR F4: "depth 1 -> view depth 0.1", black - a hand or an overlay at the near plane
+        // voted dark, and with the rest of the view on the sky the step flipped off and on every few seconds)
+        if (q[7] > 0.5f || !(q[0] > 1e-7f) || q[1] > 2000.0f || q[1] < 1.0f) continue;
+        ++voters;
+        const float first = q[4] + q[5] + q[6], second = q[12] + q[13] + q[14];
+        const float sc = swapped ? second : first, tg = swapped ? first : second;
+        scene += sc;
+        target += tg;
+        sceneLit += sc > kLitAt;
+        targetLit += tg > kLitAt;
+    }
+    if (voters < 2) return -1;   // (too few points off the sky: no vote - the mode stays)
+    const int need = std::max(2, (voters * 3 + 4) / 5);   // (3 of 5; of fewer, as many in proportion, at least 2)
+    if (sceneLit >= need && !(scene < 0.1f * target)) return 0;
+    if (targetLit >= need && scene < 0.1f * target) return 1;
+    return 2;
+}
+// (the test: the check started again in a mode - 0 a lit scene taken as proven)
+void ResetSceneCheck(int mode);
+int g_run = 0, g_runWant = -1;   // the same verdict this many probes in a row (SceneCheck)
+std::atomic<ID3D12Resource*> g_provenScene{nullptr};   // the scene a lit picture was proven in (mode 0 reached with it)
+void ResetSceneCheck(int mode) {
+    g_sceneMode.store(mode);
+    g_run = 0;
+    g_runWant = -1;
+    g_provenScene.store(nullptr);
+}
+void SceneCheck() {
+    static uint32_t lastStep = 0;
+    float r[kProbeBytes / 4];
+    uint32_t step = 0;
+    {
+        std::lock_guard<std::mutex> one(g_gpuMx);
+        if (!g_gpu.probes || g_slot <= 8) return;
+        step = g_slot - 8;   // (8 steps back: surely done)
+        if (step == lastStep) return;
+        std::memcpy(r, g_gpu.probes + (size_t)(step % kSlots) * (kProbeBytes / 4), kProbeBytes);
+    }
+    lastStep = step;
+    int v = ProbeVerdict(r, g_slotMode[step % kSlots] == 1);
+    // (a scene proven lit stays so through dark views - night, the sky, a menu over it: "neither lit" is no vote then; a black scene where the
+    // resolve's target is lit still is)
+    ID3D12Resource* followed = nullptr;
+    AcquireSRWLockShared(&g_chainLock);
+    followed = g_chain[0].res;
+    ReleaseSRWLockShared(&g_chainLock);
+    if (v == 2 && followed && g_provenScene.load() == followed) v = -1;
+    if (v < 0) return;   // (the sky: no vote)
+    const int blends = g_lastResolveBlends.load();
+    const int want = v == 0 ? 0 : v == 1 && blends == 1 ? 1 : 2;   // (the target only when the resolve blends into it)
+    if (want == g_runWant) ++g_run;
+    else { g_runWant = want; g_run = 1; }
+    const int mode = g_sceneMode.load();
+    if (want == mode || g_run < kWrongRuns) return;
+    g_sceneMode.store(want);
+    g_run = 0;
+    if (want == 0) g_provenScene.store(followed);
+    if (want == 0)
+        Line("vrcam: fog before the effects - the tables' scene holds a lit picture (%d probes in a row): fogged by the step, the game's pass "
+             "leaves the fog's colour out", kWrongRuns);
+    else if (want == 1)
+        Line("vrcam: fog before the effects - the tables' scene is black where the resolve's own target is lit (%d probes in a row) and the resolve "
+             "blends into its target: the step fogs that target now", kWrongRuns);
+    else
+        Line("vrcam: fog before the effects - no lit picture proven (%d probes in a row: %s; the resolve %s): nothing of ours written, the game's "
+             "fog pass keeps its own fog", kWrongRuns, v == 1 ? "the tables' scene black, the resolve's target lit" : "neither the tables' scene "
+             "nor the resolve's own target holds a lit picture at the probe's points - the lit world is laid in after the resolve",
+             blends == 1 ? "blends into its target" : blends == 0 ? "writes its target whole" : "blend not known");
+}
 void Frame() {
+    SceneCheck();
     g_frame.fetch_add(1, std::memory_order_relaxed);
     TwinTimesTick();
     static ULONGLONG toldAt = 0;
@@ -1628,9 +2479,9 @@ void Frame() {
         const uint64_t sinks = g_cpuSinks.exchange(0), twins = g_cpuTwins.exchange(0), stepCpu = g_cpuStep.exchange(0);
         TwinTimes& tt = g_twinTimes;
         if (g_on.load() || sinks)
-            Line("vrcam: fog before the effects, 10 s, its cost a present (%u presents): on the CPU %.3f ms in the followed lists' calls, of them "
+            Line("vrcam: fog before the effects, 10 s, its cost a present (%u presents; %s): on the CPU %.3f ms in the followed lists' calls, of them "
                  "%.3f ms drawing the effects' depth again and %.3f ms recording the step; on the graphics card the effects' depth %.3f ms a "
-                 "present (%u presents sampled, %u draws timed)", presents, sinks * per, twins * per, stepCpu * per,
+                 "present (%u presents sampled, %u draws timed)", presents, g_watching.load() ? "watching the found targets only" : "the full search", sinks * per, twins * per, stepCpu * per,
                  tt.samples ? tt.sumMs / tt.samples : 0.0, tt.samples, tt.timed);
         tt.sumMs = 0.0;
         tt.samples = tt.timed = 0;
@@ -1654,6 +2505,23 @@ void Frame() {
             }
             g_readUpTo = upTo;
         }
+        if (g_gpu.probes && g_readUpTo) {
+            const float* r = g_gpu.probes + (size_t)((g_readUpTo - 1) % kSlots) * (kProbeBytes / 4);
+            static const char* const kAt[5] = {"centre", "15% 45%", "35% 45%", "65% 45%", "85% 45%"};
+            char b[2000];
+            const bool swapped = g_slotMode[(g_readUpTo - 1) % kSlots] == 1;
+            const int modeNow = g_sceneMode.load();
+            int len = snprintf(b, sizeof b, "vrcam: fog before the effects - the probe (what the step read and made, step %u; it %s %s; \"scene\" "
+                               "is that, \"the other\" %s):", g_readUpTo - 1, modeNow == 2 ? "wrote NOTHING (no lit picture proven), read" : "fogged",
+                               swapped ? "the resolve's own target" : "the tables' scene", swapped ? "the tables' scene" : "the resolve's own target");
+            for (int i = 0; i < 5 && len > 0 && len < (int)sizeof b; ++i) {
+                const float* q = r + i * 16;
+                len += snprintf(b + len, sizeof b - len, "%s %s: depth %.3g -> view depth %.1f, distance %.1f, fog %.0f%%%s, scene %.3f %.3f %.3f -> "
+                                "%.3f %.3f %.3f, the other %.3f %.3f %.3f", i ? ";" : "", kAt[i], q[0], q[1], q[2], 100.0f * (1.0f - q[3]),
+                                q[7] > 0.5f ? " (sky)" : "", q[4], q[5], q[6], q[8], q[9], q[10], q[12], q[13], q[14]);
+            }
+            if (g_log) g_log(b);   // (longer than Line takes)
+        }
     }
     const uint32_t bound = g_boundSeen.exchange(0), boundU = g_boundUntracked.exchange(0), drawn = g_drawSeen.exchange(0), drawnU = g_drawUntracked.exchange(0);
     const bool ours = g_ours.load();
@@ -1664,6 +2532,27 @@ void Frame() {
              "game's kept), %u draws of those pipelines into other targets, %u not drawn again (no step took it for %u steps in a row); %u "
              "steps fogged the effects by it, %u with effects not fogged",
              twinDraws, twinsMade, g_twinsKept.load(), other, skipped, kFxIdleSteps, fogged, notFogged);
+    if (const uint32_t sent = g_redirected.exchange(0))   // (the hair / foliage draws sent into ours, fogged by the depth behind them)
+        Line("vrcam: fog before the effects, 10 s: %u hair / foliage draws sent into our weighted colour target (fogged by the depth behind "
+             "them; %u such pipelines known); the particles as drawn", sent, g_fogBehindN.load());
+    {   // [fog] game_fog_planes: the planes, once each 10 s while they are asked for
+        Params pp;
+        AcquireSRWLockShared(&g_paramLock);
+        pp = g_params;
+        ReleaseSRWLockShared(&g_paramLock);
+        if (pp.on && pp.planes > 0 && !pp.ours) {
+            char b[1200];
+            const int np = std::clamp(pp.planes, 1, 64);
+            const int into = g_planesDrawnInto.load();
+            int len = snprintf(b, sizeof b, "vrcam: fog planes before the player, 10 s: %d planes, soft %.2f, drawn %u times into %s, on the graphics card %.3f "
+                               "ms a step; at view depth / alpha:", np, pp.planesSoft, draws,
+                               into == 2 ? "the resolve's own target (the lit picture)" : into == 1 ? "the scene the resolve's tables name" : "NOTHING (the scene not the lit picture - the game's fog kept)",
+                               n ? ms / n : 0.0);
+            for (int i = 0; i < np && len > 0 && len < (int)sizeof b - 32; ++i)
+                len += snprintf(b + len, sizeof b - len, " %.0f/%.2f", PlaneAt(i, np, pp.planesStart, pp.planesEnd), PlaneAlpha(i, np, pp.planesStrength));
+            if (g_log) g_log(b);
+        }
+    }
     Line("vrcam: fog before the effects, 10 s: %u steps before the game's transparent resolve (%s)%s; on the graphics card %.3f ms a step (%d "
          "measured)%s (its pipeline bound %u times on followed lists, %u on others; its draws %u, %u of them on lists not followed)",
          draws, ours ? "our effect's fog" : "the game's fog", g_resolveN.load() ? "" : " - the game's resolve pipeline NOT found (another build?)",

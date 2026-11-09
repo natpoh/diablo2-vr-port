@@ -1,5 +1,34 @@
 # What's new in D2R VR
 
+## 0.210.0
+
+Fire stays bright in the fog, the game's own day and night, and many fixes from today's tests.
+
+- **Fog before the effects** (Settings > Fog, `[fog] game_fog_before_fx`, on): the fog is laid on the lit world before the game adds
+  its fire and effects, so a torch in front of you stays bright. Branches, bushes, hair and far fires are fogged by their own
+  distance, so far trees no longer show through. The fog's step costs about 0.1 ms on the graphics card.
+- **The game's own day and night again**: the lighting follows the game's clock (in Act 1 and Act 2 it stayed day or night).
+- **The fog's colour by the game's time**, per act, for day, dawn, dusk and night; a new **Fog** tab holds every fog setting, the
+  game's fog and our old fog each in its own block, picked by one selector.
+- **Draw distance slider** is back (1 near - 7 far, default 2 = Medium).
+- **Holes in the world patched** (`[holes] patch_world`): the camp bridge's ramps and their sides in Act 1, in every view.
+- **Dungeon floors join up** along the way you come (`[render] room_stitch`, from D2R VR Unleashed) in every view, and the game's cave
+  ceiling stands over the level's highest floor (`[ceiling] top_from_level`).
+- **Monster plates in every view**, with depth sliders for the HP bar in F2 and F3; talking to an NPC no longer pulls the view back.
+- **The flat game: a bow or a throw goes exactly into the crosshair** (`[input] flat_shot_at_crosshair`), and an arrow goes where you
+  aim as it leaves the bow (`[gameplay] shot_at_release`; in co-op the host decides).
+- **Co-op: a body in your hand is seen by everyone**, and blows that knock down or shove (`[multiplayer] pose_share_grab`).
+- **Left-handed mode** (Controls > Hands and the headset's Controls tab, `[hands] left_handed`, off): the two controllers swap, VR F4.
+- **The monitor shows one clean eye**: only what the lens shows, fitted to the window.
+- **Potato**: transparent leaves and ground decals drawn right; the lens mask is on in Potato (2-4 frames more on PS VR2). The Potato
+  light in the game's own colours is there (Performance > Render cost), off for now.
+- **The headset's Video page**: the rows no longer overlap.
+- **Crash fix candidate**: a frame is not replayed when the game reset its command lists first (`[stereo] replay_reset_guard`).
+- Removed: "near misses still hit" and "the left stick walks where the left controller points" (not wanted).
+- **Known issue**: with the new fog before the effects, far trees can show through the fog as dark speckled shapes
+  against the sky (most seen in VR F4). It will be fixed in the next version; until then, untick Settings > Fog > "The fog before smoke and fire"
+  for the game's own fog as before, or pick the old fog (Fog drawn by: our effect).
+
 ## 0.209.0
 
 Gestures: draw a shape in the air and its skill is cast.

@@ -43,6 +43,9 @@ inline constexpr Rule kRules[] = {
     {4, L"gameplay", L"melee_direct_client_cleave", "Two-handed swing hits each monster (VR)", 0, 2, {"Off", "On"}},
     {5, L"gameplay", L"quick_blow", "Quick blow: the swing never stops the hero (VR)", 1, 2, {"Off", "On"}},
     {6, L"gameplay", L"quick_blow_faster", "Quick blow: faster than the animation", 0, 2, {"Off", "On"}},
+    // 2026-11-08 (vr/hit_share.h): the host's box decides whether the joined players' swing timers get their blows' outcomes
+    {7, L"multiplayer", L"share_hit_outcomes", "Send the joined players what their blows did", 0, 2, {"Off", "On"}},
+    {8, L"gameplay", L"shot_at_release", "The arrow goes where you aim as it leaves the bow", 0, 2, {"Off", "On"}},   // (vr/shot_release.h, 2026-11-06)
 };
 inline constexpr int kCount = static_cast<int>(sizeof kRules / sizeof kRules[0]);
 constexpr int kMaxRules = 16;   // what a message may carry (a newer host's extra ids are skipped by an older client)
@@ -170,6 +173,8 @@ inline const char* Label(int i) {
         case 4: return uitext::Tr("vr.rules.melee_direct_client_cleave", "Two-handed swing hits each monster (VR)");
         case 5: return uitext::Tr("vr.rules.quick_blow", "Quick blow: the swing never stops the hero (VR)");
         case 6: return uitext::Tr("vr.rules.quick_blow_faster", "Quick blow: faster than the animation");
+        case 7: return uitext::Tr("vr.rules.share_hit_outcomes", "Send the joined players what their blows did");
+        case 8: return uitext::Tr("vr.rules.shot_at_release", "The arrow goes where you aim as it leaves the bow");
         default: return "?";
     }
 }

@@ -22,6 +22,10 @@ struct Suspects {
 void Init(const D2RL::PluginContext* ctx, const wchar_t* iniPath);
 // From LoadSettings, every read of the ini: the step ([debug] patch_hunt), the pipeline's K ([debug] patch_hunt_pipe) and the rest as read.
 void Configure(int step, int pipeK, const Suspects& s);
+// From LoadSettings, every read of the ini: [render] preset_game_options and the Quality preset the keys match (shared/quality_presets.h Match;
+// kCount = Custom). Ticked and the preset not the one put last (d2r_vr_game_options.txt): its game options (kGameOptions) go through the game's
+// own setter once, on the UI thread, one log line with the old and new values. Unticked: nothing, and the file removed.
+void PresetGameOptions(bool on, int preset);
 // The step in force (the update thread, the draw thread: one atomic load).
 int Step();
 // vrcam's update thread, every 1 ms: Ctrl+F8 next step, Ctrl+Shift+F8 back, Ctrl+Alt+F8 / Ctrl+Alt+Shift+F8 the next / last pipeline of step 8 -

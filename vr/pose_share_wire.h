@@ -20,7 +20,9 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "grab_share.h"   // [multiplayer] pose_share_grab: the holds on their own messages
 #include "pose_share.h"
+#include "shot_share.h"
 
 namespace posewire {
 
@@ -50,6 +52,33 @@ struct Remote {
     poseshare::Pose pose;
 };
 size_t Remotes(Remote* out, size_t max);
+
+// [multiplayer] pose_share_grab (vr/grab_share.h): the holds our hands make this tick and our knocks (0..grabshare::kGrabMsgMax; stamped by the caller with NowMs, as the poses are; sent with the
+// next pose tick on their own message, kMsgGrab), from the plugin's own thread. n 0: none (nothing is sent - a hold not handed again is not a release: the caller's
+// grabshare::Sender makes the releases).
+void SetOwnGrabs(const grabshare::Hold* h, int n);
+// The other players' holds as played back now (any thread): each holder's hand, as far behind as that holder's poses are played. lost: the holder fell silent
+// while holding (the hold as a release with no throw).
+struct RemoteGrab {
+    uint32_t unit = 0;
+    grabshare::Hold hold;
+    bool lost = false;
+};
+size_t RemoteGrabs(RemoteGrab* out, size_t max);
+// ... and their knocks (grabshare kKnock: a blow of theirs knocked a body down, staggered or shoved it) due now, each given once (any thread).
+struct RemoteKnock {
+    uint32_t unit = 0;
+    grabshare::Hold knock;
+};
+size_t RemoteKnocks(RemoteKnock* out, size_t max);
+// A bow shot (vr/shot_share.h): ours to the host - the latest one handed in goes on the next send, once (any thread); the host hands every player's on
+// to all the others at once. The ones that come are given to the sink on D2RLoader's callback threads: asHost - the host's copy of a player's shot as it
+// came to it (for the create of his arrows), else a shot handed on to us (the partner's arrow drawn along it).
+void ShotOut(uint32_t ownUnit, const shotshare::Shot& s);
+using ShotSink = void (*)(uint32_t unit, const shotshare::Shot& s, bool asHost);
+void SetShotSink(ShotSink fn);
+// Connected to a host that is another PC's (a joined player: our arrows are created by its server, not ours).
+bool Joined();
 
 // The wire's own clock, milliseconds (QueryPerformanceCounter): poses are stamped with it.
 uint64_t NowMs();

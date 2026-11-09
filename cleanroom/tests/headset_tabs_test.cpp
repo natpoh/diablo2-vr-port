@@ -2330,7 +2330,7 @@ static void TestViews() {
         // the rows: Options without "Menus as a panel", HUD with the toolbar type alone (the plates are F4's hook), the rest as in F4
         CHECK(RowsOn(kPageOptions, view) == RowsOn(kPageOptions) - (flat ? 1 : 0));
         CHECK(RowsOn(kPageHud, view) == (flat ? 1 : 7) && KeyAt(kPageHud, 0, view) == kKeyBarPlace);   // (F4: the plates' two, Allies shown, our names' three)
-        CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == 6 && RowsOn(kPageKeysR, view) == 6);
+        CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == (flat ? 6 : 7) && RowsOn(kPageKeysR, view) == 6);   // (F4: Left-handed under the bindings)
         for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
         // the flips: Skills and the pages shown (Party with it, while it is on)
         const int f3Page = view == 0 || view == 3 ? 1 : 0;   // (F3's page: VR F3 only, and 0)

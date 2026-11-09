@@ -350,6 +350,12 @@ and towns. Visual only, live.
 
 ![Controls](screenshots/settings_03_controls.png)
 
+- **Hands** (VR) - **Left-handed: swap the controllers** (off, `[hands] left_handed`;
+  first person F4 only): the left controller holds the main weapon and strikes with it,
+  the right one is the off hand; buttons, stick and trigger swap with them, and the
+  inventory and map in the hand, the wrist orbs, the belt, throws, the bow and vibration
+  follow. The menu button stays where it is. The game's weapons are not changed.
+  Also in the headset: the overlay's Controls tab, Left page, last row (F4).
 - **Walking (left stick)** - walk where you look, exact mode, reverse, turn
   strength, diagonal correction.
 - **Turning (right stick)** - turning on the right stick; **smooth turning**
@@ -873,10 +879,16 @@ through ReShade.
   last five frames (an attack is kept for the animation's end), green in - then it melts away. Inside it
   (or rising over the bar) what the blow did: the life it took, a crit in gold, one swing's monsters
   summed, or miss / blocked / dodged / avoided (`swing_timer_numbers`). Single player or a game you host:
-  exact; joined: the timer from your hero's animation, no numbers. The monitor needs D2R_DepthFog.fx.
+  exact; joined: the timer from your hero's animation, the numbers only when the host sends them (below).
+  The monitor needs D2R_DepthFog.fx.
   A VR touch that did not become an attack says why in the same place (`swing_timer_reasons`, on): shaft /
   handle / not the tip (where it met the body), slow / weak / short / push with your swing's number against
   the one it needs (3.1/5.0), wrong way, shield. Only told: what counts as a hit is the same.
+- **Host: send the joined players what their blows did** (off - `[multiplayer] share_hit_outcomes`): you host
+  a TCP/IP game - each joined player with this mod version gets his own blows' outcomes (hit, miss, blocked,
+  dodged, avoided, the life taken, a crit) and his swing timer shows them as yours does. The roll and the
+  damage happen on the host's machine only. Only the host's box counts (it is in the host's rules list).
+  D2RLoader's plugin network, channel "HS"; a few bytes per blow; only shown.
 - **Joined: send a touch when the host takes it** (VR F4, off - `[gameplay] swing_pace_joined`): joined to
   someone's TCP/IP game, your PC counts your hero's attack from his animation and sends a touch only when
   the host's game will take it: not while it would refuse one, held in the attack's last moments and sent

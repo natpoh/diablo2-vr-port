@@ -12,7 +12,8 @@
 // (cleanroom/tests/hit_outcome_test.cpp).
 //
 // [hud] swing_timer (vr/swing_timer.h) reads the same two observers for its numbers: a ring of its own (LabelRing), filled while it wants it,
-// whether or not this log is on; each record carries the attacker's id, so it keeps our hero's blows only.
+// whether or not this log is on; each record carries the attacker's id, so it keeps our hero's blows only. [multiplayer] share_hit_outcomes
+// (vr/hit_share.h) reads them too, into a third ring (ShareRing): the host sends each joined player his own hero's records.
 
 #include <atomic>
 #include <cstdint>
@@ -205,13 +206,25 @@ inline std::atomic<bool>& LabelsFlag() {
     return on;
 }
 inline bool LabelsWanted() { return LabelsFlag().load(std::memory_order_relaxed); }
-// Either: the observers go in and push.
-inline bool Wanted() { return LogWanted() || LabelsWanted(); }
+// [multiplayer] share_hit_outcomes: the host sends the joined players their own blows' outcomes (vr/hit_share.h; vr/hit_share_wire.cpp sets it).
+inline std::atomic<bool>& ShareFlag() {
+    static std::atomic<bool> on{false};
+    return on;
+}
+inline bool ShareWanted() { return ShareFlag().load(std::memory_order_relaxed); }
+// Any: the observers go in and push.
+inline bool Wanted() { return LogWanted() || LabelsWanted() || ShareWanted(); }
 inline Ring& Global() {
     static Ring r;
     return r;
 }
 inline Ring& LabelRing() {
+    static Ring r;
+    return r;
+}
+// Every player's blows on our server, for the joined players (one reader: vr/hit_share_wire.cpp's tick). A joined client's own LabelRing gets
+// what the host sent it (the channel's callback pushes there).
+inline Ring& ShareRing() {
     static Ring r;
     return r;
 }
@@ -230,12 +243,14 @@ inline void PushRoll(uint32_t monClass, uint32_t monId, uint16_t flags, uint64_t
     r.ms = ms;
     if (LogWanted()) Global().Push(r);
     if (LabelsWanted()) LabelRing().Push(r);
+    if (ShareWanted()) ShareRing().Push(r);
 }
 inline void PushDamage(Record r) {
     r.kind = Kind::Damage;
     r.direct = t_direct;
     if (LogWanted()) Global().Push(r);
     if (LabelsWanted()) LabelRing().Push(r);
+    if (ShareWanted()) ShareRing().Push(r);
 }
 
 }  // namespace hitoutcome

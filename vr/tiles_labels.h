@@ -71,47 +71,55 @@ inline Glyph GlyphOf(int slot) {
 //   RT: no control of a VR controller is bound to it.
 // With the slot controls on ([openxr] skill_rt_a, vr/slot_controls.h) the right hand's A presses A and its trigger presses RT (each with the left trigger for the
 // second row): "Right A", "R trigger" - which hold wherever the rest of the layout is rebound, since the panel takes those two controls itself.
-inline bool HandHint(int slot, Profile left, Profile right, char* out, int n, bool slotControls = false) {
+// [hands] left_handed (`swapped`, vr/hand_swap.h): the layout's right hand is the LEFT controller then and its left hand the right one - each hint names
+// the controller that presses it, with its own profile's button names ("Right B" on Touch becomes "Left Y", "LT + Left X" becomes "RT + Right A").
+inline bool HandHint(int slot, Profile left, Profile right, char* out, int n, bool slotControls = false, bool swapped = false) {
     if (!out || n <= 0) return false;
     out[0] = 0;
     if (slot < 0 || slot >= wheel::kSlotCount) return false;
     const int base = wheel::BaseSlot(slot);
-    const char* lt = wheel::kSlotDefs[slot].alt ? "LT + " : "";
+    const int rh = swapped ? 0 : 1, lh = 1 - rh;                         // the controllers the layout's right and left hands are
+    const Profile rp = swapped ? left : right, lp = swapped ? right : left;
+    const char* rName = swapped ? "Left" : "Right";
+    const char* lName = swapped ? "Right" : "Left";
+    const char* rTrigger = swapped ? "L trigger" : "R trigger";
+    const char* rGrip = swapped ? "L grip" : "R grip";
+    const char* lt = wheel::kSlotDefs[slot].alt ? (swapped ? "RT + " : "LT + ") : "";
     if (slotControls && (base == 8 || base == 9)) {
-        if (right == Profile::None) return false;
+        if (rp == Profile::None) return false;
         if (base == 9) {
-            std::snprintf(out, n, "%sR trigger", lt);
+            std::snprintf(out, n, "%s%s", lt, rTrigger);
             return true;
         }
-        const char* a = FaceButton(right, 1, false);
+        const char* a = FaceButton(rp, rh, false);
         if (!a) return false;
-        std::snprintf(out, n, "%sRight %s", lt, a);
+        std::snprintf(out, n, "%s%s %s", lt, rName, a);
         return true;
     }
     if (base == 8) {
-        if (right == Profile::None) return false;
-        std::snprintf(out, n, "%sR trigger", lt);
+        if (rp == Profile::None) return false;
+        std::snprintf(out, n, "%s%s", lt, rTrigger);
         return true;
     }
     if (base == 9) return false;
     const char* name = nullptr;
-    const char* hand = base == 1 || base == 2 ? "Left" : "Right";
-    if (base == 0) name = FaceButton(right, 1, true);              // B: the right hand's second face button
-    else if (base == 1) name = FaceButton(left, 0, false);         // X: the left hand's first
-    else if (base == 2) name = FaceButton(left, 0, true);          // Y: the left hand's second
-    else name = FaceButton(right, 1, true);                        // RB: the right grip held, with the right hand's second face button
+    const char* hand = base == 1 || base == 2 ? lName : rName;
+    if (base == 0) name = FaceButton(rp, rh, true);                // B: the right hand's second face button
+    else if (base == 1) name = FaceButton(lp, lh, false);          // X: the left hand's first
+    else if (base == 2) name = FaceButton(lp, lh, true);           // Y: the left hand's second
+    else name = FaceButton(rp, rh, true);                          // RB: the right grip held, with the right hand's second face button
     if (!name) return false;
-    if (base == 3) std::snprintf(out, n, "%sR grip + %s", lt, name);
+    if (base == 3) std::snprintf(out, n, "%s%s + %s", lt, rGrip, name);
     else std::snprintf(out, n, "%s%s %s", lt, hand, name);
     return true;
 }
 
 // The hints for a pair of profiles; `show` false (direct input off, or its layout rebound) leaves them all empty.
-inline wheel::Hints BuildHints(Profile left, Profile right, bool show, bool slotControls = false) {
+inline wheel::Hints BuildHints(Profile left, Profile right, bool show, bool slotControls = false, bool swapped = false) {
     wheel::Hints h;
     if (!show && !slotControls) return h;
     for (int s = 0; s < wheel::kSlotCount; ++s)
-        if (show || wheel::BaseSlot(s) >= 8) HandHint(s, left, right, h.text[s], wheel::kHintLen, slotControls);   // (the slot controls' two are true whatever the layout is)
+        if (show || wheel::BaseSlot(s) >= 8) HandHint(s, left, right, h.text[s], wheel::kHintLen, slotControls, swapped);   // (the slot controls' two are true whatever the layout is)
     return h;
 }
 

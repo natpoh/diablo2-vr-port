@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "hset_panel.h"
+#include "patch_hunt.h"   // the game's graphics options the Quality presets put ([render] preset_game_options)
 #include "hset_life.h"
 #include "hset_scene.h"
 #include "low_hp.h"
@@ -187,7 +188,7 @@ static void TestDefs() {
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
-    CHECK(RowsOn(kPageVideo) == 6, "the Video page: its slider by hand, six table rows under it (the Quality preset, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
+    CHECK(RowsOn(kPageVideo) == 7, "the Video page: its slider by hand, seven table rows under it (the Quality preset, the Draw distance, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
     CHECK(PageCount() == 23 && PageCount() <= kMaxPages && kTabCount == 15,
           "twenty-three pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F3 under View)");
@@ -1366,24 +1367,42 @@ static void TestPagesHit() {
                 for (float x = 0.01f; x < 1.0f; x += 0.02f) presetHits += HitTest(p, x, y).kind == Kind::Preset;
         CHECK(presetHits == 0, "no preset button left on any page");
     }
+    {   // a row's name never on the grey line of the row above it (Serg's 0.209.18 shot of the Video page: seven rows 39 apart, each name on the
+        // line above), every page; the name and its line inside the row's band, the name beside its buttons
+        bool clear = true, inBand = true, beside = true;
+        for (int p = 0; p < kPageCount; ++p)
+            for (int r = 0; r < RowsOn(p); ++r) {
+                const Rect band = RowBand(r, p), name = RowLabel(r, p), line = RowDetailRect(r, p);
+                if (line.h > 0 && r + 1 < RowsOn(p) && Overlap(line, RowLabel(r + 1, p))) clear = false;
+                if (r > 0 && Overlap(name, RowBand(r - 1, p))) clear = false;
+                if (name.y < band.y || (line.h > 0 && line.y + line.h > band.y + band.h + 6) || (line.h == 0 && name.y + name.h > band.y + band.h)) inBand = false;
+                if (name.x + name.w > kDec(r, p).x || name.y + name.h < kDec(r, p).y || name.y > kDec(r, p).y + kDec(r, p).h) beside = false;
+            }
+        CHECK(clear, "no row's name overlaps the line under the row above it (or the row above)");
+        CHECK(inBand && beside, "each row's name and line inside its band, the name left of its buttons and level with them");
+        CHECK(!RowDetail(kPageVideo) && RowDetailRect(0, kPageVideo).h == 0 && RowDetail(kPageRender) && RowDetail(kPageWorld),
+              "the Video page's rows are a name alone (seven: no room for a line under it); the other pages keep their line");
+        const Rect n = RowLabel(3, kPageVideo), dec = kDec(3, kPageVideo);
+        CHECK(n.y == dec.y && n.h == dec.h, "a Video row's name centred on its buttons");
+    }
     {   // the Video page's three rows: under the slider and its ends, above the cost line; each row's control hit
-        CHECK(RowsOn(kPageVideo) == 6 && KeyAt(kPageVideo, 0) == kKeyPreset && KeyAt(kPageVideo, 1) == kKeyPairPerTick && KeyAt(kPageVideo, 2) == kKeyGameSky &&
-                  KeyAt(kPageVideo, 3) == kKeyGameFog,
-              "Video: the Quality preset, Render type, Sky drawn by, Fog drawn by");
+        CHECK(RowsOn(kPageVideo) == 7 && KeyAt(kPageVideo, 0) == kKeyPreset && KeyAt(kPageVideo, 1) == kKeyDistance && KeyAt(kPageVideo, 2) == kKeyPairPerTick &&
+                  KeyAt(kPageVideo, 3) == kKeyGameSky && KeyAt(kPageVideo, 4) == kKeyGameFog,
+              "Video: the Quality preset, Draw distance, Render type, Sky drawn by, Fog drawn by");
         {   // the Potato light's brightness (Serg 2026-11-08), the Settings' Render cost slider's key and range
-            const Def& d = kDefs[KeyAt(kPageVideo, 4)];
+            const Def& d = kDefs[KeyAt(kPageVideo, 5)];
             CHECK(!wcscmp(d.section, L"render") && !wcscmp(d.key, L"potato_light_brightness") && d.min == 0.3f && d.max == 5.0f && d.def == 1.0f,
-                  "Video's fifth row: the Potato light's brightness, 0.3 - 5.0, 1 by default");
-            const Def& c = kDefs[KeyAt(kPageVideo, 5)];
+                  "Video's sixth row: the Potato light's brightness, 0.3 - 5.0, 1 by default");
+            const Def& c = kDefs[KeyAt(kPageVideo, 6)];
             CHECK(!wcscmp(c.section, L"render") && !wcscmp(c.key, L"potato_light_brightness_caves") && c.min == 0.3f && c.max == 5.0f && c.def == 1.0f,
-                  "Video's sixth row: the Potato light's brightness in caves, the same range");
+                  "Video's seventh row: the Potato light's brightness in caves, the same range");
         }
-        CHECK(RowY(0, kPageVideo) - 5 >= kSlTrack.y + kSlTrack.h && RowY(5, kPageVideo) + RowH(kPageVideo) <= kVidCost.y && !Overlap(kAutoBtn, {32, RowY(0, kPageVideo) - 5, 960, 4}),
+        CHECK(RowY(0, kPageVideo) - 5 >= kSlTrack.y + kSlTrack.h && RowY(6, kPageVideo) + RowH(kPageVideo) <= kVidCost.y && !Overlap(kAutoBtn, {32, RowY(0, kPageVideo) - 5, 960, 4}),
               "the rows between the slider (and Auto beside it) and the line under them");
         CHECK(kVidCost.y + kVidCost.h <= kStatus.y && kVidLimit.y == kVidCost.y && kVidNote.y == kVidCost.y && kVidLimit.h == kVidCost.h,
               "one line under the rows (the limit's warning, the Apply note or the cost), above the status line");
         float u, v;
-        for (int r = 0; r < 6; ++r) {   // (the render type a stepper too since its five entries; the preset one too)
+        for (int r = 0; r < 7; ++r) {   // (the render type a stepper too since its five entries; the preset and the draw distance too)
             Centre(kDec(r, kPageVideo), &u, &v);
             CHECK((HitTest(kPageVideo, u, v) == Hit{Kind::Change, KeyAt(kPageVideo, r), -1}), "a Video row's <");
             Centre(kInc(r, kPageVideo), &u, &v);
@@ -2540,8 +2559,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 57 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and the F3 page's two - not the others");
+    CHECK(live == 58 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names, the F3 page's two and the Left page's Left-handed - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -2815,7 +2834,14 @@ static void TestKeys() {
     const int nPicks = keys::PickCount();
     // the table: twelve rows on two pages, the keys the slots name
     CHECK(kBindCount == keys::kSlotCount && IsBindKey(kKeyBindFirst) && IsBindKey(kKeyBindFirst + kBindCount - 1) && !IsBindKey(kKeyBindFirst + kBindCount), "twelve binding keys in a row");
-    CHECK(RowsOn(kPageKeysL) == 6 && RowsOn(kPageKeysR) == 6 && !strcmp(kPageNames[kPageKeysL], "Left") && !strcmp(kPageNames[kPageKeysR], "Right"), "Left and Right: six rows each");
+    CHECK(RowsOn(kPageKeysL) == 7 && RowsOn(kPageKeysR) == 6 && !strcmp(kPageNames[kPageKeysL], "Left") && !strcmp(kPageNames[kPageKeysR], "Right"),
+          "Left: six bindings and Left-handed, Right: six bindings");
+    {   // [hands] left_handed: the Left page's seventh row, under the bindings - a live toggle, F4 only, and the page still fits (rows closer)
+        const int lh = IndexOf(L"hands", L"left_handed");
+        CHECK(lh >= 0 && KeyAt(kPageKeysL, 6) == lh && IsToggle(kDefs[lh]) && kDefs[lh].live && !IsBindKey(lh) && kDefs[lh].def == 0.0f, "Left-handed: a live toggle, off by default");
+        CHECK(F4OnlyKey(lh) && RowsOn(kPageKeysL, 2) == 6 && KeyAt(kPageKeysL, 6, 2) < 0, "Left-handed: F4 only (F1 - F3 show the six bindings)");
+        CHECK(RowY(6, kPageKeysL) + RowH(kPageKeysL) <= kStatus.y, "the seventh row stands above the status line");
+    }
     for (int slot = 0; slot < kBindCount; ++slot) {
         const Def& d = kDefs[KeyRow(slot)];
         const std::string want = keys::KeyOf(slot);
@@ -4564,12 +4590,13 @@ static void TestRenderTypeApply() {
         CHECK(rendertype::FromKeys(RenderTypeKeys(back.values)) == want && !m.Dirty(), "the file is the type, the panel clean again");
     }
     DeleteFileW(path.c_str());
-    {   // the row's line says when the type takes effect: one pass after a restart when its hooks were not in at the start
+    {   // the line under the Video rows says when the type takes effect (the row's own grey line before, gone since the seventh row - Serg 2026-11-09
+        // "удали эти линии"): one pass after a restart when its hooks were not in at the start, any type changed in the draft; else the cost
         Model w = OnPage(SnapWith({{kKeyOpenXrOn, 1}, {kKeyAfr, 1}, {kKeyPairPerTick, 1}, {kKeyNativeReplay, 1}}), kPageVideo);
         video::Env e;
         e.replayAtStart = true;
         w.SetEnv(e);
-        CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeOne, true)), "one pass, hooks in: right away");
+        CHECK(!HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeOne, true)), "one pass, hooks in, unchanged: no line of its own (the cost there)");
         e.replayAtStart = false;
         w.SetEnv(e);
         CHECK(HasLabel(Compose(w, {}), RenderTypeWhen(rendertype::kNativeOne, false)) &&
@@ -4681,9 +4708,9 @@ static void TestVideoRows() {
         m.Click({Kind::Change, kKeyPreset, 1});
         m.Click({Kind::Change, kKeyPreset, 1});
         CHECK(PresetOf(m.Get()) == 2 && m.Get()[IndexOf(L"render", L"game_stages")] == 0.0f && m.Get()[IndexOf(L"render", L"potato_light")] == 0.0f &&
-                  m.Get()[IndexOf(L"render", L"model_radius")] == 210.0f && m.Get()[IndexOf(L"render", L"big_radius")] == 600.0f &&
+                  m.Get()[IndexOf(L"render", L"model_radius")] == 200.0f && m.Get()[IndexOf(L"render", L"big_radius")] == 600.0f &&
                   HasLabel(Compose(m, {}), "Medium"),
-              "Medium: the whole frame, models 210, big 600");
+              "Medium: the whole frame, models 200 (the Draw distance's default stop), big 600");
         m.Click({Kind::Change, kKeyPreset, 1});
         CHECK(PresetOf(m.Get()) == 2, "> at Medium: stays (the highest)");
         CHECK(m.Get()[IndexOf(L"render", L"lens_mask")] == 1.0f && m.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 1.0f,
@@ -4697,6 +4724,23 @@ static void TestVideoRows() {
         m.Click({Kind::Change, IndexOf(L"render", L"potato_light_brightness"), 1});
         CHECK(PresetOf(m.Get()) == 2, "the brightness is no preset key: still Medium");
         CHECK(qualitypreset::Step(qualitypreset::kCount, -1) == 2 && qualitypreset::Step(qualitypreset::kCount, 1) == 0, "from Custom: < Medium, > Potato");
+        // [render] preset_game_options: each game option one of vr/patch_hunt.h's (its accessor found there), in the game's range, never AA /
+        // DLSS / the resolution scale, Potato <= Low <= Medium; put only for a preset that is not the one put last, never for Custom
+        for (const qualitypreset::GameOption& o : qualitypreset::kGameOptions) {
+            const int g = patchhunt::GfxByName(o.name);
+            CHECK(g >= 0, "a preset's game option is one of patch_hunt's settings");
+            if (g < 0) continue;
+            CHECK(g != patchhunt::kAa && g != patchhunt::kDlss && g != patchhunt::kResScale, "the presets never touch AA, DLSS, resolution scale");
+            for (int p = 0; p < qualitypreset::kCount; ++p)
+                CHECK(o.v[p] >= patchhunt::kGfx[g].lo && o.v[p] <= patchhunt::kGfx[g].hi, "a preset's game value in the game's range");
+            CHECK(o.v[0] <= o.v[1] && o.v[1] <= o.v[2], "the game's options rise Potato -> Low -> Medium");
+            CHECK(o.v[0] < o.v[2], "Potato and Medium differ in each game option");
+        }
+        CHECK(qualitypreset::kGameOptionCount == 3 && patchhunt::GfxByName("Ambient Occlusion Quality") == patchhunt::kAo &&
+              patchhunt::GfxByName("Nope") == -1, "AO, shadows, lights by the game's own names");
+        CHECK(qualitypreset::GameOptionsDue(0, -1) && qualitypreset::GameOptionsDue(2, 1) && !qualitypreset::GameOptionsDue(1, 1) &&
+              !qualitypreset::GameOptionsDue(qualitypreset::kCount, -1) && !qualitypreset::GameOptionsDue(qualitypreset::kCount, 2),
+              "game options due: a changed preset or none put yet; never the same again, never Custom");
         CHECK(!IsDerived(kKeyPairPerTick) && IsDerived(kKeyPreset) && !IsGame(kKeyPreset), "the preset row: derived, not the game's");
         int changed = 0;   // only the preset's keys (and the render type's) move
         const Values base = OnPage(Snap(), kPageVideo).Get();
@@ -4715,6 +4759,45 @@ static void TestVideoRows() {
                   return true;
               }(),
               "no [hud] key in any preset");
+    }
+    {   // the Draw distance (shared/draw_distance.h kReach; Serg 2026-11-09: the slider back, the default as today): the presets' distances are its
+        // stops 1 and 2, < / > write its six keys and nothing else, a step off a preset's distance makes the preset Custom
+        Model m = OnPage(Snap(), kPageVideo);
+        CHECK(IsDerived(kKeyDistance) && !IsGame(kKeyDistance) && HasLabel(Compose(m, {}), "Draw distance"), "the Draw distance row: derived, named");
+        m.Click({Kind::Change, kKeyPreset, -1});   // (Custom -> Medium)
+        CHECK(PresetOf(m.Get()) == 2 && DistanceOf(m.Get()) == drawdistance::kReachDefault && HasLabel(Compose(m, {}), "2 (default)"),
+              "Medium is the Draw distance's stop 2, the default");
+        m.Click({Kind::Change, kKeyPreset, -1});
+        CHECK(PresetOf(m.Get()) == 1 && DistanceOf(m.Get()) == 0, "Low is its stop 1");
+        m.Click({Kind::Change, kKeyPreset, -1});
+        CHECK(PresetOf(m.Get()) == 0 && DistanceOf(m.Get()) == 0, "Potato too");
+        m.Click({Kind::Change, kKeyDistance, -1});
+        CHECK(DistanceOf(m.Get()) == 0 && PresetOf(m.Get()) == 0, "< at stop 1: stays, the preset with it");
+        m.Click({Kind::Change, kKeyPreset, 1});
+        m.Click({Kind::Change, kKeyPreset, 1});   // (Medium again)
+        const Values medium = m.Get();
+        m.Click({Kind::Change, kKeyDistance, 1});
+        const drawdistance::Reach& three = drawdistance::kReach[2];
+        CHECK(DistanceOf(m.Get()) == 2 && m.Get()[kKeyRings] == (float)three.rings && m.Get()[kKeyModelRadius] == three.modelRadius &&
+                  m.Get()[kKeyFogStart] == three.fogStart && m.Get()[kKeyFogEnd] == three.fogEnd && m.Get()[kKeyCavesStart] == three.cavesStart &&
+                  m.Get()[kKeyCavesEnd] == three.cavesEnd && HasLabel(Compose(m, {}), "3") && m.Dirty(),
+              "> from 2: stop 3's six keys in the draft");
+        CHECK(PresetOf(m.Get()) == qualitypreset::kCount && HasLabel(Compose(m, {}), "Custom"), "... and the Quality preset reads Custom");
+        int others = 0;
+        for (int i = 0; i < kCount; ++i)
+            if (m.Get()[i] != medium[i] && i != kKeyRings && i != kKeyModelRadius && i != kKeyFogStart && i != kKeyFogEnd && i != kKeyCavesStart &&
+                i != kKeyCavesEnd)
+                ++others;
+        CHECK(others == 0, "the Draw distance writes nothing but its six keys (never the sky dome, big objects or the render)");
+        for (int k = 0; k < 10; ++k) m.Click({Kind::Change, kKeyDistance, 1});
+        CHECK(DistanceOf(m.Get()) == drawdistance::kReachCount - 1 && m.Get()[kKeyModelRadius] == 1000.0f && m.Get()[kKeyRings] == 7.0f,
+              "> to the far end: stop 7 (7 rings, models 1000), and stays");
+        m.Click({Kind::Change, kKeyPreset, 1});
+        m.Click({Kind::Change, kKeyPreset, 1});
+        m.Click({Kind::Change, kKeyPreset, 1});   // (Potato -> Medium from Custom)
+        CHECK(PresetOf(m.Get()) == 2 && DistanceOf(m.Get()) == drawdistance::kReachDefault, "a preset picked again: the slider back on its stop");
+        CHECK(drawdistance::StepReach(-1, 220.0f, 1) == 1 && drawdistance::StepReach(-1, 250.0f, -1) == 2 && drawdistance::StepReach(1, 200.0f, -1) == 0,
+              "from Custom the first press lands on the nearest stop itself (220: 2, 250: 3), then a step");
     }
     {   // a card without variable rate shading (video::Env::vrs 0): the Render page's foveation rows greyed with the reason, their changes refused
         Model m = OnPage(Snap(), kPageRender);

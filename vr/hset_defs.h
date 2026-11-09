@@ -26,6 +26,7 @@
 
 #include "ui_text.h"   // the rows' words in the player's language ([hud] headset_language)
 #include "quality_presets.h"   // the Video page's Quality preset: the keys it writes (shared/quality_presets.h)
+#include "draw_distance.h"   // the Video page's Draw distance: its stops (shared/draw_distance.h kReach)
 
 namespace hset {
 
@@ -124,8 +125,8 @@ constexpr Mask Bit(int key) {
 // value is the pick's index, one past the list = a line the list does not name; shown by the pick's name, stepped round the list), or a number of the
 // game's own (Game: not the ini's - the row shows what the game says, Model::Players, its - / + ask the game, Do::Players; the store neither reads
 // nor writes it).
-// Derived: a row made of other keys (the Quality preset: shared/quality_presets.h) - shown by the preset they match, its < / > write them;
-// the store neither reads nor writes the row's own key ("@preset" is no ini key).
+// Derived: a row made of other keys (the Quality preset: shared/quality_presets.h; the Draw distance: shared/draw_distance.h kReach) - shown by
+// the preset / stop they match, its < / > write them; the store neither reads nor writes the row's own key ("@preset", "@distance": no ini keys).
 enum class DefType : uint8_t { Number, Choice, Game, Derived };
 
 struct Def {
@@ -304,6 +305,12 @@ inline constexpr Def kDefs[] = {
     {L"direct", L"right_stick", "Right stick click", "[direct] right_stick", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_stick_hold", "Right stick, long press", "[direct] right_stick_hold", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_menu", "Right menu button", "[direct] right_menu", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
+    // [hands] left_handed (vr/hand_swap.h; Serg, 2026-11-09: "надо галочку внутрь оверлея игры"): the Controls tab's first page, its seventh row, under the
+    // twelve bindings (kept one after the other: kKeyBindFirst). Live: written a moment after the press, and the plugin trades the controllers at
+    // the next frame (xr.cpp Publish). Once on, the panel is pointed at with either trigger as ever; it opens with the long press of the LEFT
+    // stick click then (the layout's right stick is the left controller's). F4 only.
+    {L"hands", L"left_handed", "Left-handed", "Swap the controllers: the left one holds the weapon (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageKeysL, true},
     //
     // Vibration (Serg, 2026-10-31: the vibration on a tab of its own, in D2R VR Settings and in the headset): [openxr] haptics, its strength and the
     // extra pulses after bearstonem/d2r-pcvr (MIT; vr/haptics.h Extras) - the keys, defaults and ranges of D2R VR Settings > Vibration (its steps coarser).
@@ -404,6 +411,11 @@ inline constexpr Def kDefs[] = {
     // them. Room rings and the models' radius are read at the game's start: the line says so
     {L"@preset", L"preset", "Quality preset", "Potato, Low, Medium - room rings and models from the next start",
      2.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageVideo, false, DefType::Derived},
+    // the Draw distance under it (Serg 2026-11-09: "ползунок дравдистанс давай вернем" - back after 0.208 hid it, the default as today): D2R VR
+    // Settings' Home slider, the same stops (shared/draw_distance.h kReach) - shown by the stop the keys match (Custom: none); < / > write its six
+    // keys (room rings, models' radius, the fog's four distances) into the draft, Apply writes them. 1 is Low / Potato's distance, 2 Medium's.
+    {L"@distance", L"stop", "Draw distance", "Near (1) - far (7): room rings, models, the fog. 2 = Medium's, the default",
+     2.0f, 1.0f, 7.0f, 1.0f, "%.0f", "", "", kPageVideo, false, DefType::Derived},
     {L"stereo", L"pair_per_tick", "Render type", "Native two passes / one pass / eyes by turns, FlatVR stereo / depth (one pass: from the next game start)",
      0.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kPageVideo},
     // "Sky drawn by" / "Fog drawn by": none, our effect, the game's (vr/draw_by.h) - a stepper over [sky] game_sky + [sky] enabled, [fog] game_fog +
@@ -451,24 +463,27 @@ inline constexpr Def kDefs[] = {
     {L"render", L"game_stages", "The game's render stages", "A Quality preset key ([render] game_stages)", 0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"render", L"game_outline", "The game's hover outline", "A Quality preset key ([render] game_outline)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"render", L"potato_light", "Potato light", "A Quality preset key ([render] potato_light)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
-    {L"render", L"rings", "Room rings", "A Quality preset key ([render] rings)", 4.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kNoPage},
-    {L"render", L"model_radius", "Model radius", "A Quality preset key ([render] model_radius)", 1000.0f, 150.0f, 1000.0f, 10.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"potato_light_game", "Potato light in the game's colours", "A Quality preset key ([render] potato_light_game)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"render", L"rings", "Room rings", "A Quality preset key ([render] rings)", 2.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"model_radius", "Model radius", "A Quality preset key ([render] model_radius)", 200.0f, 150.0f, 1000.0f, 10.0f, "%.0f", "", "", kNoPage},
     {L"render", L"big_radius", "Big objects' radius", "A Quality preset key ([render] big_radius)", 0.0f, 0.0f, 3000.0f, 10.0f, "%.0f", "", "", kNoPage},
     {L"fog", L"light", "Light fog", "A Quality preset key ([fog] light)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
-    {L"fog", L"start", "Fog start", "A Quality preset key ([fog] start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
-    {L"fog", L"end", "Full fog", "A Quality preset key ([fog] end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
-    {L"fog", L"caves", "Fog in caves", "A Quality preset key ([fog] caves)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
-    {L"fog", L"caves_start", "Fog start in caves", "A Quality preset key ([fog] caves_start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
-    {L"fog", L"caves_end", "Full fog in caves", "A Quality preset key ([fog] caves_end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"game_fog_start", "Fog start", "A Quality preset key ([fog] game_fog_start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"game_fog_end", "Full fog", "A Quality preset key ([fog] game_fog_end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"game_fog_caves", "Fog in caves", "A Quality preset key ([fog] game_fog_caves)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_caves_start", "Fog start in caves", "A Quality preset key ([fog] game_fog_caves_start)", 150.0f, 0.0f, 100000.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"fog", L"game_fog_caves_end", "Full fog in caves", "A Quality preset key ([fog] game_fog_caves_end)", 600.0f, 0.0f, 200000.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"fog", L"game_fog_mist", "The game's fog over its mist", "A Quality preset key ([fog] game_fog_mist)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"fog", L"game_fog_height", "The game's fog thinned with height", "A Quality preset key ([fog] game_fog_height)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
-    {L"fog", L"game_fog_before_fx", "The fog before smoke and fire", "A Quality preset key ([fog] game_fog_before_fx)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"fog", L"game_fog_before_fx", "The fog before smoke and fire", "A Quality preset key ([fog] game_fog_before_fx)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"fog", L"game_fog_fx_depth", "The effects fogged by their depth", "A Quality preset key ([fog] game_fog_fx_depth)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"fog", L"game_fog_our_curve", "The game's fog by our curve", "A Quality preset key ([fog] game_fog_our_curve)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"fog", L"game_fog_caves_black", "The game's fog black in caves", "A Quality preset key ([fog] game_fog_caves_black)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"ceiling", L"enabled", "Cave ceiling", "A Quality preset key ([ceiling] enabled)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"ceiling", L"steps", "Cave ceiling relief", "A Quality preset key ([ceiling] steps)", 12.0f, 1.0f, 64.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"stereo", L"headset_rate", "Headset refresh rate", "A Quality preset key ([stereo] headset_rate)", 3.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"render", L"monitor_eye", "Monitor shows one eye", "A Quality preset key ([render] monitor_eye)", 1.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
+    {L"openxr", L"hands_over_panels", "Your hands over the Gestures tab", "A Quality preset key ([openxr] hands_over_panels)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     // -- no row: the Video page. [render] vr_resolution_px = a square's side in pixels (0 = not used), vr_resolution = the older
     //    mode (0 the window's own size, 1 the headset's recommendation, 2..6 a square); shared/render_size.h reads the two together.
     {L"render", L"vr_resolution", "VR render size: mode", "0 window, 1 headset, 2-6 an older square",
@@ -551,6 +566,12 @@ constexpr bool PresetKeysIn() {   // every key a preset writes has its place her
     return true;
 }
 static_assert(kKeyPreset >= 0 && PresetKeysIn(), "the Quality preset's row and every key it writes are in the table");
+// the Video page's Draw distance (shared/draw_distance.h kReach) and the six keys it writes
+constexpr int kKeyDistance = IndexOf(L"@distance", L"stop");
+constexpr int kKeyRings = IndexOf(L"render", L"rings"), kKeyModelRadius = IndexOf(L"render", L"model_radius"), kKeyFogStart = IndexOf(L"fog", L"game_fog_start"),
+              kKeyFogEnd = IndexOf(L"fog", L"game_fog_end"), kKeyCavesStart = IndexOf(L"fog", L"game_fog_caves_start"), kKeyCavesEnd = IndexOf(L"fog", L"game_fog_caves_end");
+static_assert(kKeyDistance >= 0 && kKeyRings >= 0 && kKeyModelRadius >= 0 && kKeyFogStart >= 0 && kKeyFogEnd >= 0 && kKeyCavesStart >= 0 && kKeyCavesEnd >= 0,
+              "the Draw distance's row and every key it writes are in the table");
 constexpr int kKeyNativeReplay = IndexOf(L"stereo", L"native_replay"), kKeySource = IndexOf(L"stereo", L"source"), kKeyOpenXrOn = IndexOf(L"openxr", L"on");
 // the Render page's steppers named (vr/hset_names.h)
 constexpr int kKeyFoveatedStrength = IndexOf(L"render", L"foveated_strength"), kKeyFoveatedPasses = IndexOf(L"render", L"foveated_fullscreen"),
@@ -660,7 +681,8 @@ constexpr bool F4OnlyPage(int page) {
 constexpr bool F4OnlyKey(int key) {
     return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||
                                         key == IndexOf(L"hud", L"ordinary_mob_bars") || key == kKeyAlliesPlace || key == IndexOf(L"hud", L"names_own_size_pct") ||
-                                        key == IndexOf(L"hud", L"names_own_far_pct") || key == IndexOf(L"hud", L"names_own_alpha"));   // (where the allies are, our names: F4 only)
+                                        key == IndexOf(L"hud", L"names_own_far_pct") || key == IndexOf(L"hud", L"names_own_alpha") ||
+                                        key == IndexOf(L"hands", L"left_handed"));   // (where the allies are, our names, the left-handed swap: F4 only)
 }
 // F3's page (the game on the floor's keys): VR F3 only, and view 0 (not known: a test) - "only what relates" (Serg, 2026-11-02) the other way round.
 constexpr bool F3OnlyPage(int page) { return page == kPageF3; }

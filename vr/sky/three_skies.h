@@ -4,10 +4,11 @@
 // game's own, the atlas), the night's (the effect's SkyNBand / SkyNCap) and one for dawn and dusk alike; act 4 (Hell: "там ночи нет") one,
 // the day's, at [sky] three_bright_act4, the time of day doing nothing there. No act has a dawn / dusk picture yet: until one is made, the
 // day's stands in for it at the dawn / dusk brightness.
-// The game's time of day picks the picture (vr/sky/day_night.cpp env::Now: 0 end of night / dawn, 1 end of dawn / start of day, 2 day, 3 end
-// of day / dusk, 4 end of dusk / start of night, 5 night): as the period turns, the next one's picture whole (kSwapPic, baked once then); or,
-// [sky] sky_crossfade, each period begins on one picture (kStartPic) and crossfades to the next by the game's light as bright_<period> eased
-// (periodbright::Ease) - baked again at each step of the light through the dawns and dusks. The bake (vr/sky/dome_atlas.h: lerp(day, night,
+// The game's own lighting's time of day picks the picture (VisShares below - not the world clock, which the HD world is not lit by; until
+// 0.208.2 it was the clock, vr/sky/day_night.cpp env::Now: 0 end of night / dawn, 1 end of dawn / start of day, 2 day, 3 end of day /
+// dusk, 4 end of dusk / start of night, 5 night - and the night picture stood over a world the game lit as day): each period's picture
+// by kVisPic (by the files' own light), [sky] sky_crossfade blending them by the game's own weights, otherwise the period's whole. (SharesNow / kStartPic, the
+// clock's crossfade by its light, are left for the tests.) The bake (vr/sky/dome_atlas.h: lerp(day, night,
 // night share) x brightness) takes either as its two numbers, exactly; it runs only when they change.
 // The fog's colour with it ([fog] fog_colour_measured unticked, the default): the dome's own at the horizon - the pictures' 0 degree rows'
 // means, as the dome lays them under the horizon (tools/game_sky/make_sky_dome.py), mixed by the same two numbers (HorizonScene).
@@ -29,6 +30,12 @@ constexpr int kStartPic[periodbright::kPeriods] = {kNight, kDawnDusk, kDay, kDay
 // as the period turns (the default): its picture whole - the dawn and the dusk the dawn / dusk picture, by their names
 constexpr int kSwapPic[periodbright::kPeriods] = {kDawnDusk, kDay, kDay, kDawnDusk, kNight, kNight};
 constexpr int kHellAct = 4;   // (one sky: no night there)
+// The game's lighting files' pictures (VisShares), by their own light, not their names: dawn1 and night are the dark pair (ambient 0.10
+// in act 1's open air and act 2's, key light 3 - 4.5 blue), dawn2 / dusk1 / dusk2 lit like each other (ambient 0.2 - 0.65, key light 5 - 7)
+// and the day bright (key light 13.5 in act 1, 50 in act 2). dusk2 - "end of dusk, start of night" - is as bright as dawn2: by its
+// name it took the night picture, and the night stood over a world still lit as dusk (Serg on 0.208.2 at 22:04:10, "в игре день а небо
+// темное"). dawn2, dusk1 and dusk2 the dawn / dusk picture - the day's as it is until an act has one
+constexpr int kVisPic[periodbright::kPeriods] = {kNight, kDawnDusk, kDay, kDawnDusk, kDawnDusk, kNight};
 
 // Each picture's share now (they add up to 1); the time not known (period out of range): the day's
 struct Shares { float pic[kPics] = {1.0f, 0.0f, 0.0f}; };
@@ -50,6 +57,30 @@ inline Shares SharesNow(periodbright::State& s, int period, float light) {
 }
 // as the period turns
 inline Shares SwapShares(int period) { return period < 0 || period >= periodbright::kPeriods ? Shares{} : Whole(kSwapPic[period]); }
+
+// The game's own lighting's time of day - what the HD world is lit by, and so what picks the sky since 0.208.3 (Serg on 0.208.2: "в игре
+// день а небо темное", "наше ночное небо не совпадает с ночью в игре"). The HD renderer's VisualDataSystem keeps the time of day the
+// world is lit by (+0x190 the period 0..5, +0x194 how far into it 0..1, vr/sky/lights.cpp cavelight::VisTime): made as "day, 0"
+// (0xDFA440), then set every tick from the 2D day cycle (its update 0x352270 -> 0x3529E0 sends period and fraction at 0x352B83 to the
+// HD side's WeatherTranslation, whose handler 0x7CD8F0 sets them) unless the game's OverrideTimeOfDay switch (+0x1A9, a developer
+// remote-debug command, off) holds it; its debug panel (0xF2FF00) and console (0xE24EC0) set it too. Read here rather than the clock
+// (env::Now) so the sky is whatever the lighting really is. Every frame it blends the area's six vis files - dawn1, dawn2, day, dusk1,
+// dusk2, night - by it (0xF5D603): the period's own file at weight 1, and the one before it (fraction under 0.5) or after it (over 0.5)
+// at |fraction - 0.5|, wrapping round. So each vis file is the look at its period's middle. The pictures by the same weights, each vis
+// file's by kVisPic; `fade` off: the period's own picture whole. Out of range or not read: the day's (the lighting is made at day).
+inline Shares VisShares(int period, float frac, bool fade) {
+    Shares out;
+    if (period < 0 || period >= periodbright::kPeriods || !(frac >= 0.0f && frac <= 1.0f)) return out;
+    if (!fade) return Whole(kVisPic[period]);
+    int next = period;
+    float w = 0.0f;
+    if (frac < 0.5f) { w = 0.5f - frac; next = period == 0 ? periodbright::kPeriods - 1 : period - 1; }
+    else if (frac > 0.5f) { w = frac - 0.5f; next = period == periodbright::kPeriods - 1 ? 0 : period + 1; }
+    out.pic[kDay] = 0.0f;
+    out.pic[kVisPic[period]] += 1.0f / (1.0f + w);
+    out.pic[kVisPic[next]] += w / (1.0f + w);
+    return out;
+}
 
 // The sky's brightness now (our own sky and the open-air fog of the tinted path follow it): the pictures' brightnesses by their shares
 inline float Brightness(const Shares& s, const float bright[kPics]) {

@@ -90,6 +90,45 @@ int main() {
     // no height (F4's eye at the hero) leaves the stop's numbers as they are
     CHECK(FromEyeAbove(0.0f, 50.0f) == 50.0f && FromEyeAbove(30.0f, 40.0f) == 50.0f && FromEyeAbove(54.0f, 0.0f) == 54.0f);
     CHECK(FromEyeAbove(54.0f, 180.0f) > 180.0f && FromEyeAbove(54.0f, 180.0f) < 180.0f + 54.0f);
+    // The Home slider's own stops since 2026-11-09 (kReach; Serg: "ползунок дравдистанс давай вернем", "по умолчанию поставим как сейчас 2",
+    // "комнаты 200 дистанция"): each value on its own slider, near to far, the fog full before the models' radius past the presets' stops,
+    // the default stop 2 = 2 rings, models 200 and today's game fog
+    CHECK(kReachCount == 7 && kReachDefault == 1);
+    for (int i = 0; i < kReachCount; ++i) {
+        const Reach& q = kReach[i];
+        CHECK(q.rings >= 2 && q.rings <= 8);
+        CHECK(OnSlider(q.modelRadius, 150, 1000, 10));
+        CHECK(OnSlider(q.fogStart, 0, 1000, 5) && OnSlider(q.fogEnd, 10, 2000, 10));
+        CHECK(OnSlider(q.cavesStart, 0, 1000, 5) && OnSlider(q.cavesEnd, 10, 2000, 10));
+        CHECK(q.fogStart < q.fogEnd && q.fogEnd < q.modelRadius && q.cavesStart < q.cavesEnd);
+        CHECK(q.rings >= (int)std::ceil(q.modelRadius / 150.0f));
+        CHECK(MatchReach(q) == i && NearestReach(q.modelRadius) == i);
+        if (i > kReachDefault) {   // past the presets' world: the fog opens with the distance, today's proportions (0.275 / 0.7 r, caves 0.325 r - r)
+            CHECK(std::fabs(q.fogStart - 0.275f * q.modelRadius) <= 2.5f && std::fabs(q.fogEnd - 0.7f * q.modelRadius) <= 5.0f);
+            CHECK(std::fabs(q.cavesStart - 0.325f * q.modelRadius) <= 2.5f && q.cavesEnd == q.modelRadius);
+        }
+        if (i > 0) {   // near to far: nothing comes nearer
+            const Reach& p = kReach[i - 1];
+            CHECK(q.rings >= p.rings && q.modelRadius > p.modelRadius && q.fogStart >= p.fogStart && q.fogEnd >= p.fogEnd);
+            CHECK(q.cavesStart >= p.cavesStart && q.cavesEnd >= p.cavesEnd);
+        }
+    }
+    {   // the presets' distances (shared/quality_presets.h: 2 rings, the game's fog 55 / 140, caves 65 / 200): Low / Potato stop 1, Medium stop 2
+        const Reach low{2, 150, 55, 140, 65, 200}, medium{2, 200, 55, 140, 65, 200};
+        CHECK(MatchReach(low) == 0 && MatchReach(medium) == kReachDefault);
+        // 0.208's Medium (models 210): Custom, the slider at 2 (210 nearest 200)
+        const Reach was{2, 210, 55, 140, 65, 200};
+        CHECK(MatchReach(was) == -1 && NearestReach(was.modelRadius) == kReachDefault);
+        Reach r = medium; r.fogEnd = 150; CHECK(MatchReach(r) == -1);
+        r = medium; r.rings = 3; CHECK(MatchReach(r) == -1);
+        r = medium; r.cavesEnd = 210; CHECK(MatchReach(r) == -1);
+        CHECK(NearestReach(100) == 0 && NearestReach(5000) == kReachCount - 1 && NearestReach(175) == 1 && NearestReach(220) == 1 && NearestReach(230) == 2 && NearestReach(800) == 6);
+        // the headset's < / >: at the ends it stays, from Custom first onto the nearest stop
+        CHECK(StepReach(0, 150, -1) == 0 && StepReach(kReachCount - 1, 1000, 1) == kReachCount - 1 && StepReach(1, 200, 1) == 2);
+        CHECK(StepReach(-1, 210, 1) == kReachDefault && StepReach(-1, 210, -1) == kReachDefault);
+    }
+    // VR F3's table stays as it was (its stop 3: 2 rings, 200, fog 50 - 180, the dome at 200)
+    CHECK(kStops[2].rings == 2 && kStops[2].modelRadius == 200.0f && kStops[2].fogEnd == 180.0f && kStops[2].skyRadius == 200.0f && kCount == 8);
     if (g_failures) { std::printf("%d check(s) FAILED\n", g_failures); return 1; }
     std::printf("draw_distance_test: all %d checks passed\n", g_checks);
     return 0;

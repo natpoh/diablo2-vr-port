@@ -1,6 +1,7 @@
 #pragma once
-// D2R VR Settings' "Draw distance" slider (Home and its own tab): one stop, near to far, sets the keys that are set apart elsewhere so
-// that they agree -
+// The draw distance stops. kStops: the first table, made for D2R VR Settings' Draw distance slider (2026-10-28) and since 0.209 VR F3's own
+// ([table] draw_distance, ViewStop below) - kept as they were. The Home slider has its own table since 2026-11-09: kReach (further down).
+// kStops' rule: one stop, near to far, sets the keys that are set apart elsewhere so that they agree -
 //
 //   [render] rings, model_radius        how many rings of rooms are drawn, how far out models (monsters, objects) are drawn: the edge
 //                                       of the drawn world
@@ -56,6 +57,56 @@ inline int Nearest(float modelRadius) {
     for (int i = 1; i < kCount; ++i)
         if (std::fabs(kStops[i].modelRadius - modelRadius) <= std::fabs(kStops[best].modelRadius - modelRadius)) best = i;
     return best;
+}
+
+// The Home slider's own stops (Serg 2026-11-09, the slider back after 0.208 hid it: "ползунок дравдистанс давай вернем", "по умолчанию
+// поставим как сейчас 2", "комнаты 200 дистанция" - the option to draw farther, the default as today). kStops above stay VR F3's ([table]
+// draw_distance, unchanged); this table is what D2R VR Settings' Draw distance slider (Home, its tab) and the headset's Video page row write.
+// Six keys, no dome: [sky] game_sky_radius_m ships at 1000 m (Serg 2026-11-03), past every stop, and the cave dome is its own slider - the
+// slider leaves both as they are. The near stops are the Quality presets' world (shared/quality_presets.h: 2 rings everywhere, the game's fog
+// 55 / 140, in caves 65 / 200 - "размер тумана одинаковый на всех"): stop 1 = Low and Potato (models 150), stop 2 = Medium (200), the
+// default and the shipped d2r_vr.ini's. Past it the fog opens with the distance, today's proportions kept (start 0.275 r, full 0.7 r; in
+// caves 0.325 r to r), rounded to the sliders' steps, so the farther world drawn is seen; rings = ceil(r / 150), at least 2.
+struct Reach {
+    int rings;
+    float modelRadius, fogStart, fogEnd, cavesStart, cavesEnd;
+};
+inline constexpr Reach kReach[] = {
+    {2, 150, 55, 140, 65, 200},    // Low, Potato
+    {2, 200, 55, 140, 65, 200},    // Medium: the default
+    {2, 260, 70, 180, 85, 260},
+    {3, 320, 90, 220, 105, 320},
+    {3, 400, 110, 280, 130, 400},
+    {4, 600, 165, 420, 195, 600},
+    {7, 1000, 275, 700, 325, 1000},
+};
+inline constexpr int kReachCount = (int)(sizeof(kReach) / sizeof(kReach[0]));
+inline constexpr int kReachDefault = 1;   // (0-based) the slider's default, Medium's and the shipped d2r_vr.ini's: stop 2 - 2 rings, models 200
+
+// The stop these values are, or -1 (Custom).
+inline int MatchReach(const Reach& v) {
+    auto same = [](float a, float b) { return std::fabs(a - b) < 0.5f; };
+    for (int i = 0; i < kReachCount; ++i) {
+        const Reach& s = kReach[i];
+        if (v.rings == s.rings && same(v.modelRadius, s.modelRadius) && same(v.fogStart, s.fogStart) && same(v.fogEnd, s.fogEnd) &&
+            same(v.cavesStart, s.cavesStart) && same(v.cavesEnd, s.cavesEnd))
+            return i;
+    }
+    return -1;
+}
+// Where the slider sits for Custom: the stop with the nearest model radius (the farther one on a tie).
+inline int NearestReach(float modelRadius) {
+    int best = 0;
+    for (int i = 1; i < kReachCount; ++i)
+        if (std::fabs(kReach[i].modelRadius - modelRadius) <= std::fabs(kReach[best].modelRadius - modelRadius)) best = i;
+    return best;
+}
+// A press of < (-1) or > (+1) on the headset's row: stopping at the ends; from Custom it starts at the nearest stop, one step on.
+inline int StepReach(int now, float modelRadius, int delta) {
+    const int from = now >= 0 && now < kReachCount ? now : NearestReach(modelRadius);
+    if (now < 0) return from;   // (Custom: first onto the nearest stop itself)
+    const int to = from + (delta > 0 ? 1 : -1);
+    return to < 0 ? 0 : to >= kReachCount ? kReachCount - 1 : to;
 }
 
 // VR F3's own draw distance ([table] draw_distance, Serg 2026-11-08: "вернуть ползунок драв дистанс в режиме ф3, он нужен"): 0 = F3 draws as

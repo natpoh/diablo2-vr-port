@@ -63,6 +63,7 @@ std::mutex g_lock;               // the controller, the snapshot copy, what the 
 wheel::Controller g_ctl;
 wheel::Settings g_cfg;            // what g_ctl was configured with (the profiles change the hints without the rest)
 tiles::Profile g_profile[2] = {tiles::Profile::None, tiles::Profile::None};
+bool g_swapped = false;   // [hands] left_handed: the controllers traded (the hints follow)
 bool g_showHints = false;         // direct input is on and its layout is the default one
 wheel::Snapshot g_snap;
 uint32_t g_snapRevision = 0;
@@ -222,7 +223,7 @@ bool LongPressCanCome(const wchar_t* ini) {
 
 // g_cfg + the profiles -> the controller (under g_lock).
 void ApplyLocked() {
-    g_cfg.hints = tiles::BuildHints(g_profile[0], g_profile[1], g_showHints, g_cfg.slotControls);
+    g_cfg.hints = tiles::BuildHints(g_profile[0], g_profile[1], g_showHints, g_cfg.slotControls, g_swapped);
     g_ctl.Configure(g_cfg);
 }
 
@@ -686,6 +687,13 @@ void SetProfiles(const char* left, const char* right) {
     std::lock_guard<std::mutex> lock(g_lock);
     g_profile[0] = tiles::ProfileOf(left);
     g_profile[1] = tiles::ProfileOf(right);
+    ApplyLocked();
+}
+
+void SetSwapped(bool swapped) {
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (g_swapped == swapped) return;
+    g_swapped = swapped;
     ApplyLocked();
 }
 

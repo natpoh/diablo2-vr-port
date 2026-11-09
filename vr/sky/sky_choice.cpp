@@ -19,26 +19,32 @@ namespace fx {
 bool NoFogUnderground() {
     return g_inWorld.load() && g_underground.load() && !g_set.fogCaves.load() && !(g_arcaneArea.load() && g_set.arcaneFog.load());
 }
+// ... the game's fog by its own [fog] game_fog_caves (Serg 2026-11-09: "у каждого свои ползунки и свой блок")
+bool NoGameFogUnderground() {
+    return g_inWorld.load() && g_underground.load() && !g_set.gameFogCaves.load() && !(g_arcaneArea.load() && g_set.arcaneFog.load());
+}
 // A fog here at all, whoever draws it: in the world, first person, not paused, not [fog] caves=0 underground, not the River of Flame
-bool FogHere() {
+// (`game`: the game's fog - its own [fog] game_fog_caves underground; else our effect's [fog] caves)
+bool FogHereFor(bool game) {
     // under the Arcane Sanctuary's sky only with [sky] arcane_fog: the shader then takes the fog's colour from that sky
     const bool arcane = g_arcaneSky.load();
     // (from above none - but VR F3 with [table] full_width has the game's own fog round the diorama: TableFull)
     return (!arcane || g_set.arcaneFog.load()) && g_enabled.load() && (!Overhead() || TableFull()) && g_inWorld.load() && !EffectsPaused() &&
-           !NoFogUnderground() &&   // [fog] caves=0: none underground (the Arcane Sanctuary with arcane_fog apart)
+           !(game ? NoGameFogUnderground() : NoFogUnderground()) &&   // [fog] caves=0 / game_fog_caves=0: none underground (the Arcane Sanctuary with arcane_fog apart)
            !g_noFogArea.load();     // [fog] no_fog_river: none in the River of Flame (our effect's and the game's fog alike)
 }
+bool FogHere() { return FogHereFor(g_set.gameFog.load()); }
 // Our effect's fog: [fog] enabled ("Distance fog") and a fog here
 // (never in VR F3 with [table] full_width: there only the game's own fog pass, no fallback of ours - Serg's "no pass of ours")
-bool OurFogWanted() { return g_set.fogOn.load() && FogHere() && !TableFull(); }
+bool OurFogWanted() { return g_set.fogOn.load() && FogHereFor(false) && !TableFull(); }
 // The game's fog with our numbers ([fog] game_fog=1): a fog here - whatever [fog] enabled says (Serg 2026-11-08 on Medium: enabled=0 with
 // game_fog=1 left no fog at all, "game fog 0"; our own fog off must never take the game's away)
-bool GameFogWanted() { return g_set.gameFog.load() && FogHere(); }
+bool GameFogWanted() { return g_set.gameFog.load() && FogHereFor(true); }
 // The post pass's fog: ours, unless the game's own pass draws it ([fog] game_fog)
 // ... and only when the game's is not chosen ([fog] game_fog: its pass draws ours, also before it took our numbers - never both; the Arcane
 // Sanctuary's ours whatever the choice - vr/sky_paths.h)
 // (the game's unable here for good - a view it does not draw in, its frame fog not found: ours instead; vr/sky_paths.h GameFogCannot)
-const char* FogCannot() { return skypaths::GameFogCannot(GameDrawnView(), gamefogvr::g_bad.load()); }
+const char* FogCannot() { return skypaths::GameFogCannot(GameFogDrawnView(), gamefogvr::g_bad.load()); }
 bool FogWanted() {
     return skypaths::OurFog(OurFogWanted(), skypaths::GameHolds(g_set.gameFog.load(), FogCannot()), g_arcaneSky.load()) && !gamefogvr::Active() &&
            !TableFull();   // (VR F3 full width: the game's fog pass or none)
@@ -78,7 +84,11 @@ FogNumbers GameFogNumbersNow() {
     FogNumbers n = FogNumbersNow();
     const drawdistance::Stop* f3 = ViewDistanceStop();   // VR F3's own Draw distance ([table] draw_distance), nullptr: the shared keys
     if (ArcaneOwnFog()) { n.start = g_set.gameArcaneFogStart.load(); n.end = g_set.gameArcaneFogEnd.load(); }
-    else if (g_underground.load()) { n.start = f3 ? f3->cavesStart : g_set.gameFogCaveStart.load(); n.end = f3 ? f3->cavesEnd : g_set.gameFogCaveEnd.load(); }
+    else if (g_underground.load()) {
+        n.start = f3 ? f3->cavesStart : g_set.gameFogCaveStart.load();
+        n.end = f3 ? f3->cavesEnd : g_set.gameFogCaveEnd.load();
+        n.strength = g_set.gameFogCaveStrength.load();   // ([fog] game_fog_caves_strength)
+    }
     else { n.start = f3 ? f3->fogStart : g_set.gameFogStart.load(); n.end = f3 ? f3->fogEnd : g_set.gameFogEnd.load(); }
     // VR F3 full width: the eye is the head high over the diorama - the same rings kept round the hero (drawdistance::FromEyeAbove)
     if (TableFull() && g_floorCamOk.load()) {

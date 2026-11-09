@@ -533,6 +533,12 @@ bool GameDrawnView() {
     if (TableFull()) return true;   // VR F3 with [table] full_width: the diorama with the game's dome and fog round it (no ceiling - not first person)
     return g_set.gameDrawnFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
 }
+// The game's fog's own (Serg: "у каждого свои ползунки и свой блок"): the flat game by [fog] game_fog_flat - missing: game_drawn_flat
+bool GameFogDrawnView() {
+    if (viewgate::F4()) return true;
+    if (TableFull()) return true;
+    return g_set.gameFogFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
+}
 
 // FlatVR's 3D source as [stereo] has it - real stereo: the game's pair; else the
 // depth (source 1) or none (0) - asked through Game Link whenever BodyWalk comes
@@ -669,7 +675,7 @@ bool HandRay(float* o, float* d, float* dRaw = nullptr);   // (declared here: it
 
 // The flat game's clicks: the map click's hook, the mouse on raised ground, the body under the pointer, the town portal's oval: vr/input/flat_click.cpp
 
-// [render] floors_stay (the room heights' hook): vr/render/render_switches.cpp
+// [render] room_stitch (the room heights' hook): vr/render/render_switches.cpp
 
 // ... and the click itself (FlatPickClick, HookMapClick): vr/input/flat_click.cpp
 
@@ -989,7 +995,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.209.0";
+static const char g_info_version[] = "0.210.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1134,6 +1140,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     CheckGameVersion();   // the game data older than 3.x (a broken install): said loudly before the game dies on it (shared/game_version.h)
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
     gpufault::EnableDred(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0);   // [debug] dred, on unless the ini says 0
+    gpufault::EnableDredEvents(GetPrivateProfileIntW(L"debug", L"dred", 1, g_iniPath) != 0 &&
+                               GetPrivateProfileIntW(L"debug", L"dred_events", 1, g_iniPath) != 0);   // [debug] dred_events: the events' names with it
     gpufault::EnableValidation((int)GetPrivateProfileIntW(L"debug", L"d3d12_validation", 0, g_iniPath));   // [debug] d3d12_validation: the debug layer's errors in the log (off unless asked)
     strikestatswire::Start();   // [stats] strike_stats: the player's strike statistics read from Saved Games\...\D2R VR Stats (the touch counts into them)
     savebackups::Start();   // [support] save_backups: the saves copied before the game opens them, then whenever one changes (power cuts zero them)
@@ -1281,6 +1289,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     beltglow::Init(ctx);   // [hands] belt_inner_glow
 #if D2RVR_FIRST_PERSON
     if (posewire::Init(ctx, &Log, IniB(L"multiplayer", L"pose_share", true), "vrcam: pose share")) PoseShareConfigure();   // [multiplayer] pose_share: the channel now or never this run
+    ShotShareInit();   // the other players' bow shots (vr/shot_share.h): their arrows drawn along their lines, and as the host turned at the create
 #endif
     shoulderwire::Init(ctx);   // the shoulder swap listens to direct_input's frames
     weightwire::Init(ctx);     // [weight]: so does the grip of a hand on the weapon
@@ -1332,6 +1341,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     attackpath::InitNet(ctx);   // [gameplay] flat_attack_path: a joined player's channel to the host
     flatmenu::Init(ctx, g_iniPath);   // [hud] game_menu_settings: the host's rules channel "HR" (always: D2RLoader takes channels at the load only) and the console's "vrrules"
     meleedirectclient::InitNet(ctx);   // [gameplay] melee_direct_client_cleave: who hosts decides - the channel always (D2RLoader takes it at the load only)
+    hitshare::Init(ctx);   // [multiplayer] share_hit_outcomes: the channel "HS" always (D2RLoader takes it at the load only); the host's box is live
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread
     merctint::Init(ctx);   // [hud] merc_tint reads the merc's life on the UI thread
@@ -1351,6 +1361,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gengine::Init(ctx);         // [gestures] engine_in_game: the gesture engine in the game
     arrowflightwire::Init(ctx);   // [bow] arrow_flight: on the potion hide's two renderer hooks
     arrowflightwire::SetHeroIdSource(&GestureHeroId);   // ... whose arrows are the hero's
+    // ... where: VR F4, and the flat 3D views ([bow] arrow_flight_flat, vr/flat_arrow.h: our camera on - first or third person, not the game's F1)
+    arrowflightwire::SetViewGate(+[]() { return viewgate::F4() || (g_set.platform.load() == 0 && g_enabled.load() && g_inWorld.load() && !Overhead()); });
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
     bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver: the quiver decides, before the release's button goes down, whether it is the armed skill or the plain arrow
     // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none; [bow] swap_by_grab: the free hand at the bow's grip takes the bow, not the string
@@ -1360,6 +1372,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     quiverwire::Init(ctx);   // [hands] javelin_quiver: the log
     throwwire::SetHeroModeFn(&GestureHeroMode);
     potionhide::SetHeroIdSource(&GestureHeroId);   // [hands] potion_hide_game: whose potion missile is the hero's
+    throwborn::SetHeroIdSource(&GestureHeroId);    // [debug] missile_probe: whose creates are the hero's
+    throwborn::SetAimSource(&FlatReleaseAim);      // the shot at release: the hero's arrow turned at the create to the crosshair of that moment (flat)
     headshadow::Init(ctx);   // [arms] head_shadow: the log
 #if D2RVR_FIRST_PERSON
     potionhide::SetXformObserver(&skel::XbowRendered);   // [hands] xbow_support_model: the crossbow as the renderer places it (reads only)
@@ -1402,6 +1416,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     attackpath::ShutdownNet();   // [gameplay] flat_attack_path: its channel given back
     meleedirectclient::ShutdownNet();   // [gameplay] melee_direct_client_cleave: the channel given back
     flatmenu::Shutdown();   // [hud] game_menu_settings: the overlay's callback, the channel, the ini writer's thread
+    hitshare::Shutdown();   // [multiplayer] share_hit_outcomes: the channel given back
     logasync::Shutdown();   // [debug] log_async: the lines that wait are written, its thread joined, before the context goes
     sessionlogs::Stop();   // [support] session_logs: the last copy, after the lines that waited
     g_ctx = nullptr;

@@ -7,9 +7,10 @@
 #include "../xr.h"
 #include "d2rcam.h"
 #include "../../shared/draw_distance.h"
+#include "../npc_dialog_view.h"
 
 namespace hud { bool LayerFound(); bool FlatVrTakesMenu(); }   // (vr/hud.cpp)
-namespace gamestate { bool MenuOpen(); }                        // (vr/gamestate.cpp)
+namespace gamestate { bool MenuOpen(); bool NpcTalkOnly(); }                        // (vr/gamestate.cpp)
 
 namespace vrc {
 
@@ -84,7 +85,18 @@ bool FlatVrLaserWanted() {
 // The last pair's: a menu open, and out of the picture as a panel (the world in stereo behind it). Any thread.
 std::atomic<bool> g_menu3dNow{false};
 // A menu open that the picture shows (the flat one): the effects that lie over the whole picture stay off.
-bool MenuFlat() { return gamestate::MenuOpen() && !g_menu3dNow.load(); }
+// [hud] npc_dialog_keep_view (vr/npc_dialog_view.h): an NPC's talk the only menu open in native VR F1 - F3 - the pair kept, its box in the picture.
+bool NpcDialogKeepsView() {
+    npcview::Where w;
+    w.on = g_set.npcDialogKeepView.load();
+    w.vr = g_set.platform.load() == 1;
+    w.firstPerson = FullBody();
+    w.nativeView = NativeView();
+    w.inWorld = g_inWorld.load();
+    w.talkOnly = w.on && gamestate::NpcTalkOnly();
+    return npcview::KeepsView(w);
+}
+bool MenuFlat() { return gamestate::MenuOpen() && !g_menu3dNow.load() && !NpcDialogKeepsView(); }
 // The sky, the fog and the cave ceiling stop for a menu in VR, where the flat menu fills the picture; on a monitor the world stays behind
 // the panel, and they stay with it (from sajmonsoft's flat fork: opening a chest, a dialogue or the inventory turned them off).
 bool EffectsPaused() { return MenuFlat() && g_set.platform.load() != 0; }

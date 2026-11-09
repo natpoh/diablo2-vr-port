@@ -108,6 +108,21 @@ void FlatPortalFrame() {
     idle = !o.force && machine.stage() == portalauto::Machine::Stage::Idle;
 }
 
+// [debug] missile_probe (vr/missile_probe.h): the server's missile create, read only - switched as the key says, the hook put in, a finished shot summed up.
+void MissileProbeTick() {
+    // the shot at release (vr/shot_release.h): with [gameplay] shot_at_release the same hook turns the hero's arrows at the create (flat) and, as the
+    // host in either mode, a joined player's by the line he sent (vr/shot_share.h)
+    const bool aim = g_set.shotAtRelease.load();
+    throwborn::Aim(aim);
+    if (aim) throwborn::Install();
+    static bool wasOn = false;
+    const bool on = g_set.missileProbe.load();
+    if (on != wasOn) { wasOn = on; throwborn::Probe(on); }
+    if (!on) return;
+    throwborn::Install();   // (the hook goes in for the probe alone too, once the game's code is there)
+    throwborn::ProbeTick();
+}
+
 // [debug] bow_latency (vr/bow_latency.h): for every shot the draw gesture releases and every throw the throw gesture presses, one log line - the wire's press, the pad's button, the hero's
 // mode, the body's turn, the animation row the action runs on, the server's missile create (throw_born.cpp's read-only look) and the first missile the client shows - as ms after
 // the release. Read only; the camera thread and the input hook leave their stamps (BowLatencyPad, g_latYaw), this runs on the update thread.
@@ -389,6 +404,7 @@ void MeleeTouchTick() {
 #if D2RVR_FIRST_PERSON
     ThrowTraceTick();
     BowLatencyTick();   // [debug] bow_latency
+    MissileProbeTick(); // [debug] missile_probe
     AnimCutTick();      // [bow] quick_release, [hands] quick_throw
     {   // [hands] throw_autoaim_deg: the monsters near the hero and the server's verdicts, while a thrown weapon is in hand (the touch stands down for it)
         const bool inWorld = g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen();

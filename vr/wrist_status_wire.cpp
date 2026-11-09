@@ -31,6 +31,7 @@
 
 #include "direct_input.h"
 #include "view_gate.h"
+#include "hand_swap.h"   // [hands] left_handed
 #include "wheel_icons.h"
 #include "wrist_status_game.h"
 #include "wrist_status_paint.h"
@@ -250,6 +251,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         const Look look = MakeLook(fresh ? roster : Roster{}, fresh ? status : Status{}, ContentFor(cfg, side), cfg, icons);
         handvitals::In in = base;
         in.cfg = RevealConfig(cfg, side);
+        in.cfg.flip = in.cfg.flip != handswap::Now();   // [hands] left_handed: the controller's own palm side (vr/hand_swap.h)
         in.gate.hideNow = !fl.f4 || fl.otherView;
         in.gate.hide = !fl.focused || fl.inMenu || fl.uiUp || !fresh || look.n == 0;   // (a wrist with nothing to show does not come up)
         const handvitals::Out out = w.reveal.Step(in);

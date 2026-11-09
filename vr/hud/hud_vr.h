@@ -29,6 +29,8 @@ extern std::atomic<bool> g_labelPaintIn, g_labelSizeIn;   // the game's item-lab
 bool LabelBoxNative();
 bool LabelsTilted();
 bool PlateOwnDepth();
+bool PlateOtherStereo();       // VR F1 / F2 / F3, a stereo pair of our camera: the plate may stand apart there too (vr/plate_look.h OtherView)
+float PlateDepthOtherView();   // [hud_third] / [hud_floor] monster_depth for the view now (1 = at its monster), 0 elsewhere
 platelook::DepthByDistance PlateDepthByDistance();   // [hud] monster_stereo_by_distance's settings
 float PlateDepthForBox();
 bool PlateWanted();
@@ -71,6 +73,7 @@ bool OwnLabelsNow();   // [hud] labels_own, F4 now (vr/hud/labels.cpp)
 // whether it is wanted and where the plate stands (the interface layer's pixels; nullptr: no plate), takes the plate's texts the game drew, marks the ones it
 // drew ours for (only those the game then skips), and asks the target's kind (monster data + 0x1A) for a name with no colour code.
 bool MonsterNamesOwnNow();
+void MonsterPlateWhichTick();   // one log line each change: ours or the game's plate, the view, the preset, why (vr/own_plate_why.h)
 ownlabels::SizeCurve OwnSizeCurve();   // [hud] labels_own_near_pct / _far_pct / _near_m / _far_m
 void NamesSetPlate(bool on, const float* platePx);
 int NamesTake(ownnames::Text out[ownnames::kMax]);

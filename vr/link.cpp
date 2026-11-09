@@ -16,6 +16,7 @@
 
 #include "direct_feed.h"
 #include "finite_hold.h"   // nothing non-finite into the head every view is built from
+#include "hand_swap.h"   // [hands] left_handed: BodyWalk's tracking traded under FlatVR
 #include "link.h"
 #include "rune_geom.h"
 #include "view_gate.h"
@@ -163,6 +164,10 @@ void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     o->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     o->userHeightMm = t.userHeightMm;
     o->flatVrStamped = (t.flags & BW_LINK_TRACK_FLATVR_STAMP) ? 1u : 0u;
+    // [hands] left_handed (vr/hand_swap.h), F4: under FlatVR the controllers traded here, as native OpenXR trades them where they come in
+    // (a native session's BodyWalk tracking is made from our traded XrInput already)
+    if (handswap::MirrorBodyWalk(handswap::Wanted(), viewgate::F4(), handswap::NativeFresh(handswap::NativeAtSlot().load(), GetTickCount64())))
+        handswap::MirrorShared(o);
     HoldFinite(o);
 }
 

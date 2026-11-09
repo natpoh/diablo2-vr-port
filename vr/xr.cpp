@@ -113,6 +113,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "monitor_layers.h"   // [render] monitor_panels: this frame's quads noted for the monitor's picture (drawn at the window's present)
 #include "xr_profiles.h"   // [openxr] frame_profile, index_grip_force: Steam Frame's own layout, the Index grip by force
 #include "xr_stick_check.h"   // is the thumbstick bound by the runtime? (the report of 2026-10-18: SteamVR kept a binding saved for the program)
+#include "panel_grab.h"  // [openxr] panel_grab: a game panel taken by a grip that starts on it, carried, pulled nearer / pushed farther (PanelGrabStep / Post)
 #include "menu_zoom.h"   // [openxr] menu_zoom: the right grip + the right stick bring a game panel nearer / farther (MenuZoomPre / Post)
 #include "ini_txn.h"     // ... and its distance written to [screen] menu_distance_m
 #include "map_zoom.h"   // [hud] map_stick_zoom: the right stick zooms the map the laser is on (pure, tested)
@@ -127,6 +128,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "headset_shot.h"   // [headset_shot]: the frame's layers as submitted, read back to PNGs (ShotFrame, in CloseFrame)
 #include "headset_clip.h"   // [headset_shot] video: 10 s of the eyes as submitted, to an .mp4 (ClipFrame, in CloseFrame)
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
+#include "hand_swap.h"      // [hands] left_handed: the controllers traded once in Publish; Phys() names the controller a hand reads
 
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
 namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
@@ -164,6 +166,7 @@ struct Cfg {
     bool ipdAuto = true;           // ipd_auto: the eye distance from the runtime's view poses (1), or the player's own number (0) - vr/eye_gap.h
     float ipdManualM = 0.063f;     // ipd_mm: the player's eye distance, metres (taken when ipd_auto is 0), live
     bool cantedEyes = true;        // canted_eyes: canted displays - both eyes drawn and submitted in the head's frame (vr/eye_frame.h); 0 = as before, live
+    bool symmetricProjection = false;   // [render] symmetric_projection: both eyes drawn and submitted with one centred frustum, whatever the route (vr/eye_fov.h CentredPair), live
     bool stopFlatVR = true;   // FlatVR stopped before the session, started again after
     bool stopFlatVrWatch = true;   // stop_flatvr_watch: ... and stopped again when it starts while the session runs (vr/flatvr_gate.h Watch); 0 = only at the start
     bool busyGuard = true;    // busy_guard: the runtime's blocking calls with a limit, no session over a FlatVR that holds the headset (unticked: as before)
@@ -216,6 +219,8 @@ struct Cfg {
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
     bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
     float menuZoomSpeed = menuzoom::kSpeedDefault;   // menu_zoom_speed_mps: metres a second at the stick's full travel
+    bool panelGrab = false;   // panel_grab: a grip that starts on that panel carries it, the hand in / out (or its stick) nearer / farther; menu_zoom steps aside (vr/panel_grab.h); live
+    panelgrab::Kept panelKept;   // panel_grab_dist_m / _side_deg / _up_m: where it was let go, relative to the gaze (dist 0: none kept)
     bool handInv = false;     // hand_inventory: away from town the inventory's panel on the left hand, the left stick walking on (vr/hand_inventory.h)
     bool handInvFront = false;   // hand_inventory_front: the button beside it last put it in front, full size (remembered, written by the button)
     float handInvWidthM = handinv::kWidthDefault;   // hand_inventory_width_m: that panel's width
@@ -645,6 +650,10 @@ FlatShown g_flatShown{};
 // rules, kept apart from it; anchored again at a recentre.
 struct PanelPlace { bool anchored = false; float yaw = 0.0f; XrVector3f pos{}; double shownUs = 0.0, offSince = 0.0; bool told = false; };
 PanelPlace g_panelPlace;
+// [openxr] panel_grab (vr/panel_grab.h): the panel's place in the room while it is carried or once it was put somewhere this opening (or opened
+// at the kept place); not ok: HangPanel's own place. g_panelSpotAgain: a recentre / the focus back - placed afresh from the kept place.
+panelgrab::Panel g_panelSpot;
+bool g_panelSpotAgain = false;
 // [openxr] hand_inventory: vrcam says the inventory hangs on the left hand now (SetHandInventory: in force, vr/hand_inventory.h). HangPanel
 // puts the panel there; the laser is the right hand's and the left stick never parks it.
 std::atomic<bool> g_handInvUp{false};
@@ -1775,6 +1784,7 @@ void FrontSave(bool front) {
     if (!g_frontSaving.exchange(true)) std::thread(FrontSaveRun).detach();
 }
 
+bool PanelGrabApplies(bool focused);   // [openxr] panel_grab, below
 // Before the laser: the right hand's raw controls; the stick's Y and a trigger squeezed while zooming are taken out of `in`.
 void MenuZoomPre(D2RVR_XrInput& in, bool focused) {
     const double t = UsNow();
@@ -1783,7 +1793,8 @@ void MenuZoomPre(D2RVR_XrInput& in, bool focused) {
     D2RVR_XrHand& o = in.hand[1];
     menuzoom::In z;
     z.applies = g_cfg.menuZoom && focused && viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && g_panelOpen.load() && !g_hsOpen.load() &&
-                !HandInventoryHung();   // ([openxr] hand_inventory: the panel on the hand is as near as the hand holds it)
+                !HandInventoryHung() &&   // ([openxr] hand_inventory: the panel on the hand is as near as the hand holds it)
+                !PanelGrabApplies(focused);   // ([openxr] panel_grab: the grip on the panel carries it, its stick is the grab's)
     z.grip = (o.buttons & BW_LINK_XRB_SQUEEZE) ? 1.0f : o.squeeze;
     z.trigger = o.trigger;
     z.triggerClick = (o.buttons & BW_LINK_XRB_TRIGGER) != 0;
@@ -1823,6 +1834,170 @@ void MenuZoomPost(D2RVR_XrInput& in) {
     const menuzoom::Post p = g_zoom.StepPost((o.buttons & BW_LINK_XRB_SQUEEZE) != 0 || o.squeeze > 0.0f, GetTickCount64());
     if (p.hideGrip) { o.squeeze = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
     if (p.tapGrip) { o.squeeze = 1.0f; o.buttons |= BW_LINK_XRB_SQUEEZE; }
+}
+
+// -- [openxr] panel_grab: a grip that starts on a game panel carries it (vr/panel_grab.h) -------------------------------------------
+// A game panel hung in front in F4 (HangPanel: the inventory, the stash, a trader...): either hand's grip squeezed while that hand's ray is
+// on it (or the hand at it) holds it; the hand's travel then carries it, coming in / going out pulls it nearer / pushes it farther
+// (panelgrab::kPushGain times), that hand's stick forward / back too. Let go, it stays in the room; where (relative to the gaze) goes to
+// [openxr] panel_grab_dist_m / _side_deg / _up_m on a thread of its own and is where it opens next time. menu_zoom steps aside meanwhile.
+XrQuaternionf FromAxes(XrVector3f x, XrVector3f y, XrVector3f z);   // below
+XrVector3f Plus(XrVector3f a, XrVector3f b);
+XrVector3f Times(XrVector3f v, float k);
+XrVector3f Unit(XrVector3f v);
+panelgrab::Grab g_pgrab;
+panelgrab::Out g_pgrabOut;   // this frame's (the laser reads `spent`: no page, no Shift from a grab)
+double g_pgrabStepUs = 0.0, g_pgrabToldUs = 0.0;
+uint32_t g_pgrabTold = 0;
+std::atomic<bool> g_pgrabSaving{false}, g_pgrabSaveWant{false};
+panelgrab::Kept g_pgrabSave;
+
+bool PanelGrabApplies(bool focused) {
+    return g_cfg.panelGrab && focused && viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && g_panelOpen.load() && !g_hsOpen.load() &&
+           !HandInventoryHung() && !g_mapClick.Big();
+}
+
+// Where a game panel stays readable (menu_zoom.h LimitsFor) at its own width: the near is where panel_grab starts keeping its size in view.
+menuzoom::Limits PanelLimits() {
+    menuzoom::Limits l;
+    if (!g_viewsOk || !g_panelTexW || !g_panelTexH) return l;
+    const vrres::Size rec = vrres::Unpack(g_vrRecommended.load());
+    menuzoom::Eye eyes[2];
+    for (int e = 0; e < 2; ++e) {
+        const XrFovf& f = g_views[e].fov;
+        eyes[e] = {tanf(f.angleLeft), tanf(f.angleRight), tanf(f.angleUp), tanf(f.angleDown), rec.w, rec.h};
+    }
+    return menuzoom::LimitsFor(g_cfg.quadWidthM, g_cfg.quadWidthM * (float)g_panelTexH / (float)g_panelTexW, g_panelTexW, g_panelTexH, eyes);
+}
+
+void PanelGrabSaveRun() {
+    for (;;) {
+        if (!g_pgrabSaveWant.exchange(false)) {
+            g_pgrabSaving.store(false);
+            if (g_pgrabSaveWant.load() && !g_pgrabSaving.exchange(true)) continue;
+            return;
+        }
+        const panelgrab::Kept k = g_pgrabSave;
+        wchar_t vd[32], vs[32], vu[32];
+        swprintf_s(vd, L"%.2f", k.distM); swprintf_s(vs, L"%.1f", k.sideRad * 57.2957795f); swprintf_s(vu, L"%.2f", k.upM);
+        ini::Result r = ini::Result::Failed;
+        std::string why;
+        for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+            const ini::Text a = ini::Read(g_iniPath, L"openxr", L"panel_grab_dist_m"), b = ini::Read(g_iniPath, L"openxr", L"panel_grab_side_deg"),
+                            c = ini::Read(g_iniPath, L"openxr", L"panel_grab_up_m");
+            const std::vector<ini::Change> ch = {
+                ini::Change{L"openxr", L"panel_grab_dist_m", L"0", a.present ? a.text : L"0", vd},
+                ini::Change{L"openxr", L"panel_grab_side_deg", L"0", b.present ? b.text : L"0", vs},
+                ini::Change{L"openxr", L"panel_grab_up_m", L"0", c.present ? c.text : L"0", vu}};
+            r = ini::Commit(g_iniPath, ch, nullptr, &why);
+        }
+        if (r == ini::Result::Saved) LogF("vrcam: openxr - panel grab: kept %.2f m out, %.1f deg to the side, %+.2f m from the eyes ([openxr] panel_grab_dist_m / _side_deg / _up_m written)",
+                                          k.distM, k.sideRad * 57.2957795f, k.upM);
+        else LogF("vrcam: openxr - panel grab: its place NOT written (%s: %s) - kept for this game only", r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+    }
+}
+
+panelgrab::V3 PV(XrVector3f v) { return {v.x, v.y, v.z}; }
+XrVector3f XV(panelgrab::V3 v) { return {v.x, v.y, v.z}; }
+
+// Before the laser and menu_zoom: both hands' raw controls; the grabbing hand's stick Y (and its trigger while carrying) taken out of `in`.
+void PanelGrabStep(D2RVR_XrInput& in, bool focused) {
+    const double t = UsNow();
+    const float dt = g_pgrabStepUs > 0.0 ? (float)((t - g_pgrabStepUs) * 1e-6) : 0.0f;
+    g_pgrabStepUs = t;
+    if (!g_cfg.panelGrab && g_pgrab.state(0) == panelgrab::Grab::State::Idle && g_pgrab.state(1) == panelgrab::Grab::State::Idle) {
+        g_pgrabOut = panelgrab::Out{};
+        return;   // off, and nothing of it left to end
+    }
+    panelgrab::In z;
+    z.applies = PanelGrabApplies(focused);
+    {   // the panel as the last frame hung it (the laser's surface)
+        const XrQuaternionf& q = g_flatShown.pose.orientation;
+        z.panel.at = PV(g_flatShown.pose.position);
+        z.panel.right = PV(Rot(q, {1.0f, 0.0f, 0.0f}));
+        z.panel.up = PV(Rot(q, {0.0f, 1.0f, 0.0f}));
+        z.panel.front = PV(Rot(q, {0.0f, 0.0f, 1.0f}));
+        z.panel.ok = g_flatShown.ok;
+        z.widthM = g_flatShown.size.width;
+        z.heightM = g_flatShown.size.height;
+    }
+    z.eyes = g_viewsOk ? PV(Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f)) : z.panel.at;
+    z.dtS = dt;
+    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    for (int h = 0; h < 2; ++h) {
+        const D2RVR_XrHand& o = in.hand[h];
+        panelgrab::Hand& k = z.hand[h];
+        XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
+        k.tracked = o.active && g_aimSpace[handswap::Phys(h)] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[handswap::Phys(h)], g_space, g_fs.predictedDisplayTime, &aim)) &&
+                    (aim.locationFlags & need) == need;
+        if (k.tracked) {
+            k.at = PV(aim.pose.position);
+            k.turn = {aim.pose.orientation.x, aim.pose.orientation.y, aim.pose.orientation.z, aim.pose.orientation.w};
+            k.dir = PV(Unit(Rot(aim.pose.orientation, {0.0f, 0.0f, -1.0f})));
+        }
+        k.grip = (o.buttons & BW_LINK_XRB_SQUEEZE) ? 1.0f : o.squeeze;
+        k.trigger = o.trigger;
+        k.triggerClick = (o.buttons & BW_LINK_XRB_TRIGGER) != 0;
+        k.stickY = o.stickY;
+    }
+    const panelgrab::Grab::State was[2] = {g_pgrab.state(0), g_pgrab.state(1)};
+    const panelgrab::Out r = g_pgrab.Step(z);
+    g_pgrabOut = r;
+    for (int h = 0; h < 2; ++h) {
+        D2RVR_XrHand& o = in.hand[h];
+        if (r.takeY[h]) o.stickY = 0.0f;
+        if (r.takeTrigger[h]) { o.trigger = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
+        if (was[h] == panelgrab::Grab::State::Idle && g_pgrab.state(h) == panelgrab::Grab::State::Held && ++g_pgrabTold <= 60)
+            LogF("vrcam: openxr - panel grab: the %s grip on the menu's panel (%.2f m out) - held; it is carried once the hand moves %.0f cm or the stick does, "
+                 "a trigger first makes it a click as before ([openxr] panel_grab; %u)", h ? "right" : "left", panelgrab::Len(panelgrab::Sub(z.panel.at, z.eyes)),
+                 panelgrab::kMoveStartM * 100.0f, g_pgrabTold);
+        if (was[h] == panelgrab::Grab::State::Held && g_pgrab.state(h) == panelgrab::Grab::State::Spent && ++g_pgrabTold <= 60)
+            LogF("vrcam: openxr - panel grab: a trigger came first - the %s grip's hold is the laser's (right click / Shift click), the panel not moved (%u)",
+                 h ? "right" : "left", g_pgrabTold);
+    }
+    if (r.started) {
+        haptics::Play(haptics::Event::MenuClick, r.hand);
+        g_pgrabToldUs = t;
+        LogF("vrcam: openxr - panel grab: the %s hand carries the menu's panel from %.2f m out - the hand in / out moves it %.0fx, its stick forward / back "
+             "nearer / farther ([openxr] panel_grab)", r.hand ? "right" : "left", panelgrab::Len(panelgrab::Sub(z.panel.at, z.eyes)), panelgrab::kPushGain);
+    }
+    if (r.moving) {
+        g_panelSpot = r.panel;
+        if (t - g_pgrabToldUs > 1e6) {   // once a second while carried
+            g_pgrabToldUs = t;
+            const menuzoom::Limits l = PanelLimits();
+            LogF("vrcam: openxr - panel grab: carried, %.2f m out, %.2f m wide (keeps its size in view nearer than %.2f m)", r.distM,
+                 panelgrab::WidthAt(r.distM, g_cfg.quadWidthM, l.derived ? l.nearM : 0.0f), l.derived ? l.nearM : 0.0f);
+        }
+    }
+    if (r.released) {
+        g_panelSpot = r.panel;
+        const float headYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : 0.0f;
+        const panelgrab::Kept k = panelgrab::Relative(r.panel.at, z.eyes, headYaw);
+        const float d = panelgrab::Len(panelgrab::Sub(r.panel.at, z.eyes));
+        LogF("vrcam: openxr - panel grab: let go - the panel %.2f -> %.2f m out (moved %.2f m), %.0f deg to the side, %+.2f m from the eyes%s",
+             r.fromM, d, r.travelM, k.sideRad * 57.2957795f, k.upM, z.applies ? "" : " (the panel went from under the hand)");
+        if (k.ok && k.distM > 0.0f) {
+            g_cfg.panelKept = k;
+            g_pgrabSave = k;
+            g_pgrabSaveWant.store(true);
+            if (!g_pgrabSaving.exchange(true)) std::thread(PanelGrabSaveRun).detach();
+        }
+    }
+}
+
+// After the laser: a grip on the panel that still reaches the game (the laser did not take it) waits while it may be a grab - let go without
+// one, its own press (the menu's bumper) as a tap.
+void PanelGrabPost(D2RVR_XrInput& in) {
+    if (!g_cfg.panelGrab && g_pgrab.state(0) == panelgrab::Grab::State::Idle && g_pgrab.state(1) == panelgrab::Grab::State::Idle) return;
+    bool gripFree[2], hide[2], tap[2];
+    for (int h = 0; h < 2; ++h) gripFree[h] = (in.hand[h].buttons & BW_LINK_XRB_SQUEEZE) != 0 || in.hand[h].squeeze > 0.0f;
+    g_pgrab.Post(gripFree, GetTickCount64(), hide, tap);
+    for (int h = 0; h < 2; ++h) {
+        D2RVR_XrHand& o = in.hand[h];
+        if (hide[h]) { o.squeeze = 0.0f; o.buttons &= ~(uint32_t)BW_LINK_XRB_SQUEEZE; }
+        if (tap[h]) { o.squeeze = 1.0f; o.buttons |= BW_LINK_XRB_SQUEEZE; }
+    }
 }
 
 void Publish(bool focused) {
@@ -1984,15 +2159,37 @@ void Publish(bool focused) {
     }
     g_keepAt = g_fs.predictedDisplayTime;
     if (g_cfg.gameFront && focused && !anyController) g_frontWantedAt.store(GetTickCount64());
+    // [hands] left_handed (vr/hand_swap.h), F4 only: the two controllers trade places here, once - everything below and after (direct input, the
+    // arms, the strikes, the bow, the HUD on the hands, BodyWalk) reads hand 1 as the LEFT controller. The menu button stays where it was pressed.
+    uint32_t touch[2] = {g_touch[0], g_touch[1]};
+    {
+        const bool swapped = handswap::Decide(handswap::Wanted(), viewgate::F4());
+        handswap::SetNow(swapped);
+        handswap::NoteNative(GetTickCount64());   // (BodyWalk's tracking is made from this frame: link.cpp does not trade it again)
+        if (swapped) {
+            handswap::MirrorHands(in.hand, touch, BW_LINK_XRB_MENU);
+            std::swap(located[0], located[1]);
+        }
+        static int told = -1;
+        if (told != (int)swapped) {
+            if (told >= 0 || swapped)
+                LogF("vrcam: openxr - left-handed: %s", swapped ? "on - the LEFT controller is the weapon hand (the game's right hand), the right one the off hand; the menu button stays put ([hands] left_handed)"
+                                                                 : handswap::Wanted() ? "waits - not in VR F4: the controllers as they are" : "off - the controllers as they are");
+            told = (int)swapped;
+            skillwheel::SetSwapped(swapped);   // (the skill panel's hints name the controller that presses each slot)
+        }
+    }
     HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
     FeedCalibration(in, located, focused);
+    PanelGrabStep(in, focused);   // [openxr] panel_grab: a grip that starts on a game panel carries it (before the laser: its stick and trigger)
     MenuZoomPre(in, focused);   // [openxr] menu_zoom: the right stick's Y while the right grip holds a game panel is the zoom's (before the laser parks for it)
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
     MapLaserStep(in, focused);   // [hud] map_click_big: ... nor what the laser on the map takes (the right trigger, while it points at the map)
     MenuZoomPost(in);           // ... and the grip's own press waits until it is let go without a zoom
+    PanelGrabPost(in);          // ... or without a grab ([openxr] panel_grab)
     static D2RVR_XrInput raw;   // the controls before the gestures' takes (BodyWalk recording a gesture is given these: link::PublishXr)
     raw = in;
-    directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
+    directinput::Feed(&in, g_laserWanted.load(), touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
@@ -2004,6 +2201,7 @@ void Publish(bool focused) {
 // the actions are synced. xrApplyHapticFeedback replaces what the motor plays; a session without the input
 // focus (the headset off the head, the dashboard open) is not given any: haptics::Flush drops what waits.
 XrHapticActionInfo HapticInfo(int hand) {   // the hand's own action ([openxr] haptics_hand_actions), else the shared one filtered by hand
+    hand = handswap::Phys(hand);   // [hands] left_handed: the pulse of the weapon hand (1) buzzes the controller that is it - the left one then
     XrHapticActionInfo ai{XR_TYPE_HAPTIC_ACTION_INFO};
     if (g_aHapticHand[hand & 1]) ai.action = g_aHapticHand[hand & 1];
     else { ai.action = g_aHaptic; ai.subactionPath = g_handPath[hand & 1]; }
@@ -2157,6 +2355,7 @@ void Teardown() {   // under g_lock or before the session exists
     AllyPortraitsTeardown();   // the allies' portraits' picture gone
     BannerTeardown();   // the banner's picture gone
     g_panelPlace = PanelPlace{};
+    g_panelSpot = panelgrab::Panel{};   // ([openxr] panel_grab: a new session places it afresh)
     g_gate[0] = g_gate[1] = focusgate::Gate{};   // a new session: what is down at its start is held back too
     for (HudOut& o : g_hudOut) { DestroyChain(o.sc); o = HudOut{}; }   // (a menu's panel's too)
     DestroyChain(g_zoneOut.sc);
@@ -3405,6 +3604,7 @@ XrQuaternionf Q4(const float* q) { return {q[0], q[1], q[2], q[3]}; }
 // the arm is where the palm faces. An adult's lengths: only the forearm's direction counts.
 bool ForearmFromHand(const D2RVR_XrPose& head, const D2RVR_XrPose& aim, int hand, XrVector3f* wrist, XrVector3f* axis, XrVector3f* inside) {
     if (!aim.valid || !head.valid) return false;
+    hand = handswap::Phys(hand);   // [hands] left_handed: the player's own shoulder and palm - the controller's side, not the hero's
     const float side = hand == 1 ? 1.0f : -1.0f;   // right +, left -
     *wrist = Plus(P3(aim.pos), Rot(Q4(aim.rot), {0.0f, -0.02f, 0.09f}));
     const XrVector3f f0 = Rot(Q4(head.rot), {0.0f, 0.0f, -1.0f});
@@ -3456,7 +3656,7 @@ bool HudPose(const D2RVR_XrInput& in, int anchor, bool map, bool orb, float widt
         const D2RVR_XrPose& aim = in.hand[anchor - 1].aim;
         if (!aim.valid) return false;
         if (orb) {
-            const float palm = anchor == 1 ? 1.0f : -1.0f;
+            const float palm = handswap::Phys(anchor - 1) == 0 ? 1.0f : -1.0f;   // (the controller's own axes: its side, [hands] left_handed)
             out->position = Plus(P3(aim.pos), Rot(Q4(aim.rot), {palm * 0.08f, -0.01f, 0.06f}));
         } else {
             XrVector3f wrist, axis, inside;
@@ -4005,7 +4205,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     else if (!g_laserWanted.load()) why = 3;
     else if (!focused) why = 4;
     else if (!g_wnd || GetForegroundWindow() != GetAncestor(g_wnd, GA_ROOT)) why = 5;
-    else if (!in.hand[lh].active || !g_aimSpace[lh] || XR_FAILED(xrLocateSpace(g_aimSpace[lh], g_space, g_fs.predictedDisplayTime, &aim)) ||
+    else if (!in.hand[lh].active || !g_aimSpace[handswap::Phys(lh)] || XR_FAILED(xrLocateSpace(g_aimSpace[handswap::Phys(lh)], g_space, g_fs.predictedDisplayTime, &aim)) ||
              (aim.locationFlags & need) != need) why = 6;
     // the ray against the picture: u, v from its top left
     float u = 0.0f, v = 0.0f;
@@ -4085,7 +4285,8 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         for (int h = 0; h < 2; ++h) {
             gi.claimed = L.takes[h][1];
             gi.grip = (raw[h] & BW_LINK_XRB_SQUEEZE) != 0;
-            gi.spent = h == 1 && g_zoom.state() == menuzoom::Grab::State::Zooming;   // [openxr] menu_zoom moved the panel in this hold
+            gi.spent = (h == 1 && g_zoom.state() == menuzoom::Grab::State::Zooming) ||   // [openxr] menu_zoom moved the panel in this hold
+                       g_pgrabOut.spent[h];   // ... or [openxr] panel_grab carried it
             const bool was = L.gripTap[h].Step(gi);
             if (!was) continue;
             D2RVR_XrHand& o = in.hand[h];
@@ -4208,7 +4409,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     }
     L.trigger = trig;
     const bool want[2] = {acts && L.takes[oh][0] && (raw[oh] & BW_LINK_XRB_TRIGGER) != 0,
-                          acts && L.takes[oh][1] && (raw[oh] & BW_LINK_XRB_SQUEEZE) != 0};
+                          acts && L.takes[oh][1] && (raw[oh] & BW_LINK_XRB_SQUEEZE) != 0 && !g_pgrabOut.spent[oh]};   // ([openxr] panel_grab: a grip carrying the panel is no Shift)
     for (int k = 0; k < 2; ++k)
         if (want[k] != L.key[k]) {
             panelinput::OwnPointer();
@@ -4406,7 +4607,7 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); return; }
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-    const bool aimOk = r.active && g_aimSpace[1] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[1], g_space, g_fs.predictedDisplayTime, &aim)) &&
+    const bool aimOk = r.active && g_aimSpace[handswap::Phys(1)] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[handswap::Phys(1)], g_space, g_fs.predictedDisplayTime, &aim)) &&
                        (aim.locationFlags & need) == need;
     const ULONGLONG now = GetTickCount64();
     const bool big = g_mapClick.Big();
@@ -4617,7 +4818,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
         // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame. [hud] map_two_sizes: never.
         XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
         const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-        if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+        if (g_gripSpace[handswap::Phys(0)] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[handswap::Phys(0)], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
             const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
             const XrVector3f& hp = grip.pose.position;
             const handinv::Place hand = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM,
@@ -4941,6 +5142,52 @@ XrFovf Cropped(XrFovf f) {
     return {atanf(t.l), atanf(t.r), atanf(t.u), atanf(t.d)};
 }
 
+// [render] symmetric_projection (off): both eyes drawn and submitted with one centred frustum holding both (vr/eye_fov.h CentredPair) - the
+// game's light binning ignores the projection's off-axis terms, so an off-axis eye lights the wrong tiles (patches of ground detail riding
+// with the hero on one side of the view). Already centred: runtime_fov=1 on parallel displays, fov_override_centred - nothing changes. Off-axis
+// before it: symmetric_fov / fov_crop (runtime_fov=0, or frame generation's bridge: up and down as the runtime has them, the crop about its own
+// middle), canted displays (each eye reframed into the head's), runtime_fov=2 and fov_override without centred (each eye exactly its angles).
+// Those now hand in each eye's WHOLE picture with the centred fov (OpenXR takes a submitted fov other than the recommended one; the
+// compositor shows the headset's own part of it) - a little softer, the same pixels on a wider angle. F1's window (each eye's frustum the
+// window's edges seen from the eye) is not touched. Told once per change - on / off, centred or not, the frustum moved by over 0.05 deg -
+// and off-axis pairs with the key off too, so a player's log says whether the binning can miss.
+void CentrePair(eyeframe::Frame& fr) {
+    static int said = -1;            // what was told: 0 off and centred anyway, 1 on and centred here, 2 on and already centred, 3 off and off-axis
+    static eyefov::Angles saidFov{};
+    const eyefov::Angles was[2] = {{fr.fov[0].l, fr.fov[0].r, fr.fov[0].u, fr.fov[0].d}, {fr.fov[1].l, fr.fov[1].r, fr.fov[1].u, fr.fov[1].d}};
+    const eyefov::PairAngles p = eyefov::CentredPair(was[0], was[1]);
+    const bool on = g_cfg.symmetricProjection;
+    if (on)
+        for (int e = 0; e < 2; ++e) fr.fov[e] = {p.e[e].l, p.e[e].r, p.e[e].u, p.e[e].d};
+    const int now = on ? (p.changed ? 1 : 2) : (p.changed ? 3 : 0);
+    const float k = 57.29578f, moved = 0.05f / k;
+    const eyefov::Angles& shown = on ? p.e[0] : was[0];
+    const bool fovMoved = now != 0 && (std::fabs(shown.l - saidFov.l) > moved || std::fabs(shown.r - saidFov.r) > moved ||
+                                       std::fabs(shown.u - saidFov.u) > moved || std::fabs(shown.d - saidFov.d) > moved);
+    static ULONGLONG saidAt = 0;   // (a runtime whose fov moves every frame - eye-tracked foveation - told at most every 5 s)
+    if (now == said && (!fovMoved || GetTickCount64() - saidAt < 5000)) return;
+    saidAt = GetTickCount64();
+    const bool quiet = said < 0 && now == 0;   // (off and centred from the start: nothing to say)
+    said = now;
+    saidFov = shown;
+    if (quiet) return;
+    const eyefov::Proj pl = eyefov::Projection(eyefov::FromAngles(was[0].l, was[0].r, was[0].u, was[0].d)),
+                       pr = eyefov::Projection(eyefov::FromAngles(was[1].l, was[1].r, was[1].u, was[1].d));
+    if (now == 0)
+        Log("vrcam: openxr - [render] symmetric_projection=0: both eyes centred anyway (this route draws one centred frustum)");
+    else if (now == 3)
+        LogF("vrcam: openxr - each eye drawn OFF-AXIS: left %.2f %.2f %.2f %.2f, right %.2f %.2f %.2f %.2f deg (left right up down), off-axis x %+.3f / "
+             "%+.3f, y %+.3f / %+.3f (left / right) - the game's light binning takes the picture as centred: lit patches beside their lights can "
+             "show; [render] symmetric_projection=1 draws both eyes centred",
+             was[0].l * k, was[0].r * k, was[0].u * k, was[0].d * k, was[1].l * k, was[1].r * k, was[1].u * k, was[1].d * k, pl.offX, pr.offX, pl.offY, pr.offY);
+    else
+        LogF("vrcam: openxr - [render] symmetric_projection=1: both eyes drawn and submitted with one centred frustum %.2f %.2f %.2f %.2f deg (left right "
+             "up down)%s - the route's own: left %.2f %.2f %.2f %.2f, right %.2f %.2f %.2f %.2f deg, off-axis x %+.3f / %+.3f, y %+.3f / %+.3f",
+             p.e[0].l * k, p.e[0].r * k, p.e[0].u * k, p.e[0].d * k,
+             now == 2 ? " - already centred, nothing changes" : g_bridgeIn ? " - with frame generation's bridge (if the headset goes black, untick it)" : "",
+             was[0].l * k, was[0].r * k, was[0].u * k, was[0].d * k, was[1].l * k, was[1].r * k, was[1].u * k, was[1].d * k, pl.offX, pr.offX, pl.offY, pr.offY);
+}
+
 // [openxr] views_3d, F1 (vr/views3d.h): the game's view from above is a WINDOW of the room - the flat picture's place, width and
 // distance, put where the head looked when F1 came up - with the hero on its middle. Each eye sees the world through the window
 // from where it really is: the frustum is the window's four edges seen from the eye, so the window itself shows the same in
@@ -5109,7 +5356,8 @@ bool OpenFrame(Kind kind) {
                 }
             else if (g_cfg.runtimeFovMode == 2)   // [openxr] runtime_fov=2: exactly the runtime's own angles - each eye's whole image (canted displays as always)
                 for (int e = 0; e < 2; ++e) want[e] = {g_views[e].fov.angleLeft, g_views[e].fov.angleRight, g_views[e].fov.angleUp, g_views[e].fov.angleDown};
-            const eyeframe::Frame fr = eyeframe::Make(q, want, g_cfg.cantedEyes && !g_cfg.fovOverride);
+            eyeframe::Frame fr = eyeframe::Make(q, want, g_cfg.cantedEyes && !g_cfg.fovOverride);
+            CentrePair(fr);   // [render] symmetric_projection: one centred frustum for both eyes, whatever drew them (below: what is submitted follows g_fovUsed)
             TellEyes(g_views, q, fr);
             for (int e = 0; e < 2; ++e) g_fovUsed[e] = {fr.fov[e].l, fr.fov[e].r, fr.fov[e].u, fr.fov[e].d};
             // [openxr] runtime_fov: drawn with the centred frustum that holds both runtime views (above), each eye's own view is the part of
@@ -5174,6 +5422,7 @@ bool OpenFrame(Kind kind) {
             if (g_cfg.menusWaitTracking && again) {
                 g_monoAnchored = false;
                 g_panelPlace.anchored = false;
+                g_panelSpotAgain = true;
                 Log("vrcam: openxr - the input focus is back after a while: the flat picture and a menu's panel come up in front again");
             }
         }
@@ -5236,6 +5485,7 @@ bool OpenFrame(Kind kind) {
             g_recentre.exchange(false)) {   // (the request waits until then: the exchange last)
             g_monoAnchored = false;   // the flat picture comes up ahead again
             g_panelPlace.anchored = false;   // and a menu's panel
+            g_panelSpotAgain = true;         // ([openxr] panel_grab: from its kept place, or ahead)
             g_winAnchor.Reset();   // and F1's window
             ++g_epoch;             // and F3's diorama (it stands in this space)
             g_floorHeldOk = false;  // and the floor F4's standing height is taken from: seen again in the space as it is now
@@ -5427,7 +5677,7 @@ bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     const double t = UsNow();
     handinv::Place pl;
-    if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+    if (g_gripSpace[handswap::Phys(0)] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[handswap::Phys(0)], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
         const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
         const XrVector3f& hp = grip.pose.position;
         pl = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM, (float)cut.h() / (float)cut.w());
@@ -5502,10 +5752,45 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     }
     const bool fresh = !(P.shownUs > 0.0) || t - P.shownUs > 500000.0;   // came up now: placed ahead
     const float yawNow = YawOf(g_views[0].pose.orientation);
+    // [openxr] panel_grab (vr/panel_grab.h): carried by a grip (PanelGrabStep set the spot), put somewhere this opening, or opened at the place
+    // kept from the last grab - hung there, turned to the eyes. A fresh opening (or a recentre) starts from the kept place when it is in view.
+    if (g_cfg.panelGrab && viewgate::F4()) {
+        static double spotOffSince = 0.0;
+        static uint32_t told = 0;
+        const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
+        const panelgrab::V3 eyes{0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)};
+        const panelgrab::Kept& k = g_cfg.panelKept;
+        auto fromKept = [&](const char* why) {
+            g_panelSpot = panelgrab::Panel{};
+            if (panelgrab::InView(k)) {
+                g_panelSpot = panelgrab::PlaceKept(eyes, yawNow, k);
+                if (++told <= 40) LogF("vrcam: openxr - panel grab: the menu's panel %s at its kept place, %.2f m out, %.0f deg to the side, %+.2f m from the eyes ([openxr] panel_grab; %u)",
+                                       why, k.distM, k.sideRad * 57.2957795f, k.upM, told);
+            } else if (k.ok && k.distM > 0.0f && ++told <= 40) {
+                LogF("vrcam: openxr - panel grab: the kept place (%.2f m, %.0f deg, %+.2f m) is out of view - the menu's panel %s in front as without the key (%u)",
+                     k.distM, k.sideRad * 57.2957795f, k.upM, why, told);
+            }
+        };
+        if (g_pgrab.Carrying()) {
+            spotOffSince = 0.0;
+        } else if (fresh || g_panelSpotAgain) {
+            fromKept(fresh ? "opens" : "placed again (recentre)");
+            spotOffSince = 0.0;
+        } else if (g_panelSpot.ok) {   // brought round as the panel in front is: more than 60 deg off the gaze for a second
+            const float offS = panelgrab::Wrap(yawNow - panelgrab::YawTo(eyes, g_panelSpot.at));
+            if (fabsf(offS) <= 1.05f) spotOffSince = 0.0;
+            else if (spotOffSince <= 0.0) spotOffSince = t;
+            else if (t - spotOffSince > 1e6) { fromKept("brought round in front of the gaze"); spotOffSince = 0.0; P.anchored = false; }
+        }
+        g_panelSpotAgain = false;
+    } else if (!g_pgrab.Carrying()) {
+        g_panelSpot = panelgrab::Panel{};   // (the key unticked: HangPanel's own place again)
+    }
+    const bool atSpot = g_cfg.panelGrab && viewgate::F4() && g_panelSpot.ok;
     float off = yawNow - P.yaw;
     off = atan2f(sinf(off), cosf(off));
     bool anchor = fresh || !P.anchored || !g_anchorReady;   // ([openxr] menus_wait_tracking: held to the gaze until the head is tracked)
-    if (!anchor && fabsf(off) > 1.05f) {
+    if (!anchor && fabsf(off) > 1.05f && !atSpot) {
         if (P.offSince <= 0.0) P.offSince = t;
         else if (t - P.offSince > 1e6) { anchor = true; Log("vrcam: openxr - the menu's panel brought round in front of the gaze"); }
     } else {
@@ -5530,6 +5815,15 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     panel.pose.orientation = q;
     panel.pose.position = Plus(P.pos, ahead);
     panel.size = {g_cfg.quadWidthM, g_cfg.quadWidthM * (float)src.h / (float)src.w};
+    if (atSpot) {   // [openxr] panel_grab: at its spot, turned to the eyes; nearer than all of it in sight, its size in view kept (narrower)
+        const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
+        const panelgrab::V3 eyes{0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)};
+        const menuzoom::Limits l = PanelLimits();
+        const float w = panelgrab::WidthAt(panelgrab::Len(panelgrab::Sub(g_panelSpot.at, eyes)), g_cfg.quadWidthM, l.derived ? l.nearM : 0.0f);
+        panel.pose.orientation = FromAxes(XV(g_panelSpot.right), XV(g_panelSpot.up), XV(g_panelSpot.front));
+        panel.pose.position = XV(g_panelSpot.at);
+        panel.size = {w, w * (float)src.h / (float)src.w};
+    }
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
     g_flatShown = FlatShown{panel.pose, panel.size, true};   // where the next frame's laser points
     g_panelTexW = src.w; g_panelTexH = src.h;                // ... and how readable it is nearer / farther ([openxr] menu_zoom)
@@ -6376,6 +6670,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.ipdAuto = f(L"ipd_auto", 1.0f) != 0.0f;                                          // the eye distance: the runtime's (1) or the player's own (0), live
     g_cfg.ipdManualM = eyegap::ClampGap(f(L"ipd_mm", eyegap::kDefaultM * 1000.0f) * 0.001f);
     g_cfg.cantedEyes = f(L"canted_eyes", 1.0f) != 0.0f;   // canted displays: both eyes in the head's frame (1), or the old way (0)
+    g_cfg.symmetricProjection = GetPrivateProfileIntW(L"render", L"symmetric_projection", 0, ini) != 0;   // (live: OpenFrame centres the pair, CentrePair tells it)
     {   // the menus' distance ([openxr] flat_distance_m; unset, FlatVR's panel distance as before) and the
         // panels': FlatVR's "Screen distance while a panel is open" ([screen] menu_distance_m, D2R VR
         // Settings > UI: F4 body, its default as link.cpp's), 0 = the menus' - it never reached native
@@ -6681,6 +6976,27 @@ void LoadSettings(const wchar_t* ini) {
                 Log("vrcam: openxr - the right grip + stick leave a game panel's distance alone ([openxr] menu_zoom=0)");
         }
     }
+    {   // a grip that starts on a game panel carries it, nearer / farther by the hand in / out (D2R VR Settings > UI: F4 body > Menus), live
+        g_cfg.panelGrab = f(L"panel_grab", 0.0f) != 0.0f;
+        if (!g_pgrabSaving.load()) {   // (while a let-go is being written, the place in hand is the newer one)
+            panelgrab::Kept k;
+            k.distM = std::clamp(f(L"panel_grab_dist_m", 0.0f), 0.0f, panelgrab::kMaxM);
+            k.sideRad = std::clamp(f(L"panel_grab_side_deg", 0.0f), -180.0f, 180.0f) / 57.2957795f;
+            k.upM = std::clamp(f(L"panel_grab_up_m", 0.0f), -2.0f, 2.0f);
+            k.ok = k.distM > 0.0f;
+            g_cfg.panelKept = k;
+        }
+        static int said = -1;
+        if (on && (int)g_cfg.panelGrab != said) {
+            said = g_cfg.panelGrab;
+            if (g_cfg.panelGrab)
+                LogF("vrcam: openxr - a game panel in F4 (inventory, stash, trader...): a grip that starts on it carries it, the hand in / out (or its stick) "
+                     "brings it nearer / farther %.0fx; kept %s ([openxr] panel_grab=1; menu_zoom steps aside)", panelgrab::kPushGain,
+                     g_cfg.panelKept.ok ? "where it was let go last" : "nowhere yet - it opens in front");
+            else
+                Log("vrcam: openxr - game panels stay where they hang, no grip carries them ([openxr] panel_grab=0)");
+        }
+    }
     {   // the inventory on the left hand away from town (D2R VR Settings > UI: F4 body > Menus), live
         g_cfg.handInv = f(L"hand_inventory", 0.0f) != 0.0f;
         g_cfg.handInvWidthM = handinv::Width(f(L"hand_inventory_width_m", handinv::kWidthDefault));
@@ -6762,7 +7078,7 @@ void LoadSettings(const wchar_t* ini) {
         gameui::SetLog(&Log);
         gameui::SetOn(wheelOn && f(L"skill_panel_game_look", 0.0f) >= 0.5f);   // (before Configure: the window's layout asks for it)
         {   // [openxr] hands_over_panels: what is nearer than the skill panel (the hands, the weapon) drawn over it on its Gestures tab, by the scene's depth (vr/near_overlay.h)
-            const int asked = nearoverlay::ModeOf(f(L"hands_over_panels", 0.0f));
+            const int asked = nearoverlay::ModeOf(f(L"hands_over_panels", 1.0f));
             const int want = wheelOn ? asked : 0;   // (the Gestures tab is the skill panel's)
             const float dist = f(L"skill_wheel_distance_m", 0.8f);
             g_cfg.nearPanelM = std::isfinite(dist) ? std::clamp(dist, 0.4f, 3.0f) : 0.8f;

@@ -53,6 +53,7 @@
 #include "flat_map_zoom.h"   // [hud] flat_map_zoom: the flat game's map, the same call, + / - in eighths
 #include "plate_world.h"   // the hook's latest anchor for the plate, taken with each read (FollowBox)
 #include "hand_inventory.h"   // [openxr] hand_inventory: which panels are the inventory
+#include "npc_dialog_view.h"   // [hud] npc_dialog_keep_view: which menus are an NPC's talk
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
@@ -82,6 +83,7 @@ uiticket::Ticket g_readQueued;   // ReadItems() queued (ui_ticket.h: a run that 
 std::atomic<uint32_t> g_weapon{D2RVR_WEAPON_UNKNOWN};
 std::atomic<uint32_t> g_menu{0};
 std::atomic<bool> g_pause{false};   // the game's pause menu (Esc: PauseLayout, PauseLayoutGarden) is open - [hud] game_menu_settings' button (vr/flat_menu.h)
+std::atomic<bool> g_npcTalkOnly{false};     // the menus open are only an NPC's talk (its box, its speech scroll): [hud] npc_dialog_keep_view (vr/npc_dialog_view.h)
 std::atomic<bool> g_npcDialogOnly{false};   // the only menu open is an NPC's small dialogue box (Talk / Trade / Cancel), [hud] npc_dialog_no_bar
 std::atomic<bool> g_laserPanels{false};   // [openxr] laser on: d2r-pcvr's extra modal panels are menus too (IsMenuPanel)
 std::atomic<uint32_t> g_set{0};      // 1 / 2: the active weapon set
@@ -1068,6 +1070,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
                 (n == "NpcDialogPanel" ? npc : other) = true;
             }
             g_npcDialogOnly.store(npc && !other);
+            g_npcTalkOnly.store(npcview::TalkOnly(g_panels, [](const std::string& n) { return IsMenuPanel(n); }));
         }
         if (menu != before) {
             // the menu's own panels first: the whole list is cut at 200 characters, and alphabetically the one that made it a menu
@@ -1288,7 +1291,8 @@ int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 bool PauseMenuOpen() { return g_pause.load(); }   // [hud] game_menu_settings: the game's pause menu (Esc) is open
 bool InventoryOnly() { return g_invOnly.load(); }   // [openxr] hand_inventory: the menu open is the inventory alone (the tabbed menu or the inventory panel)
-bool NpcDialogOnly() { return g_npcDialogOnly.load(); }   // an NPC's dialogue box is the only menu open
+bool NpcDialogOnly() { return g_npcDialogOnly.load(); }
+bool NpcTalkOnly() { return g_npcTalkOnly.load(); }   // the menus open are only an NPC's talk (vr/npc_dialog_view.h)   // an NPC's dialogue box is the only menu open
 void SetStickBits(uint32_t bits) { g_stickBits.store(bits & (7u << 13)); }
 void SetLaserPanels(bool on) { g_laserPanels.store(on); }   // from the next panel message on
 uint64_t TitleScreenAt() { return g_titleAt.load(); }

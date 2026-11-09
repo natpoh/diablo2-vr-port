@@ -51,8 +51,8 @@ struct Settings {
     std::atomic<float> stickPitchSpeed{stickpitch::kSpeedDefault};   // deg/s at a full push
     std::atomic<float> stickPitchMin{stickpitch::kMinDefault}, stickPitchMax{stickpitch::kMaxDefault};   // the highest / lowest the stick takes the camera, [camera] pitch's units
     std::atomic<float> stickPitchSign{1.0f};   // flip if pushing up looks down
-    std::atomic<int>   rings{4};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
-    std::atomic<float> modelRadius{1000.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150)
+    std::atomic<int>   rings{2};            // [render] rings: room rings drawn around the hero (cleanroom/drawdist)
+    std::atomic<float> modelRadius{200.0f}; // [render] model_radius: houses, props, units drawn out to this (game: 150; the Draw distance default 200)
     std::atomic<float> bigRadius{0.0f};     // [render] big_radius: trees, houses, walls kept farther by their size (0 = off; D2R VR Unleashed's)
     std::atomic<int>   renderPoolMb{64};    // [render] render_pool_mb: the game's Renderer Pool at least this big (game: 12)
     std::atomic<int>   entityPoolMb{280};   // [render] entity_pool_mb: its Entity System Pool (game: 70) - cleanroom/pools
@@ -111,6 +111,9 @@ struct Settings {
     std::atomic<float> ownSizeNear{100.0f}, ownSizeFar{40.0f}, ownNearM{1.5f}, ownFarM{20.0f};
     std::atomic<float> ownMinPx{24.0f};   // [hud] labels_own_min_px: our labels and names never smaller than this, px of the eye (ownlabels::MinScale)   // [hud] labels_own_*: our labels' size by distance (ownlabels::CurveK)
     std::atomic<bool>  monsterNamesOwn{false};
+    std::atomic<bool>  monsterNamesOwnAllViews{false};
+    std::atomic<int>   gameStages{0};   // [render] game_stages (0 as the game, 1 Low, 2 Potato): for the plate's log line (vr/own_plate_why.h)   // [hud] monster_names_own_all_views: our plate in VR F1, F2, F3 too (vr/hud/labels.cpp MonsterNamesOwnNow)
+    std::atomic<float> plateDepthThird{0.0f}, plateDepthFloor{0.0f};   // [hud_third] / [hud_floor] monster_depth: F2 / F3, the game's plate at its monster's depth, 1 = exactly (vr/plate_look.h OtherView)
     std::atomic<bool>  npcNamesOwn{false};
     std::atomic<bool>  ownDropGame{false};     // [hud] own_labels_drop_game: with ours on, the game's label / plate / hover layer not drawn at all (vr/hud/labels.cpp DropGameLayer)
     std::atomic<bool>  ownLabelsDump{false};   // [debug] own_labels_dump: our atlas to d2rloader\logs\d2r_vr_own_labels.bmp once (view only)
@@ -185,6 +188,17 @@ struct Settings {
     // round. Our effect's fog keeps the ones above (its end held to start + 1)
     std::atomic<float> gameFogStart{150.0f}, gameFogEnd{600.0f};
     std::atomic<float> gameFogCaveStart{150.0f}, gameFogCaveEnd{600.0f};
+    // The game's fog's own keys (Serg 2026-11-09: "у каждого свои ползунки и свой блок"): [fog] game_fog_start / game_fog_end /
+    // game_fog_caves / game_fog_caves_start / game_fog_caves_end / game_fog_caves_strength / game_fog_flat - missing: the old fog's shared
+    // ones as before ([fog] start ... caves_strength, [render] game_drawn_flat), so an ini from before reads as it did
+    std::atomic<bool>  gameFogCaves{true};
+    std::atomic<float> gameFogCaveStrength{1.0f};
+    std::atomic<bool>  gameFogFlat{false};
+    // [fog] game_fog_planes ("Fog drawn by: Fog planes before the player", Serg 2026-11-09): the game's fog as camera-facing planes from its
+    // start to its Full fog, drawn by the step before the effects (vr/fog_before_fx.h Params::planes); their count and softness
+    std::atomic<bool>  gameFogPlanes{false};
+    std::atomic<int>   gameFogPlanesCount{8};
+    std::atomic<float> gameFogPlanesSoft{1.0f};
     std::atomic<float> gameArcaneFogStart{150.0f}, gameArcaneFogEnd{600.0f};
     std::atomic<bool>  arcaneFogIntoSky{true};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
@@ -242,6 +256,7 @@ struct Settings {
     std::atomic<bool>  gameCeiling{false};       // [ceiling] game_ceiling: the vault as the game's own lit rock slab (engitem::CeilingFrame), VR F4
     std::atomic<bool>  gameCeilingWall{false};   // [ceiling] game_ceiling_wall: its rim bent down into a wall of the same rock (the void past its edge closed)
     std::atomic<bool>  gameCeilingBeams{false};  // [ceiling] game_ceiling_beams: the barracks' own wooden ceiling frame under the slab (engitem::CeilingFrame)
+    std::atomic<bool>  holesPatch{false};        // [holes] patch_world: the world's holes patched by the game's own pieces (engitem::HolesFrame; shared/world_holes_list.h), VR F4
     std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
     std::atomic<bool>  gameCeilingDome{false};   // [ceiling] game_ceiling_dome: the cathedral's dome over its chapel in the game's ceiling (engitem::CeilingFrame)
     std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_worldstone_dome: the same over the Worldstone, level 132 (ceilmeasure::kWorldstoneBiome)
@@ -285,6 +300,8 @@ struct Settings {
     std::atomic<bool>  flatCrosshair{true};  // [input] flat_crosshair: flat mouse look, the pointer is our crosshair, not the game's gauntlet
     std::atomic<bool>  flatClickShoot{true}; // [input] flat_click_shoot: flat mouse look, a click with no target under the crosshair = a shot there, never a walk
     std::atomic<bool>  flatAimGround{true};  // [input] flat_aim_ground: flat with our camera, the mouse's point is the cell of the ground drawn under it (raised floors)
+    std::atomic<bool>  flatShotAtCrosshair{true};   // [input] flat_shot_at_crosshair: flat mouse look, a ranged weapon's click on a hostile monster is a shot at the crosshair (vr/flat_shot.h)
+    std::atomic<bool>  shotAtRelease{true};         // [gameplay] shot_at_release: the arrow turned at the server's create to where its shooter aims at that moment (vr/shot_release.h; who hosts decides)
     std::atomic<bool>  flatBodyPick{true};   // [input] flat_body_pick: flat F2 / F3, a unit or object clicked by its body (vr/flat_body.h)
     std::atomic<bool>  flatBodyTarget{true}; // [input] flat_body_target: flat (with flat_body_pick), the map click's target is the unit the crosshair's ray meets (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPick{true};     // [input] vr_body_pick: VR, the game's mouse point (F1 - F3's pointer and crosshair, F4's shift + click aim) by the body too (vr/vr_body_pick.h)
@@ -300,7 +317,9 @@ struct Settings {
     std::atomic<bool>  portalAuto{false};        // [input] portal_auto: flat F2 / F3, walking into a portal enters it by the game's own click (vr/portal_auto.h)
     std::atomic<float> portalAutoRadius{4.0f};   // [input] portal_auto_radius: how near (world units, 2 a cell)
     std::atomic<int>   portalAutoDelay{150};     // [input] portal_auto_delay_ms: how long that near, walking, before it is entered
-    std::atomic<bool>  keepRoomHeights{false};   // [render] floors_stay: a room of the level keeps the height the game first drew it at (no floor that slides on a way back)
+    std::atomic<bool>  roomStitch{true};         // [render] room_stitch: a room built meets its built neighbour nearest the hero (D2R VR Unleashed, Cal; every view; on since 0.209.9)
+    std::atomic<bool>  ceilTopFromLevel{false};  // [ceiling] top_from_level: the game's ceiling over the level's highest built floor (D2R VR Unleashed, Cal; F4)
+    std::atomic<bool>  terrainHeights{false};    // [render] terrain_heights: each ground tile at its own floor's height, stitched to its neighbours (vr/terrain_heights.h)
     std::atomic<bool>  findPrevMatrix{false};
     std::atomic<bool>  dlssPrevFix{false};
     std::atomic<int>   dlssMv{2};              // [render] dlss_mv: 0 off, 1 check vrcam's matrices against the game's motion vectors (logs), 2 hand DLSS the same eye's     // [render] dlss_prev_fix: the game's previous-frame view made the same eye's (experiment)   // [debug] find_prev_matrix: once, where the game keeps past frames' view matrices (DLSS motion vectors)
@@ -373,6 +392,7 @@ struct Settings {
     std::atomic<float> throwAutoaimDeg{15.0f};     // [hands] throw_autoaim_deg: the half-angle of the cone round a throw's line a monster snaps the point in (0 = off)
     std::atomic<float> throwPotionReachPct{throwaim::kDefaultReachPct}; // [hands] throw_potion_reach_pct: a throwing potion's hand-estimated distance scaled (50 - 1500, 800)
     std::atomic<bool>  bowLatency{false};   // [debug] bow_latency: one log line for every bow shot - where the time between the release and the arrow goes (vr/bow_latency.h)
+    std::atomic<bool>  missileProbe{false}; // [debug] missile_probe: every create of a player's missile logged with its params, read only (vr/missile_probe.h)
     std::atomic<bool>  throwTrace{true};    // [debug] throw_trace: after a throw's press the log tells what the hero and the missiles do (vr/throw_trace.h)
     std::atomic<bool>  throwAutoSkill{true}; // [hands] throw_auto_skill: a throw's A press is read by the game as its Throw skill (no skill slot needed)
     std::atomic<bool>  bowDrawArrow{false};  // [bow] draw_shoots_arrow: a bow draw's release is the bow's own arrow, whatever not-bow skill the A slot holds (SlotSkillFor)
@@ -511,6 +531,7 @@ struct Settings {
     std::atomic<bool>  strikeByForce{false};        // [weight] strike_by_force: the weight model's strikes judged by their force (vr/strike_force.h; with monster_bodies)
     std::atomic<bool>  weightMonsterRagdoll{false}; // [weight] monster_ragdoll (probe): ... and their limbs give way to it by their weight (the doll library, vr/doll_lib.h)
     std::atomic<bool>  npcDialogNoBar{true};        // [hud] npc_dialog_no_bar: an NPC's dialogue box's panel without the toolbar (0 = with it, as before)
+    std::atomic<bool>  npcDialogKeepView{false};    // [hud] npc_dialog_keep_view: VR F1-F3 native, an NPC's dialogue keeps the stereo view (vr/npc_dialog_view.h)
     std::atomic<bool>  weightGrabBodies{false};     // [weight] grab_bodies: an empty hand's grip holds a monster's or an NPC's body (vr/grab_bodies.h, grab_wire.cpp)
     std::atomic<float> weightGrabReachCm{8.0f};     // [weight] grab_reach_cm: the palm this near a body's surface takes it
     std::atomic<float> weightGrabBreakCm{80.0f};    // [weight] grab_break_cm: the controller this far off the held hand lets go
@@ -630,10 +651,11 @@ struct Settings {
     std::atomic<float> fogSoft{50.0f};         // [fog] game_fog_soft: how far below the top the fog fades in
     std::atomic<bool>  fogMist{true};          // [fog] game_fog_mist: the game's volumetric mist fogged by distance too (no light band in caves)
     std::atomic<bool>  fogCavesBlack{true};    // [fog] game_fog_caves_black: underground the game's fog black, the void left alone
-    std::atomic<bool>  fogBeforeFx{false};     // [fog] game_fog_before_fx: the fog laid on the scene before the transparent resolve (fogfx::)
+    std::atomic<bool>  fogBeforeFx{true};     // [fog] game_fog_before_fx: the fog laid on the scene before the transparent resolve (fogfx::)
     std::atomic<bool>  fogFxDepth{false};      // [fog] game_fog_fx_depth: with it, the effects fogged by their own distance (fogfx::Params::fxDepth)
     std::atomic<bool>  fogOurCurve{false};     // [fog] game_fog_our_curve: the game's fog by our effect's curve, not its exponential
     std::atomic<bool>  fogKeepsColour{false};  // [fog] fog_keeps_colour: the act's fog colour at every hour, not darkened with the game's light
+    std::atomic<bool>  gameFogColour{false};   // [fog] game_fog_colour: 0 ours (game_fog_<act>_day / _night by the game's time), 1 the game's raw colour (vr/sky/fog_times.h)
     std::atomic<bool>  fogIntoSky{false};      // [fog] fog_into_sky: the fog's colour the sky straight behind each point (D2R_DepthFog.fx SkyBehind)
     // [fog] fog_colour_measured: the fog's colour measured from the game (the measure was game_fog_match's FogSeen - removed 2026-11-08; now: the act's / cave's own colour); off (the default): the fog's colour is the
     // baked sky's at the horizon, a number (vr/sky/three_skies.h HorizonScene) - no measure, no passes

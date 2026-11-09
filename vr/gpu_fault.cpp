@@ -17,6 +17,7 @@
 
 // The numbers below are D3D12's own; if the SDK's header disagrees, this stops here instead of naming things wrongly in a report.
 static_assert(D3D12_AUTO_BREADCRUMB_OP_PRESENT == 17, "D3D12_AUTO_BREADCRUMB_OP numbering");
+static_assert(D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT == 1 && D3D12_AUTO_BREADCRUMB_OP_ENDEVENT == 2, "D3D12_AUTO_BREADCRUMB_OP numbering");
 static_assert(D3D12_AUTO_BREADCRUMB_OP_WRITEBUFFERIMMEDIATE == 26, "D3D12_AUTO_BREADCRUMB_OP numbering");
 static_assert(D3D12_DRED_ALLOCATION_TYPE_COMMAND_QUEUE == 19, "D3D12_DRED_ALLOCATION_TYPE numbering");
 static_assert(D3D12_DRED_ALLOCATION_TYPE_RESOURCE == 34, "D3D12_DRED_ALLOCATION_TYPE numbering");
@@ -28,6 +29,7 @@ void (*g_log)(const char*) = nullptr;
 wchar_t g_dir[MAX_PATH] = L"";             // ..\logs\ beside d2r_vr.ini, "" before Init
 HANDLE g_file = INVALID_HANDLE_VALUE;      // the report file, open while a report is written
 std::atomic<bool> g_removed{false}, g_dumped{false}, g_dredAsked{false}, g_validationAsked{false};
+std::atomic<bool> g_eventsAsked{false};   // [debug] dred_events went in (DRED 1.2: the breadcrumbs keep their texts)
 int g_validation = 0;                      // [debug] d3d12_validation, as asked for
 ULONGLONG g_t0 = 0;                        // the plugin's load, for the report's times
 
@@ -109,6 +111,26 @@ void DumpRecorder(ULONGLONG now) {
 // -- DRED ----------------------------------------------------------------------------------------------------------------------
 // SEH, so no object with a destructor in these: the GPU's own notes are read from memory the driver filled.
 // One unfinished list: its queue (the address the hang watchdog prints), its name, how far it got, and the commands around where it stopped.
+// [debug] dred_events: the events open where the list stopped, from DRED 1.2's texts (n is a NODE1 then: NODE's fields first, the texts after).
+// Static room: no destructors under SEH. DRED gives the texts in the order they were recorded (rising index).
+void SayOpenEvents(const D3D12_AUTO_BREADCRUMB_NODE1* n, UINT done) {
+    static EventName names[8192];
+    static wchar_t open[512];
+    UINT nn = 0;
+    for (UINT i = 0; n->pBreadcrumbContexts && i < n->BreadcrumbContextsCount && nn < 8192; ++i)
+        if (n->pBreadcrumbContexts[i].BreadcrumbIndex <= done)
+            names[nn++] = EventName{n->pBreadcrumbContexts[i].BreadcrumbIndex, n->pBreadcrumbContexts[i].pContextString};
+    const int depth = OpenEvents((const int*)n->pCommandHistory, n->BreadcrumbCount, done, names, nn, open, sizeof open / sizeof *open);
+    const wchar_t* own = nullptr;   // the stopped command's own text (a BeginEvent or SetMarker there)
+    for (UINT i = 0; i < nn; ++i)
+        if (names[i].index == done) own = names[i].text;
+    if (depth || own)
+        Say("vrcam: gpu fault -       events open at the stop (%d deep): %ls%s%ls%s", depth, depth ? open : L"none",
+            own ? " | the stopped command's own text: \"" : "", own ? own : L"", own ? "\"" : "");
+    else
+        Say("vrcam: gpu fault -       events open at the stop: none named (%u texts in this list)", (unsigned)n->BreadcrumbContextsCount);
+}
+bool g_node1 = false;   // the lists being walked are DRED 1.2's (SayBreadcrumbNode may read their texts)
 void SayBreadcrumbNode(unsigned at, const D3D12_AUTO_BREADCRUMB_NODE* n, UINT done) {
     Say("vrcam: gpu fault -   #%u queue %p \"%ls\", list \"%ls\": %u of %u commands done", at, (const void*)n->pCommandQueue,
         n->pCommandQueueDebugNameW ? n->pCommandQueueDebugNameW : L"?", n->pCommandListDebugNameW ? n->pCommandListDebugNameW : L"(unnamed)", done, n->BreadcrumbCount);
@@ -120,6 +142,7 @@ void SayBreadcrumbNode(unsigned at, const D3D12_AUTO_BREADCRUMB_NODE* n, UINT do
         len += (size_t)snprintf(ops + len, sizeof ops - len, "%s[%u]%s%s%s", i == from ? "" : " ", i, i == done ? " >>" : " ",
                                 OpName((int)n->pCommandHistory[i]), i == done ? "<<" : "");
     Say("vrcam: gpu fault -       %s", ops);
+    if (g_node1) SayOpenEvents((const D3D12_AUTO_BREADCRUMB_NODE1*)n, done);
 }
 
 // The whole list is summed first, per queue (which lists are not finished: the first and the last of them - which end of the list is the oldest
@@ -191,13 +214,24 @@ void DumpDred(ID3D12Device* dev) {
         return;
     }
     D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT ab{};
-    const HRESULT h1 = dred->GetAutoBreadcrumbsOutput(&ab);
+    // DRED 1.2 ([debug] dred_events): the same lists with the texts of their BeginEvents / SetMarkers
+    ID3D12DeviceRemovedExtendedData1* dred1 = nullptr;
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 ab1{};
+    HRESULT h1 = E_NOINTERFACE;
+    if (g_eventsAsked.load() && SUCCEEDED(dred->QueryInterface(__uuidof(ID3D12DeviceRemovedExtendedData1), (void**)&dred1)) && dred1)
+        h1 = dred1->GetAutoBreadcrumbsOutput1(&ab1);
     if (SUCCEEDED(h1)) {
+        Say("vrcam: gpu fault - auto-breadcrumbs asked (with the event names): 0x%08lX, first list %p", (unsigned long)h1, (const void*)ab1.pHeadAutoBreadcrumbNode);
+        g_node1 = true;
+        WalkBreadcrumbs((const D3D12_AUTO_BREADCRUMB_NODE*)ab1.pHeadAutoBreadcrumbNode);   // (NODE1 begins with NODE's fields, pNext among them)
+        g_node1 = false;
+    } else if (SUCCEEDED(h1 = dred->GetAutoBreadcrumbsOutput(&ab))) {
         Say("vrcam: gpu fault - auto-breadcrumbs asked: 0x%08lX, first list %p", (unsigned long)h1, (const void*)ab.pHeadAutoBreadcrumbNode);
         WalkBreadcrumbs(ab.pHeadAutoBreadcrumbNode);
     }
     else Say("vrcam: gpu fault - no auto-breadcrumbs (0x%08lX%s): DRED was not on when the device was made", (unsigned long)h1,
              h1 == DXGI_ERROR_NOT_CURRENTLY_AVAILABLE ? ", not currently available" : "");
+    if (dred1) dred1->Release();
     D3D12_DRED_PAGE_FAULT_OUTPUT pf{};
     const HRESULT h2 = dred->GetPageFaultAllocationOutput(&pf);
     if (SUCCEEDED(h2) && pf.PageFaultVA) {
@@ -289,7 +323,10 @@ const char* OpName(int op) {
         "DecodeFrame1", "SetProtectedResourceSession", "DecodeFrame2", "ProcessFrames1", "BuildRaytracingAccelerationStructure",
         "EmitRaytracingAccelerationStructurePostbuildInfo", "CopyRaytracingAccelerationStructure", "DispatchRays", "InitializeMetaCommand",
         "ExecuteMetaCommand", "EstimateMotion", "ResolveMotionVectorHeap", "SetPipelineState1", "InitializeExtensionCommand",
-        "ExecuteExtensionCommand", "DispatchMesh", "EncodeFrame", "ResolveEncoderOutputMetadata"};
+        "ExecuteExtensionCommand", "DispatchMesh", "EncodeFrame", "ResolveEncoderOutputMetadata",
+        // 45-48 (newer runtimes): 46 is the runtime's own mark at a list's start - a list shown at ">>BeginCommandList<<" had not begun
+        // (crash report 292 showed it as "op 46")
+        "Barrier", "BeginCommandList", "DispatchGraph", "SetProgram"};
     if (op >= 0 && op < (int)(sizeof k / sizeof *k)) return k[op];
     static char b[24];
     snprintf(b, sizeof b, "op %d", op);
@@ -325,6 +362,31 @@ void Init(void (*log)(const char*), const wchar_t* iniPath) {
     wcscpy_s(g_dir, iniPath);
     if (wchar_t* slash = wcsrchr(g_dir, L'\\')) slash[1] = 0;
     wcscat_s(g_dir, L"..\\logs\\");
+}
+
+// [debug] dred_events: DRED 1.2's breadcrumb texts, asked for as DRED itself is (the system's d3d12.dll, before the game's device).
+void EnableDredEvents(bool on) {
+    if (!on || g_eventsAsked.load()) return;
+    wchar_t sys[MAX_PATH];
+    UINT n = GetSystemDirectoryW(sys, MAX_PATH);
+    if (!n || n > MAX_PATH - 16) return;
+    wcscat_s(sys, L"\\d3d12.dll");
+    HMODULE m = LoadLibraryW(sys);
+    typedef HRESULT(WINAPI * GetDebugInterfaceFn)(REFIID, void**);
+    GetDebugInterfaceFn fn = m ? (GetDebugInterfaceFn)GetProcAddress(m, "D3D12GetDebugInterface") : nullptr;
+    ID3D12DeviceRemovedExtendedDataSettings1* s = nullptr;
+    const HRESULT hr = fn ? fn(__uuidof(ID3D12DeviceRemovedExtendedDataSettings1), (void**)&s) : E_NOINTERFACE;
+    if (SUCCEEDED(hr) && s) {
+        s->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        s->Release();
+        g_eventsAsked.store(true);
+        if (g_log) g_log("vrcam: gpu fault - DRED's event names on ([debug] dred_events): a lost device's report names the events open where each list stopped");
+    } else if (g_log) {
+        char b[200];
+        snprintf(b, sizeof b, "vrcam: gpu fault - DRED's event names not available (0x%08lX - a Windows older than 10 2004?): the report names the commands only",
+                 (unsigned long)hr);
+        g_log(b);
+    }
 }
 
 void EnableDred(bool on) {
@@ -442,6 +504,44 @@ void DescribeBreadcrumbs(const D3D12_AUTO_BREADCRUMB_NODE* head) {
     CollectBegin();
     WalkBreadcrumbs(head);
     CollectEnd();
+}
+void DescribeBreadcrumbs1(const D3D12_AUTO_BREADCRUMB_NODE1* head) {
+    CollectBegin();
+    g_node1 = true;
+    WalkBreadcrumbs((const D3D12_AUTO_BREADCRUMB_NODE*)head);
+    g_node1 = false;
+    CollectEnd();
+}
+
+int OpenEvents(const int* ops, uint32_t count, uint32_t at, const EventName* names, uint32_t nNames, wchar_t* out, size_t outLen) {
+    if (out && outLen) out[0] = 0;
+    if (!ops) return 0;
+    constexpr int kDepth = 32;
+    const wchar_t* stack[kDepth];
+    int depth = 0, deeper = 0;   // deeper: open past kDepth (counted, not named)
+    uint32_t j = 0;
+    const uint32_t end = at < count ? at : count;
+    for (uint32_t i = 0; i < end; ++i) {
+        while (j < nNames && names[j].index < i) ++j;
+        const wchar_t* text = j < nNames && names[j].index == i ? names[j].text : nullptr;
+        if (ops[i] == D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT) {
+            if (depth < kDepth) stack[depth++] = text && *text ? text : L"?";
+            else ++deeper;
+        } else if (ops[i] == D3D12_AUTO_BREADCRUMB_OP_ENDEVENT) {
+            if (deeper) --deeper;
+            else if (depth) --depth;   // (an EndEvent with none open: the list began inside an event of an earlier list - nothing to close here)
+        }
+    }
+    if (out && outLen) {
+        size_t len = 0;
+        for (int k = 0; k < depth && len + 1 < outLen; ++k) {
+            const wchar_t* parts[2] = {k ? L" > " : L"", stack[k]};
+            for (const wchar_t* q : parts)
+                for (; *q && len + 1 < outLen; ++q) out[len++] = *q;
+        }
+        out[len] = 0;
+    }
+    return depth + deeper;
 }
 
 // The ask itself, under SEH: an adapter whose wrapper (an OpenXR runtime's or an API layer's DXGI hook) went away reads its vtable from freed memory - the

@@ -241,4 +241,29 @@ bool Observing();
 // The hero's creates made at or after `sinceS` (NowS() time), oldest first; the count copied.
 size_t CreatesSince(double sinceS, Made* out, size_t max);
 
+// -- [debug] missile_probe (vr/missile_probe.h, docs/notes/shot_at_release.md): the same hook, read only - every create of a player's missile logged with its
+// whole params block, the units it names and the game's call site, and the creates of one shot summed up (a Multiple Shot's fan). The server's create: offline
+// and as the host (a joined player's game has no server in its process). Live; the hook goes in for it alone too (Install).
+void Probe(bool on);
+// Whose creates are the hero's own (vrcam's GestureHeroId): the lines say "the hero" / "another player".
+void SetHeroIdSource(bool (*fn)(uint32_t* id));
+// The update thread: a shot nothing has come for lately is summed up.
+void ProbeTick();
+
+// -- the shot at release (vr/shot_release.h, docs/notes/shot_at_release.md): the same hook asks, for every create of a player's missile, whether its target
+// cell is to be another - the caller (vrcam's flat shot, [input] flat_shot_at_crosshair) answers for the hero's arrows with the crosshair of that moment. Only
+// the target cell is written (absolute or relative, as the block has it); everything else of the create stays the game's. Offline and as the host.
+struct AimAsk {
+    uint32_t ownerId = 0;
+    int32_t cls = -1;
+    int sx = 0, sy = 0;        // the start cell the create takes (the block's, else the source unit's)
+    int tx = 0, ty = 0;        // its target cell (absolute)
+    bool hasTarget = false;    // the block has a target of its own (0x20 absolute or 0x2 relative)
+    bool targetUnit = false;   // aimed at a unit
+};
+// The answer: true and the new absolute target cell, or false to leave the create as it is. Called on the server's thread.
+void SetAimSource(bool (*fn)(const AimAsk& ask, int* tx, int* ty));
+// Wanted (the hook goes in for it, Install); live.
+void Aim(bool on);
+
 }  // namespace throwborn

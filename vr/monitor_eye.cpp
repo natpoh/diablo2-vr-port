@@ -2,6 +2,9 @@
 
 #include "monitor_eye.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #include <d3d12.h>
 #include <d3dcompiler.h>
@@ -9,9 +12,12 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "gpu_fault.h"
+#include "lens_mask_shape.h"
 #include "monitor_eye_math.h"
 #include "monitor_layers.h"
 
@@ -54,6 +60,69 @@ ULONGLONG g_keptAt = 0;
 // -- eyes by turns: the eye made this frame, for this frame's present -----------------------------------------------------------
 ID3D12Resource* g_made = nullptr;
 int g_madeEye = -1;
+
+// -- what the lens shows of each eye (SetLens), its grid of hidden corners, and the box of the window's shape inside it --------------
+struct LensKept {
+    bool ok = false;
+    std::vector<float> xy;
+    std::vector<uint32_t> idx;
+    uint32_t gen = 0;
+    float drawn[4] = {}, seen[4] = {};
+    bool seenOk = false;
+    uint32_t version = 0;          // moves with every change above
+    // the grid (made at a present: it needs the picture's shape), and the box for one window
+    uint32_t gridVersion = ~0u, gw = 0, gh = 0;
+    double gridAspect = 0;
+    std::vector<uint8_t> hidden;
+    ULONGLONG builtAt = 0;
+    uint32_t boxVersion = ~0u, boxW = 0, boxH = 0;
+    double boxAspect = 0;
+    bool boxOk = false;
+    Rect box{};
+};
+LensKept g_lens[2];
+uint32_t g_lensVersion = 0;
+uint32_t g_boxTold = 0;
+constexpr uint32_t kGrid = 128;   // cells across the picture's width (2304 px: 18 px a cell)
+
+// The box of the window's shape inside what the lens shows of `eye`'s picture (bw x bh), for a window ww x wh; false: none known (the whole
+// picture as before). The grid is made again when the lens or the picture's shape changes (at most 4 times a second), the box when the
+// window's shape changes.
+bool LensBox(int eye, uint32_t bw, uint32_t bh, uint32_t ww, uint32_t wh, Rect* out) {
+    if (eye < 0 || eye > 1 || !bw || !bh || !ww || !wh) return false;
+    LensKept& k = g_lens[eye];
+    if (!k.ok) return false;
+    const double picAspect = (double)bw / bh;
+    if (k.gridVersion != k.version || std::fabs(k.gridAspect - picAspect) > 1e-4) {
+        const ULONGLONG now = GetTickCount64();
+        if (k.gridVersion != ~0u && now - k.builtAt < 250 && k.boxOk) { *out = k.box; return true; }   // (a lens that moves all the time: the last box meanwhile)
+        k.gw = kGrid;
+        k.gh = (uint32_t)std::lround(kGrid / picAspect);
+        if (k.gh < 16) k.gh = 16;
+        if (k.gh > 4 * kGrid) k.gh = 4 * kGrid;
+        const lensshape::Tan drawn{k.drawn[0], k.drawn[1], k.drawn[2], k.drawn[3]};
+        const lensshape::Tan seen{k.seen[0], k.seen[1], k.seen[2], k.seen[3]};
+        k.hidden = lensshape::Corners(k.xy.data(), (uint32_t)(k.xy.size() / 2), k.idx.data(), (uint32_t)k.idx.size(), drawn, k.seenOk ? &seen : nullptr,
+                                      k.gw, k.gh, nullptr);
+        k.gridVersion = k.version;
+        k.gridAspect = picAspect;
+        k.builtAt = now;
+        k.boxVersion = ~0u;
+    }
+    const double aspect = (double)ww / wh;
+    if (k.boxVersion != k.gridVersion || std::fabs(k.boxAspect - aspect) > 1e-4 || k.boxW != bw || k.boxH != bh) {
+        k.boxOk = VisibleBox(k.hidden, k.gw, k.gh, aspect, picAspect, &k.box);
+        k.boxVersion = k.gridVersion;
+        k.boxAspect = aspect;
+        k.boxW = bw;
+        k.boxH = bh;
+        if (k.boxOk && g_boxTold++ < 4)
+            Line("vrcam: monitor eye - the %s eye's picture %ux%u: what the lens shows of it in the window's shape (%ux%u) is x %.3f-%.3f y %.3f-%.3f "
+                 "(the masked edges left out)", eye ? "right" : "left", bw, bh, ww, wh, k.box.u, k.box.u + k.box.w, k.box.v, k.box.v + k.box.h);
+    }
+    if (k.boxOk) *out = k.box;
+    return k.boxOk;
+}
 
 // -- the crop: a full-screen triangle sampling the eye's middle ---------------------------------------------------------------
 const char kShader[] = R"(
@@ -379,6 +448,25 @@ void Configure(int setting, bool fit, bool drawnOnly) {
 
 bool On() { return g_setting.load(std::memory_order_relaxed) != kAsBefore; }
 
+void SetLens(int eye, const Lens* lens) {
+    if (eye < 0 || eye > 1) return;
+    LensKept& k = g_lens[eye];
+    if (!lens) {
+        if (k.ok) { k.ok = false; k.version = ++g_lensVersion; }
+        return;
+    }
+    bool same = k.ok && k.gen == lens->gen && k.seenOk == lens->seenOk && k.xy.size() == (size_t)lens->nVerts * 2 && k.idx.size() == lens->nIdx;
+    for (int i = 0; i < 4 && same; ++i) same = std::fabs(k.drawn[i] - lens->drawn[i]) < 1e-4f && std::fabs(k.seen[i] - lens->seen[i]) < 1e-4f;
+    if (same) return;
+    k.ok = true;
+    k.gen = lens->gen;
+    k.seenOk = lens->seenOk;
+    k.xy.assign(lens->xy, lens->xy + (lens->xy ? (size_t)lens->nVerts * 2 : 0));
+    k.idx.assign(lens->idx, lens->idx + (lens->idx ? lens->nIdx : 0));
+    for (int i = 0; i < 4; ++i) { k.drawn[i] = lens->drawn[i]; k.seen[i] = lens->seen[i]; }
+    k.version = ++g_lensVersion;
+}
+
 void KeepHeld(ID3D12CommandQueue* q, int eye, ID3D12Resource* src) {
     if (EyeOf(g_setting.load()) != eye || !q || !src) return;
     ID3D12GraphicsCommandList* list = Open(q);
@@ -407,7 +495,12 @@ void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye) {
     In in{};
     in.want = want;
     in.shown = eye;
-    in.fit = g_fit.load() && client && FitWanted((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom);
+    // what the lens shows of the eye the window gets (the masked edges left out), in the window's shape - a crop even when the window has the
+    // picture's shape (0.209.18: a square window over a square picture showed the lens mask's black polygon whole)
+    Rect lensBox{};
+    const bool lens = g_fit.load() && client &&
+                      LensBox(want >= 0 ? want : eye, (uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom, &lensBox);
+    in.fit = g_fit.load() && client && (lens || FitWanted((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom));
     in.drawnOnly = g_drawnOnly.load();
     if (g_kept && want >= 0) {
         const D3D12_RESOURCE_DESC k = g_kept->GetDesc();
@@ -434,7 +527,7 @@ void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye) {
     const D3D12_RESOURCE_STATES srcState = st.from == Source::Made ? D3D12_RESOURCE_STATE_RENDER_TARGET : kRest;
     monitorlayers::Part part = monitorlayers::Whole();   // what of the eye's picture the back buffer holds now
     if (src) {
-        const Rect r = Crop((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom);
+        const Rect r = lens ? lensBox : Crop((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom);
         if (st.crop && DrawCrop(list, src, srcState, bb, r)) { ++g_n.cropped; part = {r.u, r.v, r.w, r.h}; }
         else if (src != g_kept || !st.keep) CopyPicture(list, src, srcState, bb, D3D12_RESOURCE_STATE_PRESENT);   // (the eye wanted, its crop failed: as it is)
         if (eye != want) ++(st.from == Source::Made ? g_n.byMade : g_n.byKept);

@@ -28,6 +28,7 @@
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
 #include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
 #include "allies_place.h"    // [hud] allies_place: where the allies are shown (F4), and the one-time move of the three old ticks
+#include "holes_assets.h"    // [holes] patch_world: the world's holes patched from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
 #include <tlhelp32.h>
@@ -65,6 +66,7 @@
 #include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 (the rows greyed on a card without it)
 #include "quality_presets.h"   // the Quality presets' table, the headset window's too (shared/quality_presets.h)
 #include "draw_distance.h"   // Home's Draw distance: one slider's stops over the room rings, model radius, fog and sky dome (tested)
+#include "../../vr/draw_by.h"   // [fog] game_fog / enabled as one way (the Fog tab's selector, as the headset's)
 #include "window_json.h"     // the game's windowed size in Settings.json and what each platform does to it (the plugin's policy, tested)
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
 #include "crash_reply.h"         // our reply to a crash report the player sent: sent.jsonl / replies.jsonl, the answer, the notice (tested)
@@ -372,6 +374,15 @@ constexpr unsigned kBarArm = (1u << 1) | (1u << 2), kBarBody = (1u << 3) | (1u <
 
 constexpr const wchar_t* kSkyPicture = L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. "
                                        L"Empty (x) = the shader draws this sky itself.";
+constexpr const wchar_t* kGameFogDawn = L"The game's fog colour at dawn in this act's open air (the game's light: dawn's both parts). Empty = the "
+    L"day colour in the game's own dawn cast - the day colour times the game's own change from its day fog to its dawn fog, per colour, each "
+    L"part of the dawn its own (from the act's lighting files). Live.";
+constexpr const wchar_t* kGameFogDusk = L"The game's fog colour at dusk in this act's open air (the game's light: dusk's both parts). Empty = the "
+    L"day colour in the game's own dusk cast - the day colour times the game's own change from its day fog to its dusk fog, per colour, each "
+    L"part of the dusk its own (from the act's lighting files). Live.";
+constexpr const wchar_t* kGameFogDay = L"The game's fog colour by day in this act's open air (the game's light: the day). Empty = the old fog's colour of this act (World > the act's Fog colour), as it is now. Live.";
+constexpr const wchar_t* kGameFogNight = L"The game's fog colour at night in this act's open air (the game's light: the night). "
+    L"Empty = the old fog's colour of this act times \"Sky at night\", as the old fog darkened at night. Live.";
 constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves included; the low part of the sky sinks into it. "
                                       L"Empty (x) = the sky's horizon colour, or dark without a sky.";
 // Draw distance (shared/draw_distance.h): the slider on Home and on its own tab
@@ -387,8 +398,16 @@ constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves in
            L"the Potato light (its brightness right below and on Render cost); monsters and objects out to 150 (the game's own), big objects 200. "  \
            L"Low (a weak graphics card): only the game's lit world, the sun's shadows and the tone map (Render cost: the game's own render "  \
            L"stages); monsters and objects out to 150, big objects 200. "  \
-           L"Medium: the game's whole frame; monsters and objects out to 210, big objects 600 - the only other difference. "  \
+           L"Medium: the game's whole frame; monsters and objects out to 200, big objects 600 - the only other difference. "  \
+           L"The Draw distance slider (Home) sets the distance apart: 1 is Low and Potato's, 2 Medium's, farther past it. "  \
            L"Room rings and the models' radius take effect at the next game start. Changing any of them by hand shows Custom."),  \
+    /* [render] preset_game_options (shared/quality_presets.h kGameOptions, Serg 2026-11-09): the preset also sets the game's own Video options */  \
+    Toggle(L"render", L"preset_game_options", L"... the preset also sets the game's own graphics options", 0,  \
+           L"Ticked: picking a Quality preset also changes three of the game's own Options > Video settings, as if you had set them in its menu "  \
+           L"(the game keeps them in its Settings.json): Potato - Ambient Occlusion off, Shadow Quality low, Light Quality low; Low - all three "  \
+           L"medium; Medium - Ambient Occlusion high, Shadow Quality high, Light Quality high. They are set once, when the preset changes (or when "  \
+           L"you tick this): a change you make later in the game's menu stays. Anti aliasing, DLSS and the resolution scale are never touched. "  \
+           L"The log says the old and new values. Live, in every view. Unticked: the game's options are never touched, as before."),  \
     Only(kVr, Beside(ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"run", L"Auto",  \
            L"Auto graphics tuning, in the running game: stand still (in town is best) with the headset on. The game measures its frames a "  \
            L"second with your settings. Fine at the headset's rate: nothing changes, on any graphics card. Short of it, it steps down in this "  \
@@ -404,12 +423,16 @@ constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves in
     Only(kVr, Needs(L"render", L"potato_light", 1, Slider(L"render", L"potato_light_brightness_caves", L"... Potato light: brightness in caves", 0.3f, 5.0f, 0.05f, 1.0f,  \
            L"The Potato light's brightness underground - caves, dungeons, crypts, the sewers, every area under a roof of rock - where the world has no sun and usually wants more light than in the open. 1 = each surface's own colour. The same slider as on the headset's Video page. Live."))),
 
-constexpr const wchar_t* kDrawDistanceTip = L"Sets five things at once, near (1) to far (8): how many rings of rooms round you the game draws, how far "
-                                            L"out it draws monsters and objects (the models' radius: the edge of the drawn world), the game's sky dome "
-                                            L"at that edge, and where the fog starts and is full - outdoors full just before the dome (at 0.9 of the "
-                                            L"radius), in caves at the radius - so nothing pops out of the void. 3: 2 rings, models out to 200. Farther "
-                                            L"costs processor time (more rooms and models each frame); nearer is lighter. The line under it says what "
-                                            L"is set now. Custom: one of the single values was changed by hand - moving the slider sets them all again. Live.";
+// Since 2026-11-09 its stops are shared/draw_distance.h kReach (Serg: "ползунок дравдистанс давай вернем", the default as today): the Quality
+// presets' distance at 1 (Low, Potato) and 2 (Medium, the default), farther past it; the sky dome is no longer the slider's.
+constexpr const wchar_t* kDrawDistanceTip = L"How far round you the world is drawn, near (1) to far (7): how many rings of rooms round you the game "
+                                            L"draws, how far out it draws monsters and objects (the models' radius), and where the fog starts and is "
+                                            L"full, outdoors and in caves - so the farther world is seen and nothing pops out of the void. 1: the Low "
+                                            L"and Potato presets' distance (models out to 150). 2, the default: Medium's - 2 room rings, models out to "
+                                            L"200, the game's fog 55 to 140 (in caves 65 to 200). 3 - 7 draw farther and open the fog with it; they "
+                                            L"cost processor time (more rooms and models each frame). The line under it says what is set now. Moving "
+                                            L"it shows Custom in the Quality preset; picking a preset sets the slider back to its stop. Custom here: "
+                                            L"one of the values was changed by hand - moving the slider sets them all again. Live.";
 // [view] keys (vr/view_keys.h): which F keys pick the view - Home, under the views, flat and VR. A player (barti4033, 2026-11-04) has his
 // main skills on F1 / F2 / F4 and a panic teleport on F3; Serg's idea: Shift + F1 instead of F1. 0 = as before.
 constexpr const wchar_t* kViewKeysTip =
@@ -844,11 +867,13 @@ std::vector<Item> g_items = {
     // trade distance for frames). "@distance": its stops are shared/draw_distance.h; nothing of its own is kept - it shows the stop the
     // keys match, else Custom (ReadDrawDistance), and a stop writes them all (WriteDrawDistance). The single sliders stay where they are;
     // all of them together, with the slider again, on the Draw distance tab.
-    // (Serg 2026-11-08, 0.208: "наверно надо будет удалить ползунок draw distance - он нарушает правила игры" - the slider and the single
-    // distance sliders hidden everywhere; the presets alone set rings / model_radius / big_radius; the items kept hidden: the keys read, the presets matched)
-    Hide(InColumn(1, Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. Each single value is on the Draw distance tab (and where it was: Performance, World, Sky); changing one of them shows Custom here."))),
-    Hide(Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip)),
-    Hide(Status(L"draw_distance", L"")),
+    // (Serg 2026-11-08, 0.208: "наверно надо будет удалить ползунок draw distance - он нарушает правила игры" - hidden then; back 2026-11-09 as an
+    // option: "ползунок дравдистанс давай вернем", "по умолчанию поставим как сейчас 2", "комнаты 200 дистанция". Its stops: drawdistance::kReach -
+    // 1 the Low / Potato presets' distance, 2 Medium's and the default, farther past it. The single distance sliders (Performance, World) and the
+    // Draw distance tab stay hidden: the slider and the presets set them.)
+    InColumn(1, Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius and the fog together, so the fog is full before the drawn world ends. 2 is the default - the distance of the Medium preset (1: Low and Potato's); farther shows more of the world and costs processor time. Moving it shows Custom in the Quality preset.")),
+    Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kReachCount, 1, (float)(drawdistance::kReachDefault + 1), kDrawDistanceTip),
+    Status(L"draw_distance", L""),
     // D2RLoader and the mod's effect: both ways to play (flat had no Install ReShade - a player found it in VR only, 2026-10-11 - the whole Status
     // group was VR's). Since 0.203 no ReShade at all (vr/plugin/reshade_load.cpp): no Install ReShade, no buttons for the player's own dxgi.dll ReShade.
     InColumn(2, Group(L"The game and the mod", L"Checks and installs what the mod needs: D2RLoader (the mod runs only under it) and the mod's own effect (the sky, the fog and the ceiling - D2R VR draws them itself, no ReShade needed). A ReShade of your own is left as it is. The button to make the Arcane Sanctuary sky.")),
@@ -1187,6 +1212,9 @@ std::vector<Item> g_items = {
     Only(kVr, Needs(L"render", L"potato_light", 1, Choice(L"render", L"potato_light_colour", L"... Potato light: colour", 0,
            {L"Neutral (white)", L"Warm", L"Cool", L"The area's own (its sky and fog colour)"},
            L"The colour of the one light. The area's own: a soft tint of the area's sky and fog colour (its hue only - the brightness is the slider's), followed as you move between areas. Live."))),
+    // [render] potato_light_game (docs/notes/lighting_study.md, 2026-11-09): the Potato light in the game's own ambient and sun / moon colours
+    Only(kVr, Needs(L"render", L"potato_light", 1, Toggle(L"render", L"potato_light_game", L"... Potato light in the game's own colours", 0,
+           L"Ticked: the Potato light is not one even colour but the game's own light as its lit pass gets it - the area's sky light (its colours and strength from the area's lighting file for this time of day) and the sun or the moon (its colour, power and the side it shines on) - still without shadows, torches, light loops or reflections, so it stays as cheap. The grass and the ground keep the colour the game gives them, by day, at dusk and at night. The brightness sliders still work; the colour choice is not used. Native OpenXR first person (F4). Live. Unticked: one even light, as before."))),
     Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato, Low, Medium) sets everything here at once: the game's render stages, the draw distance, the fog and the sky. Room rings, models and the frame cap need a game restart."),
     // the preset, Auto beside it and the Potato light's sliders under it (QUALITY_PRESET_ITEMS above: also on Home)
     QUALITY_PRESET_ITEMS
@@ -1233,34 +1261,15 @@ std::vector<Item> g_items = {
            L"measures and the distance blur - while the medallions, the labels, the toolbar, the phantoms and the interface stay as they are. "
            L"For seeing what the sky and the fog cost (the log's \"native effects, 10 s\" line says each pass's time). The game's own sky and "
            L"fog stay the game's. Live. Ticked: as before."),
-    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
-    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150.")),
+    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 2, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
+    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 200, L"The game's own is 150.")),
     Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
            L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
-           L"ours (VR F4; the flat game too with \"The game draws them in the flat game too\"). Our effect (old): the fog shader paints the sky "
+           L"ours (VR F4; the flat game too with \"The game draws the sky in the flat game too\"). Our effect (old): the fog shader paints the sky "
            L"in the void. Either goes with either fog (\"Fog drawn by\"): the sky's low part sinks into the fog's colour both ways. Live - the "
            L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
            L"already running."),
-    Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
-           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers (Fog start / Full fog below) - no "
-           L"frame time of ours, drawn whether \"Distance fog\" is ticked or not (VR F4; the "
-           L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
-           L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
-    Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"Our effect's distance fog, with \"Fog drawn by: Our effect (old)\". The game's fog is drawn by \"Fog drawn by: The game's fog\" "
-           L"alone - unticking this never takes it away (the presets leave it unticked: the game draws the fog). With the sky on, ours fades "
-           L"into the sky."),
-    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
-           L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
-           L"Where the fog begins. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
-           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the "
-           L"game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
-           L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
-           L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
+    Status(L"fog_moved_perf", L"The fog - who draws it, its distances, caves and colours - is on the Fog tab."),
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
            L"A painted sky over the black void outdoors. Who draws it: \"Sky drawn by\" above (our effect, or the game's dome)."),
     Toggle(L"ceiling", L"enabled", L"Ceiling in caves and dungeons", 0,
@@ -1276,11 +1285,11 @@ std::vector<Item> g_items = {
     // same items as on Performance, World and Sky (twins: the same keys and words, kept in step by SyncTwins / ShowDrawDistance).
     Only(0, Tab(L"Draw distance")),   // (0.208: the tab out of the strip - the slider breaks the game's rules, its fog / sky twins are on World and Sky)
     Group(L"Draw distance", L"How far round you the world is drawn, in one slider: the room rings, the models' radius, the game's sky dome at its edge and the fog together, so the fog is full just before the drawn world ends. Nearer runs faster on a weak processor or graphics card. The single values are below (and where they were: Performance, World, Sky); changing one of them shows Custom on the slider."),
-    Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kCount, 1, (float)(drawdistance::kDefault + 1), kDrawDistanceTip),
+    Slider(L"@distance", L"stop", L"Draw distance (near - far)", 1, (float)drawdistance::kReachCount, 1, (float)(drawdistance::kReachDefault + 1), kDrawDistanceTip),
     Status(L"draw_distance", L""),
     Group(L"What the slider sets", L"Each value the Draw distance slider writes, to set by hand. The fog's are greyed while the distance fog is off, the sky dome's while the game does not draw the sky (Sky tab: \"Sky drawn by\"), the cave dome's while it is off."),
-    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough."),
-    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150."),
+    Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 2, L"Extra room rings around the hero. With fog, 4-6 is enough."),
+    Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 200, L"The game's own is 150."),
     Slider(L"render", L"big_radius", L"Big objects: trees, houses, walls farther (0 = off)", 0, 1000, 100, 0,
            L"Trees, houses and walls stay drawn farther than the model visibility radius - the bigger, the farther (30 times its height or half "
            L"its width), out to this many units (300 - 1000; 100 and 200 count as 300). Stones, grass and monsters keep the model visibility "
@@ -1293,14 +1302,14 @@ std::vector<Item> g_items = {
            L"use with each change."))),
     Toggle(L"fog", L"enabled", L"Distance fog", 0,
            L"A distance fog. Who draws it: the Sky tab's \"Fog drawn by\" (our effect, or the game itself). With the sky on, it fades into the sky."),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150,
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"game_fog_start", L"Fog start", 0, 1000, 5, 150,
            L"Where the fog begins. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600,
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"game_fog_end", L"Full fog", 10, 2000, 10, 600,
            L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the "
            L"game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"game_fog_caves_start", L"Fog start in caves", 0, 1000, 5, 150,
            L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
+    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"game_fog_caves_end", L"Full fog in caves", 10, 2000, 10, 600,
            L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
     Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
@@ -1683,6 +1692,13 @@ std::vector<Item> g_items = {
 
 #endif
     Tab(L"Controls"),
+    // [hands] left_handed (vr/hand_swap.h; Serg, 2026-11-05: "галочка поменять контроллеры местами для левшей"): the controllers traded once where they come in
+    Only(kVr, Group(L"Hands", L"Which VR controller is the weapon hand.")),
+    Only(kVr, Toggle(L"hands", L"left_handed", L"Left-handed: swap the controllers", 0,
+           L"The LEFT controller holds the main weapon and strikes with it, the right one is the off hand (shield, second weapon, the hand that holds "
+           L"the bow). The buttons, stick and trigger swap too: what the right controller did, the left one does. The inventory and the map in the "
+           L"hand, the wrist orbs, the belt, throws, the bow and vibration follow. The menu button stays where it is. First person (F4) only; the "
+           L"game's own weapons are not changed. Unticked = as before. Live.")),
     Group(L"Walking (left stick)", L"How the left stick walks the hero: walk where you look, and fixes for when walking goes the wrong way or diagonals drift after a turn."),
     Toggle(L"stick", L"rotate", L"Walk where I look", 1, L"The left stick is turned by the camera's yaw, so forward is forward in the view."),
     Toggle(L"stick", L"exact", L"Exact mode", 0,
@@ -1751,6 +1767,11 @@ std::vector<Item> g_items = {
     Only(kFlat, Toggle(L"input", L"flat_body_pick", L"Flat: click a monster, an NPC or a chest by its body", 1,
            L"Third and first person: monsters, NPCs, doors, shrines, chests and portals near you are clicked by their body, not only by "
            L"their feet (from sajmonsoft's flat fork). Unticked: by the feet, as the game's own view from above has it.")),
+    Only(kFlat, Toggle(L"input", L"flat_shot_at_crosshair", L"Flat: a bow or throw goes exactly into the crosshair (no auto-aim)", 0,
+           L"With a bow, a crossbow, a javelin or a throwing weapon in hand, in first and third person: a click on a monster goes where the "
+           L"crosshair is, as a shot in place - not at the monster the game finds near the crosshair, the hero does not walk to it, and a held "
+           L"button does not keep shooting it when you look away. Items, NPCs, hirelings, chests, doors and portals are clicked as ever. "
+           L"Unticked: the game's own attack at the monster under the pointer.")),
     // [input] vr_body_pick, vr_body_pick_hand (GitHub issue #15, vr/vr_body_pick.h): the same in VR, along each view's ray
     Only(kVr, Toggle(L"input", L"vr_body_pick", L"VR: point at a monster, an NPC or a chest by its body", 1,
            L"The mouse pointer (F1, F3), the crosshair (F2 with mouse look) and the hand's Shift + click aim pick monsters, NPCs, doors, shrines, "
@@ -1945,7 +1966,8 @@ std::vector<Item> g_items = {
            L"Green: in. Then the ring melts away. Inside it, what the blow did: the life it took (a critical hit in gold and larger; one swing "
            L"through several monsters summed, with x2, x3 ...), or miss, blocked, dodged, avoided. Nothing here changes the game: its attack "
            L"speed, its roll and its damage are its own - the ring only shows its timing so you swing with it, not into it. Single player or a "
-           L"game you host: exact. Joined to someone's TCP/IP game: the ring from your hero's own animation (close, not exact) and no numbers. "
+           L"game you host: exact. Joined to someone's TCP/IP game: the ring from your hero's own animation (close, not exact), the numbers only "
+           L"when the host sends them (its \"Host: send the joined players what their blows did\"). "
            L"The monitor needs D2R_DepthFog.fx on in ReShade. Unticked: nothing shown. Live."),
     Needs(L"hud", L"swing_timer", 1, Choice(L"hud", L"swing_timer_style", L"Swing timer: where", 0, {L"Ring in the middle", L"Bar at the top"},
            L"Ring in the middle: a small ring round the middle of the view (in VR before the eyes, on the monitor round the crosshair), the "
@@ -1956,7 +1978,12 @@ std::vector<Item> g_items = {
            L"Joined to someone else's TCP/IP game, VR first person (F4). The host's game decides when your hero may attack again, and a touch it refuses is lost. Ticked: your PC counts your hero's attack the way the swing timer does (from your hero's own animation) and sends a touch only when the host will take it - a touch while it would refuse is not sent (\"too soon\"), one in the last moments of the attack is held and sent as it ends, so it is never thrown away on the way. The attack, its speed and its roll stay the host's game's. Works from your second attack on (the first one is measured). Single player or a game you host: nothing changes (your own game decides at once). Unticked: every touch is sent as it comes. Live."),
     Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_numbers", L"Swing timer: show what the blow did", 1,
            L"The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone (\"too soon\" "
-           L"still shows). Single player or a game you host only: a joined player's blows are rolled on the host's machine. Live.")),
+           L"still shows). Joined to someone's TCP/IP game: only when the host sends them (a joined player's blows are rolled on the host's "
+           L"machine). Live.")),
+    // [multiplayer] share_hit_outcomes (vr/hit_share.h, Serg 2026-11-08: "нужно видеть хит, мисс и т.п."; "кто сервер того галочка и учитывается при
+    // передаче"): the host's box, not under the timer's - a host may send without showing a timer himself
+    Toggle(L"multiplayer", L"share_hit_outcomes", L"Host: send the joined players what their blows did", 0,
+           L"You host a TCP/IP game: each joined player with this mod version gets what his own blows did - hit, miss, blocked, dodged, avoided, the life taken, a critical hit - and his swing timer shows it as yours does (he needs \"Swing timer: show what the blow did\" ticked). The roll and the damage happen on the host's machine only, so without this a joined player's timer has no numbers. Only the host's box counts: joined to someone else's game, yours means nothing there. A few bytes per blow; nothing in the game changes. Live."),
     // [hud] swing_timer_reasons (vr/swing_reason.h, Serg 2026-11-06: the player sees in the headset what went wrong with each swing - the shaft, too
     // slow, too short ...): melee_touch's own refusals in the same ring
     Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_reasons", L"Swing timer: say why a touch was no attack", 1,
@@ -1965,6 +1992,14 @@ std::vector<Item> g_items = {
            L"swing against the speed it needs (3.1/5.0, m/s); weak - a strike too weak for the weapon; short - the swing or thrust was too short to "
            L"count; push - a thrust with too little jab; wrong way - the blade moved away from the monster or backward; shield - its shield or weapon "
            L"stopped the blow. Nothing here changes the game or what counts as a hit: it only tells you. Live.")),
+    // [gameplay] shot_at_release (vr/shot_release.h, docs/notes/shot_at_release.md; Serg 2026-11-06: "куда прицел - туда стрела"): who hosts decides, as the boxes above
+    Toggle(L"gameplay", L"shot_at_release", L"The arrow goes where you aim as it leaves the bow", 0,
+           L"A bow or crossbow. The game aims a shot when you click and lets the arrow go half a second or more later, at the animation's action "
+           L"frame; if you turned the camera in between, the arrow went where you aimed at the click. On: the arrow leaving the bow is turned to "
+           L"where the crosshair is at that moment (2D first and third person); a Multiple Shot's fan turns as a whole. Strafe and Guided Arrow "
+           L"pick their own targets and are left as the game made them. Only the arrow's direction changes - its speed, range, hit and damage are "
+           L"the game's. A TCP/IP game: who hosts decides - the host's server turns every player's arrows by the aim each player's mod sends "
+           L"(the same version of the mod); a joined player's own box means nothing there. Unticked: the arrow goes where the click aimed. Live."),
     // [hud] game_menu_settings (vr/flat_menu.h, vr/host_rules.h): the flat game's settings from the pause menu, the host's rules shown (2026-11-05,
     // Pavel's idea: Counter-Strike's list of a server's rules on a key and in the console)
     Group(L"In-game settings and the host's rules", L"A D2R VR settings button in the game's pause menu (2D on the monitor) and a list of the host's rules above in co-op."),
@@ -2298,6 +2333,11 @@ std::vector<Item> g_items = {
            L"person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the "
            L"picture has settled (a few seconds) - two passes then, never a black eye. On by default (\"Native one pass\" in 3D in the "
            L"headset). Takes effect at the next game start. Off: two passes (\"Native two passes\")."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_reset_guard", L"... never again a list the game took up", 1,
+           L"With the right eye drawn again on the graphics card: the game may start a new recording in one of its lists as soon as it has sent "
+           L"it, and by the time the right eye sends the same list again it holds other commands - an unfinished one takes the graphics device "
+           L"away, a later one makes the card draw from what is not there yet (it hangs). On: such a frame's right eye is the left picture "
+           L"once, and the log says so. Off: told in the log, sent again anyway (as before). Live."))),
     Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
            L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
            L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
@@ -2524,6 +2564,19 @@ std::vector<Item> g_items = {
     Slider(L"hud_third", L"labels_size", L"Item labels: size, %", 20, 150, 5, 100,
            L"The names of items on the ground and their boxes in third person (F2), smaller or larger, each about the point under it. "
            L"100 = the game's own. Item tooltips and all other text keep their size."),
+    // [hud_third] monster_depth (vr/plate_look.h OtherView): the game's plate at its monster's depth in F2 (martin039383's doubled bar, Serg 2026-11-09)
+    Group(L"Monster plate, third person", L"The name and health bar over the monster you target in third person (F2): at its monster's depth, so it does not look doubled."),
+    Slider(L"hud_third", L"monster_depth", L"Monster plate: at its monster, %", 0, 150, 5, 0,
+           L"The name and health bar the game hangs over the monster you target, in third person (F2): in stereo the game draws it on the same spot in "
+           L"both eyes, so it floats at the screen's depth and looks doubled when you look at the monster. Here it is moved to its monster's own "
+           L"depth, by the point over the monster's head: 100 = exactly there, 0 = where the game leaves it. Our own plate (Name over a monster: "
+           L"our own, in every view) stands there by itself; this is for the game's. Live."),
+    // [hud] npc_dialog_keep_view (vr/npc_dialog_view.h): an NPC's talk keeps the stereo view in VR F1 - F3 (the same key on the F3 tab)
+    Toggle(L"hud", L"npc_dialog_keep_view", L"Talking to an NPC keeps the view (test)", 0,
+           L"In the headset (native OpenXR), talking to an NPC opened its small Talk / Trade / Cancel box as a menu, and in F1, F2 and F3 a menu puts up "
+           L"the flat picture of the game far ahead: the view flew away. On: while that box (or its speech scroll) is the only menu open, the view "
+           L"stays as it was, the box drawn in the game's picture as the toolbar is; pick Talk / Trade with the controller. Trade, the stash and every "
+           L"other screen still go to the flat picture. F1, F2, F3; F4 keeps its own way (Menus as a panel). Live. Off: the flat picture, as before."),
 
     Only(kVr, Tab(L"UI: F3 floor")),
     Group(L"Toolbar, the game on your floor", L"The toolbar when the game lies on your floor (F3). The screen moves with your head, so make the toolbar smaller to keep it out of the way, and set how near it sits in real stereo. Needs D2R_DepthFog.fx on in ReShade."),
@@ -2566,6 +2619,19 @@ std::vector<Item> g_items = {
            L"the game makes room for them at that size. 100 = the game's own. Through the game's label code: on "
            L"another game build it does nothing (vrcam's log says so). Only on the floor (F3); item tooltips and every "
            L"other text keep their size."),
+    // [hud_floor] monster_depth (vr/plate_look.h OtherView): the game's plate at its monster's depth in F3 (martin039383's doubled bar, Serg 2026-11-09)
+    Group(L"Monster plate, the game on your floor", L"The name and health bar over the monster you target on the floor (F3): at its monster's depth, so it does not look doubled."),
+    Slider(L"hud_floor", L"monster_depth", L"Monster plate: at its monster, %", 0, 150, 5, 0,
+           L"The name and health bar the game hangs over the monster you target, in F3, the game on your floor: in stereo the game draws it on the same spot in "
+           L"both eyes, so it floats at the screen's depth and looks doubled when you look at the monster. Here it is moved to its monster's own "
+           L"depth, by the point over the monster's head: 100 = exactly there, 0 = where the game leaves it. Our own plate (Name over a monster: "
+           L"our own, in every view) stands there by itself; this is for the game's. Live."),
+    // [hud] npc_dialog_keep_view: the same key as on the F2 tab
+    Toggle(L"hud", L"npc_dialog_keep_view", L"Talking to an NPC keeps the view (test)", 0,
+           L"In the headset (native OpenXR), talking to an NPC opened its small Talk / Trade / Cancel box as a menu, and in F1, F2 and F3 a menu puts up "
+           L"the flat picture of the game far ahead: the view flew away. On: while that box (or its speech scroll) is the only menu open, the view "
+           L"stays as it was, the box drawn in the game's picture as the toolbar is; pick Talk / Trade with the controller. Trade, the stash and every "
+           L"other screen still go to the flat picture. F1, F2, F3; F4 keeps its own way (Menus as a panel). Live. Off: the flat picture, as before."),
 
 #if D2RVR_FIRST_PERSON
     Only(kFlat, Tab(L"UI: F3 eyes")),
@@ -2700,6 +2766,15 @@ std::vector<Item> g_items = {
            L"bumper, where the laser does not have it) comes when you let go without moving the panel. Off: as before.")),
     Needs(L"openxr", L"menu_zoom", 1, Slider(L"openxr", L"menu_zoom_speed_mps", L"Panel nearer / farther: speed, m/s", 0.1f, 5.0f, 0.1f, 1.0f,
            L"How fast the panel moves with the right stick pushed all the way. Live.")),
+    Needs(L"openxr", L"menu_3d", 1, Toggle(L"openxr", L"panel_grab", L"Grab a panel with a grip: move it, pull it nearer, push it farther", 0,
+           L"Native OpenXR, F4: with a panel of the game in front (the inventory, the stash, a trader, the cube...), point either hand at "
+           L"it (or put the hand on it) and squeeze the grip: the panel is in your hand. Move the hand and it follows; pull the hand in "
+           L"and it comes nearer, push it out and it goes farther (three times the hand's own travel, so one pull brings it to arm's "
+           L"length); that hand's stick forward / back does the same. Let go and it stays where it is; it opens there next time. "
+           L"Nearer than where all of it is in sight it keeps its size in view, so near it is a tablet you point at from a few "
+           L"centimetres. Only a grip that starts on the panel takes it: a trigger pressed first is still the right click (or Shift "
+           L"click), a grip let go without moving is still the menu's page button, and weapon or potion grabs elsewhere are untouched. "
+           L"While it is on, the right grip + right stick distance above steps aside (the grab's stick does it). Off: as before.")),
     Needs(L"openxr", L"menu_3d", 1, Toggle(L"openxr", L"hand_inventory", L"Inventory on the left hand outside town", 0,
            L"Native OpenXR, F4, with the laser on: away from town the game's whole inventory window hangs on your LEFT hand instead of "
            L"in front - cut out of the interface, held over the left controller like a tablet, turned to your eyes - and the left stick "
@@ -2952,8 +3027,13 @@ std::vector<Item> g_items = {
     Toggle(L"hud", L"monster_names_own", L"Name over a monster: our own, sharp (test)", 0,
            L"The name in the plate over the monster you target drawn by the mod instead of the game's copy: sharp at any render size, in the game's "
            L"colours (unique gold, champion blue). The bar, its frame and the targeting stay the game's. It has its own size, size far away and backdrop "
-           L"(\"Our names\" below) and stands at its monster's own depth; the plate's sliders stay the game plate's. First person (F4); not with the plate hung in the room. Needs the "
+           L"(\"Our names\" below) and stands at its monster's own depth; the plate's sliders stay the game plate's. First person (F4), and F1 - F3 with the tick below; not with the plate hung in the room. Needs the "
            L"D2R_DepthFog.fx of the same build. Live. Unticked: the game's name, as before."),
+    // [hud] monster_names_own_all_views (vr/hud/labels.cpp MonsterNamesOwnNow): our plate in VR F1, F2, F3 too (Serg, 2026-11-09)
+    Needs(L"hud", L"monster_names_own", 1, Toggle(L"hud", L"monster_names_own_all_views", L"Name over a monster: our own, in every view (test)", 0,
+           L"The plate above (our own name on the red bar, type, immunities) in F1, F2 and F3 too, wherever the mod's camera draws the view in stereo: "
+           L"it stands over the monster's head at its own depth in each eye, and the game's plate under it is not drawn - no doubled bar. The game's "
+           L"own camera from above (flat F1) keeps the game's plate. Needs the tick above. Live. Unticked: F4 only, as before.")),
     // [hud] npc_names_own (vr/own_names.h): the hover names over NPCs, objects, portals - the game's hover tooltip's texts drawn by us, F4
     Toggle(L"hud", L"npc_names_own", L"Names over NPCs and objects: our own, sharp (test)", 0,
            L"The names the game shows over the NPCs (Warriv, Kashya, Akara...), objects, portals and exits you point at, drawn by the mod instead of "
@@ -3568,96 +3648,8 @@ std::vector<Item> g_items = {
 
 #endif
     Tab(L"World"),
-    Group(L"Fog", L"The distance fog, and fixes for the game's depth effects seen from our camera. Set where the fog is complete, its falloff, fog in caves and its colour, whether fire and spells are spared, and fixes for the game's own fogs, walls in front of the hero, roofs and lighting at a square window."),
-    Toggle(L"fog", L"enabled", L"Distance fog", 0,
-           L"A distance fog. Who draws it: the Sky tab's \"Fog drawn by\" (our effect, or the game itself). With the sky on, it fades into the sky."),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_mist", L"The game's fog over its mist too", 1,
-           L"The game's own fog pass adds its volumetric mist (lit by torches and the like) after the fog, never fogged by distance: in a cave "
-           L"our dark fog turned the far walls black and the mist stayed, a light band behind the fires. Ticked: the mist fades with distance "
-           L"as everything else does. Without ReShade only. Live.")),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_caves_black", L"The game's fog darkens to black in caves", 1,
-           L"Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left "
-           L"alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. "
-           L"Without ReShade only. Live.")),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_our_curve", L"The game's fog by our curve", 0,
-           L"The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own "
-           L"start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far "
-           L"range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.")),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 0,
-           L"While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of "
-           L"it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to \"Sky at night\" and by "
-           L"the sky's brightness for each time of day. With the sky's colour (\"The fog's colour: measured from the game\" unticked): the day "
-           L"sky's at the horizon at every hour; off, the night sky's by night - near black. Live.")),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
-           L"In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the "
-           L"world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, "
-           L"as it is drawn). Far objects show the sky through them. It worked through \"The game's fog as thick and as coloured as ours\", "
-           L"removed (it broke the fog): for now it changes nothing. Live. Off: one fog colour, as before.")),
-    Toggle(L"fog", L"fog_colour_measured", L"The fog's colour: measured from the game", 0,
-           L"Ticked: the fog's colour is the act's own colour as set (its measure from the game went with the removed \"The game's fog as "
-           L"thick and as coloured as ours\"). Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
-           L"land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the "
-           L"effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live."),
-    Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 0,
-           L"The fog laid on the scene before the game adds its smoke, mist, fire and spells, so they lie over the fogged world unfogged - "
-           L"without it the fog is laid over them by the wall behind them (haze cut into black holes in front of far walls, a fire spell "
-           L"fading as it flies past a far wall). The game's fog or our effect's, whichever draws it. One pass of ours on the graphics card "
-           L"(its cost in the log's 10 s line). With ReShade: our effect's fog only, VR first person only. Applies when the game is started "
-           L"again."),
-    Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_fx_depth", L"Far smoke and fire fade into the fog", 0,
-           L"With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they "
-           L"are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and "
-           L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: "
-           L"EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. "
-           L"Without ReShade only. Live. Off: the effects never fogged.")),
-    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
-           L"The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none "
-           L"above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, "
-           L"nothing added. Outdoors only (underground no sky to keep clear). Without ReShade only. Off: the game's fog as it is. Live.")),
-    Needs(L"fog", L"game_fog_height", 1, Slider(L"fog", L"game_fog_top", L"The game's fog: its top, units above the eyes", -50, 400, 5, 60,
-           L"How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.")),
-    Needs(L"fog", L"game_fog_height", 1, Slider(L"fog", L"game_fog_soft", L"The game's fog: softness of its top, units", 1, 300, 1, 50,
-           L"How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.")),
-    Needs(L"fog", L"game_fog_height", 1, Toggle(L"fog", L"game_fog_top_from_floor", L"The game's fog: its top counted from the hero's floor", 0,
-           L"The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, "
-           L"the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. "
-           L"Off: from the eyes, as before. Unticking \"thins with height\" instead gives the fog by distance alone, as our own fog. Live.")),
-    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
-           L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150, L"Where the fog begins. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600, L"Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start "
-           L"the two are taken the other way round (our effect's fog: full just past Fog start).")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"curve", L"Falloff", 0.3f, 4, 0.05f, 1.6f, L"1 = linear; more = a clearer middle distance.")),
-    Needs(L"fog", L"enabled", 1, Slider(L"fog", L"blur", L"Depth blur, px (0 = off)", 0, 12, 0.5f, 3,
-           L"The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away.")),
-    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"spare_effects", L"Fog spares fire, spells and smoke (test)", 0,
-           L"Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in "
-           L"front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each "
-           L"frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before.")),
-    Needs(L"fog", L"enabled", 1, Toggle(L"render", L"fog_in_frame", L"Fog drawn inside the game's frame (test)", 0,
-           L"The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over "
-           L"the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The "
-           L"sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 "
-           L"only. Applies when the game is started again; off = the fog as before. Over \"Fog spares fire\" when both are on.")),
-    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
-           L"Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid "
-           L"before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog "
-           L"fades into its sky): on, it keeps its fog with either fog. Live.")),
-    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"ease_in", L"Fog eased in, no hard ring", 0,
-           L"The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our "
-           L"curve draws the fog: our effect, and the game's fog with \"The game's fog by our curve\" on (not the game's own curve). From "
-           L"D2R VR Unleashed (bearstonem). Live. Off: the fog as before.")),
-    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"no_fog_river", L"No fog in the River of Flame", 0,
-           L"No added fog in the River of Flame, though it is open air: its lava's own glow and haze stay the game's. Our effect's fog and the "
-           L"game's fog alike. From D2R VR Unleashed (bearstonem). Live. Off: the fog there as everywhere outdoors.")),
-    Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
-           L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
-           L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")),
-    Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_strength", L"Fog strength in caves", 0, 1, 0.01f, 1,
-           L"How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.")),
-    Needs(L"fog", L"enabled", 1, Color(L"fog", L"color_caves", L"Fog colour in caves", L"same as the act",
-          L"Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.")),
+    Status(L"fog_moved_world", L"The fog - who draws it, its distances, caves and colours - is on the Fog tab."),
+
     Group(L"Distance blur", L"The far picture blurred, as through a pane of frosted glass standing at a distance in front of you: nothing "
           L"nearer than the pane is touched; behind it the world blurs more the farther it is. Set where the pane stands, where the blur is at "
           L"its widest, and how wide that is. Apart from the fog: no colour of its own, the fog keeps its look."),
@@ -3675,37 +3667,9 @@ std::vector<Item> g_items = {
     Needs(L"render", L"distance_blur", 1, Slider(L"render", L"distance_blur_strength", L"Blur strength", 0, 1, 0.01f, 0.4f,
            L"How wide the blur is at its widest: 1 = 2.5 % of the picture's height (about 50 pixels on a 2000-line eye), 0.4 as the fractal "
            L"game has it. 0 = no blur. Live.")),
-    Group(L"Arcane Sanctuary", L"The fog in the Arcane Sanctuary (act 2), set apart from the caves': it is not outdoors, so it takes the "
-          L"caves' fog until \"Its own fog\" is ticked. Whether there is fog under its own sky at all is on the Sky tab (Arcane Sanctuary: "
-          L"fog fades into its sky)."),
-    Needs(L"fog", L"enabled", 1, Toggle(L"fog", L"arcane_own", L"Arcane Sanctuary: its own fog", 0,
-          L"The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' "
-          L"start, end, strength and colour, as before.")),
-    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_start", L"Arcane Sanctuary: fog start", 0, 1000, 5, 100,
-          L"Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.")),
-    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_end", L"Arcane Sanctuary: full fog", 10, 2000, 10, 200,
-          L"Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live.")),
-    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_strength", L"Arcane Sanctuary: fog strength", 0, 1, 0.01f, 1,
-          L"How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live.")),
-    Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_curve", L"Arcane Sanctuary: fog curve", 0.3f, 4, 0.05f, 1,
-          L"How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it "
-          L"thickens soon after the start. Live.")),
-    Needs(L"fog", L"arcane_own", 1, Color(L"fog", L"arcane_color", L"Arcane Sanctuary: fog colour", L"same as caves",
-          L"The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live.")),
-    Needs(L"fog", L"arcane_own", 1, Toggle(L"fog", L"arcane_into_sky", L"Arcane Sanctuary: fog fades into the sky behind", 1,
-          L"Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they "
-          L"fade into the fog colour above instead. Live.")),
-    Toggle(L"render", L"game_height_fog", L"The game's own height fog", 0,
-           L"Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale "
-           L"veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0."),
-    Toggle(L"render", L"game_depth_fog", L"The game's own depth fog", 0,
-           L"Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture "
-           L"(from above too), over the near ground from our camera. Off: vrcam sets it to 0."),
+    Group(L"Depth and view", L"How the game's depth effects see our camera, and the walls, roofs and lighting seen from it. (The Arcane "
+          L"Sanctuary's fog and the game's own fogs are on the Fog tab.)"),
     // [render] game_fog_scan_safe (vr/sky/game_fog.cpp ScanSafe): the two above found through copies of the heap (Serg 2026-11-04: fake crash reports).
-    Toggle(L"render", L"game_fog_scan_safe", L"Find the game's fog safely", 1,
-           L"How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game "
-           L"frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas "
-           L"have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live."),
     Toggle(L"render", L"depth_fix", L"The game's effects measure depth from our camera", 1,
            L"The game keeps a copy of the depth for its fog, height fog, ambient occlusion, reflections and water, made for "
            L"its camera from above (550 to 1060 units away). From ours everything is nearer and read as one flat wall "
@@ -3759,6 +3723,17 @@ std::vector<Item> g_items = {
            L"The same fix in flat mode (a monitor or a window, native OpenXR's flat picture too): the game's shader is wrong at "
            L"16:9 and at a square window as well, not only in VR. Follows the mode at once. Off: flat mode keeps the game's own "
            L"shader, as before.")),
+    // [render] symmetric_projection (off): native OpenXR's pair drawn and submitted with one centred frustum whatever the route (vr/eye_fov.h
+    // CentredPair, xr.cpp CentrePair) - the game's light binning ignores the off-axis terms. Live.
+    Only(kVr, Toggle(L"render", L"symmetric_projection", L"Lighting right with off-centre eyes (softer)", 0,
+           L"Native OpenXR: the game finds which lights reach each of its 32 x 20 tiles with a shader that takes the picture as centred. An eye "
+           L"drawn off-centre (frame generation on, \"Each eye exactly as the headset gives it\" off or on the headset's own angles, angles by "
+           L"hand without \"Names and interface single in both eyes\", a headset whose displays are turned outward) gets its lights in the "
+           L"tiles beside their own: patches of ground detail that slide with the hero on one side of the view and move as you turn. On: both "
+           L"eyes are drawn and handed to the headset with one centred view that holds both eyes' (after bearstonem/d2r-pcvr) - the patches "
+           L"should go; the picture is a little softer (the same pixels over a wider angle). With \"Each eye exactly as the headset gives it\" on Centred (the "
+           L"default), on most headsets the eyes are centred already and nothing changes. If the headset goes black with frame generation, untick it. Live. Off: "
+           L"each eye as its choice draws it.")),
     Only(kVr, Toggle(L"render", L"reflections_per_eye", L"Reflections in puddles and blood at their true depth (3D)", 0,
            L"With \"Stereo - one pass, two pictures\" the game's reflections in water, puddles and blood pools were drawn in the right "
            L"eye as if seen from twice the distance between the eyes: twice the parallax, half the depth - the reflection seemed to "
@@ -3767,17 +3742,27 @@ std::vector<Item> g_items = {
            L"3D modes and flat mode look the same either way. Made at the start of the game: switched on, it works from the next start; "
            L"after that it follows this tick at once. Off: the game's own.")),
     Hide(Group(L"Render distance", L"How far around the hero the world is drawn: more room rings and a bigger model radius show more of the world and cost more processor time. With fog, 4-6 rings are enough.")),
-    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 4, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
-    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 210, L"The game's own is 150.")),
-    Group(L"Scenery", L"Fixes to the game's scenery for first person: floors that keep their height when you come back to a room, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes."),
-    Toggle(L"render", L"floors_stay", L"Floors stay where they were (no ground that slides on a way back)", 0,
-           L"The game gives each room of a level a height when it starts drawing it, matched to the rooms drawn round it at that moment, "
-           L"and forgets it when the room is out of sight. Its tiles' edges do not agree all the way round, so a room you come back to by "
-           L"another way (or after another area or town) can be a step higher or lower - from the game's camera above nobody sees it, from "
-           L"ours the floor slides: blocks pushed up, down and aside, the void showing between them. On: every room keeps the height it was "
-           L"first drawn at until you leave the game. The trade: the game also mends a room drawn at the wrong height (a step seen from afar, "
-           L"as by the Pandemonium Fortress's gate) when it draws it again as you come near - with this on, that mend does not come. Only the "
-           L"picture; nothing of the fight or the paths changes. Live. Off (the default): the game's own heights."),
+    Hide(Slider(L"render", L"rings", L"Room rings around the hero", 1, 8, 1, 2, L"Extra room rings around the hero. With fog, 4-6 is enough.")),
+    Hide(Slider(L"render", L"model_radius", L"Model visibility radius", 150, 1000, 10, 200, L"The game's own is 150.")),
+    Group(L"Scenery", L"Fixes to the game's scenery for first person: dungeon floors that join up along your way, ground tiles at their own floor's height, and the Kurast Docks canoe laid on the water instead of hanging in the sky. Only the picture changes."),
+    Toggle(L"render", L"room_stitch", L"Dungeon floors join up along the way you come", 1,
+           L"The game gives each room a height when it builds it, meeting ONE of the rooms already built round it - the hero's own room if "
+           L"it is one, else whichever asks the biggest step. From its camera above that never shows; from ours, rooms built a few rings out "
+           L"hang a step above or below the next one with a black void between, and snap into place at the threshold. On: each room meets "
+           L"its built neighbour nearest you, so floors join along the way you come; what a loop of the level cannot close is left on the "
+           L"borders away from you. Where our copy of the game's choice ever disagrees with the game, the game's answer stands. Only the "
+           L"picture; monsters, missiles and items follow the floor by themselves. A room you come back to by another way meets your way too. "
+           L"Every view: flat F1 - F3, VR F4 and the flat game with its own camera (from above it never shows, so nothing changes there); a room keeps "
+           L"its height when you switch views. Legacy graphics draws no such rooms. From D2R VR Unleashed (Cal, bearstonem's team). On by "
+           L"default. Off: the game's own choice."),
+    Toggle(L"render", L"terrain_heights", L"Ground tiles at their own floor's height (stairs, ledges)", 0,
+           L"The game draws every tile of the outdoor ground (sand, grass, snow and the paving over them) at the height of the floor under "
+           L"the hero. From its camera above that never shows; from ours, where the ground has two levels - the act 2 desert's plateaus and "
+           L"their stairs, ledges - the other level's ground lies at the hero's level, pushed aside, and the whole ground jumps up or down "
+           L"with each step of the stairs. On: each tile is drawn at the height of its own floor and stitched to the tiles round it - a "
+           L"tile across a ledge joins the level its neighbours stand on, so no steps or gaps open between tiles of one floor; real drops "
+           L"(cliffs, ledges, stairs) stay. Only the picture; nothing of the fight or the paths changes. Live. Off (the default): the game's "
+           L"one height for all."),
     Toggle(L"world", L"kurast_boat", L"Kurast Docks: the canoe in the sky sits on the water", 1,
            L"The town's HD scenery places one canoe 50 units up, where the view from above never looks; in first person it hangs over the "
            L"huts. On: it lies on the water by the western docks, where its prefab was built - one number of the town's scenery file "
@@ -3785,6 +3770,13 @@ std::vector<Item> g_items = {
            L"and keeps it inside the mod (mods\\D2R-VR\\D2R-VR.mpq); nothing of the game itself changes, nor anything you play with. "
            L"Takes effect at the next start of the game (a game already running keeps the canoe where it was). Off: the file is taken out "
            L"again, the canoe as the game has it."),
+    Toggle(L"holes", L"patch_world", L"Holes in the world patched (a test: the bridge out of the Rogue Encampment)", 0,
+           L"The game was built for a camera that looks down from above: some places were never modelled where that camera never looks - the "
+           L"bridge out of the Rogue Encampment has a strip along its deck with no floor, between the deck and its parapet, through which first "
+           L"and third person see the river far below. Ticked, this program makes a patch for each such place from your game's own files (the deck's own "
+           L"ground material, its edges carried on to the parapet - nothing placed by hand) and the game draws it as its own piece, lit and "
+           L"shadowed as the deck. Every view: flat F1, F2, F3 and VR. Takes effect at the next start of the game. Off: the files are taken out again, the bridge as "
+           L"the game has it."),
     // [weight] death_ragdoll_flat in flat mode: its own tick lives on the VR-only Weapon Weight tab, hidden here (Serg 2026-11-03: «это все скрыто на 2д режиме»)
     Only(kFlat, Group(L"Monsters (flat play)", L"How the monsters you fight are drawn when you play on the monitor.")),
     Only(kFlat, Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll (a test)", 0,
@@ -3796,20 +3788,16 @@ std::vector<Item> g_items = {
 
     Tab(L"Sky"),
     Group(L"Sky and fog", L"Who draws the sky and who draws the distance fog: the game itself (new) or our effect (old) - a choice each, any two together (the game's dome with our fog, our sky with the game's fog)."),
-    NeedsEitherOf(L"sky", L"game_sky", L"fog", L"game_fog", 1, Toggle(L"render", L"game_drawn_flat", L"The game draws them in the flat game too", 0,
-           L"The sky dome, the cave dome and ceiling and the fog the game draws itself, also when you play on the monitor without a headset "
-           L"(the flat first and third person views; from above stays as it is). Off: only in VR first person (F4). Live.")),
+    Needs(L"sky", L"game_sky", 1, Toggle(L"render", L"game_drawn_flat", L"The game draws the sky in the flat game too", 0,
+           L"The sky dome, the cave dome and ceiling the game draws itself, also when you play on the monitor without a headset (the flat "
+           L"first and third person views; from above stays as it is). Off: only in VR first person (F4). The fog has its own on the Fog tab. Live.")),
+    Status(L"fog_moved_sky", L"Who draws the fog, the fog's colours and the sky's low part in the fog's colour are on the Fog tab."),
     Choice(L"sky", L"game_sky", L"Sky drawn by", 0, {L"Our effect (old)", L"The game's dome (new)"},
            L"Who draws the sky outdoors. The game's dome (new): a sky dome of ours the game draws itself in its own scene - no frame time of "
-           L"ours (VR F4; the flat game too with \"The game draws them in the flat game too\"). Our effect (old): the fog shader paints the sky "
+           L"ours (VR F4; the flat game too with \"The game draws the sky in the flat game too\"). Our effect (old): the fog shader paints the sky "
            L"in the void. Either goes with either fog (\"Fog drawn by\"): the sky's low part sinks into the fog's colour both ways. Live - the "
            L"game's sky dome's files are made by this program at its start: the first time after an install or an update, restart a game "
            L"already running."),
-    Choice(L"fog", L"game_fog", L"Fog drawn by", 0, {L"Our effect (old)", L"The game's fog (new)"},
-           L"Who draws the distance fog. The game's fog (new): the game's own fog pass with our numbers (Fog start / Full fog below) - no "
-           L"frame time of ours, drawn whether \"Distance fog\" is ticked or not (VR F4; the "
-           L"flat game too with \"The game draws them in the flat game too\"; its own options on the World tab). Our effect (old): the fog "
-           L"shader lays the fog by the depth. Either goes with either sky (\"Sky drawn by\"). Live."),
     Group(L"Sky", L"A sky in the black void beyond the world, only in the open air. Set the clouds, whether the sky turns slowly, the sky over the dark rim round roofs and trees, and the Arcane Sanctuary's own stars all round and its fog."),
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
            L"A sky in the black void beyond the world. Only in the open air; hidden while a menu or side panel is open."),
@@ -3858,15 +3846,6 @@ std::vector<Item> g_items = {
            L"of each period of the day and the measured colours in it - every edge blends into the right sky. Without ReShade only (our own "
            L"effects). Counts from the game's next start; unticked live, the sky goes back to the game's own colours at once and our effect "
            L"recolours it as before."))),
-    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
-           L"The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with "
-           L"no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.")),
-    Needs(L"sky", L"game_sky", 1, Needs(L"fog", L"game_fog", 1, Toggle(L"sky", L"dome_fog_baked", L"The game's sky: its low part in the fog's colour", 1,
-           L"With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low "
-           L"part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's "
-           L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live."))),
-    Needs(L"sky", L"dome_fog_baked", 1, Slider(L"sky", L"dome_fog_baked_strength", L"The game's sky: how much of the fog's colour", 0, 1, 0.05f, 1,
-           L"1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.")),
     Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_sky_closed", L"The game's sky: a whole sphere, one colour below", 1,
            L"The game-drawn sky ended 12 degrees under the horizon: past a cliff's edge its rim stood as a hard line with a hole "
            L"under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - "
@@ -3890,9 +3869,6 @@ std::vector<Item> g_items = {
            L"direction, below the platforms too (after bearstonem/d2r-pcvr). The pictures are made from your game's files "
            L"when this program opens (Home: Arcane Sanctuary sky) and live inside the mod (mods\\D2R-VR); nothing of the game is changed. Not in the views from "
            L"above. Works with the outdoor sky off too. Off: the void as the game draws it."),
-    Needs(L"sky", L"arcane_sky", 1, Toggle(L"sky", L"arcane_fog", L"Arcane Sanctuary: fog fades into its sky", 0,
-           L"The distance fog ([fog] on, World > Fog) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind "
-           L"them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end.")),
     Group(L"Day and night", L"Lets the sky and the outdoor fog darken at dusk and brighten at dawn with the game's own light. Set how bright the sky stays at night and which game light counts as full day and full night."),
     Toggle(L"sky", L"day_night", L"Sky follows the game's day and night", 1,
            L"The sky and the outdoor fog darken at dusk and brighten at dawn with the game's own light, at the same pace."),
@@ -3946,32 +3922,239 @@ std::vector<Item> g_items = {
     Slider(L"sky", L"brightness_act1", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act1", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act1.png", kSkyPicture),
     File(L"sky", L"cap_act1", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_act1.png", kSkyPicture),
-    Color(L"fog", L"color_act1", L"Fog colour", L"from the sky", kFogColour),
     Group(L"Act 2 (desert)", L"The sky of act 2, the desert: its brightness, panorama picture, zenith and the act's fog colour, as for act 1."),
     Slider(L"sky", L"brightness_act2", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act2", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act2.png", kSkyPicture),
     File(L"sky", L"cap_act2", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_act2.png", kSkyPicture),
-    Color(L"fog", L"color_act2", L"Fog colour", L"from the sky", kFogColour),
     Group(L"Act 3 (jungle)", L"The sky of act 3, the jungle: its brightness, panorama picture, zenith and the act's fog colour, as for act 1."),
     Slider(L"sky", L"brightness_act3", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act3", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act3.png", kSkyPicture),
     File(L"sky", L"cap_act3", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_act3.png", kSkyPicture),
-    Color(L"fog", L"color_act3", L"Fog colour", L"from the sky", kFogColour),
     Group(L"Act 4 (Hell)", L"The sky of act 4, Hell: its brightness, panorama picture, zenith and the act's fog colour, as for act 1."),
     Slider(L"sky", L"brightness_act4", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act4", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act4.png", kSkyPicture),
     File(L"sky", L"cap_act4", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_act4.png", kSkyPicture),
-    Color(L"fog", L"color_act4", L"Fog colour", L"from the sky", kFogColour),
     Group(L"Act 5 (ruins)", L"The sky over act 5's ruins: its brightness, panorama picture, zenith and fog colour, as for act 1."),
     Slider(L"sky", L"brightness_act5", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_act5", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_act5.png", kSkyPicture),
     File(L"sky", L"cap_act5", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_act5.png", kSkyPicture),
-    Color(L"fog", L"color_act5", L"Fog colour", L"from the sky", kFogColour),
     Group(L"Act 5 (snow)", L"The sky over act 5's snow: its brightness, panorama picture, zenith and fog colour, as for act 1."),
     Slider(L"sky", L"brightness_snow", L"Brightness", 0, 2, 0.05f, 1),
     File(L"sky", L"texture_snow", L"Sky panorama", L"D2R_Sky_ours\\D2R_Sky_snow.png", kSkyPicture),
     File(L"sky", L"cap_snow", L"Zenith", L"D2R_Sky_ours\\D2R_SkyCap_snow.png", kSkyPicture),
-    Color(L"fog", L"color_snow", L"Fog colour", L"from the sky", kFogColour),
+
+    // The fog, all of it on one tab (Serg 2026-11-09: "все что связано с туманом перенести во вкладку туман", "разделить старый туман и
+    // туман игры", "у каждого свои ползунки и свой блок", "сделать это селектором ... и все ползунки делаются дисаблед"): the selector,
+    // then the game's fog's block and the old fog's, each with its own keys and greyed while the other draws; the rows both take below.
+    Tab(L"Fog"),
+    Group(L"Fog drawn by", L"Who draws the distance fog: nobody, the game's own fog pass (new, the default) or our old effect. The block of the "
+          L"one not chosen stays greyed."),
+    Choice(L"@fogby", L"way", L"Fog drawn by", 1, {L"None", L"The game's fog", L"Old fog (our effect)", L"Fog planes before the player"},
+           L"Who draws the distance fog. The game's fog: the game's own fog pass with our distances and colours (the block below) - no frame "
+           L"time of ours. Old fog (our effect): our fog shader lays the fog by the depth, as before (its own block). None: no distance fog. "
+           L"Live."),
+    Group(L"The game's fog", L"The game's own fog pass: where it begins and where it is complete, in the open air and in caves, its "
+          L"colour by the game's time of day, and the sky's low part baked into that colour. Its own sliders - the old fog's are below."),
+    Needs(L"fog", L"game_fog", 1, Slider(L"fog", L"game_fog_start", L"Fog start", 0, 1000, 5, 150,
+           L"Where the fog begins. World units (the hero is ~7.5 tall).")),
+    Needs(L"fog", L"game_fog", 1, Slider(L"fog", L"game_fog_end", L"Full fog", 10, 2000, 10, 600,
+           L"Where the fog is complete. World units (the hero is ~7.5 tall). Near fog hides what a short render distance leaves out. With the "
+           L"game's fog, below Fog start the two are taken the other way round (our effect's fog: full just past Fog start).")),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_flat", L"The game's fog in the flat game too", 0,
+           L"The game draws its fog also when you play on the monitor without a headset (the flat first and third person views). Off: only in "
+           L"VR first person (F4). Empty: as \"The game draws the sky in the flat game too\" (the one switch before). Live.")),
+    // (Serg 2026-11-09, "туман до эффектов": a torch's flame and smoke were wiped by the fog of the far ground behind them)
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 1,
+           L"The fog is laid on the world before the game adds its smoke, fire, mist and spells, so they stay bright over the fogged world. "
+           L"Off: the game's own order - the fog goes over them by whatever is far behind them, and a torch's flame and smoke in front of a "
+           L"far, fogged background are wiped out. One pass of ours on the graphics card (its cost in the log's 10 s line). Applies when "
+           L"the game is started again.")),
+    // (Serg 2026-11-09, his drawing: "новый вид тумана плоскости перед игроком с затуманиванием")
+    Sub(L"Fog planes before the player"),
+    Needs(L"fog", L"game_fog_planes", 1, Slider(L"fog", L"game_fog_planes_count", L"How many planes", 1, 64, 1, 8,
+           L"With \"Fog drawn by: Fog planes before the player\": the fog as planes facing you, standing from Fog start to Full fog, each a "
+           L"layer of the fog's colour; what is behind a plane is covered by it, what is in front of it (a torch's flame) stays bright. More "
+           L"planes: smoother, the same cost. Live.")),
+    Needs(L"fog", L"game_fog_planes", 1, Slider(L"fog", L"game_fog_planes_soft", L"How soft each plane is", 0, 1, 0.05f, 1,
+           L"0: hard planes - a line where each cuts the ground; 1: each fades in over the gap to the next, no lines. Live.")),
+    Sub(L"Caves and dungeons"),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_caves", L"Fog in caves and dungeons", 1,
+           L"The game's fog in caves, dungeons and crypts too (every area that is not open air). Live.")),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_caves", 1, Slider(L"fog", L"game_fog_caves_start", L"Fog start in caves", 0, 1000, 5, 150,
+           L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall)."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_caves", 1, Slider(L"fog", L"game_fog_caves_end", L"Full fog in caves", 10, 2000, 10, 600,
+           L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall)."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_caves", 1, Slider(L"fog", L"game_fog_caves_strength", L"Fog strength in caves", 0, 1, 0.01f, 1,
+           L"How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_caves", 1, Toggle(L"fog", L"game_fog_caves_black", L"The game's fog darkens to black in caves", 1,
+           L"Underground the game's fog fades to black, whatever the caves' fog colour says, and the void past a cave ceiling's rim is left "
+           L"alone - the game's fog pass laid its torch-lit mist over it whole, a light band behind the fires. Distance darkens, never glows. "
+           L"Without ReShade only. Live."))),
+    Sub(L"Its colour by the time of day"),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_colour", L"The game's raw colour", 0,
+           L"Unticked (the default): the fog is the dawn, day, dusk and night colours below, blended by the game's own clock. Ticked: the colour the game's "
+           L"own lighting files hold, as it is - with our near, dense fog a pale wall over the far land by day and a lavender one at night. Live.")),
+    Sub(L"Act 1 (night, storm)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act1_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act1_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act1_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act1_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"Act 2 (desert)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act2_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act2_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act2_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act2_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"Act 3 (jungle)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act3_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act3_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act3_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act3_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"Act 4 (Hell)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act4_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act4_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act4_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act4_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"Act 5 (ruins)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act5_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act5_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act5_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_act5_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"Act 5 (snow)"),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_snow_dawn", L"Dawn colour", L"the day's in the game's dawn cast", kGameFogDawn))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_snow_day", L"Day colour", L"the old fog's", kGameFogDay))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_snow_dusk", L"Dusk colour", L"the day's in the game's dusk cast", kGameFogDusk))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_colour", 0, Color(L"fog", L"game_fog_snow_night", L"Night colour", L"the old fog's by night", kGameFogNight))),
+    Sub(L"The sky's low part in the fog's colour (baked into the dome)"),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"sky", L"dome_fog_horizon", L"The game's sky: its horizon into the fog", 1,
+           L"The game-drawn sky's low part sinks into the act's fog colour, as our own sky's did: the fogged land meets the sky with "
+           L"no hard edge, and the colours match where they meet. Only while a fog is drawn. Off: the sky as the game draws it. Live.")),
+    Needs(L"fog", L"game_fog", 1, Toggle(L"sky", L"dome_fog_baked", L"The game's sky: its low part in the fog's colour", 1,
+           L"With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low "
+           L"part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's "
+           L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.")),
+    Needs(L"fog", L"game_fog", 1, Slider(L"sky", L"dome_fog_baked_strength", L"The game's sky: how much of the fog's colour", 0, 1, 0.05f, 1,
+           L"1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.")),
+    Group(L"Old fog (our effect)", L"Our own effect's distance fog, as it was (frozen) - with \"Fog drawn by: Old fog\" only, greyed "
+          L"otherwise. Its own sliders."),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150, L"Where the fog begins. World units (the hero is ~7.5 tall)."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"end", L"Full fog", 10, 2000, 10, 600, L"Where the fog is complete. World units (the hero is ~7.5 tall). With the game's fog, below Fog start "
+           L"the two are taken the other way round (our effect's fog: full just past Fog start)."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"light", L"Light fog (weak graphics cards)", 0,
+           L"Our effect's fog the short way: the depth read once a pixel, the fog by it, the sky still drawn in the void - no depth blur, no fog over glows and sparks against the sky, no cave ceiling. A fraction of the full fog's cost on the graphics card (the log's 10 s line says it). Off: the full fog, as before."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"curve", L"Falloff", 0.3f, 4, 0.05f, 1.6f, L"1 = linear; more = a clearer middle distance."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"blur", L"Depth blur, px (0 = off)", 0, 12, 0.5f, 3,
+           L"The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"ease_in", L"Fog eased in, no hard ring", 0,
+           L"The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our "
+           L"curve draws the fog: our effect, and the game's fog with \"The game's fog by our curve\" on (not the game's own curve). From "
+           L"D2R VR Unleashed (bearstonem). Live. Off: the fog as before."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"spare_effects", L"Fog spares fire, spells and smoke (test)", 0,
+           L"Fire, spells, smoke and glows are fogged only as much as the scene behind them is not: a torch or a Fire Bolt in "
+           L"front of a far wall stays bright instead of fogged like the wall. The game's own transparent layers of each "
+           L"frame are copied for it (VR F4 only). Applies when the game is started again; off = the fog as before."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"render", L"fog_in_frame", L"Fog drawn inside the game's frame (test)", 0,
+           L"The fog is drawn into the game's own picture before its fire, spells and smoke, and the game lays them over "
+           L"the fogged scene: a torch, a Fire Bolt or an Inferno in front of a far wall is not fogged like the wall. The "
+           L"sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 "
+           L"only. Applies when the game is started again; off = the fog as before. Over \"Fog spares fire\" when both are on."))),
+    Sub(L"Caves and dungeons"),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
+           L"Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid "
+           L"before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog "
+           L"fades into its sky): on, it keeps its fog with either fog. Live."))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_start", L"Fog start in caves", 0, 1000, 5, 150,
+           L"Where the fog begins in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_end", L"Full fog in caves", 10, 2000, 10, 600,
+           L"Where the fog is complete in caves, dungeons and crypts. World units (the hero is ~7.5 tall).")))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Needs(L"fog", L"caves", 1, Slider(L"fog", L"caves_strength", L"Fog strength in caves", 0, 1, 0.01f, 1,
+           L"How much the full fog covers in caves: 1 = the far end is gone in the fog colour, less = it shows through.")))),
+    Sub(L"Fog colour of each act"),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_act1", L"Fog colour: Act 1 (night, storm)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_act2", L"Fog colour: Act 2 (desert)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_act3", L"Fog colour: Act 3 (jungle)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_act4", L"Fog colour: Act 4 (Hell)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_act5", L"Fog colour: Act 5 (ruins)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Color(L"fog", L"color_snow", L"Fog colour: Act 5 (snow)", L"from the sky", kFogColour))),
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"arcane_curve", L"Arcane Sanctuary: fog curve", 0.3f, 4, 0.05f, 1,
+          L"How the fog grows from its start to full: 1 = evenly, more = it stays thin longer and thickens near the end, less = it "
+          L"thickens soon after the start. Live."))),
+    Group(L"Both fogs", L"What the game's fog and the old one both take, whichever draws."),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Toggle(L"fog", L"no_fog_river", L"No fog in the River of Flame", 0,
+           L"No added fog in the River of Flame, though it is open air: its lava's own glow and haze stay the game's. Our effect's fog and the "
+           L"game's fog alike. From D2R VR Unleashed (bearstonem). Live. Off: the fog there as everywhere outdoors.")),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Color(L"fog", L"color_caves", L"Fog colour in caves", L"same as the act",
+          L"Caves, dungeons, crypts: every area that is not outdoors. Empty (x) = that act's colour.")),
+    Sub(L"Arcane Sanctuary"),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Toggle(L"fog", L"arcane_own", L"Arcane Sanctuary: its own fog", 0,
+          L"The fog in the Arcane Sanctuary set on its own, with the values below; the caves keep theirs. Live. Off: it takes the caves' "
+          L"start, end, strength and colour, as before.")),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_start", L"Arcane Sanctuary: fog start", 0, 1000, 5, 100,
+          L"Where the fog begins in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live."))),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_end", L"Arcane Sanctuary: full fog", 10, 2000, 10, 200,
+          L"Where the fog is complete in the Arcane Sanctuary. World units (the hero is ~7.5 tall). Live."))),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Needs(L"fog", L"arcane_own", 1, Slider(L"fog", L"arcane_strength", L"Arcane Sanctuary: fog strength", 0, 1, 0.01f, 1,
+          L"How much the full fog covers there: 1 = the far platforms are gone in the fog, less = they show through. Live."))),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Needs(L"fog", L"arcane_own", 1, Color(L"fog", L"arcane_color", L"Arcane Sanctuary: fog colour", L"same as caves",
+          L"The fog's colour in the Arcane Sanctuary. Empty (x) = the caves' colour (with the game's fog never black there). Live."))),
+    NeedsEitherOf(L"fog", L"enabled", L"fog", L"game_fog", 1, Needs(L"fog", L"arcane_own", 1, Toggle(L"fog", L"arcane_into_sky", L"Arcane Sanctuary: fog fades into the sky behind", 1,
+          L"Under its own sky (Sky tab) the fog is the sky straight behind each point: the far platforms dissolve into the void. Off: they "
+          L"fade into the fog colour above instead. Live."))),
+    Toggle(L"sky", L"arcane_fog", L"Arcane Sanctuary: fog fades into its sky", 0,
+           L"The distance fog ([fog] on, World > Fog) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind "
+           L"them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end."),
+    Group(L"Advanced", L"The game's own built-in fogs, which our numbers replace, and how they are found."),
+    Toggle(L"render", L"game_depth_fog", L"The game's own depth fog", 0,
+           L"Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture "
+           L"(from above too), over the near ground from our camera. Off: vrcam sets it to 0."),
+    Toggle(L"render", L"game_fog_scan_safe", L"Find the game's fog safely", 1,
+           L"How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game "
+           L"frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas "
+           L"have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live."),
+    // (ruled out, hidden: their keys read as set - the game's height fog, and the game fog's tweaks Serg turned off)
+    Hide(Toggle(L"render", L"game_height_fog", L"The game's own height fog", 0,
+           L"Only the act 2 town has it. From our camera its edge is a hard line across the picture with a pale "
+           L"veil above it (the game's camera never sees that edge). Off: vrcam sets it to 0.")),
+    Hide(Toggle(L"fog", L"game_fog_mist", L"The game's fog over its mist too", 1,
+           L"The game's own fog pass adds its volumetric mist (lit by torches and the like) after the fog, never fogged by distance: in a cave "
+           L"our dark fog turned the far walls black and the mist stayed, a light band behind the fires. Ticked: the mist fades with distance "
+           L"as everything else does. Without ReShade only. Live.")),
+    Hide(Toggle(L"fog", L"game_fog_our_curve", L"The game's fog by our curve", 0,
+           L"The game's own fog pass fades the fog in as our effect does - from Fog start to Full fog by the Curve below (in caves their own "
+           L"start, end and strength) - instead of its own exponential, which puts nearly all of the fog right after the start and leaves the far "
+           L"range one grey. A few instructions in its pass, nothing added. Without ReShade only. Live.")),
+    Hide(Toggle(L"fog", L"fog_keeps_colour", L"The game's fog keeps the act's colour at night", 0,
+           L"While the game draws the fog: its colour is the act's own (the colours above) at every hour - the far fades into a light haze of "
+           L"it, never toward black. Our own effect's fog is not changed. Off: it darkens with the game's light as the sky does - by night to \"Sky at night\" and by "
+           L"the sky's brightness for each time of day. With the sky's colour (\"The fog's colour: measured from the game\" unticked): the day "
+           L"sky's at the horizon at every hour; off, the night sky's by night - near black. Live.")),
+    Hide(Toggle(L"fog", L"fog_into_sky", L"The game's fog fades the far into the sky behind it", 0,
+           L"In the open air the fog's colour at each point is the sky straight behind it, as in the Arcane Sanctuary: the far land, the "
+           L"world's edge and tall far buildings fade into the sky, not into one flat colour (the sky's low part is the act's fog colour, "
+           L"as it is drawn). Far objects show the sky through them. It worked through \"The game's fog as thick and as coloured as ours\", "
+           L"removed (it broke the fog): for now it changes nothing. Live. Off: one fog colour, as before.")),
+    Hide(Toggle(L"fog", L"fog_colour_measured", L"The fog's colour: measured from the game", 0,
+           L"Ticked: the fog's colour is the act's own colour as set (its measure from the game went with the removed \"The game's fog as "
+           L"thick and as coloured as ours\"). Unticked: the fog's colour is the sky's own at the horizon - the baked picture there at its brightness slider - so the far "
+           L"land melts into the sky with no seam; a number, set when the time of day or a slider changes: no measure, nothing of it in the "
+           L"effect. Underground, in the Arcane Sanctuary and with the tinted sky: the act's or the cave's colour as set. Live.")),
+    Hide(Toggle(L"fog", L"game_fog_fx_depth", L"Far smoke and fire fade into the fog", 0,
+           L"With the fog before smoke and fire: the smoke, mist, fire and spells fogged too, each by its own distance - near ones as they "
+           L"are, far ones fading into the fog with the world behind them. Without it a far camp fire stands at full light in full fog and "
+           L"the see-through edges of far fences show as specks on the horizon. The game's effects are drawn once more for their depth alone: "
+           L"EXPENSIVE - on a Quest 3 at 2048 x 2048 an eye it took about 30 frames a second (72 -> 42); the cost in the log's 10 s lines. "
+           L"Without ReShade only. Live. Off: the effects never fogged.")),
+    Hide(Toggle(L"fog", L"game_fog_height", L"The game's fog thins with height", 0,
+           L"The game's own fog pass leaves the sky clear: the fog as it is up to the fog's top less its softness, fading out above that, none "
+           L"above the top (world units above your eyes). For the game's sky dome, so its sky shows above the fogged horizon. Its own pass, "
+           L"nothing added. Outdoors only (underground no sky to keep clear). Without ReShade only. Off: the game's fog as it is. Live.")),
+    Hide(Slider(L"fog", L"game_fog_top", L"The game's fog: its top, units above the eyes", -50, 400, 5, 60,
+           L"How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.")),
+    Hide(Slider(L"fog", L"game_fog_soft", L"The game's fog: softness of its top, units", 1, 300, 1, 50,
+           L"How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.")),
+    Hide(Toggle(L"fog", L"game_fog_top_from_floor", L"The game's fog: its top counted from the hero's floor", 0,
+           L"The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, "
+           L"the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. "
+           L"Off: from the eyes, as before. Unticking \"thins with height\" instead gives the fog by distance alone, as our own fog. Live.")),
 
     Tab(L"Ceiling"),
     Group(L"Cave ceiling", L"A ceiling over the black void in caves and dungeons, first person only: who draws it, the game's own ceiling's parts (its rim, the barracks' beams, the cathedral's and the Worldstone's domes) and each room's height below."),
@@ -3989,6 +4172,12 @@ std::vector<Item> g_items = {
            L"the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, "
            L"wood and size, lit by its torches - with the barracks' stone over the beams to close the gaps between them. Made from your game's "
            L"files. VR F4 only. Off: the flat stone ceiling. Live.")),
+    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"top_from_level", L"The ceiling over the level's highest floor", 0,
+           L"The ceiling stood on the lowest floor you had stood on in the area, so up a staircase it stayed low until you walked on. Ticked: "
+           L"its height is measured from the highest floor of the level you are on - every room the game builds there tells its floors - taken "
+           L"whole 2 s after you enter a level, raised gently if a higher room is built later, never lowered. The game's ceiling and our "
+           L"effect's vault alike. Each room's own height (above) is still measured from there. From D2R VR Unleashed (Cal, bearstonem's team). "
+           L"VR F4 only. Off: as before. Live.")),
     Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_dome", L"The game's ceiling: the cathedral's dome over the chapel", 0,
            L"In the Cathedral the game's ceiling rises into a dome over the chapel, as our effect's vault did there: one even dome standing on "
            L"the four pillars round the altar, just high enough to pass over the altar's canopy. Where, how wide and how high come from the "
@@ -4274,6 +4463,12 @@ std::vector<Item> g_items = {
            L"with \"aim up and down\" on, up or down to what the line met: a monster's body, or the ground (where it stays stuck when something stands near). It "
            L"arrives when the game's own arrow does. It is the game's own arrow model, put where we draw it; the game's missile - its flight, its hit, its damage - "
            L"is the game's. Multiple Shot's side arrows, Strafe's and Guided Arrow leave the bow and join their own path. Off: the game draws its arrows. Live.")),
+    Only(kFlat, Toggle(L"bow", L"arrow_flight_flat", L"Flat: the arrow flies into the crosshair", 1,
+           L"First and third person, with a bow or crossbow: the arrow (or bolt) you shoot is drawn leaving from just below your eye (first "
+           L"person) or the hero's chest (third person) and flying to what the crosshair is on - a monster's body, or the ground, where it "
+           L"stays stuck. It arrives when the game's own arrow does; the game's missile - its flight, its hit, its damage - is the game's. "
+           L"Multiple Shot's side arrows, Strafe's and Guided Arrow join their own path. Unticked: the game draws its arrows flat, from the "
+           L"hero's body.")),
     Only(kVr, Needs(L"bow", L"arrow_flight", 1, Toggle(L"bow", L"arrow_flight_straight", L"Bow: the drawn arrow flies straight along the shot's line", 0,
            L"With \"draw the shot arrow ourselves\": an arrow whose line met nothing (aim up and down off, a shot into the air) flies straight along the line it was "
            L"drawn along, from the bow - no bend. Off: it leaves the bow and swings onto the game's own path, which runs from your body beside the line, over the "
@@ -5325,7 +5520,7 @@ std::vector<Item> g_items = {
            {L"None (only the Gestures tab's takes)", L"The left trigger", L"The right trigger", L"Both triggers"},
            L"Which triggers draw for the gesture engine while you play: a stroke drawn with one held is read, and one that matches a gesture casts "
            L"its skill. The trigger still does what it does in the game. Live.")),
-    Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 0,
+    Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 1,
            L"In VR first person (F4), while the skill panel is open on its Gestures tab, what is nearer than the window - your hands and arms, the "
            L"weapon you hold - is drawn over it instead of under it, by the scene's depth, so you see your hands while you record and try gestures. "
            L"The Gestures tab only: the panel's other tabs, every other menu and play are as before and this costs nothing there. On the tab it "
@@ -6255,6 +6450,14 @@ std::vector<Item> g_items = {
            L"item taken off the ground, a prop of the level - a jar, a book, a cup - in the hand, flying as it was thrown, and where it came to rest. "
            L"Their potions and items are copies of the game's own models; their props are the level's own, moved where they have them (with \"knock "
            L"props\", near you, in F4). Visual only: the potion's use, the items and the props stay each game's own. Live.")),
+    // [multiplayer] pose_share_grab (vr/grab_share.h): a body held in the hand (grab_throw) seen held by everyone - each viewer's own ragdoll draws it
+    Needs(L"multiplayer", L"pose_share", 1, Toggle(L"multiplayer", L"pose_share_grab", L"See the bodies they hold, knock down and throw - and let them see mine", 0,
+           L"A body your hand holds (\"Lift and throw a humanoid you grab\": taken, lifted, carried) goes to the others with your pose - which monster, the limb "
+           L"and the point your hand took, your palm, and the throw as you let go - and theirs hang from their hands for you, drawn by your own ragdoll at "
+           L"the same limb and point and thrown as they let go. A blow of yours that knocks a humanoid down, staggers or shoves it goes too (the limb and "
+           L"point it met, how fast it sent the body), and theirs knock your own drawing of it down the same way. Needs \"Lift and throw a humanoid you "
+           L"grab\" or \"A hard blow knocks a humanoid off its feet\" on here and the weight library; a monster your game has not got near is not drawn. "
+           L"Visual only: the monster's real place and the game stay each game's own. Live. F4 only.")),
 #endif
     Tab(L"Debug"),
     Group(L"Debug", L"Switches for testers and for finding problems: extra log lines, GPU replay modes, the multiplayer heads-and-hands probe, frame and stutter traces, and reports on why the graphics device was lost. Leave them off for normal play unless asked to send a log."),
@@ -6360,6 +6563,11 @@ std::vector<Item> g_items = {
            L"after the release to the gesture's press, the pad's button reaching the game, the hero's attack or throw mode, the body's turn toward the aim, the "
            L"animation row the action runs on (name, frames, the action frame), the game's own missile being created (read only: the game's missile create is "
            L"watched, nothing is changed) and the client showing a missile. Nothing is drawn and nothing is changed in the game. Live."),
+    Toggle(L"debug", L"missile_probe", L"Log every missile a player's shot or throw creates (the server's create, read only)", 0,
+           L"One line in the log for each missile the game's server creates for a player - an arrow, a bolt, each arrow of a Multiple Shot, a javelin, a "
+           L"throwing knife or axe, a potion: its class, the game's call site, the start and target cells, the heading, the target unit if any and every "
+           L"number of its create, with the whole block in hex once a shot; then one line per shot (how many missiles, the fan's angles). Offline and as "
+           L"the host only (a joined player's server is the host's). Read only: nothing is changed in the game. Live."),
     Toggle(L"debug", L"melee_touch_client_verdict", L"Hit by touch: decide hostile / wall from the client's own units", 0,
            L"What a player who JOINED a TCP/IP game gets (the game's server runs on the host's PC there, so it cannot be asked), tried "
            L"offline: a hireling or summon is not hostile, nobody in town is, the game's own line test stops a touch through a wall. "
@@ -6502,6 +6710,10 @@ std::vector<Item> g_items = {
            L"done when the GPU stopped, the address of a page fault and what was allocated or freed there, and the plugin's own last events that touch the "
            L"GPU's memory. Send that file in. It costs the runtime a marker between commands. Needs a game restart. Off: the device loss is still told, "
            L"with its reason only."),
+    Toggle(L"debug", L"dred_events", L"... and name the game's events where the GPU stopped", 1,
+           L"With DRED: the report also names the game's events open where each unfinished command list stopped (Windows keeps the text of each "
+           L"of the game's event marks - Windows 10 2004 and later), so a hang says which of the game's draws it was in, not only "
+           L"\"DrawIndexedInstanced\". Costs a little. Takes effect at the next game start."),
     Toggle(L"debug", L"d3d12_validation", L"D3D12 debug layer: errors in the log (slow)", 0,
            L"To find what takes the graphics device down. Needs Windows' optional feature Graphics Tools. On: before the game makes its device the D3D12 debug layer is switched "
            L"on, and its errors and warnings go to the log (d2r-vr-vrcam.log) in its own words - a barrier that names the wrong state, a copy past the end of a buffer, a "
@@ -6973,17 +7185,16 @@ int MatchPreset() {
     return kPresets;
 }
 
-// Home's Draw distance (shared/draw_distance.h): the seven keys as their own sliders read them, the stop they match (-1 Custom).
-drawdistance::Stop DrawDistanceNow() {
+// Home's Draw distance (shared/draw_distance.h kReach): the six keys as their own sliders read them, the stop they match (-1 Custom).
+drawdistance::Reach DrawDistanceNow() {
     auto v = [](const wchar_t* section, const wchar_t* key) { const Item* it = PresetItem(section, key); return it ? ReadValue(*it) : 0.0f; };
-    drawdistance::Stop s{};
+    drawdistance::Reach s{};
     s.rings = (int)std::lround(v(L"render", L"rings"));
     s.modelRadius = v(L"render", L"model_radius");
-    s.fogStart = v(L"fog", L"start");
-    s.fogEnd = v(L"fog", L"end");
-    s.cavesStart = v(L"fog", L"caves_start");
-    s.cavesEnd = v(L"fog", L"caves_end");
-    s.skyRadius = drawdistance::ToUnits(v(L"sky", L"game_sky_radius_m"));   // (the stops' units: metres on its slider)
+    s.fogStart = v(L"fog", L"game_fog_start");
+    s.fogEnd = v(L"fog", L"game_fog_end");
+    s.cavesStart = v(L"fog", L"game_fog_caves_start");
+    s.cavesEnd = v(L"fog", L"game_fog_caves_end");
     return s;
 }
 // The domes' radii in metres from the keys they took over from (shared/draw_distance.h), as the plugin reads an ini without the new ones.
@@ -6994,23 +7205,20 @@ float CaveRadiusMFromShare(float share) {
 }
 // The slider's place: the stop matched, or for Custom the one with the nearest model radius (1-based, as the slider counts).
 float ReadDrawDistance() {
-    const drawdistance::Stop s = DrawDistanceNow();
-    const int m = drawdistance::Match(s);
-    return (float)((m >= 0 ? m : drawdistance::Nearest(s.modelRadius)) + 1);
+    const drawdistance::Reach s = DrawDistanceNow();
+    const int m = drawdistance::MatchReach(s);
+    return (float)((m >= 0 ? m : drawdistance::NearestReach(s.modelRadius)) + 1);
 }
 bool g_writingDistance = false;   // WriteDrawDistance's keys one by one: no Custom shown in between
 void WriteValue(const Item& it, float v);
 void ShowDrawDistance();
 void RefreshControls();
 void WriteDrawDistance(float v) {
-    const drawdistance::Stop& s = drawdistance::kStops[std::clamp((int)std::lround(v) - 1, 0, drawdistance::kCount - 1)];
-    const drawdistance::Stop was = DrawDistanceNow();
-    const Item* cave = PresetItem(L"sky", L"game_dome_caves_radius_m");   // the cave dome keeps its share of the models' radius (as game_dome_caves_size did)
-    const float caveM = drawdistance::CaveRadiusFollowing(cave ? ReadValue(*cave) : 0.0f, was.modelRadius, s.modelRadius);
+    // (since 2026-11-09 the six keys of kReach; the sky dome and the cave dome are left as they are - the dome ships at 1000 m, past every stop)
+    const drawdistance::Reach& s = drawdistance::kReach[std::clamp((int)std::lround(v) - 1, 0, drawdistance::kReachCount - 1)];
     const struct { const wchar_t* section; const wchar_t* key; float v; } keys[] = {
         {L"render", L"rings", (float)s.rings}, {L"render", L"model_radius", s.modelRadius},
-        {L"fog", L"start", s.fogStart}, {L"fog", L"end", s.fogEnd}, {L"fog", L"caves_start", s.cavesStart}, {L"fog", L"caves_end", s.cavesEnd},
-        {L"sky", L"game_sky_radius_m", drawdistance::ToMetres(s.skyRadius)}, {L"sky", L"game_dome_caves_radius_m", caveM},
+        {L"fog", L"game_fog_start", s.fogStart}, {L"fog", L"game_fog_end", s.fogEnd}, {L"fog", L"game_fog_caves_start", s.cavesStart}, {L"fog", L"game_fog_caves_end", s.cavesEnd},
     };
     g_writingDistance = true;
     for (const auto& k : keys) {
@@ -7364,6 +7572,11 @@ float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@game") == 0) { float v = it.def; ReadGameValue(it, &v); return v; }
     if (wcscmp(it.section, L"@window") == 0) return ReadSquareWindow();
     if (wcscmp(it.section, L"@bodywalk") == 0) return ReadBodyWalkValue(it);
+    if (wcscmp(it.section, L"@fogby") == 0) {   // Fog drawn by: None 0, The game's fog 1, Old fog 2 ([fog] game_fog / enabled, vr/draw_by.h's fog way)
+        const int way = drawby::FromKeys(GetPrivateProfileIntW(L"fog", L"enabled", 0, g_ini) != 0, GetPrivateProfileIntW(L"fog", L"game_fog", 0, g_ini) != 0, true);
+        if (way == drawby::kGame && GetPrivateProfileIntW(L"fog", L"game_fog_planes", 0, g_ini) != 0) return 3.0f;   // (the planes: the game's fog drawn as them)
+        return way == drawby::kGame ? 1.0f : way == drawby::kOurs ? 2.0f : 0.0f;
+    }
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: Off 0 / 0, By the rules 2 / 1, Fully on 1 / 2 ([gameplay] melee_direct / melee_direct_client)
         return (float)directhit::FromKeys(GetPrivateProfileIntW(L"gameplay", L"melee_direct", 0, g_ini), GetPrivateProfileIntW(L"gameplay", L"melee_direct_client", 0, g_ini),
                                           (int)GetPrivateProfileIntW(L"gameplay", L"melee_direct_scope", -1, g_ini), GetPrivateProfileIntW(L"gameplay", L"quick_blow", 1, g_ini) != 0);
@@ -7428,6 +7641,17 @@ void WriteValue(const Item& it, float v) {
     }
     if (wcscmp(it.section, L"@window") == 0) { WriteSquareWindow(v != 0.0f); return; }
     if (wcscmp(it.section, L"@bodywalk") == 0) { WriteBodyWalkValue(it, v); return; }
+    if (wcscmp(it.section, L"@fogby") == 0) {   // Fog drawn by: one choice, the two keys (the game's fog: game_fog 1, enabled 0; the old: 0 / 1; none: 0 / 0)
+        const int pick = (int)std::lround(v);
+        int enabled = 0, game = 0;
+        drawby::ToKeys(pick == 1 || pick == 3 ? drawby::kGame : pick == 2 ? drawby::kOurs : drawby::kNone, 0, &enabled, &game, true);
+        WritePrivateProfileStringW(L"fog", L"game_fog", game ? L"1" : L"0", g_ini);
+        WritePrivateProfileStringW(L"fog", L"enabled", enabled ? L"1" : L"0", g_ini);
+        WritePrivateProfileStringW(L"fog", L"game_fog_planes", pick == 3 ? L"1" : L"0", g_ini);   // (Fog planes before the player: the game's fog as planes)
+        RefreshControls();   // (each block greyed or not by the two keys)
+        ShowPreset();
+        return;
+    }
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: one choice writes the key where the server runs and the joined player's
         int d = 0, c = 0, scope = -1;
         directhit::ToKeys((int)std::lround(v), &d, &c, &scope);
@@ -7658,7 +7882,7 @@ void ShowValue(const Item& it, float v) {
         if (side) swprintf_s(buf, L"%d x %d", side, side);
         else wcscpy_s(buf, TR(L"value.window_size", L"window's size"));
     } else
-    if (wcscmp(it.section, L"@distance") == 0 && drawdistance::Match(DrawDistanceNow()) < 0) wcscpy_s(buf, TR(L"value.custom", L"Custom"));
+    if (wcscmp(it.section, L"@distance") == 0 && drawdistance::MatchReach(DrawDistanceNow()) < 0) wcscpy_s(buf, TR(L"value.custom", L"Custom"));
     else if (wcscmp(it.section, L"calibration") == 0 && wcscmp(it.key, L"arm_span_m") == 0 && !(v >= it.min)) wcscpy_s(buf, TR(L"value.auto", L"auto"));   // none stored
     else if (it.step >= 1.0f) swprintf_s(buf, L"%d", (int)std::lround(v));
     else if (it.step >= 0.1f) swprintf_s(buf, L"%.1f", v);
@@ -8012,18 +8236,20 @@ void ShowDrawDistance() {
             SendMessageW(it.ctl, TBM_SETPOS, TRUE, ToPos(it, v));
             ShowValue(it, v);
         }
-    const drawdistance::Stop s = DrawDistanceNow();
-    const int m = drawdistance::Match(s);
+    const drawdistance::Reach s = DrawDistanceNow();
+    const int m = drawdistance::MatchReach(s);
     auto n = [](float f) { return std::to_wstring((int)std::lround(f)); };
-    std::wstring line = m >= 0 ? TRF(L"status.draw_distance.stop", L"{n} of {count}: ", {{L"n", std::to_wstring(m + 1)}, {L"count", std::to_wstring(drawdistance::kCount)}})
+    std::wstring line = m >= 0 ? TRF(L"status.draw_distance.stop", L"{n} of {count}: ", {{L"n", std::to_wstring(m + 1)}, {L"count", std::to_wstring(drawdistance::kReachCount)}})
                                : std::wstring(TR(L"status.draw_distance.custom", L"Custom (a value changed by hand): "));
-    line += TRF(L"status.draw_distance.values", L"{rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}), the game's sky dome at {sky} m. All live - no restart.",
+    // (a key of its own since the sky dome left the slider, 2026-11-09: the older line's translations name a {sky} this one has not)
+    line += TRF(L"status.draw_distance.reach", L"{rings} room rings, models out to {model}, fog {fs} to {fe} (in caves {cs} to {ce}). All live - no restart.",
                 {{L"rings", std::to_wstring(s.rings)}, {L"model", n(s.modelRadius)}, {L"fs", n(s.fogStart)}, {L"fe", n(s.fogEnd)},
-                 {L"cs", n(s.cavesStart)}, {L"ce", n(s.cavesEnd)}, {L"sky", n(drawdistance::ToMetres(s.skyRadius))}});
-    if (GetPrivateProfileIntW(L"fog", L"enabled", 0, g_ini) == 0)
+                 {L"cs", n(s.cavesStart)}, {L"ce", n(s.cavesEnd)}});
+    if (m == drawdistance::kReachDefault)
+        line += TR(L"status.draw_distance.default", L" The default (the Medium preset's distance).");
+    // the fog off: neither our effect's fog ([fog] enabled) nor the game's ([fog] game_fog, enabled 0 - 0.208's default) is drawn
+    if (GetPrivateProfileIntW(L"fog", L"enabled", 0, g_ini) == 0 && GetPrivateProfileIntW(L"fog", L"game_fog", 0, g_ini) == 0)
         line += TR(L"status.draw_distance.fog_off", L" The fog is off (Performance): the drawn world ends in the void.");
-    if (GetPrivateProfileIntW(L"sky", L"game_sky", 0, g_ini) == 0)
-        line += TR(L"status.draw_distance.no_game_sky", L" The sky dome counts only while the game draws the sky (Sky tab).");
     SetStatus(L"draw_distance", m >= 0 ? 0 : 3, line.c_str());   // (green: a stop; grey: Custom)
 }
 
@@ -12081,6 +12307,24 @@ domeassets::Result PrepareCeilingNow() {
     return domeassets::PrepareCeiling(game, modRoot, on);
 }
 
+// [holes] patch_world: the patches over the world's holes made from the player's own game (holes_assets.cpp), at the start on a thread of its own and
+// when the tick changes (off: ours taken out); the result to the log. The same here and now for Setup's --prepare-assets.
+holesassets::Result PrepareHolesNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    return holesassets::Prepare(game, modRoot, GetPrivateProfileIntW(L"holes", L"patch_world", 0, g_ini) != 0);
+}
+void StartHoles() {
+    try {
+        std::thread([] {
+            const holesassets::Result r = PrepareHolesNow();
+            LogLine(L"world holes: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"world holes: could not be started");
+    }
+}
+
 void StartGameCeiling() {
     try {
         std::thread([] {
@@ -12707,6 +12951,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"knock_props") == 0 || wcscmp(it.key, L"grab_items") == 0)) StartPropsCatalog();
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"world_contact") == 0 || wcscmp(it.key, L"world_contact_hands") == 0)) StartSolidsCatalog();
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
+                if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"patch_world") == 0) StartHoles();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
@@ -12764,6 +13009,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartKurastBoat();
         StartSkyDome();
         StartGameCeiling();
+        StartHoles();
         StartMenuArt();
         StartPortraits();
         StartDataMods();
@@ -13083,6 +13329,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"kurast boat", [] { return PrepareBoat().text; });              // [world] kurast_boat: the canoe on the water
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
+            timed(L"world holes", [] { return PrepareHolesNow().text; });           // [holes] patch_world: the patches over the world's holes
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made
@@ -13140,6 +13387,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // [render] keep_room_heights (on) became [render] floors_stay (off) in 0.188.6: the old line goes, its value is not carried over -
     // the point is that every upgrade comes out with it off (the player can tick it again)
     WritePrivateProfileStringW(L"render", L"keep_room_heights", nullptr, g_ini);
+    // ... and [render] floors_stay itself is gone since 0.209.9 ([render] room_stitch fixes the same step; Serg 2026-11-09): its line goes too
+    WritePrivateProfileStringW(L"render", L"floors_stay", nullptr, g_ini);
     {   // [body] leap_camera_up (a tick) became leap_camera_up_pct (a share of the arc) in 0.202: an ini with the tick and no share gets 100 for on,
         // 0 for off (the plugin reads it so too), the old line goes
         wchar_t now[16], old[16];

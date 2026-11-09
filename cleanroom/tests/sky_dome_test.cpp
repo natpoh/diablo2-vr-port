@@ -118,6 +118,25 @@ int main(int argc, char** argv) {
         CHECK(UnitFileProblem(R"({"type":"UnitDefinition","a":{"type":"UnitRootComponent"}})") != nullptr);
         CHECK(UnitFileProblem(R"({"type":"Preset","a":{"type":"UnitRootComponent"},"c":"ModelDefinitionComponent"})") != nullptr);
     }
+    {   // the model the unit names, read before the game gets the unit (the test PC 2026-11-08: an earlier build's ceiling slab at
+        // Tests/pillar01 drawn as act 2's dome - a giant rock round the eye)
+        const std::string unit = R"({"type":"UnitDefinition","name":"d2r_vr_sky_dome_act2","entities":[{"components":[{"type":"ModelDefinitionComponent",)"
+                                 R"("name":"component_model_sky_dome_act2","filename":"data/hd/env/model/Tests/pillar01.model","visibleLayers":1}]}]})";
+        CHECK(UnitModel(unit) == "data/hd/env/model/Tests/pillar01.model");
+        CHECK(UnitModel(R"({"type":"UnitDefinition"})").empty());
+        CHECK(LodFile("data/hd/env/model/Tests/pillar01.model", 3) == "data/hd/env/model/Tests/pillar01_lod3.model");
+        CHECK(LodFile("data/hd/env/model/Tests/pillar01", 0).empty());
+        CHECK(DomeName("data/hd/env/model/d2r_vr/sky/sky_dome_act2_unit.json") == "act2");
+        CHECK(DomeName("data/hd/env/model/d2r_vr/sky/sky_dome_cave_unit.json") == "cave");
+        CHECK(DomeName("data/hd/env/model/d2r_vr/ceiling/cave_ceiling_unit.json").empty());
+        for (const char* n : {"act1", "act2", "act3", "act4", "act5", "cave"}) CHECK(ChecksModel(n));
+        for (const char* n : {"test", "summit", "summitours", ""}) CHECK(!ChecksModel(n));   // ([debug] game_sky_test: the game's own model on purpose)
+        const std::string ours = std::string("granny...d2rvr_sky_act2_material\0d2rvr_sky_act2_map", 52);
+        CHECK(ModelFileProblem(ours, "act2") == nullptr);
+        CHECK(ModelFileProblem("", "act2") != nullptr && std::strstr(ModelFileProblem("", "act2"), "not there") != nullptr);
+        CHECK(ModelFileProblem("granny...rocks03...act3_jungle_dungeon_rocky01_ALB", "act2") != nullptr);   // the old slab
+        CHECK(ModelFileProblem(ours, "act3") != nullptr);   // another dome's model at this one's path
+    }
     if (argc > 1) {   // a unit file as make_sky_dome.py wrote it (the staged one): the game may load it
         std::string text;
         if (FILE* f = std::fopen(argv[1], "rb")) {

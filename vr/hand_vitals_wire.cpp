@@ -32,6 +32,7 @@
 #include "direct_input.h"
 #include "hand_vitals_game.h"
 #include "hand_vitals_paint.h"
+#include "hand_swap.h"   // [hands] left_handed
 #include "view_gate.h"
 
 namespace handvitals {
@@ -258,6 +259,7 @@ void OnFrame(const directinput::Frame& f, void*) {
 
     In in;
     in.cfg = cfg;
+    in.cfg.flip = in.cfg.flip != handswap::Now();   // [hands] left_handed: hand 0 is the RIGHT controller then - its palm is its -X (vr/hand_swap.h)
     in.dt = dt;
     in.head.valid = f.head.valid == 1;
     in.head.pos = {f.head.pos[0], f.head.pos[1], f.head.pos[2]};

@@ -4,6 +4,7 @@
 #include "../../fence_wait.h"   // a fence wait that does not end on a wake meant for an older one
 #include "../../resize_drain.h"   // [render] resize_drain: no replay of a pass the game resized in, the GPU drained first
 #include "../../shadows_once.h"   // [render] shadows_once_a_pair: the lists that only draw the shadow / grass maps not replayed for the right eye
+#include "replay_list_gen.h"   // [stereo] replay_reset_guard: no replay of a list the game reset since it submitted it
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -40,7 +41,7 @@ std::atomic<bool> g_nativeHooks{false};   // its hooks went in at the start (Nat
 std::atomic<int> g_nativeKey{0};          // [stereo] native_replay now (live)
 std::atomic<int> g_replayRightIni{0};     // [stereo] replay_right as the ini has it (the ReShade path's)
 std::atomic<bool> g_nativeNow{false};     // this pair goes the native way (Wanted, once a pair)
-struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; bool mapsOnly = false; };   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec; mapsOnly: it only draws the shadow / grass maps ([render] shadows_once_a_pair, vr/shadows_once.h)
+struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; bool mapsOnly = false; uint32_t gen = 0; };   // gen: the list's count of resets when the game submitted it (vr/render/stereo/replay_list_gen.h)   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec; mapsOnly: it only draws the shadow / grass maps ([render] shadows_once_a_pair, vr/shadows_once.h)
 std::vector<Sub> g_subs;           // the left pass's direct and compute submissions, in order
 SRWLOCK g_lock = SRWLOCK_INIT;
 IDXGISwapChain* g_proxy = nullptr; // the game's swap chain (ReShade's proxy): what it presents through
@@ -191,6 +192,11 @@ std::atomic<bool> g_holdSignals{false};
 // game's own queue waits let them go), and a signal held while the game loads an area is a
 // wait that never ends.
 std::atomic<bool> g_holdSignalsOn{false};
+// [stereo] replay_reset_guard (on; vr/render/stereo/replay_list_gen.h, crash batch 2026-11-09): a pass with a list the game reset after submitting it
+// is not replayed - the list holds other commands by then (open: the device removed, INVALID_CALL; or a later recording: a draw on what is not
+// there yet, a hang). Off: counted and told, replayed anyway (as before).
+std::atomic<bool> g_resetGuard{true};
+std::atomic<uint32_t> g_staleReplays{0};   // passes with such a list (all along)
 std::atomic<uint32_t> g_heldMax{0};
 thread_local bool t_ours = false;   // our own signals pass
 std::atomic<uint32_t> g_sigCalls{0}, g_sigHeld{0}, g_sigWhileHolding{0};
@@ -366,7 +372,7 @@ void ExecCore(ID3D12CommandQueue* nq, ID3D12CommandList* ncl, bool ours) {
     else CopyLateSlots(nq);
     const bool mapsOnly = shadowsonce::MapsOnly(ncl);   // (judged now: closed, before the game's ExecuteCommandLists; false with the tick off)
     AcquireSRWLockExclusive(&g_lock);
-    g_subs.push_back({nq, ncl, 0, mapsOnly});
+    g_subs.push_back({nq, ncl, 0, mapsOnly, listgen::Lists().Gen(ncl)});
     ReleaseSRWLockExclusive(&g_lock);
 }
 void OnExecute(command_queue* q, command_list* cl) {
@@ -924,6 +930,22 @@ void MonitorPresent(reshade::api::effect_runtime* rt, HWND wnd, ID3D12CommandQue
     const bool was = t_ours;
     t_ours = true;
     if (rt) rt->get_command_queue()->flush_immediate_command_list();
+    if (monitoreye::On())   // [render] monitor_eye_fit: what the headset shows of each eye - the window gets that, not the lens mask's edges
+        for (int e = 0; e < 2; ++e) {
+            xr::EyeLens l{};
+            xr::VisMask m;
+            if (eye < 0 || !xr::PairLens(e, &l) || !l.seenOk || l.fwd[0] != 0.0f || l.fwd[1] != 0.0f) { monitoreye::SetLens(e, nullptr); continue; }   // (canted: drawn turned)
+            xr::VisibilityMask(e, &m);
+            monitoreye::Lens ml;
+            ml.xy = m.xy.data();
+            ml.nVerts = (uint32_t)(m.xy.size() / 2);
+            ml.idx = m.idx.data();
+            ml.nIdx = (uint32_t)m.idx.size();
+            ml.gen = m.gen;
+            for (int k = 0; k < 4; ++k) { ml.drawn[k] = l.drawn[k]; ml.seen[k] = l.seen[k]; }
+            ml.seenOk = true;
+            monitoreye::SetLens(e, &ml);
+        }
     monitoreye::Present(q, (HWND__*)wnd, bb, eye);
     t_ours = was;
 }
@@ -1414,12 +1436,9 @@ void NativeSinks(natived3d::Sinks& k) {
     k.uploadMade = &camfix::NativeUploadMade;
     k.uploadGone = &camfix::NativeUploadGone;
     g_nativeHooks.store(true);
-    xr::SetReplayAtStart(!IniB(L"fog", L"game_fog_before_fx", false));   // (the headset's render type row: one pass works now, or after a restart)
-    // [fog] game_fog_before_fx hooks the lists' compute root signature / root CBV calls first (natived3d's fxRoot, at the device's creation):
-    // camfix's camera hooks on the same functions cannot go in after it, and without them the right eye would be the left one - skipped, said now
-    if (IniB(L"fog", L"game_fog_before_fx", false))
-        Log("vrcam: stereo - the replay will be SKIPPED this session: [fog] game_fog_before_fx=1 holds the camera's root hooks (the same functions) - "
-            "\"Native one pass\" draws two passes a pair; untick \"fog before the effects\" and restart for one pass");
+    xr::SetReplayAtStart(true);   // (the headset's render type row: one pass works now, or after a restart)
+    // ([fog] game_fog_before_fx hooks the lists' root signature / compute root CBV calls first, at the device's creation: camfix's camera
+    // handlers run inside those hooks since 0.209.10 - natived3d::SetRootChain; until then the replay was skipped with it on)
     SetWant(g_replayRightIni.load(), key);
     StartGuard();
     g_on.store(true);
@@ -1456,7 +1475,7 @@ bool NativeSetup() {
     LogF("vrcam: native replay - set up: the camera's root hooks %s, the game's ExecuteCommandLists on its direct, compute and copy queues %s; "
          "%zu upload buffers of the game's known so far%s%s", root ? "in" : "NOT in", ecl ? "watched" : "NOT all watched", camfix::NativeUploadsKnown(),
          done ? "" : " - the replay stays off this session (two passes a pair)",
-         !root && IniB(L"fog", L"game_fog_before_fx", false) ? " - SKIPPED because [fog] game_fog_before_fx=1 hooked the same functions first" : "");
+         "");
     return done == 1;
 }
 // Once a pair (Wanted): does this pair take the native path (vr/native_replay.h Decide)? The reason told at the first pair and at each change.
@@ -1664,6 +1683,20 @@ bool RightFromLeft() {
     // pair is the back buffer as it stands, and the left picture goes back only if it still fits.
     const bool resized = !resizedrain::ReplayLists(g_resizeDrain.load(), g_captureEpoch, g_resizes.load());
     if (resized && g_resizeDrops.fetch_add(1) < 6) Log("vrcam: replay - this pass was recorded across a resize: its lists are not replayed");
+    // [stereo] replay_reset_guard: any list of this pass reset by the game since it submitted it (the plugin's Reset hooks count them)
+    const size_t stale = listgen::Stale(listgen::Lists(), subs.size(), [&subs](size_t k, const void** l, uint32_t* g) { *l = subs[k].cl; *g = subs[k].gen; });
+    const bool held = stale && g_resetGuard.load();
+    if (stale) {
+        const uint32_t nth = g_staleReplays.fetch_add(1) + 1;
+        gpufault::Note(held ? "replay: a pass held back - lists reset since the game submitted them" : "replay: a pass replayed with lists reset since (guard off)",
+                       stale, subs.size());
+        if (nth <= 6 || nth % 100 == 0)
+            LogF("vrcam: replay - %zu of the %zu lists this pass submitted were reset by the game before their replay (it took them up again; %u such "
+                 "pass(es) so far, %s): %s", stale, subs.size(), nth, listgen::Lists().Full() ? "the reset table is FULL - unseen lists count as reset" : "the reset table has room",
+                 held ? "not replayed - the right eye is the back buffer as it stands ([stereo] replay_reset_guard)"
+                      : "REPLAYED anyway ([stereo] replay_reset_guard=0) - the GPU may run commands that are not this pass's");
+    }
+    const bool notReplayed = resized || held;
     camfix::g_capture.store(false);
     if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
     if (mode == 1) {   // the right eye's camera into the slots, on the direct queue before the replay
@@ -1684,13 +1717,13 @@ bool RightFromLeft() {
     }
     // [render] shadows_once_a_pair (vr/shadows_once.h): the lists that only draw the shadow maps and the grass map are not submitted again - the
     // right eye samples the maps the left pass drew (they do not depend on the eye: the same light cameras, lights and hero in this one CPU pass)
-    if (mode == 1 && !resized && shadowsonce::On()) {
+    if (mode == 1 && !notReplayed && shadowsonce::On()) {
         uint32_t skipped = 0;
         shadowsonce::Filter(subs, true, [](const Sub& s) { return s.mapsOnly; }, &skipped);
         shadowsonce::NotePair((uint32_t)subs.size(), skipped);
     }
     double t = pairtime::UsNow();
-    if (mode != 3 && !resized) {   // the lists again, a batch per run of one queue; a fence between queues
+    if (mode != 3 && !notReplayed) {   // the lists again, a batch per run of one queue; a fence between queues
         // (the first batch may be the compute queue's: it must see the right eye's slots too)
         if (mode == 1 && !subs.empty() && subs[0].q != g_direct) { g_why = "replay: first batch not direct"; GpuWait(subs[0].q, SignalOn(g_direct)); }
         ID3D12CommandQueue* prev = nullptr;

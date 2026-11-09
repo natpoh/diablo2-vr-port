@@ -6,6 +6,9 @@
 #include "engitem.h"
 #include "held_units.h"   // the units we placed let go, as the game does, when a game is left
 #include "sky_atlas.h"    // the domes' atlas: its layout's mark (DomeAtlasHasCap)
+#include "world_holes_file.h"   // [holes] patch_world: the places and the measures file D2R_VR_Settings writes
+
+#include <array>
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp: ::SafeRead and the rest are vrc's
@@ -1320,7 +1323,7 @@ constexpr const char* kDomeUnitSummit = "data/hd/env/model/d2r_vr/sky/sky_dome_s
 // rest what its log last said
 struct Dome { Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int test = 0, tries = 0;
               ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; float toldR = -1.0f; bool toldPlace = false;
-              bool fileMissing = false; ULONGLONG fileCheckedAt = 0; };   // (its unit's file not there yet: looked for again - DomeRun)
+              bool fileMissing = false; ULONGLONG fileCheckedAt = 0, loadAskedAt = 0; std::string fileTold; };   // (its unit's file not there yet, or its model not ours: looked for again - DomeRun)
 std::vector<Shared> g_domeOld;   // placings given up on (no model made): laid away, kept until the game is left (LetGoAll)
 Dome g_dome;
 // [sky] game_dome_caves: the same dome, black, round the eye underground at its radius ([sky] game_dome_caves_radius_m,
@@ -1452,6 +1455,19 @@ bool DomeAtlasHasCap() {
     return cap;
 }
 std::atomic<bool> g_domeShown{false};
+std::atomic<uint64_t> g_domeFrames{0};   // SkyDomeFrame's runs (DomeHeartbeat)
+// Where the domes' frame is (the test PC, 0.209.5, flat, act 2 town: the radius line and then nothing at all - no DomeRun line, no 10 s
+// state, no heartbeat, while the frame kept being called: a fault swallowed each frame?). Set as it goes; a fault caught in Work names it.
+std::atomic<int> g_domeStep{0};
+const char* DomeStepName(int step) {
+    switch (step) {
+    case 1: return "the frame's start"; case 2: return "why not (DomeWhyNot)"; case 3: return "the radius (dome_past_far)";
+    case 4: return "act 1's dome (DomeRun)"; case 5: return "the act's dome (DomeRun)"; case 6: return "the 10 s state line"; case 7: return "the frame's end";
+    case 10: return "DomeRun's start"; case 11: return "the unit's file read"; case 12: return "the model's LOD files checked";
+    case 13: return "the game asked for the definition (LoadDef)"; case 14: return "the definition's answer"; case 15: return "placing / laying the dome";
+    default: return "?";
+    }
+}
 std::atomic<float> g_domeRadius{0.0f};   // the radius it is laid at now (skydome::DrawableRadius)
 bool DomeShown() { return g_domeShown.load(std::memory_order_relaxed); }
 // The shown act's dome's band in the domes' picture (shared/sky_atlas.h: act - 1), -1: none shown, or a debug dome of its own picture
@@ -1498,6 +1514,8 @@ const char* SkyCannot() {
     return skypaths::GameSkyCannot(GameDrawnView(), d != nullptr, t, g_set.gameSkybox.load() && g_gameSkyboxHere.load());
 }
 void SkyDomeFrame() {
+    g_domeFrames.fetch_add(1, std::memory_order_relaxed);
+    g_domeStep.store(1, std::memory_order_relaxed);
     if (g_set.gameSkyTest.load() != g_dome.test) {   // [debug] game_sky_test changed: another unit from now on (the one placed laid away, kept)
         if (g_dome.inst.p) {
             float m[16];
@@ -1519,7 +1537,9 @@ void SkyDomeFrame() {
     }
     const bool ticked = skypaths::GameDomeWanted(g_set.gameSky.load(), fx::noreshade::FxWaiting());
     const int act = g_fogAct.load();
+    g_domeStep.store(2, std::memory_order_relaxed);
     const char* why = DomeWhyNot();
+    g_domeStep.store(3, std::memory_order_relaxed);
     {   // our effect's sky chosen and our effect still being built for this size: nothing meanwhile (skypaths::GameDomeWanted - no stand-in)
         const int meanwhile = !g_set.gameSky.load() && fx::noreshade::FxWaiting() && g_skyPalette.load() >= 0 ? 1 : 0;
         static int told = 0;
@@ -1534,7 +1554,11 @@ void SkyDomeFrame() {
     // (GameSkyRadiusNow: VR F3's own Draw distance there, [table] draw_distance)
     float radius = skybox ? skydome::SkyboxRadius(GameSkyRadiusNow(), g_lastNear.load()) : GameSkyRadiusNow();
     // [sky] dome_past_far: off VR F4 (the flat game's views, VR F2) the dome past the far end of the game's depth range in every pixel on the
-    // screen - nearer, the game's own haze lay on part of it (skydome::PastFarRadius); F4 as set
+    // screen - nearer, the game's own haze lay on part of it (skydome::PastFarRadius); F4 as set. (0.209.8 laid it inside the range in flat
+    // F3, so the game's fog would fade into its low band - but the game's fog does not thin with height (game_fog_height is ruled out), and
+    // at 1007 units against our fog full at 140 it covered the whole dome: Serg, flat F3, act 1 at night, "туман закрывает все небо". So
+    // flat F3 is past the range again, and the fade into the fog is the dome's low band baked in the fog's colour ([sky] dome_fog_baked,
+    // in the texture the game samples, the colour the game's fog draws now) - Serg's "надо красить и запекать".)
     if (g_set.domePastFar.load() && !viewgate::F4()) {
         float proj[4] = {};
         AcquireSRWLockShared(&g_skyLock);
@@ -1557,7 +1581,9 @@ void SkyDomeFrame() {
     toldSkybox = skybox && !*why;
     bool shown = false;
     // act 1's (and the debug tests'); then acts 2 - 5's, each only for its act - one placed in another act is put away
+    g_domeStep.store(4, std::memory_order_relaxed);
     if (ticked || !g_dome.parked) shown |= DomeRun(g_dome, DomeUnit(), act == 1 || *why ? why : "another act's dome", radius, "game sky");
+    g_domeStep.store(5, std::memory_order_relaxed);
     for (int a = 2; a <= 5; ++a) {
         Dome& d = g_actDomes[a];
         if (a != act && d.parked) continue;   // (never placed, or put away already: nothing to do)
@@ -1567,11 +1593,35 @@ void SkyDomeFrame() {
         shown |= DomeRun(d, ActDomeUnit(a), a == act || *why ? why : "another act's dome", radius, tag);
     }
     g_domeShown.store(shown);
+    g_domeStep.store(6, std::memory_order_relaxed);
+    {   // [sky] game_sky chosen and no dome shown: every 10 s what each dome's state is - so a dome never stays away without a line (the test PC,
+        // 0.209.3, flat, act 2 town: no line at all after the radius one)
+        static ULONGLONG toldAt = 0;
+        const ULONGLONG now = GetTickCount64();
+        if (ticked && !shown && g_inWorld.load() && now - toldAt >= 10000) {
+            toldAt = now;
+            auto state = [](const Dome& x) {
+                char b[160];
+                snprintf(b, sizeof b, "%s%s%s%s%s", x.parked ? "put away" : "laid", x.loadTried ? ", asked" : ", never asked",
+                         x.def.p ? ", loaded" : ", not loaded", x.fileMissing ? ", files not right: " : "", x.fileMissing ? x.fileTold.c_str() : "");
+                return std::string(b);
+            };
+            LogF("vrcam: game sky - no dome shown, 10 s: act %d, why \"%s\"; act 1's dome: %s; act %d's: %s", act, *why ? why : "(wanted)",
+                 state(g_dome).c_str(), act >= 2 && act <= 5 ? act : 0, act >= 2 && act <= 5 ? state(g_actDomes[act]).c_str() : "-");
+        }
+    }
+    g_domeStep.store(7, std::memory_order_relaxed);
 }
 
 // One dome a frame: its unit loaded once, placed (again, while no model came of it), laid at the eye at `radius` while `why` is "" - put
 // away, small under the ground, while not; true while shown. `tag` heads its log lines.
 bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const char* tag) {
+    g_domeStep.store(10, std::memory_order_relaxed);
+    if (!unit || !why || !tag) {   // (never: the act's unit path missing - told, nothing done)
+        static bool told = false;
+        if (!told) { told = true; LogF("vrcam: game sky - DomeRun given no %s - no dome", !unit ? "unit" : !why ? "reason" : "tag"); }
+        return false;
+    }
     const bool want = !*why;
     // The definition, once a run - and only a file that holds what the game needs (vr/sky_dome.h). Its file not there (yet): looked for again
     // every 3 s - Serg on 0.192.1: "Sky and fog drawn by" set to the game while it ran, the Settings window made the files a moment (or
@@ -1582,18 +1632,41 @@ bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const cha
         d.loadTried = true;
         d.fileCheckedAt = checkMs;
         std::wstring file;
+        g_domeStep.store(11, std::memory_order_relaxed);
         const std::string text = ModDataText(unit, &file);
+        g_domeStep.store(12, std::memory_order_relaxed);
+        // ... and the model it names, every LOD file, ours (vr/sky_dome.h ModelFileProblem): another file there is what the game draws as the dome
+        std::string modelBad;
+        const std::string name = skydome::DomeName(unit);
+        if (!skydome::UnitFileProblem(text) && skydome::ChecksModel(name)) {
+            const std::string model = skydome::UnitModel(text);
+            for (int lod = 0; lod < 5 && modelBad.empty(); ++lod) {
+                std::wstring lodFile;
+                const std::string rel = skydome::LodFile(model, lod);
+                const char* bad = rel.empty() ? "the unit names no model file" : skydome::ModelFileProblem(ModDataText(rel.c_str(), &lodFile), name);
+                if (bad) modelBad = (rel.empty() ? model : Utf8(lodFile.c_str())) + " - " + bad;
+            }
+        }
         if (const char* bad = skydome::UnitFileProblem(text)) {
-            if (!again)
+            if (d.fileTold != bad)
                 LogF("vrcam: %s - the dome's unit NOT given to the game: %s - %s (the Settings window makes it); looked for again every 3 s", tag,
                      Utf8(file.c_str()).c_str(), bad);
+            d.fileTold = bad;
             d.fileMissing = true;
-        } else if (LoadDef(unit, &d.def) && d.def.p) {
+        } else if (!modelBad.empty()) {
+            if (d.fileTold != modelBad)
+                LogF("vrcam: %s - the dome's unit NOT given to the game: its model %s - no dome (our effect's sky instead); looked for again every 3 s",
+                     tag, modelBad.c_str());
+            d.fileTold = modelBad;
+            d.fileMissing = true;
+        } else if ((LogF("vrcam: %s - the dome's files check out (%s and its model's five LOD files ours): asking the game for its definition "
+                         "now (a line follows: loaded, or did NOT load; none means the game's loader never came back)", tag, unit),
+                    d.loadAskedAt = GetTickCount64(), g_domeStep.store(13, std::memory_order_relaxed), LoadDef(unit, &d.def)) && d.def.p) {
             d.fileMissing = false;
             d.loadedAt = GetTickCount64();
-            LogF("vrcam: %s - the dome's definition loaded%s: %s (one unit root; the model file asks UnlitMaterial - models_unlit_p -, "
+            LogF("vrcam: %s - the dome's definition loaded%s in %llu ms: %s (one unit root; the model file asks UnlitMaterial - models_unlit_p -, "
                  "lightMask 0, shadowMask 0; whether the game drew it: the 10 s line's draws of its mesh)", tag, again ? " (its file there now)" : "",
-                 unit);
+                 (unsigned long long)(d.loadedAt - d.loadAskedAt), unit);
         } else {
             d.fileMissing = false;
             d.def = {};
@@ -1602,6 +1675,7 @@ bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const cha
                        : "");
         }
     }
+    g_domeStep.store(14, std::memory_order_relaxed);
     if (!d.def.p) {   // (never loaded: wanted nowhere yet - the reason told all the same, once a change)
         if (std::string(why) != d.told) {
             d.told = why;
@@ -1609,6 +1683,7 @@ bool DomeRun(Dome& d, const char* unit, const char* why, float radius, const cha
         }
         return false;
     }
+    g_domeStep.store(15, std::memory_order_relaxed);
     // its middle at the head's centre, between the eyes (not one eye's camera: the game's Summit card laid at the camera stood in one eye
     // only - PC1 2026-10-27, real stereo; a dome 50+ units round differs by a hair, but the middle is the right place)
     float eye[3];
@@ -1744,6 +1819,9 @@ void CaveDomeFrame() {
 // height_from_walls: that height the area's walls' top (shared/ceiling_measures.h, read at each area change).
 // One piece (a kind's slab or wall): its unit, its definition and instance, its placings, what the log was last told
 struct Slab { std::string what, unit, model; std::atomic<unsigned>* indices = nullptr;
+              // the log's words for it ([holes] patch_world's pieces: their own)
+              const char* tag = "game ceiling", *madeWhile = "[ceiling] game_ceiling is the game's",
+                          *modelNote = " - the game's lit rock model with this kind's own terrain maps, lightMask 19, shadowMask 0";
               Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int tries = 0;
               ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; };
 std::atomic<unsigned> g_slabIndices[gameceiling::kKindCount], g_wallIndices[gameceiling::kKindCount];
@@ -1882,16 +1960,16 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
         std::wstring file;
         const std::string text = ModDataText(p.unit.c_str(), &file);
         if (const char* bad = skydome::UnitFileProblem(text)) {
-            LogF("vrcam: game ceiling - the %s's unit NOT given to the game: %s - %s (D2R_VR_Settings makes it while [ceiling] game_ceiling is "
-                 "the game's)%s", p.what.c_str(), Utf8(file.c_str()).c_str(), bad, p.indices >= g_slabIndices && p.indices < g_slabIndices + gameceiling::kKindCount
+            LogF("vrcam: %s - the %s's unit NOT given to the game: %s - %s (D2R_VR_Settings makes it while %s)%s", p.tag, p.what.c_str(),
+                 Utf8(file.c_str()).c_str(), bad, p.madeWhile, p.indices >= g_slabIndices && p.indices < g_slabIndices + gameceiling::kKindCount
                  ? "; our own vault in this room" : "");
         } else if (LoadDef(p.unit.c_str(), &p.def) && p.def.p) {
             p.loadedAt = GetTickCount64();
-            LogF("vrcam: game ceiling - the %s's definition loaded: %s (one unit root; the model %s - the game's lit rock model with this kind's "
-                 "own terrain maps, lightMask 19, shadowMask 0)", p.what.c_str(), p.unit.c_str(), p.model.c_str());
+            LogF("vrcam: %s - the %s's definition loaded: %s (one unit root; the model %s%s)", p.tag, p.what.c_str(), p.unit.c_str(), p.model.c_str(),
+                 p.modelNote);
         } else {
             p.def = {};
-            LogF("vrcam: game ceiling - the %s's definition did NOT load (%s): the game refused it", p.what.c_str(), p.unit.c_str());
+            LogF("vrcam: %s - the %s's definition did NOT load (%s): the game refused it", p.tag, p.what.c_str(), p.unit.c_str());
         }
     }
     if (!p.def.p) return false;
@@ -1902,13 +1980,13 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
             Lay(p.inst.p, p.root, away);
             g_slabOld.push_back(p.inst);
             ++p.tries;
-            LogF("vrcam: game ceiling - the %s's placing %d made no model in 3 s: laid away, placed again (its definition asked %.1f s ago)", p.what.c_str(),
+            LogF("vrcam: %s - the %s's placing %d made no model in 3 s: laid away, placed again (its definition asked %.1f s ago)", p.tag, p.what.c_str(),
                  p.tries, (nowMs - p.loadedAt) / 1000.0);
             p.inst = {};
             p.root = 0xFFFFFFFFu;
         } else if (p.tries == 4) {
             ++p.tries;
-            LogF("vrcam: game ceiling - the %s made no model in 5 placings over 15 s: the game does not take its model file - placed no more", p.what.c_str());
+            LogF("vrcam: %s - the %s made no model in 5 placings over 15 s: the game does not take its model file - placed no more", p.tag, p.what.c_str());
         }
     }
     if (want && !p.inst.p && p.tries <= 4 && nowMs - p.loadedAt < 2000) return false;   // (its files loading)
@@ -1917,9 +1995,9 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
             p.root = RootOf(p.inst.p);
             p.parked = false;
             p.placedAt = nowMs;
-            LogF("vrcam: game ceiling - the %s placed (instance %p, root entity %X) at the hero %.1f %.1f %.1f", p.what.c_str(), p.inst.p, p.root, hero[0], hero[1], hero[2]);
+            LogF("vrcam: %s - the %s placed (instance %p, root entity %X) at the hero %.1f %.1f %.1f", p.tag, p.what.c_str(), p.inst.p, p.root, hero[0], hero[1], hero[2]);
         } else {
-            LogF("vrcam: game ceiling - PlaceInstance gave nothing for the %s - not asked again this run", p.what.c_str());
+            LogF("vrcam: %s - PlaceInstance gave nothing for the %s - not asked again this run", p.tag, p.what.c_str());
             p.tries = 5;
             return false;
         }
@@ -1927,7 +2005,7 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
     if (!p.inst.p) return false;
     if (p.root == 0xFFFFFFFFu) p.root = RootOf(p.inst.p);
     if (!Lay(p.inst.p, p.root, want ? m : away)) {   // its entity is gone (an area change): let go, placed again next frame
-        LogF("vrcam: game ceiling - the %s's entity is gone (an area change): let go, placed again", p.what.c_str());
+        LogF("vrcam: %s - the %s's entity is gone (an area change): let go, placed again", p.tag, p.what.c_str());
         ReleaseInstance(&p.inst, &g_areaTally);
         p.inst = {};
         p.root = 0xFFFFFFFFu;
@@ -1936,13 +2014,13 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
     p.parked = !want;
     if (std::string(why) != p.told) {
         p.told = why;
-        if (want) LogF("vrcam: game ceiling - the %s shown at %.1f %.1f %.1f, scale %.2f round / %.2f down; its model: %s", p.what.c_str(), m[12], m[13], m[14],
+        if (want) LogF("vrcam: %s - the %s shown at %.1f %.1f %.1f, scale %.2f round / %.2f down; its model: %s", p.tag, p.what.c_str(), m[12], m[13], m[14],
                        m[0], m[5], ModelState(p.inst.p, p.indices).c_str());
-        else LogF("vrcam: game ceiling - the %s put away (under the ground, small): %s", p.what.c_str(), why);
+        else LogF("vrcam: %s - the %s put away (under the ground, small): %s", p.tag, p.what.c_str(), why);
     }
     if (want && nowMs - p.modelAt >= 10000) {   // its model as the game has it, every 10 s while shown (it may load after the placing)
         p.modelAt = nowMs;
-        LogF("vrcam: game ceiling - the %s's model, 10 s: %s", p.what.c_str(), ModelState(p.inst.p, p.indices).c_str());
+        LogF("vrcam: %s - the %s's model, 10 s: %s", p.tag, p.what.c_str(), ModelState(p.inst.p, p.indices).c_str());
     }
     return want;
 }
@@ -1977,8 +2055,11 @@ void CeilingFrame() {
     // lowest on them); else 18
     const float tile = gameceiling::TileWorld(g_set.ceilScale.load());
     const float walls = g_set.ceilFromWalls.load() && ownHeight <= 0.0f ? g_wallsTopHere.load() : 0.0f;
+    // [ceiling] top_from_level (from D2R VR Unleashed, Cal): measured from the level's highest built floor, not the lowest he stood on - up the
+    // stairs it no longer stays low until he walks on (0 when off)
+    const float topLift = CeilingTopLift(hero[1], floorAt, g_biomeGen.load());
     const float height = gameceiling::HeightOf(ownHeight, g_set.ceilFromWalls.load(), g_wallsTopHere.load(),
-                                               kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile);
+                                               kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile) + topLift;
     const float reach = gameceiling::WallReach(height, g_set.ceilFloor.load());
     // [ceiling] game_ceiling_beams: the barracks' frame with its bottom at that height, the slab over it by the frame's depth
     ceilmeasure::Beam beam;
@@ -2116,13 +2197,153 @@ void CeilingFrame() {
     g_slabShown.store(shown);
 }
 
+// ---- [holes] patch_world: the world's holes patched by the game's own pieces (shared/world_holes_file.h, docs/notes/world_holes_pipeline.md) ----
+// D2R_VR_Settings makes each place's patch from the player's game (tools/settings/holes_assets.cpp): the rim floor's own model file with the patch's
+// triangles in it, at a free model path, a unit, and a line of the measures file (data/hd/env/model/d2r_vr/holes/holes.txt): the patch's anchor
+// piece and a witness piece of the place's preset (their places in the preset). Here, at each area change while the tick is on, the anchor is looked
+// for among the renderer's own pieces (knockprops::PresetPieces: at its place in its preset, with the witness at its own place under the same preset
+// root, as far apart drawn as placed - ceilmeasure::MatchPreset; a whole pass over the transforms on a thread of its own, again every 2 s while not
+// found, kHoleTries times); found, the patch is placed and laid every frame at the anchor's place as drawn (the patch is made in the anchor's own
+// space; a level preset is laid unturned). VR F4 only (viewgate::F4); anywhere else, off, or not found: laid away under the ground, small.
+constexpr int kHoleTries = 15;
+Slab g_holes[holeslist::kPlaceCount];
+std::atomic<unsigned> g_holeIndices[holeslist::kPlaceCount];
+std::vector<holeslist::Line> g_holeLines;   // (the render thread's: read at each area change while the tick is on)
+struct HolesFound { unsigned gen = ~0u; bool read = false; size_t pieces = 0; double ms = 0.0; std::vector<int> matches; std::vector<std::array<float, 3>> world; };
+SRWLOCK g_holesLock = SRWLOCK_INIT;
+HolesFound g_holesFound;   // (under g_holesLock)
+std::atomic<bool> g_holesBusy{false};
+struct HolesAsk { unsigned gen; std::vector<holeslist::Line> lines; };
+DWORD WINAPI HolesThread(void* arg) {
+    const HolesAsk* ask = static_cast<const HolesAsk*>(arg);
+    LARGE_INTEGER f, t0, t1;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&t0);
+    std::vector<float> places;   // each patch's anchor and witness
+    for (const holeslist::Line& l : ask->lines) places.insert(places.end(), {l.anchor[0], l.anchor[1], l.anchor[2], l.witness[0], l.witness[1], l.witness[2]});
+    std::vector<knockprops::PresetPiece> got;
+    HolesFound r;
+    r.gen = ask->gen;
+    r.read = !places.empty() && knockprops::PresetPieces(reinterpret_cast<const float(*)[3]>(places.data()), (int)(places.size() / 3), &got);
+    std::vector<ceilmeasure::Piece> pieces;
+    for (const knockprops::PresetPiece& p : got) {
+        ceilmeasure::Piece c;
+        c.parent = p.parent;
+        std::memcpy(c.local, p.local, sizeof c.local);
+        std::memcpy(c.world, p.world, sizeof c.world);
+        pieces.push_back(c);
+    }
+    r.pieces = pieces.size();
+    for (const holeslist::Line& l : ask->lines) {
+        std::array<float, 3> w{};
+        r.matches.push_back(ceilmeasure::MatchPreset(pieces, l.anchor, l.witness, w.data()));
+        r.world.push_back(w);
+    }
+    QueryPerformanceCounter(&t1);
+    r.ms = 1000.0 * (double)(t1.QuadPart - t0.QuadPart) / (double)f.QuadPart;
+    AcquireSRWLockExclusive(&g_holesLock); g_holesFound = r; ReleaseSRWLockExclusive(&g_holesLock);
+    delete ask;
+    g_holesBusy.store(false);
+    return 0;
+}
+void HolesFrame() {
+    static bool named = false;
+    if (!named) {
+        named = true;
+        for (int i = 0; i < holeslist::kPlaceCount; ++i) {
+            Slab& s = g_holes[i];
+            s.what = std::string("patch '") + holeslist::kPlaces[i].name + "'";
+            s.unit = holeslist::UnitPath(holeslist::kPlaces[i]);
+            s.model = holeslist::ModelPath(holeslist::kPlaces[i]);
+            s.indices = &g_holeIndices[i];
+            s.tag = "world holes";
+            s.madeWhile = "[holes] patch_world is ticked";
+            s.modelNote = " - the rim floor's own model file of the game's with the patch's triangles in it";
+        }
+    }
+    const bool tick = g_set.holesPatch.load();
+    if (!tick) {   // never wanted (or every patch put away): nothing to do
+        bool parked = true;
+        for (const Slab& s : g_holes) parked = parked && s.parked;
+        if (parked) return;
+    }
+    // every view: flat F1 - F3 and VR alike (Serg 2026-11-09, on 0.209.7 in flat: "Yes, every view") - the game draws the patch as its own
+    // piece wherever it draws the bridge
+    const float hero[3] = {g_heroPosNow[0], g_heroPosNow[1], g_heroPosNow[2]};
+    float away[16];
+    gameceiling::Matrix(hero, 0.0f, 0.0f, 1.0f, false, away);
+    // the measures, at each area change (and the first frame the tick is on)
+    const unsigned gen = g_biomeGen.load() * 2u + (tick ? 1u : 0u);
+    static unsigned readGen = ~0u;
+    static std::string readWhy = "not read yet";
+    if (tick && readGen != gen) {
+        readGen = gen;
+        std::wstring file;
+        const std::string text = ModDataText(holeslist::kFile, &file);
+        if (text.empty()) { g_holeLines.clear(); readWhy = "no measures file (D2R_VR_Settings makes it while [holes] patch_world is ticked)"; }
+        else if (!holeslist::Parse(text, &g_holeLines)) { g_holeLines.clear(); readWhy = "the measures file is not of this version - D2R_VR_Settings makes it again"; }
+        else readWhy = "";
+        for (const holeslist::Line& l : g_holeLines)
+            for (int i = 0; i < holeslist::kPlaceCount; ++i)
+                if (l.name == holeslist::kPlaces[i].name) g_holeIndices[i].store((unsigned)l.triangles * 3u);
+        LogF("vrcam: world holes - the measures: %s%s (%zu places made by D2R_VR_Settings: %s)", Utf8(file.c_str()).c_str(), readWhy.empty() ? "" : (" - " + readWhy).c_str(),
+             g_holeLines.size(), [&] { std::string n; for (const auto& l : g_holeLines) n += (n.empty() ? "" : ", ") + l.name; return n.empty() ? std::string("none") : n; }().c_str());
+        for (const holeslist::Line& l : g_holeLines)
+            LogF("vrcam: world holes - '%s': %d triangles (%d floor strips, %d skirts; %d ramp strips to the parapet, %d side skirts, %.1f units of side left open; "
+                 "%.1f units of floor edge with an opening seen from the eyes), %.0f sq "
+                 "units over a hole of %.0f (%.1f left by the maker's check); the material of %s's mesh %s (%s); its anchor at %.2f %.2f %.2f in its preset, the witness "
+                 "at %.2f %.2f %.2f", l.name.c_str(), l.triangles, l.strips, l.skirts, l.ramps, l.sides, l.sideLeft, l.seen, l.area, l.holeArea, l.left, l.source.c_str(), l.sourceMesh.c_str(), l.technique.c_str(), l.anchor[0], l.anchor[1], l.anchor[2], l.witness[0], l.witness[1], l.witness[2]);
+    }
+    // looked for among the game's pieces: at the area change, again every 2 s while one is not found, kHoleTries times
+    HolesFound found;
+    AcquireSRWLockShared(&g_holesLock); found = g_holesFound; ReleaseSRWLockShared(&g_holesLock);
+    static unsigned askedGen = ~0u, toldGen = ~0u;
+    static int tries = 0, toldTries = -1;
+    static ULONGLONG askedAt = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    bool allFound = found.gen == gen && found.matches.size() == g_holeLines.size();
+    for (int n : found.matches) allFound = allFound && n >= 1;
+    if (tick && !g_holeLines.empty() && !allFound && !g_holesBusy.load()) {
+        if (askedGen != gen) { askedGen = gen; tries = 0; askedAt = 0; }
+        if (tries < kHoleTries && nowMs - askedAt >= 2000) {
+            ++tries;
+            askedAt = nowMs;
+            g_holesBusy.store(true);
+            if (HANDLE th = CreateThread(nullptr, 0, HolesThread, new HolesAsk{gen, g_holeLines}, 0, nullptr)) CloseHandle(th);
+            else g_holesBusy.store(false);
+        }
+    }
+    if (found.gen == gen && (toldGen != gen || toldTries != tries)) {   // each look's answer, once
+        toldGen = gen;
+        toldTries = tries;
+        for (size_t k = 0; k < found.matches.size() && k < g_holeLines.size(); ++k)
+            LogF("vrcam: world holes - '%s' %s (%zu pieces at the patches' anchors' and witnesses' places, %.1f ms; look %d of %d)%s", g_holeLines[k].name.c_str(),
+                 found.matches[k] >= 1 ? "found among the game's pieces" : found.read ? "NOT here (its preset not in this area)" : "NOT looked for (the renderer's registry does not read)",
+                 found.pieces, found.ms, tries, kHoleTries,
+                 found.matches[k] >= 1 ? (" - its anchor drawn at " + std::to_string(found.world[k][0]) + " " + std::to_string(found.world[k][1]) + " " + std::to_string(found.world[k][2]) +
+                                          (found.matches[k] > 1 ? " (" + std::to_string(found.matches[k]) + " agreeing: the first taken)" : std::string())).c_str() : "");
+    }
+    // each place's patch: laid at its anchor as drawn, or away
+    for (int i = 0; i < holeslist::kPlaceCount; ++i) {
+        int k = -1;
+        for (size_t j = 0; j < g_holeLines.size(); ++j) if (g_holeLines[j].name == holeslist::kPlaces[i].name) k = (int)j;
+        const bool here = k >= 0 && found.gen == gen && (size_t)k < found.matches.size() && found.matches[(size_t)k] >= 1;
+        const bool want = tick && here;
+        const char* why = !tick ? "[holes] patch_world=0" : k < 0 ? (readWhy.empty() ? "not made by D2R_VR_Settings (its line not in the measures)" : readWhy.c_str())
+                        : !here ? "its preset not found among the game's pieces in this area" : "";
+        float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        if (here) { m[12] = found.world[(size_t)k][0]; m[13] = found.world[(size_t)k][1]; m[14] = found.world[(size_t)k][2]; }
+        PieceFrame(g_holes[i], want, why, hero, want ? m : away, away);
+    }
+}
+
 // ---- The game left: every unit of ours let go before the game's own teardown (vr/engine/held_units.h) ----
 // From the world's teardown (HookTeardown, the game's thread that owns the registry): every instance first - its entities still the
 // registry's, the game's own removal takes them out - then every definition; everything placed is forgotten, and the next game's first
 // world loads and places it all afresh (g_life: nothing placed in between).
 void ResetDome(Dome& d) {
     d.def = {}; d.inst = {}; d.root = 0xFFFFFFFFu; d.loadTried = false; d.parked = true; d.tries = 0;
-    d.loadedAt = d.placedAt = d.modelAt = 0; d.told = "?"; d.toldR = -1.0f; d.toldPlace = false;
+    d.loadedAt = d.placedAt = d.modelAt = 0; d.told = "?"; d.toldR = -1.0f; d.toldPlace = false; d.fileTold.clear();
 }
 void ResetSlab(Slab& s) {
     s.def = {}; s.inst = {}; s.root = 0xFFFFFFFFu; s.loadTried = false; s.parked = true; s.tries = 0;
@@ -2144,6 +2365,7 @@ heldunits::Tally LetGoAll() {
     for (Slab& s : g_walls) ReleaseInstance(&s.inst, &t);
     for (Slab& s : g_beams) ReleaseInstance(&s.inst, &t);
     for (Slab& s : g_vaults) ReleaseInstance(&s.inst, &t);
+    for (Slab& s : g_holes) ReleaseInstance(&s.inst, &t);
     if (t.kept) return t;   // (not the owner thread: nothing forgotten - the definitions stay with the instances that need them)
     // then the definitions
     for (Shared& d : g_defs) ReleaseDefinition(&d, &t);
@@ -2154,6 +2376,7 @@ heldunits::Tally LetGoAll() {
     for (Slab& s : g_walls) ReleaseDefinition(&s.def, &t);
     for (Slab& s : g_beams) ReleaseDefinition(&s.def, &t);
     for (Slab& s : g_vaults) ReleaseDefinition(&s.def, &t);
+    for (Slab& s : g_holes) ReleaseDefinition(&s.def, &t);
     // and all of it forgotten: the next game places its own
     g_bottles.clear(); g_loose.clear(); g_copies.clear(); g_remoteDrawn.clear(); g_placed.clear(); g_domeOld.clear(); g_slabOld.clear();
     g_copyDefs.clear(); g_placedDefs.clear();
@@ -2165,6 +2388,7 @@ heldunits::Tally LetGoAll() {
     for (Slab& s : g_walls) ResetSlab(s);
     for (Slab& s : g_beams) ResetSlab(s);
     for (Slab& s : g_vaults) ResetSlab(s);
+    for (Slab& s : g_holes) ResetSlab(s);
     g_slabShown.store(false);
     return t;
 }
@@ -2201,7 +2425,42 @@ void InstallTeardownHook() {
 }
 // SkyTick, each area: a menu (no world) after the teardown lets the next game place again
 void WorldSeen(bool inWorld) { g_life.World(inWorld); }
+// The update thread, each tick: with [sky] game_sky in a world, a line every 30 s when the domes' frame did not run at all - the units' work
+// (Work, on the registry owner's thread) not called, so no dome is ever asked (the test PC, 0.209.3, flat: silence after the radius line)
+void DomeHeartbeat(bool inWorld) {
+    static ULONGLONG toldAt = 0;
+    static uint64_t seen = 0;
+    const ULONGLONG now = GetTickCount64();
+    {   // every 30 s in a world, whatever the state: each input of the dome's choice (the test PC, 0.209.6, flat: no dome and not one dome
+        // line - "the sky drawn by nothing - no sky wanted here" said game_sky read 0 there though its ini has 1)
+        static ULONGLONG inputsAt = 0;
+        if (inWorld && now - inputsAt >= 30000) {
+            inputsAt = now;
+            const char* why = DomeWhyNot();
+            LogF("vrcam: game sky - the dome's inputs, 30 s: [sky] game_sky read %d, [sky] enabled %d, in a world %d, the act %d, the sky's palette %d, "
+                 "platform %d, view %d, [render] game_drawn_flat %d, VR camera on %d; why not: \"%s\"; the domes' frame ran %llu times, the last step "
+                 "%d (%s), shown %d", g_set.gameSky.load() ? 1 : 0, g_set.skyOn.load() ? 1 : 0, inWorld ? 1 : 0, g_fogAct.load(), g_skyPalette.load(),
+                 g_set.platform.load(), ViewNow(), g_set.gameDrawnFlat.load() ? 1 : 0, g_enabled.load() ? 1 : 0, *why ? why : "(none: wanted)",
+                 (unsigned long long)g_domeFrames.load(), g_domeStep.load(), DomeStepName(g_domeStep.load()), g_domeShown.load() ? 1 : 0);
+        }
+    }
+    if (!inWorld || !g_set.gameSky.load()) { toldAt = now; seen = g_domeFrames.load(); return; }
+    if (now - toldAt < 30000) return;
+    const uint64_t n = g_domeFrames.load();
+    if (n == seen) LogF("vrcam: game sky - the domes' frame did not run in 30 s (the game's units' work not called on the registry's thread): no dome asked or laid");
+    else if (!g_domeShown.load()) {
+        const int step = g_domeStep.load();
+        LogF("vrcam: game sky - no dome shown, 30 s: the domes' frame ran %llu times, the last step it reached %d (%s)", (unsigned long long)(n - seen),
+             step, DomeStepName(step));
+    }
+    seen = n;
+    toldAt = now;
+}
 
+// SkyDomeFrame under a structured guard (no C++ object here, so __try is allowed): 0 ran through, else the exception's code
+unsigned long GuardedSkyDomeFrame() {
+    __try { SkyDomeFrame(); return 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return GetExceptionCode(); }
+}
 void Work() {
     if (!g_life.MayPlace(true)) return;   // (between the world's teardown and the menu: nothing placed into a registry the game is clearing)
     static int checked = 0;   // 1 the game's functions are where 3.3.93787 has them, -1 not
@@ -2236,9 +2495,20 @@ void Work() {
     if (g_set.weightGrabItems.load() || !g_copies.empty()) HeldItemFrame(g_fullBody.load());   // [weight] grab_items: the copy of an item taken off the ground
     if (g_remoteCopiesOn.load()) RemoteCopiesFrame();   // [multiplayer] pose_share_held: the other players' potions and items
     PublishOwnModels();   // ([weight] world_contact: the belt's bottles and what the hands hold are never walls)
-    SkyDomeFrame();   // [sky] game_sky: our sky as the game's own dome
+    if (const unsigned long code = GuardedSkyDomeFrame()) {   // [sky] game_sky: our sky as the game's own dome - a fault in it told, not swallowed
+        static unsigned long toldCode = 0;
+        static int toldStep = -1;
+        const int step = g_domeStep.load();
+        if (code != toldCode || step != toldStep) {
+            toldCode = code;
+            toldStep = step;
+            LogF("vrcam: game sky - the domes' frame FAULTED (exception 0x%08lX) at step %d, %s - the cave dome and the ceiling after it skipped "
+                 "this frame; told once a change", code, step, DomeStepName(step));
+        }
+    }
     CaveDomeFrame();  // [sky] game_dome_caves: a black dome round the eye underground
     CeilingFrame();   // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock
+    HolesFrame();     // [holes] patch_world: the world's holes patched by the game's own pieces
 }
 
 // [sky] summit_backdrop_hidden: at the Arreat Summits (120, 137) the game's backdrop - a picture of the ground far below, made for the view from above - stood as a flat
@@ -2353,7 +2623,8 @@ bool Wanted() {
            g_remoteCopiesOn.load() ||                                                                            // ([multiplayer] pose_share_held: the others' copies)
            g_set.gameSky.load() ||                                                                               // ([sky] game_sky: the dome)
            g_set.summitBackdropHidden.load() ||                                                                  // ([sky] summit_backdrop_hidden: the Summit's ground picture)
-           g_set.gameCeiling.load();                                                                             // ([ceiling] game_ceiling: the slab)
+           g_set.gameCeiling.load() ||                                                                           // ([ceiling] game_ceiling: the slab)
+           g_set.holesPatch.load();                                                                              // ([holes] patch_world: the patches)
 }
 void InstallHook() {
     if (g_hook.load() != 0 || !Wanted()) return;

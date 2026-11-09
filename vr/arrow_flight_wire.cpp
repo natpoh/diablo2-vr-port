@@ -43,6 +43,8 @@ const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false}, g_trace{false}, g_fxOff{false}, g_faulted{false};
 std::atomic<bool> g_straight{false};   // [bow] arrow_flight_straight: the shot's own arrow along its line when nothing was met (arrowflight::Params::straight)
 bool (*g_heroId)(uint32_t*) = nullptr;
+bool (*g_viewGate)() = nullptr;   // where ours is drawn (SetViewGate); none: VR F4 only
+bool ViewOn() { return g_viewGate ? g_viewGate() : viewgate::F4(); }
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
 template <typename... A> void LogF(const char* fmt, A... a) {
@@ -55,6 +57,20 @@ template <typename... A> void LogF(const char* fmt, A... a) {
 SRWLOCK g_shotLock = SRWLOCK_INIT;
 arrowflight::Shot g_shot;
 std::atomic<uint64_t> g_shotAt{0};   // (the look's cheap gate: no shot within its window, no arrow to take)
+
+// The other players' shots (NoteRemote, vr/shot_share.h): the latest line of each, by his hero's unit id - his arrows are drawn along it.
+struct RemoteShot { uint32_t owner = 0; arrowflight::Shot shot; };
+SRWLOCK g_remoteLock = SRWLOCK_INIT;
+RemoteShot g_remote[8];
+std::atomic<uint64_t> g_remoteAt{0};   // (the cheap gate, as g_shotAt)
+bool RemoteFor(uint32_t owner, uint64_t now, arrowflight::Shot* out) {
+    bool ok = false;
+    AcquireSRWLockShared(&g_remoteLock);
+    for (const RemoteShot& r : g_remote)
+        if (r.owner && r.owner == owner && arrowflight::Armed(r.shot, now)) { *out = r.shot; ok = true; break; }
+    ReleaseSRWLockShared(&g_remoteLock);
+    return ok;
+}
 
 struct Ent {
     uint32_t id = 0;
@@ -196,16 +212,26 @@ void OnVisual(uint32_t entity, uintptr_t unit) {
     const uint64_t now = GetTickCount64();
     const uint64_t at = g_shotAt.load(std::memory_order_relaxed);
     const bool windowed = at && now >= at && now - at <= arrowflight::kWindowMs;
-    if (!windowed && g_live.load(std::memory_order_relaxed) == 0) return;   // the usual call: no shot of ours, nothing of ours in flight
+    const uint64_t rat = g_remoteAt.load(std::memory_order_relaxed);
+    const bool remoteWindowed = rat && now >= rat && now - rat <= arrowflight::kWindowMs;
+    if (!windowed && !remoteWindowed && g_live.load(std::memory_order_relaxed) == 0) return;   // the usual call: no shot of anyone's, nothing of ours in flight
     arrowflight::Unit u;
     if (!ReadUnit(unit, &u)) return;
     uint32_t hero = 0;
     if (g_heroId) { uint32_t id = 0; if (g_heroId(&id)) hero = id; }
-    if (windowed && viewgate::F4() && arrowflight::IsHeroArrow(u, hero)) {
+    arrowflight::Shot sh;
+    bool take = false, remote = false;
+    if (windowed && ViewOn() && arrowflight::IsHeroArrow(u, hero)) {
         AcquireSRWLockShared(&g_shotLock);
-        const arrowflight::Shot sh = g_shot;
+        sh = g_shot;
         ReleaseSRWLockShared(&g_shotLock);
         if (!arrowflight::Armed(sh, now)) return;
+        take = true;
+    } else if (remoteWindowed && ViewOn() && u.type == arrowflight::kTypeMissile && arrowflight::IsArrowClass(u.cls) && (u.flags & arrowflight::kFlagHasOwner) &&
+               u.ownerType == arrowflight::kTypePlayer && u.ownerId != hero && RemoteFor(u.ownerId, now, &sh)) {
+        take = remote = true;   // another player's arrow: drawn along his line (vr/shot_share.h)
+    }
+    if (take) {
         int slot = -1, ent = -1;
         bool fresh = false;
         AcquireSRWLockExclusive(&g_lock);
@@ -250,7 +276,10 @@ void OnVisual(uint32_t entity, uintptr_t unit) {
         AcquireSRWLockExclusive(&g_lock);
         if (g_slots[slot].used && g_slots[slot].unit == u.id && ent < g_slots[slot].n && g_slots[slot].e[ent].id == entity) g_slots[slot].e[ent].fx = fx;
         ReleaseSRWLockExclusive(&g_lock);
-        if (g_trace.load())
+        if (g_trace.load() && remote && fresh && ent == 0)
+            LogF("arrow flight: player %u's %s #%u - drawn along his line as it came over the network (%s)", u.ownerId, ClassName(u.cls), u.id,
+                 sh.target ? (sh.monster ? "it met a monster" : "it met the ground") : "it met nothing");
+        if (g_trace.load() && !remote)
             LogF("arrow flight: the hero's %s #%u (class %u) - entity %08X %s, %s%s: drawn by us%s", ClassName(u.cls), u.id, u.cls, entity,
                  ent == 0 ? "(its root: the matrix we place)" : "(another of its entities: carried with the root)",
                  fx > 0 ? "an effect component" : fx == 0 ? "no effect component" : "its effect component not readable",
@@ -284,7 +313,7 @@ void OnVisual(uint32_t entity, uintptr_t unit) {
 void OnXform(uint32_t entity, uintptr_t comp, uintptr_t out) {
     if (g_live.load(std::memory_order_relaxed) == 0 || g_faulted.load(std::memory_order_relaxed)) return;
     const int i = Find(entity);
-    if (i < 0 || !viewgate::F4()) return;   // (another view: the game's own place)
+    if (i < 0 || !ViewOn()) return;   // (another view: the game's own place)
     float m[16];
     if (!ReadM(out, m)) { Fault("reading an arrow's matrix"); return; }
     if (!arrowflight::FiniteM(m)) return;
@@ -370,6 +399,7 @@ void Init(const D2RL::PluginContext* ctx) {
 }
 
 void SetHeroIdSource(bool (*fn)(uint32_t* id)) { g_heroId = fn; }
+void SetViewGate(bool (*fn)()) { g_viewGate = fn; }
 
 void Configure(bool on, bool trace, bool fxOff, bool straight) {
     const bool was = g_on.exchange(on);
@@ -385,8 +415,31 @@ void Configure(bool on, bool trace, bool fxOff, bool straight) {
 
 bool On() { return g_on.load() && !g_faulted.load(); }
 
+void NoteRemote(uint32_t owner, const arrowflight::Shot& s) {
+    if (!owner || !On() || !s.ok) return;
+    const uint64_t now = GetTickCount64();
+    arrowflight::Shot sh = s;
+    sh.atMs = now;   // (his clock is not ours: the window counts from when it came)
+    AcquireSRWLockExclusive(&g_remoteLock);
+    RemoteShot* slot = nullptr;
+    for (RemoteShot& r : g_remote) if (r.owner == owner) { slot = &r; break; }
+    if (!slot)
+        for (RemoteShot& r : g_remote) if (!r.owner || !arrowflight::Armed(r.shot, now)) { slot = &r; break; }
+    if (slot) { slot->owner = owner; slot->shot = sh; }
+    ReleaseSRWLockExclusive(&g_remoteLock);
+    if (slot) g_remoteAt.store(now);
+}
+
+bool Current(arrowflight::Shot* out) {
+    if (!out || !On()) return false;
+    AcquireSRWLockShared(&g_shotLock);
+    *out = g_shot;
+    ReleaseSRWLockShared(&g_shotLock);
+    return out->ok && arrowflight::Armed(*out, GetTickCount64());
+}
+
 void NoteShot(unsigned shot, const float o[3], const float d[3], float theta, const bowpitch::Result* met, const float heroRender[3], float upm) {
-    if (!On() || !viewgate::F4() || !o || !d || !heroRender || !(upm > 1e-4f) || !std::isfinite(upm) || !std::isfinite(theta)) return;
+    if (!On() || !ViewOn() || !o || !d || !heroRender || !(upm > 1e-4f) || !std::isfinite(upm) || !std::isfinite(theta)) return;
     const uint64_t now = GetTickCount64();
     arrowflight::Shot s;
     s.ok = true;

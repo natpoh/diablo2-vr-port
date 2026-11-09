@@ -134,6 +134,97 @@ begin
   end;
 end;
 
+// Kept settings from 0.208 / 0.209.0: the monitor's one eye ([render] monitor_eye) and the hands over the Gestures tab ([openxr]
+// hands_over_panels) are in every quality preset since 0.209.1 (Serg 2026-11-09: "на графике нормал по умолчанию должно быть включено
+// monitor_eye=1 а так же при записи движений чтобы слой рук был поверх меню на всех режимах"); 0.208 / 0.209.0 shipped hands_over_panels=0. Once,
+// at the first update that has this (its mark [support] monitor_hands_0209, one of the shipped defaults, comes in with the other new keys right
+// after this - missing = not done yet): either at 0 becomes 1. A 0 chosen after that stays.
+procedure MoveToMonitorEyeHands(Ini: String);
+begin
+  if GetIniString('support', 'monitor_hands_0209', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('render', 'monitor_eye', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('render', 'monitor_eye', '1', Ini);
+    Log('d2r_vr.ini: [render] monitor_eye=0 from an older version - in every preset since 0.209.1: 1 now');
+  end;
+  if IniValue(GetIniString('openxr', 'hands_over_panels', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('openxr', 'hands_over_panels', '1', Ini);
+    Log('d2r_vr.ini: [openxr] hands_over_panels=0 from an older version - in every preset since 0.209.1: 1 now');
+  end;
+end;
+
+// Kept settings at 0.208 - 0.209's Medium distance: the Medium preset's models' radius was 210, since the Draw distance slider came back it is
+// 200 - the slider's stop 2, its default (Serg 2026-11-09: "по умолчанию поставим как сейчас 2", "комнаты 200 дистанция"). A kept ini at 210
+// would read Custom in both the Quality preset and the slider though nothing was changed. Once, at the first update that has this (its mark
+// [support] model_radius_200, one of the shipped defaults, comes in with the other new keys right after this - missing = not done yet):
+// [render] model_radius=210 with rings=2 becomes 200 (the fog is full at 140 either way: nothing seen changes). Any other radius stays.
+procedure MoveToRadius200(Ini: String);
+begin
+  if GetIniString('support', 'model_radius_200', '<none>', Ini) <> '<none>' then Exit;
+  if (IniValue(GetIniString('render', 'model_radius', '<none>', Ini)) = '210') and (IniValue(GetIniString('render', 'rings', '<none>', Ini)) = '2') then
+  begin
+    SetIniString('render', 'model_radius', '200', Ini);
+    Log('d2r_vr.ini: [render] model_radius=210 from an older version - the Medium preset''s distance is 200 since the Draw distance slider: 200 now');
+  end;
+end;
+
+// Kept settings from before 0.209.10: [fog] game_fog_before_fx was 0 (shipped off, and with it "Native one pass" was skipped). Since then
+// it ships on (Serg 2026-11-09, "С‚СѓРјР°РЅ РґРѕ СЌС„С„РµРєС‚РѕРІ": a torch's flame and smoke were wiped by the fog behind them). Once, at the first update
+// that has this (its mark [support] fog_before_fx_0209, one of the shipped defaults, comes in with the other new keys right after this -
+// missing = not done yet), a kept 0 becomes 1; a 0 set after that update stays.
+procedure MoveToFogBeforeFx(Ini: String);
+begin
+  if GetIniString('support', 'fog_before_fx_0209', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('fog', 'game_fog_before_fx', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('fog', 'game_fog_before_fx', '1', Ini);
+    Log('d2r_vr.ini: [fog] game_fog_before_fx=0 from an older version - the fog goes before smoke and fire since 0.209.10: 1 now');
+  end;
+end;
+
+// Kept settings from before 0.209.8: the game's fog read the old fog's distances ([fog] start / end / caves / caves_start / caves_end /
+// caves_strength, and [render] game_drawn_flat for the flat game); since then it has keys of its own (Serg 2026-11-09: "у каждого свои
+// ползунки и свой блок"). Once, at the first update that has this (its mark [support] game_fog_keys_0209, one of the shipped defaults, comes in
+// with the other new keys right after this - missing = not done yet), each game-fog key the ini does not have yet takes the shared one's
+// value, so the fog stays as the player had it; the new keys of the shipped defaults (the Medium preset's) fill only what is still missing.
+procedure MoveToGameFogKey(Ini, Sec, Key, FromSec, From: String);
+var
+  V: String;
+begin
+  if GetIniString(Sec, Key, '<none>', Ini) <> '<none>' then Exit;
+  V := GetIniString(FromSec, From, '<none>', Ini);
+  if V = '<none>' then Exit;
+  SetIniString(Sec, Key, IniValue(V), Ini);
+  Log('d2r_vr.ini: [' + Sec + '] ' + Key + '=' + IniValue(V) + ' from [' + FromSec + '] ' + From + ' - the game''s fog has its own keys since 0.209.8');
+end;
+
+procedure MoveToGameFogKeys(Ini: String);
+begin
+  if GetIniString('support', 'game_fog_keys_0209', '<none>', Ini) <> '<none>' then Exit;
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_start', 'fog', 'start');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_end', 'fog', 'end');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_caves', 'fog', 'caves');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_caves_start', 'fog', 'caves_start');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_caves_end', 'fog', 'caves_end');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_caves_strength', 'fog', 'caves_strength');
+  MoveToGameFogKey(Ini, 'fog', 'game_fog_flat', 'render', 'game_drawn_flat');
+end;
+
+// Kept settings from 0.209.7 / 0.209.8: [render] room_stitch (D2R VR Unleashed's room stitch, by Cal) came in at 0; since 0.209.9 it is on by
+// default and floors_stay is gone (Serg 2026-11-09: "floors_stay отключи и удали", "оставляем код медведя включенным по умолчанию"). Once, at
+// the first update that has this (its mark [support] room_stitch_on_0209, one of the shipped defaults, comes in with the other new keys right
+// after this - missing = not done yet): room_stitch=0 becomes 1. A 0 chosen after that stays.
+procedure MoveToRoomStitch(Ini: String);
+begin
+  if GetIniString('support', 'room_stitch_on_0209', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('render', 'room_stitch', '<none>', Ini)) = '0' then
+  begin
+    SetIniString('render', 'room_stitch', '1', Ini);
+    Log('d2r_vr.ini: [render] room_stitch=0 from an older version - on by default since 0.209.9: 1 now');
+  end;
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -207,6 +298,11 @@ begin
     MoveOffReShade(Ini);    // (the same: its mark [support] no_reshade_0203 is one of them)
     MoveToQuickBlow(Ini);   // (the same: its mark [support] quick_blow_0204 is one of them)
     MoveToExitEnd(Ini);     // (the same: its mark [support] exit_end_0206 is one of them)
+    MoveToMonitorEyeHands(Ini);   // (the same: its mark [support] monitor_hands_0209 is one of them)
+    MoveToRadius200(Ini);   // (the same: its mark [support] model_radius_200 is one of them)
+    MoveToGameFogKeys(Ini); // (the same: its mark [support] game_fog_keys_0209 is one of them)
+    MoveToRoomStitch(Ini);  // (the same: its mark [support] room_stitch_on_0209 is one of them)
+    MoveToFogBeforeFx(Ini); // (the same: its mark [support] fog_before_fx_0209 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

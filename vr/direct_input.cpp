@@ -26,6 +26,7 @@
 #include "belt_flick.h"
 #include "direct_feed.h"
 #include "direct_input.h"
+#include "hand_swap.h"   // [hands] left_handed: a swap is a new context (the gate holds what is held)
 #include "direct_layout.h"
 #include "direct_remap.h"
 #include "stick_shape.h"
@@ -791,7 +792,8 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     }
     // the context: any change of it is an epoch, and the gate holds every control held until it is let go
     // (the view is a part of it: back in F4 the hands start fresh)
-    const uint32_t ctx = (focused ? 1u : 0u) | (menu ? 2u : 0u) | (direct ? 4u : 0u) | (f4 ? 0u : 8u);
+    // ([hands] left_handed switched: a control held across it is the other hand's now - held until let go, not a press of that hand)
+    const uint32_t ctx = (focused ? 1u : 0u) | (menu ? 2u : 0u) | (direct ? 4u : 0u) | (f4 ? 0u : 8u) | (handswap::Now() ? 16u : 0u);
     if (ctx != s.ctx) { s.ctx = ctx; ++s.epoch; s.layout.Cancel(); }   // (a press under way is not a tap, nor a hold)
     ++s.counter;
     Frame f = MakeFrame(*in, menu, direct, s.counter, s.session, s.epoch, !f4, touches);

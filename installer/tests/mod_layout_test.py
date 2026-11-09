@@ -118,7 +118,7 @@ NEW_WEIGHT = b"MZ weight library of 0.169 (d2r_vr_libs)\0" + NOISE[12000:19000]
 NEW_GRIP = b"MZ grip library of 0.169 (d2r_vr_libs)\0" + NOISE[19000:24000]
 BEAR_DLL = b"MZ" + b"\0" * 62 + NOISE[:500000] + "d2r_vr_icons".encode("utf-16-le") + b"\0d2r-vr-vrcam\0" + NOISE[500000:]
 DEFAULTS_V1 = ("[mode]\nplatform=1\n[openxr]\non=1\ndirect_input=1\n[hands]\nbow_draw=1\nweight=1\n[render]\nfog=30\n[weight]\ndeath_ragdoll=0\n").replace("\n", "\r\n")
-DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[support]\nraw_tests_off_0201=1\nno_reshade_0203=1\nquick_blow_0204=1\nexit_end_0206=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark; 0.204: quick blow's; 0.206: the session ended at quit)
+DEFAULTS_V2 = DEFAULTS_V1.replace("death_ragdoll=0", "death_ragdoll=1") + "[new]\nthing=7\n[fog]\ngame_fog_start=55\ngame_fog_end=140\ngame_fog_caves=1\n[support]\nraw_tests_off_0201=1\nno_reshade_0203=1\nquick_blow_0204=1\nexit_end_0206=1\nmodel_radius_200=1\ngame_fog_keys_0209=1\nroom_stitch_on_0209=1\nfog_before_fx_0209=1\n".replace("\n", "\r\n")   # (0.198: death_ragdoll came on; 0.201: the raw tests' mark; 0.204: quick blow's; 0.206: the session ended at quit; the Draw distance slider back: Medium's 200)
 PLAYERS_RESHADE_INI = ("[ADDON]\nDisabledAddons=\nOverlayCollapsed=Effect Runtime Sync,FlatVR Depth Provider v2.19@FlatVR_DepthProvider.addon64\n\n[DEPTH]\nDepthCopyBeforeClears=2\n\n"
                        "[GENERAL]\nEffectSearchPaths=.\\reshade-shaders\\Shaders\\**\nIntermediateCachePath=C:\\Temp\\ReShade\nNoDebugInfo=1\nPresetPath=.\\ReShadePreset.ini\n"
                        "TextureSearchPaths=.\\reshade-shaders\\Textures\\**\n\n[OVERLAY]\nDocking=[Docking][Data],DockSpace   ID=0xB0DF600F Pos=8,,8 Size=1008,,1008 Split=X\nShowFPS=2\n"
@@ -1109,8 +1109,9 @@ def main():
     rc, log = run_setup("c5_install1", "v1")
     mp = game / MOD / "d2rloader/plugins"
     # (a) the player changed his settings
-    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77\r\nno_reshade=0\r\nnative_effects=0").replace("direct_input=1", "direct_input=1\r\nend_session_on_exit=0").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
-             + "[calibration]\r\nheight=1.82\r\n[gameplay]\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n")   # (0.203's Direct hit By the rules, 0.203.2's quick_blow=0; the raw tests on from an older version, as denails75r's 2026-11-04; ReShade on, as before 0.203)
+    tuned = (rd(mp / "d2r_vr.ini").replace("fog=30", "fog=77\r\nno_reshade=0\r\nnative_effects=0\r\nrings=2\r\nmodel_radius=210\r\nroom_stitch=0").replace("direct_input=1", "direct_input=1\r\nend_session_on_exit=0").replace("death_ragdoll=0", "death_ragdoll=0\r\nworld_contact=1\r\nown_body=1\r\nworld_contact_hands=0")
+             + "[calibration]\r\nheight=1.82\r\n[gameplay]\r\nmelee_direct=2\r\nmelee_direct_client=1\r\nquick_blow=0\r\n"
+             + "[fog]\r\nstart=88\r\nend=300\r\ncaves=0\r\ngame_fog_before_fx=0\r\n")   # (0.209.7 and before: the game's fog read the old fog's distances)   # (0.203's Direct hit By the rules, 0.203.2's quick_blow=0; the raw tests on from an older version, as denails75r's 2026-11-04; ReShade on, as before 0.203)
     put(mp / "d2r_vr.ini", tuned)
     put(game / MOD / "D2R-VR.mpq/modinfo.json", '{ "name": "D2R-VR", "savepath": "../", "description": "edited by the player" }')
     put(mp / "d2r_vr_headset.ini", "[headset]\nipd=0.07\n")
@@ -1144,6 +1145,19 @@ def main():
     check(cur.get(("openxr", "end_session_on_exit")) == "1" and cur.get(("support", "exit_end_0206")) == "1",
           "...end_session_on_exit=0 (0.203 - 0.205's default) is 1, the mark set (MoveToExitEnd, the VD exit crash, crash batch 2026-11-07)")
     check("[openxr] end_session_on_exit=0 from an older version" in log, "...and the Setup log says so")
+    check(cur.get(("render", "model_radius")) == "200" and cur.get(("render", "rings")) == "2" and cur.get(("support", "model_radius_200")) == "1",
+          "...0.208's Medium distance (2 rings, models 210) is 200, Medium's and the Draw distance's stop 2 now, the mark set (MoveToRadius200)")
+    check("[render] model_radius=210 from an older version" in log, "...and the Setup log says so")
+    check(cur.get(("fog", "game_fog_start")) == "88" and cur.get(("fog", "game_fog_end")) == "300" and cur.get(("fog", "game_fog_caves")) == "0"
+          and cur.get(("fog", "start")) == "88" and cur.get(("support", "game_fog_keys_0209")) == "1",
+          "...the game's fog's own keys take his shared fog distances (88 / 300, no caves), not v2's 55 / 140; the old keys kept; the mark set (MoveToGameFogKeys)")
+    check("[fog] game_fog_start=88 from [fog] start" in log, "...and the Setup log says so")
+    check(cur.get(("render", "room_stitch")) == "1" and cur.get(("support", "room_stitch_on_0209")) == "1",
+          "...0.209.7 / 0.209.8's room_stitch=0 is 1, on by default since 0.209.9, the mark set (MoveToRoomStitch)")
+    check("[render] room_stitch=0 from an older version" in log, "...and the Setup log says so")
+    check(cur.get(("fog", "game_fog_before_fx")) == "1" and cur.get(("support", "fog_before_fx_0209")) == "1"
+          and "[fog] game_fog_before_fx=0 from an older version" in log,
+          "...his kept game_fog_before_fx=0 turned to 1 once, the mark set, the Setup log says so (MoveToFogBeforeFx)")
     check((mp / "d2r_vr.default.ini").read_bytes() == DEFAULTS_V2.encode(), "d2r_vr.default.ini is v2's")
     check("take_new=0 changed=1" in rd(work / "ready.txt"), "the question was asked (a changed ini); a silent run answers Yes = keep")
     check(rd(mp / "d2r_vr_headset.ini") == "[headset]\nipd=0.07\n" and rd(game / MOD / "reshade/ReShade.ini") == "[GENERAL]\nmine=1\n", "the headset ini and the mod's ReShade.ini are the player's")
@@ -1153,13 +1167,19 @@ def main():
     check(rd(game / MOD / "d2rloader/logs/d2r-vr-vrcam.log") == "a log\n", "logs are left")
     check(b'default_mod = "D2R-VR"' in (game / "d2rloader/config/d2rloader.toml").read_bytes(), "default_mod stays")
     # once only: native_effects=0 chosen after the move (the lightest, no effect) stays through the next update
-    put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("native_effects=1", "native_effects=0").replace("quick_blow=1", "quick_blow=0").replace("end_session_on_exit=1", "end_session_on_exit=0"))
+    put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("native_effects=1", "native_effects=0").replace("quick_blow=1", "quick_blow=0").replace("end_session_on_exit=1", "end_session_on_exit=0")
+        .replace("model_radius=200", "model_radius=210").replace("room_stitch=1", "room_stitch=0").replace("game_fog_before_fx=1", "game_fog_before_fx=0"))
     rc, log = run_setup("c5_install2a", "v2")
     cur = ini_keys(rd(mp / "d2r_vr.ini"))
     check(rc == 0 and cur.get(("render", "native_effects")) == "0" and cur.get(("render", "no_reshade")) == "1" and "=0 from an older version" not in log,
           "a later update (the mark there): his native_effects=0 chosen since stays, nothing moved again")
     check(cur.get(("gameplay", "quick_blow")) == "0" and "quick_blow=0 from an older version" not in log, "...and his quick_blow=0 chosen after 0.204's move stays")
     check(cur.get(("openxr", "end_session_on_exit")) == "0" and "end_session_on_exit=0 from an older version" not in log, "...and his end_session_on_exit=0 chosen after the move stays")
+    check(cur.get(("render", "model_radius")) == "210" and "model_radius=210 from an older version" not in log, "...and his models' radius 210 set after the move stays")
+    check(cur.get(("fog", "game_fog_start")) == "88" and "game_fog_start=" not in log, "...and the game's fog's keys are not taken again")
+    check(cur.get(("render", "room_stitch")) == "0" and "room_stitch=0 from an older version" not in log, "...and his room_stitch=0 chosen after the move stays")
+    check(cur.get(("fog", "game_fog_before_fx")) == "0" and "game_fog_before_fx=0 from an older version" not in log,
+          "...and his game_fog_before_fx=0 set after the move stays")
     # a raw test the player ticks again after that stays on at the next update: the mark says it was done
     put(mp / "d2r_vr.ini", rd(mp / "d2r_vr.ini").replace("world_contact=0", "world_contact=1"))
     rc, log = run_setup("c5_install2b", "v2")

@@ -53,7 +53,7 @@ void SkyTick() {
         g_inWorld.store(world);
         engitem::WorldSeen(world);   // (a menu after a game left: our units may be placed again in the next one)
         g_frontendBiome.store(!biome.empty() && !world);   // (a load into a game sets no name first: not the menus' any more)
-        if (!world) g_roomHeightsClear.store(true);   // [render] floors_stay: the next game's rooms are other rooms
+        if (!world) g_terrainHeightsClear.store(true);   // [render] terrain_heights: the next game's tiles are other tiles
         g_fogAct.store(world ? ActOfBiome(biome) : 0);
         g_underground.store(world && !IsOutdoorBiome(biome));
         g_arcaneArea.store(world && biome == "act2_arcane");
@@ -115,6 +115,7 @@ void SkyTick() {
         }
     }
     cavelight::Tick(biome, g_underground.load());
+    engitem::DomeHeartbeat(g_inWorld.load());   // ([sky] game_sky: a line when the domes' frame stops running)
     {   // the cave ceiling: each change of mind to the log, like the sky's
         const char* cw = nullptr;
         if (!g_set.ceilOn.load()) cw = "[ceiling] enabled=0";

@@ -205,6 +205,19 @@ bool HookUnitToScreen(void* context, void* unit, float* out, uint8_t above) {
     const bool lift = plateworld::LiftWanted() && !world;   // [hud] monster_over_head (the plate cut out and hung in the room, if asked, has its own way)
     const bool follow = plateworld::Following();   // [hud] monster_alpha, monster_size...: where the plate hangs, for the effect's box (the answer unchanged)
     const bool steady = plateworld::Steadying() && !world;   // [hud] monster_plate_smooth: the plate hung on the head held steady
+    // Our own plate on ([hud] monster_names_own, any view, any preset: plateworld::Ours), or VR F1, F2, F3 ([hud] monster_names_own_all_views,
+    // [hud_third] / [hud_floor] monster_depth): which monster is targeted and where the game hung its plate, noted - its answer left exactly the
+    // game's. With ours on, none of the old plate's ways (ordinary_mob_bars' cull, monster_height, monster_over_head, monster_plate_smooth,
+    // monster_bar_room): the game's plate is simply not drawn (vr/hud/labels.cpp HookPlateDraw) and ours hangs on the target (Serg, 2026-11-09)
+    const bool ours = plateworld::Ours();
+    if (const int view = viewgate::Number(); (ours || (view >= 1 && view <= 3 && plateworld::Elsewhere())) && (track || follow) &&
+        IsPlateCall(true, above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
+        if (!IsMonsterUnit((uintptr_t)unit, GameRead())) return g_orig(context, unit, out, above);
+        const bool shown = g_orig(context, unit, out, above);
+        if (shown && track) NoteSeen(unit, plateworld::Why::Hung, nullptr);
+        if (shown && follow) NoteFollow(unit, out);
+        return shown;
+    }
     if (IsPlateCall((hide || height != 0.0f || world || track || lift || follow || steady) && viewgate::F4(), above, out, (uintptr_t)_ReturnAddress(), g_plateRet.load(std::memory_order_relaxed))) {
         static std::atomic<bool> toldHide{false}, toldKeep{false}, toldShift{false}, toldWorld{false};
         if (hide && HidesPlate((uintptr_t)unit, GameRead())) {
