@@ -78,6 +78,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "eye_frame.h"   // [openxr] canted_eyes: both eyes drawn and submitted in the head's frame when the displays are canted (the pure maths)
 #include "eye_fov.h"   // [openxr] runtime_fov / symmetric_fov / fov_crop: the fov each eye is drawn and submitted with (the pure maths)
 #include "unleashed_foveation.h"   // [render] foveated: the eyes' gaze sample's freshness (Bear's rule, MPL 2.0)
+#include "eye_gaze_ask.h"          // [render] foveated + foveated_gaze: the gaze asked as the ini says at each session's start
 #include "foveation.h"   // [render] foveated: variable rate shading here (the headset Video / Render page's rows greyed without it)
 #include "session_end.h"   // a live session end off the game's present: the exit asked for, the runtime's handles destroyed on a thread of their own
 #include "api_layers_lib.h"   // [openxr] block_listed_layers: implicit OpenXR layers known to break the picture off in this process (shared/api_layers.h)
@@ -583,6 +584,9 @@ XrQuaternionf g_lensQ[2] = {{0, 0, 0, 1}, {0, 0, 0, 1}};   // ... the frame each
 // g_gazeSys: the system says it has an eye tracker; this frame's gaze in g_space (g_gazeOk: tracked, timed, fresh). No gaze is ever logged,
 // only how many samples were usable (vr/foveation.h).
 bool g_gazeExt = false, g_gazeSys = false, g_gazeOk = false, g_gazeSeen = false;
+// ... the runtime offered the extension at this session's start; the "switched on in a session that did not ask" line said (eye_gaze_ask.h)
+std::atomic<bool> g_gazeOffered{false};
+bool g_gazeRestartTold = false;
 XrAction g_aGaze = XR_NULL_HANDLE;
 XrSpace g_gazeSpace = XR_NULL_HANDLE;
 XrQuaternionf g_gazeQ = {0, 0, 0, 1};
@@ -2536,10 +2540,18 @@ bool StartSession() {
     // [render] foveated: what this runtime offers for foveated rendering. Its own foveation (XR_FB_foveation and kin) is for Vulkan swapchains,
     // quad views would mean two more passes of the game a frame: we shade the edges coarser ourselves (variable rate shading), centred on the
     // eyes' gaze where the runtime gives it, else on each lens centre.
-    g_gazeExt = g_cfg.eyeGaze && eyeGaze;
-    LogF("vrcam: openxr - foveation in this runtime: %s; eye gaze %s", fovNames.empty() ? "nothing" : fovNames.c_str(),
-         !eyeGaze ? "not offered" : g_gazeExt ? "offered - asked for ([render] foveated, foveated_gaze)"
-                                             : "offered - not asked for ([render] foveated or foveated_gaze off at the start)");
+    // The ask from the file as it is NOW, not as the plugin read it at its load (eye_gaze_ask.h: an ini switched on after that read left the
+    // gaze un-asked for the whole session, 0.211.1 on PS VR2).
+    {
+        const eyegazeask::Keys ask = eyegazeask::Read(g_iniPath);
+        g_cfg.eyeGaze = eyegazeask::Wanted(ask);
+        g_gazeExt = g_cfg.eyeGaze && eyeGaze;
+        g_gazeOffered.store(eyeGaze);
+        g_gazeRestartTold = false;
+        char why[320];
+        eyegazeask::Describe(ask, eyeGaze, why, sizeof why);
+        LogF("vrcam: openxr - foveation in this runtime: %s; eye gaze %s", fovNames.empty() ? "nothing" : fovNames.c_str(), why);
+    }
     {
         uint32_t nl = 0;
         xrEnumerateApiLayerProperties(0, &nl, nullptr);
@@ -6833,7 +6845,14 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.handSpace = (int)f(L"hand_space", 2.0f);   // live
     g_cfg.roomByHead = (int)f(L"room_by_head", 2.0f);   // live
     g_cfg.frameProfile = f(L"frame_profile", 1.0f) != 0.0f;   // (taken at the next session start)
-    g_cfg.eyeGaze = GetPrivateProfileIntW(L"render", L"foveated", 0, ini) != 0 && GetPrivateProfileIntW(L"render", L"foveated_gaze", 1, ini) != 0;   // (next session)
+    {   // [render] foveated + foveated_gaze: asked of the runtime when a session starts (read again there, eye_gaze_ask.h); switched on during a
+        // session that did not ask, the log says it waits for the next one
+        const eyegazeask::Keys now = eyegazeask::Read(ini);
+        g_cfg.eyeGaze = eyegazeask::Wanted(now);
+        if (g_session && eyegazeask::RestartNeeded(now, g_gazeOffered.load(), g_gazeExt, &g_gazeRestartTold))
+            Log("vrcam: openxr - eye gaze: [render] foveated and foveated_gaze are on now, but this headset session started without them - the runtime "
+                "offers the gaze, it is asked only when a session starts: restart the game for the sharp area to follow the eyes (until then, the lens centre)");
+    }
     {
         g_cfg.indexGripForce = f(L"index_grip_force", 0.0f) != 0.0f;   // live
         static int said = 0;   // (off at the start: not a word)

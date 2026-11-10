@@ -16,6 +16,9 @@
 
 #include <cstdio>
 
+// vr/config/settings.cpp's IniB asks [debug] perf_sweep (vr/perf_sweep.cpp, plugin only) for a value it forces: none here.
+namespace perfsweep { bool Forced(const wchar_t*, const wchar_t*, float*) { return false; } }
+
 static int g_fail = 0, g_checks = 0;
 #define CHECK(c) do { ++g_checks; if (!(c)) { std::printf("FAIL line %d: %s  [%s]\n", __LINE__, #c, g_case); ++g_fail; } } while (0)
 static char g_case[256] = "";

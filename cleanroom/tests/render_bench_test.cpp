@@ -98,6 +98,29 @@ int main() {
     CHECK(MaskText(kAll) == "ALL");
     CHECK(MaskText((1u << kKeyBloom) | (1u << kKeyPpr)) == "bloom, ppr");
 
+    // the lit calls by kind and the depth pre-pass (view only; Serg's pipe trace of 2026-11-09 16:51 - each heavy pipeline's hashes)
+    CHECK(LitKindOf(0xae12b1e437155234ull) == kSubModels);         // ps_models_p (944 draws in that frame)
+    CHECK(LitKindOf(0xdf7d377bda243447ull) == kSubFoliage);        // ps_foliage_p into the scene's colour (731)
+    CHECK(LitKindOf(0xd606a4f97d05aa30ull) == kSubFoliage);        // ps_foliage_p into the two RGBA16F targets, blended (731)
+    CHECK(LitKindOf(0xa11d8d1c6efd3f33ull) == kSubTerrain);        // ps_terrain
+    CHECK(LitKindOf(0x390f43817f73b104ull) == kSubAlphaTested);    // ps_alpha_threshold_p
+    CHECK(LitKindOf(0x170ed0704b9e5650ull) == kSubGrunge);         // ps_grunge_p
+    CHECK(LitKindOf(0x33e9ff96047fa42eull) == kSubNone);           // a shadow shader is no lit kind
+    CHECK(LitKindOf(0) == kSubNone);
+    CHECK(SubOf(kLit, 0xae12b1e437155234ull, 0xc6d83ee9f62612d2ull, false, false) == kSubModels);
+    // the pre-pass: ps_models_velocity_p (in no bench container) with vs_models_shadows_v / vs_clutter_shadows_v, the depth written
+    CHECK(SubOf(Classify(0xdba7aacc1295b83bull, 0x0ff5f144953c838cull, false), 0xdba7aacc1295b83bull, 0x0ff5f144953c838cull, false, true) == kSubPrepass);
+    CHECK(SubOf(Classify(0x69bc30aa76416354ull, 0x240c2ea9fec85a71ull, false), 0x69bc30aa76416354ull, 0x240c2ea9fec85a71ull, false, true) == kSubPrepass);
+    CHECK(SubOf(kNone, 0x69bc30aa76416354ull, 0x240c2ea9fec85a71ull, false, false) == kSubNone);   // no depth written: not the pre-pass
+    CHECK(SubOf(kShadows, 0, 0x0ff5f144953c838cull, false, true) == kSubNone);                     // the shadow map's own depth-only draws
+    CHECK(SubOf(kNone, 0xeafadee47877eb58ull, 0xba29203c61667ee4ull, false, true) == kSubNone);   // ps_ui_p: not a shadow container's vs
+    CHECK(SubOf(kNone, 0x45573483ffc471f0ull, 0, true, false) == kSubNone);                        // a compute pipeline
+    for (const LitKindHash& h : kLitKindHashes) CHECK(StageOf(h.hash) == kLit && h.kind >= kSubModels && h.kind < kSubPrepass);
+    CHECK(std::is_sorted(std::begin(kLitKindHashes), std::end(kLitKindHashes), [](const LitKindHash& a, const LitKindHash& b) { return a.hash < b.hash; }));
+    std::string names;
+    for (int s = 0; s < kSubs; ++s) names += SubName(s);
+    CHECK(names.find('?') == std::string::npos);
+
     std::printf("render_bench_test: %d checks, %d failed\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

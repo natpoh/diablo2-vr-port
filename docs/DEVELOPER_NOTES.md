@@ -167,6 +167,14 @@ FNV-1a 64) and take the rate image too; the grass lighting may also get a base r
 has one grass-lighting shader: no lighter variant exists for an option to pick. The 10 s line says how many of those passes' pixels were
 shaded coarse.
 
+Blurring the coarse pixels (`[render] foveated_blur`, `foveated_blur_strength`; `D2R_DepthFog.fx` FovBlur*, the sums in
+`shared/foveation_blur_math.h`): Serg asked for the existing blur filter, as an effect of its own. Two passes right after the distance
+blur's in both eyes' techniques, built on it (across into `FovBlurTex`, then down; its 9 Gaussian taps a quarter radius apart; the
+interface neither blurred nor taken in), with their own texture, switch and strength. The radius is the tile's block size (the rate
+image's TileRate with the region of that eye's last pass: `foveation::EyeRegionOf`, handed in as uniforms at the eye's effects begin) x
+strength x 1.5 pixels, faded in over 30 % past the sharp ellipse. `distance_blur` is untouched; both on, they add. Off: both passes left
+out (`fx_pass_keep.h`). Its time: `fs.MsOf("PS_FovBlur")` in the native effects line, handed to the foveated line.
+
 Tests: `unleashed_foveation_test` (Bear's tile rule against ours over 6 million tiles, lens centres per fov, the unseen part,
 eligibility, the coarse share per strength), `foveation_native_test` (end to end on a VRS tier 2 device: the picture read back is
 shaded 2x2 at the edges, whole round each lens centre, mirrored between the eyes; no D3D12 debug layer error). Proving a gain:

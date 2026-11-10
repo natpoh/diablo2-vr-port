@@ -1,5 +1,32 @@
 # What's new in D2R VR
 
+## 0.212.0
+
+More frames: the game window no longer stays bigger than the VR picture.
+
+- **The square game window follows the VR render size** (Settings, "Square game window", `[openxr] square_window_follow`, on): the
+  window is made as big as the picture the headset gets - smaller if your monitor can't hold it, never bigger. Until now it stayed
+  1920 x 1920 while the picture was 1536 (or whatever Auto chose), and part of the game's frame followed the big window: on our test
+  PC, Medium at 1024 went from 79 to 108 frames a second.
+- **Our own measuring costs less**: the render bench's bookkeeping on every draw is cut (about 0.8 ms of the processor a pass).
+- **Auto tunes for the headset's real rate**: it aimed at the slowed-down rate SteamVR reports while the game can't keep up (it said
+  "22 Hz" and changed nothing); now it aims at 90 / 120 Hz. Its order: the render size down to 1600, then eyes by turns, then the
+  preset (Low, Potato); and when a step reaches the target with room to spare, the size climbs back up (eyes by turns often holds
+  the rate at a much bigger size).
+- **PS VR2 eye tracking for foveated rendering** works: the gaze is asked of SteamVR when the session starts (it never was), so the
+  sharp centre follows your eyes. Needs PSVR2 Toolkit's eye tracking and SteamVR's "Share eye tracking data".
+- **Foveated rendering: blur the coarse pixels** (new, off): the blocky periphery is smoothed by an effect of its own.
+- **The hand map on PS VR2** (and at small render sizes): the game's map is found and stays in your hand, not in the sky.
+- **The flat game's map**: its own keys to turn it, centre it and zoom in and out; a thin or ring compass.
+- **Experimental: move during special moves** (Settings > Mechanics, *Move during special moves*, off - `[gameplay] move_during_skills`):
+  with W A S D in the monitor's F2 / F3, or the stick in VR F4, the hero keeps moving during Zeal, Fury, Double Swing, Frenzy and the
+  one-blow special moves (Bash, Stun, Berserk, Concentrate, Sacrifice, Vengeance, Power Strike ...). The skill keeps its number of
+  blows, animation, attack speed, mana and damage; each blow goes to the monster before the camera when it lands (F4: the one your
+  swing started on), else into the air. It changes the game's rules; in a TCP/IP game the host's box decides.
+- **The swing does not stop the hero** (`[gameplay] flat_attack_path`) is now the plain Attack and the Throw only: until now it also
+  took every skill that plays the attack animation (Bash, Zeal, Berserk ...) - those are on the new box. In VR F4, Quick blow still
+  lets you move through the one-blow skills as before.
+
 ## 0.211.0
 
 The fog fixed, and a crash fix for Native one pass.

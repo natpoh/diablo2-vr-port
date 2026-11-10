@@ -36,7 +36,7 @@ struct RowDef {
 
 // The player's own 2D keys (D2R VR Settings has each, the same default): Camera's field of view and F2's distance back, UI: F3 eyes'
 // weapon in hand and the body under the camera, Controls' flat aiming, picking, gamepad, the portal's oval and the pad's look up and down;
-// the map's zoom keys and its place (left, middle, right: vr/minimap_side.h PlaceMode).
+// the map's zoom keys and its place (left, middle, right: vr/minimap_side.h PlaceMode); the pick-up key; the map's own keys.
 inline constexpr RowDef kOwn[] = {
     {L"camera", L"fov", Kind::Steps, 20.0f, 120.0f, 5.0f, 60.0f},
     {L"third", L"distance", Kind::Steps, 0.0f, 30.0f, 0.5f, 7.0f},
@@ -54,6 +54,16 @@ inline constexpr RowDef kOwn[] = {
     {L"input", L"flat_pickup_key_on", Kind::Toggle, 0.0f, 1.0f, 1.0f, 0.0f},
     {L"input", L"flat_pickup_key", Kind::Key, 1.0f, 254.0f, 1.0f, 69.0f},
     {L"input", L"flat_item_hitbox", Kind::Toggle, 0.0f, 1.0f, 1.0f, 0.0f},
+    // the map's own keys (2026-11-10, a player's ask relayed by Serg: "turn it, put it in the middle and back, zoom in and out - by hotkeys,
+    // not through the menu"): the turn on / off, the compass's look, the key that turns it, the key that puts it in the middle and back to
+    // the corner chosen here, the zoom's two keys (vr/flat_map_keys.h, vr/flat_map_zoom.h)
+    {L"hud", L"map_rotate_flat", Kind::Toggle, 0.0f, 1.0f, 1.0f, 0.0f},
+    {L"hud", L"map_compass_flat", Kind::Choice, 0.0f, 3.0f, 1.0f, 2.0f},
+    {L"hud", L"flat_map_turn_key", Kind::Key, 1.0f, 254.0f, 1.0f, 111.0f},    // Num /
+    {L"hud", L"flat_map_place_key", Kind::Key, 1.0f, 254.0f, 1.0f, 106.0f},   // Num *
+    {L"hud", L"flat_map_corner", Kind::Choice, 0.0f, 1.0f, 1.0f, 1.0f},
+    {L"hud", L"flat_map_zoom_in_key", Kind::Key, 1.0f, 254.0f, 1.0f, 187.0f},    // the main row's =/+
+    {L"hud", L"flat_map_zoom_out_key", Kind::Key, 1.0f, 254.0f, 1.0f, 189.0f},   // the main row's -
 };
 constexpr int kOwnCount = static_cast<int>(sizeof kOwn / sizeof kOwn[0]);
 constexpr int kRows = kOwnCount + hostrules::kCount;   // the own rows, then the host's rules in kRules' order
@@ -81,11 +91,18 @@ inline const char* Label(int row) {
         case 6: return uitext::Tr("vr.flatmenu.flat_no_pad", "Hide the gamepad from the game (mouse and keyboard)");
         case 7: return uitext::Tr("vr.flatmenu.flat_portal_no_oval", "No black oval in the town portal");
         case 8: return uitext::Tr("vr.flatmenu.stick_pitch_flat", "The gamepad's right stick looks up and down");
-        case 9: return uitext::Tr("vr.flatmenu.flat_map_zoom", "- and + zoom the map out of its circle and back");
+        case 9: return uitext::Tr("vr.flatmenu.flat_map_zoom", "Zoom keys: the map nearer and farther (out of its circle)");
         case 10: return uitext::Tr("vr.flatmenu.flat_map_place", "Map on the screen");
         case 11: return uitext::Tr("vr.flatmenu.flat_pickup_key_on", "A key picks up items (first and third person)");
         case 12: return uitext::Tr("vr.flatmenu.flat_pickup_key", "The pick-up key (click, then press a key)");
         case 13: return uitext::Tr("vr.flatmenu.flat_item_hitbox", "With Alt held, click an item by its body, not only its name");
+        case 14: return uitext::Tr("vr.flatmenu.map_rotate_flat", "Map turns with the camera (F2 / F3)");
+        case 15: return uitext::Tr("vr.flatmenu.map_compass_flat", "Compass over the turned map");
+        case 16: return uitext::Tr("vr.flatmenu.flat_map_turn_key", "Key: map turns / stops turning");
+        case 17: return uitext::Tr("vr.flatmenu.flat_map_place_key", "Key: map in the middle / in the corner");
+        case 18: return uitext::Tr("vr.flatmenu.flat_map_corner", "The corner that key puts the map in");
+        case 19: return uitext::Tr("vr.flatmenu.flat_map_zoom_in_key", "Key: map nearer (zoom in)");
+        case 20: return uitext::Tr("vr.flatmenu.flat_map_zoom_out_key", "Key: map farther (zoom out)");
         default: return "?";
     }
 }
@@ -99,7 +116,26 @@ inline const char* OwnChoiceName(int row, int v) {
             case 3: return uitext::Tr("vr.flatmenu.flat_map_place.right", "Right");
         }
     }
+    if (row == 15) {   // [hud] map_compass_flat (vr/map_turn.h CompassStyle)
+        switch (v) {
+            case 0: return uitext::Tr("vr.flatmenu.map_compass_flat.off", "None");
+            case 1: return uitext::Tr("vr.flatmenu.map_compass_flat.strip", "Strip");
+            case 2: return uitext::Tr("vr.flatmenu.map_compass_flat.thin", "Thin: letters only");
+            case 3: return uitext::Tr("vr.flatmenu.map_compass_flat.ring", "Ring of letters");
+        }
+    }
+    if (row == 18) {   // [hud] flat_map_corner
+        switch (v) {
+            case 0: return uitext::Tr("vr.flatmenu.flat_map_place.left", "Left");
+            case 1: return uitext::Tr("vr.flatmenu.flat_map_place.right", "Right");
+        }
+    }
     return nullptr;
+}
+// What a key row's capture refuses (vr/key_capture.h): the pick-up key's rules, or the map's.
+inline keycap::Use KeyUse(int row) {
+    const RowDef d = Def(row);
+    return d.kind == Kind::Key && std::wcsncmp(d.key, L"flat_map_", 9) == 0 ? keycap::Use::MapKey : keycap::Use::PickupKey;
 }
 
 // The ini's text as the row's value (a missing or unreadable key: the default), within the row's range.

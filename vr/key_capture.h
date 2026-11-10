@@ -19,6 +19,8 @@ constexpr unsigned kEsc = 0x1B;
 enum class Use : uint8_t {
     PickupKey,   // [input] flat_pickup_key: a key of the flat first-person play (not W A S D, not Alt - the names, not F1 - F4 / F9 - F12 - ours)
     GameKey,     // a gesture's key: any key the game may have bound (its own command is what the gesture presses)
+    MapKey,      // [hud] flat_map_*_key: the flat game's map keys - turn, place, zoom (any view: not W A S D, not Tab - the game's own map -,
+                 // not F1 - F4 / F9 - F12, not Esc; a keyboard key, the window's key messages are what is read)
 };
 
 // A key's name as a keyboard shows it; nullptr: none known (Text writes its number then).
@@ -100,6 +102,12 @@ inline const char* Refusal(unsigned vk, Use use) {
     if (vk == 0x0D) return "Enter opens the chat line";
     if (use == Use::PickupKey) {
         if (vk == 'W' || vk == 'A' || vk == 'S' || vk == 'D') return "W A S D walk";
+        if ((vk >= 0x70 && vk <= 0x73) || (vk >= 0x78 && vk <= 0x7B)) return "F1 - F4 pick the view, F9 - F12 are the mod's own keys";
+        if (vk == 0x05 || vk == 0x06 || vk == 0x04) return "a mouse button is not taken from the game here - a keyboard key";
+    }
+    if (use == Use::MapKey) {
+        if (vk == 'W' || vk == 'A' || vk == 'S' || vk == 'D') return "W A S D walk";
+        if (vk == 0x09) return "Tab opens and shuts the game's own map";
         if ((vk >= 0x70 && vk <= 0x73) || (vk >= 0x78 && vk <= 0x7B)) return "F1 - F4 pick the view, F9 - F12 are the mod's own keys";
         if (vk == 0x05 || vk == 0x06 || vk == 0x04) return "a mouse button is not taken from the game here - a keyboard key";
     }

@@ -46,6 +46,8 @@ inline constexpr Rule kRules[] = {
     // 2026-11-08 (vr/hit_share.h): the host's box decides whether the joined players' swing timers get their blows' outcomes
     {7, L"multiplayer", L"share_hit_outcomes", "Send the joined players what their blows did", 0, 2, {"Off", "On"}},
     {8, L"gameplay", L"shot_at_release", "The arrow goes where you aim as it leaves the bow", 0, 2, {"Off", "On"}},   // (vr/shot_release.h, 2026-11-06)
+    // 2026-11-10 (vr/attack_path.h KindOf): the hero moves during special moves (Zeal, Double Swing, Frenzy, Bash ...)
+    {9, L"gameplay", L"move_during_skills", "Move during special moves", 0, 3, {"Off", "Walk", "Walk or run"}},
 };
 inline constexpr int kCount = static_cast<int>(sizeof kRules / sizeof kRules[0]);
 constexpr int kMaxRules = 16;   // what a message may carry (a newer host's extra ids are skipped by an older client)
@@ -175,6 +177,7 @@ inline const char* Label(int i) {
         case 6: return uitext::Tr("vr.rules.quick_blow_faster", "Quick blow: faster than the animation");
         case 7: return uitext::Tr("vr.rules.share_hit_outcomes", "Send the joined players what their blows did");
         case 8: return uitext::Tr("vr.rules.shot_at_release", "The arrow goes where you aim as it leaves the bow");
+        case 9: return uitext::Tr("vr.rules.move_during_skills", "Move during special moves");
         default: return "?";
     }
 }
@@ -184,9 +187,9 @@ inline const char* ValueName(int i, int v) {
     const char* en = kRules[i].names[c];
     if (kRules[i].count == 2) return c ? uitext::Tr("vr.rules.on", "On") : uitext::Tr("vr.rules.off", "Off");
     switch (kRules[i].id * 4 + c) {
-        case 1 * 4 + 0: case 2 * 4 + 0: return uitext::Tr("vr.rules.off", "Off");
-        case 1 * 4 + 1: return uitext::Tr("vr.rules.walk", "Walk");
-        case 1 * 4 + 2: return uitext::Tr("vr.rules.walk_or_run", "Walk or run");
+        case 1 * 4 + 0: case 2 * 4 + 0: case 9 * 4 + 0: return uitext::Tr("vr.rules.off", "Off");
+        case 1 * 4 + 1: case 9 * 4 + 1: return uitext::Tr("vr.rules.walk", "Walk");
+        case 1 * 4 + 2: case 9 * 4 + 2: return uitext::Tr("vr.rules.walk_or_run", "Walk or run");
         case 2 * 4 + 1: return uitext::Tr("vr.rules.spear_and_bow", "Spear and bow");
         case 2 * 4 + 2: return uitext::Tr("vr.rules.every_weapon", "Every weapon");
         default: return en;

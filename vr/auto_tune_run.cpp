@@ -21,6 +21,7 @@
 
 #include "auto_tune.h"
 #include "auto_tune_run.h"
+#include "frame_cap.h"     // shared/: [stereo] headset_rate 0..4 as Hz (the rate when no display period was seen)
 #include "foveation.h"   // [render] foveated live: hooked at the start and VRS tier 2 (the ladder's foveation rung)
 #include "hset_defs.h"     // a missing key's default (the headset window's table: the plugin's own defaults)
 #include "quality_presets.h"   // shared/: the Quality presets, the ladder's middle rungs
@@ -95,6 +96,14 @@ std::string Px(int side) { return std::to_string(side) + " px"; }
 // one pass, so late) - from one pass only, live (pair_per_tick; the replay's hooks stay), frame generation off - and the size to 1200 last
 // (kTurnsBefore1200 swaps the two). Never a rung: our effects one by one, a lower headset rate, two passes / FlatVR, the render type a preset
 // names, the wrist medallions ([hud] bar_place / wrist_look / hand_vitals - "оставляем во всех режимах").
+// Before the presets go down to Low / Potato, eyes by turns is TRIED at the preset and size as they stand (Serg 2026-11-10, "перед переключением
+// на лоу и потато он должен переключить режим на глаза по очереди": Medium 1280x720 one pass 107 fps, by turns 114): kept and done if it
+// meets the target; short, the presets go down with whichever measured better (the log and d2r_vr_autotune.txt say which). Keep writes it
+// with the rest, Undo drops it (autotune::LadderStep::trial). The order (Serg 2026-11-10, "сперва уменьшаем до 1600 размера потом по очереди
+// глаза"): the size to 1600 first, then the trial at 1600, then the presets, the size under 1600 last.
+// A rung that meets with room to spare climbs back ("если много кадров то можно поднять обратно немного"; "на глазах по очереди будет 90, но
+// можно поднять графику до 2100"): the size on its 64 px grid up to the player's own while the target holds with 7 % of the frame's budget to
+// spare, then the preset a level at a time (autotune::Options::climbKnob); each step logged ("climb ... holds / not kept").
 constexpr int kSideFloor = 1600, kSideMid = 1300, kSideLast = 1200;
 constexpr bool kTurnsBefore1200 = false;   // eyes by turns after the last drop to 1200 (Serg 2026-11-08: "после 1200 пусть будет по очереди")
 
@@ -120,11 +129,14 @@ int FilePreset() {
     });
 }
 
-std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotune::LadderStep>* ladder, std::string* skipped) {
+std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotune::LadderStep>* ladder, std::string* skipped, int* climbSize = nullptr,
+                               int* climbPreset = nullptr) {
     std::vector<KnobDef> out;
     ladder->clear();
-    // knob 0: the render size, its levels from 1200 up to the player's own (the start)
+    // knob 0: the render size, its levels from 1200 up to the player's own (the start) on the slider's 64 px grid - the climb's steps (Serg
+    // 2026-11-10: "можно поднять графику до 2100"); the ladder's drops are some of them (sizeRungs: a tenth less each, down to 1600)
     int sizeKnob = -1, sizeFloorLevel = -1, sizeMidLevel = -1, sizeStart = 0;
+    std::vector<int> sizeRungs;
     const int mode = FileInt(L"render", L"vr_resolution", 0), pxKey = FileInt(L"render", L"vr_resolution_px", 0);
     const rendersize::Pick pick = rendersize::FromIni(mode, pxKey);
     const int side = pick.kind == rendersize::Kind::Square ? pick.side : pick.kind == rendersize::Kind::Headset ? (int)std::max(recW, recH) : 0;
@@ -136,17 +148,26 @@ std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotun
         }
         for (const int s : {kSideMid, kSideLast})   // then 1300 and 1200 (below a player's own smaller size only)
             if (s < (down.empty() ? side : down.back())) down.push_back(s);
+        std::vector<int> grid(down.begin(), down.end());   // the rungs' sides and every 64 px between 1200 and the player's own
+        for (int s = (kSideLast / rendersize::kSideStep + 1) * rendersize::kSideStep; s < side; s += rendersize::kSideStep) grid.push_back(s);
+        std::sort(grid.begin(), grid.end());
+        grid.erase(std::unique(grid.begin(), grid.end()), grid.end());
+        grid.erase(std::remove_if(grid.begin(), grid.end(), [&](int s) { return s >= side || s < (down.empty() ? side : down.back()); }), grid.end());
         KnobDef d;
         d.k.id = "scale";
-        d.k.levels = (int)down.size() + 1;
-        d.k.start = (int)down.size();
+        d.k.levels = (int)grid.size() + 1;
+        d.k.start = (int)grid.size();
         d.k.worth = 2.0f;
-        for (auto it = down.rbegin(); it != down.rend(); ++it) {   // level 0 the smallest
-            d.levels.push_back({{L"render", L"vr_resolution", 0}, {L"render", L"vr_resolution_px", *it}});
-            d.names.push_back(Px(*it));
-            if (*it == kSideFloor) sizeFloorLevel = (int)d.levels.size() - 1;
-            if (*it == kSideMid) sizeMidLevel = (int)d.levels.size() - 1;
+        for (const int s : grid) {   // level 0 the smallest
+            d.levels.push_back({{L"render", L"vr_resolution", 0}, {L"render", L"vr_resolution_px", s}});
+            d.names.push_back(Px(s));
+            if (s == kSideFloor) sizeFloorLevel = (int)d.levels.size() - 1;
+            if (s == kSideMid) sizeMidLevel = (int)d.levels.size() - 1;
         }
+        for (const int s : down)   // the first drop's rungs (largest first): their levels on the grid
+            if (s >= kSideFloor)
+                for (size_t g = 0; g < grid.size(); ++g)
+                    if (grid[g] == s) sizeRungs.push_back((int)g);
         d.levels.push_back({{L"render", L"vr_resolution", mode}, {L"render", L"vr_resolution_px", pxKey}});
         d.names.push_back(pick.kind == rendersize::Kind::Headset ? uitext::Tr("vr.autotune.headset_size", "headset's size") : Px(side));
         d.what = uitext::Tr("vr.autotune.k.scale", "Render size");
@@ -241,7 +262,9 @@ std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotun
     }
     // the rungs (autotune::SergLadder): the size to 1600, the presets down, the size to 1300, foveation, eyes by turns, the size to 1200
     *ladder = autotune::SergLadder(sizeKnob, sizeStart, sizeFloorLevel, sizeMidLevel, presetKnob, presetStart, fovKnob, fovStart, turnsKnob, turnsStart,
-                                   kTurnsBefore1200);
+                                   kTurnsBefore1200, sizeKnob >= 0 ? &sizeRungs : nullptr);
+    if (climbSize) *climbSize = sizeKnob;       // the climb: the size back up on its grid, then the preset
+    if (climbPreset) *climbPreset = presetKnob;
     return out;
 }
 
@@ -298,10 +321,21 @@ std::string LevelsText(const std::vector<int>& lv) {
 
 void Finish();
 
+// The headset's own rate (autotune::HeadsetRate): the shortest display period seen this session, every frame (XR thread) - SteamVR stretches
+// the period while the game is slow, the target must not follow it. [stereo] headset_rate as Hz, read at each run's start (0: none in the ini).
+autotune::PeriodFloor g_floor;
+std::atomic<float> g_iniHz{0.0f};
+bool g_rateTold = false;
+
 void Begin() {
+    {
+        const int rate = FileInt(L"stereo", L"headset_rate", -1);
+        g_iniHz.store(rate >= 0 ? (float)framecap::HzOfRate(rate) : 0.0f);
+        g_rateTold = false;
+    }
     std::string skipped;
     autotune::Options o;
-    g_knobs = MakeKnobs(g_recW.load(), g_recH.load(), &o.ladder, &skipped);
+    g_knobs = MakeKnobs(g_recW.load(), g_recH.load(), &o.ladder, &skipped, &o.climbKnob, &o.climbPresetKnob);
     o.halfRate = false;   // (the ladder: short at its last rung is "below the minimum", never half the rate)
     std::vector<autotune::Knob> ks;
     for (const auto& d : g_knobs) ks.push_back(d.k);
@@ -370,6 +404,7 @@ void Start() {
 }
 
 void OnFrame(double nowUs, double waitUs, double periodNs, bool counts) {
+    g_floor.Note(periodNs);   // (every frame, run or not: the session's first frames are at the headset's own rate)
     if (g_state.load(std::memory_order_relaxed) != (int)State::Running) return;
     std::lock_guard lk(g_mu);
     if (g_state.load() != (int)State::Running || !g_tuner) return;
@@ -397,15 +432,38 @@ void OnFrame(double nowUs, double waitUs, double periodNs, bool counts) {
 
     autotune::Measure m;
     const double s = spanUs / 1e6;
-    m.valid = !g_spoilt && g_frames >= 15 && g_maxGap < 250e3 && g_periodNs > 0;   // a load, a menu, a freeze in the window: measured again
+    const autotune::Rate rate = autotune::HeadsetRate(g_floor.Shortest(), g_iniHz.load());
+    m.valid = !g_spoilt && g_frames >= 15 && g_maxGap < 250e3 && rate.hz > 0;   // a load, a menu, a freeze in the window: measured again
     m.fps = (float)(g_frames / s);
     m.busyMs = (float)(spanUs / g_frames / 1000.0 - g_waitSum / g_frames / 1000.0);
-    m.hz = g_periodNs > 0 ? (float)(1e9 / g_periodNs) : 0.0f;
+    m.hz = rate.hz;   // the headset's own - not 1e9 / g_periodNs, which SteamVR stretches while the game is slow
+    if (!g_rateTold && rate.hz > 0) {   // once a run: where the target comes from, and the period the runtime gives now
+        g_rateTold = true;
+        LogF("vrcam: auto tune - headset %.1f Hz from %s (shortest display period %.2f ms, now %.2f ms%s)", rate.hz, autotune::RateFromName(rate.from),
+             g_floor.Shortest() / 1e6, g_periodNs / 1e6, g_periodNs > g_floor.Shortest() * 1.2 ? " - stretched by the runtime: the game is slower than the headset" : "");
+    }
     const autotune::Phase ph = g_tuner->phase();
     const std::vector<int> was = g_tuner->Want();
+    const size_t rowsWas = g_tuner->Log().size();
     g_tuner->Feed(m);
     LogF("vrcam: auto tune - %s %s: %.1f frames/s, %.2f ms a frame of our own (headset %.0f Hz)%s", autotune::PhaseName(ph), LevelsText(was).c_str(),
          m.fps, m.busyMs, m.hz, m.valid ? "" : g_spoilt ? " - not counted (out of the world / F4), again" : " - not counted (a freeze or too few frames), again");
+    for (size_t r = rowsWas; r < g_tuner->Log().size(); ++r) {   // a tried rung (eyes by turns before Low / Potato): what stayed, and why
+        const autotune::LogRow& row = g_tuner->Log()[r];
+        if (row.phase == autotune::Phase::Up && row.knob >= 0 && row.knob < (int)g_knobs.size()) {   // the climb (room to spare: back up a little)
+            const KnobDef& d = g_knobs[row.knob];
+            LogF("vrcam: auto tune - climb %s %s -> %s: %.1f frames/s, %.2f ms of the %.2f ms budget (at most %.2f with the margin) - %s", d.k.id,
+                 d.names[row.from].c_str(), d.names[row.to].c_str(), row.fpsAfter, row.busyAfter, 1000.0f / std::max(1.0f, g_tuner->Target()),
+                 1000.0f / std::max(1.0f, g_tuner->Target()) * 0.93f, row.kept ? "holds" : "too much, not kept");
+            continue;
+        }
+        if (!row.trial || row.knob < 0 || row.knob >= (int)g_knobs.size()) continue;
+        const KnobDef& d = g_knobs[row.knob];
+        LogF("vrcam: auto tune - tried %s before the presets go down: %.1f frames/s (%.2f ms) against %s's %.1f (%.2f ms) - %s", d.names[row.to].c_str(),
+             row.fpsAfter, row.busyAfter, d.names[row.from].c_str(), row.fpsBefore, row.busyBefore,
+             row.kept ? (row.fpsAfter >= g_tuner->Target() * 0.97f ? "kept, the target is met" : "kept: the presets go down with it")
+                      : "back to it: the presets go down without it");
+    }
     g_rev.fetch_add(1);
     if (g_tuner->Done()) {
         Finish();
@@ -474,7 +532,7 @@ void Keep() {
             const char* what = r.knob >= 0 ? g_knobs[r.knob].k.id : "all";
             snprintf(b, sizeof b, "%-8s %-16s %s -> %s  %.1f -> %.1f frames/s  %.2f -> %.2f ms%s", autotune::PhaseName(r.phase), what,
                      r.knob >= 0 ? g_knobs[r.knob].names[r.from].c_str() : "", r.knob >= 0 ? g_knobs[r.knob].names[r.to].c_str() : "", r.fpsBefore,
-                     r.fpsAfter, r.busyBefore, r.busyAfter, r.kept ? "  kept" : "");
+                     r.fpsAfter, r.busyBefore, r.busyAfter, r.trial ? (r.kept ? "  tried before Low / Potato: kept" : "  tried before Low / Potato: undone") : r.kept ? "  kept" : "");
             report.push_back(b);
         }
         report.push_back("Result: " + LevelsText(t.Result()));
@@ -538,6 +596,7 @@ View Now() {
         Row w;
         w.phase = (int)r.phase;
         w.kept = r.kept;
+        w.trial = r.trial;
         w.fpsBefore = r.fpsBefore;
         w.fpsAfter = r.fpsAfter;
         if (r.knob >= 0 && r.knob < (int)g_knobs.size()) {

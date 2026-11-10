@@ -72,6 +72,11 @@ static void TestGate() {
     // before the blow: nothing noted, or a note of another attack (another end, mode, hero), or from before this one began
     { GateAsk a = Shot(); a.fired.valid = false; CHECK(JudgeGate(a) == GateWhy::NotFired); }
     { GateAsk a = Shot(); a.endFrame = 122; CHECK(JudgeGate(a) == GateWhy::NotFired); }   // the next attack, its blow not out yet
+    // Zeal with a spear (attack 1 started again after each blow, 0x4914E0): its blow is noted with the end BEFORE the game's action moved it
+    // (vr/move_attack_wire.cpp NoteTrigger runs before the trigger), so between the blows the walk waits - the series is never cut after its
+    // first blow; after the last one (no restart, the end stays) the walk goes on as for any attack (2026-11-10, move_during_skills)
+    { GateAsk a = Shot(); a.fired.weapon = kTypeSpear; a.endFrame = 116; CHECK(JudgeGate(a) == GateWhy::NotFired); }
+    { GateAsk a = Shot(); a.fired.weapon = kTypeSpear; CHECK(JudgeGate(a) == GateWhy::Let); }
     { GateAsk a = Shot(); a.fired.mode = kModeAttack2; CHECK(JudgeGate(a) == GateWhy::NotFired); }
     { GateAsk a = Shot(); a.fired.heroId = 8; CHECK(JudgeGate(a) == GateWhy::NotFired); }
     { GateAsk a = Shot(); a.nowFrame = 103; CHECK(JudgeGate(a) == GateWhy::NotFired); }

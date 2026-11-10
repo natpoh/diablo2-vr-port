@@ -195,6 +195,24 @@ int main() {
         const CompassPlace ct = CompassOnScreen(rt, 0.0f);
         Check(ct.ok && ct.below && ct.box[1] > rt.centre[1] + rt.radius[1] && ct.box[3] <= 1.0f, "compass: the corner map at the top: under the circle");
         Check(!CompassOnScreen(Round{}, 0.0f).ok, "compass: no circle, no strip");
+        // its looks (CompassStyle): none, the strip, thin (the letters' rows only), a ring of letters inside the circle's rim
+        Check(!CompassOnScreen(r, 1.0f, CompassStyle::None).ok, "compass: none - nothing");
+        Check(c.style == (int)CompassStyle::Strip && Near(c.bearing, 1.0f, 1e-6f), "compass: the strip by default, its bearing kept");
+        const CompassPlace thin = CompassOnScreen(r, 1.0f, CompassStyle::Thin);
+        const float tw = (thin.box[2] - thin.box[0]) * sw, th = (thin.box[3] - thin.box[1]) * sh;
+        Check(thin.ok && Near(th / tw, (float)kThinRows / (float)kWindow, 2e-3f) && th < 0.75f * ph, "compass: thin - the letters' rows at the same scale, under 3/4 as tall");
+        Check(thin.box[3] < r.centre[1] - r.radius[1] && Near(thin.box[0], c.box[0], 1e-6f), "compass: thin - over the circle, as wide");
+        const CompassPlace ring = CompassOnScreen(r, 1.0f, CompassStyle::Ring);
+        Check(ring.ok && Near(ring.box[1], r.centre[1] - r.radius[1], 1e-6f) && Near(ring.box[3], r.centre[1] + r.radius[1], 1e-6f), "compass: ring - the circle's square");
+        Check(kThinTop <= 20 && kThinTop + kThinRows >= 85 && kThinTop + kThinRows <= kStripH, "compass: thin's rows hold the letters and ticks, inside the strip");
+        Check(StyleOf(0) == CompassStyle::None && StyleOf(3) == CompassStyle::Ring && StyleOf(9) == CompassStyle::None, "compass: the ini's number as a look");
+        float qx = 0.0f, qy = 0.0f;
+        RingLabel(0, 0.0f, &qx, &qy);
+        Check(Near(qx, 0.0f, 1e-5f) && Near(qy, -kRingAt, 1e-5f), "ring: looking north, N at the top");
+        RingLabel(2, kTau / 4.0f, &qx, &qy);
+        Check(Near(qx, 0.0f, 1e-5f) && Near(qy, -kRingAt, 1e-5f), "ring: looking east, E at the top");
+        RingLabel(0, kTau / 4.0f, &qx, &qy);
+        Check(Near(qx, -kRingAt, 1e-5f) && Near(qy, 0.0f, 1e-5f), "ring: looking east, N on the left");
     }
     {   // the head's turn held while it looks down at the hand
         HeadHold k;

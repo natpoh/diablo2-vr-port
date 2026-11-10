@@ -54,6 +54,10 @@ bool LastWritten(std::wstring* path);
 void SetBench(uint32_t mask);
 uint32_t BenchMask();
 std::string BenchLine();
+// [debug] perf_sweep (vr/perf_sweep.h): the calls of each stage and sub-kind (renderbench::Sub: the lit kinds, the depth pre-pass) counted
+// while no bench key is on too (on); Counts: the totals since the start, kStages and kSubs of them (each reader takes its own difference)
+void SetCounting(bool on);
+void Counts(uint64_t* stages, uint64_t* subs);
 
 // [render] sun_shadows / sun_shadow_every (vr/simpler_sun.h): the bench's shadow-target tally kept without the bench too (on) - one tally for
 // both; and the sun's shadow map the last present picked (the sun / spot target - the sun and spot shaders', not the point lights' - with the

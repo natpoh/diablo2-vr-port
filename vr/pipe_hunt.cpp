@@ -41,7 +41,7 @@ uint64_t HashOf(const D3D12_SHADER_BYTECODE& b) { return b.pShaderBytecode && b.
 // stage: [render] bench_skip_* (vr/render_bench.h). The trace's pass order (Serg 2026-11-09, "огонь туман перекрывает": does the game's fog
 // apply come after the flames, and what depth do they leave it?): resolve = the game's transparent resolve; zw = the depth written (1), not
 // (0), - a compute pipeline (-1); blend = a render target blended (the effects: additive / alpha, no depth written)
-struct Info { uint64_t hash = 0, vs = 0; char kind = 'g'; uint8_t stage = 0; bool resolve = false; int8_t zw = -1; bool blend = false; };
+struct Info { uint64_t hash = 0, vs = 0; char kind = 'g'; uint8_t stage = 0, sub = 0; bool resolve = false; int8_t zw = -1; bool blend = false; };
 int8_t DepthWrites(const D3D12_DEPTH_STENCIL_DESC& d) { return d.DepthEnable && d.DepthWriteMask == D3D12_DEPTH_WRITE_MASK_ALL ? 1 : 0; }
 bool Blends(const D3D12_BLEND_DESC& b) {
     for (int i = 0; i < (b.IndependentBlendEnable ? 8 : 1); ++i)
@@ -50,21 +50,43 @@ bool Blends(const D3D12_BLEND_DESC& b) {
 }
 SRWLOCK g_infoLock = SRWLOCK_INIT;
 std::unordered_map<ID3D12PipelineState*, Info> g_info;
+// Each recording thread's last answers (2026-11-10): with a bench key on - and [render] game_outline 0 sets the outline's in every preset, so
+// in practice always - every SetPipelineState of the game's looked its pipeline up here under the shared lock, and the game binds a pipeline
+// before EVERY draw (the 2026-11-09 pipe trace: binds = draws, ~7,600 a pass on Medium). A per-thread direct-mapped cache answers the same
+// without the lock; a generation that moves on every pipeline kept (Keep: a new one, or a pointer the driver reused) empties every thread's
+// cache before any bind of the new pipeline can come (the game binds it only after its creation call, which ran Keep, returned). A miss
+// takes the shared lock as before, so the answers are the map's.
+std::atomic<uint32_t> g_infoGen{1};
+struct InfoSlot { ID3D12PipelineState* pso; Info info; };
+constexpr int kInfoSlots = 128;
+thread_local InfoSlot t_infoCache[kInfoSlots];
+thread_local uint32_t t_infoGen = 0;
 // [render] bench_skip_* (vr/render_bench.h): the pipelines of each stage the game made (recognised by their hashes)
 std::atomic<uint32_t> g_benchMade[renderbench::kStages] = {};
 void Keep(ID3D12PipelineState* pso, Info i) {
     i.stage = renderbench::Classify(i.hash, i.vs, i.kind == 'c');
+    i.sub = renderbench::SubOf(i.stage, i.hash, i.vs, i.kind == 'c', i.zw == 1);
     if (i.stage) g_benchMade[i.stage].fetch_add(1, std::memory_order_relaxed);
     AcquireSRWLockExclusive(&g_infoLock);
     g_info[pso] = i;
+    g_infoGen.fetch_add(1, std::memory_order_release);
     ReleaseSRWLockExclusive(&g_infoLock);
 }
 bool InfoOf(ID3D12PipelineState* pso, Info* out) {
+    const uint32_t gen = g_infoGen.load(std::memory_order_acquire);
+    if (t_infoGen != gen) {
+        for (InfoSlot& s : t_infoCache) s.pso = nullptr;
+        t_infoGen = gen;
+    }
+    const uintptr_t p = (uintptr_t)pso;
+    InfoSlot& slot = t_infoCache[(p * 0x9E3779B97F4A7C15ull) >> 57];   // (128 slots: the top 7 bits of a Fibonacci hash - the driver's objects sit on aligned strides)
+    if (slot.pso == pso) { *out = slot.info; return true; }
     AcquireSRWLockShared(&g_infoLock);
     const auto it = g_info.find(pso);
     const bool ok = it != g_info.end();
     if (ok) *out = it->second;
     ReleaseSRWLockShared(&g_infoLock);
+    if (ok) { slot.pso = pso; slot.info = *out; }   // (an unknown pipeline is not kept: it is looked up again)
     return ok;
 }
 
@@ -105,11 +127,51 @@ thread_local uint64_t t_recKey = 0;
 // present), what the pipeline bound on this thread's list belongs to, and the depth-stencil that list binds (the shadows: the sun's or not)
 std::atomic<uint32_t> g_benchMask{0};
 std::atomic<bool> g_benchGate{false};
-thread_local uint8_t t_stage = 0;
+thread_local uint8_t t_stage = 0, t_sub = 0;
 thread_local ID3D12GraphicsCommandList* t_dsCl = nullptr;
 thread_local ID3D12Resource* t_ds = nullptr;
-// calls of each stage made / left out since the last bench line, and the presents meanwhile
-std::atomic<uint32_t> g_benchSeen[renderbench::kStages] = {};
+// calls of each stage and sub-kind seen (made or left out) since the start - cumulative: the bench line and [debug] perf_sweep each take
+// their own difference - while a bench key is on or a sweep counts (g_counting); calls left out since the last bench line; the presents.
+// Each recording thread counts in a block of its own with plain adds (2026-11-10): a locked add on every draw cost ~0.6 ms a pass between
+// the driver's writes (tools/hook_cost_bench --gpu --medium: armedc against armedt) - and with [render] game_outline 0 in every preset
+// the counting ran on every draw. The blocks are never freed (a thread that ends leaves its counts); readers sum them. Past kBlocks
+// threads the rest share one block with locked adds.
+struct Counters { std::atomic<uint64_t> stage[renderbench::kStages]; std::atomic<uint64_t> sub[renderbench::kSubs]; };
+constexpr int kBlocks = 64;
+std::atomic<Counters*> g_blocks[kBlocks] = {};
+std::atomic<int> g_blockN{0};
+Counters g_sharedBlock{};
+thread_local Counters* t_cnt = nullptr;
+thread_local bool t_cntShared = false;
+Counters* MyCounters() {
+    if (t_cnt) return t_cnt;
+    const int i = g_blockN.fetch_add(1, std::memory_order_relaxed);
+    if (i < kBlocks) {
+        Counters* c = new Counters{};
+        g_blocks[i].store(c, std::memory_order_release);
+        t_cnt = c;
+    } else {
+        t_cnt = &g_sharedBlock;
+        t_cntShared = true;
+    }
+    return t_cnt;
+}
+inline void Bump(std::atomic<uint64_t>& a) {
+    if (t_cntShared) a.fetch_add(1, std::memory_order_relaxed);
+    else a.store(a.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);   // (this thread's own: no lock prefix)
+}
+void SumCounters(uint64_t* stages, uint64_t* subs) {
+    for (int s = 0; s < renderbench::kStages; ++s) stages[s] = g_sharedBlock.stage[s].load(std::memory_order_relaxed);
+    for (int s = 0; s < renderbench::kSubs; ++s) subs[s] = g_sharedBlock.sub[s].load(std::memory_order_relaxed);
+    for (int i = 0; i < kBlocks; ++i) {
+        const Counters* c = g_blocks[i].load(std::memory_order_acquire);
+        if (!c) continue;
+        for (int s = 0; s < renderbench::kStages; ++s) stages[s] += c->stage[s].load(std::memory_order_relaxed);
+        for (int s = 0; s < renderbench::kSubs; ++s) subs[s] += c->sub[s].load(std::memory_order_relaxed);
+    }
+}
+std::atomic<bool> g_counting{false};
+uint64_t g_lineStage[renderbench::kStages] = {}, g_lineSub[renderbench::kSubs] = {};   // (the bench line's last snapshot: its caller only)
 std::atomic<uint32_t> g_benchSkipped[renderbench::kKeys] = {};
 std::atomic<uint32_t> g_benchPresents{0}, g_benchUngated{0};
 // The shadow targets drawn into last frame and how many calls each took, sun / spot or point: ONE tally for the bench's line (what the maps
@@ -208,7 +270,8 @@ void Describe(std::string& s, ID3D12Resource* r) {
 }
 
 void Recount() {
-    bool any = g_skipLegacy.load() || g_skipHunt.load() || g_shaders.load() || g_trace.load() != kIdle || g_benchMask.load() || g_sunWatch.load();
+    bool any = g_skipLegacy.load() || g_skipHunt.load() || g_shaders.load() || g_trace.load() != kIdle || g_benchMask.load() || g_sunWatch.load() ||
+               g_counting.load();
     g_any.store(any);
 }
 bool Skipped(uint64_t h) {
@@ -370,11 +433,12 @@ void OnBound(ID3D12GraphicsCommandList* cl, ID3D12PipelineState* pso) {
     t_skip = false;
     t_recKey = 0;
     t_stage = 0;
+    t_sub = 0;
     if (!g_any.load(std::memory_order_relaxed) || !pso) return;
     Info i;
     const bool known = InfoOf(pso, &i);
     t_skip = known && Skipped(i.hash);
-    if (known) t_stage = i.stage;
+    if (known) { t_stage = i.stage; t_sub = i.sub; }
     if (g_trace.load(std::memory_order_relaxed) == kRecording) {
         std::lock_guard<std::mutex> l(g_recLock);
         const uint64_t key = known && i.hash ? i.hash : ((uint64_t)(uintptr_t)pso | 1ull << 63);
@@ -415,8 +479,11 @@ bool Skip(ID3D12GraphicsCommandList* cl, int kind) {
     // [render] bench_skip_*: a call of a stage whose key is on, in VR first person - not made (its clears, barriers and binds are)
     const uint8_t st = t_stage;
     const uint32_t mask = g_benchMask.load(std::memory_order_relaxed);
-    if (!st || (!mask && !g_sunWatch.load(std::memory_order_relaxed))) return false;
-    if (mask) g_benchSeen[st].fetch_add(1, std::memory_order_relaxed);
+    const bool count = mask || g_counting.load(std::memory_order_relaxed);
+    if (count && t_sub) Bump(MyCounters()->sub[t_sub]);
+    if (!st) return false;
+    if (count) Bump(MyCounters()->stage[st]);
+    if (!mask && !g_sunWatch.load(std::memory_order_relaxed)) return false;
     if (st == renderbench::kShadows || st == renderbench::kShadowsPoint) NoteShadowTarget(t_dsCl == cl ? t_ds : nullptr, st == renderbench::kShadowsPoint);
     if (!mask || !renderbench::Skips(mask, st)) return false;
     if (!g_benchGate.load(std::memory_order_relaxed)) { g_benchUngated.fetch_add(1, std::memory_order_relaxed); return false; }
@@ -540,6 +607,10 @@ void SetBench(uint32_t mask) {
              "calls only - clears, barriers and binds go on)", renderbench::MaskText(mask).c_str());
 }
 uint32_t BenchMask() { return g_benchMask.load(); }
+void SetCounting(bool on) {
+    if (g_counting.exchange(on) != on) Recount();
+}
+void Counts(uint64_t* stages, uint64_t* subs) { SumCounters(stages, subs); }
 void SetSunWatch(bool on) {
     if (g_sunWatch.exchange(on) != on) Recount();
 }
@@ -553,8 +624,19 @@ std::string BenchLine() {
     const ULONGLONG now = GetTickCount64();
     const double secs = g_benchLineAt && now > g_benchLineAt ? (now - g_benchLineAt) / 1000.0 : 10.0;
     g_benchLineAt = now;
-    uint32_t seen[renderbench::kStages], skipped[renderbench::kKeys];
-    for (int i = 0; i < renderbench::kStages; ++i) seen[i] = g_benchSeen[i].exchange(0);
+    uint64_t seen[renderbench::kStages], sub[renderbench::kSubs];
+    uint32_t skipped[renderbench::kKeys];
+    SumCounters(seen, sub);
+    for (int i = 0; i < renderbench::kStages; ++i) {
+        const uint64_t c = seen[i];
+        seen[i] = c - g_lineStage[i];
+        g_lineStage[i] = c;
+    }
+    for (int i = 0; i < renderbench::kSubs; ++i) {
+        const uint64_t c = sub[i];
+        sub[i] = c - g_lineSub[i];
+        g_lineSub[i] = c;
+    }
     for (int k = 0; k < renderbench::kKeys; ++k) skipped[k] = g_benchSkipped[k].exchange(0);
     const uint32_t presents = g_benchPresents.exchange(0), ungated = g_benchUngated.exchange(0);
     if (!mask) {
@@ -579,6 +661,14 @@ std::string BenchLine() {
         snprintf(b, sizeof b, " %s %.0f", renderbench::StageName(st), seen[st] * per);
         out += b;
     }
+    // the lit calls by kind and the depth pre-pass before them (vr/render_bench.h Sub: view only)
+    out += " | lit by kind:";
+    for (int s = renderbench::kSubModels; s < renderbench::kSubPrepass; ++s) {
+        snprintf(b, sizeof b, " %s %.0f", renderbench::SubName(s), sub[s] * per);
+        out += b;
+    }
+    snprintf(b, sizeof b, " | depth pre-pass %.0f", sub[renderbench::kSubPrepass] * per);
+    out += b;
     out += " | pipelines recognised:";
     bool none = true;
     for (int st = 1; st < renderbench::kStages; ++st) {

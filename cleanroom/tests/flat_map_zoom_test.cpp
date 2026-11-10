@@ -20,9 +20,13 @@ int main() {
     {   // the steps: 0 in the circle, -1 out of it at the game's own zoom, then smaller
         Check(InCircle(0) && !InCircle(-1) && !InCircle(-4), "0 in the circle, -1 and less out of it");
         Check(!Steers(0) && !Steers(-1) && Steers(-2) && Steers(-4), "0 and -1 leave the game's zoom alone, -2.. steer it");
+        Check(Steers(1) && Steers(4) && InCircle(1) && InCircle(4), "+1..+4 steer it, nearer, still in the circle");
+        Check(Near(Arg(0.5f, 1), 0.625f) && Near(Arg(0.5f, 2), 0.75f) && Near(Arg(0.5f, 4), 1.0f), "+1 0.625, +2 0.75, +4 1.0 (twice its own)");
+        Check(Near(Arg(1.5f, 4), mapzoom::kGameMax), "nearer: never over our ceiling");
+        Check(Near(Times(0.5f, 4), 2.0f), "+4: twice the game's own size");
         Check(Arg(0.5f, 0) == 0.5f && Arg(0.5f, -1) == 0.5f && Arg(0.43f, -1) == 0.43f, "0, -1: the game's own zoom as it came");
         Check(Near(Arg(0.5f, -2), 0.375f) && Near(Arg(0.5f, -3), 0.25f) && Near(Arg(0.5f, -4), 0.125f), "-2 0.375, -3 0.25, -4 0.125 (the floor)");
-        Check(Near(Arg(0.5f, -99), 0.125f) && Arg(0.5f, 99) == 0.5f, "a level past the range: kept in it");
+        Check(Near(Arg(0.5f, -99), 0.125f) && Near(Arg(0.5f, 99), 1.0f), "a level past the range: kept in it");
         Check(Near(Arg(0.25f, -4), 0.125f) && Near(Arg(1.0f, -3), 0.75f), "another own zoom: an eighth a step, never under the floor");
         Check(Near(Arg(0.52f, -2), 0.375f), "the game's own rounded as it rounds it first");
         Check(Arg(0.0f, -3) == 0.0f && Arg(9.0f, -3) == 9.0f && std::isnan(Arg(NAN, -3)), "a zoom of the game's out of 0.05 - 4: untouched");
@@ -43,7 +47,11 @@ int main() {
         Check(s == -1 && !InCircle(s), "+ back the same steps: the whole box again");
         s = Stepped(s, 1);
         Check(s == 0 && InCircle(s), "one more +: into the circle");
-        Check(Stepped(s, 1) == 0, "+ in the circle: stays");
+        Check(Stepped(s, 1) == 1, "+ in the circle: nearer");
+        for (int i = 0; i < 40; ++i) s = Stepped(s, 1);
+        Check(s == kMaxSteps && kMaxSteps == 4, "pressed + on and on: the nearest (+4)");
+        s = Stepped(s, -1);
+        Check(s == 3, "- from there: back a step");
         Check(Stepped(-2, 0) == -2, "no direction: the same");
         Check(Clamped(50) == kMaxSteps && Clamped(-50) == kMinSteps && Clamped(-2) == -2, "a level from the ini: kept in the range");
     }
@@ -69,6 +77,13 @@ int main() {
         Check(KeyDir(kVkOemPlus) == 1 && KeyDir(kVkAdd) == 1, "+ (main row, numpad): back toward the circle");
         Check(KeyDir(kVkOemMinus) == -1 && KeyDir(kVkSubtract) == -1, "- (main row, numpad): out and smaller");
         Check(KeyDir('W') == 0 && KeyDir(0x0D) == 0 && KeyDir(0x70) == 0, "other keys: not ours");
+        // keys set in the game's panel ([hud] flat_map_zoom_in_key / _out_key)
+        Check(KeyDir(0x21, 0x21, 0x22) == 1 && KeyDir(0x22, 0x21, 0x22) == -1, "keys of the player's own: Page Up nearer, Page Down farther");
+        Check(KeyDir(kVkAdd, 0x21, 0x22) == 0 && KeyDir(kVkOemMinus, 0x21, 0x22) == 0, "... then + / - (and the numpad's) are the game's");
+        Check(KeyDir(kVkAdd, kDefaultInKey, 0x22) == 1 && KeyDir(kVkSubtract, kDefaultInKey, 0x22) == 0, "the numpad's twin only with the default key");
+        Check(KeyDir(0, 0, 0) == 0 && KeyDir(kVkOemPlus, 0, 0) == 0, "no keys: nothing is ours");
+        Check(KeyOf(0x21, kDefaultInKey) == 0x21 && KeyOf(0, kDefaultInKey) == 0 && KeyOf(-3, kDefaultInKey) == kDefaultInKey &&
+              KeyOf(999, kDefaultInKey) == kDefaultInKey, "a key from the ini: its code, 0 none, nonsense the default");
         Check(WheelDir(120, true) == 1 && WheelDir(-240, true) == -1, "Ctrl + wheel: away +, back -");
         Check(WheelDir(120, false) == 0 && WheelDir(0, true) == 0, "the wheel without Ctrl: the game's");
     }

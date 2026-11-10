@@ -57,6 +57,8 @@ struct Config {
     bool gaze = true;   // foveated_gaze: the sharp area follows the eyes where the runtime gives their gaze (asked for at the session's start)
     int fullscreen = 0;    // foveated_fullscreen: 0 Bear's rule alone, 1 + the grass lighting and the reflections passes, 2 + the hair (vr/fullscreen_passes.h)
     int grassCoarse = 0;   // grass_lighting_coarse: 0 as the game, 1 the grass lighting shaded 2x1 everywhere, 2 2x2 (works without foveated too)
+    bool blur = false;          // foveated_blur: the coarse pixels softened by a blur of their own (D2R_DepthFog.fx FovBlur*)
+    float blurStrength = 0.7f;  // foveated_blur_strength 0..1: the radius, x 1.5 pixels a block
 };
 void Configure(const Config& c);
 
@@ -67,5 +69,20 @@ void NoteScreen(ID3D12Device* dev, uint32_t w, uint32_t h);
 // one (`pair` false: a flat picture, a menu, F1 - F3) the rate image is not bound. EndWorld: after the pair's passes.
 void BeginEye(int eye, bool pair);
 void EndWorld();
+
+// [render] foveated_blur (reshade/D2R_DepthFog.fx FovBlur*, shared/foveation_blur_math.h): the region eye `eye`'s last pass took the rate
+// image with, for the effect's uniforms - the scene viewport (pixels), the region (cx cy ax ay), the shown window (x0 x1 y0 y1), the tile and
+// the periphery's / never-shown part's block sizes (0: none). False: that pass took no image, or the scene is not the picture's size. The
+// draw thread (vrcam's effects begin, the eye presented).
+struct EyeRegion {
+    float vp[4];
+    float reg[4];
+    float win[4];
+    float rate[3];
+};
+bool EyeRegionOf(int eye, EyeRegion* out);
+bool BlurOn();
+float BlurStrength();
+void NoteBlurMs(double ms);   // the blur's two passes' GPU time, ms a present (vrcam's native effects line, every 10 s): in the foveated line
 
 }  // namespace foveation

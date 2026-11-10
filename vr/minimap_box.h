@@ -79,12 +79,13 @@ inline Canvas CanvasOf(uint32_t layerW, uint32_t layerH, float vx, float vy, flo
 // every time), and does not shrink with a small picture either: at 1024x1024 it came 512,132 - 1151,771 - wider than half the picture,
 // taller than 0.6 of it, its right edge 127 px past the picture's. The size rule refused it and the map stayed in the picture, high in
 // the sky in F4 (Serg, a 1024 render size for a CPU test). A box the size rule refuses is still the map's when it is that capped box:
-// 600 - 680 px wide in the map's own shape, no taller than it is wide; then its outer edge may run past the picture (the game draws only
+// 600 - 680 px wide as drawn - the box itself does not follow the stretch, only the tiles in it do (PS VR2 at 1664, stretch 0.72, came
+// 857,214 - 1496,853: 639 px, refused as wider than 0.72 x half) - no taller than it is wide; then its outer edge may run past the picture (the game draws only
 // what lies on the layer; the share copies that much).
 constexpr float kCapMinPx = 600.0f, kCapMaxPx = 680.0f;
 inline bool SizeOk(float rw, float rh, float W, float H, float f) { return rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W) && rh > H / 8.0f && rh < 0.6f * H; }
 inline bool CappedBox(float rw, float rh, float W, float H, float f) {
-    return !SizeOk(rw, rh, W, H, f) && rw >= kCapMinPx * f && rw <= kCapMaxPx * f && rh > H / 8.0f && rh <= 1.1f * rw / f;
+    return !SizeOk(rw, rh, W, H, f) && rw >= kCapMinPx && rw <= kCapMaxPx && rh > H / 8.0f && rh <= 1.1f * rw;
 }
 // In which top corner the box's outer edge lies: 1 left, 2 right, 0 neither. `capped`: CappedBox - the edge may run past the picture.
 inline int SideOf(float l, float rr, float W, float side, float tol, bool capped) {

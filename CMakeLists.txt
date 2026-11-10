@@ -1335,6 +1335,14 @@ target_include_directories(form_strength_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR
 target_compile_options(form_strength_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [render] foveated (shared/unleashed_foveation.h, MPL, from Unleashed's steamvr/foveation_math.h + foveation.cpp): the shading-rate image's
 # tiles per eye and per fov, which draws take it. Run: unleashed_foveation_test.exe
+# [render] foveated + foveated_gaze: the eyes' gaze asked as the ini says at the session's start (vr/eye_gaze_ask.h). Run: eye_gaze_ask_test.exe
+add_executable(eye_gaze_ask_test cleanroom/tests/eye_gaze_ask_test.cpp)
+target_include_directories(eye_gaze_ask_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(eye_gaze_ask_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [render] foveated_blur: the coarse pixels blurred by an effect of its own (shared/foveation_blur_math.h, D2R_DepthFog.fx FovBlur*). Run: foveation_blur_test.exe
+add_executable(foveation_blur_test cleanroom/tests/foveation_blur_test.cpp)
+target_compile_definitions(foveation_blur_test PRIVATE FX_PATH="${CMAKE_CURRENT_SOURCE_DIR}/reshade/D2R_DepthFog.fx")
+target_compile_options(foveation_blur_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_foveation_test cleanroom/tests/unleashed_foveation_test.cpp)
 target_compile_options(unleashed_foveation_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_fog_test cleanroom/tests/unleashed_fog_test.cpp)
@@ -1610,6 +1618,18 @@ target_sources(d2rl-vrcam PRIVATE vr/low_hp.cpp)
 # [autotune] the "Auto" graphics tuning (vr/auto_tune.h the steps, pure and tested; vr/auto_tune_run.cpp applies them live through the
 # plugin's ini reads and counts the frames at each xrEndFrame). Run: auto_tune_test.exe
 target_sources(d2rl-vrcam PRIVATE vr/auto_tune_run.cpp)
+# [debug] perf_sweep: an automatic A/B of the left pass's processor time in the headset, the ini untouched (vr/perf_sweep.h)
+target_sources(d2rl-vrcam PRIVATE vr/perf_sweep.cpp)
+# [debug] gpu_timeline: the graphics card's idle gaps within a pair, stamped around every submission (vr/gpu_timeline.h)
+target_sources(d2rl-vrcam PRIVATE vr/gpu_timeline.cpp)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/gpu_timeline_test.cpp")
+    # ... checked on a real queue: work with known pauses of the processor between, the idle gaps found and put down to the right part. Run:
+    # gpu_timeline_test.exe (adapter 0) or --warp
+    add_executable(gpu_timeline_test tools/gpu_timeline_test.cpp vr/gpu_timeline.cpp vr/ecl_hook.cpp)
+    target_include_directories(gpu_timeline_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(gpu_timeline_test PRIVATE minhook d3d12 dxgi)
+    target_compile_options(gpu_timeline_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/auto_tune_test.cpp")
     add_executable(auto_tune_test tools/auto_tune_test.cpp)
     target_include_directories(auto_tune_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -2646,3 +2666,7 @@ target_compile_options(map_zoom_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_map_zoom_test cleanroom/tests/flat_map_zoom_test.cpp)
 target_include_directories(flat_map_zoom_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(flat_map_zoom_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hud] flat_map_turn_key / flat_map_place_key: the flat game's map turned and put in the middle by keys of the player's own (vr/flat_map_keys.h)
+add_executable(flat_map_keys_test cleanroom/tests/flat_map_keys_test.cpp)
+target_include_directories(flat_map_keys_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(flat_map_keys_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

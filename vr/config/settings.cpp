@@ -2,6 +2,7 @@
 #include "settings.h"
 #include "../vrcam_internal.h"
 #include "../auto_tune_run.h"   // [autotune]: the values a run tries, handed to the reads instead of the file's
+#include "../perf_sweep.h"      // [debug] perf_sweep: likewise, a step's values
 
 #include <cmath>
 #include <cwchar>
@@ -46,6 +47,7 @@ wchar_t g_iniPath[MAX_PATH];
 
 float IniF(const wchar_t* sec, const wchar_t* key, float def) {
     if (float forced = 0.0f; autotunerun::Forced(sec, key, &forced)) return forced;   // ([autotune]: a run measures or waits for Keep)
+    if (float forced = 0.0f; perfsweep::Forced(sec, key, &forced)) return forced;   // ([debug] perf_sweep: a step in force)
     if (float forced = 0.0f; BenchForced(sec, key, def, &forced)) return forced;   // ([render] bench_bare)
     wchar_t buf[64], d[64];
     swprintf_s(d, L"%g", def);

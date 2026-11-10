@@ -338,7 +338,9 @@ uintptr_t HookDrawGameScreen(int a) {
     const double t0 = pairtime::UsNow(), c0 = pairtime::CpuUs();
     pairtime::g_drawThread.store(GetCurrentThreadId());
     frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
-    if (lastEnd > 0.0) sumGap += t0 - lastEnd;
+    const double gapUs = lastEnd > 0.0 ? t0 - lastEnd : 0.0;   // ([debug] perf_sweep: this pair's game frame)
+    gputimeline::SetPhase(gputimeline::kXrBegin);   // [debug] gpu_timeline: what the draw thread is in while it submits
+    sumGap += gapUs;
     pairtime::g_presentAt.store(0.0); pairtime::g_effSum.store(0.0);
     cbcmp::PairBegin();
     rtrace::PairBegin();
@@ -355,6 +357,7 @@ uintptr_t HookDrawGameScreen(int a) {
     const bool native = NativePairBegin();
     const double tb = pairtime::UsNow();   // XR begin is over (the long-pair line)
     sumBegin += tb - t0;
+    gputimeline::SetPhase(gputimeline::kLeft);
     if (native && XrIntoShared(&held, live)) g_pairShared.store(&held);   // the game's own head and hands for this pair
     // [render] foveated: the left eye's mask into the rate image - before the replay starts noting the left pass's lists (ours stays out)
     foveation::BeginEye(0, native);
@@ -366,6 +369,7 @@ uintptr_t HookDrawGameScreen(int a) {
     cbcmp::PairMiddle();
     rtrace::PairMiddle();
     const double t1 = pairtime::UsNow();
+    gputimeline::SetPhase(gputimeline::kRight);
     sumPass[0] += t1 - t0;
     if (const double pa = pairtime::g_presentAt.load(); pa > t0) sumPresent[0] += t1 - pa;
     sumEff[0] += pairtime::g_effSum.load();
@@ -386,6 +390,7 @@ uintptr_t HookDrawGameScreen(int a) {
     foveation::EndWorld();
     lensmask::EndWorld();
     const double tr = pairtime::UsNow();   // the right pass is over (the long-pair line)
+    gputimeline::SetPhase(gputimeline::kPairEnd);
     if (native) replay::XrEnd();   // both eyes to the runtime, or an empty frame if one went missing
     xr::PairOver();
     *dt = keep; *rawDt = keepRaw;
@@ -399,7 +404,11 @@ uintptr_t HookDrawGameScreen(int a) {
     if (lastEnd > 0.0) PairTrace(t2 - lastEnd, t0 - lastEnd, tb - t0, t1 - tb, tr - t1, t2 - tr, pairtime::CpuUs() - c0, native, false);   // [debug] frame_trace
     if (lastEnd > 0.0) maxPair = std::max(maxPair, t2 - lastEnd);
     lastEnd = t2;
-    sumCpu += pairtime::CpuUs() - c0; sumWall += t2 - t0;
+    const double cpuUs = pairtime::CpuUs() - c0;
+    sumCpu += cpuUs; sumWall += t2 - t0;
+    perfsweep::OnPair(cpuUs, t1 - tb, t2 - t1, gapUs, viewgate::F4());   // [debug] perf_sweep: nothing unless a run measures
+    gputimeline::OnPair(natived3d::GameQueue());   // [debug] gpu_timeline: the stamps that came back read (its hook put in when first wanted)
+    gputimeline::SetPhase(gputimeline::kGame);
 
     // BodyWalk's head back before the pair is over: the timer thread, seeing no pair, would
     // otherwise read the held one (the game's own head in native: another zero) meanwhile
@@ -425,6 +434,12 @@ uintptr_t HookDrawGameScreen(int a) {
         }
         // [render] bench_skip_*: which of the game's stages were left out these 10 s, right under the frame lines (vr/render_bench.h)
         if (const std::string bench = pipehunt::BenchLine(); !bench.empty()) Log(bench.c_str());
+        if (const std::string gt = gputimeline::Line(); !gt.empty())   // [debug] gpu_timeline: the card's idle gaps (one line a queue)
+            for (size_t at = 0; at < gt.size();) {
+                const size_t e = std::min(gt.find('\n', at), gt.size());
+                Log(gt.substr(at, e - at).c_str());
+                at = e + 1;
+            }
         if (const std::string sun = simplersun::Line(); !sun.empty()) Log(sun.c_str());   // [render] sun_shadow_*: the sun map's models kept / left out
         if (const std::string lights = benchlights::Line(); !lights.empty()) Log(lights.c_str());   // [render] bench_skip_point_lights
         if (const std::string flat = litflat::Line(); !flat.empty()) Log(flat.c_str());   // [render] bench_lit_flat

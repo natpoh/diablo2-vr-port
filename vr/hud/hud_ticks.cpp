@@ -67,7 +67,7 @@ void MapRotateFlatTick() {
     const int platform = g_set.platform.load(), view = ViewNow();
     const mapturn::FlatWhy why = mapturn::FlatGate(g_set.mapRotateFlat.load(), g_inWorld.load(), platform, view, g_enabled.load(), ClassicNow());
     hud::SetMapRotateFlat(mapturn::FlatTurns(why));
-    hud::SetMapCompassFlat(mapturn::FlatTurns(why) && g_set.mapCompassFlat.load());   // [hud] map_compass_flat: the strip over it, as VR's
+    hud::SetMapCompassFlat(mapturn::FlatTurns(why) ? g_set.mapCompassFlat.load() : 0);   // [hud] map_compass_flat: its look over it (0 none)
     // [hud] flat_map_place: the flat game's map kept left, in the middle or right, turned or not (minimapside::PlaceKeeper; in the middle the
     // game's whole-screen map, as before - nothing to turn there); 0 the game's own: only a corner map has a box to turn, the game's
     // whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
@@ -124,7 +124,7 @@ void FlatZoomSaveRun() {
 // The window's thread (GameWndProc): a press that is the zoom's steps the level and is not the game's (true).
 bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l) {
     int dir = 0;
-    if (msg == WM_KEYDOWN) dir = flatzoom::KeyDir((unsigned)w);
+    if (msg == WM_KEYDOWN) dir = flatzoom::KeyDir((unsigned)w, g_set.flatMapZoomInKey.load(), g_set.flatMapZoomOutKey.load());
     else if (msg == WM_MOUSEWHEEL) dir = flatzoom::WheelDir(GET_WHEEL_DELTA_WPARAM(w), (GET_KEYSTATE_WPARAM(w) & MK_CONTROL) != 0);
     if (dir == 0) return false;
     if (!flatzoom::Takes(g_set.flatMapZoom.load(), g_set.platform.load() == 0, g_inWorld.load(), gamestate::AutoMapOpen(), ChatOpen(), gamestate::MenuOpen()))
@@ -136,12 +136,52 @@ bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l) {
     const int was = g_flatZoom.Live(), next = g_flatZoom.Press(dir);
     if (next != was) {
         g_flatZoomSaveAt.store(now + 1500);
-        LogF("vrcam: flat map zoom - level %d (%s): %s", next, msg == WM_MOUSEWHEEL ? "Ctrl + wheel" : dir > 0 ? "+" : "-",
-             next >= 0 ? "the map as before (round, if it turns)" : next == -1 ? "out of the circle, the whole box at the game's own zoom"
+        LogF("vrcam: flat map zoom - level %d (%s): %s", next, msg == WM_MOUSEWHEEL ? "Ctrl + wheel" : dir > 0 ? "zoom-in key" : "zoom-out key",
+             next > 0 ? "nearer, the game draws it bigger (an eighth of zoom a step; round, if it turns)"
+             : next == 0 ? "the map as before (round, if it turns)" : next == -1 ? "out of the circle, the whole box at the game's own zoom"
                                                                  : "out of the circle, the game draws it smaller (an eighth of zoom a step)");
     }
     return true;
 }
+// [hud] flat_map_turn_key / flat_map_place_key (vr/flat_map_keys.h): the map turned on and off, put in the middle and back in the corner, by
+// keys of the player's own - live at once (g_set), saved to the ini on a thread of its own (shared/ini_txn: only that one key, a value
+// changed meanwhile by Settings is theirs).
+void FlatMapSaveRun(const wchar_t* key, int v) {
+    wchar_t text[16];
+    swprintf_s(text, L"%d", v);
+    ini::Result r = ini::Result::Failed;
+    std::string why;
+    for (int attempt = 0; attempt < 2 && r != ini::Result::Saved; ++attempt) {
+        const ini::Text now = ini::Read(g_iniPath, L"hud", key);
+        const ini::Change c{L"hud", key, L"0", now.present ? now.text : L"0", text};
+        r = ini::Commit(g_iniPath, {c}, nullptr, &why);
+    }
+    if (r == ini::Result::Saved) LogF("vrcam: flat map keys - [hud] %ls=%d written", key, v);
+    else LogF("vrcam: flat map keys - [hud] %ls=%d NOT written (%s: %s)", key, v, r == ini::Result::Conflict ? "changed meanwhile" : "failed", why.c_str());
+}
+// The window's thread (GameWndProc): a press of the turn or the place key is ours (true: the game does not see it); its repeats too.
+bool FlatMapKey(UINT msg, WPARAM w, LPARAM l) {
+    if (msg != WM_KEYDOWN) return false;
+    const flatmapkeys::Act act = flatmapkeys::Of((unsigned)w, g_set.flatMapTurnKey.load(), g_set.flatMapPlaceKey.load());
+    if (act == flatmapkeys::Act::None) return false;
+    if (!flatmapkeys::Takes(g_set.platform.load() == 0, g_inWorld.load(), ChatOpen(), gamestate::MenuOpen())) return false;
+    if (l & (1 << 30)) return true;   // a held key's repeats: nothing more
+    if (act == flatmapkeys::Act::Turn) {
+        const bool on = !g_set.mapRotateFlat.load();
+        g_set.mapRotateFlat.store(on);
+        LogF("vrcam: flat map keys - the turn key: the map %s", on ? "turns with the camera" : "as the game draws it (not turned)");
+        std::thread(FlatMapSaveRun, L"map_rotate_flat", on ? 1 : 0).detach();
+    } else {
+        const int place = flatmapkeys::NextPlace(g_set.mapPlaceFlat.load(), g_set.flatMapCorner.load());
+        g_set.mapPlaceFlat.store(place);
+        hud::SetMapCorner(place != 0 ? 0 : g_set.mapCorner.load());   // (as LoadSettings: a place of ours looks for the box in either corner)
+        LogF("vrcam: flat map keys - the place key: the map %s", place == 2 ? "in the middle (the game's whole-screen map: it does not turn)"
+                                                                : place == 1 ? "in the left corner" : "in the right corner");
+        std::thread(FlatMapSaveRun, L"flat_map_place", place).detach();
+    }
+    return true;
+}
+
 // Every tick: the level handed to gamestate's hook while it may act (the key on, the flat game, in a game; 0 otherwise - the game's own), the
 // ini's level taken when it changed from outside, the level written when due, and what the game drew at in the log when that changes.
 void FlatMapZoomTick() {

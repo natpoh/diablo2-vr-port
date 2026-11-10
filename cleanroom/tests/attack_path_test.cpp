@@ -3,10 +3,13 @@
 
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 #include "../../vr/attack_path.h"
 
 using namespace attackpath;
+
+static_assert(kToken != 0x4150415448000001ull, "move_during_skills' key in the answer: an older client and host must not connect");
 
 static int g_failures = 0, g_checks = 0;
 #define CHECK(cond) do { ++g_checks; if (!(cond)) { ++g_failures; std::printf("FAIL line %d: %s\n", __LINE__, #cond); } } while (0)
@@ -27,6 +30,67 @@ static void TestActs() {
     a.skillFlags = 0x1000; CHECK(!Acts(a));
     a.skillFlags = 4; CHECK(Acts(a));
     CHECK(!RunAllowed(1) && RunAllowed(2));
+}
+
+// [gameplay] move_during_skills: the used skill decides the kind, the kind decides the key.
+static void TestKinds() {
+    // the plain Attack and the Throw (and a skill not read): flat_attack_path's
+    CHECK(KindOf(7, kSkillAttack, 0, 1) == Move::Plain && KindOf(8, kSkillAttack, 0, 1) == Move::Plain);
+    CHECK(KindOf(11, kSkillThrow, 0, 0) == Move::Plain && KindOf(7, kSkillNotRead, 0, 0) == Move::Plain);
+    CHECK(KindOf(7, kSkillLeftSwing, 0, 0) == Move::Plain && KindOf(11, kSkillLeftThrow, 0, 0) == Move::Plain);
+    // single-blow skills in attack 1 / 2 or the throw: the special moves' tick
+    for (int32_t id : {126, 139, 144, 152, 96, 111, 116, 14, 15, 35}) CHECK(KindOf(7, id, 0, 2) == Move::Single);
+    CHECK(KindOf(8, 126, 0, 2) == Move::Single);
+    // Zeal and Fury: several blows (by their id, or by their do-function 12 / 13 whatever the id)
+    CHECK(KindOf(7, kSkillZeal, 0, 13) == Move::Series && KindOf(7, kSkillFury, 0, 12) == Move::Series);
+    CHECK(KindOf(7, kSkillZeal, 0, 0) == Move::Series);    // (the do-function not read)
+    CHECK(KindOf(8, 999, 0, 13) == Move::Series);
+    // the sequence mode: Double Swing and Frenzy only
+    CHECK(KindOf(18, kSkillDoubleSwing, 0, 0) == Move::Series && KindOf(18, kSkillFrenzy, 0, 0) == Move::Series);
+    for (int32_t id : {10, 30, 26, 140, 255, 0, -1}) CHECK(KindOf(18, id, 0, 0) == Move::None);   // Jab, Fend, Strafe, Double Throw, Dragon Talon: not yet
+    // never: skills that move by themselves, casts, kicks, the skill modes
+    CHECK(KindOf(7, kSkillCharge, 0, 0) == Move::None && KindOf(7, kSkillWhirlwind, 0, 0) == Move::None && KindOf(7, kSkillLeapAttack, 0, 0) == Move::None);
+    CHECK(KindOf(7, 126, 1, 2) == Move::None && KindOf(18, kSkillDoubleSwing, 0x1000, 0) == Move::None && KindOf(7, kSkillAttack, 1, 0) == Move::None);
+    for (uint32_t m : {1u, 2u, 3u, 10u, 12u, 13u, 14u, 15u, 16u}) CHECK(KindOf(m, 126, 0, 0) == Move::None && KindOf(m, kSkillDoubleSwing, 0, 0) == Move::None);
+    CHECK(WalkInMode(7) && WalkInMode(8) && WalkInMode(11) && WalkInMode(18) && !WalkInMode(10) && !WalkInMode(12) && !WalkInMode(13));
+    CHECK(TargetInSkill(12) && TargetInSkill(13) && !TargetInSkill(1) && !TargetInSkill(2) && !TargetInSkill(0));
+    CHECK(TwoHands(kSkillDoubleSwing) && TwoHands(kSkillFrenzy) && !TwoHands(kSkillZeal));
+    // the key a kind goes by: flat - plain by flat_attack_path, the rest by move_during_skills; VR F4 - a single blow by either
+    CHECK(KeyFor(Move::Plain, 1, 0, false) == 1 && KeyFor(Move::Plain, 0, 2, false) == 0);
+    CHECK(KeyFor(Move::Single, 2, 0, false) == 0 && KeyFor(Move::Single, 0, 1, false) == 1);
+    CHECK(KeyFor(Move::Single, 2, 0, true) == 2 && KeyFor(Move::Single, 0, 2, true) == 2);
+    CHECK(KeyFor(Move::Series, 2, 0, true) == 0 && KeyFor(Move::Series, 0, 1, false) == 1);
+    CHECK(KeyFor(Move::None, 2, 2, true) == 0);
+    // the host takes: plain - flat_attack_path or quick_blow; single - quick_blow or the skills; series - the skills
+    CHECK(HostTakes(Move::Plain, true, false, false) && HostTakes(Move::Plain, false, true, false) && !HostTakes(Move::Plain, false, false, true));
+    CHECK(HostTakes(Move::Single, false, true, false) && HostTakes(Move::Single, false, false, true) && !HostTakes(Move::Single, true, false, false));
+    CHECK(HostTakes(Move::Series, false, false, true) && !HostTakes(Move::Series, true, true, false) && !HostTakes(Move::None, true, true, true));
+    CHECK(ServerRun(Move::Plain, 2, 0, false) && !ServerRun(Move::Plain, 1, 2, false) && ServerRun(Move::Series, 0, 2, false) && !ServerRun(Move::Series, 2, 1, false));
+    CHECK(ServerRun(Move::Single, 0, 1, true));
+    // a series' blow: the game started the frames again
+    CHECK(Rescheduled(100, 112) && !Rescheduled(100, 100) && !Rescheduled(100, 0));
+    // where a special move's blow is aimed without a camera
+    CHECK(AimFor(true, false, false) == Aim::Front && AimFor(true, true, true) == Aim::Started);
+    CHECK(AimFor(false, false, true) == Aim::Front && AimFor(false, true, false) == Aim::Started);
+    CHECK(std::string(SkillName(kSkillZeal)) == "Zeal" && std::string(SkillName(kSkillDoubleSwing)) == "Double Swing" && !SkillName(12345));
+    // Acts / the kinds allowed
+    Ask a;
+    a.flatView = true; a.allowed = true; a.mode = 7; a.skill = kSkillZeal; a.doFunc = 13;
+    a.key = 2; CHECK(!Acts(a));                  // flat_attack_path alone: Zeal stops as in the game
+    a.skillsKey = 1; CHECK(Acts(a) && KeyOf(a) == 1);
+    a.skill = kSkillAttack; a.doFunc = 1; CHECK(Acts(a) && KeyOf(a) == 2);
+    a.key = 0; CHECK(!Acts(a));                  // the skills' tick alone: the plain Attack stops as in the game
+    a.mode = 18; a.skill = kSkillDoubleSwing; a.doFunc = 0; CHECK(Acts(a));
+    a.skill = 10; CHECK(!Acts(a));               // Jab: not yet
+    a.f4 = true; a.key = 2; a.skillsKey = 0; a.mode = 7; a.skill = 126; CHECK(Acts(a));   // VR F4: Bash with quick_blow, as since 0.204
+    a.skill = kSkillZeal; CHECK(!Acts(a));
+    Ask k;
+    k.flatView = true; k.allowed = true; k.key = 1;
+    CHECK(KindsAllowed(k) == (1u << 1));
+    k.skillsKey = 1; CHECK(KindIn(KindsAllowed(k), Move::Plain) && KindIn(KindsAllowed(k), Move::Single) && KindIn(KindsAllowed(k), Move::Series));
+    k.key = 0; CHECK(!KindIn(KindsAllowed(k), Move::Plain) && KindIn(KindsAllowed(k), Move::Series));
+    CHECK(!KindIn(KindsAllowed(k), Move::None));
+    k.menu = true; CHECK(KindsAllowed(k) == 0);
 }
 
 static void TestSpeed() {
@@ -104,6 +168,13 @@ static void TestNet() {
     AllowMsg a{2}, a2{};
     CHECK(ParseAllow(&a, sizeof a, &a2) && a2.key == 2);
     a.key = 3; CHECK(!ParseAllow(&a, sizeof a, &a2));
+    a.key = MakeAllow(1, true, 2);               // [gameplay] move_during_skills' key in bits 8-11
+    CHECK(ParseAllow(&a, sizeof a, &a2) && AllowKey(a2.key) == 1 && AllowF4(a2.key) && AllowSkills(a2.key) == 2);
+    a.key = MakeAllow(0, false, 1); CHECK(ParseAllow(&a, sizeof a, &a2) && AllowKey(a2.key) == 0 && !AllowF4(a2.key) && AllowSkills(a2.key) == 1);
+    CHECK(MakeAllow(5, false, 9) == (2u | 2u << kAllowSkillsShift));
+    a.key = 3u << kAllowSkillsShift; CHECK(!ParseAllow(&a, sizeof a, &a2));
+    a.key = 0x20; CHECK(!ParseAllow(&a, sizeof a, &a2));
+    a.key = 1u << 12; CHECK(!ParseAllow(&a, sizeof a, &a2));
     FrontMsg f{}, f2{};
     f.hero = 5; f.n = 2; f.ids[0] = 11; f.ids[1] = 12;
     CHECK(ParseFront(&f, sizeof f, &f2) && f2.n == 2 && f2.ids[1] == 12);
@@ -117,6 +188,7 @@ static void TestNet() {
 int main() {
     TestNet();
     TestActs();
+    TestKinds();
     TestSpeed();
     TestGrid();
     TestPick();

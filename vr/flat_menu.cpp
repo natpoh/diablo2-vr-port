@@ -375,7 +375,7 @@ void DrawPanel(const ov::Frame* f, uint64_t now) {
             if (g_keyRefusedRow.load() == r && now - g_keyRefusedAt.load() < 3000) {
                 char name[32];
                 keycap::Text(g_keyRefusedVk.load(), name, sizeof name);
-                const char* why = keycap::Refusal(g_keyRefusedVk.load(), keycap::Use::PickupKey);
+                const char* why = keycap::Refusal(g_keyRefusedVk.load(), KeyUse(r));
                 Rect note = label;
                 Text(f, note, L.small, kWarn, std::string(name) + ": " + (why ? why : "?"), Align::Right);
             }
@@ -632,7 +632,7 @@ bool OnWindowMessage(void* hwnd, unsigned msg, uintptr_t w, intptr_t l, intptr_t
                 g_open.store(false);
             } else if (h.row >= 0 && h.part == Part::Value && IsKey(h.row)) {   // a key row: the next key pressed is its value (Esc: as it was)
                 if (keycapwire::Armed(keycapwire::kFlatMenu + h.row)) keycapwire::Cancel(keycapwire::kFlatMenu + h.row);
-                else keycapwire::Arm(keycapwire::kFlatMenu + h.row, keycap::Use::PickupKey);
+                else keycapwire::Arm(keycapwire::kFlatMenu + h.row, KeyUse(h.row));
             } else if (h.row >= 0) {
                 {
                     std::lock_guard<std::mutex> lock(g_valLock);

@@ -541,16 +541,36 @@ constexpr const wchar_t* kFlatAimTiltMaxTip =
 constexpr const wchar_t* kFlatAimTiltTargetTip =
     L"While your hero attacks a monster under the crosshair, the arms tilt toward the point on its body where the crosshair is, not only with "
     L"the look - the blow comes to it whatever height you look from, and stays on it if the crosshair slips off as you swing. Live.";
-// [hud] map_compass_flat (vr/map_turn.h CompassOnScreen): the VR compass strip over the turned map on the screen
+// [hud] map_compass_flat (vr/map_turn.h CompassOnScreen, CompassStyle): the compass over the turned map on the screen, its look
 constexpr const wchar_t* kMapCompassFlatTip =
-    L"With Map turns with the camera: the compass strip of the VR map (N, NE, E ...) over the round map on the screen, its middle the way "
-    L"the camera looks, N the game map's up. Under the map when the map is too near the top of the screen. Unticked: no strip. Live.";
+    L"With Map turns with the camera: a compass with the round map on the screen (N, NE, E ...), N the game map's up. Strip: the VR map's "
+    L"compass strip over the map, its middle the way the camera looks. Thin: only that strip's letters and ticks, no band behind them - as "
+    L"big, less in the way. Ring of letters: no strip - the letters round the inside of the map's edge, each where that way lies, turning "
+    L"with the map. The strips go under the map when it is too near the top of the screen. None: no compass. Live.";
+// [hud] flat_map_turn_key / flat_map_place_key / flat_map_corner (vr/flat_map_keys.h): the map turned, put in the middle and back, by keys
+constexpr const wchar_t* kFlatMapTurnKeyTip =
+    L"The flat game (on the monitor): this key turns Map turns with the camera on and off while you play, and saves it. Any other key: in "
+    L"the game's own D2R VR settings panel (F10), click the key's row and press the one you want. The game does not get it in a game "
+    L"(in menus and the chat line it is the game's). Empty here: a key set in the game's panel.";
+constexpr const wchar_t* kFlatMapPlaceKeyTip =
+    L"The flat game (on the monitor): this key puts the map in the middle of the screen (the game's whole-screen map - it has no box, so it "
+    L"does not turn; zoom it in and out with the zoom keys) and, pressed again, back in the corner below, and saves it (Map on the screen "
+    L"above follows it). Any other key: in the game's own D2R VR settings panel (F10), click the key's row and press the one you want. The "
+    L"game does not get it in a game. Empty here: a key set in the game's panel.";
+constexpr const wchar_t* kFlatMapCornerTip =
+    L"The corner the map key above puts the map back in from the middle: top left or top right.";
+constexpr const wchar_t* kFlatMapZoomKeyTip =
+    L"The keys that zoom the flat game's map (with Zoom the map ticked, the map open). Nearer: the game draws the map bigger, up to twice "
+    L"its size, still round if it turns. Farther: out of the circle, then smaller, down to a quarter of its size. With the default keys the "
+    L"numpad's + and - work too. Any other key: in the game's own D2R VR settings panel (F10), click the key's row and press the one you "
+    L"want. Empty here: a key set in the game's panel.";
 // [hud] flat_map_zoom (vr/flat_map_zoom.h): + / - zoom the flat game's map, the game's own zoom
 constexpr const wchar_t* kFlatMapZoomTip =
     L"The flat game (on the monitor, any view), with the game's map open: - takes the round map (Map turns with the camera) out of its "
     L"circle and shows the map's whole box, still turned; each further - makes the game draw it smaller, down to a quarter of its size, so "
-    L"the whole level fits; + goes back the same steps and into the circle. Ctrl + mouse wheel does the same. It is the game's own map "
-    L"zoom, so the game draws the map smaller itself - walls and markers stay sharp. The step is kept for the next game. While the chat "
+    L"the whole level fits; + goes back the same steps and into the circle, and further + brings it nearer - the game draws it bigger, up "
+    L"to twice its size, to see where to go. Ctrl + mouse wheel does the same; the keys can be changed below. It is the game's own map "
+    L"zoom, so the game draws the map itself - walls and markers stay sharp. The step is kept for the next game. While the chat "
     L"line or a panel is open, or the map is shut, the keys are the game's. Unticked: the keys are the game's and the map is as before. Live.";
 // [hud] flat_map_place (vr/minimap_side.h PlaceMode): the flat game's map left, in the middle or right, whether it turns or not
 constexpr const wchar_t* kFlatMapPlaceTip =
@@ -1171,6 +1191,14 @@ std::vector<Item> g_items = {
            L"rendering left it whole), and draws the reflections in puddles and blood and the hair in passes of their own. On: they get "
            L"the same coarse edge and sharp centre as the rest of the world. The log says how many of their pixels were shaded coarsely "
            L"every 10 s. Live."))),
+    Only(kVr, Needs(L"render", L"foveated", 1, Toggle(L"render", L"foveated_blur", L"... blur the coarse pixels at the edges", 0,
+           L"At the edges the world is shaded once for every 2 x 2 or 4 x 4 pixels and shows small squares. On: those squares are blurred - the "
+           L"same frosted glass as 'Blur in the distance', as an effect of its own: the coarser the pixels, the more blur, none where every pixel "
+           L"is shaded (the centre, or where you look), fading in past it so no ring shows. The interface and labels are not blurred. 'Blur in "
+           L"the distance' keeps working as before; both on, the two add up. Its cost on the graphics card is in the log every 10 s. Live."))),
+    Only(kVr, Needs(L"render", L"foveated_blur", 1, Slider(L"render", L"foveated_blur_strength", L"... how much", 0.1f, 1.0f, 0.05f, 0.7f,
+           L"The blur's width: at 1, one and a half times the size of the coarse squares (6 pixels for 4 x 4, 3 for 2 x 2); at 0.7, 4.2 and 2.1. "
+           L"Live."))),
     Only(kVr, Choice(L"render", L"grass_lighting_coarse", L"Grass lighting at a lower rate (F4)", 0,
            {L"As the game", L"Half: 2 x 1 pixels a shade", L"Quarter: 2 x 2 pixels a shade"},
            L"The game's grass lighting is one shader with no lighter version (lower Environment Detail only draws less grass). This shades "
@@ -1982,6 +2010,17 @@ std::vector<Item> g_items = {
            L"is the game's own. The game's own reach test still applies, so backing away "
            L"from a monster with a short weapon mostly misses. A TCP/IP game: who hosts decides. The host's box holds for every player with the same "
            L"version of the mod; a joined player's own box means nothing there. It replaces the 2D strafe option on the Controls tab. Unticked: the game's own rule."),
+    // [gameplay] move_during_skills (vr/attack_path.h KindOf, Serg 2026-11-10: past early Act 1 every fight is special moves): who hosts decides, as the box above
+    Toggle(L"gameplay", L"move_during_skills", L"Move during special moves", 0,
+           L"EXPERIMENTAL - CHANGES HOW THE GAME PLAYS. The monitor's third and first person (F2, F3) with W A S D held, and VR first person (F4) with "
+           L"the stick: the hero keeps moving during special moves - Zeal, Double Swing, Frenzy, Fury, and the one-blow ones such as Bash, Stun, "
+           L"Berserk, Concentrate, Sacrifice, Vengeance or Power Strike. The skill stays the game's: its number of blows, its animation, attack speed, "
+           L"mana and damage. Once he moved during it, each blow goes to who is there when it lands: in F2 / F3 the monster before the camera (the "
+           L"one you attacked first, while it stays there), in F4 the monster your swing started on; nobody there, the blow hits the air (Zeal and "
+           L"Fury: the game picks a monster in reach itself). The game's own reach test still applies. Not for skills that move the hero by "
+           L"themselves (Charge, Leap Attack, Whirlwind), spells and kicks; Jab, Fend, Strafe and Smite not yet. The plain attack has the box "
+           L"above (F4: Quick blow). A TCP/IP game: who hosts decides. The host's box holds for every player with the same version of the mod; a "
+           L"joined player's own box means nothing there. Unticked: the game's own rule. Live."),
     // [gameplay] melee_direct_client_cleave (vr/melee_direct_client.h CleaveRule): who hosts decides, as the box above (Serg, 2026-11-05)
     Toggle(L"gameplay", L"melee_direct_client_cleave", L"A two-handed swing hits each monster it touches (VR)", 0,
            L"GOES PAST THE GAME'S RULE OF ONE ATTACK AT A TIME. VR first person (F4) with hit by touch and Strikes > Direct hit \"By the rules\": "
@@ -2362,6 +2401,12 @@ std::vector<Item> g_items = {
            L"The square window's side, as far as a monitor holds it (past a monitor's edge the game itself closes): about 2060 "
            L"on a 4K screen. Bigger: make a virtual monitor that size in BodyWalk (Virtual Monitor, no need to make it primary) - "
            L"vrcam moves the game's window onto it by itself. Bigger is sharper and slower."),
+    // [openxr] square_window_follow (vr/hud/window.cpp BigWindowTick): the square as big as the render size, not window_size
+    Toggle(L"openxr", L"square_window_follow", L"Square window: as big as the render size", 0,
+           L"With a render size set (Performance > Render size, Auto or a preset) the game's picture is that size, but the square window "
+           L"stayed at the size above round it. On: the window is made the render size too (1024 x 1024 for 1024), a few seconds after "
+           L"the hero is in a game and whenever the render size changes. Off: as before. Live; the game writes the window's size into "
+           L"its options when it quits, so it starts at that size next time."),
     Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
@@ -2582,7 +2627,7 @@ std::vector<Item> g_items = {
            L"Hung in the room: where the F4 tab puts them (forearm, hand)."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Needs(L"hud_third", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
-    Needs(L"hud_third", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Choice(L"hud", L"map_compass_flat", L"Compass over the turned map", 2, {L"None", L"Strip", L"Thin: letters only", L"Ring of letters"}, kMapCompassFlatTip))),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_size", L"Toolbar size, %", 30, 200, 1, 100,
            L"The toolbar in the picture, smaller or larger, about the middle of its bottom edge (then moved by the sliders below).")),
     Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_near", L"Toolbar nearer / farther", -10, 10, 0.1f, 0,
@@ -2658,7 +2703,7 @@ std::vector<Item> g_items = {
            L"The corner map (Tab) smaller or larger, about its own corner. Needs D2R_DepthFog.fx on in ReShade (it draws "
            L"the map back); without it the game's own map stays. The mouse pointer lies on the game's ground by itself here."),
     Needs(L"hud_floor", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
-    Needs(L"hud_floor", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip))),
+    Needs(L"hud_floor", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Choice(L"hud", L"map_compass_flat", L"Compass over the turned map", 2, {L"None", L"Strip", L"Thin: letters only", L"Ring of letters"}, kMapCompassFlatTip))),
     Slider(L"hud_floor", L"map_near", L"Map nearer / farther", -10, 10, 0.1f, 0,
            L"Real stereo only: + brings the map towards the eyes, - pushes it behind the screen; 0 = where the game puts it."),
     Slider(L"hud_floor", L"map_x", L"Map left / right, %", -50, 50, 1, 0,
@@ -2730,13 +2775,24 @@ std::vector<Item> g_items = {
     Group(L"Toolbar and map (F2, F3)", L"The toolbar and the map in your own camera's views (F2 and F3): tick the arrow to see on the map which way you look."),
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip),
-    Needs(L"hud", L"map_rotate_flat", 1, Toggle(L"hud", L"map_compass_flat", L"Compass over the turned map", 1, kMapCompassFlatTip)),
+    Needs(L"hud", L"map_rotate_flat", 1, Choice(L"hud", L"map_compass_flat", L"Compass over the turned map", 2, {L"None", L"Strip", L"Thin: letters only", L"Ring of letters"}, kMapCompassFlatTip)),
     Choice(L"hud", L"flat_map_place", L"Map on the screen", 0, {L"As in the game's options", L"Left", L"Centre", L"Right"}, kFlatMapPlaceTip),
-    Toggle(L"hud", L"flat_map_zoom", L"Zoom the map out with - and back with +", 1, kFlatMapZoomTip),
-    Needs(L"hud", L"flat_map_zoom", 1, Slider(L"hud", L"flat_map_zoom_level", L"Map zoom step", -4, 0, 1, 0,
-           L"0: the map as before (round, if it turns with the camera). -1: out of the circle, the map's whole box at the game's own zoom. "
-           L"-2, -3, -4: the game draws it smaller each step, down to a quarter of its size, to see the whole level. - and + in the game set "
-           L"the same step and save it. Live.")),
+    ChoiceValues(L"hud", L"flat_map_turn_key", L"Key: map turns / stops turning", 111,
+           {L"Num /", L"Num *", L"Num 0", L"Num .", L"Insert", L"Home", L"Page Up", L"M", L"`", L"\\"}, {111, 106, 96, 110, 45, 36, 33, 77, 192, 220},
+           kFlatMapTurnKeyTip),
+    ChoiceValues(L"hud", L"flat_map_place_key", L"Key: map in the middle / in the corner", 106,
+           {L"Num /", L"Num *", L"Num 0", L"Num .", L"Insert", L"Home", L"Page Up", L"M", L"`", L"\\"}, {111, 106, 96, 110, 45, 36, 33, 77, 192, 220},
+           kFlatMapPlaceKeyTip),
+    Choice(L"hud", L"flat_map_corner", L"The corner that key puts the map in", 1, {L"Left", L"Right"}, kFlatMapCornerTip),
+    Toggle(L"hud", L"flat_map_zoom", L"Zoom the map with keys (+ nearer, - farther)", 1, kFlatMapZoomTip),
+    Needs(L"hud", L"flat_map_zoom", 1, ChoiceValues(L"hud", L"flat_map_zoom_in_key", L"Key: map nearer (zoom in)", 187,
+           {L"= / +", L"Num +", L"Page Up", L"]", L"Num 8", L"E"}, {187, 107, 33, 221, 104, 69}, kFlatMapZoomKeyTip)),
+    Needs(L"hud", L"flat_map_zoom", 1, ChoiceValues(L"hud", L"flat_map_zoom_out_key", L"Key: map farther (zoom out)", 189,
+           {L"-", L"Num -", L"Page Down", L"[", L"Num 2", L"Q"}, {189, 109, 34, 219, 98, 81}, kFlatMapZoomKeyTip)),
+    Needs(L"hud", L"flat_map_zoom", 1, Slider(L"hud", L"flat_map_zoom_level", L"Map zoom step", -4, 4, 1, 0,
+           L"0: the map as before (round, if it turns with the camera). 1 - 4: nearer, the game draws it bigger each step, up to twice its "
+           L"size. -1: out of the circle, the map's whole box at the game's own zoom. -2, -3, -4: the game draws it smaller each step, down "
+           L"to a quarter of its size, to see the whole level. The zoom keys in the game set the same step and save it. Live.")),
     // Flat F1 and F2 draw the toolbar at [hud_top] / [hud_third] bar_size (vrcam BarSizeNow, whatever the platform), whose sliders are on
     // the VR-only tabs UI: F1 above / UI: F2 behind: a flat player had the shipped 74 / 71 % and no way to change them (2026-10-28).
     Group(L"Toolbar size (F1, F2)", L"How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back."),
@@ -6823,6 +6879,18 @@ std::vector<Item> g_items = {
            L"Every 10 s one line in the log: how many draws, dispatches, pipelines, target binds, barriers, viewports and clears the game records a "
            L"present, on its draw thread and on its other threads. For comparing views at the same spot (F1 against F4) and setting against setting: "
            L"more draws cost the processor more. It only counts and writes a line; it changes nothing in play. Live."),
+    // [debug] perf_sweep (vr/perf_sweep.h): an automatic A/B of the processor's left pass, the ini untouched
+    Toggle(L"debug", L"perf_sweep", L"Performance sweep: try the draw distance and the benches one by one (about 4 minutes, F4)", 0,
+           L"Each time this turns on, in VR first person: about 13 steps of ~18 s each - as set, big objects 300 and off, models 150 and 100, one "
+           L"room ring, the bench's call counting idle, every game draw skipped, our extras off, as set again, and a 5 s profile. Stand still and "
+           L"look the same way the whole time. Each step only changes what is drawn, in memory - d2r_vr.ini is never written. At the end one table "
+           L"in the log: frames, the processor's time a pair and the game's calls of each kind. Turn it off to stop early (everything back at once)."),
+    // [debug] gpu_timeline (vr/gpu_timeline.h): the card's idle gaps within a pair - view only
+    Toggle(L"debug", L"gpu_timeline", L"Log where the graphics card waits within a pair (a line every 10 s)", 0,
+           L"Every 10 s one line in the log: how long the graphics card worked and how long it sat idle in each stereo pair, and in which part of "
+           L"the pair the processor was when the card got work again - the game's frame, the headset's frame start, the left pass, the right eye "
+           L"(the one-pass replay) or the pair's end. A gap in the right eye means the card waited on the replay; in the left pass, on the game's "
+           L"own recording. Two tiny timestamps round every submission: a little processor time while on. It changes nothing in play. Live."),
     Toggle(L"debug", L"find_prev_matrix", L"Look for the previous frame's camera matrix", 0, L"A developer's search for the motion vectors' matrix, in the log. Live."),
     Group(L"GPU and stereo replay (developer)", L"Developer switches for the right eye's stereo replay, the stall guard and the fog in the frame's edges: traces, comparisons and timings. Most need a game restart; not for play."),
     Toggle(L"debug", L"replay_proto", L"Stereo replay hooks (needed by Stereo's right-eye replay)", 1,

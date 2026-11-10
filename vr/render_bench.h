@@ -20,6 +20,7 @@
 #include <string>
 
 #include "render_bench_hashes.h"
+#include "render_bench_lit_kinds.h"
 
 namespace renderbench {
 
@@ -113,6 +114,45 @@ inline uint8_t Classify(uint64_t ps, uint64_t vs, bool compute) {
     if (compute || !vs) return kNone;
     const uint8_t s = StageOf(vs);
     return s == kShadows ? s : (uint8_t)kNone;
+}
+
+// The lit calls split by kind, and the depth pre-pass (2026-11-10, "which objects make the ~3100 lit draws a present"): view only - the bench
+// line counts them, nothing is skipped by them. A lit pipeline's kind is its pixel shader's container (vr/render_bench_lit_kinds.h, generated
+// with the stage table). The depth pre-pass is not a bench stage (no key: everything after it reads its depth - docs/notes/render_bench.md): its
+// pipelines write the depth, draw with one of the shadow containers' vertex shaders (vs_models_shadows_v / vs_clutter_shadows_v, the game
+// shares them) and have a pixel shader of their own that is in none of the bench's containers (the velocity target's). Read from Serg's pipe
+// trace of 2026-11-09 16:51: one pre-pass pipeline per lit models / foliage pipeline, draw for draw.
+enum Sub : uint8_t {
+    kSubNone = 0,
+    kSubModels,        // ps_models_p: houses, props, walls, monsters, the hero (192 permutations)
+    kSubFoliage,       // ps_foliage_p: trees' and bushes' leaves - drawn twice in the lit stage (once into the two RGBA16F targets, blended,
+                       // once into the scene's colour), each with its own pre-pass draw
+    kSubTerrain,       // ps_terrain: the ground
+    kSubAlphaTested,   // ps_alpha_threshold_p
+    kSubGrunge,        // ps_grunge_p: decals on the ground
+    kSubModelsBlend,   // ps_models_blend_p
+    kSubDetailNormal,  // ps_detail_normal_p
+    kSubLava,          // ps_lava_p
+    kSubPrepass,       // the depth pre-pass (not a lit kind: the pass before the lit one)
+    kSubs
+};
+inline const char* SubName(int s) {
+    static const char* const n[kSubs] = {"-", "models", "foliage", "terrain", "alpha-tested", "grunge", "models-blend", "detail-normal", "lava",
+                                         "depth pre-pass"};
+    return s >= 0 && s < kSubs ? n[s] : "?";
+}
+inline uint8_t LitKindOf(uint64_t hash) {
+    if (!hash) return kSubNone;
+    const LitKindHash* b = std::begin(kLitKindHashes);
+    const LitKindHash* e = std::end(kLitKindHashes);
+    const LitKindHash* it = std::lower_bound(b, e, hash, [](const LitKindHash& x, uint64_t h) { return x.hash < h; });
+    return it != e && it->hash == hash ? it->kind : (uint8_t)kSubNone;
+}
+// A pipeline's sub-kind from what Classify decided (`stage`) and its depth write
+inline uint8_t SubOf(uint8_t stage, uint64_t ps, uint64_t vs, bool compute, bool depthWrites) {
+    if (stage == kLit) return LitKindOf(ps);
+    if (stage == kNone && !compute && ps && depthWrites && StageOf(vs) == kShadows) return kSubPrepass;
+    return kSubNone;
 }
 
 // Whether a call of a pipeline of stage `s` is left out under `mask` (bits of Key)

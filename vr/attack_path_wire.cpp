@@ -14,6 +14,12 @@
 // a second and who stands before its camera; the host answers with its key, and its server acts for the heroes that spoke lately. Their game sends the other clients
 // nothing for a path in an attack, so the host tells them the place every few frames with the game's own reassign 0x486B20.
 //
+// [gameplay] move_during_skills (2026-11-10): the same walk through the special moves, its own key; which key a swing goes by is decided by
+// the used skill (attack_path.h KindOf). Zeal and Fury: their do-function (12 / 13) aims each blow at the skill's own target [skill+0x2C] /
+// [skill+0x30] and, after it, starts the frames again with 0x4914E0, which drops every pending event of the hero (our step too) - AfterAction
+// sees the new end, keeps the attack ours and queues the step again. Double Swing and Frenzy (mode 18): one schedule for both hands, each
+// hand's blow is its own trigger (code 1 / 2) and is aimed on its own. docs/notes/move_during_skills.md.
+//
 // Every call behind an SEH guard: a fault turns the option off for the session.
 
 #define WIN32_LEAN_AND_MEAN
@@ -29,6 +35,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "attack_path.h"
 #include "attack_path_wire.h"
@@ -59,6 +66,7 @@ const uint8_t kSigPredict[15] = {0x44, 0x89, 0x4C, 0x24, 0x20, 0x89, 0x4C, 0x24,
 
 constexpr uintptr_t kUnitId = 0x8, kUnitMode = 0xC, kUnitGame = 0xD8, kGameFrame = 0x170;
 constexpr uintptr_t kPathX = 0x10, kPathY = 0x12, kPathUnit = 0x70, kPathVelocity = 0xA0;
+constexpr uintptr_t kSkillRowDoFunc = 0x4E, kSkillTargetType = 0x2C, kSkillTargetId = 0x30;   // the skill's Skills.txt row: its do-function; the skill's own target
 constexpr uintptr_t kRecStride = 0xB8, kRecStamina = 0x1951, kRecForcedWalk = 0x1952, kRecGrid = 0x195C, kMgrRunThreshold = 0x1F94;
 constexpr int kPathVectorType = 0x11, kPathFindType = 7, kGateNotYet = 4, kPredictWalk = 0x1E;
 constexpr uint32_t kStepMs = 120, kSendMs = 40, kScanMs = 20;
@@ -68,6 +76,7 @@ using PredictFn = int (*)(int type, uintptr_t unit, const uint32_t* data, int fl
 
 void (*g_log)(const char*) = nullptr;
 std::atomic<int> g_key{0};
+std::atomic<int> g_skillsKey{0};             // [gameplay] move_during_skills: 0 off, 1 walk, 2 walk or run
 std::atomic<float> g_cosHalf{0.7071f};
 std::atomic<bool> g_faulted{false};
 std::atomic<int> g_state{0};
@@ -77,7 +86,8 @@ PredictFn g_origPredict = nullptr;
 
 std::atomic<uintptr_t> g_clientUnit{0};
 std::atomic<uint32_t> g_heroId{0};
-std::atomic<bool> g_clientActs{false};       // our hero's verdict for our own server: the key, the view, the menu, the game type
+std::atomic<uint32_t> g_clientKinds{0};      // our hero's verdict for our own server: the kinds of attack (KindIn) he walks in - the keys, the view, the menu, the game type
+std::atomic<bool> g_clientActsNow{false};    // ... and for the attack he is in now (the client's prediction and the stick's stop ask)
 std::atomic<int> g_percent{100};             // the speed bonuses, seen on the client's path while the hero walked or ran
 std::atomic<int> g_clientKey{0};             // the key the client goes by: ours with the server here, the host's joined (ClientKey)
 std::atomic<uint64_t> g_serverSeenMs{0};     // when the server's hook last ran in this process: we host, or play alone
@@ -85,13 +95,14 @@ std::atomic<uint64_t> g_gameSinceMs{0};      // when our client's hero of this g
 std::atomic<uint64_t> g_allowMs{0};          // when the host last said yes
 std::atomic<int> g_allowKey{0};
 std::atomic<bool> g_allowF4{false};          // the host's [gameplay] quick_blow: the joined heroes walk through the swing in VR F4 too
+std::atomic<int> g_allowSkills{0};           // the host's [gameplay] move_during_skills key
 namespace nw = D2RL::Network;
 const D2RL::PluginContext* g_ctx = nullptr;
 const D2RL::NetworkService* g_net = nullptr;
 nw::ChannelHandle g_channel = nw::InvalidChannelHandle;
 std::atomic<bool> g_netDead{false};
 std::atomic<uint64_t> g_lastAskMs{0};        // the client's last walk of ours
-std::atomic<uint64_t> g_predicted{0}, g_asked{0}, g_steps{0}, g_blows{0}, g_air{0};
+std::atomic<uint64_t> g_predicted{0}, g_asked{0}, g_steps{0}, g_blows{0}, g_air{0}, g_skillBlows{0}, g_rearmed{0};
 
 SRWLOCK g_frontLock = SRWLOCK_INIT;
 uint32_t g_front[kCandidates] = {};          // who stands before OUR camera, the nearest first (the client writes, our server reads)
@@ -119,6 +130,11 @@ struct Attack {
     bool hasTarget = false;
     int32_t lastAsk = 0, lastSync = 0;
     int percent = 100;         // this hero's speed bonuses, seen on the server's path while he walked or ran
+    Move kind = Move::None;    // what the used skill makes of it (KindOf)
+    int32_t skill = kSkillNotRead;
+    int doFunc = 0;
+    int hits = 0;              // blows of this attack so far (a series: Zeal's, a hand of Double Swing's)
+    bool aimed = false;        // the blow in flight had its path's unit set by us (AfterAction clears it)
 };
 Attack g_attacks[kPeers];
 Attack* AttackOf(uint32_t hero) {
@@ -148,7 +164,8 @@ void Fault(const char* where) {
 }
 // The host's word for the heroes on its server: the key, or [gameplay] quick_blow (VR F4: the swing does not stop the hero).
 bool Quick() { return moveattack::QuickWanted(); }
-bool On() { return (g_key.load(std::memory_order_relaxed) > 0 || Quick()) && !g_faulted.load(std::memory_order_relaxed); }
+bool SkillsOn() { return g_skillsKey.load(std::memory_order_relaxed) > 0; }
+bool On() { return (g_key.load(std::memory_order_relaxed) > 0 || Quick() || SkillsOn()) && !g_faulted.load(std::memory_order_relaxed); }
 
 bool Read(void* d, uintptr_t s, size_t n) noexcept {
     if (s < 0x10000) return false;
@@ -160,11 +177,36 @@ template <class T> T Fn(uint64_t rva) { return reinterpret_cast<T>(d2rsig::Addr(
 uintptr_t PathOf(uintptr_t unit) noexcept {
     __try { return Fn<uintptr_t (*)(uintptr_t)>(RVA_PATH_OF)(unit); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
-uint32_t SkillFlagsOf(uintptr_t unit) noexcept {
+uintptr_t UsedSkill(uintptr_t unit) noexcept {
+    __try { return Fn<uintptr_t (*)(uintptr_t)>(RVA_USED_SKILL)(unit); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+uint32_t FlagsOfSkill(uintptr_t s) noexcept {
+    __try { return Fn<uint32_t (*)(uintptr_t)>(RVA_SKILL_FLAGS)(s); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+// The used skill: its flags, its id (Skills.txt's row [skill+0], its first word) and its server do-function (the row's word +0x4E).
+struct Skill { uint32_t flags = 0; int32_t id = kSkillNotRead; int doFunc = 0; };
+Skill SkillOf(uintptr_t unit) {
+    Skill k;
+    const uintptr_t s = UsedSkill(unit);
+    if (!s) return k;
+    k.flags = FlagsOfSkill(s);
+    uintptr_t row = 0;
+    int16_t id = 0, fn = 0;
+    if (Read(&row, s, sizeof row) && row && Read(&id, row, sizeof id) && Read(&fn, row + kSkillRowDoFunc, sizeof fn)) {
+        k.id = id;
+        k.doFunc = fn;
+    }
+    return k;
+}
+// Zeal / Fury aim each blow at the skill's own target: type and id written where their do-function reads them.
+bool SetSkillTarget(uintptr_t unit, uint32_t id) noexcept {
+    const uintptr_t s = UsedSkill(unit);
+    if (s < 0x10000) return false;
     __try {
-        const uintptr_t s = Fn<uintptr_t (*)(uintptr_t)>(RVA_USED_SKILL)(unit);
-        return s ? Fn<uint32_t (*)(uintptr_t)>(RVA_SKILL_FLAGS)(s) : 0;
-    } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+        *reinterpret_cast<uint32_t*>(s + kSkillTargetType) = 1;
+        *reinterpret_cast<uint32_t*>(s + kSkillTargetId) = id;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool SetPathAndMake(uintptr_t path, uintptr_t unit, int type, const float* vec, float mag, int tx, int ty, int velocity, int makeArg) noexcept {
     __try {
@@ -247,19 +289,28 @@ bool PeerFresh(uint32_t hero, uint64_t now) {
 }
 
 // ---- the server -------------------------------------------------------------------------------------------------------------------
-// A hero we act for on this game's server, in a plain attack: ours as our client says, a joined one's who spoke lately.
-bool OurAttacker(uintptr_t game, uintptr_t unit, uint32_t* mode, uint32_t* hero) {
+// A hero we act for on this game's server, in an attack whose kind (the used skill's) a tick covers: ours as our client says, a joined
+// one's who spoke lately as the host's ticks say.
+struct Who { uint32_t mode = 0, hero = 0; bool own = false; Move kind = Move::None; Skill skill; };
+bool OurAttacker(uintptr_t game, uintptr_t unit, Who* w) {
     if (!On()) return false;
     uint32_t head[4] = {};
     uintptr_t back = 0;
     if (!Read(head, unit, sizeof head) || head[0] != 0 || !head[kUnitId / 4]) return false;
+    if (!WalkInMode(head[kUnitMode / 4])) return false;
     if (!Read(&back, unit + kUnitGame, sizeof back) || back != game) return false;
     const uint32_t id = head[kUnitId / 4];
     const bool own = id == g_heroId.load(std::memory_order_relaxed);
-    if (own ? !g_clientActs.load(std::memory_order_acquire) : !PeerFresh(id, GetTickCount64())) return false;
-    if (!PlainAttackMode(head[kUnitMode / 4]) || (SkillFlagsOf(unit) & kSkillMovesItself)) return false;
-    *mode = head[kUnitMode / 4];
-    *hero = id;
+    if (!own && !PeerFresh(id, GetTickCount64())) return false;
+    const Skill k = SkillOf(unit);
+    const Move kind = KindOf(head[kUnitMode / 4], k.id, k.flags, k.doFunc);
+    if (own ? !KindIn(g_clientKinds.load(std::memory_order_acquire), kind)
+            : !HostTakes(kind, g_key.load(std::memory_order_relaxed) > 0, Quick(), SkillsOn())) return false;
+    w->mode = head[kUnitMode / 4];
+    w->hero = id;
+    w->own = own;
+    w->kind = kind;
+    w->skill = k;
     return true;
 }
 
@@ -307,14 +358,16 @@ Attack* NoteAttack(uintptr_t game, uintptr_t unit, uintptr_t path, uint32_t hero
     return at;
 }
 
-bool ServerWalk(uintptr_t game, uintptr_t unit, uint32_t hero, int mode, const float* dir, float mag, uint16_t x, uint16_t y) {
+bool ServerWalk(uintptr_t game, uintptr_t unit, const Who& who, int mode, const float* dir, float mag, uint16_t x, uint16_t y) {
+    const uint32_t hero = who.hero;
     const uintptr_t path = PathOf(unit);
     if (!path) { Fault("the server's path (0x34AE80)"); return false; }
     Attack* const at = NoteAttack(game, unit, path, hero);
     float vec[2] = {}, point[2] = {};
     bool direct = false;
     if (!PointOfDir(unit, (uint32_t)x | (uint32_t)y << 16, dir, vec, point, &direct)) { Fault("the point of a direction (0x3ACC60)"); return false; }
-    const bool run = mode == 3 && (RunAllowed(g_key.load(std::memory_order_relaxed)) || Quick());   // (quick_blow: a walk or a run as the toggle says)
+    // (quick_blow: a walk or a run as the toggle says; else the key of the attack's kind)
+    const bool run = mode == 3 && ServerRun(who.kind, g_key.load(std::memory_order_relaxed), g_skillsKey.load(std::memory_order_relaxed), Quick());
     const int velocity = VelocityFor(at->percent, run);
     if (!SetPathAndMake(path, unit, direct ? kPathVectorType : kPathFindType, direct ? vec : nullptr, mag, (int)point[0], (int)point[1], velocity, 0)) { Fault("the server's path"); return false; }
     at->walked = true;
@@ -327,7 +380,13 @@ bool ServerWalk(uintptr_t game, uintptr_t unit, uint32_t hero, int mode, const f
         if (moveattack::ProbeOn()) moveattack::ProbeRearmed(game, unit, 1, now + 1, before);
         at->ticking = true;
     }
-    if (g_asked.fetch_add(1) < 6) Say("vrcam: attack path - the server took a walk in the attack (hero %u, mode kept, asked %d, velocity %d, %s, point %.0f %.0f)", hero, mode, velocity, direct ? "by vector" : "by search", point[0], point[1]);
+    if (g_asked.fetch_add(1) < 6) Say("vrcam: attack path - the server took a walk in the attack (hero %u, mode %u kept, skill %d - %s, asked %d, velocity %d, %s, point %.0f %.0f)",
+                                      hero, who.mode, who.skill.id, MoveName(who.kind), mode, velocity, direct ? "by vector" : "by search", point[0], point[1]);
+    if (who.kind == Move::Series || who.kind == Move::Single) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) Say("vrcam: attack path - move during skills - the server took a walk in %s (hero %u, skill %d, mode %u, do-function %d)",
+                                       SkillName(who.skill.id) ? SkillName(who.skill.id) : "a special move", hero, who.skill.id, who.mode, who.skill.doFunc);
+    }
     return true;
 }
 
@@ -340,8 +399,8 @@ int HookModeByDir(uintptr_t game, uintptr_t unit, int mode, const float* dir, fl
             const uintptr_t path = PathOf(unit);
             if (path && Read(&v, path + kPathVelocity, sizeof v) && v > 0) AttackOf(head[kUnitId / 4])->percent = PercentOf(v, head[kUnitMode / 4] == 3);
         } else {
-            uint32_t cur = 0, hero = 0;
-            if (OurAttacker(game, unit, &cur, &hero) && ServerWalk(game, unit, hero, mode, dir, mag, x, y)) return kGateNotYet;
+            Who who;
+            if (OurAttacker(game, unit, &who) && ServerWalk(game, unit, who, mode, dir, mag, x, y)) return kGateNotYet;
         }
     }
     return g_origModeByDir(game, unit, mode, dir, mag, x, y);
@@ -364,10 +423,10 @@ bool ClientWalk(uintptr_t unit, uint32_t packed) {
 }
 
 int HookPredict(int type, uintptr_t unit, const uint32_t* data, int flag) {
-    if (type == kPredictWalk && data && !g_faulted.load(std::memory_order_relaxed) && g_clientActs.load(std::memory_order_acquire) && unit == g_clientUnit.load(std::memory_order_relaxed)) {
+    if (type == kPredictWalk && data && !g_faulted.load(std::memory_order_relaxed) && g_clientActsNow.load(std::memory_order_acquire) && unit == g_clientUnit.load(std::memory_order_relaxed)) {
         uint32_t mode = 0;
         uint32_t packed = 0;
-        if (Read(&mode, unit + kUnitMode, sizeof mode) && PlainAttackMode(mode) && Read(&packed, (uintptr_t)data, sizeof packed) && ClientWalk(unit, packed)) {
+        if (Read(&mode, unit + kUnitMode, sizeof mode) && WalkInMode(mode) && Read(&packed, (uintptr_t)data, sizeof packed) && ClientWalk(unit, packed)) {
             g_lastAskMs.store(GetTickCount64(), std::memory_order_release);
             if (g_predicted.fetch_add(1) < 6) Say("vrcam: attack path - the client set the path in the attack (mode %u kept)", mode);
             return 1;
@@ -454,10 +513,10 @@ void __cdecl OnHost(const D2RL::PluginContext*, nw::ChannelHandle, nw::PeerHandl
         HelloMsg m{};
         if (!ParseHello(data, size, &m)) return;
         AcquireSRWLockExclusive(&g_frontLock);
-        Peer* p = g_key.load() > 0 || Quick() ? slot(m.hero) : nullptr;
+        Peer* p = g_key.load() > 0 || Quick() || SkillsOn() ? slot(m.hero) : nullptr;
         if (p) p->helloMs = now;
         ReleaseSRWLockExclusive(&g_frontLock);
-        const AllowMsg a{p ? (uint32_t)g_key.load() | (Quick() ? kAllowF4 : 0u) : 0u};
+        const AllowMsg a{p ? MakeAllow(g_key.load(), Quick(), g_skillsKey.load()) : 0u};
         if (g_net && g_ctx) g_net->sendToClient(g_ctx, g_channel, peer, kMsgAllow, &a, sizeof a);
         static std::atomic<int> told{0};
         if (told.fetch_add(1) < 4) Say("vrcam: attack path - host: hero %u spoke on the channel, answered %u", m.hero, a.key);
@@ -475,9 +534,10 @@ void __cdecl OnClient(const D2RL::PluginContext*, nw::ChannelHandle, uint16_t id
     if (g_netDead.load() || id != kMsgAllow || !ParseAllow(data, size, &m)) return;
     const int was = g_allowKey.exchange(AllowKey(m.key));
     const bool wasF4 = g_allowF4.exchange(AllowF4(m.key));
+    const int wasSkills = g_allowSkills.exchange(AllowSkills(m.key));
     g_allowMs.store(m.key ? GetTickCount64() : 0, std::memory_order_release);
-    if (was != AllowKey(m.key) || wasF4 != AllowF4(m.key))
-        Say("vrcam: attack path - joined: the host's key is %d, its quick blow %s (%s)", AllowKey(m.key), AllowF4(m.key) ? "on" : "off",
+    if (was != AllowKey(m.key) || wasF4 != AllowF4(m.key) || wasSkills != AllowSkills(m.key))
+        Say("vrcam: attack path - joined: the host's key is %d, its quick blow %s, its move during skills %d (%s)", AllowKey(m.key), AllowF4(m.key) ? "on" : "off", AllowSkills(m.key),
             m.key ? "the host decides: the swing does not stop the hero" : "the host decides: not ticked, the hero stops as in the game");
 }
 void __cdecl OnConnection(const D2RL::PluginContext*, const nw::ConnectionEvent* ev, void*) noexcept {
@@ -532,7 +592,7 @@ void SetLogger(void (*log)(const char*)) { g_log = log; }
 void SetForwardFn(bool (*fn)(float*, float*)) { g_forward.store(fn, std::memory_order_release); }
 // Ticked, or in a TCP/IP game, where the host may have ticked it: the hooks then pass through until someone did.
 bool Wanted() {
-    if (g_key.load() > 0 || Quick()) return true;
+    if (g_key.load() > 0 || Quick() || SkillsOn()) return true;
     uint32_t client = 0, launch = 0;
     const uintptr_t c = d2rsig::Addr(RVA_CLIENT_GAME_TYPE), l = d2rsig::Addr(RVA_LAUNCH_GAME_TYPE);
     return c && l && Read(&client, c, sizeof client) && Read(&launch, l, sizeof launch) && launch != moveattack::kLaunchBnet && (client != 0 || launch == moveattack::kLaunchTcpIp);
@@ -548,12 +608,22 @@ void SetWanted(int key, float coneDeg) {
                                   : "vrcam: attack path - [gameplay] flat_attack_path=2 (changes the game): the swing does not stop the hero, at a walk or a run as the toggle says; a melee blow goes to who stands before the camera at its frame. F2 / F3; TCP/IP: the host ticks it too");
 }
 
+void SetSkillsWanted(int key) {
+    key = key < 0 ? 0 : key > 2 ? 2 : key;
+    if (g_skillsKey.exchange(key) != key && g_log)
+        g_log(key == 0 ? "vrcam: attack path - [gameplay] move_during_skills=0: special moves stop the hero as in the game"
+                       : key == 1 ? "vrcam: attack path - [gameplay] move_during_skills=1 (changes the game): the hero moves at a walk during special moves (Zeal, Double Swing, Frenzy, Bash ...); each blow at who stands before the camera at its frame. F2 / F3, VR F4; TCP/IP: the host ticks it too"
+                                  : "vrcam: attack path - [gameplay] move_during_skills=2 (changes the game): the hero moves at a walk or a run during special moves (Zeal, Double Swing, Frenzy, Bash ...); each blow at who stands before the camera at its frame. F2 / F3, VR F4; TCP/IP: the host ticks it too");
+}
+
 bool OnTick(uintptr_t game, uintptr_t unit, int code, int* ret) {
     if (code != kTickCode) return false;
     *ret = 1;
-    uint32_t mode = 0, hero = 0, head[3] = {};
+    uint32_t head[3] = {};
     int32_t now = 0;
-    if (OurAttacker(game, unit, &mode, &hero)) {
+    Who who;
+    if (OurAttacker(game, unit, &who)) {
+        const uint32_t hero = who.hero;
         Attack* const at = AttackOf(hero);
         if (at->valid && at->unit == unit && Read(&now, game + kGameFrame, sizeof now) && StepOn(now, at->lastAsk)) {
             if (!ServerStep(game, unit)) { Fault("the server's step (0x491AC0)"); return true; }
@@ -574,42 +644,115 @@ bool OnTick(uintptr_t game, uintptr_t unit, int code, int* ret) {
     return true;
 }
 
+// Who stands before the camera for this hero: ours from our client's scan, a joined one's from his client's last word (fresh).
+size_t FrontOf(uint32_t hero, uint32_t* ids, bool* fresh) {
+    size_t n = 0;
+    *fresh = false;
+    AcquireSRWLockShared(&g_frontLock);
+    if (hero == g_heroId.load(std::memory_order_relaxed)) {
+        n = g_frontN;
+        std::memcpy(ids, g_front, sizeof(uint32_t) * kCandidates);
+        *fresh = true;
+    } else {
+        const uint64_t nowMs = GetTickCount64();
+        for (const Peer& p : g_peers)
+            if (p.hero == hero && Fresh(nowMs, p.frontMs, kFrontFreshMs)) { n = p.n; std::memcpy(ids, p.ids, sizeof(uint32_t) * kCandidates); *fresh = true; }
+    }
+    ReleaseSRWLockShared(&g_frontLock);
+    return n;
+}
+
+// [gameplay] move_during_skills: a special move's blow after a walk in it. Flat: who stands before the camera now (the monster clicked first
+// while it is still there); VR F4 / a joined hero whose client said nothing lately: the monster it was started on, while hostile. Zeal and
+// Fury aim through the skill's own target (their do-function reads it); with nobody to give it, the game's own pick in reach stays (its search
+// 0x4331D0) - a series' blow cannot be sent into the air from here. Every other special move: the path's unit, nobody = into the air.
+bool SkillBlow(uintptr_t game, uintptr_t unit, uintptr_t path, Attack* at, const Who& w, int code) {
+    uint32_t ids[kCandidates] = {};
+    bool fresh = false;
+    size_t n = FrontOf(w.hero, ids, &fresh);
+    const Aim aim = AimFor(w.own, viewgate::F4(), fresh);
+    uintptr_t target = 0;
+    uint32_t id = 0;
+    if (aim == Aim::Front) {
+        if (at->hasTarget && at->targetType == 1) StartedFirst(ids, n, at->targetId);
+        for (size_t i = 0; i < n && !target; ++i) {
+            const uintptr_t t = Lookup(game, 1, ids[i]);
+            if (t && Hostile(game, unit, t)) { target = t; id = ids[i]; }
+        }
+    } else {
+        n = 0;
+        if (at->hasTarget && at->targetType == 1) {
+            const uintptr_t t = Lookup(game, 1, at->targetId);
+            if (t && Hostile(game, unit, t)) { target = t; id = at->targetId; }
+        }
+    }
+    const bool inSkill = TargetInSkill(w.skill.doFunc);
+    if (inSkill) {
+        if (target && !SetSkillTarget(unit, id)) { Fault("the skill's own target ([skill+0x2C])"); return false; }
+    } else {
+        if (!SetTarget(unit, target)) { Fault("the blow's target (0x34E0C0)"); return false; }
+        at->aimed = true;
+        if (!target) g_air.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (g_skillBlows.fetch_add(1) < 120) {
+        const char* name = SkillName(w.skill.id);
+        char what[48];
+        if (name) snprintf(what, sizeof what, "%s %s %d", name, TwoHands(w.skill.id) ? "hand" : "hit", at->hits);
+        else snprintf(what, sizeof what, "skill %d hit %d", w.skill.id, at->hits);
+        const char* from = aim == Aim::Front ? "before the camera" : "the monster it was started on";
+        if (target) Say("vrcam: attack path - move during skills - %s (hero %u, mode %u, trigger %d): at monster %u, %s%s; the game's reach and roll decide",
+                        what, w.hero, w.mode, code, id, from, inSkill ? " (the skill's own target)" : "");
+        else if (inSkill) Say("vrcam: attack path - move during skills - %s (hero %u, mode %u, trigger %d): nobody hostile %s (%u looked at): the game's own pick in reach", what, w.hero, w.mode, code, from, (unsigned)n);
+        else Say("vrcam: attack path - move during skills - %s (hero %u, mode %u, trigger %d): nobody hostile %s (%u looked at), into the air", what, w.hero, w.mode, code, from, (unsigned)n);
+    }
+    (void)path;
+    return true;
+}
+
 bool BeforeAction(uintptr_t game, uintptr_t unit, int code) {
     if (code != 1 && code != 2) return false;
-    uint32_t mode = 0, hero = 0;
-    if (!OurAttacker(game, unit, &mode, &hero)) return false;
+    Who w;
+    if (!OurAttacker(game, unit, &w)) return false;
+    const uint32_t hero = w.hero, mode = w.mode;
     const uintptr_t path = PathOf(unit);
     if (!path) return false;
     Attack* const at = NoteAttack(game, unit, path, hero);
-    if (!at->walked) return false;   // no walk in this attack: the path still has what was clicked, the blow is the game's own
+    at->kind = w.kind;
+    at->skill = w.skill.id;
+    at->doFunc = w.skill.doFunc;
+    at->aimed = false;
+    ++at->hits;
+    // (true from here on: AfterAction is due - a series may start its frames again in the game's action)
+    if (!at->walked) {   // no walk in this attack (so far): the path still has what was clicked, the blow is the game's own
+        if (w.kind != Move::Plain && g_skillBlows.fetch_add(1) < 120) {
+            const char* name = SkillName(w.skill.id);
+            Say("vrcam: attack path - move during skills - %s%s %s %d (hero %u): no move in it yet, the game's own target", name ? name : "skill ", name ? "" : std::to_string(w.skill.id).c_str(),
+                TwoHands(w.skill.id) ? "hand" : "hit", at->hits, hero);
+        }
+        return true;
+    }
     const uint32_t weapon = WeaponKind(unit);
     if (Ranged(mode, weapon)) {   // what it was started on
         uintptr_t target = 0;
         if (at->hasTarget) target = Lookup(game, at->targetType, at->targetId);
         if (!SetPoint(path, at->x, at->y) || !SetTarget(unit, target)) { Fault("the shot's target"); return false; }
+        at->aimed = true;
         return true;
     }
     // [gameplay] quick_blow: the blow is on the attack's first frame - the monster it was started on (the one the blade touched), while hostile
-    if (moveattack::QuickAttack(hero, at->end) && at->hasTarget && at->targetType == 1) {
+    if (w.kind != Move::Series && moveattack::QuickAttack(hero, at->end) && at->hasTarget && at->targetType == 1) {
         const uintptr_t t = Lookup(game, 1, at->targetId);
         if (t && Hostile(game, unit, t)) {
             if (!SetTarget(unit, t)) { Fault("the blow's target (0x34E0C0)"); return false; }
-            if (g_blows.fetch_add(1) < 60) Say("vrcam: attack path - quick blow (hero %u, mode %u, weapon kind %u): at monster %u, the one it was started on", hero, mode, weapon, at->targetId);
+            at->aimed = true;
+            if (g_blows.fetch_add(1) < 60) Say("vrcam: attack path - quick blow (hero %u, mode %u, weapon kind %u, skill %d): at monster %u, the one it was started on", hero, mode, weapon, w.skill.id, at->targetId);
             return true;
         }
     }
+    if (w.kind != Move::Plain) return SkillBlow(game, unit, path, at, w, code);
     uint32_t ids[kCandidates] = {};
-    size_t n = 0;
-    AcquireSRWLockShared(&g_frontLock);
-    if (hero == g_heroId.load(std::memory_order_relaxed)) {
-        n = g_frontN;
-        std::memcpy(ids, g_front, sizeof ids);
-    } else {
-        const uint64_t nowMs = GetTickCount64();
-        for (const Peer& p : g_peers)
-            if (p.hero == hero && Fresh(nowMs, p.frontMs, kFrontFreshMs)) { n = p.n; std::memcpy(ids, p.ids, sizeof ids); }
-    }
-    ReleaseSRWLockShared(&g_frontLock);
+    bool fresh = false;
+    const size_t n = FrontOf(hero, ids, &fresh);
     if (at->hasTarget && at->targetType == 1) StartedFirst(ids, n, at->targetId);   // the monster clicked, while it still stands before the camera
     uintptr_t target = 0;
     uint32_t id = 0;
@@ -618,6 +761,7 @@ bool BeforeAction(uintptr_t game, uintptr_t unit, int code) {
         if (t && Hostile(game, unit, t)) { target = t; id = ids[i]; }
     }
     if (!SetTarget(unit, target)) { Fault("the blow's target (0x34E0C0)"); return false; }
+    at->aimed = true;
     if (!target) g_air.fetch_add(1, std::memory_order_relaxed);
     if (g_blows.fetch_add(1) < 60) {
         if (target) Say("vrcam: attack path - blow %llu (hero %u, mode %u, weapon kind %u): at monster %u, started on %u; the game's reach and roll decide", (unsigned long long)g_blows.load(), hero, mode, weapon, id, at->hasTarget ? at->targetId : 0);
@@ -627,21 +771,46 @@ bool BeforeAction(uintptr_t game, uintptr_t unit, int code) {
 }
 
 void AfterAction(uintptr_t game, uintptr_t unit) {
-    (void)game;
+    uint32_t head[3] = {};
+    if (!Read(head, unit, sizeof head) || head[0] != 0) return;
+    Attack* const at = AttackOf(head[2]);
+    if (!at->valid || at->unit != unit) return;
     // A target left on the path would turn the walk towards it (0x3813DD), so it goes; the next action looks again.
-    if (!SetTarget(unit, 0)) Fault("the blow's target (0x34E0C0)");
+    if (at->aimed && !SetTarget(unit, 0)) Fault("the blow's target (0x34E0C0)");
+    at->aimed = false;
+    // Zeal / Fury: the game's action started the frames again (0x4914E0: a new end, every pending event of the hero dropped - our step too).
+    // The same attack goes on: what it was started on, the walk in it, its blows' count; the step is queued again while the walk is held.
+    const int32_t end = EventFrame(game, unit);
+    if (!Rescheduled(at->end, end)) return;
+    const int32_t was = at->end;
+    at->end = end;
+    int32_t now = 0;
+    Read(&now, game + kGameFrame, sizeof now);
+    const bool held = at->ticking && StepOn(now, at->lastAsk);
+    if (held) {
+        if (!SetEvent(game, unit, now + 1)) { Fault("the event (0x48B720)"); return; }
+    } else {
+        at->ticking = false;   // the next walk starts it again
+    }
+    if (g_rearmed.fetch_add(1) < 40) {
+        const char* name = SkillName(at->skill);
+        Say("vrcam: attack path - move during skills - %s%s: blow %d done, the game started the frames again (end %d -> %d): %s", name ? name : "skill ", name ? "" : std::to_string(at->skill).c_str(),
+            at->hits, was, end, held ? "the step goes on" : at->walked ? "the step waits for the next walk" : "no move in it, the game's own");
+    }
 }
 
 bool SwallowStop(void* unit, int type) {
-    if (type != 6 || !unit || g_faulted.load(std::memory_order_relaxed) || !g_clientActs.load(std::memory_order_acquire) || (uintptr_t)unit != g_clientUnit.load(std::memory_order_relaxed)) return false;
+    if (type != 6 || !unit || g_faulted.load(std::memory_order_relaxed) || !g_clientActsNow.load(std::memory_order_acquire) || (uintptr_t)unit != g_clientUnit.load(std::memory_order_relaxed)) return false;
     uint32_t mode = 0;
-    return Read(&mode, (uintptr_t)unit + kUnitMode, sizeof mode) && PlainAttackMode(mode);
+    return Read(&mode, (uintptr_t)unit + kUnitMode, sizeof mode) && WalkInMode(mode);
 }
 
 void AfterCtrl(uint32_t player, uintptr_t mgr) {
     const GameKind game = KindOfGame();
-    if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed) || game.online || (game.single && g_key.load(std::memory_order_relaxed) == 0 && !Quick())) {
-        g_clientActs.store(false, std::memory_order_release);   // nothing to do here: off, and nobody else decides
+    if (g_state.load(std::memory_order_relaxed) != 1 || g_faulted.load(std::memory_order_relaxed) || game.online ||
+        (game.single && g_key.load(std::memory_order_relaxed) == 0 && !Quick() && !SkillsOn())) {
+        g_clientKinds.store(0, std::memory_order_release);   // nothing to do here: off, and nobody else decides
+        g_clientActsNow.store(false, std::memory_order_release);
         return;
     }
     uintptr_t unit = 0;
@@ -662,22 +831,44 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
     const uint64_t now = GetTickCount64();
     if (!game.serverHere) JoinedTick(head[kUnitId / 4], now);
     const bool hostYes = !game.serverHere && Fresh(now, g_allowMs.load(std::memory_order_acquire), kPeerFreshMs);
-    // [gameplay] quick_blow in VR first person: walk or run through the swing, by our tick with the server here, by the host's joined
-    const bool f4Quick = F4Quick(viewgate::F4(), game.online, game.serverHere, Quick(), hostYes, g_allowF4.load(std::memory_order_relaxed));
-    const int key = f4Quick ? 2 : ClientKey(game.online, game.serverHere, g_key.load(std::memory_order_relaxed), hostYes, g_allowKey.load(std::memory_order_relaxed));
-    g_clientKey.store(key, std::memory_order_relaxed);
+    // VR first person: [gameplay] quick_blow walks through the plain swing (and the single-blow skills), [gameplay] move_during_skills through
+    // the special moves, at a walk or a run as the toggle says - by our ticks with the server here, by the host's joined
+    const bool f4 = viewgate::F4();
+    const bool f4Quick = F4Quick(f4, game.online, game.serverHere, Quick(), hostYes, g_allowF4.load(std::memory_order_relaxed));
+    const bool f4Skills = F4Quick(f4, game.online, game.serverHere, SkillsOn(), hostYes, g_allowSkills.load(std::memory_order_relaxed) > 0);
     Ask a;
-    a.key = key;
-    a.flatView = moveattack::PathViewNow() || f4Quick;
+    a.f4 = f4;
+    a.key = f4 ? (f4Quick ? 2 : 0) : ClientKey(game.online, game.serverHere, g_key.load(std::memory_order_relaxed), hostYes, g_allowKey.load(std::memory_order_relaxed));
+    a.skillsKey = f4 ? (f4Skills ? 2 : 0) : ClientKey(game.online, game.serverHere, g_skillsKey.load(std::memory_order_relaxed), hostYes, g_allowSkills.load(std::memory_order_relaxed));
+    a.flatView = f4 ? (f4Quick || f4Skills) : moveattack::PathViewNow();
     a.menu = gamestate::MenuOpen();
     a.allowed = Allowed(game.online, game.serverHere, hostYes);
     a.mode = mode;
-    a.skillFlags = PlainAttackMode(mode) ? SkillFlagsOf(unit) : 0;
+    if (WalkInMode(mode)) {
+        const Skill k = SkillOf(unit);
+        a.skillFlags = k.flags;
+        a.skill = k.id;
+        a.doFunc = k.doFunc;
+    }
     const bool acts = Acts(a);
-    // Between attacks the server must not be told "no": the verdict stays with the view, the menu and the game until the mode says otherwise.
-    g_clientActs.store(a.key > 0 && a.flatView && !a.menu && a.allowed, std::memory_order_release);
+    g_clientKey.store(KeyOf(a), std::memory_order_relaxed);
+    // Between attacks the server must not be told "no": the verdict stays with the keys, the view, the menu and the game until the mode says otherwise.
+    g_clientKinds.store(KindsAllowed(a), std::memory_order_release);
+    g_clientActsNow.store(acts, std::memory_order_release);
+    if (WalkInMode(mode)) {   // once an attack kind: what the used skill made of it
+        static uint32_t saidMode = 0;
+        static int32_t saidSkill = -2;
+        static std::atomic<int> told{0};
+        if ((mode != saidMode || a.skill != saidSkill) && told.fetch_add(1) < 24) {
+            const char* name = SkillName(a.skill);
+            Say("vrcam: attack path - our hero's attack: mode %u, skill %d (%s, do-function %d) - %s, %s", mode, a.skill, name ? name : "?", a.doFunc, MoveName(KindOf(a)),
+                acts ? "he moves with the walk keys" : KeyOf(a) > 0 ? "not in a view / menu / game it is for" : "no tick for it: the game's own stop");
+        }
+        saidMode = mode;
+        saidSkill = a.skill;
+    }
     if (!acts) return;
-    if (!f4Quick) ScanFront(unit, !game.serverHere);   // (VR F4: no flat camera's forward - a quick blow goes to the monster touched)
+    if (!f4) ScanFront(unit, !game.serverHere);   // (VR F4: no flat camera's forward - a blow goes to the monster touched)
     static uint64_t lastSend = 0;
     if (now - lastSend >= kSendMs) {
         float grid[2] = {}, threshold = 0.0f;
@@ -698,8 +889,9 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
     static uint64_t lastTell = 0;
     if (now - lastTell >= 3000) {
         lastTell = now;
-        Say("vrcam: attack path - so far: %llu walks predicted, %llu taken by the server, %llu server steps, %llu blows, %llu into the air; speed %d%%",
-            (unsigned long long)g_predicted.load(), (unsigned long long)g_asked.load(), (unsigned long long)g_steps.load(), (unsigned long long)g_blows.load(), (unsigned long long)g_air.load(), g_percent.load());
+        Say("vrcam: attack path - so far: %llu walks predicted, %llu taken by the server, %llu server steps, %llu blows, %llu special moves' blows, %llu series restarted, %llu into the air; speed %d%%",
+            (unsigned long long)g_predicted.load(), (unsigned long long)g_asked.load(), (unsigned long long)g_steps.load(), (unsigned long long)g_blows.load(),
+            (unsigned long long)g_skillBlows.load(), (unsigned long long)g_rearmed.load(), (unsigned long long)g_air.load(), g_percent.load());
     }
 }
 

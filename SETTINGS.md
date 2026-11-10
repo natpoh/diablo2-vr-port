@@ -875,6 +875,17 @@ through ReShade.
   the blow is out, no sooner than *the least wait between blows*
   (`quick_blow_min_ms`, 200 ms). Not for bows, crossbows, throws, Zeal or Fury.
   In a TCP/IP game the host's boxes hold for every hero in it.
+  *Move during special moves* (Mechanics tab, F2 / F3 and F4, off, EXPERIMENTAL -
+  `[gameplay] move_during_skills`): it changes the game. With W A S D (F2 / F3) or the
+  stick (F4) the hero keeps moving during Zeal, Fury, Double Swing, Frenzy and the
+  one-blow special moves (Bash, Stun, Berserk, Concentrate, Sacrifice, Vengeance,
+  Power Strike ...). The skill keeps its number of blows, animation, attack speed,
+  mana and damage; each blow goes to who is there when it lands - the monster before
+  the camera in F2 / F3, the one your swing started on in F4 - or hits the air (Zeal
+  and Fury: the game picks a monster in reach). Not for Charge, Leap Attack,
+  Whirlwind, spells or kicks; Jab, Fend, Strafe and Smite not yet. Which box a swing
+  goes by is decided by the skill: *The swing does not stop the hero* is the plain
+  Attack and the Throw only. In a TCP/IP game the host's box holds for every hero in it.
 - **Swing timer** (VR F4 and the monitor's F2 / F3, off - `[hud] swing_timer`): only shown, the game is
   untouched. Nothing is drawn until you attack - no ring means go. After an attack the game started, a
   ring in the middle of the view (`swing_timer_style` 0; 1 = a bar at the top) fills until the game lets

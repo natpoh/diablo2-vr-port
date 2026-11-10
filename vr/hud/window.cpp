@@ -105,6 +105,8 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         InputLogWindow(msg, w);
     // [hud] flat_map_zoom: + / - (and Ctrl + wheel) with the game's map open in the flat game zoom it - not the game's then (chat: letters)
     if ((msg == WM_KEYDOWN || msg == WM_MOUSEWHEEL) && FlatMapZoomKey(msg, w, l)) return 0;
+    // [hud] flat_map_turn_key / flat_map_place_key: the map turned, put in the middle and back, by the player's own keys (flat, no chat, no panel)
+    if (msg == WM_KEYDOWN && FlatMapKey(msg, w, l)) return 0;
     // [gameplay] block_stray_clicks (F4): a mouse button the game gets from outside the plugin while it plays in the world with no panel open
     // (the log of 2026-10-14 16:26: four clicks "from a device" at the rhythm of a bow's draw and release) is dropped before the game sees it.
     // The mouse look's pointer and [bow] mode 2's own Shift + click are the game's by design.
@@ -222,10 +224,23 @@ void BigWindowTick() {
     at = now;
     if (g_set.platform.load() != 1) { SquareWhy(0, ""); return; }   // flat mode ([mode] platform=0): the game stays in the window the player set - no square
     if (!IniB(L"openxr", L"square_window", false)) { SquareWhy(0, ""); return; }
+    // [openxr] square_window_follow (2026-11-10, Serg: "нам надо чтобы квадратное окно уменьшалось вместе с разрешением а не оставалось
+    // большим"): with a render size of its own in force the square is made THAT size (its longer side), not window_size - the game's
+    // picture is that size anyway (render_window.h tells the game so), only the window stayed 1920 x 1920 round it. Off: as before, the
+    // window keeps its size while a render size is in force.
+    int followSide = 0;
     if (xr::On() && rendersize::FromIni((int)IniF(L"render", L"vr_resolution", 0.0f), (int)IniF(L"render", L"vr_resolution_px", 0.0f)).kind !=
                         rendersize::Kind::Desktop) {
-        SquareWhy(6, "not needed: [render] vr_resolution_px / vr_resolution gives the game a render size of its own, the window keeps its size");
-        return;
+        vrres::Size game{};
+        if (!IniB(L"openxr", L"square_window_follow", false)) {
+            SquareWhy(6, "not needed: [render] vr_resolution_px / vr_resolution gives the game a render size of its own, the window keeps its size");
+            return;
+        }
+        if (!vrres::GameSize(g_gameWnd, &game) || !game.w || !game.h) {
+            SquareWhy(7, "[openxr] square_window_follow: waiting for the render size to be in force (the game told it) before the window follows it");
+            return;
+        }
+        followSide = (int)std::max(game.w, game.h);
     }
     if (!xr::On()) {
         wchar_t off[48] = L"";
@@ -253,7 +268,17 @@ void BigWindowTick() {
         LogF("vrcam: square window - the game's window has no frame (%dx%d): its Options > Video > Window Mode is not Windowed - "
              "the square wants Windowed", (int)c.right, (int)c.bottom);
     }
-    const int asked = std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
+    const int asked = followSide ? std::clamp(followSide, 320, 4000) : std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
+    {   // the window's size and what it follows, whenever either changes
+        static int toldAsked = -1, toldFollow = -1;
+        if (asked != toldAsked || followSide != toldFollow) {
+            toldAsked = asked;
+            toldFollow = followSide;
+            if (followSide) LogF("vrcam: square window - follows the render size ([openxr] square_window_follow): the game's picture %d a side, the window %dx%d asked (was %dx%d)",
+                                 followSide, asked, asked, (int)c.right, (int)c.bottom);
+            else LogF("vrcam: square window - %dx%d asked ([openxr] window_size; the window now %dx%d)", asked, asked, (int)c.right, (int)c.bottom);
+        }
+    }
     // the monitor it is on when that holds the square; else the one that holds the most (a virtual
     // monitor made for it, BodyWalk's Virtual Monitor): the window is moved there, no "make it primary"
     struct Pick { HMONITOR here, bestMon; RECT best; int bestFits; RECT cur; int curFits; int fw, fh; wchar_t hereName[32], bestName[32]; char list[640]; };

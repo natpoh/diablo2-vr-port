@@ -53,6 +53,12 @@ std::atomic<bool> g_hooked{false};
 // the settings (Configure, live)
 std::atomic<bool> g_cfgOn{false}, g_cfgUnseen{true}, g_cfgGaze{true};
 std::atomic<int> g_cfgStrength{uf::kDefaultStrength}, g_cfgAb{0};
+std::atomic<bool> g_cfgBlur{false};          // [render] foveated_blur: the coarse pixels softened by a blur of their own (D2R_DepthFog.fx FovBlur*)
+std::atomic<float> g_cfgBlurStrength{0.7f};   // ... foveated_blur_strength 0..1
+std::atomic<double> g_blurMs{-1.0};           // ... its two passes' GPU time, ms a present (vrcam's native effects line hands it in; -1 not known)
+// [render] foveated_blur: the region the eye's last pass took the image with (ok false: none that pass) - the draw thread
+EyeRegion g_eyeRegion[2];
+bool g_eyeRegionOk[2] = {};
 std::atomic<int> g_cfgFull{0};    // [render] foveated_fullscreen: 0 Bear's rule alone, 1 + the grass lighting and the reflections, 2 + the hair
 std::atomic<int> g_cfgGrass{0};   // [render] grass_lighting_coarse: 0 as the game, 1 the grass lighting shaded 2x1 everywhere, 2 2x2
 std::atomic<float> g_cfgRadius{0.0f};
@@ -650,6 +656,9 @@ void Line(const char* state) {
                 full, grass, d[1], co[1] / 1e6, px[1] / 1e6, px[1] ? 100.0 * co[1] / px[1] : 0.0, wh[1], d[2], co[2] / 1e6, px[2] / 1e6,
                 px[2] ? 100.0 * co[2] / px[2] : 0.0, wh[2], d[3], co[3] / 1e6, px[3] / 1e6, px[3] ? 100.0 * co[3] / px[3] : 0.0, wh[3]);
     }
+    if (g_cfgBlur.load() || g_blurMs.load() >= 0.0)   // [render] foveated_blur: its passes' GPU time, as the native effects line measured it
+        Say("vrcam: foveated - the coarse pixels blurred ([render] foveated_blur %d, strength %.2f): %.3f ms GPU a present (its two passes; the "
+            "native effects' timestamps)", g_cfgBlur.load() ? 1 : 0, g_cfgBlurStrength.load(), std::max(0.0, g_blurMs.load()));
     if (L && L->bank)
         Say("vrcam: foveated - eye-tracked: %u eye passes centred on the gaze, %u on the lens centre (no tracked gaze, or it looked beyond the picture), "
             "%u whole (the gaze came back or jumped)", g_nGaze, g_nLens, g_nJump);
@@ -715,12 +724,22 @@ void Configure(const Config& c) {
     g_cfgGaze.store(c.gaze);
     g_cfgFull.store(std::clamp(c.fullscreen, 0, 2));
     g_cfgGrass.store(std::clamp(c.grassCoarse, 0, 2));
+    g_cfgBlur.store(c.blur);
+    g_cfgBlurStrength.store(std::isfinite(c.blurStrength) ? std::clamp(c.blurStrength, 0.0f, 1.0f) : 0.7f);
     (void)was;
 }
 bool Usable() { return g_hooked.load() && g_ready.load() && g_vrs.load() != 0; }
 int VrsTier2() { return g_vrs.load(); }
 void NoteNoVrs() { g_vrs.store(0); }
 void SetLog(LogFn log) { g_log = log; }
+bool BlurOn() { return g_cfgBlur.load(std::memory_order_relaxed); }
+float BlurStrength() { return g_cfgBlurStrength.load(std::memory_order_relaxed); }
+void NoteBlurMs(double ms) { g_blurMs.store(ms, std::memory_order_relaxed); }
+bool EyeRegionOf(int eye, EyeRegion* out) {
+    if (eye < 0 || eye > 1 || !g_eyeRegionOk[eye]) return false;
+    *out = g_eyeRegion[eye];
+    return true;
+}
 void TestKind(uint64_t psHash, int kind) {
     AcquireSRWLockExclusive(&g_testLock);
     g_testKinds.push_back({psHash, (uint8_t)kind});
@@ -761,6 +780,7 @@ void NoteScreen(ID3D12Device* dev, uint32_t w, uint32_t h) {
 
 void BeginEye(int eye, bool pair) {
     if (!g_hooked.load()) return;
+    g_eyeRegionOk[eye & 1] = false;   // (until this pass copies a mask)
     Sweep(false);
     // anything of ours this pass: foveated (the image) or grass_lighting_coarse (a base rate on that one pass), in F4's native pair
     const bool grass = g_cfgGrass.load() > 0;
@@ -832,7 +852,17 @@ void BeginEye(int eye, bool pair) {
         g_jump[eye & 1].Reset();
         ++g_nLens;
     }
-    CopyMask(*L, slot);
+    if (CopyMask(*L, slot) && L->w == g_screenW.load() && L->h == g_screenH.load()) {   // (the picture the effect blurs is the scene's size)
+        const uf::Region g = SlotRegion(*L, slot);
+        EyeRegion& er = g_eyeRegion[eye & 1];
+        er.vp[0] = L->vp.TopLeftX; er.vp[1] = L->vp.TopLeftY; er.vp[2] = L->vp.Width; er.vp[3] = L->vp.Height;
+        er.reg[0] = g.cx; er.reg[1] = g.cy; er.reg[2] = g.ax; er.reg[3] = g.ay;
+        er.win[0] = g.x0; er.win[1] = g.x1; er.win[2] = g.y0; er.win[3] = g.y1;
+        er.rate[0] = (float)g_tile;
+        er.rate[1] = L->coarse == uf::kRate4x4 ? 4.0f : L->coarse == uf::kRate2x2 ? 2.0f : 1.0f;
+        er.rate[2] = L->unseen == uf::kRate4x4 ? 4.0f : L->unseen == uf::kRate2x2 ? 2.0f : 0.0f;
+        g_eyeRegionOk[eye & 1] = g.ok;
+    }
     g_slotCoarse.store(slot < L->share.size() ? L->share[slot] : 0.0f, std::memory_order_relaxed);
     worldOn(true);
 }

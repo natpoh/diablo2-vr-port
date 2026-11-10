@@ -1755,13 +1755,19 @@ void Tell() {
         if (const reshade::api::effect_uniform_variable u = g_fx->find_uniform_variable("D2R_DepthFog.fx", "SkyTex"); u.handle) g_fx->get_uniform_value_float(u, &skyTex, 1);
         char blur[48] = "off";   // [render] distance_blur: its two passes' time (ms a present), whether or not among the dearest
         if (on("DistBlurOn")) snprintf(blur, sizeof blur, "on, %.2f ms", fs.MsOf("PS_DistBlur"));
+        char fovBlur[48] = "off";   // [render] foveated_blur: its two passes' time, here and in the foveated line
+        if (foveation::BlurOn()) {
+            const double ms = fs.MsOf("PS_FovBlur");
+            snprintf(fovBlur, sizeof fovBlur, "on, %.2f ms", ms);
+            foveation::NoteBlurMs(ms);
+        }
         autotunerun::NoteGpu(fs.MsOf("PS_DepthFog"), fs.MsOf("PS_DistBlur"), fogfx::Hooked());   // ([autotune]: the order its probes run in)
-        LogF("vrcam: native effects, 10 s: %s, sky %s (picture %d), fog %s, ceiling %s, distance blur %s; on the graphics card %.2f ms a present (the overlays "
+        LogF("vrcam: native effects, 10 s: %s, sky %s (picture %d), fog %s, ceiling %s, distance blur %s, foveated blur %s; on the graphics card %.2f ms a present (the overlays "
              "apart not timed); %u passes in %u presents and %u overlay draws, %u left out with nothing to draw (D2R_DepthFog.fx, %ux%u) - dearest "
              "passes (ms a present, and when run): %s",
              fs.ready ? (g_set.effectWorld.load() ? "drawn" : "drawn, its sky and fog LEFT OUT ([render] effect_world=0)") : fs.compiling ? "building"
                       : fs.failed ? "NOT built (above)" : "waiting", on("SkyOn") ? "on" : "off",
-             (int)(skyTex + 0.5f), !on("FogOn") ? "off" : on("FogLight") ? "light" : "full", on("CeilOn") && !on("FogLight") ? "on" : "off", blur, fs.gpuMs,
+             (int)(skyTex + 0.5f), !on("FogOn") ? "off" : on("FogLight") ? "light" : "full", on("CeilOn") && !on("FogLight") ? "on" : "off", blur, fovBlur, fs.gpuMs,
              fs.passes, fs.renders, fs.techniques, fs.skipped, fs.width, fs.height, fs.dearest.empty() ? "-" : fs.dearest.c_str());
         if (fs.rectPasses) {   // [render] phantom_rects: the vignette pass's pixels and time (vr/phantom_rect.h)
             const double share = fs.rectPixelsFull ? 100.0 * (double)fs.rectPixels / (double)fs.rectPixelsFull : 100.0;
@@ -2576,6 +2582,19 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         eye = e;
     }
     g_fxEye = eye;
+    {   // [render] foveated_blur (D2R_DepthFog.fx FovBlur*): the coarse pixels of this eye's last pass blurred - its region (the lens centre or
+        // the gaze), F4 only (foveation keeps a region only for an F4 eye pass that took the rate image); the distance blur is not touched
+        foveation::EyeRegion fr;
+        const bool fovBlur = foveation::BlurOn() && viewgate::F4() && foveation::EyeRegionOf(eye, &fr);
+        SetBool(rt, "FovBlurOn", fovBlur);
+        if (fovBlur) {
+            SetFloat(rt, "FovBlurStrength", foveation::BlurStrength());
+            SetFloats(rt, "FovVp", fr.vp, 4);
+            SetFloats(rt, "FovReg", fr.reg, 4);
+            SetFloats(rt, "FovWin", fr.win, 4);
+            SetFloats(rt, "FovRate", fr.rate, 3);
+        }
+    }
     // Both eyes' views: the technique on picks one. Without AFR the one eye there is fills both.
     SkyView sv[2];
     AcquireSRWLockShared(&g_skyLock);
@@ -2962,8 +2981,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             SetBool(rt, "GameMapTurnOn", turn);
             SetBool(rt, "GameMapTurnWhole", turn && whole);   // [hud] flat_map_zoom: out of the circle (an older effect: none, the circle stays)
             // [hud] map_compass_flat: the compass strip over it - its picture (xr.cpp's, painted once) uploaded into GameCompassTex once per effect load
-            float cbox[4], crop = 0.0f;
-            bool compass = turn && hud::PictureCompass(cbox, &crop);
+            float cbox[4], crop = 0.0f, bearing = 0.0f;
+            int style = 0;
+            bool compass = turn && hud::PictureCompass(cbox, &crop, &style, &bearing);
             if (compass) {
                 static uint64_t upVar = 0;
                 static bool failed = false;
@@ -2989,6 +3009,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             if (compass) {
                 SetFloats(rt, "GameCompassBox", cbox, 4);
                 SetFloat(rt, "GameCompassCrop", crop);
+                SetInt(rt, "GameCompassStyle", style);       // (1 the strip, 2 thin, 3 the ring - an older effect: none, its strip)
+                SetFloat(rt, "GameCompassBearing", bearing);
             }
             if (turn) {
                 SetFloats(rt, "GameMapTurnCircle", circle, 4);

@@ -94,6 +94,8 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "stray_walk_wire.h"    // [gameplay] block_stray_walk / block_stray_clicks: no stray walk, no stray mouse button in the F4 world (stray_walk_wire.cpp)
 #include "view_gate.h"     // everything added after the base mod acts in VR first person (F4) only
 #include "auto_tune_run.h"   // [autotune]: the "Auto" graphics tuning - measured live, kept or undone by the player
+#include "perf_sweep.h"      // [debug] perf_sweep: an automatic A/B of the left pass's processor time (the ini untouched)
+#include "gpu_timeline.h"    // [debug] gpu_timeline: the graphics card's idle gaps within a pair
 #include "headset_shot.h"  // [headset_shot]: a screenshot of what reaches the headset (every view: a support tool, not a feature of play)
 #include "headset_clip.h"  // [headset_shot] video: 10 s of what reaches the headset, to an .mp4
 #include "headset_grid.h"  // [headset_shot] grid: a calibration grid in each eye's picture
@@ -124,6 +126,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "map_direction.h"   // [hud] map_direction: the way our camera looks, on the game's isometric map (pure part, tested)
 #include "map_turn.h"        // [hud] map_rotate / map_compass: the head's turn held while it looks down at the map in the hand
 #include "flat_map_zoom.h"   // [hud] flat_map_zoom: + / - zoom the flat game's map (the game's own zoom, in eighths)
+#include "flat_map_keys.h"   // [hud] flat_map_turn_key / flat_map_place_key: the flat game's map turned and put in the middle by keys
 #include "minimap_side.h"    // [hud] map_corner: the corner the start's Settings.json rewrite puts the game's map in (pure part, tested)
 #include "walk_path.h"     // [openxr] direct_bodywalk_walk: BodyWalk's walking stick mixed into the controller's in direct mode (pure part, tested)
 #include "walk_latency.h"  // [debug] walk_start_log: one line per walk start of BodyWalk's, from its stick leaving rest to the hero moving (pure part, tested)
@@ -164,7 +167,7 @@ namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void 
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready); bool PictureReady();
-                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(bool on); bool PictureCompass(float box[4], float* crop); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
+                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(int style); bool PictureCompass(float box[4], float* crop, int* style, float* bearing); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
 #include "d2rcam.h"

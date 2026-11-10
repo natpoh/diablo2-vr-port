@@ -2067,6 +2067,89 @@ float4 PS_DistBlurH(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target 
 float4 PS_DistBlurHR(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DistBlurAcross(uv, 1); }
 float3 PS_DistBlurV(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return DistBlurDown(uv); }
 
+// [render] foveated_blur (vrcam; the sums in shared/foveation_blur_math.h, tested there): foveated rendering's coarse pixels softened - the
+// distance blur's glass above (its two passes, its 9 taps, its rule for the interface), but an effect of its own: its own texture, switch
+// and strength, and the radius from how coarse the pixel's tile was shaded (the rate image's own rule, unleashed_foveation.h TileRate, with
+// the region of the eye's last pass: the lens centre or the gaze), not from its distance. The block size (1, 2, 4) x strength x 1.5 pixels,
+// faded in over the first 30 % past the sharp ellipse (no ring where the tiles start). After the distance blur: both on, the two add, as two
+// panes one behind the other; the distance blur itself is untouched. Off: both passes left out (vr/fx_pass_keep.h).
+uniform bool FovBlurOn < hidden = true; > = false;
+uniform float FovBlurStrength < hidden = true; > = 0.7;
+uniform float4 FovVp < hidden = true; > = float4(0.0, 0.0, 1.0, 1.0);      // the scene viewport, pixels: x, y, w, h
+uniform float4 FovReg < hidden = true; > = float4(0.5, 0.5, 0.25, 0.25);   // the region: cx, cy, ax, ay (fractions of the viewport)
+uniform float4 FovWin < hidden = true; > = float4(0.0, 1.0, 0.0, 1.0);     // the shown window: x0, x1, y0, y1
+uniform float3 FovRate < hidden = true; > = float3(16.0, 2.0, 0.0);        // the tile, the periphery's block size, the never-shown part's (0 none)
+texture2D FovBlurTex { Width = BUFFER_WIDTH; Height = BUFFER_HEIGHT; Format = RGBA8; };
+sampler2D FovBlurSmp { Texture = FovBlurTex; };
+// the block size of the tile under picture pixel p (TileRate)
+float FovBlockAt(float2 p)
+{
+    const float tile = max(FovRate.x, 1.0);
+    const float left = floor(p.x / tile) * tile, top = floor(p.y / tile) * tile, right = left + tile, bottom = top + tile;
+    if (left >= FovVp.x + FovVp.z || top >= FovVp.y + FovVp.w || right <= FovVp.x || bottom <= FovVp.y) return 1.0;
+    const float cx = FovVp.x + FovVp.z * FovReg.x, cy = FovVp.y + FovVp.w * FovReg.y;
+    const float dx = max(max(left - cx, cx - right), 0.0) / (FovVp.z * 0.5), dy = max(max(top - cy, cy - bottom), 0.0) / (FovVp.w * 0.5);
+    const float rx = 2.0 * FovReg.z, ry = 2.0 * FovReg.w;
+    if ((dx / rx) * (dx / rx) + (dy / ry) * (dy / ry) <= 1.0) return 1.0;
+    if (FovRate.z > 1.0 && (right <= FovVp.x + FovVp.z * FovWin.x || left >= FovVp.x + FovVp.z * FovWin.y ||
+                            bottom <= FovVp.y + FovVp.w * FovWin.z || top >= FovVp.y + FovVp.w * FovWin.w)) return FovRate.z;
+    return FovRate.y;
+}
+float FovBlurRadius(float2 uv)
+{
+    const float2 p = uv * float2(BUFFER_WIDTH, BUFFER_HEIGHT);
+    const float b = FovBlockAt(p);
+    if (b <= 1.0) return 0.0;
+    const float cx = FovVp.x + FovVp.z * FovReg.x, cy = FovVp.y + FovVp.w * FovReg.y;
+    const float dx = abs(p.x - cx) / (FovVp.z * 0.5) / (2.0 * FovReg.z), dy = abs(p.y - cy) / (FovVp.w * 0.5) / (2.0 * FovReg.w);
+    return saturate(FovBlurStrength) * 1.5 * b * smoothstep(1.0, 1.3, sqrt(dx * dx + dy * dy));
+}
+// the interface (the game's layer under UiMaskOn, the AFR HUD mask): neither blurred nor taken in, as the distance blur's
+bool FovBlurUi(float2 uv)
+{
+    return (UiMaskOn && !UiMaskOff && tex2Dlod(GameLayerSmp, float4(uv, 0, 0)).a < 0.98) || IsHud(uv);
+}
+// FovBlurTex's alpha: 0 the interface; else 0.5 + the radius / 32 (8 bits: an eighth of a pixel)
+float4 FovBlurAcross(float2 uv)
+{
+    if (!FovBlurOn) discard;
+    const float3 c = tex2Dlod(FogColorSmp, float4(uv, 0, 0)).rgb;
+    if (FovBlurUi(uv)) return float4(c, 0.0);
+    const float r = FovBlurRadius(uv);
+    if (r < 0.5) return float4(c, 0.5);
+    float3 sum = c;
+    float wsum = 1.0;
+    [unroll] for (int i = 1; i <= 4; ++i)
+        [unroll] for (int s = -1; s <= 1; s += 2) {
+            const float2 at = saturate(uv + float2((float)(s * i) * r * 0.25 * BUFFER_RCP_WIDTH, 0.0));
+            const float w = FovBlurUi(at) ? 0.0 : kDistBlurW[i];
+            sum += tex2Dlod(FogColorSmp, float4(at, 0, 0)).rgb * w;
+            wsum += w;
+        }
+    return float4(sum / wsum, 0.5 + min(r, 15.9) / 32.0);
+}
+float3 FovBlurDown(float2 uv)
+{
+    if (!FovBlurOn) discard;
+    const float3 c = tex2Dlod(FogColorSmp, float4(uv, 0, 0)).rgb;
+    const float4 m = tex2Dlod(FovBlurSmp, float4(uv, 0, 0));
+    if (m.a < 0.25) return c;   // the interface
+    const float r = (m.a - 0.5) * 32.0;
+    if (r < 0.5) return c;
+    float3 sum = m.rgb;
+    float wsum = 1.0;
+    [unroll] for (int i = 1; i <= 4; ++i)
+        [unroll] for (int s = -1; s <= 1; s += 2) {
+            const float4 t = tex2Dlod(FovBlurSmp, float4(saturate(uv + float2(0.0, (float)(s * i) * r * 0.25 * BUFFER_RCP_HEIGHT)), 0, 0));
+            const float w = kDistBlurW[i] * step(0.25, t.a);
+            sum += t.rgb * w;
+            wsum += w;
+        }
+    return lerp(c, sum / wsum, smoothstep(0.5, 1.5, r));
+}
+float4 PS_FovBlurH(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FovBlurAcross(uv); }
+float3 PS_FovBlurV(float4 pos : SV_Position, float2 uv : TEXCOORD) : SV_Target { return FovBlurDown(uv); }
+
 // HUD pixels come from where the HUD was; where it left, the world beside it fills in.
 float3 Hud(float2 uv, float shift)
 {
@@ -2104,6 +2187,11 @@ uniform bool GameMapTurnWhole < hidden = true; > = false;
 uniform bool GameCompassOn < hidden = true; > = false;
 uniform float4 GameCompassBox < hidden = true; > = float4(0.0, 0.0, 0.0, 0.0);
 uniform float GameCompassCrop < hidden = true; > = 0.0;
+// [hud] map_compass_flat's look (vr/map_turn.h CompassStyle): 1 the strip, 2 thin (its letters and ticks only, see-through between), 3 a ring of
+// letters inside the circle's rim, each where its way lies on the turned map - GameCompassBearing (radians, clockwise from the map's up) the
+// way the camera looks. An older plugin sets neither: the strip.
+uniform int GameCompassStyle < hidden = true; > = 1;
+uniform float GameCompassBearing < hidden = true; > = 0.0;
 texture2D GameCompassTex { Width = 1536; Height = 112; Format = RGBA8; };
 sampler2D GameCompassSmp { Texture = GameCompassTex; AddressU = CLAMP; AddressV = CLAMP; MinFilter = LINEAR; MagFilter = LINEAR; };   // [hud] flat_map_zoom past level 0: not held to the circle - the whole map, turned
 texture2D GameBarTex : D2R_GAME_BAR;
@@ -2455,10 +2543,49 @@ float4 GameMapRound(float2 uv)
 
 // [hud] map_compass_flat: the strip's window at GameCompassBox, the marker's gold wedge over its middle at its top edge (premultiplied; alpha
 // the world through).
+// The strip's painted background (xr.cpp PaintCompass: RGB 17 16 14, its rims darker gold) is keyed out for the thin strip and the ring: a
+// texel's cover from how bright it is over that background, a dark halo round the letters so they read over the map.
+float CompassInk(float4 s) { return saturate((max(s.r, max(s.g, s.b)) - 0.16) / 0.30); }
+float4 CompassKeyed(float2 at, float2 texel)
+{
+    const float4 s = tex2Dlod(GameCompassSmp, float4(at, 0, 0));
+    const float ink = CompassInk(s);
+    float halo = ink;
+    halo = max(halo, CompassInk(tex2Dlod(GameCompassSmp, float4(at + float2(texel.x, 0.0), 0, 0))));
+    halo = max(halo, CompassInk(tex2Dlod(GameCompassSmp, float4(at - float2(texel.x, 0.0), 0, 0))));
+    halo = max(halo, CompassInk(tex2Dlod(GameCompassSmp, float4(at + float2(0.0, texel.y), 0, 0))));
+    halo = max(halo, CompassInk(tex2Dlod(GameCompassSmp, float4(at - float2(0.0, texel.y), 0, 0))));
+    const float cover = max(ink, 0.75 * halo);
+    return float4(s.rgb * ink, 1.0 - cover);   // (the halo black: no colour of its own)
+}
 float4 GameCompass(float2 uv)
 {
+    const float2 texel = float2(2.5 / 1536.0, 2.5 / 112.0);
+    [branch] if (GameCompassStyle == 3)
+    {   // the ring: eight labels round the circle, each the strip's own label (its column 256 + 128 i, rows 20 .. 61) at a size of the radius
+        const float2 q = (uv - GameMapTurnCircle.xy) / GameMapTurnCircle.zw;
+        if (dot(q, q) > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+        const float px = 0.16 / 41.0;   // q units per strip texel: a label's 41 rows 0.16 of the radius
+        [loop] for (int i = 0; i < 8; ++i)
+        {
+            const float a = i * 0.785398163 - GameCompassBearing;
+            const float2 d = (q - 0.84 * float2(sin(a), -cos(a))) / px;   // strip texels from the label's middle
+            if (abs(d.x) < 44.0 && abs(d.y) < 21.0)
+            {
+                const float4 c = CompassKeyed(float2((256.0 + 128.0 * i + d.x) / 1536.0, (40.5 + d.y) / 112.0), texel);
+                if (c.a < 0.999) return c;
+            }
+        }
+        return float4(0.0, 0.0, 0.0, 1.0);
+    }
     const float2 t = (uv - GameCompassBox.xy) / (GameCompassBox.zw - GameCompassBox.xy);
     if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) return float4(0.0, 0.0, 0.0, 1.0);
+    [branch] if (GameCompassStyle == 2)
+    {   // thin: the strip's rows 18 .. 88 (its letters and ticks), keyed; the marker a small gold wedge over the middle
+        const float mw = 20.0 / 512.0, mh = 10.0 / 70.0;
+        if (abs(t.x - 0.5) < 0.5 * mw * (1.0 - t.y / mh) && t.y < mh) return float4(0.95, 0.80, 0.47, 0.0);
+        return CompassKeyed(float2(GameCompassCrop + t.x * (512.0 / 1536.0), (18.0 + t.y * 70.0) / 112.0), texel);
+    }
     const float mw = 32.0 / 512.0, mh = 16.0 / 96.0;   // the marker: its share of the window's width and the strip's height
     if (abs(t.x - 0.5) < 0.5 * mw && t.y < mh)
     {
@@ -3766,6 +3893,8 @@ technique D2R_DepthFog <
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFog; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurH; RenderTarget = DistBlurTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurV; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FovBlurH; RenderTarget = FovBlurTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FovBlurV; }
 #if D2R_DOME_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeenStore; RenderTarget = DomeSeenOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSumStore; RenderTarget = DomeSumOldTex; }
@@ -3818,6 +3947,8 @@ technique D2R_DepthFog_R <
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DepthFogR; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurHR; RenderTarget = DistBlurTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DistBlurV; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FovBlurH; RenderTarget = FovBlurTex; }
+    pass { VertexShader = VS_Fullscreen; PixelShader = PS_FovBlurV; }
 #if D2R_DOME_MEASURE
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSeenStore; RenderTarget = DomeSeenOldTex; }
     pass { VertexShader = VS_Fullscreen; PixelShader = PS_DomeSumStore; RenderTarget = DomeSumOldTex; }

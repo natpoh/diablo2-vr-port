@@ -202,6 +202,15 @@ int main() {
             const Box mirror{(int)m.n - m.b.right, m.b.top, (int)m.n - m.b.left, m.b.bottom};
             Check(minimapbox::Find(mirror, c, game, 0.8f, 0, 1.04f) == 1, "the same box in the left corner found (left)", m.n, m.n, 80);
         }
+        {   // PS VR2 (Serg 2026-11-10, 0.211.1): 1664 square, the F4 frustum makes the tiles 0.72 as wide - the box stays 639 px
+            const Canvas p{0, 0, 1664, 1664};
+            const float g = minimapbox::SafeFromScale(GameScale(1664, 0.8f), 1664);
+            const Box psvr2{857, 214, 1496, 853};
+            Check(minimapbox::Find(psvr2, p, g, 0.8f, 0, 0.72f) == 2, "PS VR2 1664 at stretch 0.72: the capped box found", 1664, 1664, 80);
+            Check(minimapbox::WhyNot(psvr2, p, 0.8f, 0, 0.72f) == nullptr, "PS VR2 1664: no reason against it", 1664, 1664, 80);
+            const Box mid{512, 214, 1151, 853};
+            Check(minimapbox::Find(mid, p, g, 0.8f, 0, 0.72f) == 0, "PS VR2 1664: the same box at the top middle refused", 1664, 1664, 80);
+        }
         const Canvas c{0, 0, 1024, 1024};
         const float game = minimapbox::SafeFromScale(GameScale(1024, 0.8f), 1024);
         const Box whole{0, 0, 1024, 1024}, toolbar{0, 789, 1024, 921}, small{1012, 789, 1143, 921};

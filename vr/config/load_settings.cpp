@@ -284,7 +284,13 @@ void LoadSettings() {
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
     g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));
-    g_set.mapCompassFlat.store(IniB(L"hud", L"map_compass_flat", true));   // the compass over the turned map on the screen: MapRotateFlatTick
+    g_set.mapCompassFlat.store(std::clamp((int)std::lround(IniF(L"hud", L"map_compass_flat", 2.0f)), 0, 3));   // the compass over the turned map: MapRotateFlatTick
+    // the map's own keys (vr/flat_map_keys.h, vr/flat_map_zoom.h; 2026-11-10): set in the game's D2R VR settings panel or in D2R VR Settings
+    g_set.flatMapTurnKey.store(flatmapkeys::KeyOf((int)IniF(L"hud", L"flat_map_turn_key", (float)flatmapkeys::kDefaultTurnKey), flatmapkeys::kDefaultTurnKey));
+    g_set.flatMapPlaceKey.store(flatmapkeys::KeyOf((int)IniF(L"hud", L"flat_map_place_key", (float)flatmapkeys::kDefaultPlaceKey), flatmapkeys::kDefaultPlaceKey));
+    g_set.flatMapCorner.store(std::clamp((int)IniF(L"hud", L"flat_map_corner", 1.0f), 0, 1));
+    g_set.flatMapZoomInKey.store(flatzoom::KeyOf((int)IniF(L"hud", L"flat_map_zoom_in_key", (float)flatzoom::kDefaultInKey), flatzoom::kDefaultInKey));
+    g_set.flatMapZoomOutKey.store(flatzoom::KeyOf((int)IniF(L"hud", L"flat_map_zoom_out_key", (float)flatzoom::kDefaultOutKey), flatzoom::kDefaultOutKey));
     g_set.flatMapZoom.store(IniB(L"hud", L"flat_map_zoom", true));   // + / - zoom the flat game's map: FlatMapZoomTick, FlatMapZoomKey
     g_set.flatMapZoomLevel.store(flatzoom::Clamped((int)std::lround(IniF(L"hud", L"flat_map_zoom_level", 0.0f))));   // the corner map on the screen turned with the camera: MapRotateFlatTick
     // The same while the game runs: the game's map put back in the middle (its options) is put in a corner again, by the game's own
@@ -496,6 +502,8 @@ void LoadSettings() {
         fc.gaze = IniB(L"render", L"foveated_gaze", true);   // (the gaze itself is asked of the runtime at the session start)
         fc.fullscreen = (int)IniF(L"render", L"foveated_fullscreen", 0.0f);   // the heavy full-screen passes too (vr/fullscreen_passes.h)
         fc.grassCoarse = (int)IniF(L"render", L"grass_lighting_coarse", 0.0f);  // the grass lighting at 2x1 / 2x2
+        fc.blur = IniB(L"render", L"foveated_blur", false);   // the coarse pixels blurred (D2R_DepthFog.fx FovBlur*)
+        fc.blurStrength = IniF(L"render", L"foveated_blur_strength", 0.7f);
         foveation::Configure(fc);
     }
     {   // [render] lens_mask (vr/lens_mask.h): the hidden area of each eye cleared to the nearest depth after the game's scene depth clear - live
@@ -587,6 +595,12 @@ void LoadSettings() {
         const bool on = IniB(L"debug", L"profile_draw", false);
         if (on && !was) drawprof::g_want.store(true);
         was = on;
+        // [debug] perf_sweep: one automatic A/B run each time it turns 1 (vr/perf_sweep.h) - read from the file itself: its own bench_bare step
+        // reads every [debug] key as 0 through IniF, which would stop it
+        perfsweep::Configure(GetPrivateProfileIntW(L"debug", L"perf_sweep", 0, g_iniPath) != 0, g_iniPath);
+        // [debug] gpu_timeline: the card's idle gaps within a pair (vr/gpu_timeline.h); live, the hook goes in at the first turn on
+        // (from the file itself, as perf_sweep: that run's bench_bare step reads every [debug] key as 0)
+        gputimeline::Configure(GetPrivateProfileIntW(L"debug", L"gpu_timeline", 0, g_iniPath) != 0);
         static bool wasGo = false;
         const bool go = IniB(L"debug", L"cb_compare_go", false);
         if (go && !wasGo) cbcmp::g_go.store(true);
@@ -1414,6 +1428,7 @@ void LoadSettings() {
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)
     const int attackPath = (int)IniF(L"gameplay", L"flat_attack_path", 0.0f);   // the prototype: the swing does not stop the hero; it replaces the cut below
     attackpath::SetWanted(attackPath, IniF(L"gameplay", L"flat_attack_path_cone", 45.0f));
+    attackpath::SetSkillsWanted((int)IniF(L"gameplay", L"move_during_skills", 0.0f));   // EXPERIMENTAL: the hero moves during special moves (Zeal, Double Swing ...), F2 / F3 and VR F4
     moveattack::SetFlatWanted(attackPath > 0 ? 0 : (int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
     // [gameplay] quick_blow, EXPERIMENTAL, on by default since 0.204 (vr/quick_blow.h): VR F4 - the blow on the first frame, the hero walks through the swing, the touch is the game's
     // attack, its target in reach; quick_blow_faster: the next attack cuts the animation once the blow is out and quick_blow_min_ms passed
@@ -1938,7 +1953,7 @@ FILETIME g_uiIniTime{};
 bool ReloadIfChanged() {
     WIN32_FILE_ATTRIBUTE_DATA fa{};
     if (!GetFileAttributesExW(g_iniPath, GetFileExInfoStandard, &fa)) return false;
-    if (autotunerun::TakeReload()) {   // [autotune]: a run changed the values it hands the reads - read again, the file untouched
+    if (autotunerun::TakeReload() | perfsweep::TakeReload()) {   // [autotune] / [debug] perf_sweep: a run changed the values it hands the reads - read again, the file untouched
         g_iniTime = fa.ftLastWriteTime;
         LoadSettings();
         return true;

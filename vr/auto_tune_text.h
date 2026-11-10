@@ -21,7 +21,11 @@ inline std::string StepLine(const autotunerun::Row& r) {
     switch ((Phase)r.phase) {
         case Phase::Baseline: return uitext::TrF("vr.autotune.line.start", "Your settings: {b} frames/s", {b});
         case Phase::Probe: return uitext::TrF("vr.autotune.line.probe", "Tried {what} {from} -> {to}: {a} -> {b} frames/s", {what, from, to, a, b});
-        case Phase::Down: return uitext::TrF("vr.autotune.line.down", "Turned down {what} {from} -> {to}: {a} -> {b} frames/s", {what, from, to, a, b});
+        case Phase::Down:
+            if (r.trial)   // eyes by turns tried before Low / Potato: whether it stayed
+                return r.kept ? uitext::TrF("vr.autotune.line.trial_kept", "Tried {what} {from} -> {to}: {a} -> {b} frames/s - kept", {what, from, to, a, b})
+                              : uitext::TrF("vr.autotune.line.trial_back", "Tried {what} {from} -> {to}: {a} -> {b} frames/s - no better, back", {what, from, to, a, b});
+            return uitext::TrF("vr.autotune.line.down", "Turned down {what} {from} -> {to}: {a} -> {b} frames/s", {what, from, to, a, b});
         case Phase::Up:
             return r.kept ? uitext::TrF("vr.autotune.line.up", "Back up {what} {from} -> {to}: {b} frames/s holds", {what, from, to, b})
                           : uitext::TrF("vr.autotune.line.up_no", "Back up {what} {from} -> {to}: {b} frames/s, too slow - left down", {what, from, to, b});

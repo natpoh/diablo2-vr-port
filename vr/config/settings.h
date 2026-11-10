@@ -60,7 +60,13 @@ struct Settings {
     std::atomic<bool>  mapDirection{true};  // [hud] map_direction: an arrow on the hero's marker of the game's map, the way our camera looks (vr/map_direction.h)
     std::atomic<bool>  mapTurn{false};      // [hud] map_rotate or map_compass: the way the head looks, for the map in the hand (vr/map_turn.h, xr.cpp)
     std::atomic<bool>  mapRotateFlat{false};   // [hud] map_rotate_flat: the corner map in the picture round and turned, the camera's way up (MapRotateFlatTick)
-    std::atomic<bool>  mapCompassFlat{true};   // [hud] map_compass_flat: the compass strip over the turned map on the screen (mapturn::CompassOnScreen)
+    std::atomic<int>   mapCompassFlat{2};      // [hud] map_compass_flat: the compass over the turned map on the screen - 0 none, 1 the strip, 2 thin (letters
+                                               // only), 3 a ring of letters round it (mapturn::CompassStyle, CompassOnScreen)
+    std::atomic<unsigned> flatMapTurnKey{0x6F};    // [hud] flat_map_turn_key: flips map_rotate_flat (vr/flat_map_keys.h, FlatMapKey); 0 none
+    std::atomic<unsigned> flatMapPlaceKey{0x6A};   // [hud] flat_map_place_key: the map in the middle / back in flat_map_corner's corner; 0 none
+    std::atomic<int>   flatMapCorner{1};       // [hud] flat_map_corner: the place key's corner - 0 left, 1 right
+    std::atomic<unsigned> flatMapZoomInKey{0xBB};    // [hud] flat_map_zoom_in_key / _out_key: the zoom's keys (vr/flat_map_zoom.h KeyDir); 0 none
+    std::atomic<unsigned> flatMapZoomOutKey{0xBD};
     std::atomic<bool>  flatMapZoom{true};   // [hud] flat_map_zoom: + / - (and Ctrl + wheel) zoom the flat game's map, the game's own zoom (FlatMapZoomKey)
     std::atomic<int>   flatMapZoomLevel{0};   // [hud] flat_map_zoom_level: its level, steps of 1/8 on the game's own (vr/flat_map_zoom.h), written back when changed
     std::atomic<int>   mapCorner{0};         // [hud] map_corner: 0 either, 1 left, 2 right - where [hud] map_rotate_flat puts a whole-screen map

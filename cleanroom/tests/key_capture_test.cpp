@@ -34,6 +34,11 @@ int main() {
     Check(Bindable('W', Use::GameKey) && Bindable(0x70, Use::GameKey) && Bindable(0x05, Use::GameKey), "a gesture's game key: W, F1, Mouse 4 too");
     Check(!Bindable(0x01, Use::GameKey) && !Bindable(0x0D, Use::GameKey) && !Bindable(0, Use::GameKey), "left click, Enter, nothing: never");
     Check(!Bindable(0x05, Use::PickupKey), "a mouse button is not the pick-up key");
+    // [hud] flat_map_*_key: the map's keys
+    Check(Bindable(0x6F, Use::MapKey) && Bindable(0x6A, Use::MapKey) && Bindable(0xBB, Use::MapKey) && Bindable('M', Use::MapKey), "Num /, Num *, =, M: a map key");
+    Check(!Bindable(0x09, Use::MapKey) && !Bindable('W', Use::MapKey) && !Bindable(0x71, Use::MapKey) && !Bindable(0x79, Use::MapKey),
+          "Tab (the game's map), W A S D, F2, F10: not a map key");
+    Check(!Bindable(0x05, Use::MapKey) && !Bindable(0x0D, Use::MapKey) && !Bindable(0x10, Use::MapKey), "a mouse button, Enter, Shift: not a map key");
 
     {   // the answer
         Capture c;

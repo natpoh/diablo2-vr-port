@@ -18,9 +18,9 @@
 namespace eclhook {
 namespace {
 
-using ExecFn = void(STDMETHODCALLTYPE*)(ID3D12CommandQueue*, UINT, ID3D12CommandList* const*);
 std::atomic<Observer> g_observer{nullptr};
 std::atomic<Observer> g_tap{nullptr};
+std::atomic<Around> g_around{nullptr};
 ExecFn g_orig[3] = {};
 std::mutex g_mx;
 std::vector<void*> g_hooked;   // the functions hooked
@@ -30,7 +30,8 @@ bool g_slotDone[3] = {};
 template <int S> void STDMETHODCALLTYPE Hook(ID3D12CommandQueue* q, UINT n, ID3D12CommandList* const* lists) {
     if (Observer o = g_observer.load(std::memory_order_relaxed)) o(q, n, lists);
     if (Observer t = g_tap.load(std::memory_order_relaxed)) t(q, n, lists);
-    g_orig[S](q, n, lists);
+    if (Around a = g_around.load(std::memory_order_relaxed)) a(q, n, lists, g_orig[S]);
+    else g_orig[S](q, n, lists);
 }
 
 template <int S> bool InstallSlot(void** vt) {
@@ -42,6 +43,20 @@ template <int S> bool InstallSlot(void** vt) {
 }
 
 }  // namespace
+
+bool InstallAround(ID3D12CommandQueue* q, Around around) {
+    if (!q) return false;
+    g_around.store(around);
+    const D3D12_COMMAND_LIST_TYPE t = q->GetDesc().Type;
+    const int slot = t == D3D12_COMMAND_LIST_TYPE_DIRECT ? 0 : t == D3D12_COMMAND_LIST_TYPE_COMPUTE ? 1 : 2;
+    std::lock_guard<std::mutex> l(g_mx);
+    if (g_slotDone[slot]) return true;
+    void** vt = *(void***)q;
+    const bool ok = slot == 0 ? InstallSlot<0>(vt) : slot == 1 ? InstallSlot<1>(vt) : InstallSlot<2>(vt);
+    g_slotDone[slot] = ok;
+    return ok;
+}
+void SetAround(Around around) { g_around.store(around); }
 
 bool InstallTap(ID3D12CommandQueue* q, Observer tap) {
     if (!q) return false;

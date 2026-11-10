@@ -6,6 +6,7 @@
 //   PS_TableKey(R)  TableKey: the picture unless TableKeyOn
 //   PS_Stamp(R)     Stamp: the picture unless StampOn
 //   PS_DistBlurV    DistBlurDown: the picture unless DistBlurOn ([render] distance_blur) - and PS_DistBlurH(R), what only it reads, with it
+//   PS_FovBlurV     FovBlurDown: the picture unless FovBlurOn ([render] foveated_blur) - and PS_FovBlurH, what only it reads, with it
 //   PS_Ov*          the overlays drawn apart (eyes by turns): PS_OvHud(R) as PS_Hud, PS_Ov(Made)GameHud(R) as PS_GameHud, PS_Ov(Made)Phantom(R) as
 //                   PS_Phantom - on their own picture, OverlaysApart not asked
 // With FogLight ([fog] light: the fog's short way, D2R_DepthFog.fx LightFog) the passes only the full fog, the cave ceiling and the glow over
@@ -87,6 +88,7 @@ bool Keep(const char* entry, ReadBool readBool, ReadFloat readFloat) {
         return on("GameFogMatch") && on("FogSeenNow");   // (spread over presents: a row of points each, a measure in 2 s - FogSeenNow)
     if (is("PS_Stamp") || is("PS_StampR")) return on("StampOn");
     if (is("PS_DistBlurH") || is("PS_DistBlurHR") || is("PS_DistBlurV")) return on("DistBlurOn");
+    if (is("PS_FovBlurH") || is("PS_FovBlurV")) return on("FovBlurOn");   // [render] foveated_blur: both, or neither
     return true;
 }
 

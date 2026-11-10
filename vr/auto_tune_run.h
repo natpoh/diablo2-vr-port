@@ -44,6 +44,7 @@ struct Row {
     float fpsBefore = 0, fpsAfter = 0;
     int phase = 0;               // autotune::Phase
     bool kept = false;
+    bool trial = false;          // tried before Low / Potato (eyes by turns): kept says whether it stayed
 };
 struct View {
     State state = State::Idle;

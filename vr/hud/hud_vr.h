@@ -100,6 +100,7 @@ void MapDirectionTick();
 void MapRotateFlatTick();
 void FlatMapZoomTick();
 bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l);
+bool FlatMapKey(UINT msg, WPARAM w, LPARAM l);   // [hud] flat_map_turn_key / flat_map_place_key (vr/flat_map_keys.h)
 bool FloorPointerAuto();
 void FloorPointerTick();
 void HandInventoryTick(ULONGLONG nowMs);

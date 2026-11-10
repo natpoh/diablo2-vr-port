@@ -194,20 +194,46 @@ inline int StepAt(int x) { return (x - kWindow / 2 + kPeriod) / (kPeriod / 32); 
 // from the strip's own picture (xr.cpp PaintCompass). As wide as the circle, its window's shape, a gap above the circle - or under it when
 // the circle is too near the screen's top for it (the game's corner map is at the top: 0.202.2's flat map had nothing over it). box: uv l, t,
 // r, b of the screen; crop: the window's left edge in the picture, uv (Crop / kAtlasW).
-struct CompassPlace { float box[4] = {0.0f, 0.0f, 0.0f, 0.0f}; float crop = 0.0f; bool below = false, ok = false; };
-inline CompassPlace CompassOnScreen(const Round& r, float bearing) {
+// Its look (2026-11-10, a player's ask relayed by Serg: "the thick strip at the bottom is in the way - a thin one with big letters, or the
+// letters round the map turning with it, no frame"): CompassStyle. Thin: only the strip's letters and ticks (its rows kThinTop ..
+// + kThinRows, the dark band and its gold rims left out by the effect), at the same scale - so the letters stay as big and the strip is
+// a little over two thirds as tall, see-through between them. Ring: no strip - N, NE, E ... round the circle's rim inside it, each where
+// that way lies on the turned map (the effect places them from the bearing; box is the circle's square then).
+enum class CompassStyle : int { None = 0, Strip = 1, Thin = 2, Ring = 3 };
+inline CompassStyle StyleOf(int v) { return v >= 1 && v <= 3 ? (CompassStyle)v : CompassStyle::None; }
+constexpr int kThinTop = 18, kThinRows = 70;   // the letters (20 .. 61) and the ticks (63 .. 85) of the strip's 96 rows, a little room round them
+struct CompassPlace { float box[4] = {0.0f, 0.0f, 0.0f, 0.0f}; float crop = 0.0f, bearing = 0.0f; int style = 0; bool below = false, ok = false; };
+inline CompassPlace CompassOnScreen(const Round& r, float bearing, CompassStyle style = CompassStyle::Strip) {
     CompassPlace c;
-    if (!r.ok || !(r.radius[0] > 0.0f) || !(r.radius[1] > 0.0f)) return c;
-    const float h = 2.0f * r.radius[1] * (float)kStripH / (float)kWindow, gap = 0.15f * h;
-    float top = r.centre[1] - r.radius[1] - gap - h;
-    if (top < 0.0f) { top = r.centre[1] + r.radius[1] + gap; c.below = true; }
-    c.box[0] = r.centre[0] - r.radius[0];
-    c.box[1] = top;
-    c.box[2] = r.centre[0] + r.radius[0];
-    c.box[3] = top + h;
+    if (style == CompassStyle::None || !r.ok || !(r.radius[0] > 0.0f) || !(r.radius[1] > 0.0f)) return c;
+    c.style = (int)style;
+    c.bearing = std::isfinite(bearing) ? bearing : 0.0f;
     c.crop = (float)Crop(bearing) / (float)kAtlasW;
+    if (style == CompassStyle::Ring) {
+        c.box[0] = r.centre[0] - r.radius[0];
+        c.box[1] = r.centre[1] - r.radius[1];
+        c.box[2] = r.centre[0] + r.radius[0];
+        c.box[3] = r.centre[1] + r.radius[1];
+    } else {
+        const int rows = style == CompassStyle::Thin ? kThinRows : kStripH;
+        const float h = 2.0f * r.radius[1] * (float)rows / (float)kWindow, gap = (style == CompassStyle::Thin ? 0.05f : 0.15f) * h;
+        float top = r.centre[1] - r.radius[1] - gap - h;
+        if (top < 0.0f) { top = r.centre[1] + r.radius[1] + gap; c.below = true; }
+        c.box[0] = r.centre[0] - r.radius[0];
+        c.box[1] = top;
+        c.box[2] = r.centre[0] + r.radius[0];
+        c.box[3] = top + h;
+    }
     c.ok = std::isfinite(c.box[0] + c.box[1] + c.box[2] + c.box[3]);
     return c;
+}
+// Ring: where label i (0 N, 1 NE ... 7 NW) stands, in the circle's own units (q: (p - centre) / radius, +y down), for a bearing (the way
+// the camera looks, clockwise from the map's up - up the screen on the turned map). kRingAt of the radius out from the centre.
+constexpr float kRingAt = 0.84f;
+inline void RingLabel(int i, float bearing, float* qx, float* qy) {
+    const float a = (float)i * (kTau / 8.0f) - (std::isfinite(bearing) ? bearing : 0.0f);   // the screen's angle, clockwise from up
+    *qx = kRingAt * std::sin(a);
+    *qy = -kRingAt * std::cos(a);
 }
 
 }  // namespace mapturn

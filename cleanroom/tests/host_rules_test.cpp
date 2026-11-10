@@ -25,7 +25,7 @@ static Values All(int a, int b, int c, int d) {
 
 static void Table() {
     // the Mechanics tab's "who hosts decides" keys, each once, ids unique and never 0, a default within its range
-    CHECK(kCount == 8);   // ... and quick_blow, quick_blow_faster (2026-11-05), shot_at_release (2026-11-06, id 8), share_hit_outcomes (2026-11-08, id 7)
+    CHECK(kCount == 9);   // ... and quick_blow, quick_blow_faster (2026-11-05), shot_at_release (2026-11-06, id 8), share_hit_outcomes (2026-11-08, id 7), move_during_skills (2026-11-10, id 9)
     std::set<int> ids;
     std::set<std::wstring> keys;
     for (int i = 0; i < kCount; ++i) {
@@ -45,6 +45,8 @@ static void Table() {
     CHECK(Parse(IndexOf(1), L"") == 0);   // flat_attack_path 0
     CHECK(Parse(IndexOf(3), L"") == 1);   // move_while_attacking true
     CHECK(Parse(IndexOf(4), L"") == 0);   // melee_direct_client_cleave false
+    CHECK(keys.count(L"gameplay/move_during_skills") && Parse(IndexOf(9), L"") == 0 && Parse(IndexOf(9), L"2") == 2 && Parse(IndexOf(9), L"7") == 2);   // move_during_skills: off by default, 2 = walk or run
+    CHECK(std::string(ValueName(IndexOf(9), 2)) == "Walk or run" && std::string(ValueName(IndexOf(9), 0)) == "Off");
 }
 
 static void Parsing() {
@@ -168,6 +170,13 @@ static void Panel() {
     CHECK(Def(10).kind == Kind::Choice && Shown(10, 0) == "As in the game's options" && Shown(10, 2) == "Centre" && Shown(10, 3) == "Right");   // [hud] flat_map_place
     // [input] flat_pickup_key: a key row - its name shown, one button (a click arms "press a key"), never stepped, its code kept through the ini text
     CHECK(Def(12).kind == Kind::Key && std::wcscmp(Def(12).key, L"flat_pickup_key") == 0 && Shown(12, 69) == "E" && Shown(12, 0x75) == "F6");
+    // the map's own rows (2026-11-10): its turn, its compass's look, its keys - a map key refuses Tab, the pick-up key does not
+    CHECK(std::wcscmp(Def(14).key, L"map_rotate_flat") == 0 && Def(14).kind == Kind::Toggle && Shown(14, 1) == "On");
+    CHECK(Def(15).kind == Kind::Choice && Shown(15, 0) == "None" && Shown(15, 2) == "Thin: letters only" && Shown(15, 3) == "Ring of letters");
+    CHECK(Def(16).kind == Kind::Key && Shown(16, 111) == "Num /" && Def(17).kind == Kind::Key && Shown(17, 106) == "Num *");
+    CHECK(Def(18).kind == Kind::Choice && Shown(18, 0) == "Left" && Shown(18, 1) == "Right");
+    CHECK(Shown(19, 187) == "=" && Shown(20, 189) == "-" && std::wcscmp(Def(20).key, L"flat_map_zoom_out_key") == 0);
+    CHECK(KeyUse(16) == keycap::Use::MapKey && KeyUse(19) == keycap::Use::MapKey && KeyUse(12) == keycap::Use::PickupKey);
     CHECK(!HasSteps(12) && IsKey(12) && !IsKey(11) && Step(Def(12), 69, 1) == 69 && ParseValue(Def(12), L"71") == 71 && ParseValue(Def(12), L"") == 69);
     CHECK(Def(11).kind == Kind::Toggle && Def(13).kind == Kind::Toggle && Def(11).fallback == 0 && Def(13).fallback == 0);   // new: off
     // the layout at 1080p and 720p: inside the screen, rows in order, buttons inside their row
