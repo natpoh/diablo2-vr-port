@@ -13,12 +13,14 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <system_error>
 #include <thread>
 
 #include "paint_kit.h"
@@ -281,11 +283,22 @@ void Render(const View& v, std::vector<uint32_t>& px) {
 
 // -- the worker ---------------------------------------------------------------------------------------------------------------------------
 
+std::atomic<void (*)()> g_afterPaint{nullptr};
+void AfterPaintForTest(void (*fn)()) { g_afterPaint.store(fn); }
+
 struct Async::Impl {
     std::mutex m;
     std::condition_variable cv;
     std::thread th;
     bool stop = false;
+    // Stop (vr/skill_wheel.cpp Release) comes from two threads: the update thread's ini reload (skill_wheel off - a key written, the 2D mode)
+    // and the session's end (xr.cpp WheelTeardown). Both read `th` joinable and both joined it outside the lock: the second join threw
+    // std::system_error out of the reload and the game died (0.210.1, Serg's PC twice, 2026-11-09; the icons' Shutdown had the same in 0.201).
+    // Now one Stop at a time (stopM), the thread taken out of `th` under `m` and joined outside it, never joined from itself, a throw caught;
+    // `stopping` keeps Submit / Warm from starting a painter meanwhile, and `gen` ends a painter Stop could not join (it returns on its own).
+    std::mutex stopM;
+    bool stopping = false;
+    uint32_t gen = 0;
     View want;
     bool haveWant = false;
     uint32_t paintedRev = 0;
@@ -296,7 +309,14 @@ struct Async::Impl {
     int doneW = kSize, doneH = kSize;
     bool haveDone = false;
 
-    void Run() {
+    // A painter of the generation it was started in: a later Stop's gen ends it even when its stop flag was cleared again.
+    void Start() {   // under m
+        if (th.joinable() || stopping) return;
+        stop = false;
+        const uint32_t g = gen;
+        th = std::thread([this, g] { Run(g); });
+    }
+    void Run(uint32_t myGen) {
         std::vector<uint32_t> px;
         (void)GetPolar();   // (the pixel table, made before the first wanted picture)
         for (;;) {
@@ -305,7 +325,7 @@ struct Async::Impl {
             {
                 std::unique_lock<std::mutex> lock(m);
                 for (;;) {
-                    if (stop) return;
+                    if (stop || myGen != gen) return;
                     icons = wheelicons::Revision();
                     if (haveWant && (!painted || want.revision != paintedRev || icons != paintedIcons)) break;
                     cv.wait_for(lock, std::chrono::milliseconds(40));
@@ -316,11 +336,14 @@ struct Async::Impl {
                 painted = true;
             }
             try { Render(v, px); } catch (...) { continue; }
-            std::lock_guard<std::mutex> lock(m);
-            done.swap(px);
-            doneRev = v.revision;
-            SizeOf(v.style, &doneW, &doneH);
-            haveDone = true;
+            {
+                std::lock_guard<std::mutex> lock(m);
+                done.swap(px);
+                doneRev = v.revision;
+                SizeOf(v.style, &doneW, &doneH);
+                haveDone = true;
+            }
+            if (void (*f)() = g_afterPaint.load()) f();   // (tests only: a Stop from the painter's own thread)
         }
     }
 };
@@ -339,19 +362,13 @@ void Async::Submit(const View& v) {
         I.haveWant = true;
         I.cv.notify_one();
     }
-    if (!I.th.joinable()) {
-        I.stop = false;
-        I.th = std::thread([this] { impl_->Run(); });
-    }
+    I.Start();
 }
 
 void Async::Warm() {
     Impl& I = *impl_;
     std::lock_guard<std::mutex> lock(I.m);
-    if (!I.th.joinable()) {
-        I.stop = false;
-        I.th = std::thread([this] { impl_->Run(); });
-    }
+    I.Start();
 }
 
 bool Async::Fetch(std::vector<uint32_t>& out, uint32_t* revision, int* width, int* height) {
@@ -366,17 +383,42 @@ bool Async::Fetch(std::vector<uint32_t>& out, uint32_t* revision, int* width, in
     return true;
 }
 
-void Async::Stop() {
+std::atomic<uint32_t> g_stopFaults{0};
+
+void Async::Stop() noexcept {
     Impl& I = *impl_;
-    {
+    try {
+        std::lock_guard<std::mutex> one(I.stopM);   // a second Stop waits for the first, then finds nothing to join
+        std::thread t;
+        {
+            std::lock_guard<std::mutex> lock(I.m);
+            I.stop = true;
+            I.stopping = true;
+            ++I.gen;
+            t = std::move(I.th);
+            I.cv.notify_all();
+        }
+        if (t.joinable()) {
+            if (t.get_id() == std::this_thread::get_id()) {
+                t.detach();   // (Stop from the painter itself: it returns on its own - its generation is gone)
+            } else {
+                try {
+                    t.join();
+                } catch (const std::system_error&) {
+                    g_stopFaults.fetch_add(1);
+                    if (t.joinable()) t.detach();
+                }
+            }
+        }
         std::lock_guard<std::mutex> lock(I.m);
-        I.stop = true;
-        I.cv.notify_all();
+        I.haveWant = I.haveDone = I.painted = false;
+        I.stop = false;
+        I.stopping = false;
+    } catch (...) {   // (a lock that failed: nothing of this may reach the ini reload)
+        g_stopFaults.fetch_add(1);
     }
-    if (I.th.joinable()) I.th.join();
-    std::lock_guard<std::mutex> lock(I.m);
-    I.haveWant = I.haveDone = I.painted = false;
-    I.stop = false;
 }
+
+uint32_t StopFaults() { return g_stopFaults.load(); }
 
 }  // namespace wheelpaint

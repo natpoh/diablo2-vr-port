@@ -90,6 +90,9 @@ struct Params {
     // planesStrength there (the fog's share after plane i: strength x (i + 1) / planes). planesSoft 0: hard planes; 1: each fades in over the
     // spacing in front of it (soft particles: no line where a plane cuts the ground; the fog still from planesStart, whole at planesEnd). In
     // place of the game's exponential; 0 = none (as before).
+    // [fog] game_fog_cover: at or past this distance (world units) the fog's colour whole - the world, the hair and foliage, the particles
+    // (their light out); 0 = the fog's own curve all the way (as before). The game's fog only
+    float cover = 0.0f;
     int planes = 0;
     float planesStart = 55.0f, planesEnd = 140.0f, planesStrength = 1.0f, planesSoft = 1.0f;
 };

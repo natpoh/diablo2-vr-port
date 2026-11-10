@@ -454,6 +454,8 @@ thread_local bool t_touchAnswer = false;   // [debug] melee_press_trace: the loo
 // only the hand picked. None of ours: the game's answer.
 void* HandAnswer(uintptr_t ret, int skill, void* game) {
     if (ret == g_clickTargetRet && g_set.platform.load() == 0) {   // [input] flat_body_target: flat, the map click's lookup - the crosshair's unit
+        // [input] flat_pickup_key_on / flat_item_hitbox: an item first - the pick-up key's while its press is under way, Alt's by its hitbox
+        if (const uintptr_t item = FlatItemClickAnswer((uintptr_t)game)) return (void*)item;
         const uintptr_t flat = FlatClickTarget((uintptr_t)game);
         return flat ? (void*)flat : game;
     }
@@ -685,6 +687,7 @@ void InstallSlotSkillHook() {
 
 void InstallSpellAimHooks() {
     if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (g_set.platform.load() == 0 && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load()) ||
+                                                   (g_set.platform.load() == 0 && (g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load())) ||
                                                    (g_set.flatShotAtCrosshair.load() && g_set.platform.load() == 0)) || !OrigAttackPoint) return;   // the point's hook in first ([input] flat_body_target: flat, the map click's lookup answered; [input] flat_shot_at_crosshair: for the hover lookup)
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||
         !Matches(RVA_HOVER_UNIT, kSigHoverUnit, sizeof kSigHoverUnit) || !Matches(RVA_CLIENT_INDEX, kSigClientIndex, sizeof kSigClientIndex) ||

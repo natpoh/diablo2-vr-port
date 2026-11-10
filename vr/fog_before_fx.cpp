@@ -170,9 +170,19 @@ void NoteFogBehind(ID3D12PipelineState* pso) {
     ReleaseSRWLockExclusive(&g_fbLock);
     if (added) g_fogBehindN.fetch_add(1, std::memory_order_relaxed);
 }
+// Every pipeline's pixel shader hash (the 10 s line below names the ones drawing into the effects' weighted colour that are not sent - the
+// particles, and any foliage / grass the bench's stages do not know: Serg 2026-11-10 on 0.210.4, far crowns, bushes and small grass on
+// Medium through the fog)
+std::unordered_map<ID3D12PipelineState*, uint64_t> g_psHashOf;   // (under g_fbLock)
+SRWLOCK g_notSentLock = SRWLOCK_INIT;
+std::unordered_map<ID3D12PipelineState*, uint32_t> g_notSent;     // draws into the weighted colour not sent, by pipeline (10 s)
 void NoteIfFogBehind(ID3D12PipelineState* pso, const void* ps, size_t n) {
     if (!pso || !ps || !n) return;
-    const uint8_t st = renderbench::StageOf(Fnv64(ps, n));
+    const uint64_t h = Fnv64(ps, n);
+    AcquireSRWLockExclusive(&g_fbLock);
+    g_psHashOf[pso] = h;
+    ReleaseSRWLockExclusive(&g_fbLock);
+    const uint8_t st = renderbench::StageOf(h);
     if (st == renderbench::kLit || st == renderbench::kWaterGlassHair) NoteFogBehind(pso);
 }
 bool IsFogBehind(ID3D12PipelineState* pso) {
@@ -241,6 +251,12 @@ struct Known {   // a resource's last barrier on a list: its subresource 0's sta
     uint32_t frame;   // (any list's record: the present count when it was recorded)
     D3D12_RESOURCE_STATES first = D3D12_RESOURCE_STATE_COMMON;   // (a list's record: the state its first barrier on it came from - the chain)
     bool firstWhole = false;                                       // ... that first barrier was on all its subresources
+    // Subresource 0 - all the step touches of any target (its views one mip, its barriers and copies subresource 0): whether a barrier on it
+    // (or on all) was seen, so s is its state, and the state the first such barrier on this list came from (the chain). Serg's 0.210.4 log:
+    // the effects' weighted colour "set on the resolve's list (0x80)" and still refused after e93a2020 - more than one subresource, moved
+    // by barriers on subresource 0
+    bool has0 = false;
+    D3D12_RESOURCE_STATES first0 = D3D12_RESOURCE_STATE_COMMON;
 };
 std::atomic<uint32_t> g_frame{0};   // the game's presents (Frame)
 struct FxDepth;
@@ -382,6 +398,10 @@ bool AnyState(ID3D12Resource* r, Known* k) {
 // One barrier into a record: subresource 0's state (all the step touches of the scene: its first mip), and whether every subresource is in
 // it (the depth's planes: our barriers on it cover them all)
 void Note(Known& k, const D3D12_RESOURCE_TRANSITION_BARRIER& t) {
+    if (t.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES || t.Subresource == 0) {
+        if (!k.has0) k.first0 = t.StateBefore;
+        k.has0 = true;
+    }
     if (t.Subresource == D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) { k.s = t.StateAfter; k.whole = true; return; }
     if (t.Subresource == 0) k.s = t.StateAfter;
     k.whole = false;
@@ -431,6 +451,7 @@ void NoteFxR11(ID3D12Resource* r) {
 // ... and the effects' weighted colour target bound in that call: the first RGBA16F one (the revealage the second - the particles write colour x
 // alpha x weight into SV_Target0, the revealage into 1; the resolve takes rgb / a). The latest held.
 std::atomic<ID3D12Resource*> g_fxAccum{nullptr};
+std::atomic<uint32_t> g_accumBarriers{0};   // the game's barriers seen on it (the "not known" line: none ever = no barrier of ours to follow)
 std::atomic<ID3D12Resource*> g_fxReveal{nullptr};   // ... and its revealage target (the pair's second RGBA16F), held
 void NoteFxReveal(ID3D12Resource* r) {
     if (!r || g_fxReveal.load() == r) return;
@@ -581,6 +602,7 @@ void OnBarrier(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_RESOURCE_B
     for (unsigned i = 0; i < n; ++i) {
         if (b[i].Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION || !b[i].Transition.pResource) continue;
         ID3D12Resource* r = b[i].Transition.pResource;
+        if (r == g_fxAccum.load(std::memory_order_relaxed)) g_accumBarriers.fetch_add(1, std::memory_order_relaxed);
         if (watching && !Watched(r)) continue;   // (watching: only the found ones' states)
         const D3D12_RESOURCE_TRANSITION_BARRIER& t = b[i].Transition;
         // (a first barrier on one subresource other than 0: subresource 0's state not known from it)
@@ -665,7 +687,7 @@ cbuffer K : register(b0) {
     float cCurve, cStrength, easeOn, byDepth;
     uint glowW, glowH; float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
-    float pSoft, accumBehind, revealOn, pad2;
+    float pSoft, accumBehind, revealOn, coverAt;
 };
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
@@ -717,6 +739,7 @@ float KeepZ(float2 uv, float z) {
             : curveOn > 0.5 ? 1.0 - pow(saturate((dist - cStart) / max(cEnd - cStart, 1.0)), cCurve) * cStrength * UnleashedFogEase(dist, cStart, easeOn)   // ([fog] game_fog_our_curve, ease_in)
                             : min(1.0, exp(-density * (dist / plane - 1.0)));
     if (heightOn > 0.5) t = 1.0 - (1.0 - t) * saturate((top - dot(v, up)) / soft);
+    if (coverAt > 0.5 && byDepth < 0.5 && dist >= coverAt) t = 0.0;   // ([fog] game_fog_cover: the fog's colour whole from there on)
     return t;
 }
 // The void, or the game's dome ([sky] game_sky, Params::skyDepth) at p: the depth is the view's (near / the depth along the view), so off the
@@ -779,6 +802,16 @@ float3 GameFogPixel(uint2 p, float3 c) {
     }
     const float k0 = KeepAt(p, uv, d0);
     if (dHi - dLo <= 0.02 * dHi) return lerp(fogColour, c, k0);
+    // The game's dome beside ground the fog nearly covers: fogged as that ground. Far tree crowns are thinned to a pixel pattern by the game
+    // (its draw-distance fade); between their leaves - fogged by their depth - the dome showed through unfogged: dark specks over every
+    // far crown (Serg 2026-11-09 on 0.209.21 / 0.210 rc, VR F4; with the dome at 200, in front of them, "все выглядит отлично"). Only beside
+    // ground fogged half or more: near trees' gaps keep the sky as it is
+    if (SkyProper(p, d0)) {
+        float kGround = 2.0;
+        [unroll] for (int i = 0; i < 8; ++i)
+            if (dn[i] > 1e-7 && !SkyAt(p, dn[i])) kGround = min(kGround, Keep(uv, dn[i]));
+        if (kGround <= 0.5) return lerp(fogColour, c, kGround);
+    }
     if (d0 <= 1e-7 && holes > 0.5) {   // (a hole: no sky proper beside it, drawn ground beside it)
         float far = 1e9;
         bool sky = false;
@@ -920,7 +953,7 @@ struct Consts {
     uint32_t glowW, glowH;
     float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
-    float pSoft, accumBehind, revealOn, pad2;
+    float pSoft, accumBehind, revealOn, coverAt;
 };
 static_assert(sizeof(Consts) == 36 * 4, "thirty-six root constants");
 
@@ -1371,13 +1404,16 @@ void TwinDraw(ID3D12GraphicsCommandList* cl, List& l, Twin* t, bool indexed, uns
 }
 
 // The state a target the resolve reads is in: certain when this list set it; else a read state set on another list this frame (see Insert)
+// Subresource 0's state is what counts (Known::has0): the game moves the effects' targets by barriers on subresource 0 (Serg's 0.210.3 log:
+// refused as "part of it"; 0.210.4: still refused with one-subresource targets counted whole - so they have more), and the step touches
+// only it - its views one mip, its barriers and copies subresource 0
 bool ReadState(const List& l, ID3D12Resource* r, D3D12_RESOURCE_STATES* s) {
     const D3D12_RESOURCE_STATES readable = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     Known k{};
     const bool own = OwnState(l, r, &k);
     if (!own && !(AnyState(r, &k) && k.frame == g_frame.load(std::memory_order_relaxed))) return false;
     *s = k.s;
-    return (k.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(k.s & ~readable);
+    return k.has0 && (k.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(k.s & ~readable);
 }
 // One of ours as big as a target of the game's and of its format, written by a compute shader (a new size or format: made again - the old
 // one's last step long done, as the scene's)
@@ -1668,13 +1704,37 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
             D3D12_RESOURCE_STATES s{};
             bool ok = false;
             const char* how = "";
-            if (own) { s = k.s; ok = k.whole && (s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(s & ~readable); how = "set on the resolve's list"; }
+            if (own) { s = k.s; ok = k.has0 && (s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(s & ~readable); how = "set on the resolve's list"; }
             else if (ChainProven(1, acc, &s)) { ok = true; l.stepOnChain[1] = true; l.stepState[1] = s; how = "proven by the submission order"; }
             else if (ReadState(l, acc, &s)) { ok = true; how = "a read state set on another list this frame"; }
             static int toldOk = -1;
             if (toldOk != (int)ok) {
                 toldOk = (int)ok;
                 Line("vrcam: fog before the effects - the effects' weighted colour: %s", ok ? how : "its state not known yet - not fogged (the additive and the scene are)");
+            }
+            // Why not known (Serg 2026-11-09, 0.210.2: in every session so far "not known yet" and never known - the hair / foliage / particle
+            // fog never ran in the game; the submission order never lost it either, so it never saw a barrier on it): its flags, this list's and
+            // any list's last barrier on it, the chain's view - once for each target, again every 30 s while not known
+            if (!ok) {
+                static ID3D12Resource* toldFor = nullptr;
+                static ULONGLONG toldAt = 0;
+                const ULONGLONG now = GetTickCount64();
+                if (toldFor != acc || now - toldAt > 30000) {
+                    toldFor = acc;
+                    toldAt = now;
+                    Known ka{};
+                    const bool anyK = AnyState(acc, &ka);
+                    AcquireSRWLockShared(&g_chainLock);
+                    const Chain ch = g_chain[1];
+                    ReleaseSRWLockShared(&g_chainLock);
+                    Line("vrcam: fog before the effects - the weighted colour %p not known: flags 0x%X (simultaneous access %d), %u mips, %u slices; on "
+                         "the resolve's list %s (0x%X, subresource 0 %s, all %s); last recorded anywhere %s (0x%X, frame %u, now %u); the submission "
+                         "order: %s, state 0x%X, %d runs; barriers seen on it %u", (void*)acc, (unsigned)ad.Flags,
+                         (ad.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS) ? 1 : 0, (unsigned)ad.MipLevels, (unsigned)ad.DepthOrArraySize,
+                         own ? "set" : "none", own ? (unsigned)k.s : 0u, own && k.has0 ? "moved" : "not moved", own && k.whole ? "yes" : "no", anyK ? "yes" : "never", anyK ? (unsigned)ka.s : 0u, anyK ? ka.frame : 0u,
+                         g_frame.load(), ch.res == acc ? (ch.known ? "known" : "no barrier seen") : "another target followed", (unsigned)ch.state, ch.runs,
+                         g_accumBarriers.load());
+                }
             }
             if (ok && !MakeHair(dev, ad.Width, ad.Height)) ok = false;   // (g_gpuMx held here)
             ID3D12Resource* rev = ok ? g_fxReveal.load() : nullptr;   // the revealage: its state as the weighted colour's, else by the depth behind
@@ -1688,7 +1748,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
                 ChainWatch(2, rev);
                 D3D12_RESOURCE_STATES sr{};
                 bool okR = false;
-                if (ownR) okR = kr.whole && (kr.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kr.s & ~readable), sr = kr.s;
+                if (ownR) okR = kr.has0 && (kr.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kr.s & ~readable), sr = kr.s;
                 else if (ChainProven(2, rev, &sr)) { okR = true; l.stepOnChain[2] = true; l.stepState[2] = sr; }
                 else if (ReadState(l, rev, &sr)) okR = true;
                 if (okR && MakeOwn(g.revealTex, g.revealW, g.revealH, g.revealF, rd2.Width, rd2.Height, rd2.Format, L"d2rvr fog before fx reveal")) {
@@ -1738,7 +1798,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
             ChainWatch(3, add);
             D3D12_RESOURCE_STATES sg{};
             bool okG = false;
-            if (ownG) { okG = kg.whole && (kg.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kg.s & ~readable); sg = kg.s; }
+            if (ownG) { okG = kg.has0 && (kg.s & D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE) && !(kg.s & ~readable); sg = kg.s; }
             else if (ChainProven(3, add, &sg)) { okG = true; l.stepOnChain[3] = true; l.stepState[3] = sg; }
             else if (ReadState(l, add, &sg)) okG = true;
             if (okG && MakeOwn(g.glowTex, g.glowW, g.glowH, g.glowF, gd.Width, gd.Height, gd.Format, L"d2rvr fog before fx glow")) {
@@ -1856,6 +1916,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     if (c.planeN > 0.0f) c.curveOn = 0.0f;   // (the planes in place of either curve)
     c.accumBehind = hair ? 1.0f : 0.0f;   // (the hair / foliage folded in: no effects' depth)
     c.revealOn = revealOn ? 1.0f : 0.0f;
+    c.coverAt = p.ours ? 0.0f : std::max(p.cover, 0.0f);
     g_planesDrawnInto.store(write ? (onTarget ? 2 : 1) : 0, std::memory_order_relaxed);
 
     natived3d::SetOurs(true);
@@ -2013,6 +2074,11 @@ void Redirect(ID3D12GraphicsCommandList* cl, List& l) {
     ID3D12Resource* acc = g_fxAccum.load(std::memory_order_relaxed);
     const bool want = acc && l.rt0 == acc && g_foldOk.load(std::memory_order_relaxed) && g_sceneMode.load(std::memory_order_relaxed) != 2 &&
                       g_lastWrote.load(std::memory_order_relaxed) && l.nRt >= 1 && IsFogBehind(l.pso);
+    if (acc && l.rt0 == acc && !want && l.pso) {   // (a draw into the weighted colour left as drawn: counted by its pipeline)
+        AcquireSRWLockExclusive(&g_notSentLock);
+        if (g_notSent.size() < 4096 || g_notSent.count(l.pso)) ++g_notSent[l.pso];
+        ReleaseSRWLockExclusive(&g_notSentLock);
+    }
     if (want == l.redirected) return;
     natived3d::SetOurs(true);
     if (want) {
@@ -2108,8 +2174,8 @@ void OnExecute(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* list
             }
             for (const Known& k : l->states) {
                 if (k.r != r) continue;
-                if (!k.firstWhole || !k.whole) { ch.known = false; ch.runs = 0; lostWhy = "a barrier on part of it"; break; }
-                if (ch.known && k.first != ch.state) { ch.runs = 0; lostWhy = "a transition not seen"; }
+                if (!k.has0) break;   // (only other subresources moved on this list: subresource 0, all the step touches, as it was)
+                if (ch.known && k.first0 != ch.state) { ch.runs = 0; lostWhy = "a transition not seen"; }
                 ch.state = k.s;
                 ch.known = true;
                 break;
@@ -2276,6 +2342,16 @@ void Configure(const Params& p) {
     g_ours.store(p.on && p.ours, std::memory_order_relaxed);
     g_fxDepth.store(p.on && p.fxDepth, std::memory_order_relaxed);
     g_on.store(p.on, std::memory_order_relaxed);
+    // [fog] game_fog_cover: once each time it changes (Serg 2026-11-09 on 0.210.2: "не работает заглушка тумана" - the log said nothing of it)
+    static float toldCover = -1.0f;
+    const float cover = p.on && !p.ours ? std::max(p.cover, 0.0f) : 0.0f;
+    if (std::fabs(cover - toldCover) > 0.5f) {
+        toldCover = cover;
+        if (cover > 0.5f)
+            Line("vrcam: fog before the effects - the fog covers everything from %.0f units ([fog] game_fog_cover): the scene there the fog's colour "
+                 "whole; the hair, foliage and particles too once the effects' weighted colour is taken (its line says)", cover);
+        else Line("vrcam: fog before the effects - the fog's own curve all the way ([fog] game_fog_cover 0)");
+    }
 }
 
 bool Drawn() {
@@ -2535,6 +2611,33 @@ void Frame() {
     if (const uint32_t sent = g_redirected.exchange(0))   // (the hair / foliage draws sent into ours, fogged by the depth behind them)
         Line("vrcam: fog before the effects, 10 s: %u hair / foliage draws sent into our weighted colour target (fogged by the depth behind "
              "them; %u such pipelines known); the particles as drawn", sent, g_fogBehindN.load());
+    {   // the draws into the weighted colour NOT sent, the most drawn pipelines by pixel shader hash and the bench's stage (the particles are
+        // "-": fogged by their own distance at the step; a foliage or grass pipeline here is one the hair / foliage table misses)
+        std::unordered_map<ID3D12PipelineState*, uint32_t> ns;
+        AcquireSRWLockExclusive(&g_notSentLock);
+        ns.swap(g_notSent);
+        ReleaseSRWLockExclusive(&g_notSentLock);
+        if (!ns.empty()) {
+            std::vector<std::pair<uint32_t, ID3D12PipelineState*>> v;
+            uint64_t total = 0;
+            for (const auto& [pso, n] : ns) { v.push_back({n, pso}); total += n; }
+            std::sort(v.begin(), v.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            char b[1400];
+            int len = snprintf(b, sizeof b, "vrcam: fog before the effects, 10 s: %llu draws into the effects' weighted colour left as drawn (%s), by %zu "
+                               "pipelines; the most (pixel shader hash, stage, draws):", (unsigned long long)total,
+                               g_foldOk.load() ? "the particles - fogged by their own distance at the step - and any pipeline not in the hair / foliage table"
+                                               : "the fold not running: all of them", v.size());
+            AcquireSRWLockShared(&g_fbLock);
+            for (size_t i = 0; i < v.size() && i < 12 && len > 0 && len < (int)sizeof b - 80; ++i) {
+                const auto it = g_psHashOf.find(v[i].second);
+                const uint64_t h = it != g_psHashOf.end() ? it->second : 0;
+                len += snprintf(b + len, sizeof b - len, " %016llx %s %u;", (unsigned long long)h,
+                                h ? renderbench::StageName(renderbench::StageOf(h)) : "(hash not known)", v[i].first);
+            }
+            ReleaseSRWLockShared(&g_fbLock);
+            Line("%s", b);
+        }
+    }
     {   // [fog] game_fog_planes: the planes, once each 10 s while they are asked for
         Params pp;
         AcquireSRWLockShared(&g_paramLock);

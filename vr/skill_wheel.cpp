@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdarg>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -34,6 +35,8 @@
 #include "bodywalk_start.h"    // [openxr] gesture_overlay: the tab's START BODYWALK
 #include "rune_flash.h"   // the trail's flash when a take is accepted
 #include "gesture_engine_wire.h"
+#include "banner.h"             // the Gestures tab's "Keyboard key": press a key, what it bound
+#include "key_capture_wire.h"   // ... the overlays' "press a key" (vr/key_capture.h)
 #include "gesture_play_wire.h"
 #include "trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right: the Gestures tab's Triggers screen   // the Gestures tab's Play: the take on the hero's own arms (F4, visual only)   // [gestures] engine_in_game: the tab's list and commands from the gesture engine in the game
 #include "link.h"              // [openxr] gesture_overlay: BodyWalk's Gestures block in, the GestureCmds ring out (Game Link)
@@ -49,6 +52,8 @@
 #include "wheel_icons.h"
 #include "wheel_paint.h"
 #include "xr.h"
+
+namespace gamecmd { int CommandOfKey(unsigned vk); }   // (vr/gamecmd.cpp: the game's command on a keyboard key, -1 none)
 
 namespace skillwheel {
 namespace {
@@ -421,7 +426,7 @@ void OnFrame(const directinput::Frame& f, void*) {
         gestures.missing = engine ? gov::Avail::NoEngine : MissingNow();
         gestures.canStart = !engine && g_bwFound.load();
     }
-    const wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr,
+    wheel::Step s = g_ctl.Frame(f, g_snap, GetTickCount64(), wheelgame::ReplyNow(), f4, request, tabs ? &host : nullptr,
                                       gestureTab || g_ctl.GesturesModel().Recording() ? &gestures : nullptr);
     if (g_gestureTrace.load()) {   // [debug] gesture_trace: the tab's model's events, the block's changes, the pen handed to BodyWalk
         for (int i = 0; i < s.gestureTraces; ++i) TraceF("model: %s", s.gestureTrace[i]);
@@ -495,6 +500,69 @@ void OnFrame(const directinput::Frame& f, void*) {
         heldBefore = held;
         gplaywire::Tick();
         if (!gplaywire::Playing()) g_playDurS = 0;
+    }
+    // The Game actions' "Keyboard key" (vr/gesture_actions.h Kind::Key; Serg 2026-11-09: "key binds in the gestures"): chosen for a gesture or a trigger's
+    // action, the next key pressed on the keyboard is taken (never the game's: vr/key_capture_wire.h), and the game's own command the player has on that key
+    // (its Controls: gamecmd::CommandOfKey) is bound in its place - pressed by the game's executor as every key command is, no key ever sent (a key would
+    // flip the game to mouse and keyboard in the headset). A key the game has no command on: said, nothing bound.
+    {
+        static uint32_t keyGesture = 0;   // whose: a gesture ...
+        static int keyTrigRow = -1;       // ... or a trigger's action (the Triggers screen's row)
+        const bool forBind = s.gestureBindAction && std::strcmp(s.gestureAction, gact::kKeyId) == 0;
+        const bool forTrig = s.gestureTrigSet && s.gestureTrigRole == 3 && std::strcmp(s.gestureTrigAction, gact::kKeyId) == 0;
+        if (forBind || forTrig) {
+            keyGesture = forBind ? s.gestureBindId : 0;
+            keyTrigRow = forTrig ? s.gestureTrigRow : -1;
+            keycapwire::Arm(keycapwire::kGestures, keycap::Use::GameKey);
+            banner::Show("Press a key on the keyboard - its game command goes on the gesture (Esc: cancel)", true, GetTickCount64(), (unsigned)keycap::kTimeoutMs);
+            s.gestureBindAction = false;
+            s.gestureTrigSet = false;
+            char b[160];
+            std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Keyboard key for %s %u: waiting for a key", forBind ? "gesture" : "trigger row", forBind ? keyGesture : (unsigned)keyTrigRow);
+            Log(b);
+        }
+        keycap::Res res;
+        if (keycapwire::Take(keycapwire::kGestures, &res)) {
+            char name[32];
+            keycap::Text(res.vk, name, sizeof name);
+            char b[220];
+            b[0] = 0;
+            const uint64_t now = GetTickCount64();
+            if (res.r == keycap::R::Took) {
+                const int cmd = gamecmd::CommandOfKey(res.vk);
+                char id[32];
+                std::snprintf(id, sizeof id, "d2r.cmd.%02X", (unsigned)(cmd < 0 ? 0 : cmd));
+                const gact::Def* d = cmd >= 0 ? gact::All().Find(id) : nullptr;
+                if (d && keyTrigRow >= 0) {
+                    s.gestureTrigSet = true;
+                    s.gestureTrigRow = (uint8_t)keyTrigRow;
+                    s.gestureTrigRole = 3;
+                    std::snprintf(s.gestureTrigAction, sizeof s.gestureTrigAction, "%s", id);
+                } else if (d && keyGesture) {
+                    s.gestureBindAction = true;
+                    s.gestureBindId = keyGesture;
+                    std::snprintf(s.gestureAction, sizeof s.gestureAction, "%s", id);
+                }
+                if (d) {
+                    banner::Show(std::string("Key ") + name + ": " + d->name, true, now, 3000);
+                    std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Keyboard key %s (0x%02X): the game's command 0x%02X (%s) bound", name, res.vk, (unsigned)cmd, d->name);
+                } else {
+                    banner::Show(std::string("Key ") + name + ": no game command on it (the game's Controls) - nothing bound", false, now, 4000);
+                    std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Keyboard key %s (0x%02X): no command of the game's on it - nothing bound", name, res.vk);
+                }
+                keyGesture = 0;
+                keyTrigRow = -1;
+            } else if (res.r == keycap::R::Refused) {
+                const char* why = keycap::Refusal(res.vk, keycap::Use::GameKey);
+                banner::Show(std::string(name) + ": " + (why ? why : "not that one") + " - press another (Esc: cancel)", false, now, 4000);
+            } else if (res.r == keycap::R::Cancelled || res.r == keycap::R::TimedOut) {
+                banner::Show(res.r == keycap::R::Cancelled ? "Keyboard key: cancelled" : "Keyboard key: no key pressed - nothing bound", false, now, 2500);
+                std::snprintf(b, sizeof b, "vrcam: skill panel, Gestures - Keyboard key: %s", res.r == keycap::R::Cancelled ? "cancelled (Esc)" : "no key in 10 s");
+                keyGesture = 0;
+                keyTrigRow = -1;
+            }
+            if (b[0]) Log(b);
+        }
     }
     if (s.gestureTrigSet) {   // a trigger's role / action: applied now, and kept in the ini ([gestures] trigger_<hand>, trigger_<hand>_action)
         const int hand = s.gestureTrigRow == 0 ? 1 : 0;
@@ -855,7 +923,11 @@ bool Picture(std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uin
 }
 
 // Everything let go: the wheel closed, the controller's state and the game's snapshot dropped, the painter's and the icons' threads joined.
+// Two callers can come at once - the update thread's ini reload (Configure, the wheel switched off: a key written, the 2D mode) and the
+// session's end (xr.cpp WheelTeardown): one after the other (0.210.1 died in the painter's second join, 2026-11-09). Nothing of it throws.
+std::mutex g_releaseLock;
 void Release() {
+    std::lock_guard<std::mutex> one(g_releaseLock);
     {
         std::lock_guard<std::mutex> lock(g_lock);
         g_ctl.Reset();
@@ -879,7 +951,15 @@ void Release() {
     hset::store::Join(1500);   // an Apply in flight is finished first
     hsetview::LetGo();
     directinput::SetUiUp(false);
+    const uint32_t faults = wheelpaint::StopFaults();
     Painter().Stop();
+    if (wheelpaint::StopFaults() != faults) {
+        static bool told = false;
+        if (!told) {
+            told = true;
+            Log("vrcam: openxr - skill wheel: the painter's thread could not be joined (caught; it was let go and ends on its own) - tell the author");
+        }
+    }
     wheelicons::Shutdown();
     wheelgame::Reset();
 }

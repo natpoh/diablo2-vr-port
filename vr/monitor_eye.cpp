@@ -37,6 +37,7 @@ void Line(const char* fmt, ...) {
 
 std::atomic<int> g_setting{kAsBefore};
 std::atomic<bool> g_fit{true}, g_drawnOnly{false};
+std::atomic<bool> g_cropLens{false};   // [render] monitor_eye_crop_lens (ConfigureLens)
 
 // -- our list: a ring of allocators on one fence; the queue may change (the left eye's hold, the present) -----------------------
 constexpr int kAllocs = 8;   // (two lists a frame at most: four frames - DXGI lets the GPU fall three behind)
@@ -83,6 +84,7 @@ struct LensKept {
 LensKept g_lens[2];
 uint32_t g_lensVersion = 0;
 uint32_t g_boxTold = 0;
+std::atomic<bool> g_console{false};   // D2RLoader's console open (ConsoleKey, the draw thread): no crop while it is
 constexpr uint32_t kGrid = 128;   // cells across the picture's width (2304 px: 18 px a cell)
 
 // The box of the window's shape inside what the lens shows of `eye`'s picture (bw x bh), for a window ww x wh; false: none known (the whole
@@ -448,6 +450,23 @@ void Configure(int setting, bool fit, bool drawnOnly) {
 
 bool On() { return g_setting.load(std::memory_order_relaxed) != kAsBefore; }
 
+void ConfigureLens(bool cropLens) {
+    if (g_cropLens.exchange(cropLens) == cropLens) return;
+    Line(cropLens ? "vrcam: monitor eye - [render] monitor_eye_crop_lens 1: the window gets what the lens shows of the eye, in the window's shape (the "
+                    "lens mask's edges left out)"
+                  : "vrcam: monitor eye - [render] monitor_eye_crop_lens 0: the window gets the whole eye picture (lens mask edges included), as before");
+}
+bool CropLens() { return g_cropLens.load(std::memory_order_relaxed); }
+
+void ConsoleKey(unsigned vk, bool ctrl, bool repeat) {
+    static ConsoleGate gate;   // the draw thread only (MonitorPresent)
+    if (!gate.Key(vk, ctrl, repeat)) return;
+    g_console.store(gate.open);
+    if (On())
+        Line(gate.open ? "vrcam: monitor eye - D2RLoader's console opened (Ctrl + `): the window shows the whole picture, not cropped, while it is open"
+                       : "vrcam: monitor eye - D2RLoader's console closed: the window's crop to what the lens shows again");
+}
+
 void SetLens(int eye, const Lens* lens) {
     if (eye < 0 || eye > 1) return;
     LensKept& k = g_lens[eye];
@@ -498,9 +517,13 @@ void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye) {
     // what the lens shows of the eye the window gets (the masked edges left out), in the window's shape - a crop even when the window has the
     // picture's shape (0.209.18: a square window over a square picture showed the lens mask's black polygon whole)
     Rect lensBox{};
-    const bool lens = g_fit.load() && client &&
+    // D2RLoader's console open: no crop of either kind - the console is drawn into the picture with the window's full rect, a crop magnified it
+    // off the window (0.210.1). [render] monitor_eye_crop_lens (its own key, off by default): what the lens shows; monitor_eye_fit: as ever,
+    // only a window of another shape than the picture.
+    const bool any = client && !g_console.load(std::memory_order_relaxed);
+    const bool lens = any && g_cropLens.load() &&
                       LensBox(want >= 0 ? want : eye, (uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom, &lensBox);
-    in.fit = g_fit.load() && client && (lens || FitWanted((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom));
+    in.fit = lens || (any && g_fit.load() && FitWanted((uint32_t)bd.Width, bd.Height, (uint32_t)rc.right, (uint32_t)rc.bottom));
     in.drawnOnly = g_drawnOnly.load();
     if (g_kept && want >= 0) {
         const D3D12_RESOURCE_DESC k = g_kept->GetDesc();

@@ -986,6 +986,7 @@ void __cdecl ReadItems(const PluginContext* ctx, void* user) noexcept {
 
 std::set<std::string> g_panels;   // open panels, UI thread only
 std::atomic<bool> g_invOnly{false};   // a menu is open and every menu open is the inventory (handinv::IsInventoryPanel; InventoryOnly)
+std::atomic<bool> g_invOpen{false};   // [belt] refill_key: the player's inventory is among the open panels (alone, or beside the stash, a trader, the cube)
 
 // A panel that takes the controller away from the game. Names as D2R 3.3
 // loads them (2026-10-02 log): VendorPanelLayout, PlayerInventoryExpansionLayout,
@@ -1053,10 +1054,11 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
             g_pause.store(pause);
         }
         noticecard::SetOpen(g_panels.count("NotificationPanel") != 0);
-        bool menu = false, invOnly = true;
+        bool menu = false, invOnly = true, invOpen = false;
         for (const std::string& n : g_panels)
-            if (IsMenuPanel(n)) { menu = true; if (!handinv::IsInventoryPanel(n.c_str())) invOnly = false; }
+            if (IsMenuPanel(n)) { menu = true; if (!handinv::IsInventoryPanel(n.c_str())) invOnly = false; else invOpen = true; }
         g_menu.store(menu ? 1 : 0);
+        g_invOpen.store(invOpen);
         g_invOnly.store(menu && invOnly);   // [openxr] hand_inventory: every menu open is the inventory
         {   // a vendor's panel (VendorPanelLayout, the smith's and every trader's): the left stick's hold is the game's own there (repair all)
             bool vendor = false;
@@ -1290,6 +1292,7 @@ bool RightShield() { return g_rightShield.load(); }
 int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 bool PauseMenuOpen() { return g_pause.load(); }   // [hud] game_menu_settings: the game's pause menu (Esc) is open
+bool InventoryOpen() { return g_invOpen.load(); }   // [belt] refill_key (vr/belt_refill.h): the inventory is open, with other panels or alone
 bool InventoryOnly() { return g_invOnly.load(); }   // [openxr] hand_inventory: the menu open is the inventory alone (the tabbed menu or the inventory panel)
 bool NpcDialogOnly() { return g_npcDialogOnly.load(); }
 bool NpcTalkOnly() { return g_npcTalkOnly.load(); }   // the menus open are only an NPC's talk (vr/npc_dialog_view.h)   // an NPC's dialogue box is the only menu open

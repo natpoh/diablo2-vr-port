@@ -140,6 +140,16 @@ void CeilingNow(float* height, float* bright, float* light, float* relief = null
     if (slot) *slot = sl;
 }
 
+// [ceiling] min_headroom_m (gameceiling::HeadroomNeed): the least top over the area's floor that keeps the ceiling's lowest point - its top
+// less `hang` - that many metres over the eyes, the hero `heroOverFloor` over the floor the ceiling stands on. The eyes: the hero's standing
+// eyes (his class, as the camera has them) + how far the real head is over them (g_headOverStand); metres in world units at the camera's
+// scale. 0 = no guard ([ceiling] min_headroom_m 0).
+float CeilingHeadroomNeed(float heroOverFloor, float hang) {
+    const float eye = ViewHeight() + g_headOverStand.load(std::memory_order_relaxed);
+    const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+    return gameceiling::HeadroomNeed(heroOverFloor, eye, g_set.ceilHeadroomM.load(std::memory_order_relaxed), upm, hang);
+}
+
 // The stone's look in the area now: its shine, how far the picture's light parts stand out, its fine detail.
 void CeilingLookNow(float* wet, float* detail, float* contrast, CeilVaultCfg* vault) {
     *wet = g_set.ceilWet.load(); *detail = g_set.ceilDetail.load(); *contrast = g_set.ceilContrast.load();

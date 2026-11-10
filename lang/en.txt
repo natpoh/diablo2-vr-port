@@ -274,6 +274,8 @@ render.monitor_eye.choice1 = The left eye
 render.monitor_eye.choice2 = The right eye
 render.monitor_eye_fit.label = Monitor: the eye at its own proportions (cropped to the window)
 render.monitor_eye_fit.tip = With a VR render size apart from the window (Resolution, In the headset: a square picture in a wide window) Windows stretches the picture over the window - the monitor showed it squashed. On: the middle of the eye's picture in the window's shape is drawn over the whole picture first, so the window shows it at its real proportions (the top and bottom, or the sides, cut off). Nothing changes when the window has the picture's shape. Live. Off: stretched as before.
+render.monitor_eye_crop_lens.label = Monitor: only what the headset shows (no lens edges)
+render.monitor_eye_crop_lens.tip = The eye's picture is drawn bigger than the headset shows it: its edges and corners are outside the lens, and with "Skip what the lenses never show" (Home, In the headset) they are black. On: the window gets only the part the headset shows, the biggest box of the window's shape inside it - a closer, cleaner picture for a recording, its edges cut off. Never while D2RLoader's console is open (Ctrl + `): then the whole picture, so the console fits the window. Off (the default): the whole eye picture, edges included, as before. Live.
 render.monitor_eye_drawn_only.label = Monitor: eyes by turns - only pictures the game drew
 render.monitor_eye_drawn_only.tip = "Native OpenXR - eyes by turns" only: the frames that draw the other eye show this eye's last picture the game drew - each picture twice, at half the rate, but never one made on the graphics card (made pictures can smear at the edges of moving things). Off (the default): the picture made for this eye that frame - every frame new, as the headset shows it. Live.
 render.monitor_panels.label = Monitor: show the headset's panels (inventory, trader, stash, map...)
@@ -744,6 +746,14 @@ input.flat_body_pick.label = Flat: click a monster, an NPC or a chest by its bod
 input.flat_body_pick.tip = Third and first person: monsters, NPCs, doors, shrines, chests and portals near you are clicked by their body, not only by their feet (from sajmonsoft's flat fork). Unticked: by the feet, as the game's own view from above has it.
 input.flat_shot_at_crosshair.label = Flat: a bow or throw goes exactly into the crosshair (no auto-aim)
 input.flat_shot_at_crosshair.tip = With a bow, a crossbow, a javelin or a throwing weapon in hand, in first and third person: a click on a monster goes where the crosshair is, as a shot in place - not at the monster the game finds near the crosshair, the hero does not walk to it, and a held button does not keep shooting it when you look away. Items, NPCs, hirelings, chests, doors and portals are clicked as ever. Unticked: the game's own attack at the monster under the pointer.
+input.flat_pickup_key_on.label = Flat: a key picks up items (first and third person)
+input.flat_pickup_key_on.tip = In first and third person (F3, F2) with mouse look, the key below picks up an item from the ground: the one whose name is under the crosshair (Alt), else the one the crosshair is on, else the nearest one in front of you within the reach below. It is the game's own click on that item - the hero walks up and picks it up as with the mouse. The game does not get the key. Unticked: no pick-up key, the key is the game's.
+input.flat_pickup_key.label = Flat: the pick-up key
+input.flat_pickup_key.tip = The key that picks up an item. Any other key: in the game's own D2R VR settings panel (F10), click the key and press the one you want. The game does not get it while you play in first or third person with mouse look (the game's own command on that key, if any, then does nothing there; in menus, the chat line and F1 it is the game's). Empty here: a key set in the game's panel.
+input.flat_pickup_reach_cells.label = Flat: pick-up key reach for the nearest item, cells
+input.flat_pickup_reach_cells.tip = With no item under the crosshair the key takes the nearest item in front of you (within 50 degrees of where you look) up to this far. 0: only the item under the crosshair.
+input.flat_item_hitbox.label = Flat: with Alt held, click an item by its body, not only by its name
+input.flat_item_hitbox.tip = In first and third person with mouse look, while Alt is held (the item names shown) an item on the ground is also picked up by clicking the item itself, not only its name - the crosshair on it is enough. A name under the crosshair, or a monster in front of the item, still goes first. The item's name lights up while the crosshair is on it. Unticked: only the name, as the game has it.
 input.vr_body_pick.label = VR: point at a monster, an NPC or a chest by its body
 input.vr_body_pick.tip = The mouse pointer (F1, F3), the crosshair (F2 with mouse look) and the hand's Shift + click aim pick monsters, NPCs, doors, shrines, chests and portals near you by their body, not only by their feet. The game still decides the hit. Unticked: by the feet.
 input.vr_body_pick_hand.label = VR F4: attack and interact go to what your hand points at
@@ -759,6 +769,18 @@ input.vr_keys_walk.label = VR view F2 like flat: mouse look, crosshair, W A S D
 input.vr_keys_walk.tip = Third person with the mouse and keyboard, as in flat mode: the mouse turns the camera, the pointer is the crosshair in the middle (its depth: UI: F2 behind tab), a click goes there - on a monster an attack, on an item a pick-up, on the ground a shot - and W A S D walk where the camera looks, not north on the game's map. F9 frees the pointer for menus; W A S D keep walking. Needs the game in mouse mode: after a pad stick, click once.
 input.crosshair.label = Crosshair picture
 input.crosshair.tip = The pointer while the mouse looks: your own picture (png, jpg, bmp), its middle is where you aim; it is fitted into 32-64 pixels by the window's height. A picture with no transparency: its black is see-through. A bare name is looked for in reshade-shaders\Textures; a full path works too. Empty (x) = the built-in one.
+
+# --- Belt refill ---
+group.belt_refill = Belt refill
+group.belt_refill.help = Potions from the inventory into the belt with one button, while the inventory is open: point at a potion (the laser in VR, the mouse cursor on the monitor) and tap Y - it goes into the belt; hold Y - the whole belt is filled. Both are the game's own moves.
+belt.refill_key.label = Belt refill key: tap on a potion = into the belt, hold = fill the belt
+belt.refill_key.tip = With the inventory open: a tap of the button below (Y by default, on the left controller and on the keyboard) is the game's own Shift + click where you point - the laser's point in VR (every view), the mouse cursor on the monitor - so a potion there goes into the belt, as Shift + click does. A hold is the game's own "hold to populate belt" from its controller layout: every empty belt slot gets a potion of the kind its column already holds, from the inventory, in one move the game makes itself. While the inventory is open that button is the mod's (B is left to close the panel, as in the game; pick B below and it no longer does - the menu button or the long stick press does; keyboard: I or Esc). The log says "belt refill: ..." with how many went in, of which kind. Live. Unticked: the button is the game's, as before.
+belt.refill_button.label = Belt refill: controller button
+belt.refill_button.tip = The controller button for the belt refill (A and B on the right controller, X and Y on the left). It is taken only while the inventory is open and the laser points at the game; elsewhere it does what it always does. Live.
+belt.refill_keyboard.label = Belt refill: keyboard key
+belt.refill_keyboard.tip = The keyboard key for the belt refill (the mouse cursor is the pointer). It is taken only while the inventory is open and the chat line is closed; with the inventory closed it is the game's key as before (the game's B opens the inventory). Live.
+belt.refill_hold_ms.label = Belt refill: hold for, ms
+belt.refill_hold_ms.tip = How long the button is held for the whole belt to be filled; let go sooner, it is a tap (one potion, where you point). Live.
 
 # --- Pick up by pointing ---
 group.pick_up_by_pointing = Pick up by pointing
@@ -1060,6 +1082,8 @@ stereo.native_replay.label = ... drawn once, the right eye again on the graphics
 stereo.native_replay.tip = With Both eyes from one game frame: the game draws the frame once, and the right eye is drawn again on the graphics card from the same work with its own camera, instead of the whole frame drawn twice. The game's thread does about half the work: on a PC held back by its processor, many more frames a second; a PC held back by its graphics card gains little. Native OpenXR, first person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the picture has settled (a few seconds) - two passes then, never a black eye. On by default ("Native one pass" in 3D in the headset). Takes effect at the next game start. Off: two passes ("Native two passes").
 stereo.replay_reset_guard.label = ... never again a list the game took up
 stereo.replay_reset_guard.tip = With the right eye drawn again on the graphics card: the game may start a new recording in one of its lists as soon as it has sent it, and by the time the right eye sends the same list again it holds other commands - an unfinished one takes the graphics device away, a later one makes the card draw from what is not there yet (it hangs). On: such a frame's right eye is the left picture once, and the log says so. Off: told in the log, sent again anyway (as before). Live.
+stereo.replay_alloc_guard.label = ... and never over commands the card still reads
+stereo.replay_alloc_guard.tip = With the right eye drawn again on the graphics card: the game reuses the memory its lists' commands are in as soon as its own frame is done - before the right eye has sent the same lists again. The game then writes new commands where the card is still reading the old ones (it hangs). On: the game waits there until the right eye is done with them (a moment, only when the card is behind), and a frame whose memory was already reused shows the left picture in the right eye once. Off: told in the log only (as before). Live.
 stereo.turn_warp.label = Eyes by turns: make the other eye from the depth
 stereo.turn_warp.tip = Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. Unticked: it goes to the headset as it was last drawn, and the headset turns it (rotation only: a step or a moving monster shows a frame behind in that eye). First person (F4) only. Live. Idea: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... with the eye drawn this frame over it
@@ -2217,6 +2241,8 @@ fog.game_fog_flat.label = The game's fog in the flat game too
 fog.game_fog_flat.tip = The game draws its fog also when you play on the monitor without a headset (the flat first and third person views). Off: only in VR first person (F4). Empty: as "The game draws the sky in the flat game too" (the one switch before). Live.
 fog.game_fog_before_fx.label = The fog before smoke and fire
 fog.game_fog_before_fx.tip = The fog is laid on the world before the game adds its smoke, fire, mist and spells, so they stay bright over the fogged world. Off: the game's own order - the fog goes over them by whatever is far behind them, and a torch's flame and smoke in front of a far, fogged background are wiped out. One pass of ours on the graphics card (its cost in the log's 10 s line). Applies when the game is started again.
+fog.game_fog_cover.label = The fog covers everything from
+fog.game_fog_cover.tip = With the fog before smoke and fire: from this distance on, everything is the fog's colour whole - far trees, buildings, far fires and their glow gone into the fog. World units (the hero is ~7.5 tall). 0: the fog's own curve all the way (as before). Live.
 fog.game_fog_planes_count.label = How many planes
 fog.game_fog_planes_count.tip = With "Fog drawn by: Fog planes before the player": the fog as planes facing you, standing from Fog start to Full fog, each a layer of the fog's colour; what is behind a plane is covered by it, what is in front of it (a torch's flame) stays bright. More planes: smoother, the same cost. Live.
 fog.game_fog_planes_soft.label = How soft each plane is
@@ -2250,6 +2276,8 @@ sky.dome_fog_baked.label = The game's sky: its low part in the fog's colour
 sky.dome_fog_baked.tip = With the game's fog, the sky's low part is laid into the fog's own colour in the sky's picture itself, as our old sky's low part goes into the fog: trees and bushes against the horizon stand on the fog's colour, with no light rim of the picture's horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.
 sky.dome_fog_baked_strength.label = The game's sky: how much of the fog's colour
 sky.dome_fog_baked_strength.tip = 1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.
+sky.dome_fog_baked_top_deg.label = The game's sky: how high the fog's band reaches
+sky.dome_fog_baked_top_deg.tip = How far above the horizon the sky's low part is laid into the fog's colour, fading out up to there (degrees). With "The fog covers everything from" set, the two make a band of fog round you at that distance, clear sky above it: far trees and buildings gone into it, the sky's top as it is. 11.5: as before. Live.
 
 # --- Old fog (our effect) ---
 group.old_fog_our_effect.help = Our own effect's distance fog, as it was (frozen) - with "Fog drawn by: Old fog" only, greyed otherwise. Its own sliders.
@@ -2345,8 +2373,6 @@ ceiling.game_ceiling_wall.label = The game's ceiling: bent down into a wall at i
 ceiling.game_ceiling_wall.tip = A ring of the same lit rock round you where the game's ceiling ends (about 215 units out at tile size 10), from the ceiling down to below the floor (the floor's depth below): the black void past the ceiling's edge - a band between it and the far floor, lit by the fog behind fires - is closed by stone, as our effect's far wall closed it. Off: the flat ceiling. Live.
 ceiling.game_ceiling_beams.label = The game's ceiling: the barracks' own wooden beams
 ceiling.game_ceiling_beams.tip = The game ships a wooden ceiling frame for the barracks (and its jail) that it never places: a grid of beams whose bottom sits at the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, wood and size, lit by its torches - with the barracks' stone over the beams to close the gaps between them. Made from your game's files. VR F4 only. Off: the flat stone ceiling. Live.
-ceiling.top_from_level.label = The ceiling over the level's highest floor
-ceiling.top_from_level.tip = The ceiling stood on the lowest floor you had stood on in the area, so up a staircase it stayed low until you walked on. Ticked: its height is measured from the highest floor of the level you are on - every room the game builds there tells its floors - taken whole 2 s after you enter a level, raised gently if a higher room is built later, never lowered. The game's ceiling and our effect's vault alike. Each room's own height (above) is still measured from there. From D2R VR Unleashed (Cal, bearstonem's team). VR F4 only. Off: as before. Live.
 ceiling.game_ceiling_dome.label = The game's ceiling: the cathedral's dome over the chapel
 ceiling.game_ceiling_dome.tip = In the Cathedral the game's ceiling rises into a dome over the chapel, as our effect's vault did there: one even dome standing on the four pillars round the altar, just high enough to pass over the altar's canopy. Where, how wide and how high come from the game's own pieces (measured from your game's files, the canopy found in the game as it is drawn); the cathedral's own stone, lit by its candles. The rest of the cathedral keeps the flat ceiling at its height. VR F4 only. Off: the flat ceiling. Live.
 ceiling.game_ceiling_dome_size.label = The cathedral's dome: size
@@ -2359,6 +2385,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = The Worldstone's dome: wide
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Metres added across the Worldstone's dome (half of it all round), over the one measured from the game's pieces - its own, the cathedral's size stays. Its height follows, so it still clears the crystal; wider than the pillars, its rim comes down past them onto the flat ceiling and the pillars end under the curve. Metres as the camera has them (the hero's eye height over yours). VR F4. Live.
 ceiling.height_from_walls.label = Ceiling height from the room's walls
 ceiling.height_from_walls.tip = A room whose own height below is not set (0) has its ceiling on its own walls: where the walls the game builds that room with end (the middle of its wall, pillar and cliff pieces' tops, measured from your game's files). A room's own height, once you set it, always wins. Our effect's vault and the game's ceiling both; the game's rock that hangs lower rests its lowest point on the walls. Off, or a room built with no walls of that kind: 18 over the floor where no height is set. The log says each room's height and where it comes from. Live at the next area change.
+ceiling.min_headroom_m.label = Ceiling at least, metres over your eyes (0 = off)
+ceiling.min_headroom_m.tip = Whatever height a room has, the ceiling's lowest point - the rock hanging under it too - stays at least this far over your eyes: where the floor rises over the one the ceiling stands on, and with your head higher than your height set, it goes up with you (in steps, never back down until you leave the area), so it never comes down to your face. Metres as the camera has them (the hero's eye height over yours). The game's ceiling and our effect's vault alike, first person. 0 = off: each room's height only. Live.
 ceiling.floor_depth.label = The rim's wall: how far below the floor (0 = none)
 ceiling.floor_depth.tip = How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge shows that stone, not the void.
 
@@ -4638,9 +4666,9 @@ vr.guide.4.row2.does = a grip there draws the weapon off your back. An empty han
 vr.guide.4.row3.control = Bow
 vr.guide.4.row3.does = the free hand to the string, trigger or grip, pull back, let go. While drawn: B the next arrow skill, A the one before.
 vr.guide.4.row4.control = Javelin
-vr.guide.4.row4.does = hold it with the grip, throw, and let go
-vr.guide.4.row5.control = Life and mana
-vr.guide.4.row5.does = sit on your wrists
+vr.guide.4.row4.does = grip, throw, let go. Life and mana sit on your wrists.
+vr.guide.4.row5.control = Belt refill
+vr.guide.4.row5.does = inventory open: laser on a potion + Y = into the belt; hold Y = fill it
 vr.guide.5.title = Views and this guide again
 vr.guide.5.row0.control = F1
 vr.guide.5.row0.does = from above: the game's own camera
@@ -5138,6 +5166,7 @@ vr.flatmenu.title = D2R VR settings
 vr.flatmenu.own = Your game (2D) - saved in d2r_vr.ini, live
 vr.rules.title = Host rules (who hosts decides)
 vr.flatmenu.host = host
+vr.flatmenu.press_key = Press a key (Esc: cancel)
 vr.flatmenu.close = Close (Esc)
 vr.flatmenu.button = D2R VR settings
 vr.rules.console_off = (The host is asked only with Settings > Mechanics > "In-game D2R VR settings" ticked.)
@@ -5152,6 +5181,9 @@ vr.flatmenu.flat_portal_no_oval = No black oval in the town portal
 vr.flatmenu.stick_pitch_flat = The gamepad's right stick looks up and down
 vr.flatmenu.flat_map_zoom = - and + zoom the map out of its circle and back
 vr.flatmenu.flat_map_place = Map on the screen
+vr.flatmenu.flat_pickup_key_on = A key picks up items (first and third person)
+vr.flatmenu.flat_pickup_key = The pick-up key (click, then press a key)
+vr.flatmenu.flat_item_hitbox = With Alt held, click an item by its body, not only its name
 vr.flatmenu.flat_map_place.game = As in the game's options
 vr.flatmenu.flat_map_place.left = Left
 vr.flatmenu.flat_map_place.centre = Centre
@@ -5209,6 +5241,7 @@ vr.gestures.about_hand = This hand draws or moves, with its trigger
 vr.gestures.actions_need = Game actions are kept by the in-game gesture engine: tick In-game gesture engine in D2R VR Settings (Gestures), with a d2r_vr_gestures.dll that binds actions.
 vr.gestures.kind_pad = pad
 vr.gestures.kind_item = item
+vr.gestures.kind_key = keyboard
 vr.gestures.kind_game = game
 vr.gestures.tab_actions = Game actions
 vr.gestures.tab_skills = Skills

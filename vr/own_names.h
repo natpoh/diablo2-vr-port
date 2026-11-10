@@ -197,6 +197,7 @@ struct GamePlate {
     float barW = 0.0f, barH = 0.0f;   // its Health bar, its pixels
     float lineDy[3] = {};         // each line's middle under the name's middle, its pixels (0 the name itself)
     bool line[3] = {};            // which lines there are (1 Unique, 2 Additional)
+    float nameW = 0.0f;           // our name's width with its padding (px of the eye; 0: not known) - the frame holds it whatever the bar read
 };
 struct GameLayout {
     PlateLayout plate;
@@ -206,7 +207,9 @@ struct GameLayout {
 inline bool LayOutGamePlate(float nameH, const GamePlate& g, const float lineH[3], GameLayout* out) {
     if (!(nameH > 0.0f) || !(g.nameBoxH > 0.0f) || !(g.barW > 0.0f) || !(g.barH > 0.0f)) return false;
     const float k = nameH / g.nameBoxH;   // our pixels for one of the game's
-    const float frameW = g.barW * k, frameH = g.barH * k, u = frameH / kFrameH, cap = kFrameCapW * u;
+    const float frameH = g.barH * k, u = frameH / kFrameH, cap = kFrameCapW * u;
+    // (never narrower than our name and the frame's two caps: a longer name than the bar read - our min size, a bar of another target - was cut)
+    const float frameW = std::max(g.barW * k, g.nameW > 0.0f && std::isfinite(g.nameW) ? g.nameW + 2.0f * cap : 0.0f);
     // about the name's middle (y down): the plate centred on it (the game centres its name on the bar), the lines by the game's offsets
     float top[4] = {-0.5f * frameH, 0, 0, 0}, bottom[4] = {0.5f * frameH, 0, 0, 0};
     float lowest = bottom[0];

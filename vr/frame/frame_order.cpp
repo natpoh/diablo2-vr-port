@@ -667,6 +667,7 @@ static DWORD UpdateThreadBody() {
         patchhunt::Tick();    // [debug] patch_hunt: the game's graphics settings put to the step, on the UI thread
         partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
+        beltrefill::Tick(g_inWorld.load());   // [belt] refill_key: the button's tap (the game's Shift + click) or hold (the game's own belt fill), every view
         GameFrontTick();   // [openxr] game_front: no controllers - the keyboard back to the game, Esc posted to it (before PauseKeyTick sends it)
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
         {   // [gestures] skill_link: the skills to BodyWalk, its casts back - every ~10 ms, the casts are pad presses (off: the list emptied once, then nothing)
@@ -836,7 +837,7 @@ static DWORD UpdateThreadBody() {
             InstallMapClickHook();
             InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_body_pick (VR)
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
-            InstallRoomHeightHook();    // [render] room_stitch / [ceiling] top_from_level, once asked for
+            InstallRoomHeightHook();    // [render] room_stitch, once asked for
             InstallTerrainHeightHook(); // [render] terrain_heights, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
             attackpath::Install();   // [gameplay] flat_attack_path: once asked for

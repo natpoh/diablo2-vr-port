@@ -269,6 +269,8 @@ render.monitor_eye.choice1 = L'œil gauche
 render.monitor_eye.choice2 = L'œil droit
 render.monitor_eye_fit.label = Moniteur : l'œil à ses proportions (rogné à la fenêtre)
 render.monitor_eye_fit.tip = Avec une taille de rendu RV distincte de la fenêtre (Résolution, Dans le casque : une image carrée dans une fenêtre large), Windows étire l'image sur la fenêtre - le moniteur la montrait écrasée. Activé : le milieu de l'image de l'œil, à la forme de la fenêtre, est d'abord dessiné sur toute l'image, si bien que la fenêtre la montre à ses vraies proportions (le haut et le bas, ou les côtés, sont coupés). Rien ne change quand la fenêtre a la forme de l'image. Immédiat. Désactivé : étiré comme avant.
+render.monitor_eye_crop_lens.label = Moniteur : seulement ce que montre le casque (sans les bords des lentilles)
+render.monitor_eye_crop_lens.tip = L'image de l'œil est dessinée plus grande que ce que montre le casque : ses bords et ses coins sont en dehors de la lentille et, avec « Ignorer ce que les lentilles ne montrent jamais » (Accueil, Dans le casque), ils sont noirs. Activé : la fenêtre ne reçoit que la partie montrée par le casque, le plus grand cadre à la forme de la fenêtre qui y tient - une image plus proche et plus propre pour un enregistrement, bords coupés. Jamais quand la console de D2RLoader est ouverte (Ctrl + `) : l'image entière s'affiche alors, pour que la console tienne dans la fenêtre. Désactivé (par défaut) : toute l'image de l'œil, bords compris, comme avant. Appliqué en direct.
 render.monitor_eye_drawn_only.label = Moniteur : yeux en alternance - seulement les images dessinées par le jeu
 render.monitor_eye_drawn_only.tip = Seulement pour « OpenXR natif - yeux en alternance » : les images qui dessinent l'autre œil montrent la dernière image de cet œil dessinée par le jeu - chaque image deux fois, à demi-cadence, mais jamais une image fabriquée sur la carte graphique (les images fabriquées peuvent baver aux bords des objets en mouvement). Désactivé (par défaut) : l'image fabriquée pour cet œil à cette image - nouvelle à chaque image, telle que le casque la montre. Immédiat.
 render.monitor_panels.label = Moniteur : afficher les panneaux du casque (inventaire, marchand, coffre, carte...)
@@ -739,6 +741,14 @@ input.flat_body_pick.label = Plat : cliquer un monstre, un PNJ ou un coffre par 
 input.flat_body_pick.tip = Troisième et première personne : les monstres, PNJ, portes, autels, coffres et portails près de vous se cliquent par leur corps, pas seulement par leurs pieds (du fork plat de sajmonsoft). Décoché : par les pieds, comme dans la vue de dessus du jeu.
 input.flat_shot_at_crosshair.label = À plat : un arc ou un lancer va exactement dans le réticule (pas de visée auto)
 input.flat_shot_at_crosshair.tip = Avec un arc, une arbalète, un javelot ou une arme de jet en main, en première et troisième personne : un clic sur un monstre va là où est le réticule, comme un tir sur place - pas vers le monstre que le jeu trouve près du réticule, le héros ne marche pas vers lui, et un bouton maintenu ne continue pas à tirer dessus quand vous regardez ailleurs. Objets, PNJ, mercenaires, coffres, portes et portails se cliquent comme toujours. Décoché : l'attaque propre du jeu sur le monstre sous le pointeur.
+input.flat_pickup_key_on.label = Écran plat : une touche ramasse les objets (première et troisième personne)
+input.flat_pickup_key_on.tip = En première et troisième personne (F3, F2) avec la souris pour regarder, la touche ci-dessous ramasse un objet au sol : celui dont le nom est sous le viseur (Alt), sinon celui que le viseur pointe, sinon le plus proche devant vous dans la portée ci-dessous. C'est le clic propre au jeu sur cet objet - le héros s'approche et le ramasse comme avec la souris. Le jeu ne reçoit pas la touche. Décoché : pas de touche de ramassage, la touche reste celle du jeu.
+input.flat_pickup_key.label = Écran plat : la touche de ramassage
+input.flat_pickup_key.tip = La touche qui ramasse un objet. Pour une autre touche : dans le panneau de réglages D2R VR du jeu (F10), cliquez sur la touche puis appuyez sur celle voulue. Le jeu ne la reçoit pas tant que vous jouez en première ou troisième personne avec la souris pour regarder (la commande du jeu sur cette touche, s'il y en a une, ne fait alors rien ; dans les menus, la ligne de chat et F1, elle reste celle du jeu). Vide ici : la touche définie dans le panneau du jeu.
+input.flat_pickup_reach_cells.label = Écran plat : portée de la touche de ramassage pour l'objet le plus proche, en cases
+input.flat_pickup_reach_cells.tip = Sans objet sous le viseur, la touche prend l'objet le plus proche devant vous (à moins de 50 degrés de votre regard) jusqu'à cette distance. 0 : seulement l'objet sous le viseur.
+input.flat_item_hitbox.label = Écran plat : avec Alt maintenu, cliquer un objet sur son corps, pas seulement sur son nom
+input.flat_item_hitbox.tip = En première et troisième personne avec la souris pour regarder, tant qu'Alt est maintenu (noms des objets affichés), un objet au sol est aussi ramassé en cliquant sur l'objet lui-même, pas seulement sur son nom - le viseur dessus suffit. Un nom sous le viseur, ou un monstre devant l'objet, passe toujours en premier. Le nom de l'objet s'illumine quand le viseur est dessus. Décoché : seulement le nom, comme dans le jeu.
 input.vr_body_pick.label = RV : viser un monstre, un PNJ ou un coffre par son corps
 input.vr_body_pick.tip = Le pointeur de la souris (F1, F3), le viseur (F2 avec la souris) et la visée de la main avec Maj + clic choisissent les monstres, PNJ, portes, autels, coffres et portails près de vous par leur corps, pas seulement par leurs pieds. Le jeu décide toujours du coup. Décoché : par les pieds.
 input.vr_body_pick_hand.label = RV F4 : l'attaque et l'interaction vont à ce que votre main désigne
@@ -754,6 +764,18 @@ input.vr_keys_walk.label = Vue RV F2 comme à plat : souris, viseur, W A S D
 input.vr_keys_walk.tip = Troisième personne à la souris et au clavier, comme en mode plat : la souris tourne la caméra, le pointeur est le viseur au milieu (sa profondeur : Interface : F2 derrière), un clic va là - sur un monstre une attaque, sur un objet un ramassage, sur le sol un tir - et W A S D marchent là où la caméra regarde, pas vers le nord de la carte du jeu. F9 libère le pointeur pour les menus ; W A S D continuent de marcher. Demande que le jeu soit en mode souris : après un stick de manette, cliquez une fois.
 input.crosshair.label = Image du viseur
 input.crosshair.tip = Le pointeur pendant que la souris regarde : votre propre image (png, jpg, bmp), son milieu est l'endroit où vous visez ; elle est ajustée dans 32-64 pixels selon la hauteur de la fenêtre. Une image sans transparence : son noir est transparent. Un simple nom est cherché dans reshade-shaders\Textures ; un chemin complet fonctionne aussi. Vide (x) = celle intégrée.
+
+# --- Belt refill ---
+group.belt_refill = Recharge de la ceinture
+group.belt_refill.help = Des potions de l'inventaire vers la ceinture avec un seul bouton, inventaire ouvert : pointez une potion (le laser en VR, le curseur de la souris sur le moniteur) et appuyez brièvement sur Y - elle va dans la ceinture ; maintenez Y - toute la ceinture est remplie. Les deux sont des actions propres au jeu.
+belt.refill_key.label = Touche de recharge de la ceinture : appui bref sur une potion = dans la ceinture, maintien = remplir la ceinture
+belt.refill_key.tip = Inventaire ouvert : un appui bref sur le bouton ci-dessous (Y par défaut, sur la manette gauche et au clavier) est le Maj + clic propre au jeu là où vous pointez - le point du laser en VR (toutes les vues), le curseur de la souris sur le moniteur - donc une potion à cet endroit va dans la ceinture, comme avec Maj + clic. Un maintien est le « hold to populate belt » propre au jeu, tiré de sa disposition manette : chaque emplacement vide de la ceinture reçoit une potion du type que sa colonne contient déjà, depuis l'inventaire, en un seul geste que le jeu fait lui-même. Inventaire ouvert, ce bouton est celui du mod (B reste réservé à la fermeture du panneau, comme dans le jeu ; choisissez B ci-dessous et il ne le fait plus - le bouton de menu ou l'appui long sur le stick le fait ; clavier : I ou Échap). Le journal indique « belt refill: ... » avec le nombre de potions placées et leur type. Appliqué en direct. Décoché : le bouton est celui du jeu, comme avant.
+belt.refill_button.label = Recharge de la ceinture : bouton de la manette
+belt.refill_button.tip = Le bouton de la manette pour la recharge de la ceinture (A et B sur la manette droite, X et Y sur la gauche). Il n'est pris que lorsque l'inventaire est ouvert et que le laser pointe sur le jeu ; ailleurs il fait ce qu'il a toujours fait. Appliqué en direct.
+belt.refill_keyboard.label = Recharge de la ceinture : touche du clavier
+belt.refill_keyboard.tip = La touche du clavier pour la recharge de la ceinture (le curseur de la souris sert de pointeur). Elle n'est prise que lorsque l'inventaire est ouvert et la ligne de chat fermée ; inventaire fermé, c'est la touche du jeu comme avant (le B du jeu ouvre l'inventaire). Appliqué en direct.
+belt.refill_hold_ms.label = Recharge de la ceinture : durée du maintien, ms
+belt.refill_hold_ms.tip = Durée de maintien du bouton pour remplir toute la ceinture ; relâché plus tôt, c'est un appui bref (une potion, là où vous pointez). Appliqué en direct.
 
 # --- Pick up by pointing ---
 group.pick_up_by_pointing = Ramasser en désignant
@@ -1055,6 +1077,8 @@ stereo.native_replay.label = ... dessinée une fois, l'œil droit redessiné sur
 stereo.native_replay.tip = Avec Les deux yeux depuis une seule image du jeu : le jeu dessine l'image une fois, et l'œil droit est redessiné sur la carte graphique à partir du même travail avec sa propre caméra, au lieu de dessiner deux fois toute l'image. Le fil du jeu fait environ la moitié du travail : sur un PC freiné par son processeur, beaucoup plus d'images par seconde ; un PC freiné par sa carte graphique y gagne peu. OpenXR natif, première personne (F4) seulement. Après un changement de zone, un chargement ou un changement des options vidéo, l'œil droit est dessiné seul jusqu'à ce que l'image se stabilise (quelques secondes) - deux passes alors, jamais un œil noir. Activé par défaut (« Natif, une passe » en 3D dans le casque). Prend effet au prochain lancement du jeu. Désactivé : deux passes (« Natif, deux passes »).
 stereo.replay_reset_guard.label = ... plus jamais une liste que le jeu a déjà reprise
 stereo.replay_reset_guard.tip = Avec l'œil droit redessiné sur la carte graphique : le jeu peut commencer un nouvel enregistrement dans une de ses listes dès qu'il l'a envoyée, et quand l'œil droit renvoie la même liste, elle contient d'autres commandes - une inachevée retire le périphérique graphique, une plus tardive fait dessiner la carte à partir de ce qui n'est pas encore là (elle se bloque). Activé : l'œil droit d'une telle image est une fois l'image gauche, et le journal le dit. Désactivé : signalé dans le journal, renvoyé quand même (comme avant). Immédiat.
+stereo.replay_alloc_guard.label = ... et jamais par-dessus des commandes que la carte lit encore
+stereo.replay_alloc_guard.tip = Avec l'œil droit redessiné sur la carte graphique : le jeu réutilise la mémoire contenant les commandes de ses listes dès que sa propre image est terminée - avant que l'œil droit n'ait renvoyé les mêmes listes. Le jeu écrit alors de nouvelles commandes là où la carte lit encore les anciennes (blocage). Activé : le jeu attend à cet endroit que l'œil droit en ait fini avec elles (un instant, seulement quand la carte a du retard), et une image dont la mémoire a déjà été réutilisée montre une fois l'image gauche dans l'œil droit. Désactivé : seulement signalé dans le journal (comme avant). Appliqué en direct.
 stereo.turn_warp.label = Yeux en alternance : créer l'autre œil à partir de la profondeur
 stereo.turn_warp.tip = OpenXR natif avec les yeux en alternance : l'œil non dessiné à cette image est fabriqué sur la carte graphique pour là où est la tête maintenant - sa propre dernière image déplacée avec la profondeur avec laquelle elle a été dessinée (ce que tient le héros va avec lui), à la pose de cette image. Décoché : il part au casque tel qu'il a été dessiné en dernier, et le casque le tourne (rotation seulement : un pas ou un monstre en mouvement paraît une image en retard dans cet œil). Première personne (F4) seulement. Effet immédiat. Idée : bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... avec l'œil dessiné cette image par-dessus
@@ -2212,6 +2236,8 @@ fog.game_fog_flat.label = Le brouillard du jeu aussi dans le jeu à plat
 fog.game_fog_flat.tip = Le jeu dessine son brouillard aussi quand vous jouez sur le moniteur sans casque (les vues à plat en première et troisième personne). Désactivé : seulement en RV première personne (F4). Vide : comme « Le jeu dessine le ciel aussi dans le jeu à plat » (le même interrupteur qu'avant). Immédiat.
 fog.game_fog_before_fx.label = Le brouillard avant la fumée et le feu
 fog.game_fog_before_fx.tip = Le brouillard est posé sur le monde avant que le jeu ajoute sa fumée, son feu, sa brume et ses sorts, pour qu'ils restent lumineux sur le monde embrumé. Désactivé : l'ordre propre du jeu - le brouillard passe sur eux selon ce qui est loin derrière, et la flamme et la fumée d'une torche devant un arrière-plan lointain et embrumé sont effacées. Une passe de notre part sur la carte graphique (son coût dans la ligne de 10 s du journal). S'applique au prochain démarrage du jeu.
+fog.game_fog_cover.label = Le brouillard recouvre tout à partir de
+fog.game_fog_cover.tip = Avec le brouillard avant la fumée et le feu : à partir de cette distance, tout prend entièrement la couleur du brouillard - arbres et bâtiments lointains, feux lointains et leur lueur disparus dans le brouillard. Unités du monde (le héros mesure ~7,5). 0 : la courbe propre du brouillard jusqu'au bout (comme avant). Appliqué en direct.
 fog.game_fog_planes_count.label = Combien de plans
 fog.game_fog_planes_count.tip = Avec « Brouillard dessiné par : Plans de brouillard devant le joueur » : le brouillard en plans qui vous font face, étagés de Début du brouillard à Brouillard total, chacun une couche de la couleur du brouillard ; ce qui est derrière un plan est couvert par lui, ce qui est devant (la flamme d'une torche) reste lumineux. Plus de plans : plus doux, même coût. Immédiat.
 fog.game_fog_planes_soft.label = Douceur de chaque plan
@@ -2245,6 +2271,8 @@ sky.dome_fog_baked.label = Le ciel du jeu : sa partie basse dans la couleur du b
 sky.dome_fog_baked.tip = Avec le brouillard du jeu, la partie basse du ciel est posée dans la couleur propre du brouillard dans l'image même du ciel, comme la partie basse de notre ancien ciel passe dans le brouillard : les arbres et les buissons contre l'horizon se dressent sur la couleur du brouillard, sans bord clair de l'horizon de l'image autour d'eux. L'horizon du ciel dans le brouillard ci-dessus se met de côté en attendant. Désactivé : l'image telle quelle. Immédiat.
 sky.dome_fog_baked_strength.label = Le ciel du jeu : quelle part de la couleur du brouillard
 sky.dome_fog_baked_strength.tip = 1 : l'horizon entièrement de la couleur du brouillard, revenant à l'image vers 11 degrés ; moins : un peu de l'image au travers. Immédiat.
+sky.dome_fog_baked_top_deg.label = Le ciel du jeu : hauteur atteinte par la bande de brouillard
+sky.dome_fog_baked_top_deg.tip = Jusqu'à quelle hauteur au-dessus de l'horizon la partie basse du ciel est fondue dans la couleur du brouillard, en s'estompant jusque-là (degrés). Avec « Le brouillard recouvre tout à partir de » réglé, les deux forment une bande de brouillard autour de vous à cette distance, ciel dégagé au-dessus : arbres et bâtiments lointains y disparaissent, le haut du ciel reste tel quel. 11,5 : comme avant. Appliqué en direct.
 
 # --- Old fog (our effect) ---
 group.old_fog_our_effect.help = Le brouillard de distance de notre propre effet, tel qu'il était (figé) - seulement avec « Brouillard dessiné par : Ancien brouillard », grisé sinon. Ses propres curseurs.
@@ -2340,8 +2368,6 @@ ceiling.game_ceiling_wall.label = Plafond du jeu : recourbé en mur à son bord
 ceiling.game_ceiling_wall.tip = Un anneau de la même roche éclairée autour de vous là où s'arrête le plafond du jeu (environ 215 unités plus loin à la taille de tuile 10), du plafond jusque sous le sol (la profondeur du sol) : le vide noir au-delà du bord du plafond - une bande entre lui et le sol lointain, éclairée par le brouillard derrière les feux - est fermé par de la pierre, comme le mur lointain de notre effet le fermait. Désactivé : le plafond plat. En direct.
 ceiling.game_ceiling_beams.label = Plafond du jeu : les poutres en bois de la caserne
 ceiling.game_ceiling_beams.tip = Le jeu contient une charpente de plafond en bois pour la caserne (et sa prison) qu'il ne place jamais : une grille de poutres dont le bas repose sur le haut des murs de la caserne. Coché, le jeu dessine cette charpente au-dessus de vous en une grille de charpentes entières fixée dans le monde - son propre modèle, son bois et sa taille, éclairée par ses torches - avec la pierre de la caserne au-dessus des poutres pour fermer les espaces entre elles. Faite à partir des fichiers de votre jeu. VR F4 seulement. Désactivé : le plafond de pierre plat. En direct.
-ceiling.top_from_level.label = Le plafond au-dessus du sol le plus haut du niveau
-ceiling.top_from_level.tip = Le plafond se posait sur le sol le plus bas où vous vous étiez tenu dans la zone, si bien que dans un escalier il restait bas jusqu'à ce que vous avanciez. Coché : sa hauteur est mesurée depuis le sol le plus haut du niveau où vous êtes - chaque salle que le jeu construit là indique ses sols -, prise en entier 2 s après votre entrée dans un niveau, relevée doucement si une salle plus haute est construite plus tard, jamais abaissée. Le plafond du jeu et la voûte de notre effet pareillement. La hauteur propre de chaque salle (ci-dessus) est toujours mesurée depuis là. De D2R VR Unleashed (Cal, équipe de bearstonem). RV F4 seulement. Désactivé : comme avant. Immédiat.
 ceiling.game_ceiling_dome.label = Plafond du jeu : le dôme de la cathédrale au-dessus de la chapelle
 ceiling.game_ceiling_dome.tip = Dans la Cathédrale, le plafond du jeu monte en dôme au-dessus de la chapelle, comme le faisait là la voûte de notre effet : un seul dôme régulier posé sur les quatre colonnes autour de l'autel, juste assez haut pour passer au-dessus du baldaquin de l'autel. Où, quelle largeur et quelle hauteur viennent des pièces propres du jeu (mesurées à partir des fichiers de votre jeu, le baldaquin trouvé dans le jeu tel qu'il est dessiné) ; la pierre propre de la cathédrale, éclairée par ses bougies. Le reste de la cathédrale garde le plafond plat à sa hauteur. VR F4 seulement. Désactivé : le plafond plat. En direct.
 ceiling.game_ceiling_dome_size.label = Dôme de la cathédrale : taille
@@ -2354,6 +2380,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = Dôme de la Pierre-Monde : 
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Mètres ajoutés en travers du dôme de la Pierre-Monde (la moitié tout autour), en plus de celui mesuré à partir des pièces du jeu - le sien propre ; la taille du dôme de la cathédrale reste. Sa hauteur suit, pour qu'il passe toujours au-dessus du cristal ; plus large que les colonnes, son bord descend au-delà d'elles sur le plafond plat et les colonnes s'arrêtent sous la courbe. Des mètres tels que la caméra les a (la hauteur des yeux du héros par rapport à la vôtre). VR F4. En direct.
 ceiling.height_from_walls.label = Hauteur du plafond d'après les murs de la salle
 ceiling.height_from_walls.tip = Une salle dont la hauteur propre ci-dessous n'est pas réglée (0) a son plafond sur ses propres murs : là où s'arrêtent les murs avec lesquels le jeu construit cette salle (le milieu du sommet de ses pièces de mur, de colonne et de falaise, mesuré à partir des fichiers de votre jeu). La hauteur propre d'une salle, une fois réglée, l'emporte toujours. La voûte de notre effet et le plafond du jeu tous les deux ; la roche du jeu qui pend plus bas pose son point le plus bas sur les murs. Désactivé, ou une salle construite sans murs de ce genre : 18 au-dessus du sol là où aucune hauteur n'est réglée. Le journal indique la hauteur de chaque salle et d'où elle vient. En direct au prochain changement de zone.
+ceiling.min_headroom_m.label = Plafond au moins, mètres au-dessus de vos yeux (0 = désactivé)
+ceiling.min_headroom_m.tip = Quelle que soit la hauteur d'une salle, le point le plus bas du plafond - la roche qui pend dessous aussi - reste au moins à cette distance au-dessus de vos yeux : là où le sol monte plus haut que celui sur lequel le plafond se pose, et avec votre tête plus haute que la taille réglée, il monte avec vous (par paliers, sans jamais redescendre avant que vous quittiez la zone), si bien qu'il ne descend jamais jusqu'à votre visage. Des mètres tels que la caméra les a (la hauteur des yeux du héros rapportée aux vôtres). Le plafond du jeu et la voûte de notre effet pareillement, à la première personne. 0 = désactivé : seulement la hauteur de chaque salle. Immédiat.
 ceiling.floor_depth.label = Le mur du rebord : jusqu'où sous le sol (0 = aucun)
 ceiling.floor_depth.tip = Jusqu'où sous le sol du héros descend le mur du rebord du plafond du jeu, en unités du monde : en regardant vers le bas au-delà du bord du sol dessiné, on voit cette pierre, pas le vide.
 
@@ -4633,9 +4661,9 @@ vr.guide.4.row2.does = une poignée là dégaine l'arme de votre dos. La poigné
 vr.guide.4.row3.control = Arc
 vr.guide.4.row3.does = la main libre à la corde, gâchette ou poignée, tirez en arrière, lâchez. Arc bandé : B la compétence de flèche suivante, A la précédente.
 vr.guide.4.row4.control = Javelot
-vr.guide.4.row4.does = tenez-le avec la poignée, lancez, et lâchez
-vr.guide.4.row5.control = Vie et mana
-vr.guide.4.row5.does = sont sur vos poignets
+vr.guide.4.row4.does = saisir, lancer, lâcher. La vie et le mana sont sur vos poignets.
+vr.guide.4.row5.control = Recharge de la ceinture
+vr.guide.4.row5.does = inventaire ouvert : laser sur une potion + Y = dans la ceinture ; maintenir Y = la remplir
 vr.guide.5.title = Les vues, et ce guide à nouveau
 vr.guide.5.row0.control = F1
 vr.guide.5.row0.does = du dessus : la caméra propre du jeu
@@ -5133,6 +5161,7 @@ vr.flatmenu.title = Réglages D2R VR
 vr.flatmenu.own = Votre jeu (2D) - enregistré dans d2r_vr.ini, immédiat
 vr.rules.title = Règles de l'hôte (c'est l'hôte qui décide)
 vr.flatmenu.host = hôte
+vr.flatmenu.press_key = Appuyez sur une touche (Échap : annuler)
 vr.flatmenu.close = Fermer (Échap)
 vr.flatmenu.button = Réglages D2R VR
 vr.rules.console_off = (L'hôte n'est interrogé que si Paramètres > Mécaniques > « Réglages D2R VR en jeu » est coché.)
@@ -5147,6 +5176,9 @@ vr.flatmenu.flat_portal_no_oval = Pas d'ovale noir dans le portail de ville
 vr.flatmenu.stick_pitch_flat = Le stick droit de la manette regarde en haut et en bas
 vr.flatmenu.flat_map_zoom = - et + dézooment la carte hors de son cercle et reviennent
 vr.flatmenu.flat_map_place = Carte à l'écran
+vr.flatmenu.flat_pickup_key_on = Une touche ramasse les objets (première et troisième personne)
+vr.flatmenu.flat_pickup_key = La touche de ramassage (cliquez, puis appuyez sur une touche)
+vr.flatmenu.flat_item_hitbox = Avec Alt maintenu, cliquer un objet sur son corps, pas seulement son nom
 vr.flatmenu.flat_map_place.game = Comme dans les options du jeu
 vr.flatmenu.flat_map_place.left = Gauche
 vr.flatmenu.flat_map_place.centre = Centre
@@ -5204,6 +5236,7 @@ vr.gestures.about_hand = Cette main dessine ou bouge, avec sa gâchette
 vr.gestures.actions_need = Les actions du jeu sont gérées par le moteur de gestes du jeu : cochez Moteur de gestes dans le jeu dans D2R VR Settings (Gestes), avec un d2r_vr_gestures.dll qui lie des actions.
 vr.gestures.kind_pad = manette
 vr.gestures.kind_item = objet
+vr.gestures.kind_key = clavier
 vr.gestures.kind_game = jeu
 vr.gestures.tab_actions = Actions du jeu
 vr.gestures.tab_skills = Compétences
@@ -5640,6 +5673,8 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+ceiling.top_from_level.label = Le plafond au-dessus du sol le plus haut du niveau
+ceiling.top_from_level.tip = Le plafond se posait sur le sol le plus bas où vous vous étiez tenu dans la zone, si bien que dans un escalier il restait bas jusqu'à ce que vous avanciez. Coché : sa hauteur est mesurée depuis le sol le plus haut du niveau où vous êtes - chaque salle que le jeu construit là indique ses sols -, prise en entier 2 s après votre entrée dans un niveau, relevée doucement si une salle plus haute est construite plus tard, jamais abaissée. Le plafond du jeu et la voûte de notre effet pareillement. La hauteur propre de chaque salle (ci-dessus) est toujours mesurée depuis là. De D2R VR Unleashed (Cal, équipe de bearstonem). RV F4 seulement. Désactivé : comme avant. Immédiat.
 render.floors_stay.label = Les sols restent où ils étaient (pas de sol qui glisse au retour)
 render.floors_stay.tip = Le jeu donne à chaque salle d'un niveau une hauteur quand il commence à la dessiner, accordée aux salles dessinées autour d'elle à ce moment, et l'oublie quand la salle est hors de vue. Les bords de ses tuiles ne s'accordent pas tout autour, si bien qu'une salle où vous revenez par un autre chemin (ou après une autre zone ou la ville) peut être une marche plus haut ou plus bas - depuis la caméra du jeu au-dessus, personne ne le voit ; depuis la nôtre, le sol glisse : des blocs poussés vers le haut, vers le bas et sur le côté, le vide visible entre eux. Activé : chaque salle garde la hauteur à laquelle elle a été dessinée la première fois jusqu'à ce que vous quittiez la partie. La contrepartie : le jeu corrige aussi une salle dessinée à la mauvaise hauteur (une marche vue de loin, comme près de la porte de la Forteresse du Pandémonium) quand il la redessine à votre approche - avec ceci activé, cette correction ne vient pas. L'image seulement ; rien du combat ni des chemins ne change. En direct. Désactivé (par défaut) : les hauteurs propres du jeu.
 fog.game_fog.label = Qui dessine le brouillard

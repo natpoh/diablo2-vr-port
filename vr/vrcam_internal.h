@@ -296,6 +296,7 @@ extern const uint8_t kSigClientIndex[15];
 extern const uint8_t kSigHoverUnit[12];
 extern std::atomic<ULONGLONG> g_gazeAt;
 extern std::atomic<float> g_gazeEyeH;
+extern std::atomic<float> g_headOverStand;   // [ceiling] min_headroom_m: the real head over the hero's standing eyes, world units, eased (vr/view/camera.cpp)
 extern std::atomic<float> g_gazeFwd[3];
 extern std::atomic<bool> g_ptActive;   // [debug] melee_press_trace: a press is being traced
 void PressTraceSlot(int site, int slot, int bound, int answer);

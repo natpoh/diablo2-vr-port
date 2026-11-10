@@ -50,6 +50,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "rtv_slots.h"     // the render-target views of the interface chains, handed out and given back (EnsureHudOut)
 #include "panel_input.h"
 #include "typed_keys.h"   // [openxr] laser_typing: the laser's own Ctrl / Shift carry kOwnKeyTag
+#include "belt_refill.h"  // [belt] refill_key: the laser's B on the inventory - a tap Shift + clicks at its point, a hold fills the belt
 #include "xr_layers.h"
 #include "focus_gate.h"
 #include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
@@ -4120,6 +4121,7 @@ struct Laser {
     bool button[2] = {};       // the left, right mouse button held down by us
     bool key[2] = {};          // Ctrl, Shift held down by us
     bool trigger = false;      // the laser hand's trigger the frame before (a press is its edge)
+    bool refillTake = false;   // [belt] refill_key: the refill button (B) is ours - hidden from BodyWalk and the game's pad - decided while it is let go
     int said = -1;             // the state last told the log
     uint32_t tellings = 0;
     lasergrip::Tap gripTap[2];   // [openxr] laser_grip_tap: each hand's grip, tapped while the laser had it, given back as the menu's bumper
@@ -4192,7 +4194,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     bool holds = L.button[0] || L.button[1] || L.key[0] || L.key[1];
     for (const auto& t : L.takes) holds = holds || t[0] || t[1];
     holds = holds || L.closeAt || L.checkAt;   // ([openxr] hand_inventory: a drop's inventory action is let go, its outcome told)
-    if (!g_cfg.laser && !holds) { L.pad = false; L.said = -1; return; }   // off, and nothing of it left to let go
+    if (!g_cfg.laser && !holds) { L.pad = false; L.said = -1; L.refillTake = false; beltrefill::FeedPad(false, false); return; }   // off, and nothing of it left to let go
     const bool onHand = g_handInvUp.load();   // [openxr] hand_inventory (on the hand, or in front by its button): the right hand points, the left stick walks
     const int lh = onHand || g_cfg.laserHand ? 1 : 0, oh = 1 - lh;
     const uint32_t raw[2] = {in.hand[0].buttons, in.hand[1].buttons};   // as pressed, before anything is taken
@@ -4251,6 +4253,13 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         const handinv::Box& b = g_cut.box;
         return !b.ok() || !g_cut.w || !g_cut.h || b.Has(fu * (float)g_cut.w, fv * (float)g_cut.h);
     };
+    // [belt] refill_key (vr/belt_refill.h): with the inventory open and the laser usable, the refill button (B by default) is ours - not BodyWalk's, not the
+    // game's pad (its B would close the panel), not the pad's navigation below. Decided while it is let go, as the trigger's and the grip's.
+    const beltrefill::Pad refillPad = beltrefill::PadButton();
+    const bool refillDown = refillPad.bit && (raw[refillPad.hand] & refillPad.bit) != 0;
+    if (!refillDown) L.refillTake = refillPad.bit && beltrefill::PadWanted(!why);
+    if (!refillPad.bit) L.refillTake = false;   // (switched off under a press)
+    if (L.refillTake) in.hand[refillPad.hand].buttons &= ~refillPad.bit;
     // BodyWalk's pad navigating (a stick off its middle, a face button): the laser waits until the
     // aim moves on the picture again - tracking's tremble does not take the focus back
     bool padNow = false;
@@ -4265,6 +4274,8 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     else if (L.pad && !padNow && L.hit && (!L.anchored || hypotf(u - L.padU, v - L.padV) > 0.045f)) L.pad = false;
     const bool acts = !why && !L.pad;   // the laser is the mouse this frame
     L.drawn = acts;
+    // [belt] refill_key: the button's state while ours, and whether a tap would click where the laser points (the cursor is put there below)
+    beltrefill::FeedPad(L.refillTake && refillDown, acts && L.hit && !L.button[0] && !L.button[1]);
     if (why != 1) LaserTell(why ? why : L.pad ? 7 : 0);
     // who has each trigger and grip, decided while it is let go: the laser's while it points at the picture
     const bool claim = acts && (L.hit || L.btn);

@@ -818,6 +818,9 @@ through ReShade.
   circle of light reaches and how bright it is, and the light that fills the
   place (times the area's own, at least a set amount). For headsets that lose
   the darkest shades (an LCD such as Meta Quest).
+- **Ceiling at least, metres over your eyes** (1, 0 = off) - whatever a room's
+  height, the ceiling's lowest point stays that far over your eyes: where the
+  floor rises, or your head is higher than your height set, it goes up with you.
 - **Ceiling: <dungeon>** - each dungeon's own height, brightness, relief and
   stone picture.
 

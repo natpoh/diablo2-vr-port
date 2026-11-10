@@ -103,6 +103,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "flat_pick.h"     // [debug] flat_pick: the flat mouse look's targeting log (pure part, tested)
 #include "flat_ground.h"   // [input] flat_aim_ground: the mouse's point on raised ground (pure part, tested)
 #include "flat_shift.h"    // [camera] flat_shift_x / _y: the flat picture moved on the screen, and where the hero is on it (pure part, tested)
+#include "flat_pickup.h"   // [input] flat_pickup_key_on / flat_item_hitbox: flat, an item by a key and by its hitbox (pure part, tested)
 #include "flat_body.h"     // [input] flat_body_pick: a body or an object clicked by its body in flat F2 / F3 (pure part, tested)
 #include "vr_body_pick.h"  // [input] vr_body_pick, vr_body_pick_hand: the same in VR, along each view's ray (pure part, tested)
 #include "unleashed_loot_aim.h"  // [input] point_pickup: F4, A picks up the pointed item (MPL 2.0, from D2R VR Unleashed; pure part, tested)
@@ -111,7 +112,7 @@ int FindHeroMatrices(const float hero[3], uintptr_t* out, int max);
 #include "portal_auto.h"   // [input] portal_look_horizon / portal_auto: flat, after a portal and into one (pure part, tested)
 #include "../shared/unleashed_fog.h"           // [fog] ease_in / no_fog_river: D2R VR Unleashed's fog ease and no fog in the River of Flame (MPL 2.0)
 #include "../shared/unleashed_far_objects.h"   // [render] big_radius: D2R VR Unleashed's Big objects (MPL 2.0, bearstonem) - the setting's steps
-#include "unleashed_room_stitch.h"  // [render] room_stitch, [ceiling] top_from_level: D2R VR Unleashed's room stitch (Cal; MPL 2.0, pure part, tested)
+#include "unleashed_room_stitch.h"  // [render] room_stitch: D2R VR Unleashed's room stitch (Cal; MPL 2.0, pure part, tested)
 #include "terrain_heights.h"  // [render] terrain_heights: each ground tile at its own floor's height (pure part, tested)
 #include "attack_view.h"   // VR F2 and F4: the attack goes where the player looks; VR F1 and F3 (top-down): where the hero faces (pure part, tested)
 #include "window_json.h"   // the game's windowed size in Settings.json and what each platform does to it (shared/, pure, tested)
@@ -169,7 +170,7 @@ namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(
 #include "d2rcam.h"
 #include "sigscan.h"
 #include "mat4.h"
-namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); }   // the game's key commands from BodyWalk (gamecmd.cpp)
+namespace gamecmd { void Init(const D2RL::PluginContext* ctx); void Tick(); void Tap(uint32_t cmd); bool Pressed(uint32_t cmd); int CommandOfKey(unsigned vk); }   // the game's key commands from BodyWalk (gamecmd.cpp)
 namespace playerscmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the headset's Players row: the game's own /players N (players_cmd.cpp)
 namespace partycmd { void Init(const D2RL::PluginContext* ctx); void Tick(); }   // the headset's Party page: the game's roster and Party panel buttons (party_cmd.cpp)
 namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); void Shutdown(); }   // [openxr] skill_wheel (skill_wheel.cpp)
@@ -305,6 +306,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "simpler_sun.h"          // [render] sun_shadow_radius_m / sun_shadow_every: the game's sun shadow map filled for less (F4)
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
 #include "belt_drop.h"       // [hands] belt_drop_ground: the game's own drop of a belt potion (the belt slot's click, the cursor's drop)
+#include "belt_refill.h"     // [belt] refill_key: a tap = the game's Shift + click at the pointer, a hold = the game's own belt fill
 #include "belt_glow.h"       // [hands] belt_inner_glow: a bottle in reach lit with the game's own highlight
 #include "belt_bottle.h"     // [hands] belt_empty_bottle, belt_drop_ground: past the drink - the emptied bottle, a full one onto the ground (and bottle_fall.h, their fall)
 #include "anim_cut.h"          // [bow] quick_release, [hands] quick_throw: the action-frame flag of the hero's bow attack / throw rows moved earlier (vr/anim_cut.cpp)

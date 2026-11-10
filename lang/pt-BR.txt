@@ -269,6 +269,8 @@ render.monitor_eye.choice1 = O olho esquerdo
 render.monitor_eye.choice2 = O olho direito
 render.monitor_eye_fit.label = Monitor: o olho nas proporções dele (cortado para a janela)
 render.monitor_eye_fit.tip = Com um tamanho de renderização VR diferente da janela (Resolução, No headset: uma imagem quadrada numa janela larga), o Windows estica a imagem sobre a janela - o monitor a mostrava achatada. Ligado: o meio da imagem do olho, no formato da janela, é desenhado primeiro sobre a imagem inteira, então a janela a mostra nas proporções reais (o alto e o baixo, ou as laterais, cortados). Nada muda quando a janela tem o formato da imagem. Ao vivo. Desligado: esticada como antes.
+render.monitor_eye_crop_lens.label = Monitor: só o que o headset mostra (sem as bordas das lentes)
+render.monitor_eye_crop_lens.tip = A imagem do olho é desenhada maior do que o headset mostra: suas bordas e cantos ficam fora da lente e, com "Pular o que as lentes nunca mostram" (Início, No headset), ficam pretos. Ligado: a janela recebe só a parte que o headset mostra, a maior caixa no formato da janela que cabe nela - uma imagem mais próxima e limpa para gravação, com as bordas cortadas. Nunca com o console do D2RLoader aberto (Ctrl + `): aí aparece a imagem inteira, para o console caber na janela. Desligado (padrão): a imagem inteira do olho, bordas incluídas, como antes. Aplicado ao vivo.
 render.monitor_eye_drawn_only.label = Monitor: olhos alternados - só imagens que o jogo desenhou
 render.monitor_eye_drawn_only.tip = Só com "OpenXR nativo - olhos alternados": os quadros que desenham o outro olho mostram a última imagem que o jogo desenhou deste olho - cada imagem duas vezes, à metade da taxa, mas nunca uma criada na placa de vídeo (imagens criadas podem borrar nas bordas de coisas em movimento). Desligado (o padrão): a imagem criada para este olho naquele quadro - nova a cada quadro, como o headset a mostra. Ao vivo.
 render.monitor_panels.label = Monitor: mostrar os painéis do headset (inventário, vendedor, baú, mapa...)
@@ -739,6 +741,14 @@ input.flat_body_pick.label = Plano: clicar num monstro, NPC ou baú pelo corpo
 input.flat_body_pick.tip = Terceira e primeira pessoa: monstros, NPCs, portas, santuários, baús e portais perto de você são clicados pelo corpo, não só pelos pés (do fork plano de sajmonsoft). Desmarcado: pelos pés, como na visão de cima do próprio jogo.
 input.flat_shot_at_crosshair.label = Plano: um arco ou arremesso vai exatamente para a mira (sem mira automática)
 input.flat_shot_at_crosshair.tip = Com um arco, uma besta, um dardo ou uma arma de arremesso na mão, em primeira e terceira pessoa: um clique num monstro vai para onde está a mira, como um tiro no lugar - não para o monstro que o jogo acha perto da mira, o herói não anda até ele, e um botão mantido não continua atirando nele quando você olha para outro lado. Itens, NPCs, mercenários, baús, portas e portais são clicados como sempre. Desmarcado: o ataque do próprio jogo ao monstro sob o ponteiro.
+input.flat_pickup_key_on.label = Tela plana: uma tecla pega itens (primeira e terceira pessoa)
+input.flat_pickup_key_on.tip = Em primeira e terceira pessoa (F3, F2) com o mouse para olhar, a tecla abaixo pega um item do chão: aquele cujo nome está sob a mira (Alt), senão aquele em que a mira está, senão o mais próximo à sua frente dentro do alcance abaixo. É o clique do próprio jogo nesse item - o herói anda até ele e o pega como com o mouse. O jogo não recebe a tecla. Desmarcado: sem tecla de pegar, a tecla é do jogo.
+input.flat_pickup_key.label = Tela plana: a tecla de pegar
+input.flat_pickup_key.tip = A tecla que pega um item. Para outra tecla: no painel de configurações D2R VR do próprio jogo (F10), clique na tecla e pressione a desejada. O jogo não a recebe enquanto você joga em primeira ou terceira pessoa com o mouse para olhar (o comando do jogo nessa tecla, se houver, não faz nada ali; nos menus, na linha de chat e em F1 ela é do jogo). Vazio aqui: uma tecla definida no painel do jogo.
+input.flat_pickup_reach_cells.label = Tela plana: alcance da tecla de pegar para o item mais próximo, em células
+input.flat_pickup_reach_cells.tip = Sem item sob a mira, a tecla pega o item mais próximo à sua frente (a até 50 graus de onde você olha) até essa distância. 0: só o item sob a mira.
+input.flat_item_hitbox.label = Tela plana: com Alt pressionado, clicar no item pelo corpo, não só pelo nome
+input.flat_item_hitbox.tip = Em primeira e terceira pessoa com o mouse para olhar, enquanto Alt está pressionado (nomes dos itens exibidos), um item no chão também é pego clicando no próprio item, não só no nome - basta a mira sobre ele. Um nome sob a mira, ou um monstro na frente do item, continua tendo prioridade. O nome do item acende enquanto a mira está nele. Desmarcado: só o nome, como no jogo.
 input.vr_body_pick.label = VR: mirar num monstro, NPC ou baú pelo corpo
 input.vr_body_pick.tip = O ponteiro do mouse (F1, F3), a mira (F2 com o olhar pelo mouse) e a mira da mão com Shift + clique escolhem monstros, NPCs, portas, santuários, baús e portais perto de você pelo corpo, não só pelos pés. O jogo continua decidindo o acerto. Desmarcado: pelos pés.
 input.vr_body_pick_hand.label = VR F4: o ataque e a interação vão para onde a sua mão aponta
@@ -754,6 +764,18 @@ input.vr_keys_walk.label = Visão VR F2 como no plano: olhar com o mouse, mira, 
 input.vr_keys_walk.tip = Terceira pessoa com mouse e teclado, como no modo plano: o mouse gira a câmera, o ponteiro é a mira no meio (a profundidade dela: aba IU: F2 por trás), um clique vai para lá - em um monstro um ataque, em um item pegar, no chão um tiro - e W A S D andam para onde a câmera olha, não para o norte do mapa do jogo. F9 libera o ponteiro para os menus; W A S D continuam andando. Precisa do jogo no modo de mouse: depois de um analógico de gamepad, clique uma vez.
 input.crosshair.label = Imagem da mira
 input.crosshair.tip = O ponteiro enquanto o mouse olha: uma imagem sua (png, jpg, bmp), o meio dela é onde você mira; ela é encaixada em 32-64 pixels pela altura da janela. Uma imagem sem transparência: o preto dela é transparente. Um nome simples é procurado em reshade-shaders\Textures; um caminho completo também funciona. Vazio (x) = a embutida.
+
+# --- Belt refill ---
+group.belt_refill = Reabastecer cinto
+group.belt_refill.help = Poções do inventário para o cinto com um botão, com o inventário aberto: aponte para uma poção (o laser em VR, o cursor do mouse no monitor) e toque em Y - ela vai para o cinto; segure Y - o cinto inteiro é preenchido. Ambos são movimentos do próprio jogo.
+belt.refill_key.label = Tecla de reabastecer cinto: toque numa poção = para o cinto, segurar = encher o cinto
+belt.refill_key.tip = Com o inventário aberto: um toque no botão abaixo (Y por padrão, no controle esquerdo e no teclado) é o Shift + clique do próprio jogo onde você aponta - o ponto do laser em VR (todas as visões), o cursor do mouse no monitor - então uma poção ali vai para o cinto, como com Shift + clique. Segurar é o "hold to populate belt" do próprio jogo, do layout de controle dele: cada espaço vazio do cinto recebe uma poção do tipo que a sua coluna já tem, vinda do inventário, num só movimento que o próprio jogo faz. Com o inventário aberto, esse botão é do mod (B fica livre para fechar o painel, como no jogo; escolha B abaixo e ele deixa de fazer isso - o botão de menu ou o clique longo do analógico faz; teclado: I ou Esc). O log mostra "belt refill: ..." com quantas entraram e de qual tipo. Aplicado ao vivo. Desmarcado: o botão é do jogo, como antes.
+belt.refill_button.label = Reabastecer cinto: botão do controle
+belt.refill_button.tip = O botão do controle para reabastecer o cinto (A e B no controle direito, X e Y no esquerdo). Ele só é usado com o inventário aberto e o laser apontando para o jogo; em outros lugares faz o que sempre fez. Aplicado ao vivo.
+belt.refill_keyboard.label = Reabastecer cinto: tecla do teclado
+belt.refill_keyboard.tip = A tecla do teclado para reabastecer o cinto (o cursor do mouse é o apontador). Só é usada com o inventário aberto e a linha de chat fechada; com o inventário fechado é a tecla do jogo, como antes (o B do jogo abre o inventário). Aplicado ao vivo.
+belt.refill_hold_ms.label = Reabastecer cinto: segurar por, ms
+belt.refill_hold_ms.tip = Por quanto tempo o botão é segurado para encher o cinto inteiro; soltando antes, vale como toque (uma poção, onde você aponta). Aplicado ao vivo.
 
 # --- Pick up by pointing ---
 group.pick_up_by_pointing = Pegar apontando
@@ -1055,6 +1077,8 @@ stereo.native_replay.label = ... desenhado uma vez, o olho direito de novo na pl
 stereo.native_replay.tip = Com Os dois olhos a partir de um quadro do jogo: o jogo desenha o quadro uma vez, e o olho direito é desenhado de novo na placa de vídeo a partir do mesmo trabalho, com a sua própria câmera, em vez de o quadro inteiro ser desenhado duas vezes. A thread do jogo faz cerca de metade do trabalho: num PC limitado pelo processador, muito mais quadros por segundo; um PC limitado pela placa de vídeo ganha pouco. Só OpenXR nativo, primeira pessoa (F4). Depois de uma troca de área, de um carregamento ou de uma mudança nas opções de vídeo, o olho direito é desenhado por conta própria até a imagem se firmar (alguns segundos) - duas passadas nessa hora, nunca um olho preto. Ligado por padrão ("Nativo uma passada" em 3D no headset). Vale a partir da próxima inicialização do jogo. Desligado: duas passadas ("Nativo duas passadas").
 stereo.replay_reset_guard.label = ... nunca mais uma lista que o jogo já reaproveitou
 stereo.replay_reset_guard.tip = Com o olho direito desenhado de novo na placa de vídeo: o jogo pode começar uma nova gravação numa das suas listas assim que a enviou, e quando o olho direito envia a mesma lista outra vez ela contém outros comandos - um inacabado faz o dispositivo gráfico ser perdido, um posterior faz a placa desenhar a partir do que ainda não existe (trava). Ligado: o olho direito de um quadro assim é a imagem esquerda uma vez, e o registro diz isso. Desligado: anotado no registro e enviado mesmo assim (como antes). Ao vivo.
+stereo.replay_alloc_guard.label = ... e nunca sobre comandos que a placa ainda lê
+stereo.replay_alloc_guard.tip = Com o olho direito redesenhado na placa de vídeo: o jogo reutiliza a memória onde estão os comandos de suas listas assim que o próprio quadro termina - antes de o olho direito reenviar as mesmas listas. O jogo então escreve novos comandos onde a placa ainda lê os antigos (trava). Ligado: o jogo espera ali até o olho direito terminar com elas (um instante, só quando a placa está atrasada), e um quadro cuja memória já foi reutilizada mostra a imagem esquerda no olho direito uma vez. Desligado: apenas avisado no log (como antes). Aplicado ao vivo.
 stereo.turn_warp.label = Olhos alternados: criar o outro olho a partir da profundidade
 stereo.turn_warp.tip = OpenXR nativo com os olhos alternados: o olho não desenhado neste quadro é criado na placa de vídeo para onde a cabeça está agora - a última imagem própria dele movida com a profundidade com que foi desenhada (o que o herói segura vai com ele), na pose deste quadro. Desmarcado: ele vai ao headset como foi desenhado por último, e o headset o gira (só rotação: um passo ou um monstro em movimento aparece um quadro atrás nesse olho). Só em primeira pessoa (F4). Ao vivo. Ideia: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... com o olho desenhado neste quadro por cima
@@ -2212,6 +2236,8 @@ fog.game_fog_flat.label = A neblina do jogo também no jogo plano
 fog.game_fog_flat.tip = O jogo desenha a neblina dele também quando você joga no monitor sem headset (as visões planas em primeira e terceira pessoa). Desligado: só em VR primeira pessoa (F4). Vazio: como "O jogo desenha o céu também no jogo plano" (a chave de antes). Ao vivo.
 fog.game_fog_before_fx.label = A neblina antes da fumaça e do fogo
 fog.game_fog_before_fx.tip = A neblina é posta sobre o mundo antes de o jogo acrescentar fumaça, fogo, bruma e feitiços, então eles continuam brilhantes sobre o mundo enevoado. Desligado: a ordem do próprio jogo - a neblina passa sobre eles pelo que está longe atrás deles, e a chama e a fumaça de uma tocha diante de um fundo distante enevoado são apagadas. Uma passada nossa na placa de vídeo (o custo dela na linha de 10 s do registro). Vale quando o jogo é iniciado de novo.
+fog.game_fog_cover.label = A névoa cobre tudo a partir de
+fog.game_fog_cover.tip = Com a névoa antes da fumaça e do fogo: a partir dessa distância, tudo fica inteiro na cor da névoa - árvores e construções distantes, fogos distantes e seu brilho somem na névoa. Unidades do mundo (o herói tem ~7,5 de altura). 0: a curva própria da névoa até o fim (como antes). Aplicado ao vivo.
 fog.game_fog_planes_count.label = Quantos planos
 fog.game_fog_planes_count.tip = Com "Neblina desenhada por: Planos de neblina diante do jogador": a neblina como planos voltados para você, de Início da neblina a Neblina total, cada um uma camada da cor da neblina; o que está atrás de um plano é coberto por ele, o que está na frente (a chama de uma tocha) continua brilhante. Mais planos: mais suave, o mesmo custo. Ao vivo.
 fog.game_fog_planes_soft.label = Quão suave é cada plano
@@ -2245,6 +2271,8 @@ sky.dome_fog_baked.label = Céu do jogo: a parte baixa dele na cor da neblina
 sky.dome_fog_baked.tip = Com a neblina do jogo, a parte baixa do céu é posta na própria cor da neblina na própria imagem do céu, como a parte baixa do nosso céu antigo vai para a neblina: árvores e arbustos contra o horizonte ficam sobre a cor da neblina, sem uma borda clara do horizonte da imagem em volta deles. O horizonte do céu na neblina acima fica de lado enquanto isso. Desligado: a imagem como ela é. Ao vivo.
 sky.dome_fog_baked_strength.label = Céu do jogo: quanto da cor da neblina
 sky.dome_fog_baked_strength.tip = 1: o horizonte inteiro na cor da neblina, passando para a imagem até 11 graus; menos: um pouco da imagem através dele. Ao vivo.
+sky.dome_fog_baked_top_deg.label = O céu do jogo: até que altura vai a faixa de névoa
+sky.dome_fog_baked_top_deg.tip = Até quantos graus acima do horizonte a parte baixa do céu é misturada à cor da névoa, esmaecendo até ali (graus). Com "A névoa cobre tudo a partir de" definido, os dois formam uma faixa de névoa ao seu redor nessa distância, com céu limpo acima: árvores e construções distantes somem nela, o topo do céu fica como está. 11,5: como antes. Aplicado ao vivo.
 
 # --- Old fog (our effect) ---
 group.old_fog_our_effect.help = A neblina de distância do nosso próprio efeito, como era (congelada) - só com "Neblina desenhada por: Neblina antiga", esmaecida nos outros casos. Controles deslizantes próprios.
@@ -2340,8 +2368,6 @@ ceiling.game_ceiling_wall.label = O teto do jogo: dobrado em parede na borda
 ceiling.game_ceiling_wall.tip = Um anel da mesma rocha iluminada ao seu redor onde o teto do jogo termina (a cerca de 215 unidades de distância no tamanho de ladrilho 10), do teto até abaixo do chão (a profundidade do chão abaixo): o vazio preto além da borda do teto - uma faixa entre ele e o chão distante, iluminada pela neblina atrás das fogueiras - é fechado por pedra, como a parede distante do nosso efeito o fechava. Desligado: o teto plano. Ao vivo.
 ceiling.game_ceiling_beams.label = O teto do jogo: as próprias vigas de madeira do quartel
 ceiling.game_ceiling_beams.tip = O jogo traz uma armação de teto de madeira para o quartel (e a prisão dele) que nunca coloca: uma grade de vigas cuja base fica no topo das paredes do quartel. Marcado, o jogo desenha essa armação sobre você numa grade de armações inteiras fixas no mundo - o próprio modelo, a madeira e o tamanho dela, iluminada pelas tochas dele - com a pedra do quartel sobre as vigas para fechar os vãos entre elas. Feito a partir dos arquivos do seu jogo. Só VR F4. Desligado: o teto de pedra plano. Ao vivo.
-ceiling.top_from_level.label = O teto sobre o piso mais alto do nível
-ceiling.top_from_level.tip = O teto ficava sobre o piso mais baixo em que você tinha pisado na área, então ao subir uma escada ele continuava baixo até você andar mais. Marcado: a altura dele é medida a partir do piso mais alto do nível em que você está - cada sala que o jogo constrói ali informa os seus pisos - tomada inteira 2 s depois de você entrar num nível, levantada com suavidade se uma sala mais alta for construída depois, nunca abaixada. Tanto o teto do jogo quanto a abóbada do nosso efeito. A altura própria de cada sala (acima) continua sendo medida a partir dali. De D2R VR Unleashed (Cal, equipe de bearstonem). Só VR F4. Desligado: como antes. Ao vivo.
 ceiling.game_ceiling_dome.label = O teto do jogo: a cúpula da catedral sobre a capela
 ceiling.game_ceiling_dome.tip = Na Catedral o teto do jogo sobe numa cúpula sobre a capela, como fazia ali a abóbada do nosso efeito: uma cúpula uniforme apoiada nos quatro pilares ao redor do altar, alta o bastante para passar sobre o dossel do altar. Onde, quão larga e quão alta vêm das próprias peças do jogo (medidas a partir dos arquivos do seu jogo, o dossel encontrado no jogo tal como é desenhado); a própria pedra da catedral, iluminada pelas velas dela. O resto da catedral mantém o teto plano na altura dele. Só VR F4. Desligado: o teto plano. Ao vivo.
 ceiling.game_ceiling_dome_size.label = A cúpula da catedral: tamanho
@@ -2354,6 +2380,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = A cúpula da Pedra do Mundo
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Metros somados de lado a lado à cúpula da Pedra do Mundo (metade em cada lado), além da medida a partir das peças do jogo - a própria dela; o tamanho da cúpula da catedral continua. A altura dela acompanha, de modo que ela ainda passa sobre o cristal; mais larga que os pilares, a borda dela desce além deles até o teto plano e os pilares terminam sob a curva. Metros como a câmera os tem (a altura dos olhos do herói em relação à sua). VR F4. Ao vivo.
 ceiling.height_from_walls.label = Altura do teto a partir das paredes da sala
 ceiling.height_from_walls.tip = Uma sala cuja própria altura abaixo não está definida (0) tem o teto nas próprias paredes: onde terminam as paredes com que o jogo monta essa sala (o meio do topo das peças de parede, pilar e penhasco dela, medido a partir dos arquivos do seu jogo). A altura própria de uma sala, uma vez definida, sempre vence. A abóbada do nosso efeito e o teto do jogo, ambos; a rocha do jogo que pende mais baixo apoia o ponto mais baixo dela nas paredes. Desligado, ou uma sala montada sem paredes desse tipo: 18 sobre o chão onde nenhuma altura está definida. O log diz a altura de cada sala e de onde ela vem. Ao vivo na próxima mudança de área.
+ceiling.min_headroom_m.label = Teto no mínimo, metros acima dos seus olhos (0 = desligado)
+ceiling.min_headroom_m.tip = Seja qual for a altura de uma sala, o ponto mais baixo do teto - a rocha que pende abaixo dele também - fica pelo menos isso acima dos seus olhos: onde o piso sobe acima daquele em que o teto se apoia, e com sua cabeça mais alta que a altura definida, ele sobe com você (em degraus, sem voltar a descer até você sair da área), então ele nunca desce até o seu rosto. Metros como a câmera os tem (a altura dos olhos do herói sobre a sua). Tanto o teto do jogo quanto a abóbada do nosso efeito, em primeira pessoa. 0 = desligado: só a altura de cada sala. Ao vivo.
 ceiling.floor_depth.label = A parede da borda: quanto abaixo do chão (0 = nenhuma)
 ceiling.floor_depth.tip = Até onde, abaixo do chão do herói, a parede da borda do teto do jogo alcança, em unidades do mundo: olhar para baixo além da borda do chão desenhado mostra essa pedra, não o vazio.
 
@@ -4633,9 +4661,9 @@ vr.guide.4.row2.does = um grip ali saca a arma das suas costas. O grip de uma m�
 vr.guide.4.row3.control = Arco
 vr.guide.4.row3.does = a mão livre na corda, gatilho ou grip, puxe para trás, solte. Com a corda puxada: B a próxima habilidade de flecha, A a anterior.
 vr.guide.4.row4.control = Dardo
-vr.guide.4.row4.does = segure-o com o grip, arremesse e solte
-vr.guide.4.row5.control = Vida e mana
-vr.guide.4.row5.does = ficam nos seus pulsos
+vr.guide.4.row4.does = agarrar, arremessar, soltar. Vida e mana ficam nos seus pulsos.
+vr.guide.4.row5.control = Reabastecer cinto
+vr.guide.4.row5.does = inventário aberto: laser numa poção + Y = para o cinto; segurar Y = encher
 vr.guide.5.title = Visões e este guia de novo
 vr.guide.5.row0.control = F1
 vr.guide.5.row0.does = de cima: a própria câmera do jogo
@@ -5133,6 +5161,7 @@ vr.flatmenu.title = Configurações do D2R VR
 vr.flatmenu.own = Seu jogo (2D) - salvo em d2r_vr.ini, ao vivo
 vr.rules.title = Regras do anfitrião (quem hospeda decide)
 vr.flatmenu.host = anfitrião
+vr.flatmenu.press_key = Pressione uma tecla (Esc: cancelar)
 vr.flatmenu.close = Fechar (Esc)
 vr.flatmenu.button = Configurações do D2R VR
 vr.rules.console_off = (O anfitrião só é consultado com Configurações > Mecânicas > "Configurações do D2R VR no jogo" marcado.)
@@ -5147,6 +5176,9 @@ vr.flatmenu.flat_portal_no_oval = Sem oval preto no portal da cidade
 vr.flatmenu.stick_pitch_flat = O analógico direito do gamepad olha para cima e para baixo
 vr.flatmenu.flat_map_zoom = - e + afastam o mapa do círculo e o trazem de volta
 vr.flatmenu.flat_map_place = Mapa na tela
+vr.flatmenu.flat_pickup_key_on = Uma tecla pega itens (primeira e terceira pessoa)
+vr.flatmenu.flat_pickup_key = A tecla de pegar (clique e pressione uma tecla)
+vr.flatmenu.flat_item_hitbox = Com Alt pressionado, clicar no item pelo corpo, não só pelo nome
 vr.flatmenu.flat_map_place.game = Como nas opções do jogo
 vr.flatmenu.flat_map_place.left = Esquerda
 vr.flatmenu.flat_map_place.centre = Centro
@@ -5204,6 +5236,7 @@ vr.gestures.about_hand = Esta mão desenha ou se move, com seu gatilho
 vr.gestures.actions_need = As ações do jogo são mantidas pelo motor de gestos do jogo: marque Motor de gestos no jogo no D2R VR Settings (Gestos), com um d2r_vr_gestures.dll que vincule ações.
 vr.gestures.kind_pad = controle
 vr.gestures.kind_item = item
+vr.gestures.kind_key = teclado
 vr.gestures.kind_game = jogo
 vr.gestures.tab_actions = Ações do jogo
 vr.gestures.tab_skills = Habilidades
@@ -5640,6 +5673,8 @@ vr.map.on = Ligado
 vr.map.off = Desligado
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+ceiling.top_from_level.label = O teto sobre o piso mais alto do nível
+ceiling.top_from_level.tip = O teto ficava sobre o piso mais baixo em que você tinha pisado na área, então ao subir uma escada ele continuava baixo até você andar mais. Marcado: a altura dele é medida a partir do piso mais alto do nível em que você está - cada sala que o jogo constrói ali informa os seus pisos - tomada inteira 2 s depois de você entrar num nível, levantada com suavidade se uma sala mais alta for construída depois, nunca abaixada. Tanto o teto do jogo quanto a abóbada do nosso efeito. A altura própria de cada sala (acima) continua sendo medida a partir dali. De D2R VR Unleashed (Cal, equipe de bearstonem). Só VR F4. Desligado: como antes. Ao vivo.
 render.floors_stay.label = Os pisos ficam onde estavam (sem chão que desliza na volta)
 render.floors_stay.tip = O jogo dá a cada sala de um nível uma altura quando começa a desenhá-la, combinada com as salas desenhadas ao redor dela naquele momento, e a esquece quando a sala sai de vista. As bordas dos ladrilhos não batem em toda a volta, então uma sala à qual você volta por outro caminho (ou depois de outra área ou cidade) pode ficar um degrau mais alta ou mais baixa - da câmera do jogo lá de cima ninguém vê, da nossa o chão desliza: blocos empurrados para cima, para baixo e para o lado, o vazio aparecendo entre eles. Ligado: toda sala mantém a altura em que foi desenhada pela primeira vez até você sair do jogo. A troca: o jogo também conserta uma sala desenhada na altura errada (um degrau visto de longe, como no portão da Fortaleza do Pandemônio) quando a desenha de novo ao você se aproximar - com isto ligado, esse conserto não vem. Só a imagem; nada da luta ou dos caminhos muda. Ao vivo. Desligado (o padrão): as alturas do próprio jogo.
 fog.game_fog.label = Neblina desenhada por

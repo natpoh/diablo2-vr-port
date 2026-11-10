@@ -315,6 +315,34 @@ inline float HeightOf(float own, bool fromWalls, float wallsTop, float relief, f
     return own > 0.0f ? own : fromWalls && wallsTop > 0.0f ? wallsTop + relief * k : kHeightAlone;
 }
 
+// ---- [ceiling] min_headroom_m: the ceiling never comes down onto the head ----
+// Serg 2026-11-10 (his Den of Evil, a barbarian): "в пещере потолок был на уровне 1 метра... другой человек закроет игру". The act 1 caves'
+// rock: its top 15.6 over the area's floor, hanging 6 down - its lowest 9.6, a barbarian's eyes at 6.3 - 0.85 m over the eyes at best, less
+// where the floor rises over the one it stands on, less again with a real head higher than the height set. Whatever the room's height
+// says, the ceiling's LOWEST point (its top less its rock's hang) stays at least `marginM` metres over the eyes: the eyes' height over the
+// area's floor now (the hero's ground over the floor the ceiling stands on + the eyes over his ground) + the margin in world units (`upm`
+// a metre, the camera's scale) + the hang. All in world units over the area's floor; 0 when off or not numbers.
+// (A hero more than kHeadroomMaxRise over the area's floor is a place read wrong for a frame, not a climb: it is not taken - the held need
+// would keep it for the whole area.)
+constexpr float kHeadroomMaxRise = 100.0f;
+inline float HeadroomNeed(float heroOverFloor, float eyeOverGround, float marginM, float upm, float hang) {
+    if (!(marginM > 0.0f) || !(upm > 0.0f) || !std::isfinite(heroOverFloor) || !std::isfinite(eyeOverGround) || !std::isfinite(hang) ||
+        heroOverFloor > kHeadroomMaxRise)
+        return 0.0f;
+    return std::fmax(0.0f, heroOverFloor) + std::fmax(0.0f, eyeOverGround) + marginM * upm + std::fmax(0.0f, hang);
+}
+// Held per area: what the guard needs only ever rises until the area changes (`gen`), taken up in whole kHeadroomStep - so the ceiling does
+// not breathe with the head or a ramp underfoot, and stands still in the world as before; a step up when he climbs over what it allowed.
+constexpr float kHeadroomStep = 0.5f;
+struct HeadroomHold { unsigned gen = ~0u; float need = 0.0f; };
+inline float HeadroomHeld(HeadroomHold* h, unsigned gen, float need) {
+    if (h->gen != gen) { h->gen = gen; h->need = 0.0f; }
+    if (std::isfinite(need) && need > h->need) h->need = std::ceil(need / kHeadroomStep - 1e-4f) * kHeadroomStep;
+    return h->need;
+}
+// The ceiling's top with the guard: the room's own (with its lifts) or what the guard holds, the higher
+inline float Guarded(float height, float held) { return std::fmax(height, held); }
+
 // ---- [ceiling] game_ceiling_dome: the cathedral's dome over its chapel (shared/ceiling_measures.h Dome) ----
 // Serg (0.188): the dome our post vault made over the cathedral's chapel, in the game's own ceiling. A slab can't have one (it is laid round
 // the hero, and opaque - a dome over it would never be seen), so in the cathedral the slab gives way to a vault of its own: the same smooth

@@ -463,7 +463,7 @@ inline constexpr Def kDefs[] = {
     {L"render", L"game_stages", "The game's render stages", "A Quality preset key ([render] game_stages)", 0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"render", L"game_outline", "The game's hover outline", "A Quality preset key ([render] game_outline)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"render", L"potato_light", "Potato light", "A Quality preset key ([render] potato_light)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
-    {L"render", L"potato_light_game", "Potato light in the game's colours", "A Quality preset key ([render] potato_light_game)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"render", L"potato_light_game", "Potato light in the game's colours", "A Quality preset key ([render] potato_light_game)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"render", L"rings", "Room rings", "A Quality preset key ([render] rings)", 2.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"render", L"model_radius", "Model radius", "A Quality preset key ([render] model_radius)", 200.0f, 150.0f, 1000.0f, 10.0f, "%.0f", "", "", kNoPage},
     {L"render", L"big_radius", "Big objects' radius", "A Quality preset key ([render] big_radius)", 0.0f, 0.0f, 3000.0f, 10.0f, "%.0f", "", "", kNoPage},

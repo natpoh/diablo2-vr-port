@@ -7,8 +7,11 @@
 #define NOMINMAX
 #include <windows.h>
 
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 #include <cstring>
 #include <map>
 #include <string>
@@ -1822,7 +1825,80 @@ static void TestFuzz() {
     }
 }
 
+// The painter's Stop (wheelpaint::Async; skillwheel::Release) from several threads at once and from the painter itself never throws and never
+// leaves a painter behind - 0.210.1 died twice on Serg's PC (2026-11-09): the ini reload (Configure, the wheel off) and the session's end
+// (WheelTeardown) both joined the same thread, the second join threw std::system_error out of the reload. Without the fix this test ends the
+// process (an exception out of a thread / a self-join), so getting to the count is the check.
+static wheelpaint::Async* g_selfStop = nullptr;
+static std::atomic<int> g_selfStops{0};
+static void StopFromPainter() {
+    if (g_selfStop && g_selfStops.fetch_add(1) == 0) g_selfStop->Stop();
+}
+static bool WaitPicture(wheelpaint::Async& a, uint32_t wantRev, int ms) {
+    std::vector<uint32_t> px;
+    for (int t = 0; t < ms; t += 5) {
+        uint32_t rev = 0;
+        if (a.Fetch(px, &rev) && rev == wantRev && !px.empty()) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    return false;
+}
+static void TestPainterStop() {
+    const uint32_t faults0 = wheelpaint::StopFaults();
+    wheelpaint::Async a;
+    uint32_t rev = 100;
+    View v = SampleView(Page::Wheel, 2, 1);
+    // on / off / on, as Configure switches it; a Stop of a stopped painter is nothing
+    for (int i = 0; i < 3; ++i) {
+        a.Warm();
+        v.revision = ++rev;
+        a.Submit(v);
+        a.Stop();
+    }
+    a.Stop();
+    a.Warm();
+    v.revision = ++rev;
+    a.Submit(v);
+    CHECK(WaitPicture(a, rev, 3000));   // on again: it paints
+    // the reload, the session's end and the draw thread at once (two Stops, Warm and Submit racing)
+    std::atomic<bool> go{true};
+    std::atomic<uint32_t> drawRev{1000};
+    std::thread draw([&] {
+        while (go.load()) {
+            View w = v;
+            w.revision = ++drawRev;
+            a.Submit(w);
+        }
+    });
+    std::thread reload([&] { for (int i = 0; i < 300; ++i) { a.Stop(); a.Warm(); } });
+    std::thread teardown([&] { for (int i = 0; i < 300; ++i) a.Stop(); });
+    reload.join();
+    teardown.join();
+    go.store(false);
+    draw.join();
+    a.Stop();
+    CHECK(wheelpaint::StopFaults() == faults0);   // no join failed (none was even tried twice)
+    // from the painter's own thread: let go, no throw, and on again afterwards
+    g_selfStop = &a;
+    wheelpaint::AfterPaintForTest(&StopFromPainter);
+    a.Warm();
+    v.revision = ++rev;
+    a.Submit(v);
+    for (int t = 0; t < 3000 && g_selfStops.load() == 0; t += 5) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(g_selfStops.load() >= 1);
+    wheelpaint::AfterPaintForTest(nullptr);
+    a.Stop();
+    CHECK(wheelpaint::StopFaults() == faults0);
+    a.Warm();
+    v.revision = ++rev;
+    a.Submit(v);
+    CHECK(WaitPicture(a, rev, 3000));
+    a.Stop();
+    g_selfStop = nullptr;
+}
+
 int main(int argc, char** argv) {
+    TestPainterStop();
     TestPaint(argc > 2 && std::strcmp(argv[1], "--dump") == 0 ? argv[2] : nullptr);
     TestManifest();
     TestWedges();

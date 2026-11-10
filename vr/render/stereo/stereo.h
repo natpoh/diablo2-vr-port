@@ -73,6 +73,7 @@ extern std::atomic<bool> g_resizeDrain;   // [render] resize_drain (vr/resize_dr
 extern std::atomic<bool> g_fxSync;
 extern std::atomic<bool> g_holdSignalsOn;
 extern std::atomic<bool> g_resetGuard;   // [stereo] replay_reset_guard
+extern std::atomic<bool> g_allocGuard;   // [stereo] replay_alloc_guard (vr/render/stereo/replay_alloc_guard.h)
 extern std::atomic<int> g_marksOn;
 extern fxnative::Runtime* g_nativeFx;
 extern std::atomic<bool> g_on;

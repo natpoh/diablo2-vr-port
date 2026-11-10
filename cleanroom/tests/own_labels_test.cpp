@@ -623,6 +623,15 @@ static void TestMonsterNames() {
         Expect(p.frame[0] < p.fill[0] && p.frame[2] > p.fill[2] && p.frame[1] < p.fill[1] && p.frame[3] > p.fill[3], "the red inside the frame");
         GamePlate noGame;
         Expect(!LayOutGamePlate(39.0f, noGame, lh, &gl), "no game numbers: not laid out this way (our own stack then)");
+        // a name wider than the bar read (the last target's bar, our least size): the frame holds it, caps and all (sdfsdfsdfdscvx: "cut off")
+        GamePlate wide = g;
+        wide.nameW = 420.0f;
+        Expect(LayOutGamePlate(39.0f, wide, lh, &gl) && gl.plate.frameW >= 420.0f + 2.0f * 60.0f * 8.0f / 72.0f - 1e-3f &&
+                   gl.plate.fill[2] - gl.plate.fill[0] >= 420.0f - 1e-3f,
+               "the frame never narrower than our name on it");
+        wide.nameW = 100.0f;
+        Expect(LayOutGamePlate(39.0f, wide, lh, &gl) && std::fabs(gl.plate.frameW - 300.0f) < 1e-3f, "a shorter name: the game's bar as it is");
+        Expect(std::fabs(gl.plate.frameH - 60.0f) < 1e-3f, "the height stays the game's bar's");
     }
     {   // one copy of the plate: the game draws its lines twice (the top place and over the head) - the name in the plate's box, each line nearest it
         Text tt[kMax];

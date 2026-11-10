@@ -75,6 +75,24 @@ inline Canvas CanvasOf(uint32_t layerW, uint32_t layerH, float vx, float vy, flo
     return Canvas{(int32_t)std::lround(vx), (int32_t)std::lround(vy), (uint32_t)std::lround(vw), (uint32_t)std::lround(vh)};
 }
 
+// The game's map box stops growing at about 640 px wide (measured 2026-11-10 at 1280, 1536, 1920 and 2816 square, interface 80 %: 639-640
+// every time), and does not shrink with a small picture either: at 1024x1024 it came 512,132 - 1151,771 - wider than half the picture,
+// taller than 0.6 of it, its right edge 127 px past the picture's. The size rule refused it and the map stayed in the picture, high in
+// the sky in F4 (Serg, a 1024 render size for a CPU test). A box the size rule refuses is still the map's when it is that capped box:
+// 600 - 680 px wide in the map's own shape, no taller than it is wide; then its outer edge may run past the picture (the game draws only
+// what lies on the layer; the share copies that much).
+constexpr float kCapMinPx = 600.0f, kCapMaxPx = 680.0f;
+inline bool SizeOk(float rw, float rh, float W, float H, float f) { return rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W) && rh > H / 8.0f && rh < 0.6f * H; }
+inline bool CappedBox(float rw, float rh, float W, float H, float f) {
+    return !SizeOk(rw, rh, W, H, f) && rw >= kCapMinPx * f && rw <= kCapMaxPx * f && rh > H / 8.0f && rh <= 1.1f * rw / f;
+}
+// In which top corner the box's outer edge lies: 1 left, 2 right, 0 neither. `capped`: CappedBox - the edge may run past the picture.
+inline int SideOf(float l, float rr, float W, float side, float tol, bool capped) {
+    if (l + rr < W && (capped ? rr > 0.0f : l > -tol) && l < side + tol) return 1;
+    if (l + rr > W && (capped ? l < W : rr < W + tol) && rr > W - side - tol) return 2;
+    return 0;
+}
+
 // 0: not the map's box at the area fraction `safe`; 1: a box in the top left corner; 2: the top right one. `corner` ([hud] map_corner):
 // 0 either, 1 the left one only, 2 the right one only. `stretch`: Stretch - the box's width bounds in the map's own shape (it never
 // reaches past the picture).
@@ -84,13 +102,13 @@ inline int Corner(const Box& r, const Canvas& c, float safe, int corner, float s
     const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
     const float rw = rr - l, rh = b - t;
     const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
-    if (!(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W) && rh > H / 8.0f && rh < 0.6f * H)) return 0;
+    const bool capped = CappedBox(rw, rh, W, H, f);
+    if (!capped && !SizeOk(rw, rh, W, H, f)) return 0;
     const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
     if (std::fabs(t - top) >= tol) return 0;
-    const bool atLeft = l + rr < W && l > -tol && l < side + tol;
-    const bool atRight = l + rr > W && rr < W + tol && rr > W - side - tol;
-    if (atLeft && corner != 2) return 1;
-    if (atRight && corner != 1) return 2;
+    const int at = SideOf(l, rr, W, side, tol, capped);
+    if (at == 1 && corner != 2) return 1;
+    if (at == 2 && corner != 1) return 2;
     return 0;
 }
 
@@ -103,14 +121,14 @@ inline const char* WhyNot(const Box& r, const Canvas& c, float safe, int corner,
     const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
     const float rw = rr - l, rh = b - t;
     const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
-    if (!(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W))) return "width";
-    if (!(rh > H / 8.0f && rh < 0.6f * H)) return "height";
+    const bool capped = CappedBox(rw, rh, W, H, f);
+    if (!capped && !(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W))) return "width";
+    if (!capped && !(rh > H / 8.0f && rh < 0.6f * H)) return "height";
     const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
     if (std::fabs(t - top) >= tol) return "top";
-    const bool atLeft = l + rr < W && l > -tol && l < side + tol;
-    const bool atRight = l + rr > W && rr < W + tol && rr > W - side - tol;
-    if (!atLeft && !atRight) return "side";
-    if ((atLeft && corner == 2) || (atRight && corner == 1)) return "corner";
+    const int at = SideOf(l, rr, W, side, tol, capped);
+    if (!at) return "side";
+    if ((at == 1 && corner == 2) || (at == 2 && corner == 1)) return "corner";
     return nullptr;
 }
 

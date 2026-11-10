@@ -2,9 +2,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 // Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors (https://github.com/bearstonem/d2r-pcvr).
-// From D2R VR Unleashed commit d4168617160f1759b6be6c7c612361fdd8dcd527 (Cal), its steamvr/room_stitch_test.cpp and
-// steamvr/ceiling_top_test.cpp, for vr/unleashed_room_stitch.h. Taken as they are; assert() became CHECK (a Release build keeps it) and a
-// few checks of ours were added at the end (marked). This file stays MPL 2.0.
+// From D2R VR Unleashed commit d4168617160f1759b6be6c7c612361fdd8dcd527 (Cal), its steamvr/room_stitch_test.cpp, for
+// vr/unleashed_room_stitch.h. Taken as it is; assert() became CHECK (a Release build keeps it) and a check of ours was added at the end
+// (marked). (Its ceiling_top_test.cpp went with [ceiling] top_from_level.)
 #include "unleashed_room_stitch.h"
 
 #include <cstdio>
@@ -16,7 +16,6 @@ static int g_fail = 0, g_pass = 0;
 #define CHECK(c) do { if (c) ++g_pass; else { ++g_fail; std::printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
 
 using namespace unleashed::roomstitch;
-using namespace unleashed::ceilingtop;
 
 // A fake game memory: byte buffers at made-up addresses.
 struct Memory {
@@ -122,51 +121,8 @@ static void StitchTest() {
     CHECK(Candidates(layer, mid.at, edges, read, c) == 0);
 }
 
-static void CeilingTopTest() {
-    // Built rooms' border floors, per level.
-    LevelFloors f;
-    const float flat[4] = {0, 0, 0, 0}, stair[4] = {0, 0, -6.5f, 0}, nan4[4] = {NAN, NAN, NAN, NAN};
-    float hi = 0;
-    CHECK(!f.Highest(0xA, hi));
-    f.Add(0xA, 0.03f, flat); f.Add(0xA, 6.53f, stair); f.Add(0xB, -2.96f, flat);
-    CHECK(f.Highest(0xA, hi) && hi == 6.53f);
-    CHECK(f.Highest(0xB, hi) && hi == -2.96f);
-    f.Add(0xA, 3.0f, nan4); CHECK(f.Highest(0xA, hi) && hi == 6.53f);   // no edges: the height itself
-    f.Add(0, 99, flat); CHECK(!f.Highest(0, hi));
-    // Old levels drop out once more than Slots are in use; the most recent stay.
-    for (uintptr_t l = 0x100; l < 0x100 + LevelFloors::Slots; ++l) f.Add(l, 1, flat);
-    CHECK(!f.Highest(0xB, hi) && f.Highest(0x100 + LevelFloors::Slots - 1, hi));
-
-    // The tomb: he enters at 0.03 with the level's rooms built up to 6.53: the ceiling's top is 6.53 at once.
-    {
-        Top t;
-        CHECK(t.Step(0, 1, 0xA, 0.03f, true, 6.53f) == 6.53f);
-        // up the stairs and down again: it never moves
-        for (double s = 0.1; s < 5; s += 0.1) CHECK(t.Step(s, 1, 0xA, 0.03f + float(s), true, 6.53f) == std::max(6.53f, 0.03f + float(s)));
-    }
-    {
-        Top t;
-        t.Step(0, 1, 0xA, 0.03f, true, 6.53f);
-        // a higher room built later (after the settle time): eased up, never down
-        float v = t.Step(3, 1, 0xA, 0.03f, true, 13.0f);
-        CHECK(v > 6.53f && v < 13.0f);
-        for (double s = 3.1; s < 6; s += 0.05) v = t.Step(s, 1, 0xA, 0.03f, true, 13.0f);
-        CHECK(v == 13.0f);
-        CHECK(t.Step(6.1, 1, 0xA, 0.03f, true, 13.0f) == 13.0f);
-        // within the settle time a new level is taken whole, higher or lower
-        CHECK(t.Step(7, 2, 0xB, -2.96f, true, -2.96f) == -2.96f);
-        CHECK(t.Step(7.5, 2, 0xB, -2.96f, true, 3.03f) == 3.03f);
-        // the hero's level unknown: his own floor
-        Top u;
-        CHECK(u.Step(0, 1, 0, 1.5f, false, 0) == 1.5f);
-        CHECK(u.Step(0.1, 1, 0xC, 1.5f, true, 4.0f) == 4.0f);   // the level now known: a fresh start, taken whole
-        CHECK(std::isfinite(u.Step(0.2, 1, 0xC, NAN, true, 4.0f)));
-    }
-}
-
 int main() {
     StitchTest();
-    CeilingTopTest();
     std::printf("unleashed_room_stitch_test: %d passed, %d failed\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -16,6 +16,7 @@ using namespace vrc;   // as in vrcam.cpp: ::SafeRead and the rest are vrc's
 namespace vrc {
 // the area's ceiling as the ini has it (vrcam.cpp; declared here only: its defaults are its definition's)
 void CeilingNow(float* height, float* bright, float* light, float* relief = nullptr, int* slot = nullptr, float* own = nullptr);
+float CeilingHeadroomNeed(float heroOverFloor, float hang);   // [ceiling] min_headroom_m (vr/sky/sky_config.cpp)
 
 
 
@@ -2055,11 +2056,24 @@ void CeilingFrame() {
     // lowest on them); else 18
     const float tile = gameceiling::TileWorld(g_set.ceilScale.load());
     const float walls = g_set.ceilFromWalls.load() && ownHeight <= 0.0f ? g_wallsTopHere.load() : 0.0f;
-    // [ceiling] top_from_level (from D2R VR Unleashed, Cal): measured from the level's highest built floor, not the lowest he stood on - up the
-    // stairs it no longer stays low until he walks on (0 when off)
-    const float topLift = CeilingTopLift(hero[1], floorAt, g_biomeGen.load());
-    const float height = gameceiling::HeightOf(ownHeight, g_set.ceilFromWalls.load(), g_wallsTopHere.load(),
-                                               kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile) + topLift;
+    const float roomHeight = gameceiling::HeightOf(ownHeight, g_set.ceilFromWalls.load(), g_wallsTopHere.load(),
+                                                   kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile);
+    // [ceiling] min_headroom_m (Serg 2026-11-10, Den of Evil: the rock at his eyes): the slab's lowest - its top less its rock's hang - never
+    // under the eyes + that many metres; what that needs is held for the area (only ever up, in half-unit steps: no breathing, no sliding)
+    const float hang = kind >= 0 ? gameceiling::kKinds[kind].relief * tile / gameceiling::kTile : 0.0f;
+    static gameceiling::HeadroomHold headroom;
+    const float headroomHeld = gameceiling::HeadroomHeld(&headroom, g_biomeGen.load(), want ? CeilingHeadroomNeed(hero[1] - floorAt, hang) : 0.0f);
+    const float height = gameceiling::Guarded(roomHeight, headroomHeld);
+    {
+        static float toldHeld = -1.0f;
+        if (want && height > roomHeight && headroomHeld != toldHeld) {
+            toldHeld = headroomHeld;
+            LogF("vrcam: game ceiling - raised for headroom: its top %.1f over the area's floor, not the room's %.1f - its lowest (%.1f of rock "
+                 "hanging) kept %.2f m over the eyes ([ceiling] min_headroom_m; the hero %.1f over the floor it stands on, his eyes %.1f + the "
+                 "head %.1f over them)", height, roomHeight, hang, g_set.ceilHeadroomM.load(), hero[1] - floorAt, ViewHeight(),
+                 g_headOverStand.load());
+        }
+    }
     const float reach = gameceiling::WallReach(height, g_set.ceilFloor.load());
     // [ceiling] game_ceiling_beams: the barracks' frame with its bottom at that height, the slab over it by the frame's depth
     ceilmeasure::Beam beam;
@@ -2165,8 +2179,7 @@ void CeilingFrame() {
              size, dome.radius, sizeWhy, rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise, gameceiling::VaultHalf(dome.half) * size);
     }
     // [body] leap_camera_up_pct: the slab's lowest in the world (its top less its rock's hang, the barracks' frame under it), for the leap's camera
-    if (want) {
-        const float hang = gameceiling::kKinds[kind].relief * tile / gameceiling::kTile;
+    if (want) {   // (hang: the rock's, above)
         g_slabLowestY.store(floorAt + std::min(beams ? height : slabTop, slabTop - hang));
     }
     float m[16], w[16], away[16], v[16];

@@ -210,7 +210,8 @@ bool LabelUnitIsItem(void* unit) {
 // (pointpickup::Lit) gets its name always shown, a rim round its label in its rarity colour (red out of reach), a dark shade of that colour
 // behind it and the name larger; while Show items is held for it (pointpickup::OnlyLit) every other name is cut. Which unit a paint is:
 // the label owners, kept from the layouts (lootaim::LabelOwners has the rule and why). The game's UI thread, both hooks.
-bool PointHighlightWanted() { return g_set.pointPickup.load() && viewgate::F4(); }
+bool FlatItemLitWanted();   // (vr/input/flat_click.cpp: [input] flat_pickup_key_on / flat_item_hitbox - flat, Alt held, the crosshair's item lit)
+bool PointHighlightWanted() { return (g_set.pointPickup.load() && viewgate::F4()) || FlatItemLitWanted(); }
 unleashed::lootaim::LabelOwners<64> g_labelOwners;
 SRWLOCK g_labelOwnersLock = SRWLOCK_INIT;
 uintptr_t LabelOwner(const void* box, const void* name) {

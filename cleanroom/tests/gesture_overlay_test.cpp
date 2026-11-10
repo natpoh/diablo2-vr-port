@@ -2017,6 +2017,10 @@ static void TestBindActions() {
         for (int i = 0; i < l.Count(); ++i) commands += l.At(i).kind == gact::Kind::Command;
         CHECK(commands == (int)kD2RVRCommandCount);   // (every key command of the game, once)
         CHECK(std::strcmp(gact::NameOf("d2r.identify"), "Identify (tome or scroll)") == 0 && std::strcmp(gact::NameOf("x.unknown"), "x.unknown") == 0);
+        // the Keyboard key tile (vr/key_capture.h: its key's game command is what gets bound) on the first page; the panels said as show / hide
+        const gact::Def* key = l.Find(gact::kKeyId);
+        CHECK(key && key->kind == gact::Kind::Key && l.IndexOf(gact::kKeyId) >= 0 && l.IndexOf(gact::kKeyId) < 24);
+        CHECK(std::strcmp(gact::NameOf("d2r.cmd.01"), "Show / hide inventory") == 0 && std::strcmp(gact::NameOf("d2r.cmd.00"), "Show / hide character") == 0);
     }
     {   // the bind screen: Skills | Game actions; an action binds through the engine's own call (no command), the row says what it does
         Rig r;

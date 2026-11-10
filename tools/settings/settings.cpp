@@ -151,6 +151,7 @@ struct Item {
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
+    std::vector<float> values;               // Choice: the ini's value of each entry, when it is not the entry's place (ChoiceValues: a key's code); a value not listed: none chosen
     std::vector<float> oldMap;               // ... through this table when there is one (the older key's value v gives oldMap[v - oldMapFrom])
     int oldMapFrom = 0;                      // ... the older value that is oldMap[0] (-1 for a -1 / 0 / 1 key)
     float (*fromOld)(float) = nullptr;       // ... or through this (the older key in other units: game units -> metres); neither key there: its own default
@@ -253,6 +254,13 @@ Item Choice(const wchar_t* section, const wchar_t* key, const wchar_t* label, fl
             std::initializer_list<const wchar_t*> names, const wchar_t* tip = nullptr) {
     Item i = Slider(section, key, label, 0, (float)names.size() - 1, 1, def, tip);
     i.kind = Kind::Choice; i.choices = names;
+    return i;
+}
+// A choice whose entries stand for these values in the ini (not 0, 1, 2 ...): [input] flat_pickup_key's key codes.
+Item ChoiceValues(const wchar_t* section, const wchar_t* key, const wchar_t* label, float def, std::initializer_list<const wchar_t*> names,
+                  std::initializer_list<float> values, const wchar_t* tip = nullptr) {
+    Item i = Choice(section, key, label, def, names, tip);
+    i.values = values;
     return i;
 }
 Item File(const wchar_t* section, const wchar_t* key, const wchar_t* label, const wchar_t* def, const wchar_t* tip = nullptr) {
@@ -1102,6 +1110,12 @@ std::vector<Item> g_items = {
            L"over the window - the monitor showed it squashed. On: the middle of the eye's picture in the window's shape is drawn over the whole "
            L"picture first, so the window shows it at its real proportions (the top and bottom, or the sides, cut off). Nothing changes when "
            L"the window has the picture's shape. Live. Off: stretched as before."))),
+    // [render] monitor_eye_crop_lens (vr/monitor_eye.h ConfigureLens): what the headset shows of the eye, not its lens-masked edges - its own key, off = as before
+    Only(kVr, ShowFor(L"render", L"monitor_eye", 6u, Toggle(L"render", L"monitor_eye_crop_lens", L"Monitor: only what the headset shows (no lens edges)", 0,
+           L"The eye's picture is drawn bigger than the headset shows it: its edges and corners are outside the lens, and with \"Skip what the lenses never show\" "
+           L"(Home, In the headset) they are black. On: the window gets only the part the headset shows, the biggest box of the window's shape inside "
+           L"it - a closer, cleaner picture for a recording, its edges cut off. Never while D2RLoader's console is open (Ctrl + `): then the "
+           L"whole picture, so the console fits the window. Off (the default): the whole eye picture, edges included, as before. Live."))),
     Only(kVr, ShowFor(L"render", L"monitor_eye", 6u, Toggle(L"render", L"monitor_eye_drawn_only", L"Monitor: eyes by turns - only pictures the game drew", 0,
            L"\"Native OpenXR - eyes by turns\" only: the frames that draw the other eye show this eye's last picture the game drew - each "
            L"picture twice, at half the rate, but never one made on the graphics card (made pictures can smear at the edges of moving things). "
@@ -1213,7 +1227,7 @@ std::vector<Item> g_items = {
            {L"Neutral (white)", L"Warm", L"Cool", L"The area's own (its sky and fog colour)"},
            L"The colour of the one light. The area's own: a soft tint of the area's sky and fog colour (its hue only - the brightness is the slider's), followed as you move between areas. Live."))),
     // [render] potato_light_game (docs/notes/lighting_study.md, 2026-11-09): the Potato light in the game's own ambient and sun / moon colours
-    Only(kVr, Needs(L"render", L"potato_light", 1, Toggle(L"render", L"potato_light_game", L"... Potato light in the game's own colours", 0,
+    Only(kVr, Needs(L"render", L"potato_light", 1, Toggle(L"render", L"potato_light_game", L"... Potato light in the game's own colours", 1,
            L"Ticked: the Potato light is not one even colour but the game's own light as its lit pass gets it - the area's sky light (its colours and strength from the area's lighting file for this time of day) and the sun or the moon (its colour, power and the side it shines on) - still without shadows, torches, light loops or reflections, so it stays as cheap. The grass and the ground keep the colour the game gives them, by day, at dusk and at night. The brightness sliders still work; the colour choice is not used. Native OpenXR first person (F4). Live. Unticked: one even light, as before."))),
     Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato, Low, Medium) sets everything here at once: the game's render stages, the draw distance, the fog and the sky. Room rings, models and the frame cap need a game restart."),
     // the preset, Auto beside it and the Potato light's sliders under it (QUALITY_PRESET_ITEMS above: also on Home)
@@ -1778,6 +1792,25 @@ std::vector<Item> g_items = {
            L"crosshair is, as a shot in place - not at the monster the game finds near the crosshair, the hero does not walk to it, and a held "
            L"button does not keep shooting it when you look away. Items, NPCs, hirelings, chests, doors and portals are clicked as ever. "
            L"Unticked: the game's own attack at the monster under the pointer.")),
+    // [input] flat_pickup_key_on / flat_pickup_key / flat_pickup_reach_cells, flat_item_hitbox (vr/flat_pickup.h; a player's ask, 2026-11-09)
+    Only(kFlat, Toggle(L"input", L"flat_pickup_key_on", L"Flat: a key picks up items (first and third person)", 0,
+           L"In first and third person (F3, F2) with mouse look, the key below picks up an item from the ground: the one whose name is under the "
+           L"crosshair (Alt), else the one the crosshair is on, else the nearest one in front of you within the reach below. It is the game's own "
+           L"click on that item - the hero walks up and picks it up as with the mouse. The game does not get the key. Unticked: no pick-up key, the key "
+           L"is the game's.")),
+    Only(kFlat, Needs(L"input", L"flat_pickup_key_on", 1, ChoiceValues(L"input", L"flat_pickup_key", L"Flat: the pick-up key", 69,
+           {L"E", L"F", L"G", L"V", L"X", L"Z", L"R", L"Q", L"C", L"T"}, {69, 70, 71, 86, 88, 90, 82, 81, 67, 84},
+           L"The key that picks up an item. Any other key: in the game's own D2R VR settings panel (F10), click the key and press the one you want. "
+           L"The game does not get it while you play in first or third person with mouse look (the game's own command on that key, if any, then "
+           L"does nothing there; in menus, the chat line and F1 it is the game's). Empty here: a key set in the game's panel."))),
+    Only(kFlat, Needs(L"input", L"flat_pickup_key_on", 1, Slider(L"input", L"flat_pickup_reach_cells", L"Flat: pick-up key reach for the nearest item, cells",
+           0.0f, 20.0f, 0.5f, 5.0f,
+           L"With no item under the crosshair the key takes the nearest item in front of you (within 50 degrees of where you look) up to this far. "
+           L"0: only the item under the crosshair."))),
+    Only(kFlat, Toggle(L"input", L"flat_item_hitbox", L"Flat: with Alt held, click an item by its body, not only by its name", 0,
+           L"In first and third person with mouse look, while Alt is held (the item names shown) an item on the ground is also picked up by "
+           L"clicking the item itself, not only its name - the crosshair on it is enough. A name under the crosshair, or a monster in front of the "
+           L"item, still goes first. The item's name lights up while the crosshair is on it. Unticked: only the name, as the game has it.")),
     // [input] vr_body_pick, vr_body_pick_hand (GitHub issue #15, vr/vr_body_pick.h): the same in VR, along each view's ray
     Only(kVr, Toggle(L"input", L"vr_body_pick", L"VR: point at a monster, an NPC or a chest by its body", 1,
            L"The mouse pointer (F1, F3), the crosshair (F2 with mouse look) and the hand's Shift + click aim pick monsters, NPCs, doors, shrines, "
@@ -1814,6 +1847,24 @@ std::vector<Item> g_items = {
            L"The pointer while the mouse looks: your own picture (png, jpg, bmp), its middle is where you aim; it is "
            L"fitted into 32-64 pixels by the window's height. A picture with no transparency: its black is see-through. "
            L"A bare name is looked for in reshade-shaders\\Textures; a full path works too. Empty (x) = the built-in one."),
+    // [belt] refill_key (vr/belt_refill.h): a tap = the game's own Shift + click at the pointer, a hold = the game's own belt fill; every view
+    Group(L"Belt refill", L"Potions from the inventory into the belt with one button, while the inventory is open: point at a potion (the laser in VR, the "
+                          L"mouse cursor on the monitor) and tap Y - it goes into the belt; hold Y - the whole belt is filled. Both are the game's own moves."),
+    Toggle(L"belt", L"refill_key", L"Belt refill key: tap on a potion = into the belt, hold = fill the belt", 0,
+           L"With the inventory open: a tap of the button below (Y by default, on the left controller and on the keyboard) is the game's own Shift + click where "
+           L"you point - the laser's point in VR (every view), the mouse cursor on the monitor - so a potion there goes into the belt, as Shift + click does. "
+           L"A hold is the game's own \"hold to populate belt\" from its controller layout: every empty belt slot gets a potion of the kind its column "
+           L"already holds, from the inventory, in one move the game makes itself. While the inventory is open that button is the mod's (B is left to "
+           L"close the panel, as in the game; pick B below and it no longer does - the menu button or the long stick press does; keyboard: I or Esc). The log says \"belt refill: ...\" with how many "
+           L"went in, of which kind. Live. Unticked: the button is the game's, as before."),
+    Needs(L"belt", L"refill_key", 1, Choice(L"belt", L"refill_button", L"Belt refill: controller button", 3, {L"None", L"B", L"A", L"Y", L"X"},
+           L"The controller button for the belt refill (A and B on the right controller, X and Y on the left). It is taken only while the inventory is "
+           L"open and the laser points at the game; elsewhere it does what it always does. Live.")),
+    Needs(L"belt", L"refill_key", 1, Choice(L"belt", L"refill_keyboard", L"Belt refill: keyboard key", 5, {L"None", L"B", L"V", L"G", L"H", L"Y"},
+           L"The keyboard key for the belt refill (the mouse cursor is the pointer). It is taken only while the inventory is open and the chat line is "
+           L"closed; with the inventory closed it is the game's key as before (the game's B opens the inventory). Live.")),
+    Needs(L"belt", L"refill_key", 1, Slider(L"belt", L"refill_hold_ms", L"Belt refill: hold for, ms", 200, 2000, 50, 500,
+           L"How long the button is held for the whole belt to be filled; let go sooner, it is a tap (one potion, where you point). Live.")),
     Only(kVr, Group(L"Pick up by pointing", L"First person (F4): stretch an arm toward an item on the floor - its name lights up - and pick it up with that hand's "
                     L"grip + trigger, or A. From D2R VR Unleashed.")),
     // [input] point_pickup (vr/unleashed_loot_aim.h, from D2R VR Unleashed's loot pick): F4, A picks up the item the hand points at
@@ -2344,6 +2395,10 @@ std::vector<Item> g_items = {
            L"it, and by the time the right eye sends the same list again it holds other commands - an unfinished one takes the graphics device "
            L"away, a later one makes the card draw from what is not there yet (it hangs). On: such a frame's right eye is the left picture "
            L"once, and the log says so. Off: told in the log, sent again anyway (as before). Live."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_alloc_guard", L"... and never over commands the card still reads", 1,
+           L"With the right eye drawn again on the graphics card: the game reuses the memory its lists' commands are in as soon as its own frame is done - before"
+           L" the right eye has sent the same lists again. The game then writes new commands where the card is still reading the old ones (it hangs). "
+           L"On: the game waits there until the right eye is done with them (a moment, only when the card is behind), and a frame whose memory was already reused shows the left picture in the right eye once. Off: told in the log only (as before). Live."))),
     Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
            L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
            L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
@@ -3975,6 +4030,10 @@ std::vector<Item> g_items = {
            L"Off: the game's own order - the fog goes over them by whatever is far behind them, and a torch's flame and smoke in front of a "
            L"far, fogged background are wiped out. One pass of ours on the graphics card (its cost in the log's 10 s line). Applies when "
            L"the game is started again.")),
+    // (Serg 2026-11-09: "нужен ползунок до какой дистанции туман покрывает обьекты")
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Slider(L"fog", L"game_fog_cover", L"The fog covers everything from", 0, 2000, 10, 0,
+           L"With the fog before smoke and fire: from this distance on, everything is the fog's colour whole - far trees, buildings, far fires "
+           L"and their glow gone into the fog. World units (the hero is ~7.5 tall). 0: the fog's own curve all the way (as before). Live."))),
     // (Serg 2026-11-09, his drawing: "новый вид тумана плоскости перед игроком с затуманиванием")
     Sub(L"Fog planes before the player"),
     Needs(L"fog", L"game_fog_planes", 1, Slider(L"fog", L"game_fog_planes_count", L"How many planes", 1, 64, 1, 8,
@@ -4040,6 +4099,11 @@ std::vector<Item> g_items = {
            L"horizon round them. The sky's horizon into the fog above stands aside meanwhile. Off: the picture as it is. Live.")),
     Needs(L"fog", L"game_fog", 1, Slider(L"sky", L"dome_fog_baked_strength", L"The game's sky: how much of the fog's colour", 0, 1, 0.05f, 1,
            L"1: the horizon wholly the fog's colour, fading up to the picture by 11 degrees; less: some of the picture through it. Live.")),
+    // (Serg 2026-11-09: a near band at the horizon "вверху прозрачным" - with "The fog covers everything from" its distance, the two make it)
+    Needs(L"fog", L"game_fog", 1, Slider(L"sky", L"dome_fog_baked_top_deg", L"The game's sky: how high the fog's band reaches", 1, 60, 0.5f, 11.5f,
+           L"How far above the horizon the sky's low part is laid into the fog's colour, fading out up to there (degrees). With \"The fog covers "
+           L"everything from\" set, the two make a band of fog round you at that distance, clear sky above it: far trees and buildings gone "
+           L"into it, the sky's top as it is. 11.5: as before. Live.")),
     Group(L"Old fog (our effect)", L"Our own effect's distance fog, as it was (frozen) - with \"Fog drawn by: Old fog\" only, greyed "
           L"otherwise. Its own sliders."),
     Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"start", L"Fog start", 0, 1000, 5, 150, L"Where the fog begins. World units (the hero is ~7.5 tall)."))),
@@ -4178,12 +4242,6 @@ std::vector<Item> g_items = {
            L"the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, "
            L"wood and size, lit by its torches - with the barracks' stone over the beams to close the gaps between them. Made from your game's "
            L"files. VR F4 only. Off: the flat stone ceiling. Live.")),
-    Needs(L"ceiling", L"enabled", 1, Toggle(L"ceiling", L"top_from_level", L"The ceiling over the level's highest floor", 0,
-           L"The ceiling stood on the lowest floor you had stood on in the area, so up a staircase it stayed low until you walked on. Ticked: "
-           L"its height is measured from the highest floor of the level you are on - every room the game builds there tells its floors - taken "
-           L"whole 2 s after you enter a level, raised gently if a higher room is built later, never lowered. The game's ceiling and our "
-           L"effect's vault alike. Each room's own height (above) is still measured from there. From D2R VR Unleashed (Cal, bearstonem's team). "
-           L"VR F4 only. Off: as before. Live.")),
     Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_dome", L"The game's ceiling: the cathedral's dome over the chapel", 0,
            L"In the Cathedral the game's ceiling rises into a dome over the chapel, as our effect's vault did there: one even dome standing on "
            L"the four pillars round the altar, just high enough to pass over the altar's canopy. Where, how wide and how high come from the "
@@ -4214,6 +4272,12 @@ std::vector<Item> g_items = {
            L"once you set it, always wins. Our effect's vault and the game's ceiling both; the game's rock that hangs lower rests its "
            L"lowest point on the walls. Off, or a room built with no walls of that kind: 18 over the floor where no height is set. "
            L"The log says each room's height and where it comes from. Live at the next area change.")),
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"min_headroom_m", L"Ceiling at least, metres over your eyes (0 = off)", 0, 3, 0.05f, 1,
+           L"Whatever height a room has, the ceiling's lowest point - the rock hanging under it too - stays at least this far over "
+           L"your eyes: where the floor rises over the one the ceiling stands on, and with your head higher than your height set, it "
+           L"goes up with you (in steps, never back down until you leave the area), so it never comes down to your face. Metres as "
+           L"the camera has them (the hero's eye height over yours). The game's ceiling and our effect's vault alike, first person."
+           L" 0 = off: each room's height only. Live.")),
     Needs(L"ceiling", L"game_ceiling_wall", 1, Slider(L"ceiling", L"floor_depth", L"The rim's wall: how far below the floor (0 = none)", 0, 100, 0.5f, 5,
            L"How far under the hero's floor the game's ceiling's rim wall reaches, world units: looking down past the drawn floor's edge "
            L"shows that stone, not the void.")),
@@ -7875,8 +7939,16 @@ void UpdateSafeScreenStatus() {
 
 int Steps(const Item& it) { return (int)std::lround((it.max - it.min) / it.step); }
 // (a band's vertical slider has its lowest position at the top: turned over, so its highest value is up)
-float FromPos(const Item& it, int pos) { return it.min + (it.band >= 0 ? Steps(it) - pos : pos) * it.step; }
+float FromPos(const Item& it, int pos) {
+    if (!it.values.empty()) return it.values[(size_t)std::clamp(pos, 0, (int)it.values.size() - 1)];
+    return it.min + (it.band >= 0 ? Steps(it) - pos : pos) * it.step;
+}
 int ToPos(const Item& it, float v) {
+    if (!it.values.empty()) {   // (a value not listed - a key set in the game's own panel: none of the list chosen)
+        for (size_t k = 0; k < it.values.size(); ++k)
+            if (std::fabs(it.values[k] - v) < 0.5f) return (int)k;
+        return -1;
+    }
     const int pos = std::max(0, std::min(Steps(it), (int)std::lround((v - it.min) / it.step)));
     return it.band >= 0 ? Steps(it) - pos : pos;
 }
@@ -13395,6 +13467,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     WritePrivateProfileStringW(L"render", L"keep_room_heights", nullptr, g_ini);
     // ... and [render] floors_stay itself is gone since 0.209.9 ([render] room_stitch fixes the same step; Serg 2026-11-09): its line goes too
     WritePrivateProfileStringW(L"render", L"floors_stay", nullptr, g_ini);
+    // [ceiling] top_from_level (D2R VR Unleashed's ceiling top) is gone after 0.210.4 - it lifted our ceilings over their own heights (Serg
+    // 2026-11-10: "удалить чтобы она не срабатывала у людей"): its line goes; the plugin ignores it anyway
+    WritePrivateProfileStringW(L"ceiling", L"top_from_level", nullptr, g_ini);
     {   // [body] leap_camera_up (a tick) became leap_camera_up_pct (a share of the arc) in 0.202: an ini with the tick and no share gets 100 for on,
         // 0 for off (the plugin reads it so too), the old line goes
         wchar_t now[16], old[16];

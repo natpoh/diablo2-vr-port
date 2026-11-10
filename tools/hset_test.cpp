@@ -4694,6 +4694,7 @@ static void TestVideoRows() {
                 all = all && rendertype::FromKeys(RenderTypeKeys(m.Get())) == (int)k.v[0];
                 continue;
             }
+            if (qualitypreset::IsAsIs(k.v[0])) continue;   // (a key Potato leaves as the player has it)
             const int i = IndexOf(k.section, k.key);
             all = all && i >= 0 && m.Get()[i] == k.v[0];
         }

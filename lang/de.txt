@@ -269,6 +269,8 @@ render.monitor_eye.choice1 = Linkes Auge
 render.monitor_eye.choice2 = Rechtes Auge
 render.monitor_eye_fit.label = Monitor: das Auge in seinen eigenen Proportionen (auf das Fenster zugeschnitten)
 render.monitor_eye_fit.tip = Mit einem VR-Renderformat, das vom Fenster abweicht (Auflösung, Im Headset: ein quadratisches Bild in einem breiten Fenster), streckt Windows das Bild über das Fenster - der Monitor zeigte es gestaucht. An: Die Mitte des Augenbilds in der Form des Fensters wird zuerst über das ganze Bild gezeichnet, sodass das Fenster es in seinen echten Proportionen zeigt (oben und unten oder die Seiten abgeschnitten). Nichts ändert sich, wenn das Fenster die Form des Bildes hat. Sofort. Aus: gestreckt wie bisher.
+render.monitor_eye_crop_lens.label = Monitor: nur was das Headset zeigt (ohne Linsenränder)
+render.monitor_eye_crop_lens.tip = Das Bild des Auges wird größer gezeichnet, als das Headset es zeigt: Ränder und Ecken liegen außerhalb der Linse und sind bei "Nicht zeichnen, was die Linsen nie zeigen" (Start, Im Headset) schwarz. An: Das Fenster bekommt nur den Teil, den das Headset zeigt, den größten Ausschnitt in der Form des Fensters darin - ein näheres, saubereres Bild für eine Aufnahme, die Ränder abgeschnitten. Nie bei geöffneter D2RLoader-Konsole (Strg + `): dann das ganze Bild, damit die Konsole ins Fenster passt. Aus (Standard): das ganze Augenbild samt Rändern, wie bisher. Sofort wirksam.
 render.monitor_eye_drawn_only.label = Monitor: Augen im Wechsel - nur vom Spiel gezeichnete Bilder
 render.monitor_eye_drawn_only.tip = Nur für „Natives OpenXR - Augen im Wechsel“: Die Frames, die das andere Auge zeichnen, zeigen das letzte vom Spiel gezeichnete Bild dieses Auges - jedes Bild zweimal, mit halber Rate, aber nie eines, das auf der Grafikkarte gebildet wurde (gebildete Bilder können an den Rändern bewegter Dinge verschmieren). Aus (Standard): das Bild, das in diesem Frame für dieses Auge gebildet wurde - jeder Frame neu, wie das Headset es zeigt. Sofort.
 render.monitor_panels.label = Monitor: Panels des Headsets zeigen (Inventar, Händler, Truhe, Karte...)
@@ -739,6 +741,14 @@ input.flat_body_pick.label = Flat: ein Monster, einen NPC oder eine Truhe am Kö
 input.flat_body_pick.tip = Dritte und erste Person: Monster, NPCs, Türen, Schreine, Truhen und Portale in deiner Nähe werden an ihrem Körper angeklickt, nicht nur an ihren Füßen (aus dem Flat-Fork von sajmonsoft). Nicht angehakt: an den Füßen, wie es die eigene Ansicht des Spiels von oben vorsieht.
 input.flat_shot_at_crosshair.label = Flach: Bogen oder Wurf geht genau ins Fadenkreuz (kein Auto-Zielen)
 input.flat_shot_at_crosshair.tip = Mit Bogen, Armbrust, Wurfspeer oder Wurfwaffe in der Hand, in erster und dritter Person: Ein Klick auf ein Monster geht dorthin, wo das Fadenkreuz ist, als Schuss an Ort und Stelle - nicht auf das Monster, das das Spiel in der Nähe des Fadenkreuzes findet, der Held läuft nicht hin, und eine gehaltene Taste schießt nicht weiter darauf, wenn du wegschaust. Gegenstände, NPCs, Söldner, Truhen, Türen und Portale werden wie immer angeklickt. Ohne Haken: der eigene Angriff des Spiels auf das Monster unter dem Zeiger.
+input.flat_pickup_key_on.label = Flach: Eine Taste hebt Gegenstände auf (Ego- und Third-Person)
+input.flat_pickup_key_on.tip = In der Ego- und Third-Person-Ansicht (F3, F2) mit Mausblick hebt die Taste unten einen Gegenstand vom Boden auf: den, dessen Name unter dem Fadenkreuz liegt (Alt), sonst den, auf dem das Fadenkreuz liegt, sonst den nächsten vor dir innerhalb der Reichweite unten. Es ist der eigene Klick des Spiels auf den Gegenstand - der Held läuft hin und hebt ihn auf wie mit der Maus. Das Spiel bekommt die Taste nicht. Aus: keine Aufheben-Taste, die Taste gehört dem Spiel.
+input.flat_pickup_key.label = Flach: die Aufheben-Taste
+input.flat_pickup_key.tip = Die Taste, die einen Gegenstand aufhebt. Eine andere Taste: im eigenen D2R-VR-Einstellungsfeld des Spiels (F10) die Taste anklicken und die gewünschte drücken. Das Spiel bekommt sie nicht, solange du in der Ego- oder Third-Person-Ansicht mit Mausblick spielst (der eigene Spielbefehl auf dieser Taste, falls vorhanden, tut dort dann nichts; in Menüs, der Chatzeile und F1 gehört sie dem Spiel). Hier leer: eine im Feld des Spiels gesetzte Taste.
+input.flat_pickup_reach_cells.label = Flach: Reichweite der Aufheben-Taste für den nächsten Gegenstand, Felder
+input.flat_pickup_reach_cells.tip = Liegt kein Gegenstand unter dem Fadenkreuz, nimmt die Taste den nächsten Gegenstand vor dir (innerhalb von 50 Grad deiner Blickrichtung) bis zu dieser Entfernung. 0: nur der Gegenstand unter dem Fadenkreuz.
+input.flat_item_hitbox.label = Flach: Mit gedrückter Alt-Taste einen Gegenstand am Körper anklicken, nicht nur am Namen
+input.flat_item_hitbox.tip = In der Ego- und Third-Person-Ansicht mit Mausblick wird bei gedrückter Alt-Taste (Gegenstandsnamen sichtbar) ein Gegenstand am Boden auch durch Klick auf den Gegenstand selbst aufgehoben, nicht nur auf seinen Namen - das Fadenkreuz darauf genügt. Ein Name unter dem Fadenkreuz oder ein Monster vor dem Gegenstand hat weiterhin Vorrang. Der Name des Gegenstands leuchtet auf, solange das Fadenkreuz darauf liegt. Aus: nur der Name, wie im Spiel.
 input.vr_body_pick.label = VR: ein Monster, einen NPC oder eine Truhe am Körper anvisieren
 input.vr_body_pick.tip = Der Mauszeiger (F1, F3), das Fadenkreuz (F2 mit Mausblick) und das Zielen der Hand mit Shift + Klick wählen Monster, NPCs, Türen, Schreine, Truhen und Portale in deiner Nähe an ihrem Körper, nicht nur an ihren Füßen. Den Treffer entscheidet weiterhin das Spiel. Nicht angehakt: an den Füßen.
 input.vr_body_pick_hand.label = VR F4: Angriff und Interaktion gehen an das, worauf deine Hand zeigt
@@ -754,6 +764,18 @@ input.vr_keys_walk.label = VR-Ansicht F2 wie Flat: Mausblick, Fadenkreuz, W A S 
 input.vr_keys_walk.tip = Dritte Person mit Maus und Tastatur, wie im Flat-Modus: Die Maus dreht die Kamera, der Zeiger ist das Fadenkreuz in der Mitte (seine Tiefe: Tab UI: F2 hinten), ein Klick geht dorthin - auf ein Monster ein Angriff, auf einen Gegenstand ein Aufheben, auf den Boden ein Schuss - und W A S D gehen dorthin, wohin die Kamera schaut, nicht nach Norden auf der Karte des Spiels. F9 gibt den Zeiger für Menüs frei; W A S D gehen weiter. Braucht das Spiel im Mausmodus: Klicke nach einem Pad-Stick einmal.
 input.crosshair.label = Fadenkreuz-Bild
 input.crosshair.tip = Der Zeiger, während die Maus blickt: dein eigenes Bild (png, jpg, bmp), seine Mitte ist dein Zielpunkt; es wird nach der Höhe des Fensters in 32-64 Pixel eingepasst. Ein Bild ohne Transparenz: Sein Schwarz ist durchsichtig. Ein bloßer Name wird in reshade-shaders\Textures gesucht; ein voller Pfad funktioniert auch. Leer (x) = das eingebaute.
+
+# --- Belt refill ---
+group.belt_refill = Gürtel auffüllen
+group.belt_refill.help = Tränke aus dem Inventar mit einer Taste in den Gürtel, solange das Inventar offen ist: auf einen Trank zeigen (Laser in VR, Mauszeiger am Monitor) und Y antippen - er kommt in den Gürtel; Y halten - der ganze Gürtel wird gefüllt. Beides sind die eigenen Züge des Spiels.
+belt.refill_key.label = Taste zum Gürtel-Auffüllen: Antippen auf einem Trank = in den Gürtel, Halten = Gürtel füllen
+belt.refill_key.tip = Bei offenem Inventar: Ein Antippen der Taste unten (standardmäßig Y, am linken Controller und auf der Tastatur) ist der eigene Shift + Klick des Spiels dort, worauf du zeigst - der Laserpunkt in VR (in jeder Ansicht), der Mauszeiger am Monitor - ein Trank dort kommt also in den Gürtel, wie bei Shift + Klick. Halten ist das eigene "Halten zum Gürtel füllen" des Spiels aus seinem Controller-Layout: Jeder leere Gürtelplatz bekommt einen Trank der Sorte, die seine Spalte schon enthält, aus dem Inventar, in einem Zug, den das Spiel selbst macht. Solange das Inventar offen ist, gehört diese Taste dem Mod (B bleibt zum Schließen des Fensters, wie im Spiel; wähle unten B, dann tut sie das nicht mehr - dann schließt die Menütaste oder langes Drücken des Sticks; Tastatur: I oder Esc). Das Log zeigt "belt refill: ..." mit der Anzahl und Sorte. Sofort wirksam. Aus: die Taste gehört dem Spiel, wie bisher.
+belt.refill_button.label = Gürtel auffüllen: Controller-Taste
+belt.refill_button.tip = Die Controller-Taste zum Gürtel-Auffüllen (A und B am rechten Controller, X und Y am linken). Sie wird nur belegt, solange das Inventar offen ist und der Laser auf das Spiel zeigt; sonst tut sie, was sie immer tut. Sofort wirksam.
+belt.refill_keyboard.label = Gürtel auffüllen: Tastaturtaste
+belt.refill_keyboard.tip = Die Tastaturtaste zum Gürtel-Auffüllen (der Mauszeiger ist der Zeiger). Sie wird nur belegt, solange das Inventar offen und die Chatzeile geschlossen ist; bei geschlossenem Inventar ist es wie bisher die Taste des Spiels (das B des Spiels öffnet das Inventar). Sofort wirksam.
+belt.refill_hold_ms.label = Gürtel auffüllen: Haltedauer, ms
+belt.refill_hold_ms.tip = Wie lange die Taste gehalten wird, damit der ganze Gürtel gefüllt wird; früher losgelassen ist es ein Antippen (ein Trank, dort wo du zeigst). Sofort wirksam.
 
 # --- Pick up by pointing ---
 group.pick_up_by_pointing = Aufheben durch Zeigen
@@ -1055,6 +1077,8 @@ stereo.native_replay.label = ... einmal gezeichnet, das rechte Auge noch einmal 
 stereo.native_replay.tip = Mit Beide Augen aus einem Spiel-Frame: Das Spiel zeichnet den Frame einmal, und das rechte Auge wird aus derselben Arbeit mit eigener Kamera noch einmal auf der Grafikkarte gezeichnet, statt den ganzen Frame zweimal zu zeichnen. Der Thread des Spiels leistet etwa die halbe Arbeit: auf einem PC, den der Prozessor bremst, deutlich mehr Bilder pro Sekunde; ein PC, den die Grafikkarte bremst, gewinnt wenig. Nur natives OpenXR, erste Person (F4). Nach einem Gebietswechsel, einem Ladevorgang oder einer Änderung der Videooptionen wird das rechte Auge allein gezeichnet, bis sich das Bild beruhigt hat (ein paar Sekunden) - dann zwei Durchgänge, nie ein schwarzes Auge. Standardmäßig an („Nativ: ein Durchgang“ bei 3D im Headset). Wirkt ab dem nächsten Spielstart. Aus: zwei Durchgänge („Nativ: zwei Durchgänge“).
 stereo.replay_reset_guard.label = ... nie wieder eine Liste, die das Spiel schon neu belegt hat
 stereo.replay_reset_guard.tip = Bei erneut gezeichnetem rechtem Auge auf der Grafikkarte: Das Spiel kann in einer seiner Listen eine neue Aufzeichnung beginnen, sobald es sie gesendet hat, und bis das rechte Auge dieselbe Liste erneut sendet, enthält sie andere Befehle - ein unfertiger nimmt das Grafikgerät weg, ein späterer lässt die Karte von etwas zeichnen, das noch nicht da ist (sie hängt). An: Das rechte Auge eines solchen Bildes ist einmal das linke Bild, und das Log sagt es. Aus: im Log gemeldet, trotzdem erneut gesendet (wie bisher). Sofort.
+stereo.replay_alloc_guard.label = ... und nie über Befehlen, die die Grafikkarte noch liest
+stereo.replay_alloc_guard.tip = Wenn das rechte Auge erneut auf der Grafikkarte gezeichnet wird: Das Spiel verwendet den Speicher seiner Listenbefehle wieder, sobald sein eigenes Bild fertig ist - bevor das rechte Auge dieselben Listen erneut gesendet hat. Das Spiel schreibt dann neue Befehle dorthin, wo die Karte noch die alten liest (Absturz/Hänger). An: Das Spiel wartet dort, bis das rechte Auge damit fertig ist (ein Moment, nur wenn die Karte hinterherhinkt), und ein Bild, dessen Speicher schon wiederverwendet wurde, zeigt einmal das linke Bild im rechten Auge. Aus: nur im Log gemeldet (wie bisher). Sofort wirksam.
 stereo.turn_warp.label = Augen im Wechsel: das andere Auge aus der Tiefe bilden
 stereo.turn_warp.tip = Natives OpenXR mit Augen im Wechsel: Das in diesem Frame nicht gezeichnete Auge wird auf der Grafikkarte für den Ort gebildet, an dem der Kopf jetzt ist - sein eigenes letztes Bild, mit der Tiefe verschoben, mit der es gezeichnet wurde (was der Held hält, geht mit ihm), in der Pose dieses Frames. Nicht angehakt: Es geht so zum Headset, wie es zuletzt gezeichnet wurde, und das Headset dreht es (nur Rotation: Ein Schritt oder ein sich bewegendes Monster zeigt sich in diesem Auge einen Frame zurück). Nur erste Person (F4). Sofort. Idee: bearstonem/d2r-pcvr.
 stereo.turn_from_drawn.label = ... mit dem in diesem Frame gezeichneten Auge darüber
@@ -2212,6 +2236,8 @@ fog.game_fog_flat.label = Der Nebel des Spiels auch im flachen Spiel
 fog.game_fog_flat.tip = Das Spiel zeichnet seinen Nebel auch, wenn du am Monitor ohne Headset spielst (die flachen Ansichten in erster und dritter Person). Aus: nur in VR erste Person (F4). Leer: wie "Das Spiel zeichnet den Himmel auch im flachen Spiel" (der eine Schalter von vorher). Sofort.
 fog.game_fog_before_fx.label = Der Nebel vor Rauch und Feuer
 fog.game_fog_before_fx.tip = Der Nebel wird auf die Welt gelegt, bevor das Spiel Rauch, Feuer, Dunst und Zauber hinzufügt, sodass sie hell über der vernebelten Welt bleiben. Aus: die eigene Reihenfolge des Spiels - der Nebel geht nach dem, was weit hinter ihnen liegt, über sie, und die Flamme und der Rauch einer Fackel vor einem fernen, vernebelten Hintergrund werden ausgelöscht. Ein Durchgang von uns auf der Grafikkarte (seine Kosten in der 10-s-Zeile des Logs). Gilt, wenn das Spiel neu gestartet wird.
+fog.game_fog_cover.label = Der Nebel verdeckt alles ab
+fog.game_fog_cover.tip = Bei Nebel vor Rauch und Feuer: ab dieser Entfernung hat alles ganz die Nebelfarbe - ferne Bäume, Gebäude, ferne Feuer und ihr Schein verschwinden im Nebel. Welteinheiten (der Held ist ~7,5 hoch). 0: die eigene Kurve des Nebels bis zum Ende (wie bisher). Sofort wirksam.
 fog.game_fog_planes_count.label = Wie viele Ebenen
 fog.game_fog_planes_count.tip = Mit "Nebel gezeichnet von: Nebelebenen vor dem Spieler": der Nebel als Ebenen, die dir zugewandt von Nebelanfang bis Voller Nebel stehen, jede eine Schicht in der Farbe des Nebels; was hinter einer Ebene liegt, wird von ihr verdeckt, was vor ihr liegt (die Flamme einer Fackel), bleibt hell. Mehr Ebenen: weicher, dieselben Kosten. Sofort.
 fog.game_fog_planes_soft.label = Wie weich jede Ebene ist
@@ -2245,6 +2271,8 @@ sky.dome_fog_baked.label = Himmel des Spiels: sein unterer Teil in der Farbe des
 sky.dome_fog_baked.tip = Mit dem Nebel des Spiels wird der untere Teil des Himmels im Bild des Himmels selbst in die eigene Farbe des Nebels gelegt, so wie der untere Teil unseres alten Himmels in den Nebel übergeht: Bäume und Büsche vor dem Horizont stehen auf der Farbe des Nebels, ohne hellen Rand vom Horizont des Bilds um sie. Der Übergang des Himmelshorizonts in den Nebel oben tritt währenddessen beiseite. Aus: das Bild, wie es ist. Sofort.
 sky.dome_fog_baked_strength.label = Himmel des Spiels: wie viel von der Farbe des Nebels
 sky.dome_fog_baked_strength.tip = 1: der Horizont ganz in der Farbe des Nebels, bis 11 Grad zum Bild hin verblassend; weniger: etwas vom Bild scheint durch. Sofort.
+sky.dome_fog_baked_top_deg.label = Der Himmel des Spiels: wie hoch das Nebelband reicht
+sky.dome_fog_baked_top_deg.tip = Wie weit über dem Horizont der untere Teil des Himmels in die Nebelfarbe gelegt wird, bis dorthin ausblendend (Grad). Mit gesetztem "Der Nebel verdeckt alles ab" bilden beide ein Nebelband um dich in dieser Entfernung, darüber klarer Himmel: ferne Bäume und Gebäude verschwinden darin, die Himmelsspitze bleibt, wie sie ist. 11,5: wie bisher. Sofort wirksam.
 
 # --- Old fog (our effect) ---
 group.old_fog_our_effect.help = Der Distanznebel unseres eigenen Effekts, wie er war (eingefroren) - nur mit "Nebel gezeichnet von: Alter Nebel", sonst ausgegraut. Eigene Regler.
@@ -2340,8 +2368,6 @@ ceiling.game_ceiling_wall.label = Die Decke des Spiels: an ihrem Rand zur Wand h
 ceiling.game_ceiling_wall.tip = Ein Ring aus demselben beleuchteten Fels um dich, wo die Decke des Spiels endet (etwa 215 Einheiten entfernt bei Kachelgröße 10), von der Decke bis unter den Boden (die Tiefe des Bodens darunter): Die schwarze Leere hinter dem Rand der Decke - ein Band zwischen ihr und dem fernen Boden, vom Nebel hinter den Feuern beleuchtet - wird von Stein geschlossen, wie es die ferne Wand unseres Effekts tat. Aus: die flache Decke. Live.
 ceiling.game_ceiling_beams.label = Die Decke des Spiels: die eigenen Holzbalken der Kaserne
 ceiling.game_ceiling_beams.tip = Das Spiel liefert für die Kaserne (und ihr Gefängnis) einen hölzernen Deckenrahmen mit, den es nie platziert: ein Gitter aus Balken, deren Unterseite auf der Oberkante der Kasernenwände sitzt. Angehakt zeichnet das Spiel diesen Rahmen über dir in einem Gitter aus ganzen Rahmen, fest in der Welt - sein eigenes Modell, Holz und Maß, von seinen Fackeln beleuchtet - mit dem Stein der Kaserne über den Balken, um die Lücken zwischen ihnen zu schließen. Aus den Dateien deines Spiels erzeugt. Nur VR F4. Aus: die flache Steindecke. Sofort.
-ceiling.top_from_level.label = Die Decke über dem höchsten Boden des Levels
-ceiling.top_from_level.tip = Die Decke stand auf dem niedrigsten Boden, auf dem du im Gebiet gestanden hattest, sodass sie eine Treppe hinauf niedrig blieb, bis du weitergingst. Angehakt: Ihre Höhe wird vom höchsten Boden des Levels gemessen, in dem du bist - jeder Raum, den das Spiel dort baut, nennt seine Böden -, ganz genommen 2 s nach dem Betreten eines Levels, sanft angehoben, wenn später ein höherer Raum gebaut wird, nie gesenkt. Die Decke des Spiels und das Gewölbe unseres Effekts gleichermaßen. Die eigene Höhe jedes Raums (oben) wird weiterhin von dort gemessen. Aus D2R VR Unleashed (Cal, Team von bearstonem). Nur VR F4. Aus: wie bisher. Sofort.
 ceiling.game_ceiling_dome.label = Die Decke des Spiels: die Kuppel der Kathedrale über der Kapelle
 ceiling.game_ceiling_dome.tip = In der Kathedrale steigt die Decke des Spiels in einer Kuppel über der Kapelle auf, wie es das Gewölbe unseres Effekts dort tat: eine gleichmäßige Kuppel auf den vier Säulen um den Altar, gerade hoch genug, um über den Baldachin des Altars zu reichen. Wo, wie breit und wie hoch, kommt aus den eigenen Teilen des Spiels (gemessen aus den Dateien deines Spiels, der Baldachin im Spiel gefunden, so wie er gezeichnet wird); der eigene Stein der Kathedrale, von ihren Kerzen beleuchtet. Der Rest der Kathedrale behält die flache Decke in ihrer Höhe. Nur VR F4. Aus: die flache Decke. Sofort.
 ceiling.game_ceiling_dome_size.label = Die Kuppel der Kathedrale: Größe
@@ -2354,6 +2380,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = Die Kuppel des Weltsteins: 
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = Meter, die quer über die Kuppel des Weltsteins hinzukommen (die Hälfte davon ringsum), über die aus den Teilen des Spiels gemessene hinaus - ihre eigene, die Größe der Kathedralenkuppel bleibt. Ihre Höhe folgt, sodass sie weiter über den Kristall reicht; breiter als die Säulen, kommt ihr Rand hinter ihnen auf die flache Decke herab, und die Säulen enden unter der Wölbung. Meter, wie die Kamera sie hat (die Augenhöhe des Helden zu deiner). VR F4. Sofort.
 ceiling.height_from_walls.label = Deckenhöhe aus den Wänden des Raums
 ceiling.height_from_walls.tip = Ein Raum, dessen eigene Höhe unten nicht gesetzt ist (0), hat seine Decke auf seinen eigenen Wänden: dort, wo die Wände enden, mit denen das Spiel diesen Raum baut (die Mitte der Oberkanten seiner Wand-, Säulen- und Klippenteile, gemessen aus den Dateien deines Spiels). Die eigene Höhe eines Raums gewinnt immer, sobald du sie setzt. Das Gewölbe unseres Effekts und die Decke des Spiels gleichermaßen; der Fels des Spiels, der tiefer hängt, legt seinen tiefsten Punkt auf die Wände. Aus, oder ein Raum ohne Wände dieser Art: 18 über dem Boden, wo keine Höhe gesetzt ist. Das Log nennt die Höhe jedes Raums und woher sie kommt. Wirkt beim nächsten Gebietswechsel.
+ceiling.min_headroom_m.label = Decke mindestens, Meter über deinen Augen (0 = aus)
+ceiling.min_headroom_m.tip = Welche Höhe ein Raum auch hat, der tiefste Punkt der Decke - auch der Fels, der darunter hängt - bleibt mindestens so weit über deinen Augen: wo der Boden höher steigt als der, auf dem die Decke steht, und wenn dein Kopf höher ist als deine eingestellte Größe, geht sie mit dir nach oben (in Stufen, nie wieder hinunter, bis du das Gebiet verlässt), sodass sie nie bis zu deinem Gesicht herunterkommt. Meter, wie die Kamera sie hat (die Augenhöhe des Helden über deiner). Die Decke des Spiels und das Gewölbe unseres Effekts gleichermaßen, Ego-Perspektive. 0 = aus: nur die Höhe jedes Raums. Sofort.
 ceiling.floor_depth.label = Die Wand des Rands: wie weit unter dem Boden (0 = keine)
 ceiling.floor_depth.tip = Wie weit unter den Boden des Helden die Randwand der Decke des Spiels reicht, Welteinheiten: ein Blick nach unten über den Rand des gezeichneten Bodens zeigt diesen Stein, nicht die Leere.
 
@@ -4633,9 +4661,9 @@ vr.guide.4.row2.does = ein Griff dort zieht die Waffe vom Rücken. Der Griff ein
 vr.guide.4.row3.control = Bogen
 vr.guide.4.row3.does = die freie Hand an die Sehne, Trigger oder Griff, zurückziehen, loslassen. Während gespannt: B die nächste Pfeilfertigkeit, A die vorige.
 vr.guide.4.row4.control = Wurfspieß
-vr.guide.4.row4.does = halte ihn mit dem Griff, wirf und lass los
-vr.guide.4.row5.control = Leben und Mana
-vr.guide.4.row5.does = sitzen an deinen Handgelenken
+vr.guide.4.row4.does = greifen, werfen, loslassen. Leben und Mana sitzen an deinen Handgelenken.
+vr.guide.4.row5.control = Gürtel auffüllen
+vr.guide.4.row5.does = Inventar offen: Laser auf einen Trank + Y = in den Gürtel; Y halten = Gürtel füllen
 vr.guide.5.title = Ansichten und diese Einführung erneut
 vr.guide.5.row0.control = F1
 vr.guide.5.row0.does = von oben: die eigene Kamera des Spiels
@@ -5133,6 +5161,7 @@ vr.flatmenu.title = D2R VR Einstellungen
 vr.flatmenu.own = Dein Spiel (2D) - gespeichert in d2r_vr.ini, sofort wirksam
 vr.rules.title = Regeln des Hosts (der Host entscheidet)
 vr.flatmenu.host = Host
+vr.flatmenu.press_key = Taste drücken (Esc: abbrechen)
 vr.flatmenu.close = Schließen (Esc)
 vr.flatmenu.button = D2R VR Einstellungen
 vr.rules.console_off = (Der Host wird nur gefragt, wenn Einstellungen > Mechanik > „D2R VR Einstellungen im Spiel“ angehakt ist.)
@@ -5147,6 +5176,9 @@ vr.flatmenu.flat_portal_no_oval = Kein schwarzes Oval im Stadtportal
 vr.flatmenu.stick_pitch_flat = Der rechte Stick des Gamepads blickt nach oben und unten
 vr.flatmenu.flat_map_zoom = - und + zoomen die Karte aus ihrem Kreis und zurück
 vr.flatmenu.flat_map_place = Karte auf dem Bildschirm
+vr.flatmenu.flat_pickup_key_on = Eine Taste hebt Gegenstände auf (Ego- und Third-Person)
+vr.flatmenu.flat_pickup_key = Die Aufheben-Taste (anklicken, dann Taste drücken)
+vr.flatmenu.flat_item_hitbox = Mit gedrückter Alt-Taste einen Gegenstand am Körper anklicken, nicht nur am Namen
 vr.flatmenu.flat_map_place.game = Wie in den Optionen des Spiels
 vr.flatmenu.flat_map_place.left = Links
 vr.flatmenu.flat_map_place.centre = Mitte
@@ -5204,6 +5236,7 @@ vr.gestures.about_hand = Diese Hand zeichnet oder bewegt sich, mit ihrem Trigger
 vr.gestures.actions_need = Spielaktionen werden von der Gesten-Engine im Spiel gehalten: Hake Gesten-Engine im Spiel in D2R VR Settings (Gesten) an, mit einer d2r_vr_gestures.dll, die Aktionen belegt.
 vr.gestures.kind_pad = Pad
 vr.gestures.kind_item = Gegenstand
+vr.gestures.kind_key = Tastatur
 vr.gestures.kind_game = Spiel
 vr.gestures.tab_actions = Spielaktionen
 vr.gestures.tab_skills = Fertigkeiten
@@ -5640,6 +5673,8 @@ vr.map.on = An
 vr.map.off = Aus
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+ceiling.top_from_level.label = Die Decke über dem höchsten Boden des Levels
+ceiling.top_from_level.tip = Die Decke stand auf dem niedrigsten Boden, auf dem du im Gebiet gestanden hattest, sodass sie eine Treppe hinauf niedrig blieb, bis du weitergingst. Angehakt: Ihre Höhe wird vom höchsten Boden des Levels gemessen, in dem du bist - jeder Raum, den das Spiel dort baut, nennt seine Böden -, ganz genommen 2 s nach dem Betreten eines Levels, sanft angehoben, wenn später ein höherer Raum gebaut wird, nie gesenkt. Die Decke des Spiels und das Gewölbe unseres Effekts gleichermaßen. Die eigene Höhe jedes Raums (oben) wird weiterhin von dort gemessen. Aus D2R VR Unleashed (Cal, Team von bearstonem). Nur VR F4. Aus: wie bisher. Sofort.
 render.floors_stay.label = Böden bleiben, wo sie waren (kein Boden, der auf dem Rückweg rutscht)
 render.floors_stay.tip = Das Spiel gibt jedem Raum eines Gebiets eine Höhe, wenn es beginnt, ihn zu zeichnen, passend zu den Räumen, die in diesem Moment um ihn gezeichnet sind, und vergisst sie, wenn der Raum außer Sicht ist. Die Ränder seiner Kacheln stimmen nicht ringsum überein, sodass ein Raum, zu dem du auf einem anderen Weg zurückkommst (oder nach einem anderen Gebiet oder der Stadt), eine Stufe höher oder tiefer liegen kann - aus der Kamera des Spiels oben sieht das niemand, aus unserer rutscht der Boden: Blöcke nach oben, unten und zur Seite geschoben, dazwischen die Leere. An: Jeder Raum behält die Höhe, in der er zuerst gezeichnet wurde, bis du das Spiel verlässt. Der Preis: Das Spiel repariert auch einen in falscher Höhe gezeichneten Raum (eine Stufe, von fern gesehen, wie am Tor der Festung des Pandämoniums), wenn es ihn beim Näherkommen neu zeichnet - mit dieser Option an kommt diese Reparatur nicht. Nur das Bild; nichts am Kampf oder an den Wegen ändert sich. Sofort. Aus (der Standard): die eigenen Höhen des Spiels.
 fog.game_fog.label = Wer den Nebel zeichnet

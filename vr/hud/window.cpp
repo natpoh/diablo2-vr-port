@@ -3,6 +3,7 @@
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
 #include "../exit_end.h"    // [openxr] end_session_on_exit: which window messages are the game's quit
 #include "../menu_ready.h"  // no window move and no mouse message before the game's menus exist (crash group J)
+#include "../key_capture_wire.h"   // the overlays' "press a key"
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -80,6 +81,9 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     }
     // [openxr] end_session_on_exit: the window closed (the X, Alt+F4) or Windows ending - the headset session ends before the game sees it and tears down
     if (const exitend::Trigger quit = exitend::FromWindow(msg, (uintptr_t)w); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
+    // The overlays' "press a key" (vr/key_capture_wire.h: the flat panel's key rows, the Gestures tab's key): while armed the next key is its answer,
+    // Esc its cancel - neither reaches the game (nor the panel, which Esc would close)
+    if (keycapwire::OnWindowMessage(msg, (uintptr_t)w, (intptr_t)l)) return 0;
     {   // [hud] game_menu_settings (vr/flat_menu.h): the pause menu's button and the panel over it take their clicks (the flat game only, the key on)
         intptr_t done = 0;
         if (flatmenu::OnWindowMessage(h, msg, (uintptr_t)w, (intptr_t)l, &done)) return (LRESULT)done;
@@ -105,6 +109,9 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // (the log of 2026-10-14 16:26: four clicks "from a device" at the rhythm of a bow's draw and release) is dropped before the game sees it.
     // The mouse look's pointer and [bow] mode 2's own Shift + click are the game's by design.
     if (straywalk::DropWindowMouse(msg, gamestate::MenuOpen(), g_inWorld.load(), ShooterActive(), g_set.bowMode.load() == 2)) return 0;
+    // [belt] refill_key (vr/belt_refill.h): with the inventory open, the refill key (B by default) is the mod's - a tap the game's Shift + click at the
+    // mouse cursor, a hold the game's own belt fill (beltrefill::Tick). The game sees neither its press nor its release; closed, the key is the game's.
+    if (beltrefill::KeyMessage(msg, (uintptr_t)w, (intptr_t)l, ChatOpen())) return 0;
     // (Windows keeps a window to its monitor; vrcam let it be bigger in 0.159-0.160 - a window past the
     // screen's edge flickered the fog in the left eye, and one taller than ~2400 crashes the game itself at
     // its title screen: a square now fits the monitor - BigWindowTick; a bigger one: a virtual monitor.)
@@ -136,6 +143,13 @@ LRESULT CALLBACK GameWndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     // Move byte set), let go in F3, a swallowed release left that byte set and the hero
     // walking by himself back in F1 (2026-10-07). The game's commands are on the press.
     // VR third person with vr_keys_walk (VrKeyWalk): the same - W A S D walk there.
+    // [input] flat_pickup_key_on (vr/flat_pickup.h): the pick-up key (E by default) is ours in flat F2 / F3 mouse look - its press and its letter not
+    // the game's (Alt + the key comes as a system key: Alt shows the names); its release always goes through, as W A S D's
+    if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
+        if (FlatPickupKeyDown((unsigned)w, (l & (1 << 30)) != 0)) return 0;
+    } else if (msg == WM_CHAR || msg == WM_SYSCHAR) {
+        if (FlatPickupKeyWanted((unsigned)(w >= 'a' && w <= 'z' ? w - ('a' - 'A') : w))) return 0;
+    }
     if ((msg == WM_KEYDOWN || msg == WM_CHAR) && (ShooterActive() || VrKeyWalk()) && !ChatOpen()) {
         const WPARAM k = msg == WM_CHAR && w >= 'a' && w <= 'z' ? w - ('a' - 'A') : w;
         if (k == 'W' || k == 'A' || k == 'S' || k == 'D') return 0;

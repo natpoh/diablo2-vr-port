@@ -238,6 +238,7 @@ std::atomic<float> g_viewRightY{0.0f}, g_viewUpY{1.0f};   // ... and of its righ
 // [gameplay] leap_by_gaze: every view, where the head looks (the camera's forward, world) and how high the eyes are over the hero's ground (world units, the
 // look-at's height is his ground), with when (GetTickCount64)
 std::atomic<float> g_gazeFwd[3] = {}, g_gazeEyeH{0.0f};
+std::atomic<float> g_headOverStand{0.0f};   // [ceiling] min_headroom_m: the real head over the hero's standing eyes (world units, eased, 0 .. 1 m) - VrViewInner
 std::atomic<float> g_gazeLook[3] = {};   // [gameplay] teleport_circle: the look-at of the same view (the hero as drawn: the arc's ground and the circle's middle)
 std::atomic<ULONGLONG> g_gazeAt{0};
 std::atomic<bool> g_floorCamOk{false};
@@ -995,7 +996,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.210.1";
+static const char g_info_version[] = "0.211.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1286,6 +1287,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     capture::InitConsole(ctx);   // "vrcapture [targets | status]" in the game's console   // [debug] patch_hunt: its line on the picture (D2RLoader's overlay - taken at the load only) and the UI thread
     partycmd::Init(ctx);     // the headset's Party page: the game's roster and its Party panel's buttons (vr/party_cmd.cpp)   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
     beltdrop::Init(ctx);   // [hands] belt_drop_ground
+    beltrefill::Init(ctx);   // [belt] refill_key
     beltglow::Init(ctx);   // [hands] belt_inner_glow
 #if D2RVR_FIRST_PERSON
     if (posewire::Init(ctx, &Log, IniB(L"multiplayer", L"pose_share", true), "vrcam: pose share")) PoseShareConfigure();   // [multiplayer] pose_share: the channel now or never this run

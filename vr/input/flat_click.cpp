@@ -369,6 +369,16 @@ void FlatItemScan() {
 // [debug] point_pickup_ray (vr/render/effects/effects.cpp): the ray the pick used last, world units - the game's UI thread writes, the render thread reads
 PointRayDebug g_pointRayDbg;
 SRWLOCK g_pointRayDbgLock = SRWLOCK_INIT;
+// An item's name colour as the game draws it (item data +0x10: quality +0x00, flags +0x18; white when they do not read).
+void ItemRarityRgb(uintptr_t unit, float rgb[3]) {
+    uintptr_t data = 0;
+    uint32_t quality = 0, flags = 0;
+    rgb[0] = rgb[1] = rgb[2] = 1.0f;
+    if (SafeRead(&data, (const void*)(unit + 0x10), sizeof data) && data >= 0x10000 && SafeRead(&quality, (const void*)data, sizeof quality) &&
+        SafeRead(&flags, (const void*)(data + 0x18), sizeof flags))
+        unleashed::lootaim::RarityColor(quality, flags, rgb);
+}
+
 bool PointRayDebugNow(PointRayDebug* out) {
     AcquireSRWLockShared(&g_pointRayDbgLock);
     *out = g_pointRayDbg;
@@ -475,12 +485,7 @@ uintptr_t PointPickupAnswer(uintptr_t game) {
         if (pick && (pick != toned || last.id != tonedId)) {
             toned = pick;
             tonedId = last.id;
-            uintptr_t data = 0;
-            uint32_t quality = 0, flags = 0;
-            rgb[0] = rgb[1] = rgb[2] = 1.0f;
-            if (SafeRead(&data, (const void*)(pick + 0x10), sizeof data) && data >= 0x10000 && SafeRead(&quality, (const void*)data, sizeof quality) &&
-                SafeRead(&flags, (const void*)(data + 0x18), sizeof flags))
-                la::RarityColor(quality, flags, rgb);
+            ItemRarityRgb(pick, rgb);
         }
         // a crossbow's hand (Serg: "the hand that holds the crossbow picks up only by A"): its trigger shoots (AimHand: the hand that holds it)
         const bool xbowHand = gamestate::WeaponClass() == D2RVR_WEAPON_CROSSBOW && last.hand == (AimHand() == 0 ? 1 : 0);
@@ -489,6 +494,186 @@ uintptr_t PointPickupAnswer(uintptr_t game) {
     uint32_t type = ~0u;
     const bool gameIsItem = game && SafeRead(&type, (const void*)game, sizeof type) && type == 4;
     return la::Answer(game, gameIsItem, pick, inReach);
+}
+
+// [input] flat_pickup_key_on / flat_item_hitbox (vr/flat_pickup.h, a player's ask 2026-11-09): flat F2 / F3 with mouse look, the items on the floor
+// round the hero (FlatItemScan, as point_pickup's - nothing reads it in flat but these) looked at from the mouse's point (HookMouseGround, the game's
+// thread) at most every 30 ms: the game's own hover when it is an item, the item the crosshair's ray meets by its hitbox before any body or object,
+// the nearest one ahead within reach. The pick-up key's press (FlatPickupFrame, the frame's thread) takes one of them by the game's own click.
+struct FlatItemSeen {
+    struct One { uint32_t id = 0; float x = 0.0f, z = 0.0f; };   // x, z: its place on the grid, world units
+    One hover, cross, ahead;
+    int n = 0;
+    ULONGLONG at = 0;
+};
+FlatItemSeen g_flatItemSeen;
+SRWLOCK g_flatItemSeenLock = SRWLOCK_INIT;
+std::atomic<ULONGLONG> g_pickupKeyAt{0};      // the key went down in the game's window (its thread), when
+std::atomic<uint32_t> g_itemAimId{0};         // the key's press under way: the item (0 none) - the mouse's point on it, the click lookup answered with it
+std::atomic<float> g_itemAimX{0.0f}, g_itemAimZ{0.0f};
+std::atomic<bool> g_itemAimHover{false}, g_itemAimGone{false};   // the game's own hover came to it; it left the floor
+
+bool FlatItemsWanted() {
+    if (g_set.platform.load() != 0 || !g_enabled.load() || !(g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load())) return false;
+    const int view = ViewNow();
+    return (view == 2 || view == 3) && ShooterActive() && KeyMoveMode();
+}
+bool AltHeld() { return (GetAsyncKeyState(VK_MENU) & 0x8000) != 0; }
+// The local player's hover as the game's own lookup has it (HoverUnit(ClientIndex(hero)), as the map click reads it); nullptr none / not known.
+void* GameHoverNow() {
+    void* hero = PortalHeroUnit();
+    if (!hero || !(g_mapClick.load() == 1 || g_hoverHooked.load())) return nullptr;   // (either checked ClientIndex's and HoverUnit's bytes)
+    const int idx = ((ClientIndexFn)d2rsig::Addr(RVA_CLIENT_INDEX))(hero);
+    return idx >= 0 && idx < 8 ? ((HoverUnitFn)d2rsig::Addr(RVA_HOVER_UNIT))(idx) : nullptr;
+}
+// A unit's type and id (+0x00, +0x08); false: it does not read.
+bool UnitTypeId(const void* unit, uint32_t* type, uint32_t* id) {
+    uint32_t head[3] = {};
+    if (!unit || !SafeRead(head, unit, sizeof head)) return false;
+    *type = head[0];
+    *id = head[2];
+    return true;
+}
+
+// From HookMouseGround: rayOk - the crosshair's ray (o, d unit) is known; tBody - the t of the body or object it met first (INFINITY none).
+void FlatItemTick(bool rayOk, const float o[3], const float d[3], float tBody) {
+    namespace fp = flatpickup;
+    static ULONGLONG last = 0;
+    const ULONGLONG now = GetTickCount64();
+    if (now - last < 30) return;
+    last = now;
+    FlatItemScan();
+    fp::Item items[unleashed::lootaim::MaxItems];
+    const int n = g_flatItems.n;
+    const float fy = g_flatItems.floorY;
+    for (int i = 0; i < n; ++i) {
+        const auto& it = g_flatItems.it[i];
+        items[i] = {it.id, it.at.x - fy * flatground::kShear, it.at.z - fy * flatground::kShear, fy, it.heroCells};
+    }
+    FlatItemSeen s;
+    s.at = now;
+    s.n = n;
+    auto one = [&](int i) { FlatItemSeen::One r; if (i >= 0) { r.id = items[i].id; r.x = items[i].x; r.z = items[i].z; } return r; };
+    uint32_t type = 0, id = 0;
+    if (UnitTypeId(GameHoverNow(), &type, &id) && type == 4)
+        for (int i = 0; i < n; ++i)
+            if (items[i].id == id) { s.hover = one(i); break; }
+    if (rayOk) {
+        s.cross = one(fp::RayItem(items, n, o, d, tBody));
+        float look[3];
+        if (g_set.flatPickupKeyOn.load() && LookAtNow(look))   // the hero's place on the grid: the look-at less its height's push (flat_ground.h)
+            s.ahead = one(fp::AheadItem(items, n, look[0] - look[1] * flatground::kShear, look[2] - look[1] * flatground::kShear, d[0], d[2],
+                                        g_set.flatPickupReach.load()));
+    }
+    AcquireSRWLockExclusive(&g_flatItemSeenLock);
+    g_flatItemSeen = s;
+    ReleaseSRWLockExclusive(&g_flatItemSeenLock);
+    // With Alt held (the names shown): the item a click (flat_item_hitbox) or the key would take by the crosshair - the nearest ahead for the key - gets
+    // point_pickup's rim on its name (vr/hud/labels.cpp). Hand -1: no pulse, no Show items hold (those are F4's, point_pickup_wire.cpp).
+    if (AltHeld() && !s.hover.id) {
+        const uint32_t lit = s.cross.id ? s.cross.id : g_set.flatPickupKeyOn.load() ? s.ahead.id : 0;
+        if (const uintptr_t unit = lit ? meleetouch::GroundItemUnit(lit) : 0) {
+            float rgb[3];
+            ItemRarityRgb(unit, rgb);
+            pointpickup::Publish(lit, unit, -1, true, rgb, g_labelPaintIn.load() && g_labelSizeIn.load(), false);
+        }
+    }
+}
+FlatItemSeen FlatItemSeenNow() {
+    AcquireSRWLockShared(&g_flatItemSeenLock);
+    const FlatItemSeen s = g_flatItemSeen;
+    ReleaseSRWLockShared(&g_flatItemSeenLock);
+    return s;
+}
+bool FlatItemLitWanted() { return g_set.platform.load() == 0 && (g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load()); }
+
+uintptr_t FlatItemClickAnswer(uintptr_t game) {
+    if (g_set.platform.load() != 0 || !g_enabled.load()) return 0;
+    if (const uint32_t aim = g_itemAimId.load(std::memory_order_acquire)) return meleetouch::GroundItemUnit(aim);   // the key's press (taken since: the game's own)
+    if (!g_set.flatItemHitbox.load() || !FlatItemsWanted()) return 0;
+    const FlatItemSeen s = FlatItemSeenNow();
+    const ULONGLONG now = GetTickCount64();
+    if (!s.at || now - s.at > 150) return 0;
+    uint32_t type = ~0u, gid = 0;
+    const bool gameIsItem = game && UnitTypeId((const void*)game, &type, &gid) && type == 4;
+    if (!flatpickup::HitboxAnswers(true, AltHeld(), s.cross.id != 0, gameIsItem)) return 0;
+    const uintptr_t unit = meleetouch::GroundItemUnit(s.cross.id);
+    static ULONGLONG told = 0;
+    if (unit && game && now - told > 3000) {   // (game 0: HookMapClick's own question, not the click's lookup)
+        told = now;
+        LogF("vrcam: flat: Alt held - the click goes to item %u, its hitbox under the crosshair (the game's own hover: %s; [input] flat_item_hitbox; %d items round the hero)",
+             s.cross.id, type == ~0u ? "none" : "a unit, not an item", s.n);
+    }
+    return unit;
+}
+
+// The key (vr/hud/window.cpp, the window's thread): ours in flat F2 / F3 mouse look with the box on, never while the chat line is open.
+bool FlatPickupKeyWanted(unsigned vk) {
+    if (g_set.platform.load() != 0 || !g_set.flatPickupKeyOn.load() || vk != (unsigned)g_set.flatPickupKey.load() || ChatOpen()) return false;
+    const int view = ViewNow();
+    return (view == 2 || view == 3) && ShooterActive() && KeyMoveMode();
+}
+bool FlatPickupKeyDown(unsigned vk, bool repeat) {
+    if (!FlatPickupKeyWanted(vk)) return false;
+    if (!repeat) g_pickupKeyAt.store(GetTickCount64());
+    return true;
+}
+
+// The key's press, once a frame (the frame's thread): flatpickup::Machine - the item aimed at (the mouse's point on it, HookMouseGround; the click
+// lookup answered with it, FlatItemClickAnswer), then the left button through the window as a player's (SendLeftButton, as portal_auto's click).
+void FlatPickupFrame() {
+    namespace fp = flatpickup;
+    static fp::Machine m;
+    const bool on = g_set.platform.load() == 0 && g_set.flatPickupKeyOn.load();
+    if (!on && m.stage() == fp::Machine::Stage::Idle) {
+        g_pickupKeyAt.store(0);
+        return;
+    }
+    fp::In in;
+    in.now = GetTickCount64();
+    in.wanted = on && g_inWorld.load() && FlatItemsWanted();
+    in.focused = GameFocused();
+    const ULONGLONG at = g_pickupKeyAt.exchange(0);
+    in.pressed = at && in.now - std::min(in.now, at) < 500;
+    FlatItemSeen::One pick;
+    fp::From from = fp::From::None;
+    int n = 0;
+    if (in.pressed) {
+        const FlatItemSeen s = FlatItemSeenNow();
+        if (s.at && in.now - std::min(in.now, s.at) < 300) {
+            from = fp::ChooseKey(s.hover.id != 0, s.cross.id != 0, s.ahead.id != 0);
+            pick = from == fp::From::Hover ? s.hover : from == fp::From::Crosshair ? s.cross : from == fp::From::Ahead ? s.ahead : FlatItemSeen::One{};
+        }
+        n = s.n;
+    }
+    in.target = pick.id;
+    in.lookupHooked = ClickLookupHooked();
+    in.hoverIsTarget = g_itemAimHover.load();
+    in.gone = g_itemAimGone.load();
+    const bool wasIdle = m.stage() == fp::Machine::Stage::Idle;
+    const fp::Out o = m.Step(in);
+    if (wasIdle && o.aim) {   // a new aim: its place first, then the id (HookMouseGround reads the id, then the place)
+        g_itemAimX.store(pick.x);
+        g_itemAimZ.store(pick.z);
+        g_itemAimHover.store(false);
+        g_itemAimGone.store(false);
+        g_itemAimId.store(o.id, std::memory_order_release);
+    } else if (!o.aim) {
+        g_itemAimId.store(0, std::memory_order_release);
+    }
+    if (o.down) SendLeftButton(true);
+    if (o.up) SendLeftButton(false);
+    if (o.said) {
+        static int lines = 0;
+        if (lines < 40) {
+            ++lines;
+            if (wasIdle && o.aim)
+                LogF("vrcam: flat: the pick-up key on item %u (%s; %d items round the hero) - the game's own click on it follows ([input] flat_pickup_key_on)",
+                     o.id, fp::FromText(from), n);
+            else
+                LogF("vrcam: flat: the pick-up key: %s ([input] flat_pickup_key_on)%s", o.said, lines == 40 ? " (no more of these lines this session)" : "");
+        }
+    }
 }
 
 // [body] flat_aim_tilt_target (vr/aim_tilt.h): the point where the crosshair's ray went into a monster's body, and when - written by the mouse's point
@@ -541,6 +726,16 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
         *y = g_portalForceZ.load() / flatground::kRenderPerCell;
         return true;
     }
+    // [input] flat_pickup_key_on: the key's press under way - the game's mouse point is the item's place (the middle of its cell), as portal_auto's;
+    // the game's own hover found there said, and whether the item is still on the floor
+    if (const uint32_t aim = g_itemAimId.load(std::memory_order_acquire); aim && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
+        uint32_t type = 0, id = 0;
+        if (UnitTypeId(GameHoverNow(), &type, &id) && type == 4 && id == aim) g_itemAimHover.store(true);
+        if (!meleetouch::GroundItemUnit(aim)) g_itemAimGone.store(true);
+        *x = g_itemAimX.load() / flatground::kRenderPerCell;
+        *y = g_itemAimZ.load() / flatground::kRenderPerCell;
+        return true;
+    }
     if (g_set.platform.load() == 1) return VrMouseGround(mgr, x, y, pixel, gameOk);   // [input] vr_body_pick
     // (unticked, [debug] flat_pick still works it out for its lines; only the tick hands it to the game)
     const bool apply = g_set.flatAimGround.load();
@@ -549,17 +744,18 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     // [input] flat_shot_at_crosshair: the same, for the heading of the shot click's point (and the sky's point below)
     const bool shotAim = g_set.flatShotAtCrosshair.load() && KeyMoveMode() && ShooterActive() && !gamestate::MenuOpen() && RangedInHand();
     const bool keep = arrow || shotAim;
-    if (!x || !y || !mgr || !(apply || bodyPick || keep || g_set.flatPickLog.load()) || g_set.platform.load() != 0 || !g_enabled.load()) return gameOk;
+    const bool items = FlatItemsWanted();   // [input] flat_pickup_key_on / flat_item_hitbox: the items the crosshair and the key would take
+    if (!x || !y || !mgr || !(apply || bodyPick || keep || items || g_set.flatPickLog.load()) || g_set.platform.load() != 0 || !g_enabled.load()) return gameOk;
     uint64_t filter = 0;
     float floor[3] = {NAN, NAN, NAN};
     const bool floorOk = FloorFilter(&filter) && MouseRayHit(mgr, &filter, pixel, 0, floor);
     const float game[3] = {gameOk ? *x * flatground::kRenderPerCell : NAN, 0.0f, gameOk ? *y * flatground::kRenderPerCell : NAN};
     const flatground::Pick p = flatground::Choose(gameOk, game, floorOk, floor);
     if (apply && p.ours) { *x = p.gx; *y = p.gz; }
-    float px[2], o[3], d[3];
+    float px[2], o[3] = {}, d[3] = {};
     memcpy(px, &pixel, sizeof px);
     CrossSeen cross;   // [bow] arrow_flight_flat
-    if ((bodyPick || keep) && d2rcam::PickRay(px[0], px[1], o, d)) {
+    if ((bodyPick || keep || items) && d2rcam::PickRay(px[0], px[1], o, d)) {
         cross.ok = true;
         cross.floor = floorOk;
         cross.at = GetTickCount64();
@@ -572,6 +768,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
             flatbody::Cap c;
             int n = 0;
             if (BodyCell(o, d, tFloor, &hit, &c, &n)) {
+                if (items) FlatItemTick(true, o, d, hit.t);   // (an item's hitbox only before the body)
                 if (keep) {   // [bow] arrow_flight_flat / flat_shot_at_crosshair: the body met (a monster's or an NPC's: the arrow flies on past it; an object's: it does not stick)
                     cross.body = true;
                     cross.bodyMonster = c.body;
@@ -593,6 +790,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
             }
         }
     }
+    if (items) FlatItemTick(cross.ok, o, d, INFINITY);   // [input] flat_pickup_key_on / flat_item_hitbox: no body met
     if (keep && cross.ok) StoreCross(cross);   // [bow] arrow_flight_flat / flat_shot_at_crosshair: the floor met, or nothing
     {   // once: that it acts, and the first time it moves the point by over a cell
         static int told = 0;
@@ -936,7 +1134,9 @@ void HoverFacts(void* hero, void* hover, flatshot::ClickIn* in) {
 uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     // [gameplay] flat_move_while_attacking: after W A S D cut an attack's rest, the mouse's next attack waits until that animation would have
     // ended (the game's attack rate) - answered 1 as the game answers a click it took, so a held button goes on repeating (vr/move_attack.h ClickHold)
-    if (moveattack::HoldClick(unit, type, x, y, flags)) return 1;
+    // ([input] flat_pickup_key_on: never the pick-up key's own click - it is no attack)
+    const bool itemAim = g_itemAimId.load(std::memory_order_acquire) != 0;
+    if (!itemAim && moveattack::HoldClick(unit, type, x, y, flags)) return 1;
     const bool mouseType = type == 0 || type == 1 || type == 3 || type == 4;
     // nothing under the pointer? the game's own lookup (HoverUnit), asked once for whoever needs it
     int bareKnown = -1;
@@ -947,12 +1147,16 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
             // [input] flat_body_target: the click's own lookup will be answered with what the crosshair's ray meets - not bare then, no shot at the floor
             // (only while that answer can be given: the lookup's hook in, its return address known)
             if (bareKnown == 1 && ClickLookupHooked() && FlatClickTarget(0)) bareKnown = 0;
+            // [input] flat_pickup_key_on / flat_item_hitbox: the same with an item of ours (the key's, or Alt's by its hitbox) - no shot at the floor
+            if (bareKnown == 1 && ClickLookupHooked() && FlatItemClickAnswer(0)) bareKnown = 0;
         }
         return bareKnown == 1;
     };
     // [input] flat_shot_at_crosshair: a hostile monster hovered with a ranged weapon in hand - the click as on bare ground, Stand Still, the hover hidden from it
     bool noHover = false;
-    if (unit && mouseType && g_set.platform.load() == 0 && g_set.flatShotAtCrosshair.load() && g_enabled.load()) {
+    // (not on the click of an item of ours: [input] flat_pickup_key_on / flat_item_hitbox answer its lookup with the item - it stays a pick-up)
+    if (unit && mouseType && g_set.platform.load() == 0 && g_set.flatShotAtCrosshair.load() && g_enabled.load() &&
+        !(ClickLookupHooked() && FlatItemClickAnswer(0))) {
         flatshot::ClickIn in;
         in.flat = true;
         in.shooter = KeyMoveMode() && ShooterActive();

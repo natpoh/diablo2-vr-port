@@ -269,6 +269,8 @@ render.monitor_eye.choice1 = 左眼
 render.monitor_eye.choice2 = 右眼
 render.monitor_eye_fit.label = 显示器：眼睛画面保持自身比例（裁剪到窗口）
 render.monitor_eye_fit.tip = 当 VR 渲染尺寸与窗口不同时（分辨率，头显中：宽窗口里的方形画面），Windows 会把画面拉伸铺满窗口 - 显示器上显示的画面被压扁了。开启：先把眼睛画面中与窗口形状相同的中间部分铺满整个画面，因此窗口以真实比例显示它（上下或两侧被裁掉）。窗口与画面形状相同时没有任何变化。即时生效。关闭：与以前一样被拉伸。
+render.monitor_eye_crop_lens.label = 显示器：仅显示头显所见画面（不含镜片边缘）
+render.monitor_eye_crop_lens.tip = 眼睛的画面绘制得比头显显示的更大：其边缘和角落位于镜片之外，启用“跳过镜片永远看不到的部分”（主页，头显内）后这些区域为黑色。开启：窗口只获得头显所显示的部分，即其中与窗口形状相同的最大区域——画面更近、更干净，适合录制，边缘被裁掉。D2RLoader 控制台打开时（Ctrl + `）永不生效：此时显示完整画面，以便控制台适应窗口。关闭（默认）：显示完整的眼睛画面，包括边缘，与之前一致。实时生效。
 render.monitor_eye_drawn_only.label = 显示器：双眼交替 - 只显示游戏绘制的画面
 render.monitor_eye_drawn_only.tip = 仅限“原生 OpenXR - 双眼交替”：绘制另一只眼的那些帧显示游戏绘制的这只眼的最后一幅画面 - 每幅画面显示两次，速率减半，但绝不会是在显卡上生成的（生成的画面在运动物体的边缘可能出现拖影）。关闭（默认）：显示那一帧为这只眼生成的画面 - 每一帧都是新的，如同头显所见。即时生效。
 render.monitor_panels.label = 显示器：显示头显的面板（物品栏、商人、储物箱、地图...）
@@ -739,6 +741,14 @@ input.flat_body_pick.label = 平面：点击怪物、NPC 或箱子的身体即�
 input.flat_body_pick.tip = 第三人称和第一人称：你附近的怪物、NPC、门、神殿、箱子和传送门都可以点击它们的身体来选中，而不只是脚下（来自 sajmonsoft 的平面分支）。取消勾选：只能点脚下，和游戏自己的俯视视角一样。
 input.flat_shot_at_crosshair.label = 平面：弓箭或投掷精确射向准星（无自动瞄准）
 input.flat_shot_at_crosshair.tip = 手持弓、弩、标枪或投掷武器时，在第一和第三人称中：点击怪物会射向准星所在处，作为原地射击 - 不是射向游戏在准星附近找到的怪物，英雄不会走向它，按住按钮也不会在你看向别处时继续射它。物品、NPC、雇佣兵、箱子、门和传送门照常点击。取消勾选：游戏自己对指针下怪物的攻击。
+input.flat_pickup_key_on.label = 平面模式：用一个按键拾取物品（第一和第三人称）
+input.flat_pickup_key_on.tip = 在第一和第三人称（F3、F2）且使用鼠标视角时，下方的按键可拾取地上的物品：优先拾取名称位于准星下的物品（Alt），其次是准星所指的物品，再次是下方拾取范围内你前方最近的物品。这相当于游戏自身对该物品的点击——角色会走过去拾取，与使用鼠标时相同。游戏不会收到该按键。取消勾选：没有拾取键，该按键归游戏使用。
+input.flat_pickup_key.label = 平面模式：拾取键
+input.flat_pickup_key.tip = 用于拾取物品的按键。要更换按键：在游戏自带的 D2R VR 设置面板（F10）中点击该按键，然后按下你想要的键。在第一或第三人称且使用鼠标视角游玩时，游戏不会收到该键（游戏在该键上的自有命令（如有）此时无效；在菜单、聊天栏和 F1 中，该键仍归游戏使用）。此处留空：使用游戏面板中设置的按键。
+input.flat_pickup_reach_cells.label = 平面模式：拾取键对最近物品的范围，单位：格
+input.flat_pickup_reach_cells.tip = 准星下没有物品时，该键会拾取你前方最近的物品（在你视线方向 50 度以内），最远到此距离。0：仅拾取准星下的物品。
+input.flat_item_hitbox.label = 平面模式：按住 Alt 时，点击物品本体而不仅是其名称
+input.flat_item_hitbox.tip = 在第一和第三人称且使用鼠标视角时，按住 Alt（显示物品名称）期间，地上的物品也可通过点击物品本身来拾取，而不仅是名称——准星对准即可。准星下的名称，或物品前方的怪物，仍然优先。准星对准物品时，其名称会亮起。取消勾选：仅名称有效，与游戏原样一致。
 input.vr_body_pick.label = VR：按身体指向怪物、NPC 或箱子
 input.vr_body_pick.tip = 鼠标指针（F1、F3）、准星（使用鼠标视角的 F2）以及手部的 Shift + 点击瞄准，会按身体选中你附近的怪物、NPC、门、神殿、箱子和传送门，而不只是脚下。是否命中仍由游戏决定。取消勾选：按脚下选中。
 input.vr_body_pick_hand.label = VR F4：攻击和互动指向你的手所指之物
@@ -754,6 +764,18 @@ input.vr_keys_walk.label = VR 视角 F2 与平面相同：鼠标视角，准星�
 input.vr_keys_walk.tip = 用鼠标和键盘的第三人称，与平面模式相同：鼠标转动摄像机，指针是中间的准星（其深度：界面：F2 背后标签页），点击落在那里 - 在怪物上是攻击，在物品上是拾取，在地面上是射击 - W A S D 朝摄像机看的方向行走，而不是游戏地图的北方。F9 释放指针以操作菜单；W A S D 仍可行走。需要游戏处于鼠标模式：用过手柄摇杆后，请点击一次。
 input.crosshair.label = 准星图片
 input.crosshair.tip = 鼠标视角时的指针：你自己的图片（png、jpg、bmp），它的中心就是瞄准处；会按窗口高度缩放到 32-64 像素。没有透明度的图片：其黑色部分是透明的。只写名称时会到 reshade-shaders\Textures 中查找；也可以写完整路径。留空（x）= 内置的那个。
+
+# --- Belt refill ---
+group.belt_refill = 腰带补充
+group.belt_refill.help = 打开背包时，用一个按钮把背包里的药水放入腰带：指向一瓶药水（VR 中用激光，显示器上用鼠标光标）并轻点 Y——它会进入腰带；按住 Y——整条腰带被填满。两者都是游戏自身的操作。
+belt.refill_key.label = 腰带补充键：轻点药水 = 放入腰带，按住 = 填满腰带
+belt.refill_key.tip = 打开背包时：轻点下方按钮（默认 Y，位于左手柄和键盘上）相当于游戏自身在你所指之处的 Shift + 点击——VR 中是激光所指的点（所有视角），显示器上是鼠标光标——因此那里的药水会进入腰带，与 Shift + 点击一样。按住则是游戏自身手柄布局中的“hold to populate belt”：腰带的每个空格都会从背包获得其所在列已有种类的药水，由游戏自己一次完成。背包打开时，该按钮归模组使用（B 仍留作关闭面板，与游戏一致；若在下方选择 B，它就不再起作用——改用菜单键或长按摇杆；键盘：I 或 Esc）。日志会显示“belt refill: ...”，包含放入的数量及种类。实时生效。取消勾选：该按钮归游戏使用，与之前一致。
+belt.refill_button.label = 腰带补充：手柄按钮
+belt.refill_button.tip = 用于腰带补充的手柄按钮（右手柄上的 A 和 B，左手柄上的 X 和 Y）。仅在背包打开且激光指向游戏时才会占用；其他情况下保持原有功能。实时生效。
+belt.refill_keyboard.label = 腰带补充：键盘按键
+belt.refill_keyboard.tip = 用于腰带补充的键盘按键（鼠标光标即指针）。仅在背包打开且聊天栏关闭时才会占用；背包关闭时它仍是游戏的按键，与之前一致（游戏中的 B 用于打开背包）。实时生效。
+belt.refill_hold_ms.label = 腰带补充：按住时长，毫秒
+belt.refill_hold_ms.tip = 按住按钮多久才会填满整条腰带；提前松开则视为轻点（一瓶药水，放在你所指之处）。实时生效。
 
 # --- Pick up by pointing ---
 group.pick_up_by_pointing = 指向拾取
@@ -1055,6 +1077,8 @@ stereo.native_replay.label = ... 只绘制一次，右眼在显卡上再绘制
 stereo.native_replay.tip = 使用“双眼来自同一个游戏帧”时：游戏只绘制一次画面，右眼在显卡上用它自己的摄像机，基于同一份工作再绘制一次，而不是把整帧绘制两次。游戏线程的工作量约为一半：在被处理器拖住的电脑上每秒帧数多得多；被显卡拖住的电脑收益很小。仅限原生 OpenXR 第一人称（F4）。切换区域、读取或更改视频选项后，在画面稳定之前（几秒），右眼单独绘制 - 此时是两个通道，绝不会出现黑眼。默认开启（头显中的 3D 为“原生单通道”）。下次启动游戏时生效。关闭：两个通道（“原生双通道”）。
 stereo.replay_reset_guard.label = ... 绝不再使用游戏已经重用的列表
 stereo.replay_reset_guard.tip = 在显卡上重新绘制右眼时：游戏可能在发送完某个列表后立刻在其中开始新的录制，等右眼再次发送同一个列表时，里面已经是其他命令了 - 未完成的命令会让图形设备丢失，较晚的命令会让显卡从尚不存在的内容中绘制（造成卡死）。开启：这样一帧的右眼改为使用一次左眼画面，并在日志中说明。关闭：在日志中记录，仍照样发送（和以前一样）。即时生效。
+stereo.replay_alloc_guard.label = ……且绝不覆盖显卡仍在读取的命令
+stereo.replay_alloc_guard.tip = 在显卡上重新绘制右眼时：游戏在自身帧完成后就会立即复用其列表命令所在的内存——此时右眼尚未再次发送相同的列表。游戏随即在显卡仍在读取旧命令的位置写入新命令（导致卡死）。开启：游戏会在此等待，直到右眼处理完这些命令（仅在显卡落后时有片刻等待），而内存已被复用的那一帧会在右眼中显示一次左眼画面。关闭：仅在日志中提示（与之前一致）。实时生效。
 stereo.turn_warp.label = 双眼交替：由深度生成另一只眼
 stereo.turn_warp.tip = 原生 OpenXR 且双眼交替：本帧未绘制的那只眼睛由显卡根据头部现在的位置生成 - 用它自己的上一幅画面，连同绘制时的深度移动过去（英雄手中拿的东西随他而动），按本帧的姿态。取消勾选：它按上次绘制的样子交给头显，由头显转动它（只有旋转：那只眼睛里的一步或一个移动的怪物会晚一帧显示）。仅限第一人称（F4）。即时生效。想法来自 bearstonem/d2r-pcvr。
 stereo.turn_from_drawn.label = ……并将本帧绘制的眼睛叠在其上
@@ -2212,6 +2236,8 @@ fog.game_fog_flat.label = 平面模式的游戏也使用游戏的雾
 fog.game_fog_flat.tip = 你不戴头显、用显示器玩游戏时（平面第一和第三人称视角），游戏也会绘制它的雾。关闭：仅在 VR 第一人称（F4）中。留空：同“平面模式的游戏也由游戏绘制天空”（之前的那个开关）。即时生效。
 fog.game_fog_before_fx.label = 雾在烟和火之前
 fog.game_fog_before_fx.tip = 雾铺在世界上，早于游戏添加烟、火、薄雾和法术，所以它们在有雾的世界上仍然明亮。关闭：游戏自己的顺序 - 雾按它们后面远处的东西覆盖它们，远处有雾的背景前的火把火焰和烟会被抹掉。我们在显卡上的一个通道（其开销见日志的 10 s 行）。在游戏重新启动时生效。
+fog.game_fog_cover.label = 雾完全覆盖的起始距离
+fog.game_fog_cover.tip = 启用烟火之前的雾时：从此距离起，一切都完全变为雾的颜色——远处的树木、建筑、远处的火焰及其光晕都隐没在雾中。单位为世界单位（角色高约 7.5）。0：始终使用雾自身的曲线（与之前一致）。实时生效。
 fog.game_fog_planes_count.label = 平面数量
 fog.game_fog_planes_count.tip = 当“雾由以下绘制：玩家面前的雾平面”时：雾是面向你的平面，从雾起点一直排到全雾，每个都是一层雾色；平面后面的东西被它遮住，前面的东西（火把的火焰）保持明亮。平面越多：越平滑，开销相同。即时生效。
 fog.game_fog_planes_soft.label = 每个平面有多柔和
@@ -2245,6 +2271,8 @@ sky.dome_fog_baked.label = 游戏的天空：低处为雾的颜色
 sky.dome_fog_baked.tip = 使用游戏的雾时，天空的低处在天空画面本身中就铺成雾自己的颜色，就像我们旧天空的低处融入雾中一样：地平线前的树木和灌木立在雾的颜色上，周围没有画面地平线的亮边。与此同时，上面的“天空的地平线融入雾中”暂不起作用。关闭：画面保持原样。即时生效。
 sky.dome_fog_baked_strength.label = 游戏的天空：雾的颜色占多少
 sky.dome_fog_baked_strength.tip = 1：地平线完全是雾的颜色，在 11 度内向上渐变到画面；更小：透出部分画面。即时生效。
+sky.dome_fog_baked_top_deg.label = 游戏天空：雾带到达的高度
+sky.dome_fog_baked_top_deg.tip = 天空低处部分融入雾色的地平线以上角度，到该高度逐渐淡出（度）。设置“雾完全覆盖的起始距离”后，二者会在该距离处围绕你形成一圈雾带，其上是晴朗的天空：远处的树木和建筑隐没其中，天空顶部保持原样。11.5：与之前一致。实时生效。
 
 # --- Old fog (our effect) ---
 group.old_fog_our_effect.help = 我们自己效果的远景雾，保持原样（已冻结）- 仅在“雾由以下绘制：旧雾”时可用，否则为灰色。它有自己的滑块。
@@ -2340,8 +2368,6 @@ ceiling.game_ceiling_wall.label = 游戏的顶部：在边缘向下弯成墙
 ceiling.game_ceiling_wall.tip = 在游戏的顶部结束处（图块大小 10 时约 215 单位远），用同样受光照的岩石围成一圈，从顶部一直延伸到地板之下（地板的深度）：顶部边缘之外的黑色虚空 - 它与远处地板之间由火焰后面的雾照亮的一条亮带 - 被石头封住，就像我们效果的远墙封住它一样。关闭：平的顶部。即时生效。
 ceiling.game_ceiling_beams.label = 游戏的顶部：兵营自己的木梁
 ceiling.game_ceiling_beams.tip = 游戏为兵营（及其监牢）附带了一个从未放置过的木制顶部框架：一个梁格，底部位于兵营墙壁的顶端。勾选：游戏在你头顶以固定在世界中的整框网格绘制这个框架 - 它自己的模型、木材和尺寸，由它的火把照亮 - 梁上方铺着兵营的石头，封住梁之间的空隙。用你的游戏文件制作。仅限 VR F4。关闭：平坦的石质顶部。即时生效。
-ceiling.top_from_level.label = 天花板位于关卡最高地面之上
-ceiling.top_from_level.tip = 天花板原本位于你在该区域站过的最低地面之上，所以爬上楼梯后它一直很低，直到你继续往前走。勾选：它的高度从你所在关卡的最高地面起量 - 游戏在那里建造的每个房间都会告知它的地面 - 进入关卡 2 s 后整体取值，之后若建出更高的房间则平缓升高，绝不降低。游戏的天花板和我们效果的穹顶都适用。每个房间自己的高度（上方）仍从那里起量。来自 D2R VR Unleashed（Cal，bearstonem 团队）。仅 VR F4。关闭：和以前一样。即时生效。
 ceiling.game_ceiling_dome.label = 游戏的顶部：大教堂礼拜堂上方的穹顶
 ceiling.game_ceiling_dome.tip = 在大教堂中，游戏的顶部在礼拜堂上方升成穹顶，就像我们效果的拱顶在那里那样：一个匀称的穹顶，立在祭坛周围的四根柱子上，高度刚好越过祭坛的华盖。位置、宽度和高度取自游戏自己的构件（从你的游戏文件中测得，华盖则在游戏绘制时找到）；使用大教堂自己的石头，由它的蜡烛照亮。大教堂的其余部分保持其高度上的平坦顶部。仅限 VR F4。关闭：平坦的顶部。即时生效。
 ceiling.game_ceiling_dome_size.label = 大教堂的穹顶：大小
@@ -2354,6 +2380,8 @@ ceiling.game_ceiling_worldstone_dome_wider_m.label = 世界之石的穹顶：加
 ceiling.game_ceiling_worldstone_dome_wider_m.tip = 在从游戏构件测得的宽度之上，为世界之石的穹顶横向加宽的米数（四周各加一半）- 这是它自己的设置，大教堂穹顶的大小不变。它的高度随之变化，所以仍然越过水晶；比柱子更宽时，它的边缘会越过柱子落到平坦的顶部上，柱子止于弧面之下。按相机的米计算（英雄眼睛高度与你的之比）。VR F4。即时生效。
 ceiling.height_from_walls.label = 顶部高度取自房间的墙壁
 ceiling.height_from_walls.tip = 下方没有设置自身高度（0）的房间，顶部放在它自己的墙上：游戏用来构建该房间的墙壁结束之处（其墙壁、柱子和悬崖构件顶端的中间值，从你的游戏文件中测得）。房间自己的高度一旦设置，始终优先。我们效果的拱顶和游戏的顶部都适用；游戏垂得更低的岩石以其最低点搁在墙上。关闭，或房间没有这类墙壁：未设置高度时离地 18。日志会写出每个房间的高度及其来源。在下次切换区域时生效。
+ceiling.min_headroom_m.label = 天花板至少高出眼睛（米，0 = 关）
+ceiling.min_headroom_m.tip = 无论房间的高度是多少，天花板的最低点（包括其下垂下的岩石）都至少高出你的眼睛这么多：在地面高于天花板所依据的地面之处，以及你的头部高于所设身高时，它会随你升高（分级升高，在你离开该区域之前不会再降下），因此它绝不会降到你面前。米按相机的比例计算（英雄的眼高相对于你的眼高）。游戏的天花板和我们效果的拱顶都适用，第一人称。0 = 关：只用每个房间自己的高度。实时生效。
 ceiling.floor_depth.label = 边缘的墙：在地板下方多深（0 = 无）
 ceiling.floor_depth.tip = 游戏顶部的边缘墙在英雄地板下方伸到多深，世界单位：越过已绘制地板的边缘向下看时，看到的是那块石头，而不是虚空。
 
@@ -4633,9 +4661,9 @@ vr.guide.4.row2.does = 在那里按握把会从背上拔出武器。空手在左
 vr.guide.4.row3.control = 弓
 vr.guide.4.row3.does = 空出的手放到弦上，扳机或握把，向后拉，松开。拉弓时：B 下一个箭矢技能，A 上一个。
 vr.guide.4.row4.control = 标枪
-vr.guide.4.row4.does = 用握把握住，投出，然后松开
-vr.guide.4.row5.control = 生命和法力
-vr.guide.4.row5.does = 在你的手腕上
+vr.guide.4.row4.does = 抓取、投掷、松开。生命和法力显示在你的手腕上。
+vr.guide.4.row5.control = 腰带补充
+vr.guide.4.row5.does = 背包打开时：激光指向药水 + Y = 放入腰带；按住 Y = 填满
 vr.guide.5.title = 视角和再次查看本指南
 vr.guide.5.row0.control = F1
 vr.guide.5.row0.does = 俯视：游戏自己的摄像机
@@ -5133,6 +5161,7 @@ vr.flatmenu.title = D2R VR 设置
 vr.flatmenu.own = 你的游戏（2D） - 保存在 d2r_vr.ini，即时生效
 vr.rules.title = 主机规则（由主机决定）
 vr.flatmenu.host = 主机
+vr.flatmenu.press_key = 请按一个键（Esc：取消）
 vr.flatmenu.close = 关闭（Esc）
 vr.flatmenu.button = D2R VR 设置
 vr.rules.console_off = （只有勾选了设置 > 机制 >“游戏内 D2R VR 设置”时才会询问主机。）
@@ -5147,6 +5176,9 @@ vr.flatmenu.flat_portal_no_oval = 城镇传送门中没有黑色椭圆
 vr.flatmenu.stick_pitch_flat = 游戏手柄右摇杆上下看
 vr.flatmenu.flat_map_zoom = - 和 + 把地图缩出圆圈并缩回
 vr.flatmenu.flat_map_place = 屏幕上的地图
+vr.flatmenu.flat_pickup_key_on = 用一个按键拾取物品（第一和第三人称）
+vr.flatmenu.flat_pickup_key = 拾取键（点击，然后按一个键）
+vr.flatmenu.flat_item_hitbox = 按住 Alt 时，点击物品本体而不仅是名称
 vr.flatmenu.flat_map_place.game = 与游戏选项相同
 vr.flatmenu.flat_map_place.left = 左
 vr.flatmenu.flat_map_place.centre = 居中
@@ -5204,6 +5236,7 @@ vr.gestures.about_hand = 这只手用它的扳机作画或做动作
 vr.gestures.actions_need = 游戏动作由游戏内手势引擎保存：请在 D2R VR 设置（手势）中勾选“游戏内手势引擎”，并使用能绑定动作的 d2r_vr_gestures.dll。
 vr.gestures.kind_pad = 手柄
 vr.gestures.kind_item = 物品
+vr.gestures.kind_key = 键盘
 vr.gestures.kind_game = 游戏
 vr.gestures.tab_actions = 游戏动作
 vr.gestures.tab_skills = 技能
@@ -5640,6 +5673,8 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+ceiling.top_from_level.label = 天花板位于关卡最高地面之上
+ceiling.top_from_level.tip = 天花板原本位于你在该区域站过的最低地面之上，所以爬上楼梯后它一直很低，直到你继续往前走。勾选：它的高度从你所在关卡的最高地面起量 - 游戏在那里建造的每个房间都会告知它的地面 - 进入关卡 2 s 后整体取值，之后若建出更高的房间则平缓升高，绝不降低。游戏的天花板和我们效果的穹顶都适用。每个房间自己的高度（上方）仍从那里起量。来自 D2R VR Unleashed（Cal，bearstonem 团队）。仅 VR F4。关闭：和以前一样。即时生效。
 render.floors_stay.label = 地板保持原处（回头路上的地面不再滑动）
 render.floors_stay.tip = 游戏在开始绘制关卡的每个房间时给它一个高度，与那一刻它周围已绘制的房间相匹配，房间离开视线后就忘掉这个高度。它的图块边缘并非处处吻合，所以你从另一条路（或去过另一个区域或城镇后）回到的房间可能高一级或低一级 - 从游戏高处的摄像机看谁也看不出，从我们的摄像机看地板会滑动：石块被推上、推下、推向一侧，石块之间露出虚空。开启：每个房间都保持它第一次绘制时的高度，直到你离开游戏。代价：游戏也会在你走近、再次绘制一个高度画错的房间时修正它（远处看到的台阶，比如混沌要塞的大门旁）- 开启此项后，这种修正不会出现。只影响画面；战斗和路径都不变。即时生效。关闭（默认）：游戏自己的高度。
 fog.game_fog.label = 雾由谁绘制

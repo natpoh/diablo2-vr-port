@@ -208,6 +208,29 @@ bool Pressed(uint32_t cmd) {
     return ((a >> (cmd % 64)) & 1) != 0;
 }
 
+// The game's command the player has on a keyboard key now (the Gestures tab's "Keyboard key": vr/key_capture.h) - its live bindings (0x22AA490,
+// read only, where this build has them: 10 bytes {command, key code, type}; types 2 / 3 are the pad's, docs/buttons_recon.md). The key code is
+// taken as the Windows virtual key (the game's key handlers compare Esc 0x1B, Enter 0x0D: docs/move_recon.md) - not seen live yet, so the first
+// look writes the table's keyboard rows into the log once. -1: none on that key, or the table is not where this build has it.
+int CommandOfKey(unsigned vk) {
+    if (!vk || vk > 0xFFFF || !d2rsig::Addr(RVA_CMD_TABLE) || d2rsig::Rva(RVA_CMD_TABLE) != RVA_CMD_TABLE) return -1;
+    const uint8_t* b = (const uint8_t*)(d2rsig::Addr(RVA_CMD_TABLE) - RVA_CMD_TABLE + RVA_BINDINGS);
+    static std::atomic<bool> told{false};
+    const bool tell = !told.exchange(true);
+    char line[1600];
+    int at = snprintf(line, sizeof line, "vrcam: game commands - the keyboard's bindings (command:key/type):");
+    int found = -1;
+    for (uint32_t i = 0; i < kBindings; ++i) {
+        Binding r;
+        if (!Read(&r, b + i * kBindingSize, sizeof r)) break;
+        if (r.cmd >= kCommands || r.type == 2 || r.type == 3 || r.key == 0 || r.key == 0xFFFF) continue;
+        if (tell && at > 0 && at < (int)sizeof line - 24) at += snprintf(line + at, sizeof line - at, " %02X:%X/%u", r.cmd, r.key, r.type);
+        if (found < 0 && r.key == vk) found = (int)r.cmd;
+    }
+    if (tell) Log(line);
+    return found;
+}
+
 // From D2RLoaderLoadPlugin.
 void Init(const PluginContext* ctx) {
     g_ctx = ctx;

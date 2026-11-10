@@ -118,6 +118,9 @@ void DoAction(const char* id, uint32_t gesture) {
         directinput::PadPulse(p, 65);
         break;
     }
+    case gact::Kind::Key:   // ("Keyboard key" is only the tile that arms the capture: its key's game command is what gets bound)
+        LogF("vrcam: gesture engine - gesture %u has the Keyboard key tile itself bound: nothing done (choose it again and press a key)", gesture);
+        return;
     }
     LogF("vrcam: gesture engine - gesture %u does %s (%.31s)", gesture, d->name, d->id);
 }

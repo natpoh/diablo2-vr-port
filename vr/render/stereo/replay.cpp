@@ -5,6 +5,7 @@
 #include "../../resize_drain.h"   // [render] resize_drain: no replay of a pass the game resized in, the GPU drained first
 #include "../../shadows_once.h"   // [render] shadows_once_a_pair: the lists that only draw the shadow / grass maps not replayed for the right eye
 #include "replay_list_gen.h"   // [stereo] replay_reset_guard: no replay of a list the game reset since it submitted it
+#include "replay_alloc_guard.h"   // [stereo] replay_alloc_guard: no reset of the game's allocators under our replay of their lists
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -41,7 +42,7 @@ std::atomic<bool> g_nativeHooks{false};   // its hooks went in at the start (Nat
 std::atomic<int> g_nativeKey{0};          // [stereo] native_replay now (live)
 std::atomic<int> g_replayRightIni{0};     // [stereo] replay_right as the ini has it (the ReShade path's)
 std::atomic<bool> g_nativeNow{false};     // this pair goes the native way (Wanted, once a pair)
-struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; bool mapsOnly = false; uint32_t gen = 0; };   // gen: the list's count of resets when the game submitted it (vr/render/stereo/replay_list_gen.h)   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec; mapsOnly: it only draws the shadow / grass maps ([render] shadows_once_a_pair, vr/shadows_once.h)
+struct Sub { ID3D12CommandQueue* q; ID3D12CommandList* cl; uint32_t call = 0; bool mapsOnly = false; uint32_t gen = 0; const void* alloc = nullptr; uint32_t agen = 0; };   // alloc / agen: the allocator the list was recorded into and its count of resets when the game submitted it (vr/render/stereo/replay_alloc_guard.h)   // gen: the list's count of resets when the game submitted it (vr/render/stereo/replay_list_gen.h)   // call: the number of the game's ExecuteCommandLists it was in (0 = not seen), see ObserveExec; mapsOnly: it only draws the shadow / grass maps ([render] shadows_once_a_pair, vr/shadows_once.h)
 std::vector<Sub> g_subs;           // the left pass's direct and compute submissions, in order
 SRWLOCK g_lock = SRWLOCK_INIT;
 IDXGISwapChain* g_proxy = nullptr; // the game's swap chain (ReShade's proxy): what it presents through
@@ -197,6 +198,15 @@ std::atomic<bool> g_holdSignalsOn{false};
 // there yet, a hang). Off: counted and told, replayed anyway (as before).
 std::atomic<bool> g_resetGuard{true};
 std::atomic<uint32_t> g_staleReplays{0};   // passes with such a list (all along)
+// [stereo] replay_alloc_guard (on; vr/render/stereo/replay_alloc_guard.h, crash batch 2026-11-10): the game resets an allocator once ITS fence passes -
+// before our replay of the lists recorded in it is done. A reset of the game's waits (up to 2 s) while that replay still runs on the GPU, and a pass
+// whose lists' allocators were reset before the replay is not replayed. Off: both counted and told, nothing waits or is held back (as before).
+std::atomic<bool> g_allocGuard{true};
+std::atomic<ID3D12Fence*> g_allocFence{nullptr};   // the fence the allocators' values are on (the direct queue's of ours)
+std::atomic<uint64_t> g_allocDoneV{0};               // the last value given out (an aborted mark goes back to it: never earlier than what it held)
+std::atomic<uint32_t> g_allocStalePasses{0};         // passes held back (or told, the guard off) for an allocator reset before their replay
+std::atomic<uint32_t> g_allocTold{0};
+void AllocResetGate(ID3D12CommandAllocator* a);   // (below, with BeginLeft)
 std::atomic<uint32_t> g_heldMax{0};
 thread_local bool t_ours = false;   // our own signals pass
 std::atomic<uint32_t> g_sigCalls{0}, g_sigHeld{0}, g_sigWhileHolding{0};
@@ -372,7 +382,8 @@ void ExecCore(ID3D12CommandQueue* nq, ID3D12CommandList* ncl, bool ours) {
     else CopyLateSlots(nq);
     const bool mapsOnly = shadowsonce::MapsOnly(ncl);   // (judged now: closed, before the game's ExecuteCommandLists; false with the tick off)
     AcquireSRWLockExclusive(&g_lock);
-    g_subs.push_back({nq, ncl, 0, mapsOnly, listgen::Lists().Gen(ncl)});
+    const void* alloc = allocguard::AllocOf(allocguard::Get(), ncl);
+    g_subs.push_back({nq, ncl, 0, mapsOnly, listgen::Lists().Gen(ncl), alloc, allocguard::AllocGen(allocguard::Get(), alloc)});
     ReleaseSRWLockExclusive(&g_lock);
 }
 void OnExecute(command_queue* q, command_list* cl) {
@@ -930,7 +941,17 @@ void MonitorPresent(reshade::api::effect_runtime* rt, HWND wnd, ID3D12CommandQue
     const bool was = t_ours;
     t_ours = true;
     if (rt) rt->get_command_queue()->flush_immediate_command_list();
-    if (monitoreye::On())   // [render] monitor_eye_fit: what the headset shows of each eye - the window gets that, not the lens mask's edges
+    if (monitoreye::On() && wnd && GetForegroundWindow() == wnd) {   // D2RLoader's console followed by its keys, pressed in the game's window (no
+        // plugin API says it is open; its own window hook may take the key before ours - polled here): no crop while it is open (vr/monitor_eye.h)
+        static bool wasKey = false, wasEsc = false;
+        const bool key = (GetAsyncKeyState(VK_OEM_3) & 0x8000) != 0, esc = (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0;
+        const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        if (key && !wasKey) monitoreye::ConsoleKey(VK_OEM_3, ctrl, false);
+        if (esc && !wasEsc) monitoreye::ConsoleKey(VK_ESCAPE, ctrl, false);
+        wasKey = key;
+        wasEsc = esc;
+    }
+    if (monitoreye::On() && monitoreye::CropLens())   // [render] monitor_eye_crop_lens: what the headset shows of each eye - the window gets that, not the lens mask's edges
         for (int e = 0; e < 2; ++e) {
             xr::EyeLens l{};
             xr::VisMask m;
@@ -1435,6 +1456,7 @@ void NativeSinks(natived3d::Sinks& k) {
     }
     k.uploadMade = &camfix::NativeUploadMade;
     k.uploadGone = &camfix::NativeUploadGone;
+    k.allocReset = &AllocResetGate;   // [stereo] replay_alloc_guard: the game's allocator resets wait for our replay of their lists
     g_nativeHooks.store(true);
     xr::SetReplayAtStart(true);   // (the headset's render type row: one pass works now, or after a restart)
     // ([fog] game_fog_before_fx hooks the lists' root signature / compute root CBV calls first, at the device's creation: camfix's camera
@@ -1604,6 +1626,52 @@ bool Wanted() {
     return hooked == 1 && g_proxy && g_native;   // both known after a present through the hook
 }
 
+// [stereo] replay_alloc_guard: in front of the game's ID3D12CommandAllocator::Reset (vr/native_d3d12.cpp, any thread, any list type).
+void AllocResetGate(ID3D12CommandAllocator* a) {
+    ID3D12Fence* f = g_allocFence.load(std::memory_order_acquire);
+    thread_local HANDLE ev = nullptr;
+    double us = 0;
+    const allocguard::Gate g = allocguard::Before(
+        allocguard::Get(), a, g_allocGuard.load(std::memory_order_relaxed), 2000,
+        [f](uint64_t v) { return !f || f->GetCompletedValue() >= v; },   // (a removed device's fence reads ~0: done)
+        [f](uint64_t v, unsigned ms) {
+            if (!ev) ev = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (!f || !ev || FAILED(f->SetEventOnCompletion(v, ev))) return false;
+            if (f->GetCompletedValue() >= v) return true;
+            WaitForSingleObject(ev, ms);
+            return f->GetCompletedValue() >= v;
+        },
+        [] { Sleep(0); }, [] { return pairtime::UsNow(); }, &us);
+    if (g == allocguard::Gate::Free || g == allocguard::Gate::Done) return;
+    const uint32_t n = g_allocTold.fetch_add(1) + 1;
+    if (g == allocguard::Gate::Waited || g == allocguard::Gate::TimedOut)
+        gpufault::Note(g == allocguard::Gate::Waited ? "replay: the game's allocator reset waited for our replay of its lists"
+                                                     : "replay: the game's allocator reset NOT freed by our replay in 2 s",
+                       (uint64_t)(uintptr_t)a, (uint64_t)us);
+    if (n <= 6 || n % 500 == 0)
+        LogF("vrcam: replay - the game reset an allocator (%p, thread %lu) while our replay of the lists recorded in it still ran on the GPU: %s "
+             "(%u such resets so far; [stereo] replay_alloc_guard)", (void*)a, GetCurrentThreadId(),
+             g == allocguard::Gate::Waited ? "waited for it, then let the reset go"
+             : g == allocguard::Gate::Busy ? "NOT waited for (the guard off) - the game records over commands the GPU may still read"
+                                           : "waited 2 s and it did not finish - the reset goes on (the device is likely hung)",
+             n);
+}
+// Every 10 s while the replay runs: the game's allocator resets and what the guard did (the draw thread, at a pair; a line only when it found any).
+void AllocLine() {
+    static ULONGLONG since = GetTickCount64();
+    static uint32_t r0 = 0, b0 = 0, w0 = 0, t0 = 0, s0 = 0;
+    if (GetTickCount64() - since < 10000) return;
+    since = GetTickCount64();
+    allocguard::State& st = allocguard::Get();
+    const uint32_t r = st.resets.load(), b = st.busyFound.load(), w = st.waited.load(), t = st.timedOut.load(), sp = g_allocStalePasses.load();
+    if (b != b0 || t != t0 || sp != s0)
+        LogF("vrcam: replay - the game's allocator resets, 10 s: %u; %u of them came while our replay of their lists still ran on the GPU - %u waited for "
+             "(the longest wait so far %.1f ms), %u not freed in 2 s; %u passes not replayed for an allocator reset before their replay ([stereo] "
+             "replay_alloc_guard %d; the tables %s)", r - r0, b - b0, w - w0, st.waitMaxUs.load() / 1000.0, t - t0, sp - s0, g_allocGuard.load() ? 1 : 0,
+             st.listAlloc.Full() || st.busy.Full() ? "FULL - lists past them are not guarded" : "have room");
+    r0 = r; b0 = b; w0 = w; t0 = t; s0 = sp;
+}
+
 // Before a pair's left pass. The previous replay must be done on the GPU first: the game
 // resets the left eye's command allocators once its own frame fence passes, which comes
 // before our replay of them.
@@ -1686,6 +1754,19 @@ bool RightFromLeft() {
     // [stereo] replay_reset_guard: any list of this pass reset by the game since it submitted it (the plugin's Reset hooks count them)
     const size_t stale = listgen::Stale(listgen::Lists(), subs.size(), [&subs](size_t k, const void** l, uint32_t* g) { *l = subs[k].cl; *g = subs[k].gen; });
     const bool held = stale && g_resetGuard.load();
+    // [stereo] replay_alloc_guard: any list of this pass whose ALLOCATOR the game reset since it submitted it (its commands are not there any more)
+    const size_t staleA = allocguard::StaleAllocs(allocguard::Get(), subs.size(), [&subs](size_t k, const void** a, uint32_t* g) { *a = subs[k].alloc; *g = subs[k].agen; });
+    const bool heldA = staleA && g_allocGuard.load();
+    if (staleA) {
+        const uint32_t nth = g_allocStalePasses.fetch_add(1) + 1;
+        gpufault::Note(heldA ? "replay: a pass held back - allocators reset since the game submitted its lists" : "replay: a pass replayed with allocators reset since (guard off)",
+                       staleA, subs.size());
+        if (nth <= 6 || nth % 100 == 0)
+            LogF("vrcam: replay - %zu of the %zu lists this pass submitted had their allocator reset by the game before their replay (%u such pass(es) so far): %s",
+                 staleA, subs.size(), nth, heldA ? "not replayed - the right eye is the back buffer as it stands ([stereo] replay_alloc_guard)"
+                                                 : "REPLAYED anyway ([stereo] replay_alloc_guard=0) - the GPU may run commands written over");
+    }
+    AllocLine();
     if (stale) {
         const uint32_t nth = g_staleReplays.fetch_add(1) + 1;
         gpufault::Note(held ? "replay: a pass held back - lists reset since the game submitted them" : "replay: a pass replayed with lists reset since (guard off)",
@@ -1696,7 +1777,7 @@ bool RightFromLeft() {
                  held ? "not replayed - the right eye is the back buffer as it stands ([stereo] replay_reset_guard)"
                       : "REPLAYED anyway ([stereo] replay_reset_guard=0) - the GPU may run commands that are not this pass's");
     }
-    const bool notReplayed = resized || held;
+    bool notReplayed = resized || held || heldA;
     camfix::g_capture.store(false);
     if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
     if (mode == 1) {   // the right eye's camera into the slots, on the direct queue before the replay
@@ -1723,6 +1804,21 @@ bool RightFromLeft() {
         shadowsonce::NotePair((uint32_t)subs.size(), skipped);
     }
     double t = pairtime::UsNow();
+    // [stereo] replay_alloc_guard: the allocators of the lists about to go again marked (a reset of the game's now waits), then their counts looked at once
+    // more - a reset that came between the look above and the mark holds the pass back (replay_alloc_guard.h: MarkPending)
+    // (marked with the guard off too: the resets that come while the replay runs are then counted and told, not waited for)
+    std::vector<const void*> marked;
+    if (mode != 3 && !notReplayed) {
+        allocguard::MarkPending(allocguard::Get(), subs.size(), [&subs](size_t k) { return (const void*)subs[k].cl; }, marked);
+        if (g_allocGuard.load() &&
+            allocguard::StaleAllocs(allocguard::Get(), subs.size(), [&subs](size_t k, const void** a, uint32_t* g) { *a = subs[k].alloc; *g = subs[k].agen; })) {
+            allocguard::Release(allocguard::Get(), marked, g_allocDoneV.load());
+            marked.clear();
+            g_allocStalePasses.fetch_add(1);
+            gpufault::Note("replay: a pass held back - an allocator reset while the replay was being started", 0, subs.size());
+            notReplayed = true;
+        }
+    }
     if (mode != 3 && !notReplayed) {   // the lists again, a batch per run of one queue; a fence between queues
         // (the first batch may be the compute queue's: it must see the right eye's slots too)
         if (mode == 1 && !subs.empty() && subs[0].q != g_direct) { g_why = "replay: first batch not direct"; GpuWait(subs[0].q, SignalOn(g_direct)); }
@@ -1774,6 +1870,15 @@ bool RightFromLeft() {
         g_eclUs += pairtime::UsNow() - ecl0;
         g_eclLists += (uint32_t)subs.size(); g_eclCalls += eclCalls; g_eclSignals += eclSignals;
         if (prev && prev != g_direct) { g_why = "replay: back to direct"; GpuWait(g_direct, SignalOn(prev)); }
+        if (!marked.empty()) {   // [stereo] replay_alloc_guard: the game's lists are all in; the GPU is done with their allocators at this value
+            g_why = "replay: the game's lists done (allocators free)";
+            const Pt done = SignalOn(g_direct);
+            if (done.f) {
+                g_allocFence.store(done.f, std::memory_order_release);
+                g_allocDoneV.store(done.v);
+            }
+            allocguard::Release(allocguard::Get(), marked, done.f ? done.v : g_allocDoneV.load());
+        }
     }
     // One wait on the swap chain's frame latency object a present, as the game does before its
     // frame: it waits once a game frame, we present twice - unthrottled, the GPU ran into a back

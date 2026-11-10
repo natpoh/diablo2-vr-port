@@ -73,8 +73,8 @@ inline constexpr PageText kPages[kPageCount] = {
       {"Your weapon", "has weight: hold it with the grip. Both grips let go: it falls (a grip calls it back); a second on the floor and it is on your back."},
       {"Behind a shoulder", "a grip there draws the weapon off your back. An empty hand's grip behind the left shoulder puts the shield away and draws it."},
       {"Bow", "the free hand to the string, trigger or grip, pull back, let go. While drawn: B the next arrow skill, A the one before."},
-      {"Javelin", "hold it with the grip, throw, and let go"},
-      {"Life and mana", "sit on your wrists"}},
+      {"Javelin", "grip, throw, let go. Life and mana sit on your wrists."},
+      {"Belt refill", "inventory open: laser on a potion + Y = into the belt; hold Y = fill it"}},
      kNavMiddle},
     // 5: the views
     {"Views and this guide again",

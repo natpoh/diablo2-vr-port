@@ -22,6 +22,7 @@
 #include "MinHook.h"
 #include "native_d3d12.h"
 #include "render/stereo/replay_list_gen.h"   // [stereo] native_replay: each list's resets, for the replay's check before it submits a list again
+#include "render/stereo/replay_alloc_guard.h"   // [stereo] replay_alloc_guard: each list's allocator, each allocator's resets
 
 namespace natived3d {
 namespace {
@@ -298,6 +299,7 @@ HRESULT STDMETHODCALLTYPE HookCreateList(ID3D12Device* d, UINT mask, D3D12_COMMA
         ID3D12GraphicsCommandList* l = nullptr;
         if (SUCCEEDED(((IUnknown*)*out)->QueryInterface(__uuidof(ID3D12GraphicsCommandList), (void**)&l)) && l) {
             listgen::Lists().NoteReset(l);
+            allocguard::NoteListRecorded(allocguard::Get(), l, a);   // [stereo] replay_alloc_guard: recorded into a
             l->Release();
         }
     }
@@ -499,18 +501,19 @@ ClearRtvFn g_origClearRtv = nullptr;
 ResetFn g_origResetC = nullptr, g_origResetY = nullptr;
 HRESULT STDMETHODCALLTYPE HookResetC(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const HRESULT hr = g_origResetC(cl, a, ps);
-    if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);
+    if (SUCCEEDED(hr)) { listgen::Lists().NoteReset(cl); allocguard::NoteListRecorded(allocguard::Get(), cl, a); }
     return hr;
 }
 HRESULT STDMETHODCALLTYPE HookResetY(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const HRESULT hr = g_origResetY(cl, a, ps);
-    if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);
+    if (SUCCEEDED(hr)) { listgen::Lists().NoteReset(cl); allocguard::NoteListRecorded(allocguard::Get(), cl, a); }
     return hr;
 }
 HRESULT STDMETHODCALLTYPE HookReset(ID3D12GraphicsCommandList* cl, ID3D12CommandAllocator* a, ID3D12PipelineState* ps) {
     const InList in;
     const HRESULT hr = g_origReset(cl, a, ps);
     if (SUCCEEDED(hr)) listgen::Lists().NoteReset(cl);   // (every Reset, outer or not: the replay compares counts, never adds them up)
+    if (SUCCEEDED(hr)) allocguard::NoteListRecorded(allocguard::Get(), cl, a);   // [stereo] replay_alloc_guard: the list's commands are in a now
     if (in.outer && !t_ours) Count(kCensusReset);
     if (in.outer && !t_ours && g_sinks.huntBound && SUCCEEDED(hr)) g_sinks.huntBound(cl, ps);   // (a list starts with its Reset's pipeline)
     if (in.outer && !t_ours && g_sinks.vrsReset && SUCCEEDED(hr)) g_sinks.vrsReset(cl);   // [render] foveated: a new recording, no rate image
@@ -992,6 +995,35 @@ void STDMETHODCALLTYPE HookViewports(ID3D12GraphicsCommandList* cl, UINT n, cons
     g_origViewports(cl, n, vp);
 }
 
+// [stereo] replay_alloc_guard (vr/render/stereo/replay_alloc_guard.h, crash batch 2026-11-10): the game's ID3D12CommandAllocator::Reset, every list
+// type (each type's allocator may have its own function: up to three hooks). The replay's sink first - it waits while its replay of lists recorded in
+// the allocator still runs on the GPU, and counts the reset; without one (the replay off) only the count.
+using AllocResetFn = HRESULT(STDMETHODCALLTYPE*)(ID3D12CommandAllocator*);
+AllocResetFn g_origAllocReset[3] = {};
+template <int K>
+HRESULT STDMETHODCALLTYPE HookAllocReset(ID3D12CommandAllocator* a) {
+    if (!t_ours && g_sinks.allocReset) g_sinks.allocReset(a);
+    else allocguard::Get().gens.NoteReset(a);
+    return g_origAllocReset[K](a);
+}
+void HookAllocResets(ID3D12Device* dev) {
+    const D3D12_COMMAND_LIST_TYPE types[3] = {D3D12_COMMAND_LIST_TYPE_DIRECT, D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_LIST_TYPE_COPY};
+    void* const hooks[3] = {(void*)&HookAllocReset<0>, (void*)&HookAllocReset<1>, (void*)&HookAllocReset<2>};
+    void* done[3] = {};
+    int n = 0;
+    for (int k = 0; k < 3; ++k) {
+        ID3D12CommandAllocator* a = nullptr;
+        if (FAILED(dev->CreateCommandAllocator(types[k], __uuidof(ID3D12CommandAllocator), (void**)&a)) || !a) continue;
+        // ID3D12CommandAllocator: IUnknown 0-2, ID3D12Object 3-6, ID3D12DeviceChild::GetDevice 7, Reset 8
+        void* fn = (*(void***)a)[8];
+        bool same = false;
+        for (int j = 0; j < n; ++j) same |= done[j] == fn;
+        if (!same && HookOne(fn, hooks[n], (void**)&g_origAllocReset[n], "ID3D12CommandAllocator::Reset")) done[n++] = fn;
+        a->Release();
+    }
+    LogF("vrcam: native replay - the game's allocator resets %s (%d function(s) for the three list types; [stereo] replay_alloc_guard)",
+         n ? "go through the replay's guard" : "NOT hooked: the replay cannot wait for its own use of them", n);
+}
 // [stereo] native_replay: a list of each other type made on the game's device, its Reset hooked unless it is the direct list's function (hooked
 // already). Told in the log; a hook that does not go in leaves those lists uncounted (the replay then cannot see them reset - as before).
 void HookOtherResets(ID3D12Device* dev, void* directReset) {
@@ -1089,6 +1121,7 @@ void HookDevice(ID3D12Device* dev, const char* when) {
         ok &= HookOne(lt[46], (void*)&HookOmSet, (void**)&g_origOmSet, "ID3D12GraphicsCommandList::OMSetRenderTargets");
         if (g_sinks.soReset) ok &= HookShadowsOnce(l, lt);   // [render] shadows_once_a_pair: everything else a list writes with
         if (g_sinks.uploadMade) HookOtherResets(dev, lt[10]);   // [stereo] native_replay: the compute and copy lists' resets counted too
+        if (g_sinks.uploadMade) HookAllocResets(dev);   // [stereo] replay_alloc_guard: the allocators' resets, through the replay's guard
         l->Close();
     } else {
         ok = false;

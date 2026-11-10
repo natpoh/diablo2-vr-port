@@ -435,6 +435,7 @@ struct State {
     // the targeted monster's distance as the tick worked it out (ground, from the hero's feet): metres and game units, -1 = none lately
     std::atomic<float> targetM{-1.0f}, targetUnits{0.0f};
     std::atomic<uint64_t> targetAt{0};
+    std::atomic<uintptr_t> targetUnit{0};   // whose distance it is (0: not said)
     std::atomic<bool> wanted{false};   // [hud] monster_bar_room (the plate cut out and hung in the room; off unless asked)
     // [hud] monster_over_head: the game's own plate lifted by the game's own anchor call so it hangs over the monster's head (LiftAnchor)
     std::atomic<bool> lift{false};
@@ -529,11 +530,22 @@ inline bool GroundDistance(const float foot[2], const float hero[3], float upm, 
     return true;
 }
 // What the tick made of it, for the effect's uniforms (another call, the same thread or not): a ground distance, fresh for kStaleMs.
-inline void SetTarget(float metres, float units, uint64_t nowMs) {
+inline void SetTarget(float metres, float units, uint64_t nowMs, uintptr_t unit = 0) {
     State& s = S();
     s.targetM.store(metres);
     s.targetUnits.store(units);
+    s.targetUnit.store(unit);
     s.targetAt.store(nowMs);
+}
+// The distance a plate's size and depth go by, held over a frame or a few with no fresh note of it (a hitch of the game's thread, an ALVR
+// stall): the last one measured for the SAME unit, no older than kHoldTargetMs. Until 2026-11-10 such a frame fell back to "no distance" -
+// our name at its near size, a far monster's name 1.7 times as large for that frame (sdfsdfsdfdscvx, Vision Pro: "plates sometimes larger").
+constexpr uint64_t kHoldTargetMs = 1000;
+inline bool HeldTarget(float m, float u, uint64_t atMs, uintptr_t ofUnit, uintptr_t unitNow, uint64_t nowMs, float* metres, float* units) {
+    if (!(m >= 0.0f) || !std::isfinite(m) || !ofUnit || ofUnit != unitNow || nowMs < atMs || nowMs - atMs > kHoldTargetMs) return false;
+    *metres = m;
+    *units = u;
+    return true;
 }
 inline bool GetTarget(float* metres, float* units, uint64_t nowMs) {
     State& s = S();
@@ -543,6 +555,18 @@ inline bool GetTarget(float* metres, float* units, uint64_t nowMs) {
     *units = s.targetUnits.load();
     return true;
 }
+// GetTarget, or the last distance of unitNow held (HeldTarget) - unitNow: the unit the plate hangs on now (the hook's latest answer)
+inline bool GetTargetOrHeld(float* metres, float* units, uintptr_t unitNow, uint64_t nowMs) {
+    if (GetTarget(metres, units, nowMs)) return true;
+    State& s = S();
+    return HeldTarget(s.targetM.load(), s.targetUnits.load(), s.targetAt.load(), s.targetUnit.load(), unitNow, nowMs, metres, units);
+}
+// Whether the game's plate is up now, for its box (the cut-out where the game's plate is hidden and ours stands): in the pad's layout the plate
+// hangs on its monster and the anchor hook answers for it every frame it is shown - no fresh answer, no plate, no box. The plate panel's rect is
+// read whether the plate shows or not (its last place), so a box made from it alone stayed in mid-view after the target was gone and cut out
+// whatever lay under it - the Stash's name (sdfsdfsdfdscvx, 2026-11-10). attached: the rect is the pad layout's (TargetAttached read); hookNotes:
+// the hook is in and notes in this view; followFresh: plateworld::GetFollow now. The mouse layout's plate (at the top, no anchor) keeps the rect.
+inline bool PlateUp(bool attached, bool hookNotes, bool followFresh) { return !attached || !hookNotes || followFresh; }
 // The box follows the plate (FollowBox): the hook notes where it hung the plate while a plate setting needs the box; a note is fresh for kStaleMs.
 inline void SetFollow(bool on) { S().followOn.store(on); }
 inline bool Following() { return S().followOn.load(); }

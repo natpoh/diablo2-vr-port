@@ -96,6 +96,13 @@ static D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D
     return x;
 }
 
+// ... on subresource 0 only, as the game moves the effects' targets (one mip, one slice: all of it - Serg's 0.210.3 log)
+static D3D12_RESOURCE_BARRIER Tr0(ID3D12Resource* r, D3D12_RESOURCE_STATES a, D3D12_RESOURCE_STATES b) {
+    D3D12_RESOURCE_BARRIER x = Tr(r, a, b);
+    x.Transition.Subresource = 0;
+    return x;
+}
+
 static const char* kVs = "float4 main(uint id : SV_VertexID) : SV_Position { float2 p = float2((id << 1) & 2, id & 2); return float4(p * 2 - 1, 0, 1); }";
 static const char* kResolvePs =
     "Texture2D<float3> S : register(t0); float4 main(float4 p : SV_Position) : SV_Target { return float4(S.Load(int3(p.xy, 0)), 1); }";
@@ -302,6 +309,7 @@ int main(int argc, char** argv) {
     bool curveOn = false;   // [fog] game_fog_our_curve: our effect's curve (20 - 80, curve 1.5, strength 0.9) in place of the exponential
     const float cStart = 20.0f, cEnd = 80.0f, cCurve = 1.5f, cStrength = 0.9f;
     bool ours = false;      // our effect's fog ([fog] game_fog=0): that curve by the view's depth (D2R_DepthFog.fx FogAmount), not the length
+    float coverAt = 0.0f;   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off)
     int planesN = 0;        // [fog] game_fog_planes: that many planes from 20 to 80 (strength 1), softness planesSoft
     float planesSoft = 0.0f;
     // rectangles painted over the cleared frame: their depth and their colour (a silhouette against the sky)
@@ -320,6 +328,7 @@ int main(int argc, char** argv) {
         p.start = cStart; p.end = cEnd; p.curve = cCurve; p.strength = cStrength;
         p.fxDepth = holeKey;   // (the holes go with the step now, not with this - holeKey off checks a hole with it off)
         p.skyDepth = skyDepth;
+        p.cover = coverAt;
         p.planes = planesN;
         p.planesStart = 20.0f;
         p.planesEnd = 80.0f;
@@ -833,6 +842,40 @@ int main(int argc, char** argv) {
         expect(dome, 32, 32, want);
         std::printf("  ... no dome told, the same depth: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
         CHECK(near3(got, want) && std::fabs(got[0] - grey) > 0.02f);
+        // a far crown thinned to a pixel pattern (0.210 rc, VR F4): the dome pixel (32, 32) between leaves at 150 units (fogged nearly whole) -
+        // fogged as they are; between leaves at 20 units (barely fogged) - the sky as it is
+        skyDepth = band;
+        const float leaves[2] = {nearPlane / 150.0f, nearPlane / 20.0f};
+        for (float lf : leaves) {
+            patches = {{{31, 31, 34, 32}, lf, {grey, grey, grey}}, {{31, 33, 34, 34}, lf, {grey, grey, grey}},
+                       {{31, 32, 32, 33}, lf, {grey, grey, grey}}, {{33, 32, 34, 33}, lf, {grey, grey, grey}}};
+            frame(true, dome, 32, 32, got, &word);
+            float kMin = 1.0f;
+            const int nb[8][2] = {{31, 31}, {32, 31}, {33, 31}, {31, 32}, {33, 32}, {31, 33}, {32, 33}, {33, 33}};
+            for (const auto& q : nb) {
+                float w[3];
+                expect(lf, (float)q[0], (float)q[1], w);
+                kMin = std::fmin(kMin, (w[0] - fog[0]) / (grey - fog[0]));
+            }
+            if (kMin <= 0.5f) for (int i = 0; i < 3; ++i) want[i] = fog[i] + (grey - fog[i]) * kMin;
+            else for (int i = 0; i < 3; ++i) want[i] = grey;
+            std::printf("  the dome between leaves at %.0f units (their least keep %.3f): %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", nearPlane / lf, kMin,
+                        got[0], got[1], got[2], want[0], want[1], want[2]);
+            CHECK(near3(got, want));
+        }
+        patches.clear();
+        skyDepth = 0.0f;
+        // [fog] game_fog_cover: a wall at 45 with the cover at 40 - the fog's colour whole; at 50 - the formula, as before
+        coverAt = 40.0f;
+        frame(true, nearPlane / 45.0f, 32, 32, got, &word);
+        std::printf("  the cover at 40, the wall at 45: %.4f %.4f %.4f (the fog's colour %.4f %.4f %.4f)\n", got[0], got[1], got[2], fog[0], fog[1], fog[2]);
+        CHECK(near3(got, fog));
+        coverAt = 50.0f;
+        frame(true, nearPlane / 45.0f, 32, 32, got, &word);
+        expect(nearPlane / 45.0f, 32, 32, want);
+        std::printf("  the cover at 50, the wall at 45: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
+        CHECK(near3(got, want));
+        coverAt = 0.0f;
     }
     // 2i: the game's fog at a silhouette's edge against the game's dome (Serg on 0.192.34 - 0.192.40: "чтобы туман игры был без полос
     // вокруг объектов"). A dark fence far in the fog (x < 32) against a lighter sky (x > 32); the edge column x = 32 blends the two half and
@@ -901,9 +944,11 @@ int main(int argc, char** argv) {
     {
         const float fxColour[3] = {0.8f, 0.4f, 0.1f}, fxGlow[3] = {1.0f, 0.5f, 0.25f};
         D3D12_CLEAR_VALUE zero16{DXGI_FORMAT_R16G16B16A16_FLOAT};
-        ID3D12Resource* accum = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &zero16);
+        // (two mips each, moved by barriers on subresource 0 only: Serg's 0.210.4 log - "set on the resolve's list (0x80)" and still refused
+        // after e93a2020, so the game's targets have more than one subresource; the step touches only the first)
+        ID3D12Resource* accum = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &zero16, 2);
         D3D12_CLEAR_VALUE one16{DXGI_FORMAT_R16G16B16A16_FLOAT, {1, 1, 1, 1}};
-        ID3D12Resource* reveal = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &one16);
+        ID3D12Resource* reveal = Tex(dev, DXGI_FORMAT_R16G16B16A16_FLOAT, D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_STATE_RENDER_TARGET, &one16, 2);
         ID3D12Resource* glow = nullptr;
         {
             D3D12_HEAP_PROPERTIES hp{D3D12_HEAP_TYPE_DEFAULT};
@@ -1129,10 +1174,10 @@ int main(int argc, char** argv) {
             // the resolve reads them all
             const D3D12_RESOURCE_STATES depthRead = D3D12_RESOURCE_STATE_DEPTH_READ | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
             D3D12_RESOURCE_BARRIER rb[5] = {Tr(scene, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-                                            Tr(accum, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-                                            Tr(glow, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+                                            Tr0(accum, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+                                            Tr0(glow, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
                                             Tr(depth, D3D12_RESOURCE_STATE_DEPTH_WRITE, depthRead),
-                                            Tr(reveal, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
+                                            Tr0(reveal, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)};
             k.fxBarrier(ec, 5, rb);
             ec->ResourceBarrier(5, rb);
             if (apart) CHECK(SUCCEEDED(cl2->Close()));
@@ -1156,10 +1201,10 @@ int main(int argc, char** argv) {
             cl->DrawInstanced(3, 1, 0, 0);
             D3D12_RESOURCE_BARRIER bb[6] = {Tr(out, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_SOURCE),
                                             Tr(scene, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-                                            Tr(accum, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
-                                            Tr(glow, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                                            Tr0(accum, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+                                            Tr0(glow, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
                                             Tr(depth, depthRead, D3D12_RESOURCE_STATE_DEPTH_WRITE),
-                                            Tr(reveal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)};
+                                            Tr0(reveal, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)};
             cl->ResourceBarrier(6, bb);
             D3D12_TEXTURE_COPY_LOCATION dst{readback, D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT}, src{out, D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX};
             dst.PlacedFootprint.Footprint = {DXGI_FORMAT_R32G32B32A32_FLOAT, 64, 64, 1, 64 * 16};

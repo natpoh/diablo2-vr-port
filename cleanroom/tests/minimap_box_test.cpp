@@ -186,6 +186,33 @@ int main() {
     std::printf("0.173's test missed %d of %d map boxes with a file that reads 1, %d with the file's number right (the outer edge at the picture's\n"
                 "edge at 80 %%); this one: %s\n", oldMissed, cases, oldMissedTrue, g_fail ? "see the failures" : "none");
     Check(oldMissed > 0, "the old test is shown to miss boxes (the reason for this one)", 0, 0, 0);
+
+    // The game's map box capped at ~640 px (Serg's log 2026-11-10, square pictures, interface 80 %, F4 stretch 1.04): every measured box found,
+    // the 1024 one too - wider than half the picture, taller than 0.6 of it, past its right edge - and what is not the map still refused there.
+    {
+        struct M { unsigned n; Box b; } measured[] = {
+            {1024, {512, 132, 1151, 771}}, {1280, {512, 165, 1152, 805}}, {1536, {742, 197, 1381, 836}},
+            {1920, {1088, 247, 1728, 887}}, {2816, {1895, 362, 2534, 1001}}};
+        for (const M& m : measured) {
+            const Canvas c{0, 0, m.n, m.n};
+            const float game = minimapbox::SafeFromScale(GameScale(m.n, 0.8f), m.n);
+            Check(minimapbox::Find(m.b, c, game, 0.8f, 0, 1.04f) == 2, "a measured capped box found (right)", m.n, m.n, 80);
+            Check(minimapbox::Find(m.b, c, game, 0.8f, 1, 1.04f) == 0, "a measured capped box: the left corner asked for", m.n, m.n, 80);
+            Check(minimapbox::WhyNot(m.b, c, 0.8f, 0, 1.04f) == nullptr, "a measured capped box: no reason against it", m.n, m.n, 80);
+            const Box mirror{(int)m.n - m.b.right, m.b.top, (int)m.n - m.b.left, m.b.bottom};
+            Check(minimapbox::Find(mirror, c, game, 0.8f, 0, 1.04f) == 1, "the same box in the left corner found (left)", m.n, m.n, 80);
+        }
+        const Canvas c{0, 0, 1024, 1024};
+        const float game = minimapbox::SafeFromScale(GameScale(1024, 0.8f), 1024);
+        const Box whole{0, 0, 1024, 1024}, toolbar{0, 789, 1024, 921}, small{1012, 789, 1143, 921};
+        const Box low{512, 432, 1151, 1071}, tall{512, 132, 1151, 1024}, wide{300, 132, 1100, 771};
+        Check(minimapbox::Find(whole, c, game, 0.8f, 0, 1.04f) == 0, "1024: not the whole picture", 1024, 1024, 80);
+        Check(minimapbox::Find(toolbar, c, game, 0.8f, 0, 1.04f) == 0, "1024: not the toolbar's strip", 1024, 1024, 80);
+        Check(minimapbox::Find(small, c, game, 0.8f, 0, 1.04f) == 0, "1024: not a small box in the corner", 1024, 1024, 80);
+        Check(minimapbox::Find(low, c, game, 0.8f, 0, 1.04f) == 0, "1024: not the capped size far under the area's top", 1024, 1024, 80);
+        Check(minimapbox::Find(tall, c, game, 0.8f, 0, 1.04f) == 0, "1024: not a capped width much taller than wide", 1024, 1024, 80);
+        Check(minimapbox::Find(wide, c, game, 0.8f, 0, 1.04f) == 0, "1024: not a box wider than the cap", 1024, 1024, 80);
+    }
     std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "passed", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

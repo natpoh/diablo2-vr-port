@@ -111,6 +111,9 @@ struct Sinks {
     // key, never to be called. Given: the device's resource creation is hooked as well. Any thread.
     void (*uploadMade)(ID3D12Resource* r, uint64_t va, uint64_t size, uint8_t* cpu) = nullptr;
     void (*uploadGone)(ID3D12Resource* r) = nullptr;
+    // [stereo] replay_alloc_guard (vr/render/stereo/replay_alloc_guard.h): in front of the game's ID3D12CommandAllocator::Reset, any list type, any
+    // thread - the replay waits there while its replay of lists recorded in that allocator still runs on the GPU. Given: hooked with the resets.
+    void (*allocReset)(ID3D12CommandAllocator* a) = nullptr;
     // [render] shadows_once_a_pair (vr/shadows_once.h): everything a list of the game's WRITES, every list type, each before the real call (only the
     // game's, never our own): a new recording (Reset, or a list made - any type); a bind (each colour target's resource and the depth-stencil's,
     // nullptr none; `unknown`: a view not seen made, or the plugin's own); a clear, copy, resolve or discard into `dst` (a buffer too); a draw

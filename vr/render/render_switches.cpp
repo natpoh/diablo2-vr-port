@@ -9,7 +9,7 @@ using namespace vrc;   // as in vrcam.cpp
 namespace vrc {
 
 // LevelTranslationLayer::CalculateHeightOffset 0x6A2A40(layer, DRLG_ROOM*, const float edges[4]) -> the height a room is drawn at, stitched
-// to ONE of the neighbours drawn at that moment. Hooked for [render] room_stitch and [ceiling] top_from_level (below). ([render] floors_stay,
+// to ONE of the neighbours drawn at that moment. Hooked for [render] room_stitch (below). ([render] floors_stay,
 // which kept a room's first height for the game, was here until 0.209.9: room_stitch fixes the same step near the hero - Serg 2026-11-09,
 // "floors_stay отключи и удали".)
 constexpr uint64_t RVA_ROOM_HEIGHT = 0x6A2A40;
@@ -18,9 +18,8 @@ const uint8_t kSigRoomHeight[16] = {0x48,0x8B,0xC4,0x53,0x56,0x57,0x41,0x55,0x48
 using RoomHeightFn = float (*)(void* layer, const void* room, const float* edges);
 RoomHeightFn OrigRoomHeight = nullptr;
 std::atomic<int> g_roomHeightHook{0};   // 0 not in yet, 1 in, 2 not possible
-constexpr size_t kRoomLevel = 0x90;   // DRLG_ROOM -> its DRLG_LEVEL*
 
-// [render] room_stitch and [ceiling] top_from_level - from D2R VR Unleashed (bearstonem/d2r-pcvr d416861, by Cal; the pure part MPL 2.0 in
+// [render] room_stitch - from D2R VR Unleashed (bearstonem/d2r-pcvr d416861, by Cal; the pure part MPL 2.0 in
 // vr/unleashed_room_stitch.h, this wiring ours). The game's pick of the built neighbour a room's height meets
 // (the hero's room outright, else the largest candidate - arbitrary for rooms several rings out) becomes the built neighbour nearest the
 // hero's room, so dungeon floors join along the way he comes instead of hanging over a void a step above or below the next room. Our copy
@@ -31,17 +30,11 @@ constexpr size_t kRoomLevel = 0x90;   // DRLG_ROOM -> its DRLG_LEVEL*
 // slides it along the line of sight, so nothing shows there). Legacy graphics (G) draws the old sprites, not these rooms. Visual and the
 // HD client's floor only - the game's world, its paths, collision and the server are the 2D grid; units, missiles and items find their
 // drawn ground with a ray along the same line.
-// top_from_level: each room built reports its border floors by level; the game's ceiling stands over the level's highest floor, not the
-// lowest the hero stood on (up the stairs it stayed low until he walked on).
 namespace roomstitchwire {
 namespace rs = unleashed::roomstitch;
 std::atomic<bool> g_layoutOk{false};   // the table lookup 0x6B7450 is the one this reads (checked at the hook's install)
 std::atomic<uint32_t> g_built{0}, g_moved{0}, g_disagree{0};
 std::atomic<ULONGLONG> g_reportAt{0};
-unleashed::ceilingtop::LevelFloors g_floors;   // under g_floorsLock
-unleashed::ceilingtop::Top g_top;              // under g_floorsLock
-SRWLOCK g_floorsLock = SRWLOCK_INIT;
-std::atomic<uintptr_t> g_heroLevel{0};
 template <class T> bool Rd(uintptr_t a, T& out) { return a >= 0x10000 && SafeRead(&out, (const void*)a, sizeof(T)); }
 
 // The client's local hero (the game's LocalIndex and ClientPlayer), 0 when not there. (Its own function: __try beside no C++ objects.)
@@ -58,14 +51,13 @@ uintptr_t HeroUnit() noexcept {
         return 0;
     }
 }
-// The hero's DRLG room (unit +0x38 path, +0x20 its room, +0x18 the DRLG room) and its place on the grid; its level as well.
+// The hero's DRLG room (unit +0x38 path, +0x20 its room, +0x18 the DRLG room) and its place on the grid.
 bool HeroRoom(uintptr_t* drlg, int32_t* x, int32_t* y) {
-    uintptr_t path = 0, room = 0, level = 0;
+    uintptr_t path = 0, room = 0;
     const uintptr_t hero = g_inWorld.load() ? HeroUnit() : 0;
     if (!hero || !Rd(hero + 0x38, path) || !Rd(path + 0x20, room) || !Rd(room + 0x18, *drlg) || *drlg < 0x10000 ||
         !Rd(*drlg + rs::PosX, *x) || !Rd(*drlg + rs::PosY, *y))
         return false;
-    if (Rd(*drlg + kRoomLevel, level) && level >= 0x10000) g_heroLevel.store(level, std::memory_order_relaxed);
     return true;
 }
 
@@ -105,46 +97,18 @@ float Pick(void* layer, const void* room, const float* edges, float game) {
     }
     return h;
 }
-void NoteFloors(const void* room, float h, const float* edges) {
-    uintptr_t level = 0;
-    if (!g_set.ceilTopFromLevel.load(std::memory_order_relaxed) || !edges || !Rd((uintptr_t)room + kRoomLevel, level) || level < 0x10000)
-        return;
-    AcquireSRWLockExclusive(&g_floorsLock);
-    g_floors.Add(level, h, edges);
-    ReleaseSRWLockExclusive(&g_floorsLock);
-}
 }  // namespace roomstitchwire
 
-float CeilingTopLift(float heroY, float floorAt, unsigned areaGen) {
-    using namespace roomstitchwire;
-    if (!g_set.ceilTopFromLevel.load(std::memory_order_relaxed) || g_roomHeightHook.load() != 1 || !std::isfinite(heroY) || !std::isfinite(floorAt) ||
-        !viewgate::F4())
-        return 0.0f;
-    uintptr_t drlg = 0;
-    int32_t x = 0, y = 0;
-    HeroRoom(&drlg, &x, &y);   // (keeps the hero's level fresh)
-    const uintptr_t level = g_heroLevel.load(std::memory_order_relaxed);
-    const double now = (double)GetTickCount64() / 1000.0;
-    AcquireSRWLockExclusive(&g_floorsLock);
-    float built = 0.0f;
-    const bool have = g_floors.Highest(level, built);
-    const float top = g_top.Step(now, areaGen, level, heroY, have, built);
-    ReleaseSRWLockExclusive(&g_floorsLock);
-    return std::max(0.0f, top - floorAt);
-}
-
-// The game's room-height pick, hooked: the stitch's pick (every view); the room's floors noted for the ceiling.
+// The game's room-height pick, hooked: the stitch's pick (every view).
 float HookRoomHeight(void* layer, const void* room, const float* edges) {
     const float game = OrigRoomHeight ? OrigRoomHeight(layer, room, edges) : 0.0f;
-    const float h = roomstitchwire::Pick(layer, room, edges, game);
-    if (room) roomstitchwire::NoteFloors(room, h, edges);
-    return h;
+    return roomstitchwire::Pick(layer, room, edges, game);
 }
 
-// Once [render] room_stitch or [ceiling] top_from_level asks for it; tried with the other hooks until the bytes are there.
+// Once [render] room_stitch asks for it; tried with the other hooks until the bytes are there.
 void InstallRoomHeightHook() {
     static int misses = 0;
-    if (!g_ctx || g_roomHeightHook.load() != 0 || !(g_set.roomStitch.load() || g_set.ceilTopFromLevel.load())) return;
+    if (!g_ctx || g_roomHeightHook.load() != 0 || !g_set.roomStitch.load()) return;
     if (!Matches(RVA_ROOM_HEIGHT, kSigRoomHeight, sizeof kSigRoomHeight)) {
         if (g_inWorld.load() && ++misses >= 20) {
             g_roomHeightHook.store(2);
@@ -155,8 +119,7 @@ void InstallRoomHeightHook() {
     roomstitchwire::g_layoutOk.store(Matches(unleashed::roomstitch::FindRva, unleashed::roomstitch::FindSig, sizeof unleashed::roomstitch::FindSig));
     const bool in = d2rsig::Hook(RVA_ROOM_HEIGHT, kSigRoomHeight, sizeof kSigRoomHeight, (void*)&HookRoomHeight, (void**)&OrigRoomHeight);
     g_roomHeightHook.store(in ? 1 : 2);
-    Log(in ? "vrcam: room heights: hook in - [render] room_stitch (every view) meets the built neighbour nearest the hero's room; [ceiling] top_from_level "
-             "notes each level's floors"
+    Log(in ? "vrcam: room heights: hook in - [render] room_stitch (every view) meets the built neighbour nearest the hero's room"
            : "vrcam: room heights: hook FAILED - the game's own pick");
     if (in && !roomstitchwire::g_layoutOk.load())
         Log("vrcam: room stitch - the game's room table lookup 0x6B7450 not as expected (another build?): the game's own pick stays");

@@ -61,9 +61,8 @@ Third-party parts, each under its own licence:
     ([input] point_pickup; steamvr/loot_aim.h and loot_aim_test.cpp at 0701680, on by default as in f096e76, v0.3.31)
     shared/unleashed_foveation.h, vr/foveation.h, vr/foveation.cpp, cleanroom/tests/unleashed_foveation_test.cpp - fixed
     foveated rendering ([render] foveated, foveated_gaze; steamvr/foveation_math.h, foveation.cpp and gaze.h, 63f76f4 - 7c642e3)
-    vr/unleashed_room_stitch.h, cleanroom/tests/unleashed_room_stitch_test.cpp - dungeon rooms joined toward the hero and the
-    ceiling over the level's highest floor ([render] room_stitch, [ceiling] top_from_level; steamvr/room_stitch.h,
-    ceiling_top.h and their tests at d416861, by Cal)
+    vr/unleashed_room_stitch.h, cleanroom/tests/unleashed_room_stitch_test.cpp - dungeon rooms joined toward the hero
+    ([render] room_stitch; steamvr/room_stitch.h and its test at d416861, by Cal)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

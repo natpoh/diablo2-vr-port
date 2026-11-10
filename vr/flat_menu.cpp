@@ -21,6 +21,7 @@
 
 #include "flat_menu.h"
 #include "flat_menu_wire.h"
+#include "key_capture_wire.h"   // a key row's "press a key" (vr/key_capture.h)
 #include "host_rules.h"
 #include "log_async.h"
 
@@ -261,13 +262,13 @@ float Width(const ov::Frame* f, float size, const std::string& s) {
     m.structSize = ov::TextMetricsSize;
     return g_overlay->measureText(g_ctx, &q, &m) == ov::Result::Success ? m.width : (float)s.size() * size * 0.5f;
 }
-enum class Align { Left, Center };
+enum class Align { Left, Center, Right };
 void Text(const ov::Frame* f, const Rect& r, float size, ov::Color c, const std::string& s, Align a = Align::Left) {
     if (s.empty()) return;
     ov::TextRequest q{};
     q.structSize = ov::TextRequestSize;
     q.canvas = f->canvas;
-    const float x = a == Align::Center ? r.x + (r.w - Width(f, size, s)) * 0.5f : r.x;
+    const float x = a == Align::Center ? r.x + (r.w - Width(f, size, s)) * 0.5f : a == Align::Right ? r.x + r.w - Width(f, size, s) : r.x;
     q.position = {x, r.y + (r.h - size) * 0.5f};
     q.color = c;
     q.textSize = size;
@@ -304,7 +305,34 @@ void DrawList(const ov::Frame* f, uint64_t now) {
     }
 }
 
+// A key row's capture (vr/key_capture_wire.h): its answer written like a click's value; a refused key said under the row for a moment.
+std::atomic<int> g_keyRefusedRow{-1};
+std::atomic<unsigned> g_keyRefusedVk{0};
+std::atomic<uint64_t> g_keyRefusedAt{0};
+void KeyAnswers(uint64_t now) {
+    for (int r = 0; r < kOwnCount; ++r) {
+        if (!IsKey(r)) continue;
+        keycap::Res res;
+        if (!keycapwire::Take(keycapwire::kFlatMenu + r, &res)) continue;
+        char name[32];
+        keycap::Text(res.vk, name, sizeof name);
+        if (res.r == keycap::R::Took) {
+            {
+                std::lock_guard<std::mutex> lock(g_valLock);
+                g_val[r] = static_cast<float>(res.vk);   // shown at once; the writer reads it back
+            }
+            Post({r, static_cast<float>(res.vk)});
+            Say("vrcam: game menu settings - [%ls] %ls = %u (%s, pressed)", Def(r).section, Def(r).key, res.vk, name);
+        } else if (res.r == keycap::R::Refused) {
+            g_keyRefusedRow.store(r);
+            g_keyRefusedVk.store(res.vk);
+            g_keyRefusedAt.store(now);
+        }
+    }
+}
+
 void DrawPanel(const ov::Frame* f, uint64_t now) {
+    KeyAnswers(now);
     const Layout L = Lay(f->screenWidth, f->screenHeight);
     float v[kRows];
     {
@@ -340,6 +368,17 @@ void DrawPanel(const ov::Frame* f, uint64_t now) {
             Fill(f, L.value[r], kRowB, 4);
             Text(f, L.value[r], L.small, kText, shown, Align::Center);
             Button(f, L.plus[r], "+", L.text, hover == r * 8 + (int)Part::Plus);
+        } else if (IsKey(r)) {   // a key: its name; armed, "press a key"; a key it cannot be, why (3 s)
+            const bool armed = keycapwire::Armed(keycapwire::kFlatMenu + r);
+            Button(f, L.value[r], armed ? uitext::Tr("vr.flatmenu.press_key", "Press a key (Esc: cancel)") : shown, L.small,
+                   hover == r * 8 + (int)Part::Value, armed);
+            if (g_keyRefusedRow.load() == r && now - g_keyRefusedAt.load() < 3000) {
+                char name[32];
+                keycap::Text(g_keyRefusedVk.load(), name, sizeof name);
+                const char* why = keycap::Refusal(g_keyRefusedVk.load(), keycap::Use::PickupKey);
+                Rect note = label;
+                Text(f, note, L.small, kWarn, std::string(name) + ": " + (why ? why : "?"), Align::Right);
+            }
         } else {
             Button(f, L.value[r], shown, L.small, hover == r * 8 + (int)Part::Value, v[r] >= 0.5f);
         }
@@ -358,6 +397,9 @@ void __cdecl OnFrame(const PluginContext*, const ov::Frame* f, void*) noexcept {
         Say("vrcam: game menu settings - the panel closed (%s)", flat ? "with the pause menu" : "not the flat game");
     }
     const bool open = g_open.load();
+    if (!open)   // a key row's capture never outlives the panel (its next key would be taken with nothing on the screen)
+        for (int r = 0; r < kOwnCount; ++r)
+            if (IsKey(r)) keycapwire::Cancel(keycapwire::kFlatMenu + r);
     if (open) DrawPanel(f, now);
     else if (flat && pause) {
         const Rect b = MenuButton(f->screenWidth, f->screenHeight);
@@ -588,6 +630,9 @@ bool OnWindowMessage(void* hwnd, unsigned msg, uintptr_t w, intptr_t l, intptr_t
             float now = 0, next = 0;
             if (h.part == Part::Close) {
                 g_open.store(false);
+            } else if (h.row >= 0 && h.part == Part::Value && IsKey(h.row)) {   // a key row: the next key pressed is its value (Esc: as it was)
+                if (keycapwire::Armed(keycapwire::kFlatMenu + h.row)) keycapwire::Cancel(keycapwire::kFlatMenu + h.row);
+                else keycapwire::Arm(keycapwire::kFlatMenu + h.row, keycap::Use::PickupKey);
             } else if (h.row >= 0) {
                 {
                     std::lock_guard<std::mutex> lock(g_valLock);

@@ -36,7 +36,11 @@ void Made(int eye, ID3D12Resource* made);
 // done), the window it goes to (its client size: the crop). After every copy of this present to the headset.
 void Present(ID3D12CommandQueue* q, HWND__* wnd, ID3D12Resource* bb, int eye);
 
-// [render] monitor_eye_fit: what the headset shows of eye `eye` (vrcam, the draw thread, before Present): the runtime's hidden-area mesh
+// [render] monitor_eye_crop_lens (its own key, 0 by default = the whole eye picture, lens mask edges included, as before): 1 = the window gets
+// what the headset shows of the eye (SetLens below), in the window's shape. From d2r_vr.ini, on every change.
+void ConfigureLens(bool cropLens);
+bool CropLens();
+// [render] monitor_eye_crop_lens: what the headset shows of eye `eye` (vrcam, the draw thread, before Present): the runtime's hidden-area mesh
 // (XR_KHR_visibility_mask: xy tangent pairs on the view's z = -1 plane, triangle indices; `gen` moves when it is fetched again; none: nVerts
 // 0), the frustum the eye's picture is drawn with and the part of it the headset is given (tangents l r u d, left and down negative). The
 // window then gets the biggest box of its own shape inside what the lens shows, not the masked edges (monitor_eye_math.h VisibleBox).
@@ -52,5 +56,10 @@ struct Lens {
     bool seenOk = false;
 };
 void SetLens(int eye, const Lens* lens);
+
+// A key pressed in the game's window (polled at each present: vr/render/stereo/replay.cpp MonitorPresent): D2RLoader's console followed by its key (Ctrl + ` opens / closes,
+// Esc closes - monitor_eye_math.h ConsoleGate). While it is open the window gets the whole picture, never cropped: the console is drawn into
+// the picture with the window's full rect.
+void ConsoleKey(unsigned vk, bool ctrl, bool repeat);
 
 }  // namespace monitoreye

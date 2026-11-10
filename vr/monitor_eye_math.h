@@ -98,6 +98,24 @@ inline bool VisibleBox(const std::vector<uint8_t>& hidden, uint32_t gw, uint32_t
     return false;
 }
 
+// D2RLoader's developer console (Ctrl + `, its binding "d2rloader/console"): drawn into the game's picture with the full window's rect, so a
+// crop magnified it with the eye - it began a fifth of the way across, ran off the right edge and lost its top lines (0.210.1). No plugin API
+// says whether it is open, so its key is followed in the game's window: Ctrl + ` opens and closes it, Esc closes it. While open the window
+// gets the whole picture, not cropped (the eye covering stays: the console is in every present's picture).
+constexpr unsigned kConsoleKey = 0xC0;   // VK_OEM_3 (` ~), D2RLoader's default binding with Ctrl
+constexpr unsigned kEscapeKey = 0x1B;
+struct ConsoleGate {
+    bool open = false;
+    // A key going down in the game's window (repeat: held, not a new press). True when `open` changed.
+    bool Key(unsigned vk, bool ctrl, bool repeat) {
+        if (repeat) return false;
+        const bool was = open;
+        if (vk == kConsoleKey && ctrl) open = !open;
+        else if (vk == kEscapeKey) open = false;
+        return open != was;
+    }
+};
+
 // Where the window's picture comes from at this present.
 enum class Source {
     Nothing,   // the back buffer as it is (the eye it carries is the one wanted, or nothing to put there)
@@ -110,7 +128,7 @@ struct In {
     bool keptOk;       // a kept picture of the wanted eye, the back buffer's size and family, not older than kKeptMaxMs
     bool madeOk;       // eyes by turns: the wanted eye was made this frame (the back buffer's size and family)
     bool drawnOnly;    // [render] monitor_eye_drawn_only: never the made eye - only pictures the game drew
-    bool fit;          // FitWanted and [render] monitor_eye_fit
+    bool fit;          // FitWanted and [render] monitor_eye_fit, or the lens's box ([render] monitor_eye_crop_lens)
 };
 struct Step {
     bool keep;         // the back buffer (the wanted eye) kept first

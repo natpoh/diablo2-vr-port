@@ -107,6 +107,10 @@ void LoadSettings() {
     owneffects::Configure(IniB(L"render", L"dim_own_effects", false), IniF(L"render", L"dim_own_effects_pct", 30.0f), IniF(L"render", L"dim_own_auras_pct", 50.0f));   // the hero's own effects fainter (vr/own_effects.h), F4 only
     owneffects::ConfigureSpeed(IniB(L"render", L"slow_own_effects", false), IniF(L"render", L"own_effects_speed_pct", 20.0f));   // Bone Armor (the solid effects) turning slower, F4 only
     owneffects::ConfigureHeight(IniB(L"render", L"lower_own_effects", false), IniF(L"render", L"own_effects_height_cm", 0.0f));   // Bone Armor (the solid effects) drawn lower, F4 only
+    // [belt] refill_key (Settings > Hands > Belt refill; vr/belt_refill.h): the inventory open, a tap of the button = the game's Shift + click at the pointer,
+    // a hold = the game's own belt fill; every view. Live.
+    beltrefill::Configure(IniB(L"belt", L"refill_key", false), (int)IniF(L"belt", L"refill_button", 3.0f), (int)IniF(L"belt", L"refill_keyboard", 5.0f),
+                          IniF(L"belt", L"refill_hold_ms", (float)beltrefill::kHoldDefaultMs));
     auraview::Configure(IniB(L"render", L"aura_centre", false), IniF(L"render", L"aura_lift_pct", 0.0f));   // the Paladin's aura rings centred under the hero (vr/aura_view.h), every VR view
     owneffects::ConfigureAuraPlace(IniB(L"render", L"move_own_auras", false), IniF(L"render", L"own_auras_up_cm", 0.0f), IniF(L"render", L"own_auras_ahead_cm", 0.0f),
                                    IniF(L"render", L"own_auras_side_cm", 0.0f));   // the hero's Paladin aura rings moved (vr/own_effects.h AuraShift), every VR view
@@ -551,6 +555,7 @@ void LoadSettings() {
     replay::g_rightDepth.store(IniB(L"stereo", L"replay_right_depth", true));
     replay::g_holdSignalsOn.store(IniB(L"stereo", L"replay_hold_signals", false));
     replay::g_resetGuard.store(IniB(L"stereo", L"replay_reset_guard", true));
+    replay::g_allocGuard.store(IniB(L"stereo", L"replay_alloc_guard", true));
     g_projFix.store((int)IniF(L"stereo", L"replay_proj", 3.0f));
     g_shiftMul.store(IniF(L"stereo", L"replay_shift_mul", 1.0f));
     g_replayViews.store(std::clamp((int)IniF(L"stereo", L"replay_views", 8.0f), 0, 8));
@@ -566,6 +571,7 @@ void LoadSettings() {
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     // [render] monitor_eye: the window one eye (0 as before, 1 left, 2 right), cropped to the window's shape; by turns the eye made or only drawn ones
     monitoreye::Configure((int)IniF(L"render", L"monitor_eye", 1.0f), IniB(L"render", L"monitor_eye_fit", true), IniB(L"render", L"monitor_eye_drawn_only", false));
+    monitoreye::ConfigureLens(IniB(L"render", L"monitor_eye_crop_lens", false));   // its own key: what the lens shows of the eye, not its masked edges (0 = the whole picture)
     // [render] monitor_panels: the panels the headset shows (the menu's panel, the toolbar, the map, the laser...) over the window's picture too
     monitorlayers::Configure(IniB(L"render", L"monitor_panels", false));
     xr::LoadSettings(g_iniPath);   // [openxr]: the game in the headset itself (vr/xr.cpp)
@@ -707,6 +713,7 @@ void LoadSettings() {
     g_set.gameFogPlanes.store(IniB(L"fog", L"game_fog_planes", false));
     g_set.gameFogPlanesCount.store(std::clamp((int)IniF(L"fog", L"game_fog_planes_count", 8.0f), 1, 64));
     g_set.gameFogPlanesSoft.store(std::clamp(IniF(L"fog", L"game_fog_planes_soft", 1.0f), 0.0f, 1.0f));
+    g_set.gameFogCover.store(std::clamp(IniF(L"fog", L"game_fog_cover", 0.0f), 0.0f, 10000.0f));   // (0 off; live)
     g_set.fogCaves.store(IniB(L"fog", L"caves", true));
     g_set.gameFogCaves.store(IniB(L"fog", L"game_fog_caves", g_set.fogCaves.load()));
     g_set.fogEaseIn.store(IniB(L"fog", L"ease_in", false));
@@ -801,11 +808,11 @@ void LoadSettings() {
                     // (0.3 - 5 since Serg 2026-11-08: "яркость надо сделать ползунок больше 2"; underground its own, "для пещер отдельный ползунок
                     // яркости" - without the key, the open's level)
                     const float open = std::clamp(IniF(L"render", L"potato_light_brightness", 1.0f), 0.3f, 5.0f);
-                    // [render] potato_light_game (0 = as before): the game's own ambient and key light instead of one colour, no shadows
+                    // [render] potato_light_game (on in Potato since 0.210.7; 0 = one colour as before): the game's own ambient and key light instead of one colour, no shadows
                     // (docs/notes/lighting_study.md - the grass and the ground in the area's own colours at this time of day)
                     litflat::Configure(true, open, litflat::PresetColour(choice), choice == 3,
                                        std::clamp(IniF(L"render", L"potato_light_brightness_caves", open), 0.3f, 5.0f),
-                                       IniB(L"render", L"potato_light_game", false));
+                                       IniB(L"render", L"potato_light_game", true));
                 } else {
                     wchar_t c[32];
                     GetPrivateProfileStringW(L"render", L"bench_lit_flat_colour", L"", c, (DWORD)std::size(c), g_iniPath);
@@ -876,6 +883,7 @@ void LoadSettings() {
     g_set.domeFogHorizon.store(IniB(L"sky", L"dome_fog_horizon", true));
     g_set.domeFogBaked.store(IniB(L"sky", L"dome_fog_baked", true));
     g_set.domeFogBakedStrength.store(std::clamp(IniF(L"sky", L"dome_fog_baked_strength", 1.0f), 0.0f, 1.0f));
+    g_set.domeFogBakedTopDeg.store(std::clamp(IniF(L"sky", L"dome_fog_baked_top_deg", 11.5f), 1.0f, 60.0f));
     g_set.domeTrueColour.store(IniB(L"sky", L"dome_true_colour", false));
     g_set.domeGainOnce.store(IniB(L"sky", L"dome_gain_once", false));
     g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
@@ -924,6 +932,7 @@ void LoadSettings() {
     g_set.gameCeilingBeams.store(IniB(L"ceiling", L"game_ceiling_beams", false));
     g_set.holesPatch.store(IniB(L"holes", L"patch_world", false));
     g_set.ceilFromWalls.store(IniB(L"ceiling", L"height_from_walls", true));   // (a room with no height of its own: on its walls)
+    g_set.ceilHeadroomM.store(std::clamp(IniF(L"ceiling", L"min_headroom_m", 1.0f), 0.0f, 3.0f));   // (Serg 2026-11-10: never at the eyes)
     g_set.gameCeilingDome.store(IniB(L"ceiling", L"game_ceiling_dome", false));
     g_set.gameCeilingDomesTall.store(IniB(L"ceiling", L"game_ceiling_worldstone_dome", false));
     g_set.gameCeilingDomeSize.store(IniF(L"ceiling", L"game_ceiling_dome_size", 1.0f));
@@ -1035,6 +1044,11 @@ void LoadSettings() {
     g_set.flatAimGround.store(IniB(L"input", L"flat_aim_ground", true));
     g_set.flatBodyPick.store(IniB(L"input", L"flat_body_pick", true));
     g_set.flatBodyTarget.store(IniB(L"input", L"flat_body_target", true));
+    // [input] flat_pickup_key_on / flat_pickup_key / flat_pickup_reach_cells, flat_item_hitbox (vr/flat_pickup.h; a player's ask, 2026-11-09): new, off by default
+    g_set.flatPickupKeyOn.store(IniB(L"input", L"flat_pickup_key_on", false));
+    g_set.flatPickupKey.store((int)flatpickup::KeyOf((int)IniF(L"input", L"flat_pickup_key", (float)flatpickup::kDefaultKey)));
+    g_set.flatPickupReach.store(std::clamp(IniF(L"input", L"flat_pickup_reach_cells", flatpickup::kDefaultReachCells), 0.0f, flatpickup::kMaxReachCells));
+    g_set.flatItemHitbox.store(IniB(L"input", L"flat_item_hitbox", false));
     g_set.flatShotAtCrosshair.store(IniB(L"input", L"flat_shot_at_crosshair", false));   // no auto-aim for a flat shot (vr/flat_shot.h)
     g_set.shotAtRelease.store(IniB(L"gameplay", L"shot_at_release", false));             // the arrow goes where its shooter aims as it leaves the bow (vr/shot_release.h)
     g_set.vrBodyPick.store(IniB(L"input", L"vr_body_pick", true));
@@ -1053,7 +1067,7 @@ void LoadSettings() {
     g_set.portalAutoDelay.store(std::clamp((int)IniF(L"input", L"portal_auto_delay_ms", 150.0f), 0, 2000));
     // ([render] floors_stay, was keep_room_heights, removed in 0.209.9: room_stitch fixes the same step - a kept ini's line is ignored)
     g_set.roomStitch.store(IniB(L"render", L"room_stitch", true));             // (D2R VR Unleashed's room stitch, Cal - on since 0.209.9)
-    g_set.ceilTopFromLevel.store(IniB(L"ceiling", L"top_from_level", false));   // (D2R VR Unleashed's ceiling top, Cal - off as shipped by us)
+    // ([ceiling] top_from_level, D2R VR Unleashed's ceiling top, removed after 0.210.4 - Serg 2026-11-10: it lifted our ceilings; a kept line is ignored)
     g_set.terrainHeights.store(IniB(L"render", L"terrain_heights", false));   // vr/terrain_heights.h; live
     g_set.flatCrosshair.store(IniB(L"input", L"flat_crosshair", true));
     g_set.inventoryPad.store(IniF(L"input", L"inventory_button", 0.0f) != 0.0f ? 1 : 0);

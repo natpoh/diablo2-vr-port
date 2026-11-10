@@ -183,6 +183,14 @@ in D2R VR Authentic Settings > Controls > Buttons of the controllers. In F1, F2 
 first person's skill panel, settings panel and gestures; the left trigger held with a
 flick of a thumbstick drinks a belt potion (left = 1, up = 2, right = 3, down = 4).
 
+**Belt refill** (D2R VR Authentic Settings > Controls > Belt refill, *Belt refill key*;
+off by default). With the inventory open, point at a potion - the laser in VR (in
+every view), the mouse cursor on the monitor - and **tap Y**: it goes into the belt,
+the game's own Shift + click. **Hold Y** and the whole belt is filled, the game's own
+"hold to populate belt": every empty slot gets a potion of the kind its column
+already holds. The keyboard's Y does the same with the mouse cursor; the controller
+button, the keyboard key and the hold time are set in the same group.
+
 **The skill panel and the settings in the headset** (prototype, on by default
 since 0.166; D2R VR Authentic Settings > Stereo > Native OpenXR). **Hold the right stick click for half a
 second** and the skill panel opens in front of you - a short click is still the

@@ -8,7 +8,8 @@ namespace vrc {
 
 std::atomic<float> g_gameDownDeg{60.0f};   // the game camera's own downward angle, degrees (the flat view's last build)
 void FlatPortalFrame();   // [input] portal_look_horizon / portal_auto (below)
-void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); }
+void FlatPickupFrame();  // [input] flat_pickup_key_on (vr/input/flat_click.cpp)
+void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); FlatPickupFrame(); }
 
 // The game's view from above, per eye: orthographic, so moving the camera
 // aside would only slide the picture. Each eye's view is turned instead, half
@@ -423,6 +424,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     xr::Eyes xe{};
     const bool native = NativeEyes(&xe);
     float nativeIpd = 0.0f;   // world units
+    float pivotY = NAN;       // first person F4: the standing eyes' height in the world with the jump (the pivot), for g_headOverStand
     float turnBody = 0.0f;    // native first person: the room's -z in the world (xr::TurnView, eyes by turns)
     bool turnFirst = false;   // ... this view is a native first-person pair's
     int ptrMode = -1;                 // F1 / F3 in 3D: the laser's map (PointerMap)
@@ -471,6 +473,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         }
         const V3 side = {cosf(heading), 0.0f, -sinf(heading)};
         const V3 pivot = V3{L[0], L[1] + ViewHeight() + JumpLift(), L[2]} + side * g_set.camSide.load() + ahead * g_set.camForward.load();
+        if (!ThirdPerson()) pivotY = pivot.y;
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // world units per metre, as TrueScale
         V3 mid = {0.5f * (xe.pos[0][0] + xe.pos[1][0]), 0.5f * (xe.pos[0][1] + xe.pos[1][1]), 0.5f * (xe.pos[0][2] + xe.pos[1][2])};
         if (!ThirdPerson()) { g_headDownM.store(-mid.y); g_headDownAt.store(GetTickCount64()); }   // [body] crouch: the camera goes down by this
@@ -538,6 +541,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
 
     // The eye point: the hero's eyes, moved along where we look, flattened on the ground.
     V3 pivot = V3{L[0], L[1] + ViewHeight() + JumpLift(), L[2]} + right * g_set.camSide.load() + ahead * g_set.camForward.load();
+    if (!ThirdPerson()) pivotY = pivot.y;
     // [flatvr] head_position (VR F4 on FlatVR): and where the head is in the room since the recentre, as native moves its camera
     pivot = pivot + FlatVrHeadMove(heading);
     // Neck model: the head turns about the top of the neck - over the body's
@@ -584,6 +588,19 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     g_viewUpY.store(up.y);
     g_gazeFwd[0].store(fwd.x); g_gazeFwd[1].store(fwd.y); g_gazeFwd[2].store(fwd.z);
     g_gazeEyeH.store(eye.y - L[1]);
+    if (std::isfinite(pivotY)) {
+        // [ceiling] min_headroom_m: how far the real head is over the hero's standing eyes (the room's head higher than the height set, a
+        // recentre taken seated and then stood up), the jump taken off - eased over ~1 s each way and only ever 0 .. 1 m, so a nod or a
+        // stretch does not lift the ceiling for the rest of the area (it is held per area, gameceiling::HeadroomHeld)
+        static ULONGLONG last = GetTickCount64();
+        const ULONGLONG nowMs = GetTickCount64();
+        const float dt = std::clamp((float)(nowMs - last) * 0.001f, 0.0f, 0.25f);   // (16 ms steps: their sum is still the time)
+        last = nowMs;
+        const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+        const float over = std::clamp(eye.y - pivotY, 0.0f, upm);
+        const float was = g_headOverStand.load(std::memory_order_relaxed);
+        g_headOverStand.store(std::isfinite(over) && std::isfinite(was) ? was + (over - was) * std::min(1.0f, dt) : 0.0f, std::memory_order_relaxed);
+    }
     for (int i = 0; i < 3; ++i) g_gazeLook[i].store(L[i]);
     g_gazeAt.store(GetTickCount64());
     float view[16];

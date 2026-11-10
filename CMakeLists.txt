@@ -405,6 +405,9 @@ target_compile_options(belt_bottle_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hands] belt_drop_ground: the steps of the game's own drop - the belt slot's click, the cursor's drop, the way back (vr/belt_drop.h), pure.
 add_executable(belt_drop_test cleanroom/tests/belt_drop_test.cpp)
 target_compile_options(belt_drop_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [belt] refill_key: the press (tap / hold), the Shift + click's steps, the potion kinds, the game's belt-fill plan per column, the belt before / after (vr/belt_refill.h), pure.
+add_executable(belt_refill_test cleanroom/tests/belt_refill_test.cpp)
+target_compile_options(belt_refill_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # The floor a let-go weapon falls to: the game's ground under the hero, in the room (vr/weight_floor.h), pure.
 add_executable(weight_floor_test cleanroom/tests/weight_floor_test.cpp)
 target_compile_options(weight_floor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -557,6 +560,7 @@ target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/attack_path_wire.cpp)   # [gameplay] flat_attack_path
+target_sources(d2rl-vrcam PRIVATE vr/belt_refill.cpp)   # [belt] refill_key: a tap = the game's Shift + click at the pointer, a hold = the game's own belt fill (BeltWidget's hold to populate belt)
 target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp)   # [hands] belt_inner_glow (the game's own highlight on a bottle in reach), belt_drop_ground (the game's own drop of a belt potion)
 target_sources(d2rl-vrcam PRIVATE vr/aura_view.cpp)     # [render] aura_centre: the Paladin's aura rings centred under the hero in VR (hooks the game's view.direction for particle scripts)
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
@@ -566,6 +570,7 @@ target_sources(d2rl-vrcam PRIVATE vr/headset_shot.cpp vr/headset_clip.cpp vr/hea
 target_sources(d2rl-vrcam PRIVATE vr/flatvr_feed.cpp)   # [render] flatvr_feed: without ReShade, FlatVR's picture and depth from the plugin (FlatVR_DepthProvider's blocks)
 target_sources(d2rl-vrcam PRIVATE vr/monitor_eye.cpp vr/monitor_layers.cpp)   # [render] monitor_eye: the game's window shows one eye, steady - to capture the screen (bearstonem/d2r-pcvr's desktop_one_eye, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/weight_wire.cpp)   # [weight]: a grip on the weapon is not a chord's modifier (wired to vr/direct_input.h)
+target_sources(d2rl-vrcam PRIVATE vr/key_capture_wire.cpp)   # the overlays' "press a key" (vr/key_capture.h): the flat panel's key rows, the Gestures tab's key
 target_sources(d2rl-vrcam PRIVATE vr/point_pickup_wire.cpp)   # [input] point_pickup: the pointed item's highlight and its grip + trigger pick-up (F4)
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
 target_sources(d2rl-vrcam PRIVATE vr/weight_lib.cpp)    # [weight] hands_model 1: the weight-physics library d2r_vr_weight.dll, when it is beside the plugin (shared/d2r_vr_weight.h)
@@ -1426,6 +1431,14 @@ target_compile_options(flat_shift_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_body_test cleanroom/tests/flat_body_test.cpp)
 target_include_directories(flat_body_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(flat_body_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [input] flat_pickup_key_on / flat_item_hitbox (vr/flat_pickup.h): flat first person, an item by its hitbox (Alt), the pick-up key's choice and press.
+add_executable(flat_pickup_test cleanroom/tests/flat_pickup_test.cpp)
+# The overlays' "press a key" (vr/key_capture.h): names, the keys each use refuses, the capture (Esc, releases, the time-out).
+add_executable(key_capture_test cleanroom/tests/key_capture_test.cpp)
+target_include_directories(key_capture_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(key_capture_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+target_include_directories(flat_pickup_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(flat_pickup_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [input] vr_body_pick, vr_body_pick_hand (vr/vr_body_pick.h, issue #15): the same capsules in VR - which ray each view picks along, what F4's hand answers.
 add_executable(vr_body_pick_test cleanroom/tests/vr_body_pick_test.cpp)
 target_include_directories(vr_body_pick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1437,8 +1450,8 @@ target_compile_options(point_trigger_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_loot_aim_test cleanroom/tests/unleashed_loot_aim_test.cpp)
 target_include_directories(unleashed_loot_aim_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_loot_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
-# [render] room_stitch + [ceiling] top_from_level (vr/unleashed_room_stitch.h, MPL 2.0 from D2R VR Unleashed d416861, Cal): which built
-# neighbour a room's height meets, and the ceiling's top over the level's highest floor. Run: unleashed_room_stitch_test.exe
+# [render] room_stitch (vr/unleashed_room_stitch.h, MPL 2.0 from D2R VR Unleashed d416861, Cal): which built
+# neighbour a room's height meets. Run: unleashed_room_stitch_test.exe
 add_executable(unleashed_room_stitch_test cleanroom/tests/unleashed_room_stitch_test.cpp)
 target_include_directories(unleashed_room_stitch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_room_stitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -2363,6 +2376,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/replay_list_gen_test.cpp")
     add_executable(replay_list_gen_test tools/replay_list_gen_test.cpp)
     target_include_directories(replay_list_gen_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(replay_list_gen_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/replay_alloc_guard_test.cpp")
+    # [stereo] replay_alloc_guard (vr/render/stereo/replay_alloc_guard.h): the game's allocator resets wait while our replay of their lists runs (crash batch 2026-11-10)
+    add_executable(replay_alloc_guard_test tools/replay_alloc_guard_test.cpp)
+    target_include_directories(replay_alloc_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(replay_alloc_guard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/resize_drain_test.cpp")
     # [render] resize_drain (vr/resize_drain.h) on a real D3D12 device with the debug layer: DXGI's resize against a queued list, the left pass's

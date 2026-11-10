@@ -88,6 +88,28 @@ int main(int argc, char** argv) {
         CHECK(Floor(&floor, &seen, 7, 104.0f) == 96.0f);   // up on a ledge: the floor stays
         CHECK(Floor(&floor, &seen, 8, 104.0f) == 104.0f);  // another area: its own
     }
+    {   // [ceiling] min_headroom_m: Serg's Den of Evil - act 1 caves 15.6, the rock hanging 6, a barbarian's eyes 6.3, 3.84 units a metre
+        const float upm = 6.3f / (0.936f * 1.75f);
+        CHECK(HeadroomNeed(0.0f, 6.3f, 0.0f, upm, 6.0f) == 0.0f);                 // off
+        CHECK(HeadroomNeed(0.0f, 6.3f, 1.0f, 0.0f, 6.0f) == 0.0f);                // no scale: nothing
+        CHECK(HeadroomNeed(NAN, 6.3f, 1.0f, upm, 6.0f) == 0.0f);
+        CHECK(HeadroomNeed(500.0f, 6.3f, 1.0f, upm, 6.0f) == 0.0f);              // a place read wrong for a frame: not held all area
+        const float flat = HeadroomNeed(0.0f, 6.3f, 1.0f, upm, 6.0f);              // on the floor it stands on: 6.3 + 3.85 + 6
+        CHECK(std::fabs(flat - (6.3f + upm + 6.0f)) < 1e-4f && flat > 15.6f);       // 15.6 left the rock 0.85 m over the eyes: raised
+        const float ledge = HeadroomNeed(3.0f, 6.3f, 1.0f, upm, 6.0f);             // 3 units up the cave's floor: 3 more
+        CHECK(std::fabs(ledge - flat - 3.0f) < 1e-4f);
+        CHECK(HeadroomNeed(-2.0f, -1.0f, 1.0f, upm, -3.0f) == upm);                // (not numbers that lower it: under the floor, no eyes, no hang)
+        HeadroomHold h;
+        CHECK(HeadroomHeld(&h, 5, flat) == 16.5f);                                  // 16.14 -> whole half units up
+        CHECK(Guarded(15.6f, HeadroomHeld(&h, 5, flat)) == 16.5f);
+        CHECK(Guarded(23.0f, HeadroomHeld(&h, 5, flat)) == 23.0f);                  // a room high enough: its own
+        CHECK(HeadroomHeld(&h, 5, ledge) == 19.5f);                                 // up on the ledge: up with him
+        CHECK(HeadroomHeld(&h, 5, flat) == 19.5f);                                  // back down: held, no breathing
+        CHECK(HeadroomHeld(&h, 5, 0.0f) == 19.5f && HeadroomHeld(&h, 5, NAN) == 19.5f);
+        CHECK(HeadroomHeld(&h, 5, 19.5f) == 19.5f);                                 // a whole step: not one more
+        CHECK(HeadroomHeld(&h, 6, flat) == 16.5f);                                  // another area: from its own again
+        CHECK(HeadroomHeld(&h, 7, 0.0f) == 0.0f && Guarded(15.6f, 0.0f) == 15.6f);  // off: the room's own
+    }
     {
         const float hero[3] = {57.0f, 96.0f, -21.0f};
         float m[16];

@@ -52,6 +52,7 @@ struct BakeIn {
     // SkyFogHorizon: 1 - smoothstep(-0.03, 0.2, the direction's height)), times fogBand (0: none)
     float fog[3] = {0.0f, 0.0f, 0.0f};
     float fogBand = 0.0f;
+    float fogBandTop = 0.2f;   // ... the direction's height where the band is gone ([sky] dome_fog_baked_top_deg: sin of it; 0.2 as before)
     // the pictures hold each act's zenith in a square of its own (shared/sky_atlas.h HasCap - the atlas' header): each texel's direction
     // by that layout; false: the old panorama, every row an elevation from 90 degrees down
     bool capLayout = false;

@@ -120,7 +120,7 @@ float4 PS(float4 pos : SV_Position) : SV_Target
         c = lerp(c, n, saturate(c1.x));
     }
     c *= c1.y * GainNow();
-    if (c4.w > 0.0) c = lerp(c, c4.rgb, saturate(c4.w) * (1.0 - smoothstep(-0.03, 0.2, sin(radians(el)))));
+    if (c4.w > 0.0) c = lerp(c, c4.rgb, saturate(c4.w) * (1.0 - smoothstep(-0.03, max(c6.w, 0.02), sin(radians(el)))));   // (c6.w: its top)
     return float4(c, 1.0);
 }
 float4 PSGain(float4 pos : SV_Position) : SV_Target { return float4(GainNow(), 1.0); }
@@ -491,7 +491,7 @@ void Bake(ID3D12Device* dev, ID3D12GraphicsCommandList* l, const BakeIn& in) {
                    in.gainRgb[0], in.gainRgb[1], in.gainRgb[2], in.gainFixed ? 1.0f : 0.0f,
                    in.fog[0], in.fog[1], in.fog[2], in.fogBand,
                    in.capLayout ? 1.0f : 0.0f, (float)skyatlas::kCapRows, (float)skyatlas::kCapCols, (float)skyatlas::kCapHalf,
-                   (float)skyatlas::PanoTopEl(), (float)skyatlas::kPanoLowEl, skyatlas::kInset, 0.0f};
+                   (float)skyatlas::PanoTopEl(), (float)skyatlas::kPanoLowEl, skyatlas::kInset, in.fogBandTop};
     l->SetPipelineState(g_pso);
     for (uint32_t m = 0; m < g_mips; ++m) {
         uint32_t from = 0, to = 0;
@@ -562,7 +562,8 @@ bool Differs(const BakeIn& a, const BakeIn& b) {
            a.gainFixed != b.gainFixed || off(a.gainRgb[0], b.gainRgb[0]) || off(a.gainRgb[1], b.gainRgb[1]) || off(a.gainRgb[2], b.gainRgb[2]) ||
            a.nightCap != b.nightCap || (a.gain != nullptr) != (b.gain != nullptr) || off(a.zenith[0], b.zenith[0]) ||
            off(a.zenith[1], b.zenith[1]) || off(a.zenith[2], b.zenith[2]) || (a.fogBand > 0.0f) != (b.fogBand > 0.0f) ||
-           (b.fogBand > 0.0f && (std::fabs(a.fogBand - b.fogBand) > 0.01f || off(a.fog[0], b.fog[0]) || off(a.fog[1], b.fog[1]) || off(a.fog[2], b.fog[2]))) ||
+           (b.fogBand > 0.0f && (std::fabs(a.fogBand - b.fogBand) > 0.01f || off(a.fog[0], b.fog[0]) || off(a.fog[1], b.fog[1]) || off(a.fog[2], b.fog[2]) ||
+                                 std::fabs(a.fogBandTop - b.fogBandTop) > 0.002f)) ||
            a.capLayout != b.capLayout;
 }
 

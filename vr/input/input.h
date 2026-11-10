@@ -127,6 +127,14 @@ uintptr_t VrHandTarget(vrbody::Ask ask);
 uintptr_t FlatClickTarget(uintptr_t game);
 // vr/input/spell_aim.cpp: the map click's target lookup is hooked (HoverUnit / the spell target, its return address known) - its answer can be ours.
 bool ClickLookupHooked();
+// [input] flat_pickup_key_on / flat_item_hitbox (vr/flat_pickup.h): flat, the map click's lookup answered with an item - the pick-up key's while its
+// press is under way, else (Alt held) the one the crosshair's ray meets by its hitbox; 0 none (the caller's answer stays). game: the game's own answer.
+// The game's thread. FlatPickupKeyDown: the key went down in the game's window (vr/hud/window.cpp); true = the game does not get it.
+// FlatPickupFrame: the key's press, once a frame (vr/view/camera.cpp VrFrame).
+uintptr_t FlatItemClickAnswer(uintptr_t game);
+bool FlatPickupKeyDown(unsigned vk, bool repeat);
+bool FlatPickupKeyWanted(unsigned vk);
+void FlatPickupFrame();
 // [input] point_pickup (vr/unleashed_loot_aim.h): F4, the controller's interact answered with the item on the floor the aiming hand points at.
 // game: the game's own answer; returns what the lookup gets (the game's own when no item is pointed at). The game's UI thread, inside its lookups.
 uintptr_t PointPickupAnswer(uintptr_t game);

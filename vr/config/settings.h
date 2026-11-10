@@ -199,6 +199,10 @@ struct Settings {
     std::atomic<bool>  gameFogPlanes{false};
     std::atomic<int>   gameFogPlanesCount{8};
     std::atomic<float> gameFogPlanesSoft{1.0f};
+    // [fog] game_fog_cover (Serg 2026-11-09: "нужен ползунок до какой дистанции туман покрывает обьекты"): with the fog before the effects,
+    // whatever lies at or past this distance (world units) is the fog's colour whole - the world, the hair and foliage, the particles, their
+    // light gone; 0 = as far as the fog's own curve reaches (as before)
+    std::atomic<float> gameFogCover{0.0f};
     std::atomic<float> gameArcaneFogStart{150.0f}, gameArcaneFogEnd{600.0f};
     std::atomic<bool>  arcaneFogIntoSky{true};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
@@ -222,6 +226,10 @@ struct Settings {
     // BakeIn::fog) as our old sky's low part goes into the fog - the trees' soft edges blended over it by the game, no light rim
     std::atomic<bool>  domeFogBaked{true};
     std::atomic<float> domeFogBakedStrength{1.0f};
+    // [sky] dome_fog_baked_top_deg (Serg 2026-11-09: "если сделать его вверху прозрачным то так мы решим проблему" - a near band at the horizon
+    // in the fog's colour, clear above): how high above the horizon the baked fog band reaches (degrees; it fades out up to there).
+    // 11.5 = as before (the old sky's: a direction height of 0.2)
+    std::atomic<float> domeFogBakedTopDeg{11.5f};
     std::atomic<bool>  gameSkybox{false};   // [sky] game_skybox: at the Summits the game's dome laid as far as the depth holds (an option; off: as any act 5 area)
     std::atomic<bool>  summitBackdropHidden{true};   // [sky] summit_backdrop_hidden: the Summit's ground picture (skybox01) hidden in first person (vr/own_effects.h)
     std::atomic<int>   weatherFirstPerson{0};   // [sky] weather_first_person: the game's rain and snow in VR F4 / flat F3 - 0 the game's place, 1 hidden, 2 round the viewer (vr/weather_place.h)
@@ -258,6 +266,7 @@ struct Settings {
     std::atomic<bool>  gameCeilingBeams{false};  // [ceiling] game_ceiling_beams: the barracks' own wooden ceiling frame under the slab (engitem::CeilingFrame)
     std::atomic<bool>  holesPatch{false};        // [holes] patch_world: the world's holes patched by the game's own pieces (engitem::HolesFrame; shared/world_holes_list.h), VR F4
     std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
+    std::atomic<float> ceilHeadroomM{1.0f};      // [ceiling] min_headroom_m: the ceiling's lowest at least this many metres over the eyes, 0 = off (gameceiling::HeadroomNeed)
     std::atomic<bool>  gameCeilingDome{false};   // [ceiling] game_ceiling_dome: the cathedral's dome over its chapel in the game's ceiling (engitem::CeilingFrame)
     std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_worldstone_dome: the same over the Worldstone, level 132 (ceilmeasure::kWorldstoneBiome)
     std::atomic<float> gameCeilingDomeSize{1.0f};   // [ceiling] game_ceiling_dome_size: times the measured dome round its middle (gameceiling::DomeSize)
@@ -303,6 +312,10 @@ struct Settings {
     std::atomic<bool>  flatShotAtCrosshair{true};   // [input] flat_shot_at_crosshair: flat mouse look, a ranged weapon's click on a hostile monster is a shot at the crosshair (vr/flat_shot.h)
     std::atomic<bool>  shotAtRelease{true};         // [gameplay] shot_at_release: the arrow turned at the server's create to where its shooter aims at that moment (vr/shot_release.h; who hosts decides)
     std::atomic<bool>  flatBodyPick{true};   // [input] flat_body_pick: flat F2 / F3, a unit or object clicked by its body (vr/flat_body.h)
+    std::atomic<bool>  flatPickupKeyOn{false};  // [input] flat_pickup_key_on: flat F2 / F3 mouse look, a key picks up an item - the game's own click on it (vr/flat_pickup.h)
+    std::atomic<int>   flatPickupKey{'E'};      // [input] flat_pickup_key: the key's virtual-key code (flatpickup::KeyOf: 69 E)
+    std::atomic<float> flatPickupReach{5.0f};   // [input] flat_pickup_reach_cells: the key's nearest item ahead at most this far (cells; the crosshair's item any distance)
+    std::atomic<bool>  flatItemHitbox{false};   // [input] flat_item_hitbox: flat F2 / F3 mouse look, with Alt held an item is clicked by its hitbox, not only its name
     std::atomic<bool>  flatBodyTarget{true}; // [input] flat_body_target: flat (with flat_body_pick), the map click's target is the unit the crosshair's ray meets (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPick{true};     // [input] vr_body_pick: VR, the game's mouse point (F1 - F3's pointer and crosshair, F4's shift + click aim) by the body too (vr/vr_body_pick.h)
     std::atomic<bool>  vrBodyPickHand{false};   // [input] vr_body_pick_hand: VR F4, the pad's attack and interact go to the unit the aiming hand points at (vr/vr_body_pick.h)
@@ -318,7 +331,6 @@ struct Settings {
     std::atomic<float> portalAutoRadius{4.0f};   // [input] portal_auto_radius: how near (world units, 2 a cell)
     std::atomic<int>   portalAutoDelay{150};     // [input] portal_auto_delay_ms: how long that near, walking, before it is entered
     std::atomic<bool>  roomStitch{true};         // [render] room_stitch: a room built meets its built neighbour nearest the hero (D2R VR Unleashed, Cal; every view; on since 0.209.9)
-    std::atomic<bool>  ceilTopFromLevel{false};  // [ceiling] top_from_level: the game's ceiling over the level's highest built floor (D2R VR Unleashed, Cal; F4)
     std::atomic<bool>  terrainHeights{false};    // [render] terrain_heights: each ground tile at its own floor's height, stitched to its neighbours (vr/terrain_heights.h)
     std::atomic<bool>  findPrevMatrix{false};
     std::atomic<bool>  dlssPrevFix{false};

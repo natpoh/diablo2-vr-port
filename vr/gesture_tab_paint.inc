@@ -412,7 +412,8 @@ void DrawGestureActions(Canvas& cv, Fonts& fonts, const gov::View& v) {
         GField(cv, r, hot);
         if (cur) RoundRect(cv, Rect{r.l - 4, r.t - 4, r.r + 4, r.b + 4}, 10.0f, Col{0, 0, 0}, 0.0f, kGoldBright, 1.0f, 3.0f);
         const char* kind = d.kind == gact::Kind::Pad ? uitext::Tr("vr.gestures.kind_pad", "pad") : d.kind == gact::Kind::Item ? uitext::Tr("vr.gestures.kind_item", "item")
-                                                                                                                              : uitext::Tr("vr.gestures.kind_game", "game");
+                         : d.kind == gact::Kind::Key ? uitext::Tr("vr.gestures.kind_key", "keyboard")
+                                                     : uitext::Tr("vr.gestures.kind_game", "game");
         GLine(cv, fonts, kind, Rect{r.l + 6, r.t + 8, r.r - 6, r.t + 36}, 18, false, InkDim(), hset::Align::Center);
         UseFace(fonts, false, d.name);
         Text(cv, fonts, d.name, Rect{r.l + 8, r.t + 40, r.r - 8, r.b - 8}, 22, false, hot ? kGoldBright : cur ? InkHot() : kSilver);

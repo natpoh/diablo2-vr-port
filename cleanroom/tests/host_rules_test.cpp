@@ -166,6 +166,10 @@ static void Panel() {
     CHECK(ParseValue(box, L"0.7") == 1 && ParseValue(path, L"2") == 2);
     CHECK(Shown(0, 65) == "65" && Shown(1, 7.5f) == "7.5" && Shown(2, 1) == "On" && Shown(kOwnCount, 2) == "Walk or run");
     CHECK(Def(10).kind == Kind::Choice && Shown(10, 0) == "As in the game's options" && Shown(10, 2) == "Centre" && Shown(10, 3) == "Right");   // [hud] flat_map_place
+    // [input] flat_pickup_key: a key row - its name shown, one button (a click arms "press a key"), never stepped, its code kept through the ini text
+    CHECK(Def(12).kind == Kind::Key && std::wcscmp(Def(12).key, L"flat_pickup_key") == 0 && Shown(12, 69) == "E" && Shown(12, 0x75) == "F6");
+    CHECK(!HasSteps(12) && IsKey(12) && !IsKey(11) && Step(Def(12), 69, 1) == 69 && ParseValue(Def(12), L"71") == 71 && ParseValue(Def(12), L"") == 69);
+    CHECK(Def(11).kind == Kind::Toggle && Def(13).kind == Kind::Toggle && Def(11).fallback == 0 && Def(13).fallback == 0);   // new: off
     // the layout at 1080p and 720p: inside the screen, rows in order, buttons inside their row
     for (const float h : {1080.0f, 720.0f, 2160.0f}) {
         const float w = h * 16.0f / 9.0f;

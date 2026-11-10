@@ -20,11 +20,12 @@
 #include <string>
 
 #include "host_rules.h"
+#include "key_capture.h"
 #include "ui_text.h"
 
 namespace flatmenu {
 
-enum class Kind { Toggle, Steps, Choice };
+enum class Kind { Toggle, Steps, Choice, Key };   // Key: a virtual-key code, set by pressing it (vr/key_capture.h)
 
 struct RowDef {
     const wchar_t* section;
@@ -48,6 +49,11 @@ inline constexpr RowDef kOwn[] = {
     {L"camera", L"stick_pitch_flat", Kind::Toggle, 0.0f, 1.0f, 1.0f, 1.0f},
     {L"hud", L"flat_map_zoom", Kind::Toggle, 0.0f, 1.0f, 1.0f, 1.0f},
     {L"hud", L"flat_map_place", Kind::Choice, 0.0f, 3.0f, 1.0f, 0.0f},
+    // [input] flat_pickup_key_on / flat_pickup_key / flat_item_hitbox (vr/flat_pickup.h): the pick-up key, set by pressing it (Serg 2026-11-09:
+    // "binding keys is not hard, it can be done in our overlay")
+    {L"input", L"flat_pickup_key_on", Kind::Toggle, 0.0f, 1.0f, 1.0f, 0.0f},
+    {L"input", L"flat_pickup_key", Kind::Key, 1.0f, 254.0f, 1.0f, 69.0f},
+    {L"input", L"flat_item_hitbox", Kind::Toggle, 0.0f, 1.0f, 1.0f, 0.0f},
 };
 constexpr int kOwnCount = static_cast<int>(sizeof kOwn / sizeof kOwn[0]);
 constexpr int kRows = kOwnCount + hostrules::kCount;   // the own rows, then the host's rules in kRules' order
@@ -77,6 +83,9 @@ inline const char* Label(int row) {
         case 8: return uitext::Tr("vr.flatmenu.stick_pitch_flat", "The gamepad's right stick looks up and down");
         case 9: return uitext::Tr("vr.flatmenu.flat_map_zoom", "- and + zoom the map out of its circle and back");
         case 10: return uitext::Tr("vr.flatmenu.flat_map_place", "Map on the screen");
+        case 11: return uitext::Tr("vr.flatmenu.flat_pickup_key_on", "A key picks up items (first and third person)");
+        case 12: return uitext::Tr("vr.flatmenu.flat_pickup_key", "The pick-up key (click, then press a key)");
+        case 13: return uitext::Tr("vr.flatmenu.flat_item_hitbox", "With Alt held, click an item by its body, not only its name");
         default: return "?";
     }
 }
@@ -104,8 +113,10 @@ inline float ParseValue(const RowDef& d, const wchar_t* text) {
     if (d.kind != Kind::Steps) f = std::round(f);
     return Clamp(d, f);
 }
-// One click: a toggle flips (dir is not looked at), a choice goes one value on (no wrap), a slider one step on the step's grid.
+// One click: a toggle flips (dir is not looked at), a choice goes one value on (no wrap), a slider one step on the step's grid; a key is set by
+// pressing it (the panel's capture), never stepped.
 inline float Step(const RowDef& d, float v, int dir) {
+    if (d.kind == Kind::Key) return v;
     if (d.kind == Kind::Toggle) return v >= 0.5f ? 0.0f : 1.0f;
     const float s = d.step > 0 ? d.step : 1.0f;
     const float on = std::round((v - d.lo) / s) * s + d.lo;   // a value off the grid (typed by hand) comes onto it first
@@ -128,6 +139,11 @@ inline std::string Shown(int row, float v) {
     const RowDef d = Def(row);
     if (IsRule(row)) return hostrules::ValueName(RuleOf(row), static_cast<int>(std::round(v)));
     if (d.kind == Kind::Toggle) return v >= 0.5f ? uitext::Tr("vr.rules.on", "On") : uitext::Tr("vr.rules.off", "Off");
+    if (d.kind == Kind::Key) {
+        char k[32];
+        keycap::Text(static_cast<unsigned>(std::lround(v)), k, sizeof k);
+        return k;
+    }
     if (d.kind == Kind::Choice)
         if (const char* name = OwnChoiceName(row, static_cast<int>(std::round(v)))) return name;
     char b[32];
@@ -158,8 +174,16 @@ inline Layout Lay(float w, float h) {
     L.scale = s;
     L.text = 22.0f * s;
     L.small = 18.0f * s;
-    const float pad = 16.0f * s, rowH = 38.0f * s, headH = 40.0f * s, titleH = 56.0f * s, bottomH = 64.0f * s;
+    const float pad = 16.0f * s;
+    float rowH = 38.0f * s, headH = 40.0f * s, titleH = 56.0f * s, bottomH = 64.0f * s;
     const float pw = std::min(w - 2 * pad, 1040.0f * s);
+    const float units = 3.0f * headH + titleH + bottomH + (kOwnCount + 1 + hostrules::kCount) * rowH;   // (pad aside)
+    if (units + 3 * pad > h && units > 0) {   // more rows than the screen holds at full size (the pick-up key's rows): every row a little lower
+        const float k = std::max(0.5f, (h - 3 * pad) / units);
+        rowH *= k; headH *= k; titleH *= k; bottomH *= k;
+        L.text *= std::max(0.8f, k);
+        L.small *= std::max(0.8f, k);
+    }
     const float ph = titleH + headH + kOwnCount * rowH + headH + rowH + hostrules::kCount * rowH + bottomH + pad;
     L.panel = {(w - pw) * 0.5f, std::max(pad, (h - ph) * 0.5f), pw, ph};
     float y = L.panel.y;
@@ -183,13 +207,15 @@ inline Layout Lay(float w, float h) {
     L.role = {L.panel.x + pad, y, pw - 2 * pad, rowH};
     y += rowH;
     for (int r = kOwnCount; r < kRows; ++r) put(r);
-    const float cw = 200.0f * s, ch = 46.0f * s;
+    const float cw = 200.0f * s, ch = std::min(46.0f * s, bottomH * 0.72f);
     L.close = {L.panel.x + (pw - cw) * 0.5f, y + (bottomH - ch) * 0.5f, cw, ch};
     return L;
 }
 
-// What a row shows as buttons: a toggle its value as one button; a slider or a choice "-" value "+"; a rule only where we decide.
-inline bool HasSteps(int row) { return Def(row).kind != Kind::Toggle; }
+// What a row shows as buttons: a toggle its value as one button, a key too (a click arms the capture); a slider or a choice "-" value "+"; a rule only
+// where we decide.
+inline bool HasSteps(int row) { return Def(row).kind != Kind::Toggle && Def(row).kind != Kind::Key; }
+inline bool IsKey(int row) { return Def(row).kind == Kind::Key; }
 inline bool Editable(int row, hostrules::Role role) { return row >= 0 && row < kRows && (!IsRule(row) || role != hostrules::Role::Joined); }
 
 enum class Part { None, Panel, Close, Minus, Value, Plus };

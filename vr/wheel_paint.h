@@ -32,11 +32,17 @@ public:
     // A finished picture newer than the last fetched: moved into `out`, its view revision in *revision and its size in *width, *height
     // (SizeOf the view's look). False if none.
     bool Fetch(std::vector<uint32_t>& out, uint32_t* revision, int* width = nullptr, int* height = nullptr);
-    void Stop();
+    // The painter thread joined (any thread, any number at once - one after another; from the painter itself it is let go). Never throws.
+    void Stop() noexcept;
 
 private:
     struct Impl;
     Impl* impl_;
 };
+
+// Stops whose join failed and was caught (the thread let go instead), all painters together - for a log line.
+uint32_t StopFaults();
+// Tests only (cleanroom/tests/skill_wheel_test.cpp): called on the painter's thread after each picture (nullptr: nothing).
+void AfterPaintForTest(void (*fn)());
 
 }  // namespace wheelpaint

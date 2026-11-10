@@ -1,5 +1,29 @@
 # What's new in D2R VR
 
+## 0.211.0
+
+The fog fixed, and a crash fix for Native one pass.
+
+- **Fog before the effects is on again** (Settings > Fog > "The fog before smoke and fire"): far trees, bushes, grass and hair are now
+  fogged with the rest - no more dark speckles through the fog - while torches in front of you stay bright. A slider sets the distance
+  from which the fog covers everything whole (`[fog] game_fog_cover`, 200), and another the height of the sky's fog band.
+- **Quality presets no longer switch the fog option**: picking Potato, Low or Medium leaves "The fog before smoke and fire" as you have it
+  (0.210.1 turned it back on and showed "Custom").
+- **Crash fix: a graphics-card hang with Native one pass**, most often right on an area change (`[stereo] replay_alloc_guard`): the game no
+  longer reuses the memory of its work while the second eye still draws from it.
+- **Crash fix**: the game no longer closes when the settings are reloaded or the 2D view is switched with the skill wheel set up.
+- **Belt refill key** (Controls > Belt refill, on; Y on the left controller and on the keyboard): with the inventory open, point at a
+  potion and tap Y - it goes into the belt; hold Y - the whole belt is filled. B still closes the inventory.
+- **The flat game: a pick-up key** (E) and Alt shows the items' hitboxes (`[input] flat_pickup_key_on`, `flat_item_hitbox`); the key can
+  be changed with "press a key" in the in-game panel, and a gesture can press a keyboard key.
+- **Cave ceilings back at their own height**: D2R VR Unleashed's ceiling top over the level's highest floor is removed (it put ceilings
+  in the wrong place), and a ceiling never comes lower than 1 m over your eyes (`[ceiling] min_headroom_m`).
+- **Monster plates**: the plate's box follows its plate and goes with it.
+- **Potato**: the Potato light in the game's own colours is on.
+- **The hand map at small render sizes** (1024 and under): the game's map is found and stays in your hand, not in the sky.
+- **The monitor**: D2R Loader's console fits the window again; the lens crop has its own switch (off).
+- Known: D2R 3.4 came out on 2026-11-09; D2RLoader says it is not fully tested with it yet - press OK and play.
+
 ## 0.210.1
 
 - **Fog before the effects ships off** (Settings > Fog > "The fog before smoke and fire"): the game's own fog as in 0.209, which

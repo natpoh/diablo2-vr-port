@@ -473,6 +473,20 @@ int main() {
 		CHECK(!GetTarget(&m, &u, 100));
 		SetTarget(12.5f, 37.5f, 1000);
 		CHECK(GetTarget(&m, &u, 1000 + kStaleMs) && Near(m, 12.5f) && Near(u, 37.5f) && !GetTarget(&m, &u, 1000 + kStaleMs + 1));
+		// ... held for the same monster over a stall (sdfsdfsdfdscvx: a frame without it sized our name near-size), never for another one
+		SetTarget(12.5f, 37.5f, 1000, 0x50);
+		CHECK(GetTargetOrHeld(&m, &u, 0x50, 1000 + kStaleMs + 300) && Near(m, 12.5f) && Near(u, 37.5f));
+		CHECK(!GetTargetOrHeld(&m, &u, 0x60, 1000 + kStaleMs + 300));   // another target: its own distance or none
+		CHECK(!GetTargetOrHeld(&m, &u, 0x50, 1000 + kHoldTargetMs + 1));   // held a while only
+		CHECK(!GetTargetOrHeld(&m, &u, 0, 1000 + kStaleMs + 300));         // no unit known now: not held
+		CHECK(!HeldTarget(-1.0f, 0.0f, 1000, 0x50, 0x50, 1100, &m, &u) && !HeldTarget(5.0f, 1.0f, 1000, 0, 0, 1100, &m, &u) &&
+		      !HeldTarget(5.0f, 1.0f, 1000, 0x50, 0x50, 900, &m, &u));
+		SetTarget(-1.0f, 0.0f, 0);
+		// the plate's box only while a plate is up: in the pad's layout the hook answers for it every frame (sdfsdfsdfdscvx's rectangle over the Stash)
+		CHECK(PlateUp(true, true, true));
+		CHECK(!PlateUp(true, true, false));   // no answer: no plate, no box (the rect is the last plate's place)
+		CHECK(PlateUp(false, true, false));   // the mouse layout: the plate at the top, its rect
+		CHECK(PlateUp(true, false, false));   // the hook not in / not noting here: the rect, as before
 		// the hook's note carries the monster's place; a note without one (not readable) says so
 		Clear();
 		Seen sn;

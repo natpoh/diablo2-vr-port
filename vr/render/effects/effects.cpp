@@ -25,6 +25,7 @@ void Update();
 // (vrcam.cpp and vr/input/aim.cpp; declared here only: their defaults are their definitions')
 void CeilingNow(float* height, float* bright, float* light, float* relief = nullptr, int* slot = nullptr, float* own = nullptr);
 void CeilingLookNow(float* wet, float* detail, float* contrast, CeilVaultCfg* vault);
+float CeilingHeadroomNeed(float heroOverFloor, float hang);   // [ceiling] min_headroom_m (vr/sky/sky_config.cpp)
 bool HandRay(float* o, float* d, float* dRaw = nullptr);
 
 
@@ -207,6 +208,31 @@ template <class RT> void SetFloat(RT* rt, const char* name, float v) { SetFloats
 // rectangle (plateworld::BoxOf, the room bar's cut has the same box). Then moved to where the game hangs the plate
 // in its last frames (plateworld::FollowBox): the read is up to a few frames old, the plate moves with the head.
 // The first few go into the log, to check against where it shows.
+// The game's plate up now (plateworld::PlateUp): in the pad's layout only while the anchor hook answers for it - else no box at all (a box left at
+// the last plate's place cut the Stash's name out of mid-view: sdfsdfsdfdscvx, 2026-11-10). unitNow: the unit the plate hangs on (0: not known).
+bool PlateUpNow(uintptr_t* unitNow) {
+    int32_t anchor[2];
+    const bool attached = gamestate::PlateAnchor(anchor);
+    const int view = viewgate::Number();
+    const bool notes = mobbars::Hooked() && plateworld::Following() &&
+                       (viewgate::F4() || plateworld::Ours() || (view >= 1 && view <= 3 && plateworld::Elsewhere()));
+    plateworld::Follow f;
+    const bool fresh = plateworld::GetFollow(&f, GetTickCount64());
+    *unitNow = fresh ? f.unit : 0;
+    const bool up = plateworld::PlateUp(attached, notes, fresh);
+    static int told = -1;
+    const int now = !attached ? 2 : !notes ? 3 : up ? 1 : 0;
+    if (now != told && (told >= 0 || now != 0)) {
+        told = now;
+        static int lines = 0;
+        if (lines < 12 && ++lines)
+            LogF("vrcam: the monster's plate box - %s", now == 1 ? "a plate up (the hook answers for it): the box follows it"
+                                                         : now == 0 ? "no plate up (no answer from the hook): no box - nothing cut out of the interface"
+                                                         : now == 2 ? "the mouse layout's plate (at the top): the box from its rect"
+                                                                    : "the anchor hook not noting here: the box from the plate's rect");
+    }
+    return up;
+}
 void PlateBoxUv(const int32_t r[4], uint32_t sw, uint32_t sh, float box[4]) {
     float s = g_uiScaleSeen.load();
     if (!(s > 0.05f && s < 20.0f) && Matches(RVA_UI_SCALE, kSigUiScale, sizeof kSigUiScale)) s = ((UiScaleFn)d2rsig::Addr(RVA_UI_SCALE))();
@@ -290,7 +316,7 @@ void PlateWorldTick(ULONGLONG nowMs) {
                     if (metres > 1e-4f) units *= m / metres;
                     metres = m;
                 }
-                plateworld::SetTarget(metres, units, nowMs);
+                plateworld::SetTarget(metres, units, nowMs, ts.unit);
             }
         }
     }
@@ -742,7 +768,14 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
                     int nameAt = -1;
                     for (int j = 0; j < m; ++j)
                         if (t[idx[j]].which == 0) nameAt = idx[j];
-                    if (nameAt >= 0 && s > 0.05f && gamestate::PlateRect(pr) && plateworld::SanePlate(pr)) {
+                    // the game's bar read for THIS target only: the rect is read on the interface's thread a little after the target changes, and
+                    // the last target's bar (shorter name, another frame) made ours cut off or too large for a moment (sdfsdfsdfdscvx, 2026-11-10)
+                    uintptr_t readUnit = 0, unitNow = 0;
+                    float readAt[2];
+                    plateworld::Follow fNow;
+                    if (plateworld::GetFollow(&fNow, GetTickCount64())) unitNow = fNow.unit;
+                    const bool rectOfTarget = !unitNow || (gamestate::PlateReadAt(&readUnit, readAt) && readUnit == unitNow);
+                    if (nameAt >= 0 && s > 0.05f && rectOfTarget && gamestate::PlateRect(pr) && plateworld::SanePlate(pr)) {
                         gp.nameBoxH = (float)t[nameAt].box[3];
                         gp.barW = pr[2] * s;
                         gp.barH = pr[3] * s;
@@ -753,6 +786,7 @@ template <class RT> void OwnNamesUniforms(RT* rt, uint64_t layerSrv, const float
                             gp.lineDy[tx.which] = (tx.box[1] + 0.5f * tx.box[3]) - (t[nameAt].box[1] + 0.5f * t[nameAt].box[3]);
                         }
                     }
+                    gp.nameW = nameW;   // (the frame never narrower than our name on it)
                     ownnames::GameLayout gl;
                     if (ownnames::LayOutGamePlate(lineH[0], gp, lineH, &gl)) {
                         lay = gl.plate;
@@ -1414,6 +1448,16 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         // ([fog] game_fog_planes: the planes are drawn by the same step - with the game's fog only)
         const bool planesOn = g_set.gameFogPlanes.load() && g_set.gameFog.load();
         const bool beforeFx = (g_set.fogBeforeFx.load() || planesOn) && GameFogDrawnView() && !TableFull() && fogfx::Hooked();   // (VR F3 full width: no fog tweak)   // (its hooks: no ReShade, the key on at the start)
+        {   // the switch, live (its hooks stay in from the start; off: the step draws nothing, the game's fog pass keeps its colour) - one line
+            static int toldKey = -1;
+            const int key = g_set.fogBeforeFx.load() ? 1 : 0;
+            if (fogfx::Hooked() && key != toldKey) {
+                if (toldKey >= 0)
+                    Log(key ? "vrcam: fog before the effects ON again: the step draws, the game's fog pass leaves its colour out"
+                            : "vrcam: fog before the effects OFF: nothing of the step drawn, the game's fog pass as before");
+                toldKey = key;
+            }
+        }
         fp.on = beforeFx && gamefogvr::Active();
         fp.fxDepth = g_set.fogFxDepth.load();   // [fog] game_fog_fx_depth: the effects fogged by their own distance (either fog)
         fp.ourCurve = curve.on;
@@ -1486,6 +1530,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.planesStrength = n.strength;
             fp.planesSoft = g_set.gameFogPlanesSoft.load();
         }
+        if (!fp.ours) fp.cover = g_set.gameFogCover.load();   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off)
         fogfx::Configure(fp);
         fogfx::Frame();
         {   // the submission order: the scene's state followed through the game's direct queue (the tap beside the replay's observer), once
@@ -1848,6 +1893,7 @@ void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandLi
         if (moved) memcpy(baked, now, sizeof baked);
         in.fog[0] = baked[0]; in.fog[1] = baked[1]; in.fog[2] = baked[2];
         in.fogBand = g_set.domeFogBakedStrength.load();
+        in.fogBandTop = std::sin(g_set.domeFogBakedTopDeg.load() * 3.14159265f / 180.0f);   // ([sky] dome_fog_baked_top_deg)
     }
     if (ready && g_domeBake.slot > 0) {
         char n[24];
@@ -2644,9 +2690,22 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             float height, bright, light, relief;
             int slot;
             CeilingNow(&height, &bright, &light, &relief, &slot);
-            // [ceiling] top_from_level (from D2R VR Unleashed, Cal - its shader vault and its game slab alike): over the level's highest built
-            // floor, not the lowest he stood on (F4; 0 when off)
-            SetFloat(rt, "CeilHeight", height + CeilingTopLift(sv[0].hero[1], floorY, g_biomeGen.load()));
+            // [ceiling] min_headroom_m (Serg 2026-11-10): its lowest - the top less the rock's hang, CeilRelief - kept that many metres over
+            // the eyes; what that needs held for the area (only ever up, in half-unit steps), as the game's slab (engitem::CeilingFrame)
+            const float roomTop = height;
+            static gameceiling::HeadroomHold headroom;
+            const float held = gameceiling::HeadroomHeld(&headroom, g_biomeGen.load(), CeilingHeadroomNeed(sv[0].hero[1] - floorY, std::max(0.0f, relief)));
+            const float top = gameceiling::Guarded(roomTop, held);
+            {
+                static float toldHeld = -1.0f;
+                if (top > roomTop && held != toldHeld) {
+                    toldHeld = held;
+                    LogF("vrcam: cave ceiling - raised for headroom: its top %.1f over the area's floor, not the room's %.1f - its lowest (%.1f of "
+                         "rock hanging) kept %.2f m over the eyes ([ceiling] min_headroom_m; the hero %.1f over the floor it stands on)", top, roomTop,
+                         relief, g_set.ceilHeadroomM.load(), sv[0].hero[1] - floorY);
+                }
+            }
+            SetFloat(rt, "CeilHeight", top);
             SetFloat(rt, "CeilScale", scale);
             SetFloat(rt, "CeilBrightness", bright);
             SetFloat(rt, "CeilRelief", relief);
@@ -2724,7 +2783,10 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
             float hideUnits = 0.0f;
             const bool alliesHidden = AlliesHidden(&hideUnits);   // [hud] allies_game_hide: the game's own portraits hidden (VR F4)
-            if ((PlateWanted() || AlliesMoved() || alliesHidden || PlateTurnsWanted() || MonsterNamesOwnNow()) && sw && sh && gamestate::PlateRect(r)) PlateBoxUv(r, sw, sh, box);
+            uintptr_t plateUnit = 0;
+            if ((PlateWanted() || AlliesMoved() || alliesHidden || PlateTurnsWanted() || MonsterNamesOwnNow()) && sw && sh && gamestate::PlateRect(r) &&
+                PlateUpNow(&plateUnit))
+                PlateBoxUv(r, sw, sh, box);
             SetFloats(rt, "PlateBox", box, 4);
             platelook::PlateIn pin;   // the plate's own settings and the monster it hangs on: none of the item labels'
             pin.firstPerson = PlateOwnDepth();
@@ -2734,7 +2796,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             pin.farFraction = g_set.plateFar.load();
             pin.atMonster = g_set.plateDepthBody.load();
             float tm = 0.0f, tu = 0.0f;
-            if (plateworld::GetTarget(&tm, &tu, GetTickCount64())) { pin.groundM = tm; pin.groundUnits = tu; }
+            // (a frame with no fresh note of the distance: the same monster's last one, not "none" - none sized our name at its near size)
+            if (plateworld::GetTargetOrHeld(&tm, &tu, plateUnit, GetTickCount64())) { pin.groundM = tm; pin.groundUnits = tu; }
             {   // [hud] monster_stereo_by_distance: the depth by the monster's distance from the eyes, eased from frame to frame (vr/plate_look.h DepthNow)
                 static platelook::DepthEase ease;
                 static LARGE_INTEGER last = {};

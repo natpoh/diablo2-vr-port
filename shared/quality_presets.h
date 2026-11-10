@@ -40,7 +40,7 @@ inline constexpr Key kKeys[] = {
     {L"render", L"potato_light", {1, 0, 0}},
     // the Potato light in the game's own ambient and sun / moon colours (Serg 2026-11-09 "свет игры выглядит отлично на потато надо его оставлять");
     // only read with potato_light on, so Low / Medium leave it as it is
-    {L"render", L"potato_light_game", {0, kAsIs, kAsIs}},   // 0.210: off until the characters' light is seen fixed (Serg: "выключен пока")
+    {L"render", L"potato_light_game", {1, kAsIs, kAsIs}},   // on in Potato (Serg 2026-11-10 "на потато надо включить по умолчанию")
     // [render] lens_mask: Potato turns it on, Low and Medium leave it as the player has it (Serg 2026-11-09 "маска должна быть включена только на
     // режиме потато" / "оставляем её"): his A/B on PS VR2, F4, standing still: on 44-46 pairs/s, off 41-44
     {L"render", L"lens_mask", {1, kAsIs, kAsIs}},
@@ -64,7 +64,7 @@ inline constexpr Key kKeys[] = {
     {L"fog", L"game_fog_caves_end", {200, 200, 200}},
     {L"fog", L"game_fog_mist", {0, 0, 0}},
     {L"fog", L"game_fog_height", {0, 0, 0}},
-    {L"fog", L"game_fog_before_fx", {1, 1, 1}},   // (Serg 2026-11-09: the flames over the fog in every preset)
+    {L"fog", L"game_fog_before_fx", {kAsIs, kAsIs, kAsIs}},   // (0.210.1 ships it off - far trees speckled; no preset turns it back on, the player's tick stays)
     {L"fog", L"game_fog_fx_depth", {0, 0, 0}},
     {L"fog", L"game_fog_our_curve", {0, 0, 0}},
     {L"fog", L"game_fog_caves_black", {0, 0, 0}},
