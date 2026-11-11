@@ -2,6 +2,7 @@
 // What it gives: vr/render/stereo/stereo.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
 #include "../../fence_wait.h"   // a fence wait that does not end on a wake meant for an older one
+#include "../../replay_slot_check.h"   // the camera slots' sources written after the copy (one pass's stale buffers)
 #include "../../resize_drain.h"   // [render] resize_drain: no replay of a pass the game resized in, the GPU drained first
 #include "../../shadows_once.h"   // [render] shadows_once_a_pair: the lists that only draw the shadow / grass maps not replayed for the right eye
 #include "replay_list_gen.h"   // [stereo] replay_reset_guard: no replay of a list the game reset since it submitted it
@@ -81,7 +82,7 @@ ID3D12Fence* g_fence = nullptr;   // (made with the first one: Setup's "ready")
 std::atomic<bool> g_restorePending{false};
 std::atomic<int> g_ahead{1};   // [stereo] replay_ahead: replays the CPU may run ahead of (1 or 2)   // the camera buffers to put back before the left pass reaches the GPU
 HANDLE g_event = nullptr;
-constexpr int kAllocs = 16;
+constexpr int kAllocs = 64;   // (64 since [stereo] replay_fresh_slots: a refresh copy may go before several of the game's submissions a pass)
 ID3D12CommandAllocator* g_alloc[kAllocs] = {};
 Pt g_allocDone[kAllocs] = {};
 int g_allocAt = 0, g_openAlloc = 0;
@@ -296,6 +297,7 @@ void WaitFor(const Pt& p);
 bool Setup(ID3D12CommandQueue* q);
 void CopySlots(int eye);
 void CopyLateSlots(ID3D12CommandQueue* nq);
+void RefreshBefore(ID3D12CommandQueue* nq, ID3D12CommandList* const* lists, unsigned n);   // [stereo] replay_fresh_slots (below)
 bool MakePred();
 void RecordPred(ID3D12GraphicsCommandList* l, int eye);
 int g_leftCopied = 0;
@@ -388,6 +390,10 @@ void ExecCore(ID3D12CommandQueue* nq, ID3D12CommandList* ncl, bool ours) {
 }
 void OnExecute(command_queue* q, command_list* cl) {
     ExecCore((ID3D12CommandQueue*)q->get_native(), (ID3D12CommandList*)cl->get_native(), t_ours);
+    if (!t_ours && g_capturing.load(std::memory_order_relaxed)) {
+        ID3D12CommandList* one = (ID3D12CommandList*)cl->get_native();
+        RefreshBefore((ID3D12CommandQueue*)q->get_native(), &one, 1);
+    }
 }
 // [stereo] native_replay: every ExecuteCommandLists of the game's queues (vr/ecl_hook.h, all three types), before the real call - each list as
 // ReShade's event gave it, then the call itself numbered for [debug] replay_marks 3 / 4 (ObserveExec). Ours (the replay's own lists and signals,
@@ -398,6 +404,7 @@ void NativeExec(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* lis
     for (unsigned i = 0; i < n; ++i)
         if (lists[i]) ExecCore(q, lists[i], ours);
     if (!ours) ObserveExec(q, n, lists);
+    if (!ours && g_capturing.load(std::memory_order_relaxed)) RefreshBefore(q, lists, n);   // ([stereo] replay_fresh_slots: the slots these lists bind, read again now)
 }
 
 void OnBarrier(command_list*, uint32_t count, const resource* res, const resource_usage*, const resource_usage* to) {
@@ -1019,6 +1026,24 @@ void CopyLateSlots(ID3D12CommandQueue* nq) {
     g_leftCopied = n;
     Submit(g_direct);
     if (nq != g_direct) { g_why = "slots: left, late (compute waits)"; GpuWait(nq, g_allocDone[g_openAlloc]); }
+}
+// [stereo] replay_fresh_slots (vr/replay_slot_check.h): just before the game's ExecuteCommandLists of `lists` in the left pass - the slots they bind
+// that the game wrote after the binding was copied get the game's values now, on the direct queue ahead of them (a compute queue waits for that).
+// Counted for the 10 s line.
+uint32_t g_freshLooked = 0, g_freshCopied = 0, g_freshSubmits = 0;
+void RefreshBefore(ID3D12CommandQueue* nq, ID3D12CommandList* const* lists, unsigned n) {
+    if (!camfix::g_freshSlots.load(std::memory_order_relaxed) || !camfix::g_redirect.load(std::memory_order_relaxed) || !g_direct || !g_list || !nq) return;
+    int idx[256];
+    uint32_t looked = 0;
+    const int c = camfix::RefreshFor((void* const*)lists, n, idx, 256, &looked);
+    g_freshLooked += looked;
+    if (c <= 0) return;
+    g_freshCopied += (uint32_t)c;
+    ++g_freshSubmits;
+    g_why = "slots: left, refreshed at their first submission";
+    camfix::RecordSlotsAt(Open(), 0, idx, c);
+    Submit(g_direct);
+    if (nq != g_direct) { g_why = "slots: refreshed (compute waits)"; GpuWait(nq, g_allocDone[g_openAlloc]); }
 }
 
 // One copy on the direct queue, with our own list (a ring of allocators).
@@ -1779,6 +1804,30 @@ bool RightFromLeft() {
     }
     bool notReplayed = resized || held || heldA;
     camfix::g_capture.store(false);
+    {   // vr/replay_slot_check.h: did the game write any slot's source after we copied it? (then both eyes drew it stale) - every 15th pair, a line every 10 s
+        static slotcheck::Tally tally;
+        static uint32_t pairNo = 0;
+        static ULONGLONG since = GetTickCount64();
+        if (camfix::g_redirect.load() && slotcheck::LookNow(++pairNo, 15)) {
+            uint32_t checked = 0, views = 0;
+            const uint32_t changed = camfix::LateWrites(&checked, &views);
+            tally.Add(checked, changed, views);
+        }
+        if (GetTickCount64() - since >= 10000) {
+            since = GetTickCount64();
+            if (tally.looks)
+                LogF("vrcam: replay - camera slots, 10 s: %u looks, %u slots compared, %u (%.1f%%) written by the game AFTER we copied them (%u of those "
+                     "with a view matrix) - each such buffer reached the GPU with what it held before, in both eyes%s", tally.looks, tally.slots, tally.changed,
+                     tally.StalePct(), tally.viewKeys,
+                     camfix::g_freshSlots.load() ? " - after [stereo] replay_fresh_slots' refresh (0 = none stale)"
+                     : tally.changed ? " ([stereo] replay_fresh_slots=1 reads them again at their first submission)" : "");
+            if (camfix::g_freshSlots.load())
+                LogF("vrcam: replay - fresh slots, 10 s: %u slots read again at their lists' first submission, %u of them written by the game since the "
+                     "binding - staged anew and copied before those lists in %u copies ([stereo] replay_fresh_slots)", g_freshLooked, g_freshCopied, g_freshSubmits);
+            g_freshLooked = g_freshCopied = g_freshSubmits = 0;
+            tally = slotcheck::Tally{};
+        }
+    }
     if (camfix::g_scanWant.exchange(0)) camfix::ScanCopies();
     if (mode == 1) {   // the right eye's camera into the slots, on the direct queue before the replay
         StepTimer st(kPatch);

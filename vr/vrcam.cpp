@@ -996,7 +996,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.212.0";
+static const char g_info_version[] = "0.212.3";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1282,6 +1282,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     gamestate::Init(ctx);
     crash::Step("game commands");
     gamecmd::Init(ctx);
+    appthread::Init(ctx);   // the network SDK's client calls (host rules, hit share, attack path) go to the game's app thread, not the 1 ms timer's
     playerscmd::Init(ctx);
     patchhunt::Init(ctx, g_iniPath);
     capture::Init(&Log, g_iniPath, g_info_version);   // the capture key (vr/capture.h); its state text from the update thread's file
@@ -1416,6 +1417,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     crash::Uninstall();
     strikestatswire::Stop();   // [stats] strike_stats: the last numbers written, the thread joined
     savebackups::Stop();   // [support] save_backups: what the game wrote at its exit backed up, the thread joined
+    appthread::Shutdown();   // no more network steps queued for the app thread
     posewire::Shutdown();   // [multiplayer] pose_share: no more network jobs, the channel given back
     attackpath::ShutdownNet();   // [gameplay] flat_attack_path: its channel given back
     meleedirectclient::ShutdownNet();   // [gameplay] melee_direct_client_cleave: the channel given back

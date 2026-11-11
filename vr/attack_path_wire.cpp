@@ -37,6 +37,7 @@
 #include <cstring>
 #include <string>
 
+#include "app_thread.h"   // the network SDK's client calls on the game's app thread (vr/app_thread_pump.h)
 #include "attack_path.h"
 #include "attack_path_wire.h"
 #include "move_attack.h"
@@ -484,7 +485,12 @@ void ScanFront(uintptr_t unit, bool toHost) {
             m.hero = g_heroId.load(std::memory_order_relaxed);
             m.n = (uint32_t)n;
             std::memcpy(m.ids, ids, sizeof m.ids);
-            g_net->sendToHost(g_ctx, g_channel, kMsgFront, &m, sizeof m);
+            // (the game's hook is not a place the network SDK takes a client call: to the app thread, as a copy; the latest front wins)
+            appthread::Post(appthread::kAttackPathFront, [m] {
+                if (!g_net || g_channel == nw::InvalidChannelHandle || g_netDead.load()) return;
+                appthread::NoteCall("attack path", "sendToHost");
+                g_net->sendToHost(g_ctx, g_channel, kMsgFront, &m, sizeof m);
+            });
             std::memcpy(sent, ids, sizeof sent);
             sentN = n;
             sentAt = now;
@@ -553,7 +559,8 @@ void __cdecl OnConnection(const D2RL::PluginContext*, const nw::ConnectionEvent*
 }
 
 // A joined client: the connection, asked for again, and its hello once a second.
-void JoinedTick(uint32_t heroId, uint64_t now) {
+// ON THE APP THREAD ONLY (the network SDK asserts it: JoinedTick below posts it there; 2026-11-11 co-op join crash).
+void JoinedStep(uint32_t heroId, uint64_t now) {
     if (!g_net || g_channel == nw::InvalidChannelHandle || g_netDead.load()) return;
     static uint64_t triedAt = 0, helloAt = 0;
     nw::ChannelInfo info{};
@@ -562,6 +569,7 @@ void JoinedTick(uint32_t heroId, uint64_t now) {
     if (!got || info.connectionState != nw::ConnectionState::Connected) {
         if (now - triedAt >= (got && info.connectionState == nw::ConnectionState::Connecting ? 10000u : 3000u)) {
             triedAt = now;
+            appthread::NoteCall("attack path", "connectToHost");
             g_net->connectToHost(g_ctx, g_channel);
         }
         return;
@@ -569,8 +577,18 @@ void JoinedTick(uint32_t heroId, uint64_t now) {
     if (now - helloAt >= 1000) {
         helloAt = now;
         const HelloMsg m{heroId};
+        appthread::NoteCall("attack path", "sendToHost");
         g_net->sendToHost(g_ctx, g_channel, kMsgHello, &m, sizeof m);
     }
+}
+
+// The game's controller hook calls this every update: the step goes to the app thread, at most every 25 ms.
+void JoinedTick(uint32_t heroId, uint64_t now) {
+    if (!g_net || g_channel == nw::InvalidChannelHandle || g_netDead.load()) return;
+    static uint64_t postedAt = 0;
+    if (now - postedAt < 25) return;
+    postedAt = now;
+    appthread::Post(appthread::kAttackPathJoined, [heroId, now] { JoinedStep(heroId, now); });
 }
 
 // Which game: online never; single player has the server here; in a TCP/IP game we host if the server's hook ran in this game.

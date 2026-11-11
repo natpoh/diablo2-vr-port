@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <mutex>
 
+#include "app_thread.h"   // the network SDK's client calls on the game's app thread (vr/app_thread_pump.h)
 #include "hit_outcome.h"
 #include "hit_share.h"
 #include "hit_share_wire.h"
@@ -179,7 +180,8 @@ void HostTick(uint64_t now) {
 }
 
 // A joined client (or our own process on its own channel): the connection, asked for again, and the hello once a second.
-void ClientTick(uint64_t now, bool want, uint32_t hero) {
+// ON THE APP THREAD ONLY (the network SDK asserts it: Tick posts this there; 2026-11-11 co-op join crash).
+void ClientStep(uint64_t now, bool want, uint32_t hero) {
     static uint64_t triedAt = 0, helloAt = 0;
     static bool was = false;
     if (!want) {
@@ -198,13 +200,17 @@ void ClientTick(uint64_t now, bool want, uint32_t hero) {
         if (now - helloAt >= kHelloMs) {
             helloAt = now;
             uint8_t b[kHelloBytes];
-            if (const uint32_t n = BuildHello(g_myNonce, hero, b, sizeof b)) g_net->sendToHost(g_ctx, g_channel, kMsgHello, b, n);
+            if (const uint32_t n = BuildHello(g_myNonce, hero, b, sizeof b)) {
+                appthread::NoteCall("hit share", "sendToHost");
+                g_net->sendToHost(g_ctx, g_channel, kMsgHello, b, n);
+            }
         }
         return;
     }
     if (triedAt && now - triedAt < RetryMs(static_cast<unsigned>(g_failed.load()), connecting)) return;
     if (triedAt && !connecting) g_failed.fetch_add(1);
     triedAt = now;
+    appthread::NoteCall("hit share", "connectToHost");
     const nw::Result r = g_net->connectToHost(g_ctx, g_channel);
     static int toldR = -1;
     if (static_cast<int>(r) != toldR) {
@@ -212,6 +218,14 @@ void ClientTick(uint64_t now, bool want, uint32_t hero) {
         Say("vrcam: hit share - asked the host's channel: %u (0 = asked; online, or a host without this mod version: no answer, asked again "
             "later, up to once a minute)", (unsigned)r);
     }
+}
+
+// The timer's side: the step goes to the game's app thread (one round later at the most).
+void ClientTick(uint64_t now, bool want, uint32_t hero) {
+    static bool wasWanted = false;   // (Tick's thread)
+    if (!want && !wasWanted) return;   // (the step's own reset runs once, when it stops being wanted)
+    wasWanted = want;
+    appthread::Post(appthread::kHitShare, [now, want, hero] { ClientStep(now, want, hero); });
 }
 
 // Every 10 s while anything moved: what went over the channel.

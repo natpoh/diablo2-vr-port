@@ -355,5 +355,6 @@ namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's 
 #include "melee_arm_game.h"   // [gameplay] melee_skill_armed: a melee skill's button arms it; every hit by touch is then that skill (vr/melee_arm.h)
 #include "armed_icon.h"       // [gameplay] melee_skill_armed_icon: the armed skill's icon in the mana medallion (vr/armed_icon.h)
 #include "wheel_icons.h"      // ... the game's own skill icon, as the skill panel's tiles draw it
+#include "app_thread.h"   // the network SDK's client calls on the game's app thread, not the timer's (vr/app_thread_pump.h)
 #include "flat_menu_wire.h"   // [hud] game_menu_settings: the flat game's settings in the pause menu, the host's rules (vr/flat_menu.h)
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)

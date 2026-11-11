@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 
+#include "app_thread.h"   // the network SDK's client calls on the game's app thread (vr/app_thread_pump.h)
 #include "flat_menu.h"
 #include "flat_menu_wire.h"
 #include "key_capture_wire.h"   // a key row's "press a key" (vr/key_capture.h)
@@ -131,7 +132,8 @@ void __cdecl OnConnection(const PluginContext*, const nw::ConnectionEvent* ev, v
     if (told.fetch_add(1) < 8) Say("vrcam: host rules - the channel: state %u, reason %u", (unsigned)ev->state, (unsigned)ev->reason);
 }
 
-void NetTick(uint64_t now, bool inGame) {
+// The channel's step. ON THE APP THREAD ONLY (the network SDK asserts it: NetTick below posts it there; 2026-11-11 co-op join crash).
+void NetStep(uint64_t now, bool inGame) {
     static uint64_t triedAt = 0, helloAt = 0;
     static bool was = false;
     if (!g_net || g_channel == nw::InvalidChannelHandle || g_netDead.load()) return;
@@ -151,13 +153,17 @@ void NetTick(uint64_t now, bool inGame) {
         if (now - helloAt >= hostrules::kHelloMs) {
             helloAt = now;
             uint8_t b[hostrules::kHelloBytes];
-            if (const uint32_t n = hostrules::BuildHello(g_myNonce, b, sizeof b)) g_net->sendToHost(g_ctx, g_channel, hostrules::kMsgHello, b, n);
+            if (const uint32_t n = hostrules::BuildHello(g_myNonce, b, sizeof b)) {
+                appthread::NoteCall("host rules", "sendToHost");
+                g_net->sendToHost(g_ctx, g_channel, hostrules::kMsgHello, b, n);
+            }
         }
         return;
     }
     if (triedAt && now - triedAt < hostrules::RetryMs((unsigned)g_failed.load(), connecting)) return;
     if (triedAt && !connecting) g_failed.fetch_add(1);
     triedAt = now;
+    appthread::NoteCall("host rules", "connectToHost");
     const nw::Result r = g_net->connectToHost(g_ctx, g_channel);
     static int toldR = -1;
     if ((int)r != toldR) {
@@ -165,6 +171,16 @@ void NetTick(uint64_t now, bool inGame) {
         Say("vrcam: host rules - asked the host's channel: %u (0 = asked; online, or a host without this mod version: no answer, asked again "
             "later, up to once a minute)", (unsigned)r);
     }
+}
+
+// From the plugin's timer (Tick, every 50 ms): the step goes to the game's app thread, one round later at the most. In a game every round; out of
+// one, once (the step's own "a new game: asked again at once" reset).
+void NetTick(uint64_t now, bool inGame) {
+    static bool wasIn = false;   // (the timer thread's)
+    if (!g_net || g_channel == nw::InvalidChannelHandle || g_netDead.load()) return;
+    if (!inGame && !wasIn) return;
+    wasIn = inGame;
+    appthread::Post(appthread::kHostRules, [now, inGame] { NetStep(now, inGame); });
 }
 
 // ---- the panel's values and the ini's writes ----

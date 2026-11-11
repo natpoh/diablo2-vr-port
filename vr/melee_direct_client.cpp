@@ -28,6 +28,7 @@
 
 #include <D2RLPlugin/api.h>
 
+#include "app_thread.h"   // which thread the network SDK's client calls come from (the log) - these ones are in UI jobs already
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "melee_direct_client.h"
 #include "sigscan.h"
@@ -224,6 +225,7 @@ void SendOne(const Request& r) noexcept {
     if (r.extra) {   // [gameplay] melee_direct_client_cleave: asked of the host's server attack (the game would drop a second command now)
         uint8_t b[kStrikeBytes];
         const uint32_t n = BuildStrike(r.heroId, r.monsterId, b, sizeof b);
+        if (n && g_connected.load()) appthread::NoteCall("melee direct (client)", "sendToHost (strike)");
         const nw::Result res = g_connected.load() && g_net && g_channel != nw::InvalidChannelHandle && n
                                    ? g_net->sendToHost(g_ctx, g_channel, kMsgStrike, b, n) : nw::Result::NotConnected;
         if (res == nw::Result::Success) {
@@ -247,6 +249,7 @@ void SendOne(const Request& r) noexcept {
 
 void __cdecl Apply(const PluginContext*, void* user) noexcept {
     if (!g_ticket.Claim(uiticket::FromUser(user))) return;
+    appthread::MarkUiJob();
     for (;;) {
         Request q;
         {
@@ -266,6 +269,7 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
 std::atomic<uint32_t> g_lookHero{0};
 void __cdecl Look(const PluginContext*, void* user) noexcept {
     if (!g_lookTicket.Claim(uiticket::FromUser(user))) return;
+    appthread::MarkUiJob();   // (the channel's calls below are on the UI thread = the network SDK's app thread)
     int32_t left = -1, slot = -2;
     const uintptr_t hero = Hero(g_lookHero.load(), nullptr);
     const bool ok = hero && Skills(hero, &left, &slot);
@@ -299,11 +303,15 @@ void __cdecl Look(const PluginContext*, void* user) noexcept {
             uint8_t b[kHelloBytes];
             if (now - g_helloAt >= kHelloMs && hero && Read(head, hero, sizeof head)) {
                 g_helloAt = now;
-                if (const uint32_t n = BuildHello(head[2], b, sizeof b)) g_net->sendToHost(g_ctx, g_channel, kMsgHello, b, n);
+                if (const uint32_t n = BuildHello(head[2], b, sizeof b)) {
+                    appthread::NoteCall("melee direct (client)", "sendToHost");
+                    g_net->sendToHost(g_ctx, g_channel, kMsgHello, b, n);
+                }
             }
         } else if (!g_connectTriedAt || now - g_connectTriedAt >= RetryMs(g_connectFailed, connecting)) {
             if (g_connectTriedAt && !connecting) ++g_connectFailed;   // the last ask came to nothing: the next one later
             g_connectTriedAt = now;
+            appthread::NoteCall("melee direct (client)", "connectToHost");
             const nw::Result r = g_net->connectToHost(g_ctx, g_channel);
             static int toldR = -1;
             if (static_cast<int>(r) != toldR) {

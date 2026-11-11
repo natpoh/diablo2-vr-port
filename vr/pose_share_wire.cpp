@@ -19,6 +19,7 @@
 #include <mutex>
 #include <string>
 
+#include "app_thread.h"   // which thread the network SDK's client calls come from (the log) - these ones are in the UI job already
 #include "ui_ticket.h"
 
 using namespace D2RL;
@@ -479,6 +480,7 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
         DWORD expected = 0;
         g_tid.ui.compare_exchange_strong(expected, GetCurrentThreadId());
     }
+    appthread::MarkUiJob();   // (the channel's calls below are on the UI thread = the network SDK's app thread)
     const uint64_t now = NowMs();
     // the connection as D2RLoader has it; asked for in a game, again after a refusal or a drop
     nw::ChannelInfo info{};
@@ -512,6 +514,7 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
     }
     // (Connecting for 10 s: asked again - D2RLoader says to retry after a time-out)
     if (g_inGame.load() && st != nw::ConnectionState::Connected && now - triedAt >= (st == nw::ConnectionState::Connecting ? 10000u : 3000u)) {
+        appthread::NoteCall("pose share", "connectToHost");
         const nw::Result r = g_net->connectToHost(ctx, g_channel);
         {
             std::lock_guard<std::mutex> lock(g_lock);
@@ -562,6 +565,7 @@ void __cdecl UiJob(const PluginContext* ctx, void* user) noexcept {
         }
     }
     if (n) {
+        appthread::NoteCall("pose share", "sendToHost");
         const nw::Result r = g_net->sendToHost(ctx, g_channel, ps::kMsgPose, b, n);
         {
             std::lock_guard<std::mutex> lock(g_lock);

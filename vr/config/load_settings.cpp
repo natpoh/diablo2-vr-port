@@ -37,7 +37,20 @@ void LoadSettings() {
                          "installed and idle. Kept: the picture to the headset, head and hands, input"
                        : "everything back as set in the ini");
     }
-    // [debug] patch_hunt (vr/patch_hunt.h): one suspect of the floor patches off a step - read first, the reads below leave our own parts out by it
+    // [debug] patch_hunt (vr/patch_hunt.h): one suspect of the floor patches off a step - read first, the reads below leave our own parts out by it.
+    // A step left in the ini is put back to 0 when the game starts (2026-11-11: step 7 - our sky, fog, ceiling and distance blur off - stayed in
+    // the remote test PC's ini for three days after a Ctrl+F8 hunt, and its sky and ceilings were gone with nothing saying why); during a game the
+    // step still works as before.
+    static bool huntChecked = false;
+    if (!huntChecked) {
+        huntChecked = true;
+        const int left = patchhunt::Clamp((int)IniF(L"debug", L"patch_hunt", 0.0f));
+        if (left != 0) {
+            WritePrivateProfileStringW(L"debug", L"patch_hunt", L"0", g_iniPath);
+            LogF("vrcam: patch hunt - step %d was left in the ini from an earlier game: put back to 0 at the start (it turns parts of the picture "
+                 "off; Ctrl+F8 picks a step again)", left);
+        }
+    }
     const int hunt = patchhunt::Clamp((int)IniF(L"debug", L"patch_hunt", 0.0f));
     patchhunt::Suspects suspects;
     g_set.platform.store(IniF(L"mode", L"platform", 1.0f) != 0.0f ? 1 : 0);
@@ -569,6 +582,8 @@ void LoadSettings() {
     g_replayViews.store(std::clamp((int)IniF(L"stereo", L"replay_views", 8.0f), 0, 8));
     g_viewMask.store((int)IniF(L"stereo", L"replay_view_mask", 0.0f));
     g_replayPositions.store((int)IniF(L"stereo", L"replay_positions", 2.0f));
+    camfix::g_positionKeys.store(IniB(L"stereo", L"replay_position_keys", true));
+    camfix::g_freshSlots.store(IniB(L"stereo", L"replay_fresh_slots", false));   // 1: each camera slot read again at its lists' first submission (vr/replay_slot_check.h)   // 0: position-only camera buffers bound as the game's own (vr/replay_slot_check.h)
     g_replayPrev.store((int)IniF(L"stereo", L"replay_prev", 1.0f));
     replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
     replay::g_marksOn.store(std::clamp((int)IniF(L"debug", L"replay_marks", 1.0f), 0, 4));   // how the replayed lists are submitted (replay_groups.h): 0 batched, 1 one by one with a signal after each, 2 one by one, 3 as the game's calls, 4 the same with a signal after each

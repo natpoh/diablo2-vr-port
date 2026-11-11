@@ -2435,6 +2435,18 @@ std::vector<Item> g_items = {
            L"person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the "
            L"picture has settled (a few seconds) - two passes then, never a black eye. On by default (\"Native one pass\" in 3D in the "
            L"headset). Takes effect at the next game start. Off: two passes (\"Native two passes\")."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_fresh_slots", L"... the camera read when the graphics card needs it", 0,
+           L"With one pass, the game's camera values are copied when the game records its drawing - but the game writes some of them later in "
+           L"the frame (about a third, in Serg's log of 2026-11-10), so both eyes could draw with values from before: a player's headset showed "
+           L"the world squashed into a thin slice. Ticked: each copy is read again just before the game hands that drawing to the graphics "
+           L"card, and taken anew when the game changed it since - for both eyes. The log says every 10 s how many were taken anew, and "
+           L"how many stayed stale (0 when this works). Live. Unticked: as before."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_position_keys", L"... the camera's position moved in the game's other buffers too", 1,
+           L"With one pass, the buffers where the game keeps only the camera's position (not its view) are copied when the game binds them and "
+           L"moved for the right eye. If the game writes such a buffer after binding it, both eyes draw what it held before - a player's "
+           L"headset showed the world squashed into a thin slice while one pass ran (2026-11-10). Unticked: those buffers stay the game's own, "
+           L"read when the graphics card draws (the right eye's position in them not moved). The log says every 10 s how many copies the game "
+           L"wrote over afterwards. Live. Ticked: as before."))),
     Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_reset_guard", L"... never again a list the game took up", 1,
            L"With the right eye drawn again on the graphics card: the game may start a new recording in one of its lists as soon as it has sent "
            L"it, and by the time the right eye sends the same list again it holds other commands - an unfinished one takes the graphics device "

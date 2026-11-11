@@ -34,6 +34,14 @@ void NativeUploadMade(ID3D12Resource* r, uint64_t va, uint64_t size, uint8_t* cp
 void NativeUploadGone(ID3D12Resource* r);
 size_t NativeUploadsKnown();
 bool HookNative(ID3D12Device* dev);
+// vr/replay_slot_check.h: slots whose source the game wrote after the copy (checked, views among the stale); position-only keys redirected or not
+uint32_t LateWrites(uint32_t* checked, uint32_t* views);
+extern std::atomic<bool> g_positionKeys;
+// [stereo] replay_fresh_slots: the slots a submission's lists bind read again just before it (changed: both eyes staged anew; their indices in idx),
+// and those slots' staged values of one eye copied
+extern std::atomic<bool> g_freshSlots;
+int RefreshFor(void* const* lists, unsigned nl, int* idx, int max, uint32_t* looked);
+void RecordSlotsAt(ID3D12GraphicsCommandList* l, int eye, const int* idx, int n);
 // (RecordSlots has default arguments: declared where it is called)
 }  // namespace camfix
 namespace depthsrc {

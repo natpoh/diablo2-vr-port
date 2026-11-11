@@ -1,6 +1,7 @@
 // vr/render/depth/depth_fix.cpp - the depth fix: the right eye's camera in the replayed lists and the depth range ([render] depth_fix_mode, camfix), the range at its source (depthsrc) (cut from vr/vrcam.cpp, docs/plan_modules.md M13).
 // What it gives: vr/render/depth/depth.h. It sees vrcam.cpp's headers.
 #include "../../vrcam_headers.h"
+#include "../../replay_slot_check.h"   // the slots' sources written after the copy (LateWrites)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -400,9 +401,10 @@ int VerdictSlow(ID3D12RootSignature* rs, UINT param, uint64_t va) {
     }
     return v;
 }
-uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh);
+uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh, void* cl);
 int KeyCount(int key);
 extern std::atomic<bool> g_redirect;
+extern std::atomic<bool> g_positionKeys;   // [stereo] replay_position_keys (below)
 extern std::atomic<int> g_nSlots;
 constexpr int kSlotsFwd = 256;
 // A "camera" key whose buffers fill the slots is an object's (its position near the hero
@@ -427,9 +429,12 @@ uint64_t Note(int which, ID3D12GraphicsCommandList* cl, UINT param, uint64_t va)
     AcquireSRWLockShared(&g_keyLock);
     const Layout lay = g_keys[key - 1].lay;
     ReleaseSRWLockShared(&g_keyLock);
+    // [stereo] replay_position_keys 0 (live; vr/replay_slot_check.h): a buffer where only the camera's position was found is bound as the game's own -
+    // read at GPU time, never a copy made at the binding; the right eye's position in it not moved
+    if (!lay.nv && !g_positionKeys.load(std::memory_order_relaxed)) return 0;
     if (g_redirect.load(std::memory_order_relaxed)) {
         bool fresh = false;
-        const uint64_t to = Redirect(va, lay, key, &fresh);
+        const uint64_t to = Redirect(va, lay, key, &fresh, cl);
         if (fresh && !lay.nv && KeyCount(key) > 24) Demote(key);   // a position-only key with a 25th buffer in a pass: an object's
         return to;
     }
@@ -600,12 +605,35 @@ ID3D12Resource* g_stageBuf = nullptr;      // UPLOAD: [ring][eye][slot]
 uint8_t* g_stageCpu = nullptr;
 uint64_t g_slotsVa = 0;
 int g_ring = 0;                            // this pair's staging
-struct SlotUse { uint64_t gameVa; int bytes; int key; };
+struct SlotUse { uint64_t gameVa; int bytes; int key; uint64_t hash; bool views; };   // hash: the game's bytes as copied (vr/replay_slot_check.h)
 SlotUse g_slotUse[kSlots];
 std::atomic<int> g_nSlots{0};
 SRWLOCK g_slotLock = SRWLOCK_INIT;
 std::atomic<bool> g_redirect{false};       // binding from slots this left pass
 std::atomic<uint32_t> g_overflow{0};
+// [stereo] replay_fresh_slots (vr/replay_slot_check.h; Serg's 0.212.1 log: ~30% of the slots, most with a view matrix, written by the game after
+// the binding was copied - Tycootank's AMD drew them stale): each slot remembers the lists that bound it; before the first of them goes to the
+// queue (the game's ExecuteCommandLists - the GPU cannot read the buffer before, so the game has written it by then) the slot is read again and,
+// changed, both eyes' values are staged anew and copied into it ahead of those lists (RefreshFor). Off: the copy at the binding alone, as before.
+std::atomic<bool> g_freshSlots{false};     // the key (LoadSettings)
+bool g_freshNow = false;                   // this left pass's (BeginLeft)
+constexpr int kSlotLists = 8;              // lists remembered a slot; more: refreshed at the pass's next submission
+std::atomic<void*> g_slotLists[kSlots][kSlotLists];
+std::atomic<bool> g_slotAnyList[kSlots];
+std::atomic<bool> g_slotLooked[kSlots];      // looked at again this pass
+void NoteSlotList(int i, void* cl) {       // any thread, no lock: a list's pointer into the first free place (or already there)
+    if (!cl) { g_slotAnyList[i].store(true, std::memory_order_relaxed); return; }
+    for (int k = 0; k < kSlotLists; ++k) {
+        void* have = g_slotLists[i][k].load(std::memory_order_acquire);
+        if (have == cl) return;
+        if (!have) {
+            void* none = nullptr;
+            if (g_slotLists[i][k].compare_exchange_strong(none, cl, std::memory_order_acq_rel)) return;
+            if (none == cl) return;
+        }
+    }
+    g_slotAnyList[i].store(true, std::memory_order_relaxed);
+}
 
 bool MakeSlots(ID3D12Device* dev) {
     if (g_slotsBuf) return true;
@@ -673,15 +701,9 @@ void ClearSlots() { for (int i = 0; i < kHash; ++i) g_hashVa[i].store(0, std::me
 // threads through those reads, and ~9% more in their memcpy. Now the lock covers the slot's reservation and two straight
 // writes. The slots full - all 256 every pass in that log, ~3000 more binds a pair overflowing - is found without the lock
 // (each of those took it before, only to find no room) and before any copying.
-uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh) {
-    if (const int i = FindSlot(va); i >= 0) return g_slotsVa + (uint64_t)i * kSlotBytes;
-    if (g_nSlots.load(std::memory_order_relaxed) >= kSlots) { *fresh = true; g_overflow.fetch_add(1, std::memory_order_relaxed); return 0; }
-    uint64_t room = 0;
-    uint8_t* cpu = Cpu(va, &room);
-    if (!cpu) { *fresh = true; return 0; }
-    const int bytes = (int)std::min<uint64_t>(room, kSlotBytes) & ~3;
-    alignas(16) uint8_t left[kSlotBytes], right[kSlotBytes];   // the eyes' values, cached; to the staging slots at the end
-    memcpy(left, cpu, bytes);
+// Both eyes' values from the game's bytes (`left` holds them on the way in): the left one as it is (its last frame moved, replay_prev), the
+// right one moved by the eyes' separation. Cached memory, no lock.
+void MakeEyes(uint8_t* left, uint8_t* right, int bytes, const Layout& lay) {
     if (g_replayPrev.load() >= 1) PrevToRightEye((float*)left, bytes / 4, lay, 2.0 * g_eyeHalf.load() * g_shiftMul.load());
     memcpy(right, left, bytes);
     if (g_replayPrev.load() == 2) {   // the right eye's "last frame" = the left eye's current view*projection
@@ -705,24 +727,117 @@ uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh) {
     Views(L, R);
     const double right3[3] = {L[0], L[4], L[8]};
     PatchKnown((float*)right, bytes / 4, lay, 2.0 * g_eyeHalf.load() * g_shiftMul.load(), right3);
+}
+uint64_t Redirect(uint64_t va, const Layout& lay, int key, bool* fresh, void* cl) {
+    if (const int i = FindSlot(va); i >= 0) {
+        if (g_freshNow) NoteSlotList(i, cl);   // ([stereo] replay_fresh_slots: every list that binds it)
+        return g_slotsVa + (uint64_t)i * kSlotBytes;
+    }
+    if (g_nSlots.load(std::memory_order_relaxed) >= kSlots) { *fresh = true; g_overflow.fetch_add(1, std::memory_order_relaxed); return 0; }
+    uint64_t room = 0;
+    uint8_t* cpu = Cpu(va, &room);
+    if (!cpu) { *fresh = true; return 0; }
+    const int bytes = (int)std::min<uint64_t>(room, kSlotBytes) & ~3;
+    alignas(16) uint8_t left[kSlotBytes], right[kSlotBytes];   // the eyes' values, cached; to the staging slots at the end
+    memcpy(left, cpu, bytes);
+    const uint64_t copiedHash = slotcheck::Hash(left, (size_t)bytes);   // (the game's own bytes, before anything of ours: LateWrites compares)
+    MakeEyes(left, right, bytes, lay);
     AcquireSRWLockExclusive(&g_slotLock);
     const int n = g_nSlots.load();
-    if (const int i = FindSlot(va); i >= 0) { ReleaseSRWLockExclusive(&g_slotLock); return g_slotsVa + (uint64_t)i * kSlotBytes; }
+    if (const int i = FindSlot(va); i >= 0) {
+        ReleaseSRWLockExclusive(&g_slotLock);
+        if (g_freshNow) NoteSlotList(i, cl);
+        return g_slotsVa + (uint64_t)i * kSlotBytes;
+    }
     *fresh = true;
     if (n >= kSlots) { ReleaseSRWLockExclusive(&g_slotLock); g_overflow.fetch_add(1); return 0; }
     memcpy(Stage(g_ring, 0, n), left, bytes);    // write-only into the write-combined staging
     memcpy(Stage(g_ring, 1, n), right, bytes);
-    g_slotUse[n] = {va, bytes, key};
+    g_slotUse[n] = {va, bytes, key, copiedHash, lay.nv > 0};
+    for (int k = 0; k < kSlotLists; ++k) g_slotLists[n][k].store(nullptr, std::memory_order_relaxed);
+    g_slotAnyList[n].store(false, std::memory_order_relaxed);
+    g_slotLooked[n].store(false, std::memory_order_relaxed);
+    if (g_freshNow) NoteSlotList(n, cl);
     g_nSlots.store(n + 1);
     PutSlot(va, n);
     ReleaseSRWLockExclusive(&g_slotLock);
     return g_slotsVa + (uint64_t)n * kSlotBytes;
+}
+// vr/replay_slot_check.h: this pass's slots whose source the game wrote after we copied it (once the left pass is recorded; the draw thread).
+// Reads the game's upload memory again (write-combined: slow) - only every so many pairs. *views: of the stale ones, buffers with a view.
+std::atomic<bool> g_positionKeys{true};   // [stereo] replay_position_keys
+uint32_t LateWrites(uint32_t* checked, uint32_t* views) {
+    uint32_t changed = 0, n = 0, v = 0;
+    alignas(16) uint8_t now[kSlotBytes];
+    AcquireSRWLockShared(&g_slotLock);
+    const int slots = g_nSlots.load();
+    for (int i = 0; i < slots; ++i) {
+        const SlotUse u = g_slotUse[i];
+        uint64_t room = 0;
+        uint8_t* cpu = Cpu(u.gameVa, &room);
+        if (!cpu || room < (uint64_t)u.bytes) continue;
+        memcpy(now, cpu, (size_t)u.bytes);
+        ++n;
+        if (slotcheck::Hash(now, (size_t)u.bytes) != u.hash) { ++changed; if (u.views) ++v; }
+    }
+    ReleaseSRWLockShared(&g_slotLock);
+    *checked = n;
+    *views = v;
+    return changed;
 }
 // Our copy list's body: this pair's staged values of one eye into the slots.
 void RecordSlots(ID3D12GraphicsCommandList* l, int eye, int from = 0, int to = -1) {
     const int n = to < 0 ? g_nSlots.load() : to;
     for (int i = from; i < n; ++i)
         l->CopyBufferRegion(g_slotsBuf, (UINT64)i * kSlotBytes, g_stageBuf, StageOffset(g_ring, eye, i), (UINT64)g_slotUse[i].bytes);
+}
+
+// [stereo] replay_fresh_slots: before the game's ExecuteCommandLists of `lists` (the left pass's, the draw thread): every slot not looked at
+// again yet that one of them binds is read again from the game's buffer; changed since its copy, both eyes' values are staged anew. Returns how
+// many were staged anew (their slots in `idx`: the caller copies the left values into them ahead of the lists); *looked: how many were read.
+int RefreshFor(void* const* lists, unsigned nl, int* idx, int max, uint32_t* looked) {
+    *looked = 0;
+    if (!g_freshNow || !lists || !nl) return 0;
+    int c = 0;
+    alignas(16) uint8_t left[kSlotBytes], right[kSlotBytes];
+    AcquireSRWLockExclusive(&g_slotLock);
+    const int slots = g_nSlots.load();
+    for (int i = 0; i < slots && c < max; ++i) {
+        if (g_slotLooked[i].load(std::memory_order_relaxed)) continue;
+        bool used = g_slotAnyList[i].load(std::memory_order_relaxed);
+        for (int k = 0; k < kSlotLists && !used; ++k) {
+            void* have = g_slotLists[i][k].load(std::memory_order_acquire);
+            if (!have) break;
+            for (unsigned j = 0; j < nl && !used; ++j) used = lists[j] == have;
+        }
+        if (!used) continue;
+        g_slotLooked[i].store(true, std::memory_order_relaxed);
+        SlotUse& u = g_slotUse[i];
+        uint64_t room = 0;
+        uint8_t* cpu = Cpu(u.gameVa, &room);
+        if (!cpu || room < (uint64_t)u.bytes) continue;
+        ++*looked;
+        memcpy(left, cpu, (size_t)u.bytes);
+        const uint64_t h = slotcheck::Hash(left, (size_t)u.bytes);
+        if (h == u.hash) continue;   // (as copied at the binding: nothing to do)
+        AcquireSRWLockShared(&g_keyLock);
+        const Layout lay = g_keys[u.key - 1].lay;
+        ReleaseSRWLockShared(&g_keyLock);
+        MakeEyes(left, right, u.bytes, lay);
+        memcpy(Stage(g_ring, 0, i), left, (size_t)u.bytes);    // (an earlier copy of this pair that has not run yet takes these too: fresher)
+        memcpy(Stage(g_ring, 1, i), right, (size_t)u.bytes);   // the right eye's, for the replay's copy
+        u.hash = h;
+        idx[c++] = i;
+    }
+    ReleaseSRWLockExclusive(&g_slotLock);
+    return c;
+}
+// These slots' staged values of one eye into the slots
+void RecordSlotsAt(ID3D12GraphicsCommandList* l, int eye, const int* idx, int n) {
+    for (int k = 0; k < n; ++k) {
+        const int i = idx[k];
+        l->CopyBufferRegion(g_slotsBuf, (UINT64)i * kSlotBytes, g_stageBuf, StageOffset(g_ring, eye, i), (UINT64)g_slotUse[i].bytes);
+    }
 }
 
 // [debug] replay_scan_go 0 -> 1, once: every copy of the left eye's camera (the view, and the
@@ -785,6 +900,7 @@ void BeginLeft(bool redirect) {
     g_nSlots.store(0);
     ClearSlots();
     g_redirect.store(redirect && g_slotsBuf);
+    g_freshNow = g_redirect.load() && g_freshSlots.load();   // ([stereo] replay_fresh_slots: decided once a pass)
     g_capture.store(true);
 }
 

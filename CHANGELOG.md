@@ -1,5 +1,18 @@
 # What's new in D2R VR
 
+## 0.212.3
+
+A co-op hotfix: joining a friend's game no longer closes your game.
+
+- **Crash fix: the game closed 2-15 s after joining someone's TCP/IP game** (since 0.210, with the swing timer on - the default): the mod
+  asked the game's network from its own timer thread and the game stopped itself (`ASSERT(Thread::IsAppThread())`, exit code
+  0xE0000001). The host rules, the swing timer's hit outcomes and the attack path now talk to the network from the game's own thread.
+- **A debug step no longer hides the sky**: `[debug] patch_hunt` (Ctrl+F8, a hunt for floor patches) is put back to 0 when the game starts -
+  left in the ini it kept the sky, fog, ceilings and distance blur off from one game to the next, with nothing saying why.
+- One pass (Native one pass): new switches for a picture squashed into stripes on some PCs (Settings > Stereo, both under the one-pass
+  tick; the camera read again when the graphics card needs it - off for now, and the position buffers - as before). The log says every
+  10 s how many camera values the game wrote after we copied them.
+
 ## 0.212.0
 
 More frames: the game window no longer stays bigger than the VR picture.
