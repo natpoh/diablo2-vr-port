@@ -18,6 +18,7 @@ struct ID3D12CommandQueue;
 struct ID3D12GraphicsCommandList;
 struct ID3D12Resource;
 struct IDXGISwapChain3;
+struct IDXGISwapChain;
 struct D3D12_RESOURCE_BARRIER;
 struct D3D12_CPU_DESCRIPTOR_HANDLE;
 struct D3D12_VIEWPORT;
@@ -43,6 +44,9 @@ struct Sinks {
     // ([render] resize_drain) the game's ResizeBuffers / ResizeBuffers1 on its swap chain, before the real call and before swapChainChanged:
     // its old buffers are still alive here (the plugin drains the GPU of what still names them, vr/resize_drain.h).
     void (*beforeResize)() = nullptr;
+    // ([render] apply_keep_size, vr/apply_keep_size.h) asked first, on the game's swap chain only: true = this resize is left out - the real call
+    // is not made, S_OK goes back, nothing is freed (and neither beforeResize nor swapChainChanged come).
+    bool (*keepSize)(IDXGISwapChain* sc, unsigned n, unsigned w, unsigned h, unsigned format, unsigned flags) = nullptr;
     // A list of the game's binds render targets: its depth-stencil's resource (nullptr: none, or a view not seen made) and how many colour targets.
     void (*bindDepth)(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colourTargets) = nullptr;
     // A list's barriers (all kinds; the sink looks at the transitions).

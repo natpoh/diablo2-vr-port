@@ -99,6 +99,66 @@ inline float BandLowerShare(Size canvas) {
     const float band = std::min((float)canvas.h, (float)canvas.w * 9.0f / 16.0f);
     return 0.5f * ((float)canvas.h - band) / (float)canvas.h;
 }
+// [render] ui_band_16x9 (0.214.2, Serg: "can the black backing be hidden?"): the menu's panel in front shows only the band - the canvas's top
+// rows, as wide as it, 16:9 high (the canvas's own height if it is not taller) - hung where the band hung on the lowered whole canvas (its centre at
+// the whole canvas's unlowered one), so nothing of it moves; below it nothing but the game's veil was ever drawn. 0 rows: no canvas.
+inline uint32_t BandRows(Size canvas) {
+    if (!canvas.w || !canvas.h) return 0;
+    return std::clamp((uint32_t)((float)canvas.w * 9.0f / 16.0f + 0.5f), 1u, canvas.h);
+}
+// ... and the veil the game lays under a menu (a near-black at one coverage, drawn before the menus) taken out by the HUD shader (xr.cpp kHudShader,
+// VeilOf / Unveil, g_unveil). The idea is d2r-pcvr's (bearstonem, ui_blit.cpp Undim - its leather sheet); the code here is ours. A pixel of the
+// game's interface layer is premultiplied colour over its clear (alpha = the world's share): over the veil (colour B, share Tb) what the game drew
+// (C, T) reads C + B*T, share T*Tb. The veil alone is the most see-through sample that is veil at all - near black, neither clear nor solid -
+// of the band's corners, side middles and top / bottom middles and, on a canvas taller than the band, 5 points along the last row (the game lays
+// nothing out there). The game's veil may not reach all of them (d2r-pcvr saw it cover only the band's left 1920 px of a 3072 canvas): the clear
+// ones never count, and what the game drew over the veil is never more see-through than the veil alone. With the square layout ([render]
+// menu_unveil) the "band" is the whole canvas: its corners and middles. CPU mirrors of the shader, for the tests.
+constexpr int kVeilBandSamples = 8, kVeilBelowSamples = 5, kVeilSamples = kVeilBandSamples + kVeilBelowSamples;
+constexpr float kVeilBlack = 0.02f, kVeilLeast = 0.05f, kVeilMost = 0.98f;
+// Where sample i is, in pixels of a w x h canvas whose band is `rows` high (BandRows); false for none (no row below a band as tall as the canvas).
+inline bool VeilSampleAt(int i, uint32_t w, uint32_t h, uint32_t rows, int* x, int* y) {
+    if (!w || !h || !rows) return false;
+    const int r = (int)w - 1, b = (int)rows - 1, mid = (int)rows / 2, cx = (int)w / 2;
+    const int bx[kVeilBandSamples] = {0, r, 0, r, 0, r, cx, cx}, by[kVeilBandSamples] = {0, 0, b, b, mid, mid, 0, b};
+    if (i >= 0 && i < kVeilBandSamples) { *x = bx[i]; *y = by[i]; return true; }
+    if (i >= kVeilBandSamples && i < kVeilSamples && rows < h) { *x = (int)(w * (uint32_t)(i - kVeilBandSamples + 1) / 6u); *y = (int)h - 1; return true; }
+    return false;
+}
+// Which rows of a menu's panel the veil is looked for in (the shader's g_unveil), 0 for none: the band in force (on a canvas taller than 16:9) -
+// the band's rows; the square layout - the whole canvas, only with [render] menu_unveil (0.214.4, Serg: "the backing off on the square too").
+inline uint32_t UnveilRows(Size canvas, bool bandActive, bool squareKey) {
+    const uint32_t rows = BandRows(canvas);
+    if (!rows) return 0;
+    if (bandActive && rows < canvas.h) return rows;
+    return squareKey ? canvas.h : 0;
+}
+// The veil from `n` samples (premultiplied rgb, alpha the world's share): out = its colour and share; false (out untouched) if none is veil.
+inline bool VeilOf(const float px[][4], int n, float out[4]) {
+    float best[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < n; ++i) {
+        const float through = std::clamp(px[i][3], 0.0f, 1.0f);
+        const bool veil = through > kVeilLeast && through < kVeilMost && std::max(px[i][0], std::max(px[i][1], px[i][2])) < kVeilBlack;
+        if (veil && through > best[3])
+            for (int k = 0; k < 4; ++k) best[k] = k < 3 ? std::max(px[i][k], 0.0f) : through;
+    }
+    if (best[3] < kVeilLeast) return false;
+    for (int k = 0; k < 4; ++k) out[k] = best[k];
+    return true;
+}
+inline float Smooth(float e0, float e1, float x) { const float t = std::clamp((x - e0) / (e1 - e0), 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); }
+// A pixel (premultiplied rgb, share) with the veil taken out: what the game drew alone - nothing at all where only the veil was. The panels'
+// soft drop shadows (black at most ~55 % cover) go with it, as d2r-pcvr found on its sheet: solid black art and anything coloured stay.
+inline void Unveil(const float c[4], const float veil[4], float out[4]) {
+    const float t = std::clamp(std::clamp(c[3], 0.0f, 1.0f) / veil[3], 0.0f, 1.0f);
+    if (t > 1.0f - 1.0f / 512.0f) { out[0] = out[1] = out[2] = 0.0f; out[3] = 1.0f; return; }
+    const float opacity = 1.0f - t;
+    float rgb[3], top = 0.0f;
+    for (int k = 0; k < 3; ++k) { rgb[k] = std::clamp(c[k] - veil[k] * t, 0.0f, opacity); top = std::max(top, rgb[k]); }
+    const float keep = std::max(Smooth(0.5f, 0.6f, opacity), Smooth(0.04f, 0.08f, top / std::max(opacity, 1e-6f)));
+    for (int k = 0; k < 3; ++k) out[k] = rgb[k] * keep;
+    out[3] = 1.0f - opacity * keep;
+}
 inline Size UiCanvas(Size render, bool band = false) { return band ? Size{render.w, std::min(render.h, render.w * 9u / 16u)} : render; }
 // The query's own answer packing: width in the low 32 bits, height in the high (not Pack's).
 inline uint64_t NativeSize(Size s) { return (uint64_t)s.w | (uint64_t)s.h << 32; }

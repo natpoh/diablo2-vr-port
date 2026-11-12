@@ -17,6 +17,7 @@
 #include "../hand_swap.h"   // [hands] left_handed
 #include "../debug_press.h"   // [debug] replay_scan_take: a press, never the start
 #include "../fence_gate.h"   // [stereo] replay_fence_gate
+#include "../apply_keep_size.h"   // [render] apply_keep_size
 
 using namespace D2RL;
 
@@ -609,7 +610,8 @@ void LoadSettings() {
     replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
     replay::g_marksOn.store(std::clamp((int)IniF(L"debug", L"replay_marks", 1.0f), 0, 4));   // how the replayed lists are submitted (replay_groups.h): 0 batched, 1 one by one with a signal after each, 2 one by one, 3 as the game's calls, 4 the same with a signal after each
     replay::g_fxFence.store(IniB(L"render", L"fx_fence", false));   // our effects' constants kept apart by fences (F4)
-    replay::g_resizeDrain.store(IniB(L"render", L"resize_drain", true));   // no replay of a pass the game resized / applied video options in, the GPU drained first (vr/resize_drain.h)
+    replay::g_resizeDrain.store(IniB(L"render", L"resize_drain", true));   // the GPU drained at an Apply / resize / DLSS release (every render type), no replay of a pass recorded across one (vr/resize_drain.h)
+    applykeep::g_gate.on.store(IniB(L"render", L"apply_keep_size", true));   // the game's Apply's resize inside its frame left out (vr/apply_keep_size.h)
     replay::g_dlssBoth.store(IniB(L"stereo", L"replay_dlss", false));
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
@@ -936,6 +938,7 @@ void LoadSettings() {
     g_set.domeFogBakedTopDeg.store(std::clamp(IniF(L"sky", L"dome_fog_baked_top_deg", 11.5f), 1.0f, 60.0f));
     g_set.domeTrueColour.store(IniB(L"sky", L"dome_true_colour", false));
     g_set.domeGainOnce.store(IniB(L"sky", L"dome_gain_once", false));
+    g_set.fxLeanBuild.store(IniB(L"render", L"fx_lean_build", true));   // (live)
     g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
     g_set.phantomRects.store(IniB(L"render", L"phantom_rects", false));   // (our effect's wrist-orb pass in rectangles: vr/phantom_rect.h; 0 = full screen - 0.208 ships it off)
     g_set.domeInGameColour.store(IniB(L"sky", L"dome_in_game_colour", true));

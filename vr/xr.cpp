@@ -225,6 +225,7 @@ struct Cfg {
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
     bool bandIcons = false;   // [render] ui_band_corner_icons: a square and a 16:9 icon over that panel's top right corner switch [render] ui_band_16x9 (vr/band_icons.h); live
     bool vrResUi = true;      // [render] vr_resolution_ui: the band needs its hook - no icons without it
+    bool menuUnveil = true;  // [render] menu_unveil (on since 0.215): the square layout's menu panel without the game's dark veil (the band always without it); live
     int bandLast = 1;         // [render] ui_band_16x9_last: the band's mode (1, 2) the 16:9 icon gives back, kept by the square's click
     bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
     float menuZoomSpeed = menuzoom::kSpeedDefault;   // menu_zoom_speed_mps: metres a second at the stick's full travel
@@ -3208,8 +3209,9 @@ bool MakePointerImage(HCURSOR cur) {
 }
 
 // The pointer as a quad on the flat picture (pose and size of that picture's quad), or false:
-// hidden, outside the game's window, or the game not in front.
-bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out) {
+// hidden, outside the game's window, or the game not in front. `crop` (u0 v0 u1 v1 of the window): the part of it the quad shows
+// ([render] ui_band_16x9: the band of a menu's panel) - the pointer hidden past it; none: the whole window.
+bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out, const float* crop = nullptr) {
     static int why = -1;   // the reason it is not shown, to the log when it changes
     auto no = [&](int w, const char* said) {
         if (w != why) { why = w; LogF("vrcam: openxr - mouse pointer not shown: %s", said); }
@@ -3231,14 +3233,19 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out)
     // (the window may be small, the picture is as big as the game draws it). Where it points is the window's fraction either way.
     vrres::Size game;
     const float picW = vrres::GameSize(g_wnd, &game) ? (float)game.w : (float)rc.right, picH = game ? (float)game.h : (float)rc.bottom;
-    const float fx = (float)p.x / rc.right + (0.5f * n - (float)g_ptr.hotX) / picW;   // the image's middle, as a fraction of the picture
-    const float fy = (float)p.y / rc.bottom + (0.5f * n - (float)g_ptr.hotY) / picH;
+    static const float kWhole[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+    const float* c = crop ? crop : kWhole;
+    const float cw = std::max(c[2] - c[0], 1e-3f), ch = std::max(c[3] - c[1], 1e-3f);
+    const float hx = (float)p.x / rc.right, hy = (float)p.y / rc.bottom;   // the hot spot, as a fraction of the window
+    if (hx < c[0] || hx > c[2] || hy < c[1] || hy > c[3]) return no(6, "outside the part of the window the panel shows (the 16:9 band)");
+    const float fx = ((hx - c[0]) + (0.5f * n - (float)g_ptr.hotX) / picW) / cw;   // the image's middle, as a fraction of the quad
+    const float fy = ((hy - c[1]) + (0.5f * n - (float)g_ptr.hotY) / picH) / ch;
     const XrVector3f off = Rot(pic.pose.orientation, {(fx - 0.5f) * W, (0.5f - fy) * H, 0.003f});   // a hair in front
     *out = pic;
     out->subImage.swapchain = g_ptrAtlas.sc;
     out->subImage.imageRect = {{0, 0}, {g_ptr.n, g_ptr.n}};
     out->pose.position = {pic.pose.position.x + off.x, pic.pose.position.y + off.y, pic.pose.position.z + off.z};
-    out->size = {W * n / picW, H * n / picH};
+    out->size = {W * n / (picW * cw), H * n / (picH * ch)};
     out->layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
     return true;
 }
@@ -3314,6 +3321,9 @@ cbuffer Hud : register(b0) {
   // g_turn 0: as before (the other callers pass zeros)
   float g_turn; float2 g_hero; float g_turnPad;   // g_turnPad: > 0 the last v sampled (the big map: above the toolbar's strip), 0 all
   float4 g_turnM;
+  // [render] ui_band_16x9 / menu_unveil: > 0.5 the game's veil under the menus taken out, looked for in that many rows from the top - the band, or
+  // the whole canvas (a menu's panel; vr/vr_resolution.h UnveilRows / VeilOf / Unveil); the other callers pass 0
+  float g_unveil;
 };
 Texture2D<float4> g_src : register(t0);
 SamplerState g_smp : register(s0);
@@ -3341,6 +3351,37 @@ int2 SplitSource(int2 p) {
 
 float2 TurnedUv(float2 q) { return g_hero + float2(dot(g_turnM.xy, q), dot(g_turnM.zw, q)); }
 
+// The veil the game lays under a menu (near black, one coverage): the most see-through sample that is veil at all of the band's (g_unveil rows:
+// the band, or the whole canvas) corners, side middles and top / bottom middles and 5 points along the canvas's last row below a band; alpha 0:
+// none. vr/vr_resolution.h VeilSampleAt / VeilOf, the same points and numbers (the idea d2r-pcvr's ui_blit.cpp Undim, the code ours).
+float4 VeilOf() {
+  uint w, h;
+  g_src.GetDimensions(w, h);
+  const uint rows = clamp(uint(g_unveil + 0.5), 1u, h);
+  const int r = int(w) - 1, b = int(rows) - 1, mid = int(rows / 2u), cx = int(w / 2u), last = int(h) - 1;
+  const int2 at[13] = {int2(0, 0), int2(r, 0), int2(0, b), int2(r, b), int2(0, mid), int2(r, mid), int2(cx, 0), int2(cx, b),
+                       int2(int(w / 6u), last), int2(int(w * 2u / 6u), last), int2(int(w * 3u / 6u), last),
+                       int2(int(w * 4u / 6u), last), int2(int(w * 5u / 6u), last)};
+  const int n = rows < h ? 13 : 8;
+  float4 best = 0.0;
+  [unroll] for (int i = 0; i < 13; ++i) {
+    const float4 p = g_src.Load(int3(at[i], 0));
+    const float through = saturate(p.a);
+    const bool veil = i < n && through > 0.05 && through < 0.98 && max(p.r, max(p.g, p.b)) < 0.02;
+    if (veil && through > best.a) best = float4(max(p.rgb, 0.0), through);
+  }
+  return best;
+}
+// A pixel with the veil out: what the game drew alone (nothing where only the veil was); the panels' soft black drop shadows go with it.
+float4 Unveil(float4 c, float4 veil) {
+  const float t = saturate(saturate(c.a) / veil.a);
+  if (t > 1.0 - 1.0 / 512.0) return float4(0.0, 0.0, 0.0, 1.0);
+  const float opacity = 1.0 - t;
+  const float3 rgb = clamp(c.rgb - veil.rgb * t, 0.0, opacity);
+  const float keep = max(smoothstep(0.5, 0.6, opacity), smoothstep(0.04, 0.08, max(rgb.r, max(rgb.g, rgb.b)) / max(opacity, 1e-6)));
+  return float4(rgb * keep, 1.0 - opacity * keep);
+}
+
 float4 PSMain(float4 pos : SV_Position) : SV_Target {
   const int2 at = g_split > 0.5 ? SplitSource(int2(pos.xy)) : int2(pos.xy);
   float4 c;
@@ -3359,6 +3400,10 @@ float4 PSMain(float4 pos : SV_Position) : SV_Target {
     c.a = 1.0 - (1.0 - c.a) * edge;   // (alpha is the world's share: the coverage faded at the rim)
   } else {
     c = g_src.Load(int3(at, 0));
+    if (g_unveil > 0.5) {   // the game's veil under the menus out
+      const float4 veil = VeilOf();
+      if (veil.a >= 0.05) c = Unveil(c, veil);
+    }
   }
   float cover = saturate(1.0 - c.a);
   float3 straight = cover > 1e-4 ? saturate(max(c.rgb, 0.0) / cover) : 0.0;
@@ -3475,7 +3520,8 @@ float4 PSBall(float4 pos : SV_Position) : SV_Target {
 )";
 
 constexpr uint32_t kOrbPx = 512;   // the orb's swapchain, square
-constexpr UINT kHudConstants = 20;   // the Hud cbuffer: the 12 every piece passes, the map's turn's 8 (DrawHud's `turn`)
+constexpr UINT kHudTurn = 8;         // the map's turn's constants (DrawHud's `turn`)
+constexpr UINT kHudConstants = 21;   // the Hud cbuffer: the 12 every piece passes, the turn's 8, g_unveil (DrawHud's `unveilRows`)
 constexpr float kOrbSpan = 1.6f;   // the orb's quad, in radii from its centre (kSpan in the shader)
 
 ID3D12RootSignature* g_hudRs = nullptr;
@@ -3629,7 +3675,7 @@ bool EnsureHudOut(HudOut& o, uint32_t w, uint32_t h, const char* what) {
 // One piece drawn into its swapchain's next image, on our list on the game's queue.
 // dw x dh: the corner of the image drawn into (0 = all of it): a chain larger than the picture, the monster bar's.
 // turn: [hud] map_top_down / map_rotate's 8 constants (g_turn, g_hero, pad, g_turnM), or none (zeros: as before).
-bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0, const float* turn = nullptr) {
+bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint32_t dw = 0, uint32_t dh = 0, const float* turn = nullptr, uint32_t unveilRows = 0) {
     if (!dw || dw > o.w) dw = o.w;
     if (!dh || dh > o.h) dh = o.h;
     o.usedAt = GetTickCount64();
@@ -3654,9 +3700,11 @@ bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint3
     l->SetDescriptorHeaps(1, &g_srvHeap);
     l->SetGraphicsRootSignature(g_hudRs);
     l->SetPipelineState(g_hudPso[orb ? 1 : 0]);
-    static const float kNoTurn[kHudConstants - 12] = {};
+    static const float kNoTurn[kHudTurn] = {};
     l->SetGraphicsRoot32BitConstants(0, 12, cb, 0);
-    l->SetGraphicsRoot32BitConstants(0, kHudConstants - 12, turn ? turn : kNoTurn, 12);
+    l->SetGraphicsRoot32BitConstants(0, kHudTurn, turn ? turn : kNoTurn, 12);
+    const float unveilCb = (float)unveilRows;   // (0: none; else the rows the veil is looked for in)
+    l->SetGraphicsRoot32BitConstants(0, 1, &unveilCb, 12 + kHudTurn);
     l->SetGraphicsRootDescriptorTable(1, gpu);
     l->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
     const D3D12_VIEWPORT vp{0.0f, 0.0f, (float)dw, (float)dh, 0.0f, 1.0f};
@@ -3907,16 +3955,16 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
                               powf((look.orb_rgb & 0xFF) / 255.0f, 2.2f),
                               std::clamp(look.orb_zoom, 0.5f, 4.0f), look.orb_alpha > 0.0f ? std::clamp(look.orb_alpha, 0.0f, 1.0f) : 1.0f,
                               (float)split, 0.0f};
-        float turnCb[kHudConstants - 12] = {};
+        float turnCb[kHudTurn] = {};
         const float handZoom = map && g_cfg.mapStickZoom && viewgate::F4() ? g_handZoom : 1.0f;   // [hud] map_stick_zoom: magnified about the hero
         if (turned) {
             const mapturn::Map mt = mapturn::MapFor(turn, (float)src.w, (float)src.h, stretch, (orb ? std::clamp(look.orb_zoom, 0.5f, 4.0f) : 1.0f) * handZoom);
             if (mt.ok) {
-                const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], 0.0f, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
+                const float t[kHudTurn] = {1.0f, mt.hero[0], mt.hero[1], 0.0f, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
                 memcpy(turnCb, t, sizeof turnCb);
             }
         } else if (handZoom > 1.001f) {   // the slanted map, magnified (its own shape; the orb on its ball)
-            const float t[kHudConstants - 12] = {2.0f, 0.5f, 0.5f - mapdir::kMarkerUp, 0.0f, 1.0f / handZoom, 0.0f, 0.0f, 0.0f};
+            const float t[kHudTurn] = {2.0f, 0.5f, 0.5f - mapdir::kMarkerUp, 0.0f, 1.0f / handZoom, 0.0f, 0.0f, 0.0f};
             memcpy(turnCb, t, sizeof turnCb);
         }
         if (!DrawHud(o, src.tex, orb, cb, 0, 0, turnCb)) continue;
@@ -4565,8 +4613,8 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
                         g_panelTexW && g_panelTexH;
         const float share = bandicons::BandShare(g_panelTexW, g_panelTexH);
         if (on && acts) {
-            if (L.hit) reach.AddPoint(u, v, share);
-            if (trig && !L.trigger && !L.btn && !L.lay && !L.kb) reach.AddPress(L.hit, u, v, share);
+            if (L.hit) reach.AddPoint(pu, pv, share);   // (the window's point: the quad shows only the band, its crop)
+            if (trig && !L.trigger && !L.btn && !L.lay && !L.kb) reach.AddPress(L.hit, pu, pv, share);
         }
         const ULONGLONG now = GetTickCount64();
         if (on && !since) since = now;
@@ -4962,12 +5010,12 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     HudOut& o = turned ? g_bigTurnOut : g_hudOut[hud::kNativePanel];   // (a menu's panel's chain: never both at once - a menu puts the map back)
     if (!EnsureHudOut(o, turned ? side : src.w, turned ? side : src.h, turned ? "big map, turned" : "big map")) return nl;
     const float cb[12] = {look.encoded ? 1.0f : 0.0f, 0.0f, (float)src.w / (float)src.h, turned ? (float)side : (float)src.w, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};
-    float turnCb[kHudConstants - 12] = {};
+    float turnCb[kHudTurn] = {};
     if (turned) {
-        const float t[kHudConstants - 12] = {1.0f, mt.hero[0], mt.hero[1], (float)rows / (float)src.h, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
+        const float t[kHudTurn] = {1.0f, mt.hero[0], mt.hero[1], (float)rows / (float)src.h, mt.m[0], mt.m[1], mt.m[2], mt.m[3]};
         memcpy(turnCb, t, sizeof turnCb);
     } else if (bigRest > 1.001f) {
-        const float t[kHudConstants - 12] = {2.0f, hu, hv, (float)rows / (float)src.h, 1.0f / bigRest, 0.0f, 0.0f, 0.0f};
+        const float t[kHudTurn] = {2.0f, hu, hv, (float)rows / (float)src.h, 1.0f / bigRest, 0.0f, 0.0f, 0.0f};
         memcpy(turnCb, t, sizeof turnCb);
     }
     if (!DrawHud(o, src.tex, false, cb, 0, 0, turnCb)) return nl;
@@ -6126,7 +6174,24 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     if (!EnsureHudOut(o, src.w, src.h, "menu panel")) return nl;
     const float cb[12] = {look.encoded ? 1.0f : 0.0f, 0.0f, (float)src.w / (float)src.h, (float)src.w,
                           0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};   // PSMain, whole (no split)
-    if (!DrawHud(o, src.tex, false, cb)) return nl;
+    // [render] ui_band_16x9 in force on a canvas taller than 16:9: the game's veil over its whole interface taken out (vr/vr_resolution.h VeilOf) and,
+    // in front, only the band shown (below) - the dark backing round the menus gone (Serg, 0.214.1). The square layout (the whole canvas): the veil
+    // taken out too with [render] menu_unveil (0.214.4; never cropped - its panels reach anywhere), as the game draws it without.
+    const uint32_t bandRows = vrres::BandRows({src.w, src.h});
+    const bool band = vrres::UiBandActive() && bandRows && bandRows < src.h;
+    const uint32_t unveilRows = vrres::UnveilRows({src.w, src.h}, vrres::UiBandActive(), g_cfg.menuUnveil);
+    if (!DrawHud(o, src.tex, false, cb, 0, 0, nullptr, unveilRows)) return nl;
+    {
+        static int told = -1;
+        const int now = band ? 2 : unveilRows ? 1 : 0;
+        if (told != now) {
+            told = now;
+            if (band) LogF("vrcam: openxr - the menu's panel in a 16:9 band: the game's veil taken out, in front only the band shown (%ux%u of %ux%u) ([render] ui_band_16x9)",
+                           src.w, bandRows, src.w, src.h);
+            else LogF("vrcam: openxr - the menu's panel over the whole canvas (%ux%u): %s", src.w, src.h,
+                      unveilRows ? "the game's veil taken out ([render] menu_unveil=1)" : "as the game draws it ([render] menu_unveil=0)");
+        }
+    }
     const double t = UsNow();
     const bool invUp = g_handInvUp.load();   // [openxr] hand_inventory: away from town, the inventory open
     if (invUp) HandCutStep(src);
@@ -6216,16 +6281,20 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
         panel.pose.position = XV(g_panelSpot.at);
         panel.size = {w, w * (float)src.h / (float)src.w};
     }
-    // [render] ui_band_16x9: the interface fills only the 16:9 band at the canvas's top - the panel lowered so that band hangs where the whole canvas's centre
-    // would (d2r-pcvr's UpperBandOffset); the laser takes the same pose (g_flatShown), so its point on the band is unchanged
-    if (vrres::UiBandActive()) {
-        const float down = vrres::BandLowerShare({src.w, src.h}) * panel.size.height;
-        panel.pose.position = Plus(panel.pose.position, Rot(panel.pose.orientation, {0.0f, -down, 0.0f}));
+    // [render] ui_band_16x9: the interface fills only the 16:9 band at the canvas's top - only that band shown, centred where the whole canvas's centre
+    // would be (as the whole canvas lowered by d2r-pcvr's UpperBandOffset put it, vrres::BandLowerShare): nothing below it, no dark backing (0.214.2).
+    // The laser takes the same quad and its crop (g_flatShown), so its point on the band is unchanged; past the band it points at nothing.
+    FlatShown shown{panel.pose, panel.size, true};
+    if (band) {
+        panel.subImage.imageRect = {{0, 0}, {(int32_t)src.w, (int32_t)bandRows}};
+        panel.size.height = panel.size.width * (float)bandRows / (float)src.w;
+        shown.size = panel.size;
+        shown.crop[3] = (float)bandRows / (float)src.h;
     }
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
-    g_flatShown = FlatShown{panel.pose, panel.size, true};   // where the next frame's laser points
+    g_flatShown = shown;                                     // where the next frame's laser points
     g_panelTexW = src.w; g_panelTexH = src.h;                // ... and how readable it is nearer / farther ([openxr] menu_zoom)
-    if (nl < max && PointerQuad(panel, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+    if (nl < max && PointerQuad(panel, &pointer, shown.crop)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
     if (!P.told) {
         P.told = true;
         LogF("vrcam: openxr - a menu as a panel in front, the world in stereo behind it: %ux%u, %.2f m wide at %.2f m ([openxr] menu_3d)",
@@ -7377,6 +7446,13 @@ void LoadSettings(const wchar_t* ini) {
             Log(g_cfg.bandIcons ? "vrcam: openxr - a menu's panel in F4: a square and a 16:9 icon over its top right corner - the laser's click switches the interface between "
                                   "the whole picture and the 16:9 band ([render] ui_band_corner_icons=1, writes [render] ui_band_16x9)"
                                 : "vrcam: openxr - no layout icons over a menu's panel ([render] ui_band_corner_icons=0)");
+        }
+        g_cfg.menuUnveil = GetPrivateProfileIntW(L"render", L"menu_unveil", 1, ini) != 0;   // [render] menu_unveil (live; on since 0.215)
+        static int saidUnveil = -1;   // (said once at the start either way)
+        if ((int)g_cfg.menuUnveil != saidUnveil) {
+            saidUnveil = g_cfg.menuUnveil;
+            Log(g_cfg.menuUnveil ? "vrcam: openxr - a menu's panel over the whole canvas without the game's dark veil round its panels ([render] menu_unveil=1)"
+                                 : "vrcam: openxr - a menu's panel over the whole canvas as the game draws it, its dark veil kept ([render] menu_unveil=0)");
         }
         g_cfg.nameKeyboard = f(L"name_keyboard", 0.0f) != 0.0f;   // [openxr] name_keyboard (live)
         static int said = -1;

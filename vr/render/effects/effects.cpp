@@ -5,6 +5,7 @@
 #include "../../vrcam_headers.h"
 #include "../../flatvr_feed.h"   // [render] flatvr_feed: FlatVR's picture and depth without ReShade
 #include "../../resize_drain.h"   // [render] resize_drain: the GPU drained before the game resizes or releases DLSS, no stale replay
+#include "../../apply_keep_size.h"   // [render] apply_keep_size: the game's Apply does not resize its swap chain inside its frame
 #include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 at the load (shared/)
 #include "../../ecl_hook.h"   // [fog] game_fog_before_fx: the submission order seen (fogfx::OnExecute, the tap)
 #include "../../phantom_rect.h"   // [render] phantom_rects: the vignette pass only where its carriers are
@@ -150,7 +151,8 @@ int __cdecl HookEval(void* cmdList, const NgxHandle* h, const void* params, void
 }
 int __cdecl HookRelease(NgxHandle* h) {
     // [render] resize_drain: the game releases a feature (a DLSS mode or render size change in its video options) after waiting for its own
-    // frame - not for our replay of that frame, which evaluates this feature again (and the pass now recorded would): drained first, not replayed
+    // frame - not for our replay of that frame, which evaluates this feature again (and the pass now recorded would): drained first, not replayed.
+    // Since 2026-11-12 in every render type (two passes too: crash group E2), the game's queue drained when an Apply / a resize came just before.
     resizedrain::Event(resizedrain::Why::kDlssRelease);
     NgxHandle* twin = nullptr;
     AcquireSRWLockExclusive(&g_lock);
@@ -158,8 +160,20 @@ int __cdecl HookRelease(NgxHandle* h) {
         if (g_twins[i].game == h) { twin = g_twins[i].twin; g_twins.erase(g_twins.begin() + i); break; }
     g_noTwin.erase(std::remove(g_noTwin.begin(), g_noTwin.end(), h), g_noTwin.end());
     ReleaseSRWLockExclusive(&g_lock);
-    if (twin) OrigRelease(twin);
-    return OrigRelease(h);
+    const unsigned gameId = h ? h->Id : 0, twinId = twin ? twin->Id : 0;
+    gpufault::Note("dlss: the game releases its feature (its id, the right eye's instance id or 0)", gameId, twinId);
+    // the right eye's twin first (it was made with the game's feature and is evaluated in the same lists), then the game's own; the twin is made
+    // again only with the game's next feature (HookCreate, after its creation) - each step in the log
+    const int rt = twin ? OrigRelease(twin) : 0;
+    const int r = OrigRelease(h);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 24)
+        LogF("vrcam: DLSS - the game releases its feature %u%s: %s (0x%08X); the right eye's instance is made again only with the game's next one", gameId,
+             twin ? "" : " (no right eye's instance with it)", twin ? (Ok(rt) ? "the right eye's instance released first" : "the right eye's instance NOT released") : "released",
+             (unsigned)r);
+    if (twin) gpufault::Note("dlss: the game's feature released, the right eye's instance first");
+    else gpufault::Note("dlss: the game's feature released");
+    return r;
 }
 
 // Once the driver's NGX is in the process (the game loads it when it starts NGX).
@@ -1342,6 +1356,12 @@ template <class RT> bool ApplySkyPictures(RT* rt) {
 // From here it takes effect on the next frame, with everything in place.
 // [stereo] pair_fx_sync: a fence after each pair's effects (pairfx): vr/render/stereo/pair_pace.cpp
 
+// Anything of ours drawn through D2R_DepthFog.fx this frame - its techniques are on only then (EffectsBegin); with [render] fx_lean_build the
+// native runtime is not even begun (nor built) while this is false (Effects)
+bool EffectWantedNow() {
+    return CampfireSparksWanted() || GripDrawWanted() || FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
+}
+
 // After each present's effects: the techniques switched for the next one, the sky's pictures as definitions. RT: ReShade's runtime or
 // [render] no_reshade's own (vr/fx_native.h).
 template <class RT> void EffectsFinish(RT* rt) {
@@ -1360,7 +1380,7 @@ template <class RT> void EffectsFinish(RT* rt) {
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = CampfireSparksWanted() || GripDrawWanted() || FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
+    const bool want = EffectWantedNow();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -1540,7 +1560,10 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.planesStrength = n.strength;
             fp.planesSoft = g_set.gameFogPlanesSoft.load();
         }
-        if (!fp.ours) fp.cover = GameFogCoverNow();   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off; F3 full width from the head above)
+        if (!fp.ours) fp.cover = GameFogCoverNow();
+        // the part of the target the scene is drawn in (DLSS: 0.667 x 0.667 at the top left) - the step's rays from it (renderscale's last share)
+        fp.part[0] = renderscale::g_last[0];
+        fp.part[1] = renderscale::g_last[1];   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off; F3 full width from the head above)
         fogfx::Configure(fp);
         fogfx::Frame();
         {   // the submission order: the scene's state followed through the game's direct queue (the tap beside the replay's observer), once
@@ -1983,7 +2006,28 @@ void Effects(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     }();
     (void)timed;
     ApplySkyPictures(g_fx);   // the pictures' definitions before the first build too (a change builds it again)
-    if (!g_fx->Begin(dev, bb)) {
+    // [render] fx_lean_build: nothing of ours drawn through the effect this frame - not begun, so no build of it starts (a new size, the menus'
+    // 16:9, the Auto tuning's steps: 53 shaders and ~40 s of compile threads each, for nothing - playful_pony's 0.214.0, 2026-11-12)
+    const bool lean = g_set.fxLeanBuild.load();
+    g_fx->SetLean(lean);
+    const bool wanted = !lean || EffectWantedNow();
+    {
+        static int told = -1;
+        if (lean && (wanted ? 1 : 0) != told) {
+            told = wanted ? 1 : 0;
+            static int lines = 0;
+            if (lines++ < 12)
+                LogF("vrcam: native effects - %s ([render] fx_lean_build)", wanted ? "an effect of ours is wanted: D2R_DepthFog.fx begun (built for this size if it is not yet)"
+                                                                               : "nothing of ours drawn through D2R_DepthFog.fx now: not begun, no build started");
+        }
+    }
+    if (!wanted) {
+        g_fx->Idle();
+        hud::SetPictureReady(false);   // (the toolbar / map not taken out of the picture: nothing draws them back)
+    }
+    if (!wanted || !g_fx->Begin(dev, bb)) {
+        if (!wanted) g_fxWaitSince.store(0, std::memory_order_relaxed);   // (not waiting for a build: none is wanted)
+        else
         if (!g_fxWaitSince.load(std::memory_order_relaxed)) g_fxWaitSince.store(GetTickCount64());
         ID3D12GraphicsCommandList* l = domeatlas::Ours() ? natived3d::OpenList(dev) : nullptr;
         DomeAtlas(dev, q, l, false);
@@ -2099,6 +2143,27 @@ void SwapChainChanged() {
 }
 // [render] resize_drain: the game's swap chain is about to be resized (its old buffers still alive) - vr/resize_drain.h
 void BeforeResize() { resizedrain::Event(resizedrain::Why::kResize); }
+// [render] apply_keep_size (vr/apply_keep_size.h): the game's resize right after its Apply, from inside its frame - left out while the buffers already have
+// the render size (true). Every resize after an Apply is told (the first 24), kept or not.
+bool KeepSize(IDXGISwapChain* sc, unsigned n, unsigned w, unsigned h, unsigned format, unsigned flags) {
+    uint64_t at = 0;
+    if (!applykeep::g_gate.Take(&at)) return false;   // not right after an Apply: nothing to judge, nothing to say
+    DXGI_SWAP_CHAIN_DESC d{};
+    if (FAILED(sc->GetDesc(&d))) return false;
+    const applykeep::Chain now{d.BufferDesc.Width, d.BufferDesc.Height, (uint32_t)d.BufferDesc.Format, d.BufferCount, d.Flags};
+    const applykeep::Chain ask{w, h, format, n, flags};
+    const vrres::Size force = vrres::InForce();
+    const uint64_t since = GetTickCount64() - at;
+    const applykeep::Why why = applykeep::Judge(applykeep::g_gate.on.load(), true, since, force.w, force.h, now, ask);
+    static std::atomic<int> told{0};
+    if (told.fetch_add(1) < 24)
+        LogF("vrcam: apply - the game resizes its swap chain %llu ms after its Apply (Options > Video), from inside its frame: %ux%u -> %ux%u (0 = the window's), "
+             "the render size %ux%u (0 = none) - %s%s", (unsigned long long)since, now.w, now.h, w, h, force.w, force.h, applykeep::WhyText(why),
+             why == applykeep::Why::kKeep ? " ([render] apply_keep_size: nothing freed under the frame's lists; the render size is asked for again in 0.5 s, "
+                                            "between frames)" : "");
+    if (why == applykeep::Why::kKeep) gpufault::Note("game: its Apply's resize left out (apply_keep_size): the buffers kept");
+    return why == applykeep::Why::kKeep;
+}
 void BindDepth(ID3D12GraphicsCommandList* cl, ID3D12Resource* ds, unsigned colour) {
     scenedepth::OnBindNative(ds, colour);
     renderscale::OnBindNative(cl, ds);
@@ -2161,6 +2226,7 @@ void Install() {
     k.present = &Present;
     k.swapChainChanged = &SwapChainChanged;
     k.beforeResize = &BeforeResize;
+    k.keepSize = &KeepSize;
     k.bindDepth = &BindDepth;
     k.barrier = &Barrier;
     k.viewport = &Viewport;

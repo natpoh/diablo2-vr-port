@@ -66,6 +66,14 @@ int main() {
     CHECK(Next(true, true, false, true) == Job::None);
     CHECK(Next(false, false, false, false) == Job::None);
     CHECK(Next(false, true, true, false) == Job::None);   // tried (failed), nothing to warm: no retry every present
+    // [render] fx_lean_build (playful_pony 0.214.0, i5-11600K 12 threads: 8 compile threads and a warming of every size built before):
+    // a quarter of the processors, 1 or 2, and no warming at all - the size in use is still built first, nothing after it
+    CHECK(LeanThreads(12) == 2 && LeanThreads(8) == 2 && LeanThreads(32) == 2);
+    CHECK(LeanThreads(6) == 1 && LeanThreads(4) == 1 && LeanThreads(1) == 1 && LeanThreads(0) == 1);
+    CHECK(WarmAllowed(false) && !WarmAllowed(true));
+    CHECK(Next(false, true, false, WarmAllowed(true)) == Job::InUse);   // lean: the size in use built
+    CHECK(Next(false, false, false, WarmAllowed(true)) == Job::None);   // ... and no warming after it, sizes left or not
+    CHECK(Next(false, false, false, WarmAllowed(false)) == Job::Warm);  // off: as before
     if (g_fail) { std::printf("fx_build_order_test: %d FAILED\n", g_fail); return 1; }
     std::printf("fx_build_order_test: the size in use built first, the sizes built before warmed after it: all passed\n");
     return 0;

@@ -268,6 +268,7 @@ void SwapchainMade(uint32_t width, uint32_t height, bool ok) {
     }
 }
 bool Active() { return (bool)g_ctl.InForce(); }
+Size InForce() { return g_ctl.InForce(); }
 bool GameSize(HWND window, Size* out) {
     const Size s = g_window.Logical(window);
     if (!s || !out) return false;

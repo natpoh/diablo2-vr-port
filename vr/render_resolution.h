@@ -63,6 +63,8 @@ bool UiBandActive();
 
 // A size is in force (asked for; the game may still be taking it) - the depth pick must not take a shadow map for the picture.
 bool Active();
+// The size in force ({} = none): [render] apply_keep_size (vr/apply_keep_size.h). Any thread.
+Size InForce();
 // The game's pixel space for this window while a size is in force (the window's real client area is another size).
 bool GameSize(HWND window, Size* out);
 

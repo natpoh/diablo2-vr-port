@@ -226,6 +226,7 @@ struct Settings {
     std::atomic<bool>  domeTrueColour{false};   // [sky] dome_true_colour: the game's dome brought to our sky's colours (D2R_DepthFog.fx DomeSeen / DomeLookOf)
     std::atomic<bool>  effectWorld{true};       // [render] effect_world: our effect's sky and fog passes (off: only its overlays and interface)
     std::atomic<bool>  phantomRects{true};      // [render] phantom_rects: the vignette pass drawn only where it can change the picture (vr/phantom_rect.h)
+    std::atomic<bool>  fxLeanBuild{true};      // [render] fx_lean_build: D2R_DepthFog.fx built only while an effect of ours wants it, no warming, 1-2 compile threads (vr/fx_build_order.h)
     std::atomic<bool>  domeGainOnce{false};     // [sky] dome_gain_once: that measure taken once per area and period, kept in d2r_vr_dome_gain.txt
     std::atomic<bool>  domeFogHorizon{true};   // [sky] dome_fog_horizon: the game's dome's low part into the act's fog colour (D2R_DepthFog.fx DomeHorizon)
     // [sky] dome_fog_baked / dome_fog_baked_strength: with the game's fog, the dome's low part baked into the fog's own colour (vr/sky/dome_atlas.h

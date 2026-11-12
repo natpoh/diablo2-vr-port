@@ -1208,13 +1208,19 @@ void BeforeResize(IDXGISwapChain* sc) {
     if (g_sinks.beforeResize) g_sinks.beforeResize();
     if (g_sinks.swapChainChanged) g_sinks.swapChainChanged();
 }
+// [render] apply_keep_size: the game's Apply resizing in the middle of its frame - left out when the sink says so (vr/apply_keep_size.h)
+bool KeepSize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags) {
+    return sc == g_sc.load() && g_sinks.keepSize && g_sinks.keepSize(sc, n, w, h, (unsigned)f, flags);
+}
 HRESULT STDMETHODCALLTYPE HookResize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags) {
     if (sc == g_sc.load()) TellResize(sc, w, h, f, n);
+    if (KeepSize(sc, n, w, h, f, flags)) return S_OK;
     BeforeResize(sc);
     return g_origResize(sc, n, w, h, f, flags);
 }
 HRESULT STDMETHODCALLTYPE HookResize1(IDXGISwapChain3* sc, UINT n, UINT w, UINT h, DXGI_FORMAT f, UINT flags, const UINT* mask, IUnknown* const* qs) {
     if (sc == g_sc.load()) TellResize(sc, w, h, f, n);
+    if (KeepSize(sc, n, w, h, f, flags)) return S_OK;
     BeforeResize(sc);
     return g_origResize1(sc, n, w, h, f, flags, mask, qs);
 }

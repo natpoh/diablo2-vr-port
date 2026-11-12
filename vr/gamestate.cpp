@@ -47,6 +47,7 @@
 #include "point_cast_wire.h"
 #include "render_resolution.h"
 #include "resize_drain.h"   // [render] resize_drain: the game's video options applied - the replay drained and paused first
+#include "apply_keep_size.h"   // [render] apply_keep_size: the Apply's own resize in the middle of the game's frame left out
 #include "sigscan.h"
 #include "minimap_side.h"
 #include "map_zoom.h"   // [hud] map_stick_zoom: the big map's zoom, the game's own (bigzoom, below)
@@ -1105,6 +1106,9 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
         // [render] resize_drain (vr/resize_drain.h): before the game applies them - it frees its targets, swap chain buffers and DLSS features
         // after waiting for its own frame only, not for our replay of it (crash group E). Nothing with the tick or the replay off.
         resizedrain::Event(resizedrain::Why::kApply);
+        // [render] apply_keep_size (vr/apply_keep_size.h): the resize the game makes next, from inside this frame, judged against the Apply's time
+        // (taken after the drain above: its wait is not the game's)
+        applykeep::g_gate.Applied(GetTickCount64());
         vrres::OptionsApplied();
     }
     // [hud] notice_card (vr/notice_card.h): a quest update or a level-up - the notice's panel opening, a message sent to it ('NotificationMessage'

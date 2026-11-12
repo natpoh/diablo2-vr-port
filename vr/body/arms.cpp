@@ -516,7 +516,10 @@ void PushArms() {
                  in.grip[1] < 0.0f ? "always (bridge sends no grip - older than 0.13)" : "while its grip is held",
                  in.leftHilt ? " (on the hilt, does not turn it)" : "");
         }
-        told = now;
+        // (told again only once the staff is put away or another weapon taken: with [weight] off the hook's axis comes and goes, and each
+        // return logged the line again - ~44 a minute in playful_pony's 0.214.0 log, at ~34 ms a line there)
+        if (now) told = true;
+        else if (!in.staff) told = false;
         // which bone axis the crossbow's stock was laid along (skeletons GunFrame) - it jumped with the grip
         static int toldAxis = 0;
         if (const int ax = now ? skel::GunAxis() : 0; ax && ax != toldAxis) {

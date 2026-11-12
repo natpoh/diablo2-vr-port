@@ -1630,25 +1630,49 @@ bool WaitLastReplay(unsigned ms) {
     }
     return done;
 }
+std::atomic<uint64_t> g_lastApplyOrResizeMs{0};   // GetTickCount64 of the last Apply / resize: a DLSS release soon after is the Apply's (the game alive)
 void ResizeEvent(resizedrain::Why why) {
-    if (!g_resizeDrain.load() || !g_on.load() || !g_want.load()) return;
-    g_resizes.fetch_add(1);
+    if (!g_resizeDrain.load()) return;
+    // Since 2026-11-12 in every render type (crash group E2: two passes, the replay off, the GPU hung after Apply): the drain below always; what is
+    // the replay's (the pass now recorded not replayed, the settle started again) only with it on.
+    const bool replaying = g_on.load() && g_want.load();
+    if (replaying) g_resizes.fetch_add(1);
     g_resizeWhy[(int)why].fetch_add(1);
+    const uint64_t nowMs = GetTickCount64();
+    const uint64_t lastMs = g_lastApplyOrResizeMs.load();
+    if (why != resizedrain::Why::kDlssRelease) g_lastApplyOrResizeMs.store(nowMs);
     const double t0 = pairtime::UsNow();
-    // the last replay - what escapes the game's own frame fences - finished first
-    bool done = WaitLastReplay(2000);
-    // and inside the game's ResizeBuffers (its swap chain and queue alive for sure there) the whole queue: DXGI waits for it itself on the plain
-    // runtime, not under every layer (the D3D12 debug layer's did not: tools/resize_drain_test.cpp). Not at a DLSS release or an Apply: the
-    // game may release its features as it quits, its queue already gone - our fence above is ours.
-    if (why == resizedrain::Why::kResize)
-        if (ID3D12CommandQueue* q = natived3d::GameQueue()) done = g_resizeQueue.Drain(q, 2000) && done;
+    // (each step into the GPU fault report's flight recorder, before and after: a lost device's report says which one it stopped in)
+    gpufault::Note("resize drain: begins (why: 0 resize, 1 DLSS release, 2 Apply; the replay on)", (uint64_t)why, replaying ? 1 : 0);
+    // 1. the last replay - what escapes the game's own frame fences - finished first (our fence: nothing to wait for when no replay ran)
+    const Pt lastReplay = g_lastReplay;
+    gpufault::Note("resize drain: waiting for our last replay (its fence value, reached)", lastReplay.v, lastReplay.f ? lastReplay.f->GetCompletedValue() : 0);
+    const bool replayDone = WaitLastReplay(2000);
+    const double t1 = pairtime::UsNow();
+    // 2. the game's queue (its swap chain's, alive while the swap chain is): everything queued so far done on the GPU - at its Apply, inside its
+    // ResizeBuffers (DXGI waits for it too on the plain runtime; not under every layer: tools/resize_drain_test.cpp) and at a DLSS release that
+    // comes within 5 s of an Apply / a resize (the game quitting may release its features with its queue already gone: not then).
+    ID3D12CommandQueue* q = natived3d::GameQueue();
+    const bool queueAlive = why != resizedrain::Why::kDlssRelease || (lastMs && nowMs - lastMs < 5000);
+    bool queueDone = true;
+    double queueMs = 0.0;
+    if (q && queueAlive) {
+        gpufault::Note("resize drain: draining the game's queue (our fence asked before, reached)", g_resizeQueue.Asked(), g_resizeQueue.Reached());
+        queueDone = g_resizeQueue.Drain(q, 2000, &queueMs);
+        gpufault::Note("resize drain: the game's queue (our fence asked, reached)", g_resizeQueue.Asked(), g_resizeQueue.Reached());
+    }
+    gpufault::Note("resize drain: ends (replay done, queue done)", replayDone ? 1 : 0, queueDone ? 1 : 0);
+    const bool done = replayDone && queueDone;
     const double ms = (pairtime::UsNow() - t0) / 1000.0;
     g_resizeDrains.fetch_add(1);
     if (!done) g_resizeLate.fetch_add(1);
     static std::atomic<int> told{0};
-    if (told.fetch_add(1) < 12 || !done)
-        LogF("vrcam: replay - %s ([render] resize_drain): the GPU %s in %.1f ms; the pass now recorded is not replayed, two passes until the "
-             "area settles again", resizedrain::WhyText(why), done ? "done with the last replay" : "NOT done in 2 s (the GPU is likely hung): went on", ms);
+    if (told.fetch_add(1) < 24 || !done)
+        LogF("vrcam: resize drain - %s ([render] resize_drain, the replay %s): our last replay %s (%.1f ms); the game's queue %s (%.1f ms)%s; %.1f ms in all",
+             resizedrain::WhyText(why), replaying ? "on" : "off", replayDone ? "done" : "NOT done in 2 s (the GPU is likely hung): went on",
+             (t1 - t0) / 1000.0, !q ? "not known" : !queueAlive ? "not waited for (no Apply / resize just before: the game may be quitting)"
+                                 : queueDone ? "done" : "NOT done in 2 s (the GPU is likely hung): went on", queueMs,
+             replaying ? "; the pass now recorded is not replayed, two passes until the area settles again" : "", ms);
 }
 void AreaChanged() {
     g_areaChanges.fetch_add(1);

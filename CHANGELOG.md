@@ -1,5 +1,33 @@
 # What's new in D2R VR
 
+## 0.215.0
+
+Fixes: big lags on weaker PCs, no more hang when you apply the video options in VR, the sky no longer cut to a circle with DLSS, and the
+menus without the game's dark backing.
+
+- **Big lags on weaker PCs: D2R VR no longer builds its effect shaders in the background when its own effects are off, and never uses
+  all CPU cores for it** (Settings, "Build the effects' shaders only when needed", on - `[render] fx_lean_build`): every new picture size
+  started about 50 shader builds on all processors but one, and the sizes built before were warmed again, even with our sky, fog and
+  ceiling off - a 6-core PC with a GTX 1650 fell to 1-4 frames a second. Now our effect is built only while something of it is on,
+  never for other sizes in advance, on one or two threads at the lowest priority. Also: two log lines repeated every frame with
+  `[weight]` off now come once.
+
+- **Fix: the game no longer hangs a few seconds after Apply in its video options in VR** (crash reports of the last days, two passes,
+  `DEVICE_HUNG`): with a render size in force the game resized its picture to its window in the middle of a frame, and a part of that
+  frame was then drawn into the freed picture. That one resize is left out while the picture already has the render size, and the
+  render size is asked for again half a second later, between frames (Settings, "... and the game's Apply keeps the picture's size",
+  on - `[render] apply_keep_size`). The graphics card also finishes its queue first at every Apply, resize or DLSS release now, in every
+  render type (`[render] resize_drain`, on; before only with one pass).
+- **Fix: with DLSS on, the game's sky no longer shows only inside a circle** (fog before the effects): DLSS draws the scene into a part of
+  its pictures, and the fog's distances were worked out over the whole picture, so off the middle the sky counted as far ground and got
+  the fog's colour.
+- **Fix: the menus without the dark backing** (Settings, "Menus without the dark backing", on - `[render] menu_unveil`): while a menu
+  or a panel (the inventory, the stash, a trader...) hangs in front of you, the see-through dark layer the game lays under it is taken
+  out - no dark frame round the panels, no strip above the tabs, nothing below the toolbar; the world shows round them. Tooltips keep
+  their own background. Untick it to have the menus as the game draws them.
+- **Menus laid out 16:9 without the dark frame** (the 0.214 option, off by default - `[render] ui_band_16x9`): only the 16:9 band is
+  shown in front of you and the game's dark layer is taken out; the laser, the layout icons and the mouse pointer follow the band.
+
 ## 0.214.0
 
 Two passes by default, so the graphics card no longer hangs in one pass, and the game's own render code runs faster.

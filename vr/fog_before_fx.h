@@ -93,6 +93,10 @@ struct Params {
     // [fog] game_fog_cover: at or past this distance (world units) the fog's colour whole - the world, the hair and foliage, the particles
     // (their light out); 0 = the fog's own curve all the way (as before). The game's fog only
     float cover = 0.0f;
+    // The share of the target the game draws its scene in (fx::renderscale: an upscaler - DLSS at 0.667 draws into the top-left 2/3): each
+    // pixel's ray, its distance and the dome's test, from that part (1 x 1 without an upscaler: as before). 2026-11-12: with DLSS the dome
+    // showed only in a circle, the rest the fog's colour ([fog] game_fog_cover)
+    float part[2] = {1.0f, 1.0f};
     int planes = 0;
     float planesStart = 55.0f, planesEnd = 140.0f, planesStrength = 1.0f, planesSoft = 1.0f;
 };

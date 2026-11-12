@@ -146,6 +146,12 @@ void NoteAimSource(const aimsource::Out& o, int hand) {
     static std::atomic<int> told{-1};
     const int key = (o.aims ? 1 : 0) | ((int)o.src << 1) | (hand << 4) | (o.leftOn ? 64 : 0);
     if (told.exchange(key) == key) return;
+    // (a source told within the last 30 s not told again on its return: with [weight] off the hook's staff axis comes and goes and each turn
+    // was a line - ~19 a minute in playful_pony's 0.214.0 log)
+    static std::atomic<uint64_t> toldAt[128] = {};
+    const uint64_t nowMs = GetTickCount64();
+    const uint64_t last = toldAt[key & 127].exchange(nowMs);
+    if (last && nowMs - last < 30000) return;
     const char* hn = hand ? "left" : "right";
     if (!o.aims) LogF("aim: the %s controller's own direction (%s)", hn, o.why);
     else if (o.src == aimsource::Src::LeftToRight) LogF("aim: left->right controllers (%s)", o.why);

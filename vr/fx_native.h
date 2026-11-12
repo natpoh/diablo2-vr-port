@@ -102,6 +102,12 @@ public:
     // The frame's start, with its back buffer: true when a build for its size is there - the uniforms may be set, Render may draw. The first
     // call of a size (or after a definition changed) starts a build in the background; false till it is there.
     bool Begin(ID3D12Device* dev, ID3D12Resource* bb);
+    // [render] fx_lean_build: a frame nothing of ours draws through the effect - in place of Begin: no build starts, nothing is begun (Render and
+    // RenderTechnique draw nothing this frame). The build in use, if any, is kept for when it is wanted again.
+    void Idle();
+    // [render] fx_lean_build (live): no warming of the sizes built before; the next builds on LeanThreads compile threads at the lowest priority
+    // (vr/fx_build_order.h). Off: as before (the processors less one, at most 8, below normal; the sizes built before warmed).
+    void SetLean(bool on);
     // The techniques that are on, into bb (in PRESENT before and after) on list (open; the caller submits it on the game's queue). False:
     // nothing recorded (no Begin this frame, or none on).
     bool Render(ID3D12GraphicsCommandList* list, ID3D12Resource* bb);

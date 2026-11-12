@@ -6,6 +6,7 @@
 // 4K with a 1920 square and a 2048 render size (all reachable as it was), a 1080p and a 1440p monitor with the same shipped 1920 square (rows out
 // of reach before the fit, none after), the window the start cut leaves under the taskbar, a monitor left of the main one. Run: laser_reach_test.exe.
 #include <cstdio>
+#include <initializer_list>
 #include <vector>
 
 #include "../../vr/laser_reach.h"
@@ -225,6 +226,75 @@ static void TestUiBand() {
     CHECK(BandLowerShare({3840, 2160}) == 0.0f);                      // 16:9: nothing to lower
     CHECK(std::fabs(BandLowerShare({2112, 2304}) - 0.5f * (2304 - 1188) / 2304.0f) < 1e-6f);   // the band's centre where the canvas's was
     CHECK(BandLowerShare({0, 0}) == 0.0f);
+    // 0.214.2: the panel in front shows only the band - its rows, centred where the lowered whole canvas put the band (the canvas's centre)
+    CHECK(BandRows({2112, 2304}) == 1188u);
+    CHECK(BandRows({3840, 2160}) == 2160u);                               // 16:9: the whole canvas (no crop)
+    CHECK(BandRows({3840, 2000}) == 2000u);                               // wider than 16:9: never more rows than it has
+    CHECK(BandRows({0, 0}) == 0u);
+    CHECK(BandRows({1, 1}) == 1u);
+    for (Size c : {Size{2112, 2304}, Size{2048, 2048}, Size{1920, 1920}, Size{2016, 2240}}) {
+        const float H = 1.0f, B = (float)BandRows(c) / (float)c.h;      // heights as shares of the whole canvas's
+        const float bandCentre = -BandLowerShare(c) * H + 0.5f * (H - B);   // on the lowered whole canvas, from the unlowered centre
+        CHECK(std::fabs(bandCentre) < 0.5f / (float)c.h);                 // the cropped quad centred there: nothing moves (half a row)
+    }
+    // the veil's samples: the band's corners and side middles, then 5 along the last row below a band shorter than the canvas
+    int x = -1, y = -1;
+    CHECK(VeilSampleAt(0, 2112, 2304, 1188, &x, &y) && x == 0 && y == 0);
+    CHECK(VeilSampleAt(3, 2112, 2304, 1188, &x, &y) && x == 2111 && y == 1187);
+    CHECK(VeilSampleAt(5, 2112, 2304, 1188, &x, &y) && x == 2111 && y == 594);
+    CHECK(VeilSampleAt(6, 2112, 2304, 1188, &x, &y) && x == 1056 && y == 0);          // the top middle
+    CHECK(VeilSampleAt(7, 2112, 2304, 1188, &x, &y) && x == 1056 && y == 1187);       // the band's bottom middle
+    CHECK(VeilSampleAt(8, 2112, 2304, 1188, &x, &y) && x == 352 && y == 2303);
+    CHECK(VeilSampleAt(12, 2112, 2304, 1188, &x, &y) && x == 1760 && y == 2303);
+    CHECK(!VeilSampleAt(13, 2112, 2304, 1188, &x, &y));
+    CHECK(!VeilSampleAt(8, 3840, 2160, 2160, &x, &y));                    // 16:9: nothing below the band
+    CHECK(!VeilSampleAt(0, 0, 0, 0, &x, &y));
+    // the square layout ([render] menu_unveil): the whole canvas's corners and middles, nothing "below"
+    CHECK(VeilSampleAt(3, 2112, 2304, 2304, &x, &y) && x == 2111 && y == 2303);
+    CHECK(VeilSampleAt(5, 2112, 2304, 2304, &x, &y) && x == 2111 && y == 1152);
+    CHECK(VeilSampleAt(7, 2112, 2304, 2304, &x, &y) && x == 1056 && y == 2303);
+    CHECK(!VeilSampleAt(8, 2112, 2304, 2304, &x, &y));
+    // which rows the veil is looked for in: the band in force - its rows (key or not); the square layout - the whole canvas with the key, else none
+    CHECK(UnveilRows({2112, 2304}, true, false) == 1188u);
+    CHECK(UnveilRows({2112, 2304}, true, true) == 1188u);
+    CHECK(UnveilRows({2112, 2304}, false, false) == 0u);                   // menu_unveil 0: as the game draws it (0.214.3)
+    CHECK(UnveilRows({2112, 2304}, false, true) == 2304u);
+    CHECK(UnveilRows({3840, 2160}, true, false) == 0u);                    // a 16:9 canvas: no band crop, the key decides
+    CHECK(UnveilRows({3840, 2160}, true, true) == 2160u);
+    CHECK(UnveilRows({0, 0}, true, true) == 0u);
+    // the veil: the most see-through near-black sample, neither clear nor solid; the clear ones (the veil not reaching there) never count
+    float px[kVeilSamples][4] = {};
+    auto set = [&](int i, float r, float a) { px[i][0] = r; px[i][1] = 0.0f; px[i][2] = 0.0f; px[i][3] = a; };
+    for (int i = 0; i < kVeilSamples; ++i) set(i, 0.0f, 0.45f);
+    float veil[4] = {};
+    CHECK(VeilOf(px, kVeilSamples, veil) && std::fabs(veil[3] - 0.45f) < 1e-6f);
+    set(1, 0.0f, 1.0f); set(3, 0.0f, 1.0f); set(5, 0.0f, 1.0f);            // the right edge clear (the veil only on the left)
+    set(0, 0.0f, 0.0f);                                                    // a corner under solid black art
+    set(2, 0.6f, 0.3f);                                                    // a coloured pixel (art) there
+    set(4, 0.0f, 0.3f);                                                    // the veil under a translucent panel's edge: less see-through
+    CHECK(VeilOf(px, kVeilSamples, veil) && std::fabs(veil[3] - 0.45f) < 1e-6f);
+    for (int i = 0; i < kVeilSamples; ++i) set(i, 0.0f, 1.0f);
+    CHECK(!VeilOf(px, kVeilSamples, veil));                                // no veil anywhere: left as it is
+    for (int i = 0; i < kVeilSamples; ++i) set(i, 0.3f, 0.45f);
+    CHECK(!VeilOf(px, kVeilSamples, veil));                                // not black: never a veil
+    // a pixel unveiled (veil black, 45 % see-through)
+    const float v[4] = {0.0f, 0.0f, 0.0f, 0.45f};
+    float out[4];
+    const float empty[4] = {0.0f, 0.0f, 0.0f, 0.45f};
+    Unveil(empty, v, out); CHECK(out[3] == 1.0f && out[0] == 0.0f);        // only the veil: nothing at all
+    const float art[4] = {0.5f, 0.4f, 0.3f, 0.0f};
+    Unveil(art, v, out); CHECK(out[3] == 0.0f && out[0] == 0.5f);          // solid art: as it is
+    const float tip[4] = {0.05f, 0.05f, 0.05f, 0.09f};                     // a dark 80 % tooltip over the veil
+    Unveil(tip, v, out); CHECK(std::fabs(out[3] - 0.2f) < 1e-5f && std::fabs(out[0] - 0.05f) < 1e-6f);   // 80 % again, its colour kept
+    const float shadow[4] = {0.0f, 0.0f, 0.0f, 0.27f};                     // a soft black drop shadow, 40 % over the veil
+    Unveil(shadow, v, out); CHECK(out[3] > 0.999f);                        // goes with the veil
+    const float blackArt[4] = {0.0f, 0.0f, 0.0f, 0.045f};                  // solid-ish black art (90 %)
+    Unveil(blackArt, v, out); CHECK(std::fabs(out[3] - 0.1f) < 1e-5f);     // stays
+    const float greyVeil[4] = {0.01f, 0.01f, 0.01f, 0.5f};                 // a veil not quite black: its colour taken out too
+    const float onGrey[4] = {0.31f, 0.01f, 0.01f, 0.0f};
+    Unveil(onGrey, greyVeil, out); CHECK(std::fabs(out[0] - 0.31f) < 1e-6f && out[3] == 0.0f);   // (solid: t 0, nothing of the veil in it)
+    const float halfOnGrey[4] = {0.255f, 0.005f, 0.005f, 0.25f};          // 50 % red 0.5 straight over the grey veil
+    Unveil(halfOnGrey, greyVeil, out); CHECK(std::fabs(out[0] - 0.25f) < 1e-5f && std::fabs(out[3] - 0.5f) < 1e-5f);
 }
 
 int main() {

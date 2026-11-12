@@ -688,7 +688,14 @@ cbuffer K : register(b0) {
     uint glowW, glowH; float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
+    float partX, partY, pad0, pad1;
 };
+// The share of the target the scene is drawn in (Params::part): 1 x 1, or an upscaler's part at the top left (DLSS at 0.667: the scene in
+// the top-left 2/3, the camera's whole view over it). A pixel's place in the view - its ray, so its distance and the dome test - from that
+// part, not from the whole target: with DLSS on (Serg 2026-11-12, test 0.214.5, 244.webp) the dome's test took the whole target, and only a
+// circle of the dome round 0.3, 0.3 of the picture (where that ray came out shorter than the true one) was the sky - the rest of it ground past
+// [fog] game_fog_cover's 200, the fog's colour whole; every fog distance off the middle was off by the same factor.
+float2 UvOf(float2 p) { return (p + 0.5) / (float2(width, height) * float2(partX, partY)); }
 Texture2D<float> Depth : register(t0);
 Texture2D<float3> Scene : register(t1);
 Texture2D<float> AccumDepth : register(t2);   // [fog] game_fog_fx_depth: the nearest effect drawn into the weighted-blended targets
@@ -750,7 +757,7 @@ float KeepZ(float2 uv, float z) {
 bool SkyAt(uint2 p, float d) {
     const float g = max(skyDepth, 1e-7);
     if (skyDepth <= 0.0 || sx <= 0.0 || sy <= 0.0 || byDepth > 0.5) return d <= g;
-    const float2 uv = (float2(p) + 0.5) / float2(width, height);
+    const float2 uv = UvOf(float2(p));
     const float2 t = float2((uv.x * 2.0 - 1.0 - offX) / sx, (1.0 - uv.y * 2.0) / sy);
     return d <= g * sqrt(1.0 + dot(t, t));
 }
@@ -788,7 +795,7 @@ R"(// The game's fog (Params::ours off): a pixel on an edge between two fogs. Th
 // ground beside it, as before (Params::holes)
 bool SkyProper(uint2 p, float d) { return skyDepth > 0.0 && d > 1e-7 && SkyAt(p, d); }   // (the game's dome: the sky has a depth)
 float3 GameFogPixel(uint2 p, float3 c) {
-    const float2 uv = (float2(p) + 0.5) / float2(width, height);
+    const float2 uv = UvOf(float2(p));
     const int2 m = int2(width - 1, height - 1);
     const float d0 = Depth[p];
     // (alike depths round it - the most of the picture: its own fog, no more reads)
@@ -848,10 +855,10 @@ float3 GameFogPixel(uint2 p, float3 c) {
 }
 void ProbeAt(uint2 p, float3 c, float3 o) {
     [unroll] for (int i = 0; i < 5; ++i) {
-        const uint2 q = min(uint2(kProbe[i] * float2(width, height)), uint2(width - 1, height - 1));
+        const uint2 q = min(uint2(kProbe[i] * float2(width, height) * float2(partX, partY)), uint2(width - 1, height - 1));   // (in the drawn part)
         if (q.x != p.x || q.y != p.y) continue;
         const float d = Depth[p];
-        const float2 uv = (float2(p) + 0.5) / float2(width, height);
+        const float2 uv = UvOf(float2(p));
         const float z = d > 1e-7 ? nearPlane / d : 0.0;
         const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
         const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
@@ -876,7 +883,7 @@ void main(uint3 id : SV_DispatchThreadID) {
     // the void, and the game's dome ([sky] game_sky, Params::skyDepth: it stands past the game's linear depth's far end, and the game's
     // pass leaves it - Serg 2026-10-31 on 0.192.19, "обводка вокруг объектов": its low part right behind the trees fogged to the fog's
     // colour, a light band round every tree against the dark sky): left as they are
-    const float3 o = SkyAt(id.xy, d) ? c : lerp(fogColour, c, Keep((id.xy + 0.5) / float2(width, height), d));
+    const float3 o = SkyAt(id.xy, d) ? c : lerp(fogColour, c, Keep(UvOf(float2(id.xy)), d));
     Out[id.xy] = o;
     ProbeAt(id.xy, c, o);
 }
@@ -897,7 +904,7 @@ void fxAccum(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
     const float4 a = Accum[id.xy];
     const float e = AccumDepth[id.xy], o = GroundDepth(id.xy);   // (a blended edge on the rim against the void: as the ground it borders)
-    const float2 uv = (id.xy + 0.5) / float2(width, height);
+    const float2 uv = UvOf(float2(id.xy));
     if (accumBehind > 0.5) {   // the hair / foliage (ours) fogged, added in; the particles as drawn
         const float4 h = Hair[id.xy];
         if (revealOn > 0.5) {   // by their own distance: the opacity from our revealage, the weight 1e6 / (1e5 + z^3) from the weighted colour
@@ -927,7 +934,7 @@ void fxGlow(uint3 id : SV_DispatchThreadID) {
     const float3 g = Glow[id.xy];
     if (accumBehind > 0.5 && revealOn > 0.5) {   // the additive light (no depth of its own): by the particles' distance there, else the depth behind
         const uint2 fp = min(uint2((float2(id.xy) + 0.5) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
-        const float2 fuv = (float2(fp) + 0.5) / float2(width, height);
+        const float2 fuv = UvOf(float2(fp));
         const float4 a = Accum[fp];
         const float tp = a.a > 0.0 ? ParticleKeep(fp, fuv, a) : KeepAt(fp, fuv, Depth[fp]);
         OutGlow[id.xy] = g * tp;   // (light fades out, it does not turn into the fog's colour)
@@ -938,7 +945,7 @@ void fxGlow(uint3 id : SV_DispatchThreadID) {
     const uint2 f0 = min(uint2(float2(id.xy) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
     const uint2 f1 = min(f0 + 1, uint2(width - 1, height - 1));
     const float o = max(max(Depth[f0], Depth[uint2(f1.x, f0.y)]), max(Depth[uint2(f0.x, f1.y)], Depth[f1]));
-    const float t = e > 1e-7 ? Keep((id.xy + 0.5) / float2(glowW, glowH), max(e, o)) : 1.0;
+    const float t = e > 1e-7 ? Keep((id.xy + 0.5) / float2(glowW, glowH) / float2(partX, partY), max(e, o)) : 1.0;
     OutGlow[id.xy] = g * t;
 }
 )";
@@ -954,8 +961,9 @@ struct Consts {
     float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
+    float partX, partY, pad0, pad1;
 };
-static_assert(sizeof(Consts) == 36 * 4, "thirty-six root constants");
+static_assert(sizeof(Consts) == 40 * 4, "forty root constants");
 
 constexpr int kSlots = 64;   // descriptor sets and timestamp pairs used in turn (the GPU is never that many steps behind)
 constexpr UINT kViews = 15;   // a step's views: t0 - t9, u0 - u4
@@ -1917,6 +1925,8 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.accumBehind = hair ? 1.0f : 0.0f;   // (the hair / foliage folded in: no effects' depth)
     c.revealOn = revealOn ? 1.0f : 0.0f;
     c.coverAt = p.ours ? 0.0f : std::max(p.cover, 0.0f);
+    c.partX = std::clamp(p.part[0], 0.25f, 1.0f);   // (an upscaler's share of the target: the pixels' rays from that part)
+    c.partY = std::clamp(p.part[1], 0.25f, 1.0f);
     g_planesDrawnInto.store(write ? (onTarget ? 2 : 1) : 0, std::memory_order_relaxed);
 
     natived3d::SetOurs(true);

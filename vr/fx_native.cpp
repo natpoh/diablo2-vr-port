@@ -282,6 +282,7 @@ struct Runtime::Impl {
     std::vector<std::pair<std::unique_ptr<Build>, int>> retired;
     HANDLE worker = nullptr;
     std::atomic<bool> busy{false}, cancel{false};
+    std::atomic<bool> lean{false};   // [render] fx_lean_build (SetLean)
     std::atomic<bool> warmBusy{false}, cancelWarm{false};   // the build running is a warming; it is to stop (fxbuildorder::StopWarm)
     size_t warmIdx = 0;                                     // the warm list's place of the warming running (put back there when stopped)
     uint32_t warmW = 0, warmH = 0;                          // ... and its size
@@ -447,7 +448,7 @@ struct Runtime::Impl {
         cancelWarm = false;
         d->AddRef();
         worker = BigThread([this, job]() {
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            SetThreadPriority(GetCurrentThread(), lean.load() ? THREAD_PRIORITY_LOWEST : THREAD_PRIORITY_BELOW_NORMAL);
             std::unique_ptr<Build> b = Make(job);
             job.dev->Release();
             if (b) {   // (a precompile hands nothing over)
@@ -589,8 +590,9 @@ bool Runtime::Impl::Compile(Build& b, const Job& job) {
     std::atomic<uint32_t> compiledNow{0};
     // (stopped: the runtime going away - or a warming the size in use is waiting behind, fxbuildorder::StopWarm)
     auto stop = [&]() { return cancel.load() || (job.compileOnly && cancelWarm.load()); };
+    const bool leanNow = lean.load();
     auto work = [&]() {
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        SetThreadPriority(GetCurrentThread(), leanNow ? THREAD_PRIORITY_LOWEST : THREAD_PRIORITY_BELOW_NORMAL);
         for (;;) {
             const size_t i = next.fetch_add(1);
             if (i >= eps.size() || stop()) return;
@@ -613,6 +615,7 @@ bool Runtime::Impl::Compile(Build& b, const Job& job) {
     };
     int n = o.threads > 0 ? o.threads : (int)std::thread::hardware_concurrency() - 1;
     n = std::clamp(n, 1, 8);
+    if (leanNow) n = std::min(n, fxbuildorder::LeanThreads((int)std::thread::hardware_concurrency()));   // ([render] fx_lean_build)
     std::vector<HANDLE> pool;
     for (int i = 1; i < n; ++i)
         if (const HANDLE h = BigThread(work)) pool.push_back(h);
@@ -1672,7 +1675,7 @@ bool Runtime::Impl::Frame(ID3D12Device* d, const D3D12_RESOURCE_DESC& target) {
         Log("vrcam: native effects - the game took %llux%u while a size built before was being warmed: that warming stopped, this size built first",
             (unsigned long long)target.Width, target.Height);
     }
-    switch (fxbuildorder::Next(busy.load(), want, tried, preAt < warm.size())) {
+    switch (fxbuildorder::Next(busy.load(), want, tried, fxbuildorder::WarmAllowed(lean.load()) && preAt < warm.size())) {
     case fxbuildorder::Job::InUse:
         stats.failed = false;
         Log("vrcam: native effects - building D2R_DepthFog.fx for %llux%u in the background", (unsigned long long)target.Width, target.Height);
@@ -1762,6 +1765,14 @@ Runtime::~Runtime() = default;
 bool Runtime::Begin(ID3D12Device* dev, ID3D12Resource* bb) {
     m_->begun = dev && bb && m_->Frame(dev, bb->GetDesc());
     return m_->begun;
+}
+
+void Runtime::Idle() { m_->begun = false; }
+void Runtime::SetLean(bool on) {
+    if (m_->lean.exchange(on) == on) return;
+    m_->Log("vrcam: native effects - [render] fx_lean_build %s", on ? "on: no warming of other sizes, builds on %d compile thread(s) at the lowest priority, only while an effect of "
+                                                             "ours is wanted" : "off: builds as before (the processors less one, below normal; the sizes built before warmed)",
+        fxbuildorder::LeanThreads((int)std::thread::hardware_concurrency()));
 }
 
 bool Runtime::Render(ID3D12GraphicsCommandList* list, ID3D12Resource* bb) {

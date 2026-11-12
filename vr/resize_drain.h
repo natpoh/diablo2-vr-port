@@ -26,6 +26,12 @@
 // headset's swapchains follow the picture's size (vr/xr.cpp EnsureChain). Why default 1: it only waits, at an Apply / a resize the game is
 // about to wait for itself, and it changes no picture but the one pair's right eye; it never touches the game's mechanics.
 //
+// 2026-11-12 (crash group E2: reports 338, 340-342 - two passes, the replay OFF, the same "Post Task" fault after Apply): step 1 now in every
+// render type (the last replay waited for only when one ran; the game's queue at the Apply, inside its resize, and at a DLSS release within 5 s
+// of one), steps 2-3 still only with the replay on; each drain one log line ("resize drain - ..."). A drain cannot reach that crash itself:
+// DXGI already waits for what is queued (tools/resize_drain_test.cpp A1 / A1b) and the faulting list went on the queue after the resize - the
+// game's Apply resizes from inside its frame while our render size keeps its picture apart from its window: vr/apply_keep_size.h.
+//
 // Pure parts here (ReplayLists, Why); the D3D12 drain (QueueDrain) is header-only too, so the test runs it on a real device.
 #pragma once
 
@@ -88,6 +94,9 @@ public:
         ReleaseSRWLockExclusive(&lock_);
         return done;
     }
+    // For the GPU fault report's flight recorder: the value the last Drain signalled, and what the fence has reached now (0 before any)
+    uint64_t Asked() const { return value_; }
+    uint64_t Reached() const { return fence_ ? fence_->GetCompletedValue() : 0; }
     void Release() {
         if (fence_) { fence_->Release(); fence_ = nullptr; }
         if (dev_) { dev_->Release(); dev_ = nullptr; }

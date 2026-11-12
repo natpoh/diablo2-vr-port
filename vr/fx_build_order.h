@@ -29,4 +29,11 @@ inline bool StopWarm(bool warmRunning, bool inUseWanted, bool inUseTried, bool w
     return warmRunning && inUseWanted && !inUseTried && !warmingTheSizeInUse;
 }
 
+// [render] fx_lean_build (2026-11-12, playful_pony's 0.214.0: GTX 1650 SUPER, i5-11600K 6 cores / 12 threads, Quest Link, 0.5-4 pairs/s): the
+// effect's builds - 53 shaders, ~40 s for each new size - ran on up to 8 compile threads (below normal) and a warming of every size built
+// before followed (1024, 1280, the menus' 1280x720), while his effect drew nothing (sky, fog, ceiling, blurs off: 0 passes); a stall dump held 8
+// threads inside d3dcompiler_47. Lean: no warming, and this many compile threads - a quarter of the processors, 1 or 2 - at the lowest priority.
+inline int LeanThreads(int processors) { return processors >= 8 ? 2 : 1; }
+inline bool WarmAllowed(bool lean) { return !lean; }
+
 }  // namespace fxbuildorder

@@ -848,6 +848,13 @@ std::vector<Item> g_items = {
            L"16:9\" above). The lit icon is the one in force. "
            L"The icons hang outside the game's picture, so they cover none of its buttons and the click never reaches the game. Live. Off: no "
            L"icons, as before."))),
+    // [render] menu_unveil (xr.cpp HangPanel, vr/vr_resolution.h UnveilRows): the square layout's menu panel without the game's dark veil
+    Only(kVr, Toggle(L"render", L"menu_unveil", L"Menus without the dark backing", 1,
+           L"While a menu or a panel (the inventory, the stash, a trader...) hangs in front of you in the headset, the game lays a see-through "
+           L"dark layer under it over the whole picture: a dark frame round its panels, a strip above the tabs, an area below the toolbar. On: "
+           L"that layer is taken out, so only the game's panels, tooltips and buttons hang in front of you and the world shows round them. "
+           L"Tooltips keep their own dark background. With \"Menus laid out 16:9\" in force it is always taken out. Live. Off: the menus as "
+           L"the game draws them, as before.")),
     // [render] menu_wide (vr/vr_resolution.h MenuWide): the game's own menus drawn 16:9 in the headset
     Only(kVr, Toggle(L"render", L"menu_wide", L"Main menu at 16:9", 1,
            L"Native OpenXR: the game lays its menus out for the shape of its picture, and a square picture (the square window, a square "
@@ -2599,12 +2606,20 @@ std::vector<Item> g_items = {
            L"The effects (fog, sky, ceiling) wait until the graphics card has drawn the last eye's effects before the next "
            L"eye's values go in. Both eyes of a pair get the same values anyway; this matters for FlatVR's frame stamps "
            L"with one picture a frame. Costs a little speed. Live. F4 only."),
+    Toggle(L"render", L"fx_lean_build", L"Build the effects' shaders only when needed", 1,
+           L"Our effects (sky, fog, ceiling, blurs, overlays) are compiled for each new picture size - about 50 shaders. On: only while one of "
+           L"them is actually on, never for other sizes in advance, on one or two threads at the lowest priority, so the game is never short "
+           L"of processor time (a 6-core PC fell to a few frames a second while they compiled). Off: as before. Live."),
     Only(kVr, Toggle(L"render", L"resize_drain", L"No GPU hang when video options are applied in VR", 1,
-           L"With the right eye drawn again from the left eye's frame (Both eyes from one game frame), the graphics card hung a few seconds "
-           L"after Apply in the game's video options, mostly with DLSS on: the game freed its old picture and the right eye was still drawn "
-           L"into it. On: when the game applies its video options, resizes its picture or releases a DLSS feature, that one frame is not "
-           L"drawn again for the right eye, the right eye is drawn on its own until the picture has settled (as after an area change), and "
-           L"the graphics card first finishes what is queued. It only waits. Live. Off: as before.")),
+           L"When the game applies its video options, resizes its picture or releases a DLSS feature, the graphics card first finishes "
+           L"what is queued (every render type). With the right eye drawn again from the left eye's frame (Both eyes from one game frame) "
+           L"that one frame is also not drawn again for the right eye, and the right eye is drawn on its own until the picture has settled "
+           L"(as after an area change). It only waits. Live. Off: as before.")),
+    Only(kVr, Toggle(L"render", L"apply_keep_size", L"... and the game's Apply keeps the picture's size", 1,
+           L"With a render size (the picture another size than the game's window), Apply in the game's video options made the game resize "
+           L"its picture to the window in the middle of a frame, and the graphics card hung a few seconds later drawing into the freed "
+           L"picture. On: that one resize is left out while the picture already has the render size; the render size is asked for again "
+           L"half a second later, between frames. For that moment the picture may be cut off at an edge. Live. Off: as before.")),
     Toggle(L"stereo", L"swap", L"Swap eyes", 0, L"Tick if the eyes come out swapped (depth looks inside out)."),
     Toggle(L"stereo", L"pace_flatvr_only", L"Hold frames to the headset only while FlatVR runs", 1,
            L"In FlatVR modes the plugin holds the game's pictures to the headset's rate so FlatVR gets them evenly. With FlatVR "
