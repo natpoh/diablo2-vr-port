@@ -1,4 +1,4 @@
-// render_type.h - the render type, one choice over the ini keys that make it (Serg 2026-11-08: five entries, this order; one pass the default):
+// render_type.h - the render type, one choice over the ini keys that make it (Serg 2026-11-08: five entries, this order; two passes the default since 0.214):
 //   0 Native two passes      [openxr] on=1, [stereo] afr=1 pair_per_tick=1 native_replay=0 - the game's whole draw twice a pair
 //   1 Native one pass        ... native_replay=1 - the right eye drawn again from the left pass's lists (vr/native_replay.h); paused
 //                            frames (an area change, a load, a resize) are two passes, never a black eye
@@ -6,8 +6,9 @@
 //                            ([stereo] turn_warp; the "depth fill" - stereo source 3 in Serg's list)
 //   3 FlatVR stereo          [openxr] on=0, [stereo] afr=1 source=2 (pair_per_tick / replay_right as FlatVR's one-pass stereo had them)
 //   4 FlatVR depth           [openxr] on=0, [stereo] afr=0 source=1 - one picture, FlatVR makes the second eye from the depth
-// Old inis keep their meaning: they are read from the keys (FromKeys) - an ini without native_replay reads as one pass (the default; it was
-// one pass with replay_right=1 until 0.203 lost it), FlatVR's and by turns' keys read as they always did. Pure: D2R VR Settings' "3D in the
+// Old inis keep their meaning: they are read from the keys (FromKeys) - an ini without native_replay reads as two passes (the default since
+// 0.214, Serg 2026-11-12: one pass hung graphics cards inside the replayed right eye; 0.208-0.213 read it as one pass), FlatVR's and by turns'
+// keys read as they always did. Pure: D2R VR Settings' "3D in the
 // headset" list and the headset's Video page row both go through it; tools/hset_test.cpp proves it.
 #pragma once
 
@@ -20,7 +21,7 @@ struct Keys {
     int openxrOn = 0;      // [openxr] on
     int afr = 0;           // [stereo] afr
     int pairPerTick = 0;   // [stereo] pair_per_tick
-    int nativeReplay = 1;  // [stereo] native_replay (absent: 1, the default)
+    int nativeReplay = 0;  // [stereo] native_replay (absent: 0, two passes - the default since 0.214)
     int source = -1;       // [stereo] source (absent: afr ? 2 : 1)
     int replayRight = 0;   // [stereo] replay_right (FlatVR stereo's one pass; not read on the native path)
     int replayAhead = 1;   // [stereo] replay_ahead

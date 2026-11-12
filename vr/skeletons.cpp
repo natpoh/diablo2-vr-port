@@ -97,6 +97,8 @@
 #include "flat_weapon.h"     // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle of the view
 #include "corpse_watch.h"    // [weight] monster_ragdoll: a corpse is no doll
 #include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
+#include "unleashed_head_look.h"   // [world] town_heads_look: the town's people turn their heads to you (MPL, from Unleashed)
+#include <array>
 
 namespace skel {
 
@@ -724,7 +726,7 @@ constexpr uint32_t kNoEntity = 0xFFFFFFFFu;
 std::map<uintptr_t, std::pair<uint32_t, ULONGLONG>> g_bodyEntity;   // SkeletonInstance -> entity (or none), when looked up
 // noEntity: the storages read, but no entity holds this instance - not a rig of the renderer's world (a menu's model).
 // m16 (optional): the whole matrix (row vectors, the translation in 12..14: model -> world, the look-at's units) - [multiplayer] pose_share the other heroes' bodies and travel.
-bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULONGLONG retryMs = 500, float* m16 = nullptr) {
+bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULONGLONG retryMs = 500, float* m16 = nullptr, uint32_t* entityOut = nullptr) {
     if (noEntity) *noEntity = false;
     AcquireSRWLockExclusive(&g_lock);
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_lock); } } unlock;
@@ -759,6 +761,7 @@ bool BodyPlace(uintptr_t self, float* x, float* z, bool* noEntity = nullptr, ULO
     if (!std::isfinite(t[0]) || !std::isfinite(t[2])) return false;
     if (m16 && !SafeCopy(m16, (const void*)mat, 16 * sizeof(float))) return false;
     *x = t[0]; *z = t[2];
+    if (entityOut) *entityOut = e;   // [world] town_heads_look: the entity holding the skeleton (the skinning finds its draws by its root)
     return true;
 }
 }  // namespace ecs
@@ -10281,6 +10284,322 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     return done;
 }
 
+#if D2RVR_FIRST_PERSON
+// ---- [world] town_heads_look: the town's people turn their heads to you (vr/unleashed_head_look.h, from D2R VR Unleashed's "Heads turn to you") ----
+// The pose hook (Turn) finds the town's people among the skeletons it is handed (a model under character\npc, its head by its bones' names), decides
+// once per character and visit whether it looks at you (the chance), and eases the turn it wants from the game's own pose - which is never written:
+// 0.188.6 / 0.192.7 showed the skinning draws the game's pose, not a write into it. What is drawn is the skinning's copy turned (LookSkin, handed
+// to headshadow's composite): found by its pose, else by the root of the entity being drawn (vr/skin_anchor.h), else by its head's matrix - the
+// skinning's copy of this frame's (or the last frame's) pose holds the very bytes the hook read. Never by the skeleton pointer alone: the first
+// headset runs (test 0.213.6) had whole minutes where no skinning came with the root's skeleton.
+namespace looks {
+constexpr ULONGLONG kRecheckMs = 2000;   // an instance's model path read again (its memory can be another model's later)
+constexpr ULONGLONG kFreshMs = 1000;     // a slot is drawn this long after its instance was last posed (the game poses a far one less often)
+constexpr ULONGLONG kKeepMs = 5000;      // an instance not posed this long is forgotten
+constexpr int kSlots = 32;               // the town's people turned at once
+constexpr float kHirelingUnits = 1.5f;   // game units: an NPC model standing this near a hireling's place is that hireling
+
+SRWLOCK g_inLock = SRWLOCK_INIT;
+HeadLookIn g_in;               // under g_inLock
+headlook::Limits g_limits;     // under g_inLock
+std::atomic<bool> g_live{false};
+
+// Each model's head, learned once from its skeleton; never erased (the composite reads them without a lock on the vector).
+struct Model { uintptr_t skeleton = 0; int bones = 0; std::array<int16_t, headlook::kMaxBones> parents{}; headlook::Rig rig; };
+SRWLOCK g_modelLock = SRWLOCK_INIT;
+std::vector<std::unique_ptr<Model>> g_models;
+std::set<std::pair<uintptr_t, int>> g_noHead;
+
+// Each SkeletonInstance met: what it is (kRecheckMs), and its head's state.
+struct Known { bool npc = false; uintptr_t skeleton = 0; ULONGLONG at = 0; };
+struct Head {
+    headlook::Eased eased;
+    std::chrono::steady_clock::time_point at{};
+    bool timed = false;
+    ULONGLONG seen = 0;
+    uintptr_t skeleton = 0;
+    uint32_t entity = 0, salt = 0;
+    bool decided = false, chosen = false;
+    bool haveLast = false;
+    float lastHead[16] = {};   // the head bone's matrix in the game's pose last time (the last frame's pose: its copy is skinned too)
+};
+SRWLOCK g_lock = SRWLOCK_INIT;   // g_known, g_heads
+std::unordered_map<uintptr_t, Known> g_known;
+std::unordered_map<uintptr_t, Head> g_heads;
+ULONGLONG g_pruned = 0;
+
+// What the composite reads: one slot per head turned now.
+struct Slot {
+    uintptr_t self = 0, skeleton = 0, cur = 0, prev = 0;
+    uint32_t root = 0;
+    int alike = 0;   // instances of this skeleton posed in the last second (1: a skinning outside a draw is this one)
+    const Model* model = nullptr;
+    headlook::Eased eased;
+    float placement[16] = {};
+    float headNow[16] = {}, headPrev[16] = {};   // the head bone's matrix in the game's pose this frame and the last (what the copies hold)
+    ULONGLONG at = 0;
+};
+SRWLOCK g_slotLock = SRWLOCK_INIT;
+Slot g_slots[kSlots];   // under g_slotLock
+std::atomic<ULONGLONG> g_slotsAt{0};
+
+std::atomic<unsigned> g_posed{0}, g_skinned{0}, g_skinRefused{0}, g_notChosen{0}, g_chosen{0}, g_hirelings{0}, g_unplaced{0};
+std::atomic<unsigned> g_byPose{0}, g_byRoot{0}, g_byMatrix{0}, g_byLone{0}, g_otherSkeleton{0}, g_rootElse{0};   // how the skinnings found their head
+std::atomic<float> g_widest{0.0f}, g_widestAdded{0.0f}, g_nearest{1e9f};   // the head as drawn from the body; the turn added to the animation's
+SRWLOCK g_noteLock = SRWLOCK_INIT;
+std::string g_note;   // the models learned (once each), for HeadLookNote
+
+void Note(const std::string& line) {
+    AcquireSRWLockExclusive(&g_noteLock);
+    if (g_note.size() < 4000) g_note += (g_note.empty() ? "" : "\n") + line;
+    ReleaseSRWLockExclusive(&g_noteLock);
+}
+
+const Model* ModelFor(uintptr_t self, uintptr_t skeleton, int count) {
+    AcquireSRWLockShared(&g_modelLock);
+    const Model* found = nullptr;
+    for (const auto& m : g_models) if (m->skeleton == skeleton && m->bones == count) { found = m.get(); break; }
+    const bool none = g_noHead.count({skeleton, count}) > 0;
+    ReleaseSRWLockShared(&g_modelLock);
+    if (found || none) return found;
+    auto learned = std::make_unique<Model>();
+    learned->skeleton = skeleton;
+    learned->bones = count;
+    std::string told;
+    bool ok = false;
+    uintptr_t bones = 0;
+    int32_t n = 0;
+    if (count < 2 || count > headlook::kMaxBones || !Get(skeleton + 8, &n) || n != count || !Get(skeleton + 0xC, &bones) || !bones) {
+        told = "left as the game poses it (its skeleton does not read, or has more than 256 bones)";
+    } else {
+        std::vector<unsigned char> raw((size_t)n * 0xA4);
+        if (!SafeCopy(raw.data(), (const void*)bones, raw.size())) {
+            told = "left as the game poses it (its bones do not read)";
+        } else {
+            std::vector<std::string> names((size_t)n);
+            std::vector<std::array<float, 16>> inverse((size_t)n);
+            std::vector<headlook::Bone> list((size_t)n);
+            for (int i = 0; i < n; ++i) {
+                const unsigned char* b = raw.data() + (size_t)i * 0xA4;
+                uint64_t name = 0;
+                int32_t parent = -1;
+                memcpy(&name, b, 8); memcpy(&parent, b + 8, 4); memcpy(inverse[(size_t)i].data(), b + 0x50, 64);   // granny_bone: Name, ParentIndex, InverseWorld4x4 at +0x50
+                names[(size_t)i] = Str((uintptr_t)name);
+                learned->parents[(size_t)i] = (int16_t)(parent < 0 ? -1 : std::min(parent, n));
+                list[(size_t)i] = {names[(size_t)i], parent < 0 ? -1 : parent, inverse[(size_t)i].data()};
+            }
+            const headlook::Refusal refused = headlook::Learn(list.data(), n, learned->rig);
+            ok = refused == headlook::Refusal::None;
+            if (!ok) {
+                told = std::string("left as the game poses it (") + headlook::Name(refused) + ")";
+            } else {
+                const headlook::Rig& r = learned->rig;
+                char ahead[160];
+                snprintf(ahead, sizeof ahead, "it looks along (%.2f, %.2f) in its model, %s", r.modelAhead.x, r.modelAhead.z,
+                         r.faceBones ? ("from " + std::to_string(r.faceBones) + " face bones").c_str() : "+z (no face bones: as the heroes' models)");
+                told = "head " + names[(size_t)r.head] + (r.root != r.head ? ", neck from " + names[(size_t)r.root] : std::string(", no neck")) + ", turns against " +
+                       (r.body >= 0 ? names[(size_t)r.body] : std::string("the model")) + "; " + ahead + " (" + std::to_string(n) + " bones)";
+            }
+        }
+    }
+    const Model* result = nullptr;
+    bool fresh = false;
+    AcquireSRWLockExclusive(&g_modelLock);
+    for (const auto& m : g_models) if (m->skeleton == skeleton && m->bones == count) result = m.get();   // another thread learned it meanwhile
+    if (!result) {
+        if (ok && g_models.size() < 256) { g_models.push_back(std::move(learned)); result = g_models.back().get(); fresh = true; }
+        else if (!ok) fresh = g_noHead.insert({skeleton, count}).second;
+    }
+    ReleaseSRWLockExclusive(&g_modelLock);
+    if (fresh) Note("town heads look: " + ModelOf(self) + " - " + told);
+    return result;
+}
+
+void Unslot(uintptr_t self) {
+    AcquireSRWLockExclusive(&g_slotLock);
+    for (Slot& s : g_slots) if (s.self == self) s = Slot{};
+    ReleaseSRWLockExclusive(&g_slotLock);
+}
+
+// Every pose: one of the town's people near you - its head's turn eased and put in a slot for the skinning.
+void Turn(uintptr_t self) {
+    if (!g_live.load(std::memory_order_relaxed) || self == g_heroSelf.load(std::memory_order_relaxed)) return;
+    HeadLookIn in;
+    headlook::Limits lim;
+    AcquireSRWLockShared(&g_inLock);
+    in = g_in; lim = g_limits;
+    ReleaseSRWLockShared(&g_inLock);
+    if (!in.on) return;
+    uintptr_t modelInst = 0, skeleton = 0, world = 0, prevWorld = 0, mats = 0;
+    int32_t count = 0;
+    if (!Get(self + 0x08, &modelInst) || !Get(modelInst + 0x08, &skeleton) || !skeleton) return;
+    const ULONGLONG now = GetTickCount64();
+    Known k;
+    bool known = false;
+    AcquireSRWLockShared(&g_lock);
+    if (const auto it = g_known.find(self); it != g_known.end()) { k = it->second; known = true; }
+    ReleaseSRWLockShared(&g_lock);
+    if (!known || k.skeleton != skeleton || now - k.at >= kRecheckMs) {   // what it is: its model's path (rechecked now and then)
+        k.npc = headlook::TownNpcPath(ModelOf(self));
+        k.skeleton = skeleton;
+        k.at = now;
+        AcquireSRWLockExclusive(&g_lock);
+        if (g_known.size() >= 4096) g_known.clear();
+        g_known[self] = k;
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    if (!k.npc) return;
+    if (!Get(self + 0x20, &world) || !Get(world, &count) || count < 2 || count > headlook::kMaxBones || !Get(world + 4, &mats) || !mats) return;
+    Get(self + 0x28, &prevWorld);
+    const Model* model = ModelFor(self, skeleton, count);
+    if (!model) return;
+    float x = 0.0f, z = 0.0f, placement[16];
+    uint32_t entity = 0;
+    if (!ecs::BodyPlace(self, &x, &z, nullptr, 500, placement, &entity) || !entity) { g_unplaced.fetch_add(1, std::memory_order_relaxed); return; }
+    for (int i = 0; i < in.hirelings && i < 8; ++i)   // a mercenary in town shares the rogues' and the guards' models: never turned
+        if (std::fabs(in.hireling[i][0] - x) < kHirelingUnits && std::fabs(in.hireling[i][1] - z) < kHirelingUnits) {
+            g_hirelings.fetch_add(1, std::memory_order_relaxed);
+            Unslot(self);
+            return;
+        }
+    static thread_local float pose[headlook::kMaxBones * 16];
+    if (!SafeCopy(pose, (const void*)mats, sizeof(float) * 16 * (size_t)count)) return;   // the game's own pose (we never write it)
+    const auto clock = std::chrono::steady_clock::now();
+    headlook::Eased eased;
+    float seconds = 0.0f, headPrev[16];
+    bool chosen = false, freshChoice = false;
+    int alike = 0;
+    AcquireSRWLockExclusive(&g_lock);
+    if (now - g_pruned > 2000) {
+        g_pruned = now;
+        for (auto it = g_heads.begin(); it != g_heads.end();) it = now - it->second.seen > kKeepMs ? g_heads.erase(it) : std::next(it);
+    }
+    {
+        Head& h = g_heads[self];
+        if (!h.decided || h.entity != entity || h.salt != in.salt) {   // once per character and visit: does it look at you?
+            h.decided = true;
+            h.entity = entity;
+            h.salt = in.salt;
+            h.chosen = headlook::Chooses(entity, in.salt, in.chance);
+            h.eased = {};
+            h.timed = false;
+            freshChoice = true;
+        }
+        // A head not posed for a while starts from the animation's, not from where it was left.
+        if (h.timed && now - h.seen <= 500) seconds = std::chrono::duration<float>(clock - h.at).count(); else h.eased = {};
+        h.at = clock; h.timed = true; h.seen = now; h.skeleton = skeleton;
+        eased = h.eased;
+        chosen = h.chosen;
+        const float* headNow = pose + (size_t)model->rig.head * 16;
+        memcpy(headPrev, h.haveLast ? h.lastHead : headNow, sizeof headPrev);
+        memcpy(h.lastHead, headNow, sizeof h.lastHead);
+        h.haveLast = true;
+    }
+    for (const auto& [other, hd] : g_heads) if (hd.skeleton == skeleton && now - hd.seen < 1000) ++alike;   // the townsfolk of this model posed in the last second
+    ReleaseSRWLockExclusive(&g_lock);
+    if (freshChoice) (chosen ? g_chosen : g_notChosen).fetch_add(1, std::memory_order_relaxed);
+    if (!chosen) { Unslot(self); return; }
+    headlook::Aim aim;
+    if (!headlook::Want(model->rig, pose, count, placement, {in.eye[0], in.eye[1], in.eye[2]}, in.upm, lim, aim)) aim = {};
+    headlook::Step(eased, aim, seconds, lim);
+    AcquireSRWLockExclusive(&g_lock);
+    if (const auto it = g_heads.find(self); it != g_heads.end()) it->second.eased = eased;
+    ReleaseSRWLockExclusive(&g_lock);
+    if (headlook::Still(eased)) { Unslot(self); return; }
+    uint32_t root = 0;
+    if (const EntityParentFn parentOf = g_entityParent.load(std::memory_order_relaxed))
+        root = skinanchor::RootOf(entity, [&](uint32_t e, uint32_t* p) { return parentOf(e, p); });
+    AcquireSRWLockExclusive(&g_slotLock);
+    Slot* at = nullptr;
+    for (Slot& s : g_slots) if (s.self == self) { at = &s; break; }
+    if (!at) for (Slot& s : g_slots) if (!s.self || now - s.at > kKeepMs) { at = &s; break; }
+    if (at) {
+        at->self = self;
+        at->skeleton = skeleton;
+        at->cur = world;
+        at->prev = prevWorld > 0x10000 ? prevWorld : 0;
+        at->root = root ? root : entity;
+        at->alike = std::max(alike, 1);
+        at->model = model;
+        at->eased = eased;
+        memcpy(at->placement, placement, sizeof placement);
+        memcpy(at->headNow, pose + (size_t)model->rig.head * 16, sizeof at->headNow);
+        memcpy(at->headPrev, headPrev, sizeof at->headPrev);
+        at->at = now;
+    }
+    ReleaseSRWLockExclusive(&g_slotLock);
+    g_slotsAt.store(now, std::memory_order_relaxed);
+    g_posed.fetch_add(1, std::memory_order_relaxed);
+    const float added = std::max(std::fabs(eased.yaw), std::fabs(eased.tilt));
+    if (added > g_widestAdded.load(std::memory_order_relaxed)) g_widestAdded.store(added, std::memory_order_relaxed);
+    if (aim.weight > 0) {   // the head as drawn, from where the body faces: the animation's own head plus our turn (held to the yaw limit)
+        const float drawn = std::fabs(headlook::Wrap(aim.animYaw + eased.yaw));
+        if (drawn > g_widest.load(std::memory_order_relaxed)) g_widest.store(drawn, std::memory_order_relaxed);
+    }
+    if (aim.weight > 0 && aim.metres < g_nearest.load(std::memory_order_relaxed)) g_nearest.store(aim.metres, std::memory_order_relaxed);
+}
+
+// The skinning's side (headshadow::SetLookSkin), on the render workers. mats null: might this world pose (n its bone count) be one of a head turned
+// now? - a fresh slot of a model with that many bones. Else the copy's neck and head are turned, when it is found to be one: by the pose itself (the
+// instance's this frame's or last frame's), else by the root of the entity being drawn, else by its head bone's matrix (the copy holds the bytes the
+// hook read, this frame's or the last's) - the skeleton the composite is handed is only counted, never required (test 0.213.6: whole minutes of
+// skinnings came with another skeleton pointer than the root instance's). A skinning outside a draw with nothing else to go by: only when one slot
+// of the model is about.
+bool LookSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
+    const ULONGLONG now = GetTickCount64();
+    if (now - g_slotsAt.load(std::memory_order_relaxed) > kFreshMs || n <= 0) return false;
+    static thread_local Slot cands[kSlots];
+    int k = 0;
+    AcquireSRWLockShared(&g_slotLock);
+    for (const Slot& s : g_slots)
+        if (s.self && s.model && s.model->bones == n && now - s.at <= kFreshMs) cands[k++] = s;
+    ReleaseSRWLockShared(&g_slotLock);
+    if (k == 0) return false;
+    if (!mats) return true;   // (the composite's look first: no copy of a pose that can be none of these)
+    int pick = -1;
+    for (int i = 0; i < k && pick < 0; ++i) if (pose && (cands[i].cur == pose || cands[i].prev == pose)) pick = i;
+    std::atomic<unsigned>* how = &g_byPose;
+    bool rootKnown = false;
+    if (pick < 0) {
+        const uint32_t drawn = headshadow::DrawEntity();
+        const EntityParentFn parentOf = g_entityParent.load(std::memory_order_relaxed);
+        if (drawn && parentOf) {
+            static thread_local skinanchor::Cache roots;   // (each skinning thread its own)
+            bool looked = false;
+            if (const uint32_t root = roots.Root(drawn, now, parentOf, &looked)) {
+                rootKnown = true;
+                for (int i = 0; i < k && pick < 0; ++i) if ((cands[i].root & 0xFFFFFu) == (root & 0xFFFFFu)) pick = i;
+                how = &g_byRoot;
+            }
+        }
+    }
+    if (pick < 0) {   // the head bone's matrix as the hook read it (this frame's, the last frame's): the copy's own bytes
+        int found = -1, matches = 0;
+        for (int i = 0; i < k; ++i) {
+            const int head = cands[i].model->rig.head;
+            if (head < 0 || head >= n) continue;
+            if (!memcmp(mats[head], cands[i].headNow, sizeof cands[i].headNow) || !memcmp(mats[head], cands[i].headPrev, sizeof cands[i].headPrev)) {
+                if (found < 0 || cands[found].self != cands[i].self) ++matches;
+                found = i;
+            }
+        }
+        if (matches == 1) { pick = found; how = &g_byMatrix; if (rootKnown) g_rootElse.fetch_add(1, std::memory_order_relaxed); }
+    }
+    if (pick < 0 && !rootKnown && k == 1 && cands[0].alike == 1 && cands[0].skeleton == skeleton) { pick = 0; how = &g_byLone; }
+    if (pick < 0) { g_skinRefused.fetch_add(1, std::memory_order_relaxed); return false; }
+    const Slot& s = cands[pick];
+    if (!headlook::Apply(s.model->rig, s.model->parents.data(), &mats[0][0], n, s.placement, s.eased, headlook::Limits{})) {
+        g_skinRefused.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    how->fetch_add(1, std::memory_order_relaxed);
+    if (s.skeleton != skeleton) g_otherSkeleton.fetch_add(1, std::memory_order_relaxed);
+    g_skinned.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+}  // namespace looks
+#endif
+
 void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
 #if D2RVR_FIRST_PERSON
     CheckLegWrite(self);   // [multiplayer] pose_share_legs: was our last write of this rig's feet still there? (nothing unless its legs were stepped lately)
@@ -10304,6 +10623,7 @@ void __cdecl Hook(uintptr_t self, float a, float b, bool c) {
         PoseBowRig(self);   // [bow] rig_pose: the hero's bow, after his pose has told it where the hands are
         PoseFlail(self);    // [flail] chain: the hero's flail's chain swings free
         PoseHead(self);     // [shield] heads_hang: the hero's Necromancer head hangs from its cord
+        looks::Turn(self);  // [world] town_heads_look: the town's people turn their heads to you (the skinning draws the turn: looks::LookSkin)
 #endif
     }
 #if D2RVR_FIRST_PERSON
@@ -10339,6 +10659,54 @@ void SetPoseView(bool allowed) {
 }
 void SetFrozenPoseSource(FrozenPoseFn fn) { g_frozenPose.store(fn); }
 void SetEntityParentSource(EntityParentFn fn) { g_entityParent.store(fn); }
+#if D2RVR_FIRST_PERSON
+void SetHeadLook(const HeadLookIn& in) {
+    static bool skinSet = false;   // (the update thread only)
+    if (in.wanted && !skinSet) { skinSet = true; headshadow::SetLookSkin(&looks::LookSkin); }
+    headshadow::WantForLook(in.wanted);
+    const bool on = in.wanted && in.on && std::isfinite(in.eye[0] + in.eye[1] + in.eye[2]) && in.upm >= 1.0f && in.upm <= 12.0f;
+    AcquireSRWLockExclusive(&looks::g_inLock);
+    looks::g_in = in;
+    looks::g_in.on = on;
+    looks::g_limits = headlook::FromIni(in.yawDeg, in.upDeg, in.downDeg, in.rangeM);
+    ReleaseSRWLockExclusive(&looks::g_inLock);
+    if (looks::g_live.exchange(on) && !on) {   // off (out of town, out of F4, unticked): nothing turned from the next skinning on
+        AcquireSRWLockExclusive(&looks::g_slotLock);
+        for (auto& s : looks::g_slots) s = looks::Slot{};
+        ReleaseSRWLockExclusive(&looks::g_slotLock);
+        looks::g_slotsAt.store(0);
+    }
+}
+std::string HeadLookNote() {
+    std::string out;
+    AcquireSRWLockExclusive(&looks::g_noteLock);
+    out.swap(looks::g_note);
+    ReleaseSRWLockExclusive(&looks::g_noteLock);
+    static ULONGLONG at = 0;   // (the update thread only)
+    const ULONGLONG now = GetTickCount64();
+    if (now - at < 10000) return out;
+    at = now;
+    const unsigned posed = looks::g_posed.exchange(0), skinned = looks::g_skinned.exchange(0), refused = looks::g_skinRefused.exchange(0);
+    const unsigned chosen = looks::g_chosen.exchange(0), notChosen = looks::g_notChosen.exchange(0), hirelings = looks::g_hirelings.exchange(0);
+    const unsigned unplaced = looks::g_unplaced.exchange(0);
+    const float widest = looks::g_widest.exchange(0.0f), added = looks::g_widestAdded.exchange(0.0f), nearest = looks::g_nearest.exchange(1e9f);
+    const unsigned byPose = looks::g_byPose.exchange(0), byRoot = looks::g_byRoot.exchange(0), byMatrix = looks::g_byMatrix.exchange(0);
+    const unsigned byLone = looks::g_byLone.exchange(0), otherSkel = looks::g_otherSkeleton.exchange(0), rootElse = looks::g_rootElse.exchange(0);
+    if (!posed && !skinned && !refused && !chosen && !notChosen && !hirelings) return out;
+    char line[900];
+    snprintf(line, sizeof line, "town heads look - the last 10 s: %u poses of townsfolk turned (the head as drawn at most %.0f deg from the body, the most added to "
+             "the animation's %.0f deg; nearest %.1f m), %u skinnings drew the turn (by the pose %u, the entity's root %u, the head's matrix %u%s, the one about %u; "
+             "%u of them came with another skeleton than the instance's)%s, %u skinnings of a model of that size not turned (another unit, the chance said no); "
+             "decided now: %u look at you, %u do not; %u poses of a hireling left alone%s", posed, widest * 57.29578f, added * 57.29578f,
+             nearest < 1e8f ? nearest : 0.0f, skinned, byPose, byRoot, byMatrix,
+             rootElse ? (" - " + std::to_string(rootElse) + " though the drawn root was another").c_str() : "", byLone, otherSkel,
+             posed && !skinned ? " - NONE: the composite hook is not in, or no skinning met their poses" : "", refused,
+             chosen, notChosen, hirelings, unplaced ? (", " + std::to_string(unplaced) + " not placed (no entity)").c_str() : "");
+    if (!out.empty()) out += "\n";
+    out += line;
+    return out;
+}
+#endif
 void SetMonsterPoseByWorldSource(MonsterPoseByWorldFn fn) {
     g_monsterPoseByWorld.store(fn);
     headshadow::SetDollSkin(fn ? &DollSkin : nullptr);

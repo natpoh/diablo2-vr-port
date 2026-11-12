@@ -63,6 +63,17 @@ bool ThrownInHand() { const uint32_t t = gamestate::WeaponType(); return t == D2
 bool SpellAimWanted(bool drawn) {
     return g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || drawn;
 }
+// [hands] spell_aim_by 1: where the head looks, as a unit vector on the game's grid - the gaze's heading on the ground (a fresh view's, as leap_by_gaze takes it).
+// False: no fresh view, or the gaze straight up or down (no heading).
+bool ViewGridDir(float* gx, float* gy) {
+    if (GetTickCount64() - g_gazeAt.load() >= 500) return false;
+    const float fx = g_gazeFwd[0].load(), fz = g_gazeFwd[2].load();
+    if (!std::isfinite(fx) || !std::isfinite(fz) || fx * fx + fz * fz < 1e-4f) return false;
+    AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
+    aimpoint::GridDir(atan2f(fz, fx), xr::Running(), c.ok, c.mirror != 0, c.angle, gx, gy);
+    return std::isfinite(*gx) && std::isfinite(*gy);
+}
+
 // A cast of `skill` by the hero: does it go along the hand (directed: the game's target and aim assist off), and is its point ours too (point)?
 SpellCast SpellCastFor(int skill, bool drawn) {
     SpellCast cast;
@@ -75,7 +86,10 @@ SpellCast SpellCastFor(int skill, bool drawn) {
     else if (BowInHand()) along = cast.point = shot || (g_set.bowAim.load() && (skill == 0 || flies)) || (g_set.spellAim.load() && flies);
     else along = g_set.spellAim.load() && flies;   // a spell: the old aim, only no monster
     if (along && !shot && skill < 1024 && ((g_set.autoKeep[skill >> 6].load() >> (skill & 63)) & 1)) along = false;   // [autotarget]: the game's
-    if (along && HandGridDir(&cast.gx, &cast.gy)) cast.directed = true;
+    // [hands] spell_aim_by 1: a spell (no bow, crossbow or thrown weapon in hand) goes where the head looks; its cast and target lookups are the same directed ones
+    if (along && !shot && !cast.point && g_set.spellAimBy.load() == 1) {
+        if (ViewGridDir(&cast.gx, &cast.gy)) cast.directed = cast.view = true;
+    } else if (along && HandGridDir(&cast.gx, &cast.gy)) cast.directed = true;
     return cast;
 }
 
@@ -254,13 +268,17 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
     // [hands] throw_gesture / throw_by_grip: the 0.5 s after a released throw. Its cast is the controller's own and the unit is the hero the
     // aim function last worked on (g_heroUnit) even where IsHeroUnit's look-at test says no - the camera's look-at lags a hero who runs.
     const bool thrownLive = GestureAimLive() && ThrownInHand();
+    // [hands] spell_aim_walking: the caster is the hero when it is the unit the aim function works on (g_heroUnit), as a throw's press already was - IsHeroUnit's
+    // look-at test alone fails while the camera's look-at trails a walking hero, and then a spell went with the game's target (a player's Bone Spear, 0.212:
+    // "always into the monster") while the cast flags' look (DispatchTargetOff, which never asks IsHeroUnit) had already taken it for a directed cast. Off: as before.
+    const bool heroByAim = unit && unit == g_heroUnit.load() && (thrownLive || g_set.spellAimWalking.load());
     // F4 only: in F1, F2, F3 and the flat modes the game's own auto-target and aim assist stay as they are (the user, 2026-10-15)
     if (unit && x && y && LeapGazeOn() && (IsHeroUnit(unit) || unit == g_heroUnit.load()) && GazeSkill(skill = SpellSkill(unit))) {
         // [gameplay] leap_by_gaze, teleport_circle: the game's lookups answer the gaze's monster or none (LeapLookup), the aim assist is off, the point is the gaze's (or the circle's)
         const LeapAim a = LeapAimNow(skill);
         if (a.ok) { cast.directed = cast.leap = true; cast.gx = a.gx; cast.gy = a.gy; }
     } else if (viewgate::F4() && SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
-        !gamestate::MenuOpen() && (IsHeroUnit(unit) || (thrownLive && unit == g_heroUnit.load())) && (skill = SpellSkill(unit)) >= 0)
+        !gamestate::MenuOpen() && (heroByAim || IsHeroUnit(unit)) && (skill = SpellSkill(unit)) >= 0)
         cast = SpellCastFor(skill, drawn);
     if (g_ptActive.load(std::memory_order_relaxed) && unit && IsHeroUnit(unit)) PressTraceCast(skill >= 0 ? skill : SpellSkill(unit), cast.directed);   // [debug] melee_press_trace
     const SpellCast outer = g_spellCast;   // a resolution inside this one is its own; this one's comes back after
@@ -283,14 +301,30 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
                           skill < 1024 && ((g_set.autoKeep[skill >> 6].load() >> (skill & 63)) & 1) ? "[autotarget] keeps the game's auto-target for this skill" :
                           "no heading on the ground";
         LogF("throw gesture: the cast (skill %d) was NOT aimed along the throw - %s", skill, why);
+    } else if (!cast.directed && unit && x && y && g_set.spellAim.load() && viewgate::F4() && unit == g_heroUnit.load()) {
+        // [hands] spell_aim: the hero's cast of a spell that flies went with the game's target - say why, every 2 s at most (a player's Bone Spear, 0.212, left no trace)
+        const int s = skill >= 0 ? skill : SpellSkill(unit);
+        const bool kept = s >= 0 && s < 1024 && ((g_set.autoKeep[s >> 6].load() >> (s & 63)) & 1);
+        static ULONGLONG told = 0;
+        if (s >= 0 && gamestate::SkillAimed(s) && !GazeSkill(s) && GetTickCount64() - told > 2000) {
+            told = GetTickCount64();
+            const char* why = !AimByVector() ? (g_set.bowMode.load() != 4 ? "[bow] mode is not 4" :
+                                                "no skill button (A B X Y RB, the right trigger) was down as the game read the cast")
+                            : gamestate::MenuOpen() ? "a menu is open"
+                            : !IsHeroUnit(unit) && !g_set.spellAimWalking.load() ? "the caster was not recognised as the hero (the camera's look-at trails a walking hero; [hands] spell_aim_walking is off)"
+                            : kept ? "[autotarget] keeps the game's auto-target for this skill"
+                            : g_set.spellAimBy.load() == 1 ? "no heading of the view on the ground ([hands] spell_aim_by 1: no fresh view, or the head looks straight down)"
+                            : "no heading of the hand on the ground";
+            LogF("spell aim: skill %d went with the game's target, NOT along the hand - %s", s, why);
+        }
     }
     if (cast.directed) {
         static ULONGLONG told = 0;
         if (thrownLive || GetTickCount64() - told > 2000) {
             told = GetTickCount64();
-            LogF("spell aim: skill %d from 0x%llX, the hand %.2f %.2f -> %.1f %.1f (%s; the game's target and aim assist off for this cast)",
-                 skill, (unsigned long long)((uintptr_t)_ReturnAddress() - g_base), cast.gx, cast.gy, *x, *y,
-                 cast.point ? "the point far out along the hand" : "the game's aim turned to the hand");
+            LogF("spell aim: skill %d from 0x%llX, the %s %.2f %.2f -> %.1f %.1f (%s; the game's target and aim assist off for this cast)",
+                 skill, (unsigned long long)((uintptr_t)_ReturnAddress() - g_base), cast.view ? "view" : "hand", cast.gx, cast.gy, *x, *y,
+                 cast.view ? "the point out where the head looks, [hands] spell_aim_by 1" : cast.point ? "the point far out along the hand" : "the game's aim turned to the hand");
         }
     }
 }

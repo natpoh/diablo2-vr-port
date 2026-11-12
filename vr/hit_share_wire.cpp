@@ -3,7 +3,9 @@
 //
 // Threads: D2RLoader's callbacks (OnHost / OnClient / OnConnection) and vrcam's update loop (Tick) - the same two the host's rules channel
 // (vr/flat_menu.cpp "HR") makes its calls on. The peers' table is under one lock; the host's ring (hitoutcome::ShareRing) has one reader,
-// Tick; the client's LabelRing takes many writers (the callback is one).
+// the host's step (popped under the peers' lock); the client's LabelRing takes many writers (the callback is one).
+// Every network SDK call outside D2RLoader's callbacks runs on the game's APP thread (vr/app_thread.h): the client's step (slot kHitShare)
+// and, since 2026-11-12, the host's sends and the report (slot kHitShareHost) - Tick only posts them.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -145,6 +147,8 @@ void __cdecl OnConnection(const PluginContext*, const nw::ConnectionEvent* ev, v
 }
 
 // The host: what the observers saw since the last round, each peer's own hero's, sent to it.
+// ON THE APP THREAD ONLY: sendToClient off it ended the HOST's game at a joined player's first landed blow (2026-11-12, snw25: VR + flat
+// over TCP/IP, either side hosting) - Tick posts this there (slot kHitShareHost), as the client's step.
 void HostTick(uint64_t now) {
     static Batches batches;   // (Tick only)
     batches.Clear();
@@ -172,6 +176,7 @@ void HostTick(uint64_t now) {
             uint8_t buf[kMaxPayload];
             const uint32_t sz = BuildOutcomes(g_myNonce, b.r + at, k, buf, sizeof buf);
             if (!sz) continue;
+            appthread::NoteCall("hit share", "sendToClient (outcomes)");
             const nw::Result res = g_net->sendToClient(g_ctx, g_channel, static_cast<nw::PeerHandle>(b.handle), kMsgOutcomes, buf, sz);
             if (res == nw::Result::Success) { ++g_hc.msgs; g_hc.recs += static_cast<uint32_t>(k); }
             else { ++g_hc.failed; g_hc.lastFail = res; }
@@ -306,9 +311,24 @@ void Tick(uint64_t /*nowMs*/, bool inWorld, uint32_t heroId) {
     if (now - at < 30) return;   // ~30 rounds a second: an outcome reaches the other screen within a frame or two of the network
     at = now;
     g_hero.store(heroId);
-    if (hitoutcome::ShareWanted()) HostTick(now);
-    ClientTick(now, inWorld && heroId && hitoutcome::LabelsWanted(), heroId);
-    Report(now);
+    const bool host = hitoutcome::ShareWanted();
+    const bool joined = inWorld && heroId && hitoutcome::LabelsWanted();
+    // The host's sends and the 10 s report (it reads and clears the host's counts) on the app thread; the ring waits there meanwhile
+    // (the latest post wins: an older one not run yet loses nothing, the next run pops all).
+    if (host || joined) {
+        if (!appthread::Post(appthread::kHitShareHost, [host] {
+                if (g_dead.load()) return;
+                const uint64_t t = GetTickCount64();
+                if (host) HostTick(t);
+                Report(t);
+            })) {
+            static std::atomic<bool> told{false};
+            if (host && !told.exchange(true))
+                Say("vrcam: hit share - host: no way onto the game's app thread - the joined players' outcomes are NOT sent (sent from another "
+                    "thread the network code ends the game)");
+        }
+    }
+    ClientTick(now, joined, heroId);
 }
 
 }  // namespace hitshare

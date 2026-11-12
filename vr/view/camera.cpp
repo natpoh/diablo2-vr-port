@@ -9,7 +9,7 @@ namespace vrc {
 std::atomic<float> g_gameDownDeg{60.0f};   // the game camera's own downward angle, degrees (the flat view's last build)
 void FlatPortalFrame();   // [input] portal_look_horizon / portal_auto (below)
 void FlatPickupFrame();  // [input] flat_pickup_key_on (vr/input/flat_click.cpp)
-void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); FlatPickupFrame(); }
+void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); FlatPickupFrame(); campfire::Frame(); }
 
 // The game's view from above, per eye: orthographic, so moving the camera
 // aside would only slide the picture. Each eye's view is turned instead, half
@@ -409,6 +409,8 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     memcpy(g_lookAt, in.lookAt, sizeof g_lookAt);
     g_lookOk = in.lookAtValid;
     ReleaseSRWLockExclusive(&g_lookLock);
+    // [campfire] character creation's scene round the player (vr/campfire_unleashed.h): its own camera driven by the head
+    if (campfire::Now()) return campfire::View(in, out);
     // The menus (the character screen's 3D scene too: it has a hero point) keep the game's camera.
     if (!g_inWorld.load()) return false;
     if (TopStereoOn()) return TopStereoView(in, out);
@@ -800,6 +802,7 @@ bool VrProj(const d2rcam::WorldView& in, float M[16]) {
     return ours;
 }
 bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
+    if (campfire::Now()) return campfire::Proj(in, M);   // [campfire]: each eye's own frustum
     if (!g_enabled.load() || !g_inWorld.load()) return false;   // the menus: the game's own (no near clip through the heroes' heads)
     const float ratio = in.viewportH > 0.0f ? in.viewportW / in.viewportH : 0.0f;
     const float aspect = ratio > 0.1f && ratio < 10.0f ? ratio : 16.0f / 9.0f;

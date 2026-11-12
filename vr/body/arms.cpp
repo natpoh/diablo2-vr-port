@@ -6,6 +6,7 @@
 #include "../drawn_hand.h"    // [hands] left_slot_drawn_left: a weapon alone in the left slot, drawn in the hand that holds it
 #include "../skill_wheel.h"   // [weight] grab_items_empty_grip: the skill panel (its gestures tab) keeps the grip
 #include "../gesture_play_wire.h"   // the Gestures tab's Play: the take moves the drawn arms (F4, visual only)
+#include "../client_verdict.h"      // [world] town_heads_look: IsTown
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -1030,6 +1031,52 @@ void PushArms() {
             in.itemsOn = false;
             in.wallsOn = false;
             in.grabWrap = false;
+        }
+    }
+    {   // [world] town_heads_look: the town's people turn their heads to your eyes - VR F4, in a town, the eyes known (menus too: a vendor you talk to
+        // keeps looking at you while the trade is up). Who looks is decided again at each visit (a new salt when a town is entered).
+        static int level = 0;
+        static ULONGLONG levelAt = 0, mercsAt = 0;
+        static uint32_t salt = 0;
+        static skel::HeadLookIn look;   // (this thread only: the hirelings kept between their reads)
+        const ULONGLONG now = GetTickCount64();
+        const bool wanted = g_set.townHeadsLook.load();
+        if (wanted && on && now - levelAt >= 250) {
+            levelAt = now;
+            const int was = level;
+            level = SewerLevel(SewerHero());
+            if (level != was && clientverdict::IsTown(level)) salt = (uint32_t)now ^ (uint32_t)(level * 2654435761u);
+        }
+        const bool town = on && level > 0 && clientverdict::IsTown(level);
+        look.wanted = wanted;
+        look.on = wanted && town && own && viewgate::F4() && g_eyeOk.load();
+        for (int i = 0; i < 3; ++i) look.eye[i] = g_eyeWorld[i].load();
+        look.upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
+        look.rangeM = g_set.townHeadsRangeM.load();
+        look.chance = g_set.townHeadsChance.load();
+        look.yawDeg = g_set.townHeadsYaw.load();
+        look.upDeg = g_set.townHeadsUp.load();
+        look.downDeg = g_set.townHeadsDown.load();
+        look.salt = salt;
+        if (look.on && now - mercsAt >= 500) {   // the mercenaries' places: an NPC model standing there is a hireling (the rogues' and guards' models are shared)
+            mercsAt = now;
+            look.hirelings = (int)meleetouch::HirelingSpots(merctint::kHirelingClasses, merctint::kHirelingCount, look.hireling, 8);
+        }
+        if (!look.on) look.hirelings = 0;
+        skel::SetHeadLook(look);
+        if (wanted) {
+            static bool told = false;
+            if (look.on != told) {
+                told = look.on;
+                LogF("vrcam: town heads look - %s", look.on ? "on: the town's people near you may turn their heads to you" :
+                     !town ? "waiting: not in a town" : !own || !viewgate::F4() ? "waiting: not in F4" : "waiting: the eyes are not known yet");
+            }
+            const std::string note = skel::HeadLookNote();
+            for (size_t at = 0; at < note.size();) {
+                const size_t end = std::min(note.find('\n', at), note.size());
+                LogF("vrcam: %s", note.substr(at, end - at).c_str());
+                at = end + 1;
+            }
         }
     }
 #endif

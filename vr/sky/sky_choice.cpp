@@ -53,7 +53,8 @@ bool FogWanted() {
 // missing - a fresh install - refused, no model, a view it is not drawn in: engitem::SkyCannot) - vr/sky_paths.h. g_skyPalette itself stays
 // the act's sky wanted here: the game's dome is laid by it.
 // (VR F3 full width: the game's dome or none - its palette is only wanted there to lay the dome, sky_tick.cpp)
-bool OurSkyWanted() { return g_skyPalette.load() >= 0 && !skypaths::GameHolds(g_set.gameSky.load(), engitem::SkyCannot()) && !TableFull(); }
+std::atomic<bool> g_campfireSky{false};   // [campfire] sky in force (vr/campfire_unleashed.cpp Tick sets it)
+bool OurSkyWanted() { return g_skyPalette.load() >= 0 && (g_campfireSky.load() || (!skypaths::GameHolds(g_set.gameSky.load(), engitem::SkyCannot()) && !TableFull())); }   // ([campfire] sky: the scene has no dome of the game's)
 // [render] distance_blur (D2R_DepthFog.fx DistBlur*): where our fog could be - first person, in the world, not from above (the ground is
 // all one distance there), not while the effects are paused - and whoever draws the fog: the blur rides on the picture as it is
 bool DistanceBlurWanted() {
@@ -97,6 +98,14 @@ FogNumbers GameFogNumbersNow() {
         n.end = drawdistance::FromEyeAbove(h, n.end);
     }
     return n;
+}
+// [fog] game_fog_cover: the distance round the hero past which the step before the effects lays the fog's colour whole. VR F3 full width
+// (Serg 2026-11-11 on 0.212.3: "проверил в режиме F3 - туман не работает, он работает только в режиме F4") measures the game's fog from the
+// head high over the diorama - the cover as its start and end, the same rings round the hero
+float GameFogCoverNow() {
+    const float cover = g_set.gameFogCover.load();
+    if (cover > 0.0f && TableFull() && g_floorCamOk.load()) return drawdistance::FromEyeAbove(std::max(0.0f, g_floorEyeH.load()), cover);
+    return cover;
 }
 bool ArcaneHazeFog() { return g_arcaneSky.load() && (!ArcaneOwnFog() || g_set.arcaneFogIntoSky.load()); }
 

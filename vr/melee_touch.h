@@ -373,6 +373,8 @@ struct HirelingView {
 bool FindHireling(const uint32_t* classes, size_t count, HirelingView* out);
 // That unit's place now, while it is still that monster (the same id) and alive; false otherwise.
 bool HirelingPlace(uintptr_t unit, uint32_t id, float* x, float* z);
+// [world] town_heads_look: where every live monster of those classes stands (anyone's mercenary, co-op too), up to max - how many. Read-only, guarded.
+size_t HirelingSpots(const uint32_t* classes, size_t count, float (*xz)[2], size_t max);
 
 // ---- [multiplayer] pose_share (vr/pose_share.h): where the players are ----------------------------------------------------------------
 // Read-only, any thread (guarded): every player unit in the client's unit hash (the type-0 row) - its id and place on the grid (game

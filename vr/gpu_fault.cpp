@@ -32,6 +32,7 @@ std::atomic<bool> g_removed{false}, g_dumped{false}, g_dredAsked{false}, g_valid
 std::atomic<bool> g_eventsAsked{false};   // [debug] dred_events went in (DRED 1.2: the breadcrumbs keep their texts)
 int g_validation = 0;                      // [debug] d3d12_validation, as asked for
 ULONGLONG g_t0 = 0;                        // the plugin's load, for the report's times
+std::atomic<void (*)(long)> g_onRemoved{nullptr};   // OnRemoved
 
 // -- the report's lines: the log and the file --------------------------------------------------------------------------------
 // 2026-10-18 (the first DEVICE_HUNG dump): the game ends ~40 ms after the removal is seen, and a log line costs ~1.2 ms: the report stopped after
@@ -262,6 +263,7 @@ void Dump(ID3D12Device* dev, const char* how) {
     const HRESULT reason = dev ? dev->GetDeviceRemovedReason() : E_POINTER;
     Say("vrcam: gpu fault - the device's removal reason: 0x%08lX %s; %.1f s after the plugin loaded", (unsigned long)reason, ReasonName((int32_t)reason),
         (double)(now - g_t0) / 1000.0);
+    if (void (*cb)(long) = g_onRemoved.load()) cb((long)reason);
     // the rest in memory, DRED's answer first (what the GPU was doing - the part the game's end must not take), written in one go
     CollectBegin();
     if (dev) DumpDred(dev);
@@ -590,6 +592,8 @@ bool VideoMemory(uint64_t* usage, uint64_t* budget) {
 }
 
 bool Removed() { return g_removed.load(std::memory_order_relaxed); }
+const wchar_t* LogDir() { return g_dir; }
+void OnRemoved(void (*cb)(long reason)) { g_onRemoved.store(cb); }
 
 bool Check(ID3D12Device* dev, const char* where) {
     if (g_removed.load(std::memory_order_relaxed)) return true;

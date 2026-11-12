@@ -20,7 +20,8 @@ void SetSkillsWanted(int key);
 bool Wanted();
 // vrcam, once: the camera's forward on the game's screen (x right, y up); false = not known now.
 void SetForwardFn(bool (*fn)(float* sx, float* sy));
-// Its own hooks: the server's start of a mode by direction 0x42CED0 and the client's prediction 0xFF010. Tried from the install round.
+// Its own hooks: the server's start of a mode by direction 0x42CED0 and the client's prediction 0xFF010; then the client's busy test before
+// a command 0xFFAC0 (our walk through Zeal / Fury, which the game holds every command in). Tried from the install round.
 void Install();
 
 // Called from the hooks of vr/move_attack_wire.cpp.

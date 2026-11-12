@@ -91,7 +91,7 @@ namespace replay { void AreaChanged(); }   // the game set a biome: an area load
 namespace camfix { extern std::atomic<int> g_scanWant; }
 namespace flog { void StartDiag(); }
 namespace replay { extern std::atomic<bool> g_rightDepth; }
-namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; }
+namespace replay { extern std::atomic<int> g_want; extern std::atomic<int> g_ahead; extern std::atomic<bool> g_depthCopy; extern std::atomic<bool> g_on; extern std::atomic<bool> g_fxAtHold; extern std::atomic<bool> g_holdSignalsOn; extern std::atomic<bool> g_hangFallback; extern std::atomic<int> g_hangFallbackStallMs; }
 namespace replay { extern std::atomic<int> g_capturing; }   // 1 from a pair's left pass until the replay draws its right eye (vr/sky_view_eyes.h)
 namespace replay { extern std::atomic<bool> g_rightReplayed; }   // this pair's right eye replayed from the left's lists (not a pass of its own)
 // [ceiling] a room with no height of its own
@@ -280,7 +280,7 @@ bool ViewStickToGame(float* px, float* py);
 
 // ---- what vr/input/spell_aim.cpp (M10) reads of vrcam.cpp ----
 struct Calib { double c1 = 0, s1 = 0, c2 = 0, s2 = 0; int n = 0; float angle = 0; int mirror = 0; bool ok = false; };
-struct SpellCast { bool directed = false, point = false, leap = false; float gx = 0.0f, gy = 0.0f; };
+struct SpellCast { bool directed = false, point = false, leap = false, view = false; float gx = 0.0f, gy = 0.0f; };   // view: [hands] spell_aim_by 1, gx gy the gaze's
 constexpr uint64_t RVA_ATTACK_POINT = 0x18BAD0, RVA_ATTACK_POINT_RET = 0x14484A;   // the aim's own call returns there
 using AttackPointFn = float* (*)(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir);
 using ClientIndexFn = int (*)(void* unit);

@@ -1045,6 +1045,8 @@ bool BowOrbsWanted() { return bowquiverwire::OrbsWanted() && g_enabled.load() &&
 bool BowArrowFxWanted() { return bowquiverwire::ArrowFxWanted() && g_enabled.load() && g_inWorld.load(); }
 // the line the attack goes along, for any weapon in hand (only where HandRay has one)
 bool PhantomWanted() { return (g_set.phantomRay.load() || g_set.boneAxes.load()) && g_enabled.load() && g_inWorld.load(); }
+// [campfire] the fire's sparks (reshade/D2R_Campfire_Unleashed.fxh, vr/campfire_unleashed.h): for 2.5 s after a click on the fire
+bool CampfireSparksWanted() { const uint64_t at = campfire::SparkAt(); return campfire::SparksOn() && at && GetTickCount64() - at < 2500; }
 // the axes of whatever weapon is in hand, not only the crossbow's (2026-10-06)
 bool BoneAxesWanted() { return g_set.boneAxes.load() && g_enabled.load() && g_inWorld.load(); }
 // [debug] xbow_barrel_line: the crossbow's barrel as drawn and the left palm's place under it, VR first person (F4), the gun's hold
@@ -1148,6 +1150,7 @@ int GripDrawMarks(const StickFrame& f, float upm, float (*a)[4], float (*b)[4], 
 }
 #else
 bool PhantomWanted() { return false; }
+bool CampfireSparksWanted() { const uint64_t at = campfire::SparkAt(); return campfire::SparksOn() && at && GetTickCount64() - at < 2500; }
 bool BoneAxesWanted() { return false; }
 bool XbowBarrelWanted() { return false; }
 bool SpellRayWanted() { return false; }
@@ -1357,7 +1360,7 @@ template <class RT> void EffectsFinish(RT* rt) {
     if (!g_tech[0].handle) { hud::SetPictureReady(false); return; }
     // Off while a menu is open: the fog lies over the whole picture, the
     // inventory and trade panels included, and darkened them.
-    const bool want = GripDrawWanted() || FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
+    const bool want = CampfireSparksWanted() || GripDrawWanted() || FogWanted() || OurSkyWanted() || g_arcaneSky.load() || CeilWanted() || HudWanted() || StampWanted() || hud::PictureWanted() || TableKeyWanted() || PhantomWanted() || BoneAxesWanted() || BowVectorsWanted() || BowQuiverWanted() || MercTintWanted() || BowAimRayWanted() || XbowBarrelWanted() || SpellRayWanted() || PointRayWanted() || MeleeBoxesWanted() || SkillTriggersWanted() || HandOrbsWanted() || LowHpWanted() || BowOrbsWanted() || BowArrowFxWanted() || DistanceBlurWanted();
     // The toolbar and the map are taken out of the game's picture to be drawn
     // back at their own size only while this effect runs, and is new enough to.
     {
@@ -1447,7 +1450,9 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         fogfx::Params fp;
         // ([fog] game_fog_planes: the planes are drawn by the same step - with the game's fog only)
         const bool planesOn = g_set.gameFogPlanes.load() && g_set.gameFog.load();
-        const bool beforeFx = (g_set.fogBeforeFx.load() || planesOn) && GameFogDrawnView() && !TableFull() && fogfx::Hooked();   // (VR F3 full width: no fog tweak)   // (its hooks: no ReShade, the key on at the start)
+        // (VR F3 full width too - Serg 2026-11-11 on 0.212.3: "туман не работает, он работает только в режиме F4": the game's fog there draws
+        // ours from the head above, and the step lays the same before the effects; the other fog tweaks stay off there, fogheight below)
+        const bool beforeFx = (g_set.fogBeforeFx.load() || planesOn) && GameFogDrawnView() && fogfx::Hooked();   // (its hooks: no ReShade, the key on at the start)
         {   // the switch, live (its hooks stay in from the start; off: the step draws nothing, the game's fog pass keeps its colour) - one line
             static int toldKey = -1;
             const int key = g_set.fogBeforeFx.load() ? 1 : 0;
@@ -1460,7 +1465,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         fp.on = beforeFx && gamefogvr::Active();
         fp.fxDepth = g_set.fogFxDepth.load();   // [fog] game_fog_fx_depth: the effects fogged by their own distance (either fog)
-        fp.ourCurve = curve.on;
+        fp.ourCurve = curve.on && !TableFull();   // (VR F3 full width: the game's pass keeps its own curve there - the step the same)
         fp.start = curve.start; fp.end = curve.end; fp.curve = curve.curve; fp.strength = curve.strength; fp.ease = curve.ease;
         // ... or our effect's fog ([fog] game_fog=0): its curve by the view's depth (FogAmount), its colour as the post pass lays it in the
         // scene's units; the post pass then leaves a drawn pixel's fog to the step (FogInFrame). Only with a colour of its own (the act's, a
@@ -1500,8 +1505,13 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             static gamefogvr::Fog told{-1.0f, -1.0f, -1.0f, -1.0f, -1.0f};
             static float toldNear = -1.0f;
             const float nearNow = g_lastNear.load();
-            if (std::fabs(gf.plane - told.plane) > 0.05f || std::fabs(gf.density - told.density) > 1e-4f || std::fabs(gf.r - told.r) > 1e-4f ||
-                std::fabs(gf.g - told.g) > 1e-4f || std::fabs(gf.b - told.b) > 1e-4f || std::fabs(nearNow - toldNear) > 1e-4f) {
+            // (at most every 5 s: in VR F3 full width the numbers follow the head's height over the diorama - a line a frame otherwise)
+            static ULONGLONG toldAt = 0;
+            const ULONGLONG nowMs = GetTickCount64();
+            if ((std::fabs(gf.plane - told.plane) > 0.05f || std::fabs(gf.density - told.density) > 1e-4f || std::fabs(gf.r - told.r) > 1e-4f ||
+                 std::fabs(gf.g - told.g) > 1e-4f || std::fabs(gf.b - told.b) > 1e-4f || std::fabs(nearNow - toldNear) > 1e-4f) &&
+                (told.plane < 0.0f || nowMs - toldAt >= 5000)) {
+                toldAt = nowMs;
                 told = gf;
                 toldNear = nearNow;
                 const FogNumbers n = GameFogNumbersNow();
@@ -1515,7 +1525,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.nearPlane = g_lastNear.load();
             fp.sx = g_projSx.load();
             fp.sy = g_projSy.load();
-            fp.height = height;
+            fp.height = height && !TableFull();   // (VR F3 full width: no thinning in the game's pass there - nor in the step)
             fp.top = FogTopNow();
             fp.soft = g_set.fogSoft.load();
             fp.up[0] = g_viewRightY.load(); fp.up[1] = g_viewUpY.load(); fp.up[2] = g_viewFwdY.load();
@@ -1530,7 +1540,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.planesStrength = n.strength;
             fp.planesSoft = g_set.gameFogPlanesSoft.load();
         }
-        if (!fp.ours) fp.cover = g_set.gameFogCover.load();   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off)
+        if (!fp.ours) fp.cover = GameFogCoverNow();   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off; F3 full width from the head above)
         fogfx::Configure(fp);
         fogfx::Frame();
         {   // the submission order: the scene's state followed through the game's direct queue (the tap beside the replay's observer), once
@@ -1543,8 +1553,13 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
                 }
         }
         const bool noFog = fogfx::Drawn() && !fogfx::OursDrawn();   // (our effect's fog in the step: the game's pass has none of ours to leave out)
-        fogheight::Frame((height || mist || voidAlone || noFog || curve.on) && gamefogvr::Active() && GameFogDrawnView() && !TableFull(), height ? FogTopNow() : 1.0e9f,
-                         height ? g_set.fogSoft.load() : 1.0f, mist, voidAlone, noFog, curve);
+        // (VR F3 full width: only the step's own - the game's pass leaves the colour the step laid out; its other tweaks off there as before)
+        const bool tweaks = !TableFull();
+        fogheight::Curve curveHere = curve;
+        if (!tweaks) curveHere.on = false;
+        fogheight::Frame(((tweaks && (height || mist || voidAlone || curve.on)) || noFog) && gamefogvr::Active() && GameFogDrawnView(),
+                         tweaks && height ? FogTopNow() : 1.0e9f, tweaks && height ? g_set.fogSoft.load() : 1.0f, tweaks && mist, tweaks && voidAlone,
+                         noFog, curveHere);
     }
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
     // [render] fx_fence: the next frame's pass waits for these effects; by turns ([stereo] turn_fx_fence) for its overlays too - marked after them
@@ -1566,7 +1581,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     // run in the menus, and the main menu came up with no interface at all (2026-10-13).
     if (!g_inWorld.load() || !d2rcam::InWorld()) {
         g_menu3dNow.store(false);
-        hud::SetPanelOut(false);
+        hud::SetPanelOut(campfire::PanelOut());   // ([campfire]: the creation scene's menu goes out as its board, vr/campfire_unleashed.h)
     }
     // FlatVR's laser on the menu panel is the mouse (its reader block): the pad's layout kept under it, as
     // native's LaserStep keeps it - 300 ms a call; parked, the focus is the pad's again
@@ -1587,7 +1602,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     // a panel open in a game: the flat picture at the panels' distance from its first frame
     xr::SetPanelOpen(gamestate::MenuOpen() && g_inWorld.load());
     // [openxr] laser: the flat picture's menus - a panel in a game, or the title and character screens
-    xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load());
+    xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load());   // ([campfire]: the laser on the menu's board; off it, the hand's pick)
     FlatRawTick();   // FlatVR: BodyWalk's raw controllers into the plugin's own layout ([direct] flatvr_controls)
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, dev, q, bb);
@@ -2386,12 +2401,41 @@ template <class RT> void EffectWorldOff(RT* rt) {
                           "DomeSeenNow", "FogSeenNow", "DistBlurOn", "FogInFrame", "SpareOn"})
         SetBool(rt, n, false);
 }
+// [campfire] (from D2R VR Unleashed PR #518, vrcam's Sparks uniforms - MPL 2.0 in reshade/D2R_Campfire_Unleashed.fxh): for 2.5 s after a
+// click on the fire, its burst from the fire, relative to where the hands hang (g_eyeWorld), each eye's camera from the campfire's views.
+template <class RT> void CampfireSparks(RT* rt) {
+    SkyView sv[2];
+    AcquireSRWLockShared(&g_skyLock); sv[0] = g_skyView[0]; sv[1] = g_skyView[1]; ReleaseSRWLockShared(&g_skyLock);
+    const uint64_t at = campfire::SparkAt();
+    const bool on = CampfireSparksWanted() && sv[0].proj_ok && sv[0].axes_ok;
+    SetBool(rt, "SparkOn", on);
+    if (!on) return;
+    const float o[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
+    float fire[3];
+    campfire::FirePos(fire);
+    const float pos[3] = {fire[0] - o[0], fire[1] - o[1], fire[2] - o[2]};
+    SetFloats(rt, "SparkPos", pos, 3);
+    for (int e = 0; e < 2; ++e) {
+        const SkyView& s = sv[e].proj_ok && sv[e].axes_ok ? sv[e] : sv[0];
+        const float eye[3] = {s.hero[0] + s.eyeRel[0] - o[0], s.hero[1] + s.eyeRel[1] - o[1], s.hero[2] + s.eyeRel[2] - o[2]};
+        char n[16];
+        snprintf(n, sizeof n, "SparkEye%d", e); SetFloats(rt, n, eye, 3);
+        snprintf(n, sizeof n, "SkyProj%d", e); SetFloats(rt, n, s.proj, 4);
+        snprintf(n, sizeof n, "CamRight%d", e); SetFloats(rt, n, s.axes, 3);
+        snprintf(n, sizeof n, "CamUp%d", e); SetFloats(rt, n, s.axes + 3, 3);
+        snprintf(n, sizeof n, "CamBack%d", e); SetFloats(rt, n, s.axes + 6, 3);
+    }
+    SetFloat(rt, "SparkTime", (float)(GetTickCount64() - at) * 0.001f);
+    SetFloat(rt, "SparkSeed", (float)(at % 997));
+    SetFloat(rt, "SparkNear", std::max(g_set.nearClip.load(), 0.05f));
+}
 template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     constexpr bool kReShade = std::is_same_v<RT, reshade::api::effect_runtime>;
     pairfx::BeforeWrite();   // [stereo] pair_fx_sync: this eye's last effects drawn before the constants go in (before the timing: a wait is not effects)
     pairtime::g_effBegin.store(pairtime::UsNow());
     const bool own = OwnDepthNow();
     SetBool(rt, "OwnDepth", own);   // ours (VR, the square window) or ReShade's DEPTH (scenedepth::)
+    CampfireSparks(rt);   // [campfire] the fire's sparks (Phantom's pass): their burst and both eyes' cameras
     if constexpr (kReShade) scenedepth::Bind(rt, cl);   // before the replay reads which depth the effects have
     {   // eyes by turns, the other eye made: the overlays apart this present (replay::DrawOverlays). In the eye made the scene's depth bound
         // is the other eye's: nothing of it hides them there (D2R_OverlayMade, as in the try the author saw right) - unless [stereo]

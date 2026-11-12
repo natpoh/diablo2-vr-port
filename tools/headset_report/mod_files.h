@@ -106,7 +106,7 @@ inline std::string MarkersText(const Markers& m) {
 // MPL 2.0, beside our effect). `inGameRoot`: openxr_loader.dll beside the game is d2r-pcvr's too (ours is linked into the plugin).
 inline bool UnleashedFile(const std::string& name, bool inGameRoot) {
     const std::string n = Lower(name);
-    if (n == "d2r_fogease_unleashed.fxh") return false;
+    if (n == "d2r_fogease_unleashed.fxh" || n == "d2r_campfire_unleashed.fxh") return false;   // (ours: D2R_DepthFog.fx includes them, MPL 2.0)
     return n.find("pcvr") != std::string::npos || n.find("unleashed") != std::string::npos || n == "d2r_frame_reshade.ini" ||
            (inGameRoot && n == "openxr_loader.dll");
 }

@@ -23,8 +23,10 @@
 namespace lensmask {
 namespace {
 
-// Every rectangle at least this many pixels from a shown one (the picture's pixels; an upscaler's share keeps it at >= 1.5 of its own)
-constexpr int kMargin = 3;
+// Every rectangle at least this many pixels from a shown one (the picture's pixels; an upscaler's share keeps it at >= 1.5 of its own) - 3 by
+// default, [render] lens_mask_margin_px (lens_mask.h Config)
+std::atomic<int> g_margin{3};
+std::atomic<bool> g_strip{true};   // [render] lens_mask_strip: the never-submitted strip masked too
 // Rows a band of rectangles spans (fewer rectangles; the curved edge loses at most a band's slant). A rectangle clear is not free: on an RTX
 // 4070 Ti SUPER at 1664 x 1664 (tools/lens_mask_test.cpp, LENS_TIME) 605 rectangles (band 4) took 186 us a clear, 332 (band 8) 55 us, 176 (16) 34 us.
 constexpr int kBand = 8;
@@ -65,6 +67,8 @@ struct Inputs {
     float drawn[2][4] = {}, seen[2][4] = {};
     bool seenOk[2] = {};
     uint32_t w = 0, h = 0;
+    int margin = 3;
+    bool strip = true;
     bool valid = false;
 };
 Inputs g_in;
@@ -76,7 +80,7 @@ bool g_toldPlan = false;
 std::atomic<int> g_eyeNow{-1};
 
 // The 10 s line
-std::atomic<uint32_t> g_drawn[2] = {}, g_both{0}, g_noPlan{0}, g_skipReplay{0}, g_otherClears{0}, g_outside{0};
+std::atomic<uint32_t> g_drawn[2] = {}, g_both{0}, g_noPlan{0}, g_skipReplay{0}, g_otherClears{0}, g_outside{0}, g_noStencil{0};
 uint32_t g_passes = 0;
 ULONGLONG g_lineAt = 0;
 const char* g_state = "OFF";
@@ -114,10 +118,10 @@ Plan* Build(const xr::EyeLens lens[2], const xr::VisMask mesh[2], uint32_t w, ui
         const xr::EyeLens& l = lens[e];
         const lensshape::Tan drawn{l.drawn[0], l.drawn[1], l.drawn[2], l.drawn[3]};
         const lensshape::Tan seen{l.seen[0], l.seen[1], l.seen[2], l.seen[3]};
-        const bool seenCuts = l.seenOk && (seen.l > drawn.l + 1e-4f || seen.r < drawn.r - 1e-4f || seen.u < drawn.u - 1e-4f || seen.d > drawn.d + 1e-4f);
+        const bool seenCuts = g_strip.load() && l.seenOk && (seen.l > drawn.l + 1e-4f || seen.r < drawn.r - 1e-4f || seen.u < drawn.u - 1e-4f || seen.d > drawn.d + 1e-4f);
         const xr::VisMask& m = mesh[e];
         g_full[e] = lensshape::Plan(m.xy.data(), (uint32_t)(m.xy.size() / 2), m.idx.data(), (uint32_t)m.idx.size(), drawn, seenCuts ? &seen : nullptr, w, h,
-                                    kMargin, kBand, &st[e]);
+                                    g_margin.load(), kBand, &st[e]);
         any = any || !g_full[e].empty();
     }
     if (!any) {
@@ -132,10 +136,10 @@ Plan* Build(const xr::EyeLens lens[2], const xr::VisMask mesh[2], uint32_t w, ui
         const double sp = std::max(1.0, (double)w * sx * (double)h * sy);   // (the target's pixels the scene is drawn into)
         Say("vrcam: lens mask - runtime %s, scene %ux%u (drawn into %.3f x %.3f of it): left eye %u mesh triangles, %.1f%% of its picture hidden%s, "
             "%zu rectangles cover %.1f%%; right eye %u triangles, %.1f%% hidden%s, %zu rectangles cover %.1f%% (a %d-pixel margin kept from every shown "
-            "pixel; built in %llu ms)", xr::RuntimeName()[0] ? xr::RuntimeName() : "?", w, h, sx, sy, st[0].tris, 100.0 * st[0].meshShare,
+            "pixel, [render] lens_mask_margin_px; the never-submitted strip %s, lens_mask_strip; built in %llu ms)", xr::RuntimeName()[0] ? xr::RuntimeName() : "?", w, h, sx, sy, st[0].tris, 100.0 * st[0].meshShare,
             mesh[0].idx.empty() ? " (no mesh: only what is not submitted)" : "", p->rects[0].size(), 100.0 * Area(p->rects[0]) / sp, st[1].tris,
             100.0 * st[1].meshShare, mesh[1].idx.empty() ? " (no mesh: only what is not submitted)" : "", p->rects[1].size(),
-            100.0 * Area(p->rects[1]) / sp, kMargin, (unsigned long long)(GetTickCount64() - t0));
+            100.0 * Area(p->rects[1]) / sp, g_margin.load(), g_strip.load() ? "masked too" : "NOT masked", (unsigned long long)(GetTickCount64() - t0));
     }
     return p;
 }
@@ -153,7 +157,7 @@ bool Ready(const char** why) {
     xr::VisMask mesh[2];
     xr::VisibilityMask(0, &mesh[0]);
     xr::VisibilityMask(1, &mesh[1]);
-    bool same = g_in.valid && g_in.w == w && g_in.h == h;
+    bool same = g_in.valid && g_in.w == w && g_in.h == h && g_in.margin == g_margin.load() && g_in.strip == g_strip.load();
     for (int e = 0; e < 2 && same; ++e) {
         same = g_in.gen[e] == mesh[e].gen && g_in.seenOk[e] == lens[e].seenOk;
         for (int k = 0; k < 4 && same; ++k) same = Near(g_in.drawn[e][k], lens[e].drawn[k]) && Near(g_in.seen[e][k], lens[e].seen[k]);
@@ -173,6 +177,8 @@ bool Ready(const char** why) {
         g_builtAt = now;
         g_in.valid = true;
         g_in.w = w; g_in.h = h;
+        g_in.margin = g_margin.load();
+        g_in.strip = g_strip.load();
         for (int e = 0; e < 2; ++e) {
             g_in.gen[e] = mesh[e].gen;
             g_in.seenOk[e] = lens[e].seenOk;
@@ -199,17 +205,30 @@ void Line() {
     const double s = (now - g_lineAt) / 1000.0;
     g_lineAt = now;
     const uint32_t l = g_drawn[0].exchange(0), r = g_drawn[1].exchange(0), b = g_both.exchange(0), np = g_noPlan.exchange(0), sr = g_skipReplay.exchange(0),
-                   oc = g_otherClears.exchange(0), out = g_outside.exchange(0);
+                   oc = g_otherClears.exchange(0), out = g_outside.exchange(0), ns = g_noStencil.exchange(0);
     const uint32_t passes = g_passes;
     g_passes = 0;
     if (!g_cfgOn.load() && !l && !r && !b) return;   // (off: once said at the switch)
     char extra[200] = "";
     size_t n = 0;
     if (sr) n += snprintf(extra + n, sizeof extra - n, " | NOT masked, a replay without its per-eye predicate: %u", sr);
-    if (np || oc || out)
-        snprintf(extra + n, sizeof extra - n, " | not masked - no plan %u, a partial or stencil-only clear %u, outside an eye's pass %u", np, oc, out);
+    if (np || oc || out || ns)
+        snprintf(extra + n, sizeof extra - n, " | not masked - no plan %u, a partial or stencil-only clear %u, outside an eye's pass %u, a depth of the "
+                 "picture's size without stencil (a shadow map) %u", np, oc, out, ns);
     Say("vrcam: lens mask - %s | %.1f eye passes/s | the scene depth's clears masked: left eye %u, right eye %u, both eyes for the replay (predicated) %u%s",
         g_state, passes / s, l, r, b, extra);
+}
+
+// A depth format with a stencil part (the scene's depth-stencil; the game's shadow maps are depth only)
+bool HasStencil(DXGI_FORMAT f) {
+    switch (f) {
+        case DXGI_FORMAT_R24G8_TYPELESS: case DXGI_FORMAT_D24_UNORM_S8_UINT: case DXGI_FORMAT_R24_UNORM_X8_TYPELESS: case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+        case DXGI_FORMAT_R32G8X24_TYPELESS: case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+        case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 // After the game's ClearDepthStencilView, on its list (any of its threads)
@@ -218,6 +237,10 @@ void SinkClear(ID3D12GraphicsCommandList* cl, uint64_t dsv, ID3D12Resource* ds, 
     const uint32_t w = g_screenW.load(std::memory_order_relaxed), h = g_screenH.load(std::memory_order_relaxed);
     const D3D12_RESOURCE_DESC d = ds->GetDesc();
     if (d.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D || d.Width != w || d.Height != h || d.DepthOrArraySize != 1) return;   // not the scene's
+    // 2026-11-12, Serg: grass drawn less in one eye ONLY at a 2048 x 2048 render size - the size of the game's 2048 shadow maps (shadows_once.h:
+    // "hair, 2048"): their clears matched the size test and got each eye's rectangles at the nearest depth, so each eye's shadows (and the grass
+    // lit by them) differed. The scene's depth carries stencil (the grass lighting is a stencil pass; R24G8 here); a shadow map does not.
+    if (!HasStencil(d.Format)) { g_noStencil.fetch_add(1, std::memory_order_relaxed); return; }
     const int eye = g_eyeNow.load(std::memory_order_acquire);
     if (eye < 0) { g_outside.fetch_add(1, std::memory_order_relaxed); return; }
     if (!(flags & D3D12_CLEAR_FLAG_DEPTH) || nRects) { g_otherClears.fetch_add(1, std::memory_order_relaxed); return; }
@@ -265,6 +288,8 @@ bool Hooked() { return g_hooked.load(); }
 void Configure(const Config& c) {
     const bool was = g_cfgOn.exchange(c.on);
     g_cfgTurnWarp.store(c.turnWarp);
+    g_margin.store(c.margin < 1 ? 1 : c.margin > 256 ? 256 : c.margin);   // (a change builds the plan again at the next pair: Ready)
+    g_strip.store(c.strip);
     if (was != c.on)
         Say(c.on ? "vrcam: lens mask - [render] lens_mask ON: what the lenses never show is left out of the game's depth-tested passes (F4, native OpenXR)"
                  : "vrcam: lens mask - [render] lens_mask OFF: the game's depth as it clears it");

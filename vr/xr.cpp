@@ -54,6 +54,8 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "xr_layers.h"
 #include "focus_gate.h"
 #include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
+#include "campfire_unleashed.h"   // [campfire] the creation scene's boards (MPL 2.0, from D2R VR Unleashed)
+#include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard (MPL 2.0, from D2R VR Unleashed)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "hand_keep.h"       // [openxr] hands_kept / bare_hand_poses / panels_key: the hands and the panels when the runtime gives no controllers
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
@@ -93,6 +95,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "first_start_wire.h"   // the first-start guide asks the settings panel for its Guide page ([onboarding], vr/first_start.cpp)
 #include "haptics.h"
 #include "hand_inventory.h"   // [openxr] hand_inventory: the inventory's panel on the left hand (where it hangs)
+#include "band_icons.h"       // [render] ui_band_corner_icons: the square and the 16:9 icons over a menu's panel (F4)
 #include "haptic_stop.h"   // [openxr] haptics_stop: each pulse stopped by an explicit call when its time is up (a thread of its own)
 #include "anchor_gate.h"   // [openxr] menus_wait_tracking: the flat picture and the menu panel placed only with the head tracked
 #include "frame_trace.h"   // [debug] frame_trace: what the runtime's haptic call costs a pair
@@ -133,7 +136,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hand_swap.h"      // [hands] left_handed: the controllers traded once in Publish; Phys() names the controller a hand reads
 
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
-namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
+namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); bool KeyboardShown(); uint32_t KeyboardEpoch(); bool CreatePanelOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
 namespace xr {
 void GuardSet();
@@ -218,7 +221,11 @@ struct Cfg {
     float bigDistM = 1.3f, bigSideDeg = 0.0f, bigUpM = -0.1f;   // [hud] map_big_dist_m, map_big_side_deg, map_big_up_m: where it was let go, relative to the gaze
     bool mapStickZoom = false;  // [hud] map_stick_zoom: the right stick zooms the map the right laser is on (vr/map_zoom.h); live
     bool mapClickBig = false; // [hud] map_click_big: the right laser on the map in the hand, a click makes it the game's big map in front (vr/map_laser.h); live
+    bool nameKeyboard = false; // name_keyboard: the VR keyboard under the menu while a new character's name box is up (vr/vr_keyboard_unleashed.h)
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
+    bool bandIcons = false;   // [render] ui_band_corner_icons: a square and a 16:9 icon over that panel's top right corner switch [render] ui_band_16x9 (vr/band_icons.h); live
+    bool vrResUi = true;      // [render] vr_resolution_ui: the band needs its hook - no icons without it
+    int bandLast = 1;         // [render] ui_band_16x9_last: the band's mode (1, 2) the 16:9 icon gives back, kept by the square's click
     bool menuZoom = true;     // menu_zoom: the right grip + the right stick bring that panel nearer / farther, written to [screen] menu_distance_m (vr/menu_zoom.h)
     float menuZoomSpeed = menuzoom::kSpeedDefault;   // menu_zoom_speed_mps: metres a second at the stick's full travel
     bool panelGrab = false;   // panel_grab: a grip that starts on that panel carries it, the hand in / out (or its stick) nearer / farther; menu_zoom steps aside (vr/panel_grab.h); live
@@ -596,6 +603,16 @@ ULONGLONG g_gazeLineAt = 0;
 int g_viewsMode = 0;      // what vrcam asked the next pair to be (xr.h SetViewsMode): kViewsHead, kViewsWindow, kViewsRoom
 PointerAtFn g_pointerAt = nullptr;   // vrcam's: the ground under the game's mouse in F1 / F3 (xr.h)
 int g_pairMode = 0;       // what the open pair is (OpenFrame)
+// [campfire] character creation's scene in stereo (from D2R VR Unleashed, bearstonem/d2r-pcvr, Kudlatytrue - MPL 2.0; vr/campfire_unleashed.h):
+// the menus draw no pair, so the camera opens the headset's frame for the left eye (OpenCampfireFrame) and each present copies its eye,
+// the right eye's ending the frame. Never the flat picture meanwhile.
+std::atomic<bool> g_campfire{false};
+std::atomic<uint32_t> g_campfireNoFrame{0};   // the campfire's presents in a row that found no frame open (CampfireFailing)
+std::atomic<bool> g_campfireBoardHit{false};  // the laser on the campfire's menu board (its own click; the hand's pick stays off)
+std::atomic<bool> g_campfireBoardFailed{false};   // the board not to be had for 90 frames: the menu stays as the game draws it until the scene is left
+int g_campfireBoardMissing = 0;                   // (frames in a row the board wanted but not hung)
+std::atomic<bool> g_campfireIdle{false};          // the last open asked for nothing to be drawn (shouldRender false)
+std::atomic<bool> g_campfireFrame{false};         // the frame open now is one OpenCampfireFrame opened (only that one is ended when the scene goes)
 views3d::Anchor g_winAnchor;    // where F1's window stands (held to the gaze first, brought round after a second 60 degrees off)
 views3d::Window g_win{};
 views3d::WindowEyes g_winEyes{};
@@ -688,7 +705,20 @@ struct HandCut {
 HandCut g_cut;
 struct BtnShown { XrPosef pose{}; float side = 0.0f; bool ok = false; };
 BtnShown g_btnShown;   // the button as the last frame hung it (the laser's second surface)
+struct KbShown { XrPosef pose{}; float w = 0.0f, h = 0.0f; bool ok = false; };
+KbShown g_kbShown;     // [openxr] name_keyboard: the keyboard's board as the last frame hung it (the laser's third surface)
+bool g_kbClosed = false, g_kbCampfireOpen = false;   // ... Close pressed (until the box comes up anew); [campfire]: the name box clicked
+uint32_t g_kbClosedEpoch = 0;
+int g_kbLit = -1;                                    // ... the key under the laser (LaserStep), -1 none
+framevr::keyboard::Typist g_kbTypist;
 XrCompositionLayerQuad g_btnLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+// [render] ui_band_corner_icons (vr/band_icons.h): the strip of the square and the 16:9 icon as the last frame hung it over the menu's panel (the laser's
+// fourth surface), its layer, and the ini write of a click on a thread of its own (BandSave, as the inventory's button's FrontSave)
+struct LayShown { XrPosef pose{}; float w = 0.0f, h = 0.0f; bool ok = false; };
+LayShown g_layShown;
+XrCompositionLayerQuad g_layLayer{XR_TYPE_COMPOSITION_LAYER_QUAD};
+std::atomic<int> g_bandSaveWant{-1};   // the mode to write (-1 none)
+std::atomic<bool> g_bandSaving{false};
 
 // The body the camera is held to (lean_m): where the head is over the floor, as far as a
 // lean goes - the head may lean round it, and walking off in the room drags it along
@@ -1787,6 +1817,50 @@ void FrontSaveRun() {
 void FrontSave(bool front) {
     g_frontSaveWant.store(front ? 1 : 0);
     if (!g_frontSaving.exchange(true)) std::thread(FrontSaveRun).detach();
+}
+
+// [render] ui_band_corner_icons: a click's [render] ui_band_16x9 written (kept: after a restart too) on a thread of its own (g_bandSaveWant: the mode, and with the square the band's
+// mode it left in [render] ui_band_16x9_last - the 16:9 icon gives that one back). Want = mode | (last << 4), last 0: not written.
+std::atomic<int> g_bandLast{-1};   // the band's mode the 16:9 icon gives back, as this game's clicks left it (-1: the ini's ui_band_16x9_last)
+void BandSaveRun() {
+    for (;;) {
+        const int want = g_bandSaveWant.exchange(-1);
+        if (want < 0) {
+            g_bandSaving.store(false);
+            if (g_bandSaveWant.load() >= 0 && !g_bandSaving.exchange(true)) continue;   // one came in as this one ended
+            return;
+        }
+        const int mode = want & 15, last = want >> 4;
+        // key by key in place, as D2R VR Settings writes it (WritePrivateProfileString: never the whole file rewritten under a running Settings)
+        bool ok = WritePrivateProfileStringW(L"render", L"ui_band_16x9", std::to_wstring(mode).c_str(), g_iniPath) &&
+                  GetPrivateProfileIntW(L"render", L"ui_band_16x9", -1, g_iniPath) == mode;
+        if (ok && last)
+            ok = WritePrivateProfileStringW(L"render", L"ui_band_16x9_last", std::to_wstring(last).c_str(), g_iniPath) &&
+                 GetPrivateProfileIntW(L"render", L"ui_band_16x9_last", -1, g_iniPath) == last;
+        if (ok) LogF("vrcam: openxr - [render] ui_band_16x9=%d written by the icon over the menu - kept from now on%s ([render] ui_band_corner_icons)", mode,
+                     last ? (std::string(", the band's mode kept in ui_band_16x9_last=") + std::to_string(last)).c_str() : "");
+        else LogF("vrcam: openxr - [render] ui_band_16x9=%d NOT written (error %lu) - the interface goes back to the ini's in a few seconds ([render] ui_band_corner_icons)",
+                  mode, GetLastError());
+    }
+}
+// The laser's click on an icon over the menu's panel: the square the whole picture, the 16:9 icon the band as last used - in force at once
+// (vrres::PickUiBandMode, the interface laid out again by the next UiBandTick), written to the ini behind it. The lit icon: nothing.
+void BandIconClick(bandicons::Icon icon) {
+    const int mode = vrres::UiBandMode();
+    const int lastNow = g_bandLast.load();
+    const int last = bandicons::RectMode(lastNow >= 0 ? lastNow : g_cfg.bandLast);
+    const int want = bandicons::ClickMode(icon, mode, last);
+    static uint32_t told = 0;
+    if (++told <= 40)
+        LogF("vrcam: openxr - laser: the %s icon over the menu clicked, ui_band_16x9 %d - %s ([render] ui_band_corner_icons; %u)", icon == bandicons::kSquare ? "square" : "16:9",
+             mode, want < 0 ? "already so: nothing done" : want == 0 ? "the interface over the whole picture" : want == 1 ? "the interface in the 16:9 band always" :
+             "the interface in the 16:9 band while the inventory is open", told);
+    if (want < 0) return;
+    const int keep = 0;   // (0.214: the rectangle always gives 2 - nothing kept for it in ui_band_16x9_last any more)
+    if (keep) g_bandLast.store(keep);
+    vrres::PickUiBandMode(want);
+    g_bandSaveWant.store(want | keep << 4);
+    if (!g_bandSaving.exchange(true)) std::thread(BandSaveRun).detach();
 }
 
 bool PanelGrabApplies(bool focused);   // [openxr] panel_grab, below
@@ -3039,6 +3113,8 @@ std::vector<uint32_t> g_ptrPx;
 constexpr int kStickersW = 1600, kStickersH = 320;
 stickers::Atlas g_stickerPx(kStickersW, kStickersH);
 QuadAtlas g_stickers;
+QuadAtlas g_kbAtlas;   // [openxr] name_keyboard: the keyboard's four pictures (HangKeyboard)
+bool g_kbPainted = false, g_kbUploaded = false;
 uint32_t g_stickersUp = 0;   // the generation the swapchain holds
 
 void StickerPut(Sticker& s, int w, int h, const uint32_t* px, const char* what) {
@@ -3066,6 +3142,7 @@ void StickersTeardown() {   // with the session (Teardown): painted again in the
     g_ptrPx.clear();
     g_ptr = Pointer{};
     QuadAtlasDestroy(g_stickers);
+    QuadAtlasDestroy(g_kbAtlas); g_kbUploaded = false;   // [openxr] name_keyboard
     g_stickerPx.Clear();
     g_stickersUp = 0;
     g_compass = g_rotButton = Sticker{};
@@ -4133,12 +4210,14 @@ struct Laser {
     bool button[2] = {};       // the left, right mouse button held down by us
     bool key[2] = {};          // Ctrl, Shift held down by us
     bool trigger = false;      // the laser hand's trigger the frame before (a press is its edge)
+    bool kb = false;           // [openxr] name_keyboard: it points at the keyboard's board (g_kbShown)
     bool refillTake = false;   // [belt] refill_key: the refill button (B) is ours - hidden from BodyWalk and the game's pad - decided while it is let go
     int said = -1;             // the state last told the log
     uint32_t tellings = 0;
     lasergrip::Tap gripTap[2];   // [openxr] laser_grip_tap: each hand's grip, tapped while the laser had it, given back as the menu's bumper
     uint32_t gripTaps = 0;
     bool btn = false;          // [openxr] hand_inventory: it points at the button beside the inventory (the panel to the front / to the hand)
+    int lay = 0;               // [render] ui_band_corner_icons: it points at the square (1) or the 16:9 icon (2) over the menu's panel (bandicons::Icon)
     bool pressIn = false;      // ... the left button went down on the inventory window
     float lastPu = 0.0f, lastPv = 0.0f;   // ... where it last put the cursor, as fractions of the window
     uint32_t drops = 0;
@@ -4149,6 +4228,7 @@ Laser g_laser;
 // The beam and the dot, painted once a session into the stickers.
 Sticker g_beamImg, g_dotImg;
 Sticker g_btnImg[2];   // [openxr] hand_inventory: the button beside the inventory (ButtonImages)
+Sticker g_layImg;      // [render] ui_band_corner_icons: both icons, two rows - the square lit, the 16:9 one lit (BandIconImages)
 constexpr float kBeamM = 1.5f, kBeamWidthM = 0.006f, kDotM = 0.022f;
 
 bool SendButton(int b, bool down) {
@@ -4178,10 +4258,11 @@ void LaserLetGo() {
 
 void LaserTeardown() {   // under g_lock or before the session exists
     LaserLetGo();
-    for (Sticker* i : {&g_beamImg, &g_dotImg, &g_btnImg[0], &g_btnImg[1]}) *i = Sticker{};   // (their picture went with the stickers: StickersTeardown)
+    for (Sticker* i : {&g_beamImg, &g_dotImg, &g_btnImg[0], &g_btnImg[1], &g_layImg}) *i = Sticker{};   // (their picture went with the stickers: StickersTeardown)
     g_laser = Laser{};
     g_flatShown = FlatShown{};
     g_btnShown = BtnShown{};
+    g_layShown = LayShown{};
     g_cut.pending = false;   // (a copy of the session gone is not waited for; the buffer is kept)
     directinput::Action(D2RVR_ACT_INVENTORY, false, directinput::kSrcOther6);   // (a drop's inventory action never left held)
 }
@@ -4215,7 +4296,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     if (!g_cfg.laser) why = 1;
     else if (g_hsOpen.load()) why = 8;   // the settings panel has the hands: no mouse, no keys to the game
-    else if ((g_kind != kMono && !(g_kind == kPair && g_cfg.menu3d)) || !g_flatShown.ok) why = 2;   // (menu_3d: a menu's panel in a pair)
+    else if ((g_kind != kMono && !(g_kind == kPair && (g_cfg.menu3d || g_campfire.load()))) || !g_flatShown.ok) why = 2;   // (menu_3d: a menu's panel in a pair; [campfire]: its board)
     else if (!g_laserWanted.load()) why = 3;
     else if (!focused) why = 4;
     else if (!g_wnd || GetForegroundWindow() != GetAncestor(g_wnd, GA_ROOT)) why = 5;
@@ -4225,6 +4306,8 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     float u = 0.0f, v = 0.0f;
     bool onPlane = false;   // the ray meets the picture's plane (u, v past its edges then: a drag carried off it)
     L.btn = false;
+    L.kb = false;
+    L.lay = 0;
     if (!why) {
         L.from = aim.pose.position;
         L.dir = Unit(Rot(aim.pose.orientation, {0.0f, 0.0f, -1.0f}));
@@ -4255,7 +4338,28 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
             L.at = Plus(L.from, Times(L.dir, tb));
             L.len = tb;
         }
-        if (!L.hit && !L.btn) L.len = kBeamM;
+        float tl = 0.0f;
+        XrVector3f ll{};
+        if (g_layShown.ok && !L.btn && meet(g_layShown.pose, &tl, &ll) && (!L.hit || tl < t)) {   // [render] ui_band_corner_icons: the square / the 16:9 icon
+            L.lay = bandicons::At(ll.x, ll.y, g_layShown.w, g_layShown.h);
+            if (L.lay) {   // (above the picture's edge: the game's mouse never goes there - the click is ours alone)
+                L.hit = false;
+                L.at = Plus(L.from, Times(L.dir, tl));
+                L.len = tl;
+            }
+        }
+        float tk = 0.0f;
+        XrVector3f lk{};
+        g_kbLit = -1;
+        if (g_kbShown.ok && !L.btn && !L.lay && meet(g_kbShown.pose, &tk, &lk) && fabsf(lk.x) <= 0.5f * g_kbShown.w && fabsf(lk.y) <= 0.5f * g_kbShown.h &&
+            (!L.hit || tk < t)) {   // [openxr] name_keyboard: the keyboard's board, nearer than the picture - the laser is the keyboard's there
+            L.kb = true;
+            L.hit = false;
+            L.at = Plus(L.from, Times(L.dir, tk));
+            L.len = tk;
+            g_kbLit = framevr::keyboard::KeyAt(lk.x / g_kbShown.w + 0.5f, 0.5f - lk.y / g_kbShown.h);
+        }
+        if (!L.hit && !L.btn && !L.kb && !L.lay) L.len = g_campfire.load() ? std::clamp(campfire::BoardsNow().pointerM, 0.3f, 30.0f) : kBeamM;   // ([campfire]: to where the pick's point lies)
     }
     // the quad's point as the window's: the cut's own place in it ([openxr] hand_inventory), the whole window otherwise
     const float* crop = g_flatShown.crop;
@@ -4281,16 +4385,18 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         if ((!walks && (fabsf(o.stickX) > 0.35f || fabsf(o.stickY) > 0.35f)) ||
             (o.buttons & (BW_LINK_XRB_PRIMARY | BW_LINK_XRB_SECONDARY | BW_LINK_XRB_STICK | BW_LINK_XRB_MENU))) padNow = true;
     }
+    if (g_campfire.load()) padNow = false;   // [campfire]: A is the pick's click and the pad navigates nothing - the laser never waits for it (0.213.6)
     if (why) L.pad = false;
     else if (padNow && !L.button[0] && !L.button[1]) { L.pad = true; L.anchored = L.hit; L.padU = u; L.padV = v; }
     else if (L.pad && !padNow && L.hit && (!L.anchored || hypotf(u - L.padU, v - L.padV) > 0.045f)) L.pad = false;
     const bool acts = !why && !L.pad;   // the laser is the mouse this frame
     L.drawn = acts;
+    g_campfireBoardHit.store(g_campfire.load() && acts && L.hit);   // [campfire]: the board has the click, not the hand's pick
     // [belt] refill_key: the button's state while ours, and whether a tap would click where the laser points (the cursor is put there below)
     beltrefill::FeedPad(L.refillTake && refillDown, acts && L.hit && !L.button[0] && !L.button[1]);
     if (why != 1) LaserTell(why ? why : L.pad ? 7 : 0);
     // who has each trigger and grip, decided while it is let go: the laser's while it points at the picture
-    const bool claim = acts && (L.hit || L.btn);
+    const bool claim = acts && (L.hit || L.btn || L.kb || L.lay);
     for (int h = 0; h < 2; ++h) {
         D2RVR_XrHand& o = in.hand[h];
         if (o.trigger < 0.1f && !(raw[h] & BW_LINK_XRB_TRIGGER)) L.takes[h][0] = claim;
@@ -4326,7 +4432,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     if (acts) panelinput::OwnPointer();
     else if (L.pad) panelinput::UseController();
     // [openxr] hand_inventory: an item dragged off the inventory - the cursor follows it into the window round the cut, where its release drops it
-    const bool dragOff = invUp && acts && onPlane && !L.hit && !L.btn && L.button[0];
+    const bool dragOff = invUp && acts && onPlane && !L.hit && !L.btn && !L.lay && L.button[0];
     if (acts && (L.hit || dragOff)) {   // the cursor where it points: the picture is the game window's client area
         // (the window's REAL pixels, also with a render size ([render] vr_resolution): the picture is the game's whole output, the
         // window's whole client area is the same picture, and the game's own ScreenToClient maps the one to the other - render_resolution.cpp)
@@ -4412,6 +4518,25 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
         static uint32_t told = 0;
         if (++told <= 40) LogF("vrcam: openxr - the button beside the inventory: %s ([openxr] hand_inventory; %u)", front ? "in front, full size" : "back on the left hand", told);
     }
+    if (acts && L.lay && trig && !L.trigger && L.takes[lh][0]) {   // [render] ui_band_corner_icons: the square - the whole picture; the 16:9 icon - the band
+        BandIconClick((bandicons::Icon)L.lay);
+        haptics::Play(haptics::Event::MenuClick, lh);
+    }
+    if (acts && L.kb && trig && !L.trigger && L.takes[lh][0] && g_kbLit >= 0) {   // [openxr] name_keyboard: a pull on a key types it
+        const framevr::keyboard::Output typed = g_kbTypist.Press(g_kbLit);
+        haptics::Play(haptics::Event::MenuClick, lh);
+        if (typed.close) {
+            g_kbClosed = true;
+            g_kbClosedEpoch = gamestate::KeyboardEpoch();
+            Log("vrcam: openxr - the VR keyboard closed until the name box comes up anew");
+        } else if (typed.send != framevr::keyboard::Send::None) {
+            static bool told = false;
+            if (!framevr::keyboard::SendKey(typed, g_wnd)) Log("vrcam: openxr - a VR keyboard key could not be sent (not on this keyboard layout, or SendInput refused)");
+            else if (!told) { told = true; Log("vrcam: openxr - the VR keyboard typing into the game"); }
+        }
+    }
+    if (acts && L.hit && trig && !L.trigger && L.takes[lh][0] && g_campfire.load() && u > 0.36f && u < 0.64f && gamestate::KeyboardShown())
+        g_kbCampfireOpen = true;   // [campfire] the name box on the board pulled on: the keyboard comes up (the heroes stay in reach until then)
     if (acts && L.hit && trig && !L.trigger && L.takes[lh][0]) {   // a fresh press on the picture
         const int b = grip && L.takes[lh][1] ? 1 : 0;
         L.button[b] = SendButton(b, true);
@@ -4427,7 +4552,40 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
                                why ? "no click - the laser is not the mouse now" : L.pad ? "no click - the laser waits for the pad (a stick or a face button was used): move it on the picture first" :
                                !L.hit ? "no click - it points off the picture" : !L.takes[lh][0] ? "no click - the trigger was already held when the laser came onto the picture: let it go first" :
                                "no click - Windows refused the button";
-            LogF("vrcam: openxr - laser: trigger pressed at %.3f %.3f on the picture: %s (%u)", pu, pv, L.btn ? "the button beside the inventory" : what, presses);
+            LogF("vrcam: openxr - laser: trigger pressed at %.3f %.3f on the picture: %s (%u)", pu, pv, L.btn ? "the button beside the inventory" :
+                 L.lay == 1 ? "the square icon over the menu (the whole picture)" : L.lay == 2 ? "the 16:9 icon over the menu (the band)" : what, presses);
+        }
+    }
+    {   // [render] ui_band_16x9 in force over a menu's panel in front (F4): does the laser reach all of the band? A tally told every 60 s and as the
+        // band / the panel goes (vr/band_icons.h Reach) - no line a click; it stays in the log (sent only with the player's own "Collect logs")
+        static bandicons::Reach reach;
+        static ULONGLONG since = 0;
+        static uint32_t lines = 0;
+        const bool on = viewgate::F4() && g_kind == kPair && g_cfg.menu3d && g_flatShown.ok && vrres::UiBandActive() && !HandInventoryHung() && !g_campfire.load() &&
+                        g_panelTexW && g_panelTexH;
+        const float share = bandicons::BandShare(g_panelTexW, g_panelTexH);
+        if (on && acts) {
+            if (L.hit) reach.AddPoint(u, v, share);
+            if (trig && !L.trigger && !L.btn && !L.lay && !L.kb) reach.AddPress(L.hit, u, v, share);
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (on && !since) since = now;
+        if ((on ? now - since >= 60000 : since != 0) && reach.Any()) {
+            if (++lines <= 200)
+                LogF("vrcam: openxr - laser on the 16:9 menu (%s, %.0f s): presses - %u on the band, %u at its very edge, %u below it (outside the band), %u on nothing; "
+                     "farthest pointed on the band: left %.0f %%, right %.0f %%, top %.0f %%, bottom %.0f %% (100 %% = the band's far edge; band %ux%u of the picture %ux%u) "
+                     "([render] ui_band_16x9; %u)", on ? "the last minute" : "until the panel / the band went", (double)(now - since) / 1000.0,
+                     reach.n[bandicons::kOnBand], reach.n[bandicons::kEdge], reach.n[bandicons::kBelow], reach.n[bandicons::kNothing],
+                     reach.Pointed() ? 100.0f * (1.0f - reach.left) : 0.0f, reach.Pointed() ? 100.0f * reach.right : 0.0f,
+                     reach.Pointed() ? 100.0f * (1.0f - reach.top) : 0.0f, reach.Pointed() ? 100.0f * reach.bottom : 0.0f,
+                     g_panelTexW, (uint32_t)(share * (float)g_panelTexH + 0.5f), g_panelTexW, g_panelTexH, lines);
+            reach.Clear();
+            since = on ? now : 0;
+        } else if (!on && since) {
+            reach.Clear();
+            since = 0;
+        } else if (on && now - since >= 60000) {
+            since = now;   // (a quiet minute: nothing to tell)
         }
     }
     L.trigger = trig;
@@ -4517,7 +4675,8 @@ uint32_t HangBeam(const BeamView& L, const XrCompositionLayerBaseHeader** layers
 // The game's laser over the flat picture.
 uint32_t HangLaser(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& beam, XrCompositionLayerQuad& dot) {
     const Laser& L = g_laser;
-    return HangBeam(BeamView{L.drawn, L.hit || L.btn, L.from, L.dir, L.at, L.len, L.btn ? g_btnShown.pose.orientation : g_flatShown.pose.orientation}, layers, nl, max, beam, dot);
+    return HangBeam(BeamView{L.drawn, L.hit || L.btn || L.kb || L.lay, L.from, L.dir, L.at, L.len, L.btn ? g_btnShown.pose.orientation : L.kb ? g_kbShown.pose.orientation :
+                             L.lay ? g_layShown.pose.orientation : g_flatShown.pose.orientation}, layers, nl, max, beam, dot);
 }
 
 // -- [hud] map_click_big: the right laser on the map in the hand, a click makes it big (vr/map_laser.h) ------------------------------
@@ -5519,7 +5678,7 @@ bool OpenFrame(Kind kind) {
             LogF("vrcam: openxr - recentred: yaw %.1f deg, the head at %.2f %.2f %.2f m", g_cYaw * 57.29578f, g_cPos.x, g_cPos.y, g_cPos.z);
         }
         {   // what this pair is (vr/views3d.h): the head's camera, F3's room, or F1's window
-            g_pairMode = kind == kPair && g_cfg.views3d ? g_viewsMode : 0;
+            g_pairMode = kind == kPair && g_cfg.views3d && !g_campfire.load() ? g_viewsMode : 0;   // ([campfire]: the head's camera, whatever the view)
             g_winOk = false;
             if (g_pairMode == 1) {
                 if (g_lastMode != 1) g_winAnchor.Reset();   // coming from another view: in front of the gaze again
@@ -5695,6 +5854,76 @@ uint32_t HangHandButton(const XrCompositionLayerBaseHeader** layers, uint32_t nl
     return nl;
 }
 
+// [render] ui_band_corner_icons: both icons in one sticker, two rows of two tiles - row 0 the square lit, row 1 the 16:9 one lit. Each tile a dark,
+// see-through rounded square (as the inventory's button) with its shape: a square, a 16:9 rectangle; the lit one filled, a warm rim, the other dim.
+constexpr int kLayTile = 48;
+void BandIconImages() {
+    Sticker& i = g_layImg;
+    if (i.state != 0) return;
+    constexpr int n = kLayTile, W = 2 * n, H = 2 * n;
+    std::vector<uint32_t> px((size_t)W * H);
+    for (int row = 0; row < 2; ++row)
+        for (int tile = 0; tile < 2; ++tile) {
+            const bool lit = tile == row;   // (row 0: the square lit; row 1: the 16:9 one)
+            for (int y = 0; y < n; ++y)
+                for (int x = 0; x < n; ++x) {
+                    const float fx = ((float)x + 0.5f) / n, fy = ((float)y + 0.5f) / n;   // 0..1, y down
+                    const float ex = fabsf(fx - 0.5f) - 0.40f, ey = fabsf(fy - 0.5f) - 0.40f;   // a rounded square
+                    const float d = sqrtf(std::max(ex, 0.0f) * std::max(ex, 0.0f) + std::max(ey, 0.0f) * std::max(ey, 0.0f)) + std::min(std::max(ex, ey), 0.0f) - 0.08f;
+                    const float inside = std::clamp(0.5f - d * n, 0.0f, 1.0f);
+                    float a = inside * (lit ? 0.88f : 0.70f), r = 22.0f, g = 18.0f, bl = 14.0f;
+                    const bool rim = d > -0.045f && d <= 0.0f;
+                    const float hx = tile == 0 ? 0.24f : 0.32f, hy = tile == 0 ? 0.24f : 0.18f;   // the shape's half sizes: a square, 16:9
+                    const float sx = fabsf(fx - 0.5f), sy = fabsf(fy - 0.5f);
+                    const bool in = sx < hx && sy < hy;
+                    const bool edge = in && (sx > hx - 0.06f || sy > hy - 0.06f);
+                    if (lit && rim) { r = 235.0f; g = 190.0f; bl = 90.0f; a = std::max(a, 0.95f * inside); }   // the lit tile's warm rim
+                    else if (rim) { r = 120.0f; g = 110.0f; bl = 95.0f; a = std::max(a, 0.75f * inside); }
+                    if (lit && in) { r = edge ? 255.0f : 235.0f; g = edge ? 225.0f : 190.0f; bl = edge ? 160.0f : 90.0f; a = std::max(a, 0.97f * inside); }
+                    else if (edge) { r = 150.0f; g = 140.0f; bl = 120.0f; a = std::max(a, 0.85f * inside); }
+                    px[(size_t)(row * n + y) * W + tile * n + x] =
+                        (uint32_t)(r * a) | (uint32_t)(g * a) << 8 | (uint32_t)(bl * a) << 16 | (uint32_t)(255.0f * a) << 24;
+                }
+        }
+    StickerPut(i, W, H, px.data(), "menu layout icons");
+}
+// The strip hung over the top right corner of the menu's panel just placed (in its plane, above its top edge - outside the game's picture), and kept for
+// the laser. F4, the panel in front, the key on (vr/band_icons.h Shown).
+uint32_t HangBandIcons(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, const XrCompositionLayerQuad& panel, uint32_t w, uint32_t h) {
+    g_layShown.ok = false;
+    bandicons::Facts f;
+    f.keyOn = g_cfg.bandIcons;
+    f.f4 = viewgate::F4();
+    f.inFront = true;   // (HangPanel's own place, never the hand's cut)
+    f.vrResUi = g_cfg.vrResUi;
+    f.campfire = g_campfire.load();
+    f.w = w; f.h = h;
+    if (nl >= max || !bandicons::Shown(f)) return nl;
+    BandIconImages();
+    const Sticker& i = g_layImg;
+    if (!StickerShown(i)) return nl;
+    const bandicons::Strip s = bandicons::Place(panel.size.width, panel.size.height);
+    const int row = bandicons::Lit(vrres::UiBandMode()) == bandicons::kSquare ? 0 : 1;
+    XrCompositionLayerQuad& q = g_layLayer;
+    q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    q.space = panel.space;
+    q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    q.subImage.swapchain = g_stickers.sc;
+    q.subImage.imageRect = StickerRect(i, 0, row * kLayTile, 2 * kLayTile, kLayTile);
+    q.pose.orientation = panel.pose.orientation;
+    q.pose.position = Plus(panel.pose.position, Rot(panel.pose.orientation, {s.x, s.y, 0.002f}));
+    q.size = {s.w, s.h};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+    g_layShown = LayShown{q.pose, s.w, s.h, true};
+    static bool told = false;
+    if (!told) {
+        told = true;
+        LogF("vrcam: openxr - the layout icons over the menu's top right corner: %.3f x %.3f m, the %s lit ([render] ui_band_corner_icons)", s.w, s.h, row ? "16:9 one" : "square");
+    }
+    return nl;
+}
+
 bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv::Box& cut, XrCompositionLayerQuad& panel) {
     XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
@@ -5735,6 +5964,146 @@ bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv
              "controller, turned to the eyes; the right hand's laser picks, the left stick walks, the button beside it puts it in front ([openxr] hand_inventory)",
              cut.w(), cut.h(), src.w, src.h, size.width);
     return true;
+}
+
+// [openxr] name_keyboard (vr/vr_keyboard_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue 29d29b0; transport.cpp's keyboard quads
+// and MenuPointer's keyboard): while a new character's name box is up, the keyboard on its own board hinged under the surface the laser
+// points at (the flat picture, a menu's panel, the campfire's board) - small letters, or capitals while Shift waits, the key under the
+// laser lit a hair in front of it. The laser hits the board itself (LaserStep): no game cursor there, a pull on a key types it. Close
+// hides it until the box comes up anew. In the 3D character creation it comes up only once the name box on the board was clicked.
+bool KeyboardWanted() {
+    // ([campfire]: while the creation screen is up at all - typing waits for no pick there, 0.213.7)
+    if (!g_cfg.nameKeyboard || !(gamestate::KeyboardShown() || (g_campfire.load() && gamestate::CreatePanelOpen()))) { g_kbCampfireOpen = false; return false; }
+    if (g_kbClosed && gamestate::KeyboardEpoch() != g_kbClosedEpoch) g_kbClosed = false;
+    return !g_kbClosed;   // ([campfire] too: as soon as a hero is picked - the board's name box was hard to hit, 0.213.6)
+}
+uint32_t HangKeyboard(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& board,
+                      XrCompositionLayerQuad& lit) {
+    namespace kb = framevr::keyboard;
+    static bool was = false;
+    const bool want = KeyboardWanted() && g_flatShown.ok && nl + 2 <= max;
+    if (want != was) { was = want; g_kbTypist.Reset(); Log(want ? "vrcam: openxr - the VR keyboard shown (the name box is up; [openxr] name_keyboard)" : "vrcam: openxr - the VR keyboard hidden"); }
+    if (!want) { g_kbShown.ok = false; g_kbLit = -1; return nl; }
+    static std::vector<uint32_t> px;
+    if (!g_kbPainted) {
+        g_kbPainted = true;
+        const std::vector<uint8_t> rgba = kb::PaintAtlas();
+        if (rgba.empty()) Log("vrcam: openxr - the VR keyboard could not be painted (GDI): it stays hidden");
+        else { px.resize(rgba.size() / 4); memcpy(px.data(), rgba.data(), rgba.size()); }
+    }
+    if (px.empty()) { g_kbShown.ok = false; return nl; }
+    if ((!g_kbUploaded || !g_kbAtlas.sc) && QuadAtlasUpload(g_kbAtlas, (uint32_t)kb::TexelWidth, (uint32_t)kb::TexelHeight * 4, px, "keyboard", chaincount::kPanel))
+        g_kbUploaded = true;
+    if (!g_kbAtlas.sc || !g_kbAtlas.shown) { g_kbShown.ok = false; return nl; }
+    const XrPosef& s = g_flatShown.pose;
+    const kb::Board b = kb::Place({s.position.x, s.position.y, s.position.z}, {s.orientation.x, s.orientation.y, s.orientation.z, s.orientation.w},
+                                  g_flatShown.size.width, g_flatShown.size.height);
+    if (!(b.width > 0.0f)) { g_kbShown.ok = false; return nl; }
+    const bool capitals = g_kbTypist.Shifted();
+    hset::Pose pose;
+    pose.p = {b.position.x, b.position.y, b.position.z};
+    pose.q = {b.orientation.x, b.orientation.y, b.orientation.z, b.orientation.w};
+    pose.valid = true;
+    QuadLayerOf(board, g_kbAtlas, pose, b.width, b.height);
+    board.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // premultiplied
+    board.subImage.imageRect = {{0, (capitals ? 2 : 0) * kb::TexelHeight}, {kb::TexelWidth, kb::TexelHeight}};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&board;
+    g_kbShown = KbShown{board.pose, b.width, b.height, true};
+    if (g_kbLit >= 0) {
+        const kb::Spot spot = kb::KeySpot(b, g_kbLit);
+        const kb::Rect r = kb::KeyTexelRect(g_kbLit);
+        const kb::Vec at = b.position + kb::Rotate(b.orientation, {spot.x, spot.y, 0.004f});
+        lit = board;
+        lit.pose.position = {at.x, at.y, at.z};
+        lit.size = {spot.width, spot.height};
+        lit.subImage.imageRect = {{r.x, r.y + (capitals ? 3 : 1) * kb::TexelHeight}, {r.w, r.h}};
+        layers[nl++] = (const XrCompositionLayerBaseHeader*)&lit;
+    }
+    return nl;
+}
+
+// [campfire] (from D2R VR Unleashed PR #518, steamvr/transport.cpp's campfire board and caption - MPL 2.0, Kudlatytrue / bearstonem;
+// vr/campfire_unleashed.h): the creation screen's menu taken out of the picture (hud.cpp, the same copy as menu_3d's panel) and laid in the
+// scene as two boards cut from it. The game lays the interface in a 16:9 band at the top of each eye's picture ([render] ui_band_16x9,
+// forced while the scene runs): the band's lower strip (from menu_top of it: the name box, Create, Back, the checkboxes) on a board low
+// before you, between you and the heroes, tilted up to the eyes (menu_width / menu_distance / menu_drop); the picked hero's class and
+// words (caption_left..bottom, shares of the band) on a board of its own over the heroes (caption_width / distance / rise). Both placed
+// where the head is as the scene's boards first come up, then held in the room. The laser points at the board (g_flatShown and its crop).
+struct CampfirePlace { bool placed = false; XrPosef board{}, caption{}; uint32_t gen = 0; };
+CampfirePlace g_campfirePlace;
+std::atomic<uint32_t> g_campfireGen{0};   // moves at every start of the scene: the boards placed afresh
+uint32_t HangCampfire(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint32_t max, XrCompositionLayerQuad& board,
+                      XrCompositionLayerQuad& caption, XrCompositionLayerQuad& pointer) {
+    const campfire::Boards b = campfire::BoardsNow();
+    hud::NativePiece piece[hud::kNativePieces];
+    FlatVRGameHudLook look{};
+    FlatVRGameHudPose barPose{};
+    if (b.menuBoard && ++g_campfireBoardMissing > 90 && !g_campfireBoardFailed.exchange(true))   // (set back to 0 below once hung)
+        Log("vrcam: campfire - the menu's picture not captured in 90 frames: it stays as the game draws it in this visit");
+    if (!b.menuBoard || nl >= max || !g_viewsOk || !hud::NativeHud(piece, &look, &barPose)) return nl;
+    const hud::NativePiece& src = piece[hud::kNativePanel];
+    if (!src.visible || !src.w || !src.h || !MakeHudPipeline()) {
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 5000) { told = GetTickCount64(); Log("vrcam: campfire - the menu's picture not captured yet: its board waits"); }
+        return nl;
+    }
+    HudOut& o = g_hudOut[hud::kNativePanel];
+    if (!EnsureHudOut(o, src.w, src.h, "campfire board")) return nl;
+    const float cb[12] = {look.encoded ? 1.0f : 0.0f, 0.0f, (float)src.w / (float)src.h, (float)src.w,
+                          0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f};   // PSMain, whole (no split)
+    if (!DrawHud(o, src.tex, false, cb)) return nl;
+    CampfirePlace& P = g_campfirePlace;
+    if (!P.placed || P.gen != g_campfireGen.load()) {
+        const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
+        const XrVector3f head{0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)};
+        const XrQuaternionf q = Yaw(YawOf(g_views[0].pose.orientation));
+        const float distance = b.menuDistance, drop = b.menuDrop;
+        const float a = -atan2f(drop, distance);   // tilted up to the eyes
+        P.board.orientation = Mul(q, XrQuaternionf{sinf(0.5f * a), 0.0f, 0.0f, cosf(0.5f * a)});
+        P.board.position = Plus(head, Rot(q, {0.0f, -drop, -distance}));
+        P.caption.orientation = q;
+        P.caption.position = Plus(head, Rot(q, {0.0f, b.captionRise, -b.captionDistance}));
+        P.placed = true;
+        P.gen = g_campfireGen.load();
+        LogF("vrcam: campfire - the menu's board %.2f m ahead, %.2f m below the eyes; the caption %.1f m ahead, %.1f m up", distance, drop,
+             b.captionDistance, b.captionRise);
+    }
+    const float band = std::clamp((float)src.w * 9.0f / 16.0f / (float)src.h, 0.1f, 1.0f);   // the band's height, a share of the picture's
+    const int bandBottom = std::clamp((int)(band * (float)src.h), 2, (int)src.h);
+    const int y0 = std::clamp((int)(band * b.menuTop * (float)src.h), 0, bandBottom - 2);
+    board = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+    board.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    board.space = g_space;
+    board.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    board.subImage.swapchain = o.sc;
+    board.subImage.imageRect = {{0, y0}, {(int32_t)src.w, bandBottom - y0}};
+    board.pose = P.board;
+    board.size = {b.menuWidth, b.menuWidth * (float)(bandBottom - y0) / (float)src.w};
+    layers[nl++] = (const XrCompositionLayerBaseHeader*)&board;
+    g_campfireBoardMissing = 0;
+    FlatShown s{board.pose, board.size, true};   // the laser points at it: its point is the strip's place in the window
+    s.crop[0] = 0.0f; s.crop[1] = (float)y0 / (float)src.h; s.crop[2] = 1.0f; s.crop[3] = (float)bandBottom / (float)src.h;
+    g_flatShown = s;
+    g_panelTexW = src.w; g_panelTexH = src.h;
+    if (b.caption && nl < max) {
+        const float l = std::clamp(b.captionRect[0], 0.0f, 1.0f), t = std::clamp(b.captionRect[1], 0.0f, 1.0f);
+        const float r = std::clamp(b.captionRect[2], 0.0f, 1.0f), bt = std::clamp(b.captionRect[3], 0.0f, 1.0f);
+        const int x0 = (int)(l * (float)src.w), x1 = (int)(r * (float)src.w);
+        const int cy0 = (int)(t * (float)bandBottom), cy1 = (int)(bt * (float)bandBottom);
+        if (x1 - x0 >= 2 && cy1 - cy0 >= 2) {
+            caption = {XR_TYPE_COMPOSITION_LAYER_QUAD};
+            caption.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+            caption.space = g_space;
+            caption.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            caption.subImage.swapchain = o.sc;
+            caption.subImage.imageRect = {{x0, cy0}, {x1 - x0, cy1 - cy0}};
+            caption.pose = P.caption;
+            caption.size = {b.captionWidth, b.captionWidth * (float)(cy1 - cy0) / (float)(x1 - x0)};
+            layers[nl++] = (const XrCompositionLayerBaseHeader*)&caption;
+        }
+    }
+    if (nl < max && PointerQuad(board, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+    return nl;
 }
 
 // [openxr] menu_3d (docs/plan_laser_menus.md step 2): a menu open in F4 as a panel of its own in the
@@ -5847,6 +6216,12 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
         panel.pose.position = XV(g_panelSpot.at);
         panel.size = {w, w * (float)src.h / (float)src.w};
     }
+    // [render] ui_band_16x9: the interface fills only the 16:9 band at the canvas's top - the panel lowered so that band hangs where the whole canvas's centre
+    // would (d2r-pcvr's UpperBandOffset); the laser takes the same pose (g_flatShown), so its point on the band is unchanged
+    if (vrres::UiBandActive()) {
+        const float down = vrres::BandLowerShare({src.w, src.h}) * panel.size.height;
+        panel.pose.position = Plus(panel.pose.position, Rot(panel.pose.orientation, {0.0f, -down, 0.0f}));
+    }
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&panel;
     g_flatShown = FlatShown{panel.pose, panel.size, true};   // where the next frame's laser points
     g_panelTexW = src.w; g_panelTexH = src.h;                // ... and how readable it is nearer / farther ([openxr] menu_zoom)
@@ -5857,6 +6232,7 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
              src.w, src.h, panel.size.width, FlatDistance(false));
     }
     if (invUp) nl = HangHandButton(layers, nl, max, panel, false);   // [openxr] hand_inventory: in front by the button - the button back to the hand
+    nl = HangBandIcons(layers, nl, max, panel, src.w, src.h);   // [render] ui_band_corner_icons: the square and the 16:9 icon over its top right corner
     return nl;
 }
 
@@ -6265,6 +6641,8 @@ void CloseFrame() {
     XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD}, pointer{XR_TYPE_COMPOSITION_LAYER_QUAD};
     XrCompositionLayerQuad ptr3d{XR_TYPE_COMPOSITION_LAYER_QUAD};   // F1 / F3 in 3D (pointer_3d): the game's pointer on the ground
     XrCompositionLayerQuad beam{XR_TYPE_COMPOSITION_LAYER_QUAD}, dot{XR_TYPE_COMPOSITION_LAYER_QUAD};
+    XrCompositionLayerQuad campfireCaption{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [campfire] the caption's board (HangCampfire)
+    XrCompositionLayerQuad kbBoard{XR_TYPE_COMPOSITION_LAYER_QUAD}, kbLit{XR_TYPE_COMPOSITION_LAYER_QUAD};   // [openxr] name_keyboard (HangKeyboard)
     XrCompositionLayerQuad hsPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, hsDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
     const uint32_t hsRoom = (g_hsOpen.load() ? 3 : 0) + (calib::PanelNow().show ? 2 : 0) + (skillwheel::Enabled() ? 3 : 0) + (handvitals::PanelOn() ? 1 : 0) + (wriststatus::Enabled() ? 2 : 0) + (thrustdebugwire::Wanted() ? 1 : 0) + (swingtimer::Wanted() ? 1 : 0) + (banner::g_until.load() > GetTickCount64() ? 1 : 0);   // the settings panel's three layers, the T-pose prompt's two, the skill wheel's three, the hand vitals' one and the wrist status' two, hung last
     XrCompositionLayerQuad wheelPanel{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelBeam{XR_TYPE_COMPOSITION_LAYER_QUAD}, wheelDot{XR_TYPE_COMPOSITION_LAYER_QUAD};
@@ -6277,6 +6655,7 @@ void CloseFrame() {
     const uint32_t most = std::min<uint32_t>(10 + kZonesMax + kRuneLayers, g_maxLayers);
     uint32_t nl = 0;
     if (g_kind == kPair) g_flatShown.ok = false;   // the laser's surface is gone with the flat picture (a menu's panel: HangPanel)
+    g_layShown.ok = false;   // ([render] ui_band_corner_icons: hung again by HangPanel, over a menu's panel in front only)
     if (g_kind == kPair && g_viewsOk)
         for (int e = 0; e < 2; ++e)
             if (g_copied[e])   // drawn with these (runtime_fov's crop: the swapchain is the box - whole, with the box's fov)
@@ -6339,8 +6718,9 @@ void CloseFrame() {
             if (Pointer3dQuad(eyes, g_views[0].pose.orientation, &ptr3d)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&ptr3d;
         }
         // a menu in front, the world in stereo behind it (menu_3d); what is nearer lies over it, in this order
-        if (g_cfg.menu3d && !g_mapClick.Big()) nl = HangPanel(layers, nl, most, quad, pointer);   // (the big map has the interface's picture: HangBigMap)
-        const bool laser = g_cfg.menu3d && g_flatShown.ok;   // (the beam and the dot only over a menu's panel)
+        if (g_campfire.load()) nl = HangCampfire(layers, nl, most, quad, campfireCaption, pointer);   // [campfire]: the menu's board and the caption in the scene
+        else if (g_cfg.menu3d && !g_mapClick.Big()) nl = HangPanel(layers, nl, most, quad, pointer);   // (the big map has the interface's picture: HangBigMap)
+        const bool laser = (g_cfg.menu3d || g_campfire.load()) && g_flatShown.ok;   // (the beam and the dot only over a menu's panel, or the campfire's board)
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, (laser ? 4 : 2) + hsRoom);   // room kept for those below
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls
         const bool runesOverPanel = skillwheel::GestureRecording();   // ([openxr] gesture_overlay: a recording from the skill panel - the trail over the panel, below)
@@ -6351,6 +6731,7 @@ void CloseFrame() {
         nl = HangMapLaser(layers, nl, most);   // ... and the laser on the map / the big map
         nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
         nl = HangNotice(layers, nl, most);  // the game's quest / level-up notice on a card ([hud] notice_card)
+        if (g_flatShown.ok) nl = HangKeyboard(layers, nl, most, kbBoard, kbLit); else g_kbShown.ok = false;   // [openxr] name_keyboard under a menu's panel / the campfire's board
         if (laser) nl = HangLaser(layers, nl, most, beam, dot);
         nl = HangVitals(layers, nl, most, vitalsPanel);   // life and mana over the hand turned to the face (F4)
         nl = HangThrustDebug(layers, nl, most, thrustPanel);   // [debug] thrust_debug: the last thrust's numbers over the weapon hand (F4)
@@ -6379,6 +6760,7 @@ void CloseFrame() {
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
         g_flatShown = FlatShown{quad.pose, quad.size, true};   // where the next frame's laser points
         if (PointerQuad(quad, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+        nl = HangKeyboard(layers, nl, most, kbBoard, kbLit);   // [openxr] name_keyboard under the flat picture (the character screen)
         nl = HangLaser(layers, nl, most, beam, dot);
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, hsRoom);
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls stay where they are over a panel too
@@ -6471,6 +6853,7 @@ void CloseFrame() {
             else if (p == &g_mapBeamLayer[0] || p == &g_mapBeamLayer[1]) nm = "map laser";
             else if (p == &g_calibLayer[0] || p == &g_calibLayer[1]) nm = "T-pose prompt";
             else if (p == &g_btnLayer) nm = "hand button";
+            else if (p == &g_layLayer) nm = "band icons";
             if (nm) { snprintf(b, cap, "%s", nm); return b; }
             char tmp[32];
             snprintf(b, cap, "%s", LayerSlotName((*n.slot)(l), true, tmp, sizeof tmp));
@@ -6986,6 +7369,16 @@ void LoadSettings(const wchar_t* ini) {
     }
     {   // a menu in F4 as a panel, the world in stereo (D2R VR Settings > UI: F4 body > Menus), live
         g_cfg.menu3d = f(L"menu_3d", 1.0f) != 0.0f;
+        g_cfg.vrResUi = GetPrivateProfileIntW(L"render", L"vr_resolution_ui", 1, ini) != 0;
+        g_cfg.bandIcons = GetPrivateProfileIntW(L"render", L"ui_band_corner_icons", 0, ini) != 0;   // [render] ui_band_corner_icons (live)
+        static int saidIcons = 0;   // (off at the start: not a word)
+        if ((int)g_cfg.bandIcons != saidIcons) {
+            saidIcons = g_cfg.bandIcons;
+            Log(g_cfg.bandIcons ? "vrcam: openxr - a menu's panel in F4: a square and a 16:9 icon over its top right corner - the laser's click switches the interface between "
+                                  "the whole picture and the 16:9 band ([render] ui_band_corner_icons=1, writes [render] ui_band_16x9)"
+                                : "vrcam: openxr - no layout icons over a menu's panel ([render] ui_band_corner_icons=0)");
+        }
+        g_cfg.nameKeyboard = f(L"name_keyboard", 0.0f) != 0.0f;   // [openxr] name_keyboard (live)
         static int said = -1;
         if (on && (int)g_cfg.menu3d != said) {
             said = g_cfg.menu3d;
@@ -7339,6 +7732,63 @@ bool PairEyes(Eyes* out) {
 }
 
 void PairOver() { g_pairSpent = false; }   // the draw thread, after a pair's last present
+
+// [campfire] (vr/campfire_unleashed.h)
+void SetCampfire(bool on) {
+    if (g_campfire.exchange(on) == on) return;
+    if (on) { g_campfireGen.fetch_add(1); g_campfireBoardMissing = 0; g_campfireBoardFailed.store(false); }   // the boards placed afresh
+    else g_campfireBoardHit.store(false);
+    g_campfireNoFrame.store(0);
+    if (!on && g_campfireFrame.exchange(false)) EndPair();   // a frame the scene left open: ended (never a world's pair)
+}
+bool CampfireOn() { return g_campfire.load(); }
+bool CampfireBoardHit() { return g_campfire.load() && g_campfireBoardHit.load(); }
+bool CampfireBoardFailed() { return g_campfireBoardFailed.load(); }
+uint32_t CampfireNoFrame() { return g_campfireNoFrame.load(); }
+bool OpenCampfireFrame() {
+    if (!g_campfire.load() || !On() || g_state.load() != kCreated || !g_running.load() || DeviceLost()) return false;
+    if (g_stopWanted.load()) return false;
+    AcquireSRWLockExclusive(&g_lock);
+    bool ok = g_kind == kPair && g_viewsOk;   // open already (the right eye's camera, or a left eye whose present never came)
+    if (g_kind == kNone) {
+        g_clock = PairTiming{};
+        const bool open = OpenFrame(kPair);
+        ok = open && g_viewsOk && g_fs.shouldRender;
+        g_campfireIdle.store(open && !g_fs.shouldRender);   // (the headset off or the session not shown: no failure of the scene's)
+        if (open && !ok) { CloseFrame(); g_kind = kNone; }   // nothing to draw for: an empty frame
+        if (ok) { g_pairOpen.store(true); g_pairMissed.store(false); g_campfireFrame.store(true); }
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return ok;
+}
+// The right hand's aim (or `hand`'s), trigger and buttons, in the frame PairEyes gives the head's eyes in (kViewsHead): the campfire's
+// pick lays its ray into the scene as it lays the eyes. False: no frame open, or no pose for the hand.
+bool CampfireAim(int hand, float o[3], float d[3], float* trigger, uint32_t* buttons) {
+    if (g_kind != kPair || !g_viewsOk) return false;
+    if (hand < 0) hand = g_cfg.laserHand ? 1 : 0;   // the laser's hand ([openxr] laser_hand): its beam is the one drawn
+    if (hand > 1) return false;
+    const D2RVR_XrHand& h = g_inNow.hand[hand];
+    if (trigger) *trigger = h.trigger;
+    if (buttons) *buttons = h.buttons;
+    // The aim located where the eyes are (g_space, as LaserStep does): g_inNow's poses are the room's (STAGE) - laid in with the eyes'
+    // transform, the ray stood a floor's height off the hand (0.213.6: the pointer at the picture's top, the fire's clicks 50-1500 units off).
+    XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
+    const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+    const XrSpace sp = g_aimSpace[handswap::Phys(hand)];
+    if (!sp || XR_FAILED(xrLocateSpace(sp, g_space, g_fs.predictedDisplayTime, &aim)) || (aim.locationFlags & need) != need) return false;
+    const XrVector3f& ap = aim.pose.position;
+    const XrQuaternionf& aq = aim.pose.orientation;
+    const XrQuaternionf back = Yaw(-g_cYaw);
+    const float measuredEye = calib::MeasuredEyeM();
+    const bool seated = calib::Seated();
+    const float standY = g_posHeld ? g_cPos.y : bodycal::StandingEyeY(g_cPos.y, g_floorHeldOk, g_floorHeldY, measuredEye, seated);
+    const XrVector3f rel = Rot(back, {ap.x - g_bodyX, ap.y - standY, ap.z - g_bodyZ});
+    const XrQuaternionf q = Mul(back, aq);
+    const XrVector3f f = Rot(q, {0.0f, 0.0f, -1.0f});
+    o[0] = rel.x; o[1] = rel.y; o[2] = rel.z;
+    d[0] = f.x; d[1] = f.y; d[2] = f.z;
+    return std::isfinite(o[0] + o[1] + o[2] + d[0] + d[1] + d[2]);
+}
 
 PairTiming LastPairTiming() { return g_clock; }
 
@@ -7774,7 +8224,7 @@ void* TurnMadeDepth(uint32_t* gen) {
     if (gen) *gen = g_turnGpu.MadeDepthGen();
     return g_cfg.turnOverlayDepth ? g_turnGpu.MadeDepth() : nullptr;
 }
-bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost(); }
+bool TurnsNow() { return g_kind == kPair && g_cfg.byTurns && g_cfg.turnWarp && g_pairMode == kViewsHead && g_session && !DeviceLost() && !g_campfire.load(); }
 void TurnKeep(int eye, ID3D12Resource* bb) {
     if (!TurnsNow() || !bb || eye < 0 || eye > 1 || g_copied[0] || g_copied[1]) return;
     AcquireSRWLockExclusive(&g_lock);
@@ -7967,11 +8417,21 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     {   // [render] vr_resolution: the render size the game is asked for (a post, never a wait), on every present
         if (bb) { const D3D12_RESOURCE_DESC d = bb->GetDesc(); g_outputSize.store(vrres::Pack({(uint32_t)d.Width, d.Height})); }
         vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
-                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide);
+                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide && !g_campfire.load());   // ([campfire]: the eyes' own size)
     }
     g_presentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     if (DeviceLost()) return;
     if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);
+    if (g_campfire.load() && pairEye >= 0) {   // [campfire]: this present is one eye of the frame the camera opened; the right one ends it
+        if (g_kind == kPair) {
+            if (bb) CopyEye(pairEye, bb);
+            if (pairEye == 1) { g_campfireFrame.store(false); EndPair(); }
+            g_campfireNoFrame.store(0);
+        } else {
+            if (!g_campfireIdle.load() && g_ss == XR_SESSION_STATE_FOCUSED) g_campfireNoFrame.fetch_add(1);   // (an idle or unfocused headset is no failure)
+        }
+        return;
+    }
     // inside a pair: its own frame - and a pass of two presents its own eye (the replay copied it already)
     if (g_kind == kPair) { if (pairEye >= 0 && bb) CopyEye(pairEye, bb); return; }
     if (On() && g_state.load() == kIdle) { Start(dev, queue); return; }   // from the first present: menus too

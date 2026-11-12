@@ -522,7 +522,7 @@ extern std::atomic<bool> g_inWorld;
 bool TopStereoOn() { return !g_enabled.load() && g_set.topStereo.load() && g_set.afr.load() && g_inWorld.load(); }
 // Only in a game area: the menus have no world camera, so nothing flips the
 // eye there, and a pair announced from the menu was one fresh half and one frozen.
-bool AfrOn() { return g_set.afr.load() && g_inWorld.load() && (g_enabled.load() || TopStereoOn()); }
+bool AfrOn() { return (g_set.afr.load() && g_inWorld.load() && (g_enabled.load() || TopStereoOn())) || campfire::Now(); }   // ([campfire]: the eyes by turns, a present each)
 // The labels', the plate's and the toolbar's looks per view (LabelLookNow ... PlateTurnsWanted): vr/hud/looks.cpp
 // Where the game draws our world's things itself - the sky dome ([sky] game_sky), the cave dome, the cave ceiling ([ceiling] game_ceiling)
 // and its fog ([fog] game_fog with its height, mist, caves, curve and the step before the effects): VR first person (F4), and with
@@ -996,7 +996,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(o
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.212.3";
+static const char g_info_version[] = "0.214.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1156,6 +1156,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     xr::SetLogger(&Log);   // before the settings: [openxr] on says so in the log
     autotunerun::SetLogger(&Log);   // [autotune]: a line a measure of a run
     perfsweep::SetLogger(&Log);     // [debug] perf_sweep: a line a step, the table at the end
+    gamepatches::SetLogger(&Log);   // [game_patches]: a line a patch (applied / refused / taken out), the once-a-pair ones every 10 s
     gputimeline::SetLogger(&Log);   // [debug] gpu_timeline
     monitoreye::SetLogger(&Log);
     monitorlayers::SetLogger(&Log);

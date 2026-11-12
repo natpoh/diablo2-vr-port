@@ -225,6 +225,21 @@ begin
   end;
 end;
 
+// Kept settings from 0.208 - 0.213: Native one pass ([stereo] native_replay=1) was the default there; since 0.214 two passes are (Serg
+// 2026-11-12: two passes by default, so that the game does not hang for people - one pass hung graphics cards inside the replayed right eye, the
+// top crash of the week). A kept ini still at 1 would keep hanging. Once, at the first update that has this (its mark [support]
+// two_passes_0214, one of the shipped defaults, comes in with the other new keys right after this - missing = not done yet): 1 becomes 0.
+// One pass chosen again after that stays (for a processor too slow for two passes).
+procedure MoveToTwoPasses(Ini: String);
+begin
+  if GetIniString('support', 'two_passes_0214', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('stereo', 'native_replay', '<none>', Ini)) = '1' then
+  begin
+    SetIniString('stereo', 'native_replay', '0', Ini);
+    Log('d2r_vr.ini: [stereo] native_replay=1 from an older version - Native two passes is the default since 0.214 (one pass hung graphics cards): 0 now');
+  end;
+end;
+
 procedure DecideIni(Dir: String);
 var
   Ini, Def, V: String;
@@ -303,6 +318,7 @@ begin
     MoveToGameFogKeys(Ini); // (the same: its mark [support] game_fog_keys_0209 is one of them)
     MoveToRoomStitch(Ini);  // (the same: its mark [support] room_stitch_on_0209 is one of them)
     MoveToFogBeforeFx(Ini); // (the same: its mark [support] fog_before_fx_0209 is one of them)
+    MoveToTwoPasses(Ini);   // (the same: its mark [support] two_passes_0214 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

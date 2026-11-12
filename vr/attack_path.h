@@ -199,6 +199,17 @@ inline void StartedFirst(uint32_t* ids, size_t n, uint32_t started) {
         }
 }
 
+// The client's "busy" test before ANY command of the player (0xFFAC0, its only caller the command funnel 0xFABE0; read in 3.3.94995): in
+// an attack mode (7, 8, 10-16, 18) it reads the used skill's Skills.txt row (0x97790, 0x2EC a row) and, unless the row's byte +0x27 has
+// 0x80 (the mask at 0x1D996EC: bit 31 of the first flags word, "interrupt"), answers "busy" and the command is dropped - not predicted,
+// not sent. The Attack, Bash, Double Swing ... may be interrupted; Zeal and Fury may not, so our walk in them never left the client
+// (2026-11-11: "0 walks predicted" in a whole session of Zeal on the flat PC, the host's server took one). Only OUR walk of a move in a
+// special move goes past that answer (sent from AfterCtrl while the hero acts); every other command - a click, another skill, the game's own
+// walk keys - still waits for the series' end, as in the game.
+inline bool WalkPastBusy(bool ourWalkInFlight, bool ourHero, bool acts, Move kind) {
+    return ourWalkInFlight && ourHero && acts && (kind == Move::Single || kind == Move::Series);
+}
+
 // The server's next step: only with a walk asked for lately (a let-go key stops him within a few frames).
 constexpr int kStepFrames = 3;
 inline bool StepOn(int32_t nowFrame, int32_t lastAskFrame) { return nowFrame - lastAskFrame <= kStepFrames; }

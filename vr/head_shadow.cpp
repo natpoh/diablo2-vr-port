@@ -358,6 +358,30 @@ int DollPose(uintptr_t skeleton, uintptr_t pose, uintptr_t* out) {
     return 1;
 }
 
+// [world] town_heads_look: the townsfolk's poses with their heads turned (LookSkinFn), this thread's copy - made afresh for each skinning
+std::atomic<bool> g_lookWanted{false};
+std::atomic<LookSkinFn> g_lookSkin{nullptr};
+std::atomic<unsigned> g_lookFaults{0};
+thread_local std::unique_ptr<Copy> t_look;
+
+// 1 handed a turned copy (*out), 0 not a head turned now, -1 a fault (off for the session).
+int LookPose(uintptr_t skeleton, uintptr_t pose, uintptr_t* out) {
+    const LookSkinFn fn = g_lookSkin.load(std::memory_order_relaxed);
+    int32_t bones = 0;
+    if (!fn || !pose || !ReadAt(pose + kPoseCount, &bones, sizeof bones) || bones <= 0 || bones > kMaxBones) return 0;
+    if (!fn(skeleton, pose, nullptr, bones)) return 0;   // (a look first, by the bone count - no copy of a pose that can be no turned head's)
+    if (!t_look) t_look.reset(new (std::nothrow) Copy());
+    if (!t_look) return 0;
+    int n = 0;
+    const int r = ReadPose(t_look.get(), pose, &n);
+    if (r <= 0) return r;
+    if (!fn(skeleton, pose, t_look->m, n)) return 0;
+    const uintptr_t ours = reinterpret_cast<uintptr_t>(t_look->m);
+    std::memcpy(t_look->header + kPoseMatrices, &ours, sizeof ours);
+    *out = reinterpret_cast<uintptr_t>(t_look->header);
+    return 1;
+}
+
 __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose, uintptr_t indices, uintptr_t count, uintptr_t out) {
     const int pass = t_pass;
     CountSkin(skeleton, pose, pass);
@@ -376,6 +400,13 @@ __declspec(noinline) uintptr_t HookComposite(uintptr_t skeleton, uintptr_t pose,
         if (r < 0 && g_dollFaults.fetch_add(1) == 0) Log("head shadow: a fault reading a monster's pose for its doll - the monsters' turns are written into their poses as before");
     }
     if (!poseView) return g_origComposite(skeleton, pose, indices, count, out);   // VR F1 / F3: nothing else of ours (the hero, the others)
+    if (g_lookWanted.load(std::memory_order_relaxed) && g_lookFaults.load(std::memory_order_relaxed) == 0 && pose &&
+        pose != g_cur.load(std::memory_order_relaxed) && pose != g_prev.load(std::memory_order_relaxed)) {   // [world] town_heads_look: a townsperson's head turned to you
+        uintptr_t turned = 0;
+        const int r = LookPose(skeleton, pose, &turned);
+        if (r > 0) return g_origComposite(skeleton, turned, indices, count, out);
+        if (r < 0 && g_lookFaults.fetch_add(1) == 0) Log("head shadow: a fault reading a townsperson's pose - the town's heads are not turned for the rest of the session");
+    }
     if (pass != kPassNone && pose) {
         const uintptr_t cur = g_cur.load(std::memory_order_relaxed), prev = g_prev.load(std::memory_order_relaxed);
         if (cur && (pose == cur || pose == prev)) {
@@ -559,6 +590,10 @@ void WantForDoll(bool on) {
     if (g_dollWanted.exchange(on) != on && on) Log("monster ragdoll pose: the game's skinning composite is asked for - a struck monster is drawn from a turned copy of its pose");
 }
 void SetDollSkin(DollSkinFn fn) { g_dollSkin.store(fn); }
+void WantForLook(bool on) {
+    if (g_lookWanted.exchange(on) != on && on) Log("town heads look: the game's skinning composite is asked for - a townsperson is drawn from a copy of its pose with the head turned to you");
+}
+void SetLookSkin(LookSkinFn fn) { g_lookSkin.store(fn); }
 bool DollSkinningIn() { return g_state.load() == 1 && g_dollWanted.load() && g_dollFaults.load() == 0; }
 
 void Configure(bool wanted) {
@@ -628,7 +663,8 @@ void Install() {
         }
         potionhide::Install();
     }
-    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load() || g_filterWanted.load()) || g_state.load() != 0 || !g_ctx ||
+    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load() || g_filterWanted.load() || g_lookWanted.load()) ||
+        g_state.load() != 0 || !g_ctx ||
         now < retryAt)
         return;
     retryAt = now + (tries < 30 ? 2000 : 30000);

@@ -15,6 +15,8 @@
 #include "../trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right
 #include "../bench_lights.h"   // [render] bench_skip_point_lights
 #include "../hand_swap.h"   // [hands] left_handed
+#include "../debug_press.h"   // [debug] replay_scan_take: a press, never the start
+#include "../fence_gate.h"   // [stereo] replay_fence_gate
 
 using namespace D2RL;
 
@@ -24,6 +26,7 @@ FILETIME g_iniTime{};
 static bool g_toldLefty = false;   // [hands] left_handed told once at the start, then on each change
 
 void LoadSettings() {
+    campfire::Load();   // [campfire] character creation in 3D (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed)
     {   // [render] bench_bare: read first - every key below it forces reads as off (settings.cpp BenchForced)
         const bool bench = IniB(L"render", L"bench_bare", false);
         if (g_benchBare.exchange(bench) != bench)
@@ -123,7 +126,7 @@ void LoadSettings() {
     // [belt] refill_key (Settings > Hands > Belt refill; vr/belt_refill.h): the inventory open, a tap of the button = the game's Shift + click at the pointer,
     // a hold = the game's own belt fill; every view. Live.
     beltrefill::Configure(IniB(L"belt", L"refill_key", false), (int)IniF(L"belt", L"refill_button", 3.0f), (int)IniF(L"belt", L"refill_keyboard", 5.0f),
-                          IniF(L"belt", L"refill_hold_ms", (float)beltrefill::kHoldDefaultMs));
+                          IniF(L"belt", L"refill_hold_ms", (float)beltrefill::kHoldDefaultMs), IniB(L"belt", L"refill_inventory_alone", true));
     auraview::Configure(IniB(L"render", L"aura_centre", false), IniF(L"render", L"aura_lift_pct", 0.0f));   // the Paladin's aura rings centred under the hero (vr/aura_view.h), every VR view
     owneffects::ConfigureAuraPlace(IniB(L"render", L"move_own_auras", false), IniF(L"render", L"own_auras_up_cm", 0.0f), IniF(L"render", L"own_auras_ahead_cm", 0.0f),
                                    IniF(L"render", L"own_auras_side_cm", 0.0f));   // the hero's Paladin aura rings moved (vr/own_effects.h AuraShift), every VR view
@@ -523,6 +526,8 @@ void LoadSettings() {
         lensmask::Config lc;
         lc.on = IniB(L"render", L"lens_mask", false);
         lc.turnWarp = IniB(L"stereo", L"turn_warp", true);   // (eyes by turns: the eye made is moved by the depth - no mask with it)
+        lc.margin = (int)IniF(L"render", L"lens_mask_margin_px", 3.0f);   // pixels kept from every shown one (Serg's grass, 2026-11-12: an A/B)
+        lc.strip = IniB(L"render", L"lens_mask_strip", true);              // the never-submitted nose-side strip masked too
         lensmask::Configure(lc);
     }
     g_set.solidWalls.store(std::clamp((int)IniF(L"render", L"solid_walls", 1.0f), 0, 2));
@@ -541,15 +546,16 @@ void LoadSettings() {
         g_set.headsetHz.store(kHz[std::clamp((int)IniF(L"stereo", L"headset_rate", 3.0f), 0, 4)]);
     }
     // [stereo] replay_right: the ReShade path's; [stereo] native_replay: the plugin's own path's (vr/native_replay.h) - each its own key
-    // (native_replay's default 1: one pass, Serg 2026-11-08 - shared/render_type.h reads an ini without it the same way)
-    replay::SetWant((int)IniF(L"stereo", L"replay_right", 0.0f), (int)IniF(L"stereo", L"native_replay", 1.0f));
+    // (native_replay's default 0 since 0.214: two passes, Serg 2026-11-12 - one pass hung graphics cards; shared/render_type.h reads an
+    // ini without it the same way)
+    replay::SetWant((int)IniF(L"stereo", L"replay_right", 0.0f), (int)IniF(L"stereo", L"native_replay", 0.0f));
     {   // the render type (shared/render_type.h) as these keys make it: one line at the start and at every change, and whether it takes effect now
         // (Serg's 0.207.7 report, 2026-11-08: "глаза по очереди - ничего не поменялось" - the log said nothing of what the file asked for)
         rendertype::Keys k;
         k.openxrOn = (int)IniF(L"openxr", L"on", 0.0f);
         k.afr = (int)IniF(L"stereo", L"afr", 0.0f);
         k.pairPerTick = (int)IniF(L"stereo", L"pair_per_tick", 0.0f);
-        k.nativeReplay = (int)IniF(L"stereo", L"native_replay", 1.0f);
+        k.nativeReplay = (int)IniF(L"stereo", L"native_replay", 0.0f);
         k.source = (int)IniF(L"stereo", L"source", k.afr ? 2.0f : 1.0f);
         const int type = rendertype::FromKeys(k);
         static int told = -1;
@@ -566,6 +572,17 @@ void LoadSettings() {
         }
     }
     shadowsonce::SetOn(IniB(L"render", L"shadows_once_a_pair", false));   // (live once its hooks went in at the start; vr/shadows_once.h)
+    {   // [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from D2R VR Unleashed): six changes to the game's own render code, each its own key,
+        // 0 = the game's code as it is. Live: each goes in or out between two frames (drawn in the world)
+        gamepatches::Wanted w;
+        w.transparentFilter = IniB(L"game_patches", L"transparent_filter", true);
+        w.profilerAccounting = IniB(L"game_patches", L"profiler_accounting", true);
+        w.drawDebugNames = IniB(L"game_patches", L"draw_debug_names", true);
+        w.selectionWalk = IniB(L"game_patches", L"selection_walk", true);
+        w.shadowsOnce = IniB(L"game_patches", L"shadows_once", true);
+        w.cullOnce = IniB(L"game_patches", L"cull_once", true);
+        gamepatches::Configure(w);
+    }
     // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): the game's sun shadow map filled for less in F4 - live
     // ([render] game_stages 2, the Potato stages: the Potato light reads no sun map, so none of its casters is collected either - sun_shadows 0's
     // processor saving; the stage skip alone only drops the ~1,800 draws a present after the game has collected them. Serg's 0.207.8 run)
@@ -577,6 +594,10 @@ void LoadSettings() {
     replay::g_holdSignalsOn.store(IniB(L"stereo", L"replay_hold_signals", false));
     replay::g_resetGuard.store(IniB(L"stereo", L"replay_reset_guard", true));
     replay::g_allocGuard.store(IniB(L"stereo", L"replay_alloc_guard", true));
+    fencegate::SetOn(IniB(L"stereo", L"replay_fence_gate", false));   // the game sees a frame's fences pass only once our replay of it is done (vr/fence_gate.h)
+    fencegate::SetGiveUpMs(IniF(L"stereo", L"replay_fence_gate_ms", 1000.0f));
+    replay::g_hangFallback.store(IniB(L"stereo", L"replay_hang_fallback", true));   // a hang in one pass: two passes the next session (vr/replay_hang_fallback.h)
+    replay::g_hangFallbackStallMs.store(std::clamp((int)IniF(L"stereo", L"replay_hang_fallback_stall_ms", 5000.0f), 1000, 60000));
     g_projFix.store((int)IniF(L"stereo", L"replay_proj", 3.0f));
     g_shiftMul.store(IniF(L"stereo", L"replay_shift_mul", 1.0f));
     g_replayViews.store(std::clamp((int)IniF(L"stereo", L"replay_views", 8.0f), 0, 8));
@@ -620,10 +641,10 @@ void LoadSettings() {
         const bool go = IniB(L"debug", L"cb_compare_go", false);
         if (go && !wasGo) cbcmp::g_go.store(true);
         wasGo = go;
-        static bool wasScan = false;   // [debug] replay_scan_go 0 -> 1: copies of the left camera in upload memory
-        const bool scan = IniB(L"debug", L"replay_scan_go", false);
-        if (scan && !wasScan) camfix::g_scanWant.store(1);
-        wasScan = scan;
+        // [debug] replay_scan_take: a Settings button's count - each press while the game runs, one scan of upload memory for the left camera
+        // (on a worker). The count read at the start only remembered (vr/debug_press.h); replay_scan_go, the old tick, is not read any more.
+        static debugpress::Press scanPress;
+        if (scanPress.Pressed((int)GetPrivateProfileIntW(L"debug", L"replay_scan_take", 0, g_iniPath))) camfix::g_scanWant.store(1);
         static bool wasPeek = false;   // [debug] replay_peek_go 0 -> 1: one pair's two pictures compared
         const bool peek = IniB(L"debug", L"replay_peek_go", false);
         if (peek && !wasPeek) replay::g_peekWant.store(1);
@@ -1288,6 +1309,8 @@ void LoadSettings() {
     g_set.staffFreeLeft.store(IniB(L"hands", L"staff_free_left", true));
     g_set.spellAim.store(IniB(L"hands", L"spell_aim", true));
     g_set.spellAimModel.store(IniB(L"hands", L"spell_aim_model", false));
+    g_set.spellAimWalking.store(IniB(L"hands", L"spell_aim_walking", true));
+    g_set.spellAimBy.store(std::clamp((int)GetPrivateProfileIntW(L"hands", L"spell_aim_by", 0, g_iniPath), 0, 1));
     g_set.staffUprightArm.store(IniB(L"hands", L"staff_upright_arm", false));
     g_set.staffUprightFullDeg.store(std::clamp(IniF(L"hands", L"staff_upright_full_deg", staffupright::kFullDeg), 0.0f, 60.0f));
     g_set.staffUprightNoneDeg.store(std::clamp(IniF(L"hands", L"staff_upright_none_deg", staffupright::kNoneDeg), 0.0f, 80.0f));
@@ -1583,6 +1606,12 @@ void LoadSettings() {
     g_set.forearmShare.store(std::clamp(IniF(L"hands", L"forearm_twist_share", 0.5f), 0.0f, 1.0f));
     g_set.shieldForearm.store(IniB(L"shield", L"forearm", true));
     g_set.headsHang.store(IniB(L"shield", L"heads_hang", true));
+    g_set.townHeadsLook.store(IniB(L"world", L"town_heads_look", false));
+    g_set.townHeadsRangeM.store(std::clamp(IniF(L"world", L"town_heads_look_range_m", 7.0f), 2.0f, 20.0f));
+    g_set.townHeadsChance.store(std::clamp((int)IniF(L"world", L"town_heads_look_chance", 50.0f), 0, 100));
+    g_set.townHeadsYaw.store(std::clamp(IniF(L"world", L"town_heads_look_yaw", 70.0f), 0.0f, 90.0f));
+    g_set.townHeadsUp.store(std::clamp(IniF(L"world", L"town_heads_look_up", 30.0f), 0.0f, 60.0f));
+    g_set.townHeadsDown.store(std::clamp(IniF(L"world", L"town_heads_look_down", 40.0f), 0.0f, 60.0f));
     {
         static const wchar_t* const kKeys[6] = {L"x", L"y", L"z", L"pitch", L"yaw", L"roll"};
         for (int k = 0; k < 6; ++k) g_set.shieldAdj[k].store(std::clamp(IniF(L"shield", kKeys[k], 0.0f), k < 3 ? -40.0f : -180.0f, k < 3 ? 40.0f : 180.0f));
@@ -1942,7 +1971,7 @@ void LoadSettings() {
             rk.openxrOn = (int)IniF(L"openxr", L"on", 0.0f);
             rk.afr = (int)IniF(L"stereo", L"afr", 0.0f);
             rk.pairPerTick = (int)IniF(L"stereo", L"pair_per_tick", 0.0f);
-            rk.nativeReplay = (int)IniF(L"stereo", L"native_replay", 1.0f);
+            rk.nativeReplay = (int)IniF(L"stereo", L"native_replay", 0.0f);
             rk.source = (int)IniF(L"stereo", L"source", rk.afr ? 2.0f : 1.0f);
             const int type = rendertype::FromKeys(rk);
             preset = qualitypreset::Match([type](const qualitypreset::Key& k) -> float {

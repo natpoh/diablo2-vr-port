@@ -840,12 +840,75 @@ void RecordSlotsAt(ID3D12GraphicsCommandList* l, int eye, const int* idx, int n)
     }
 }
 
-// [debug] replay_scan_go 0 -> 1, once: every copy of the left eye's camera (the view, and the
-// view*projection, of the first camera slot with a view) anywhere in the game's upload buffers,
-// logged with whether one of our slots covers it - the right eye's shadows stayed where the left
-// eye had them: a pass reads the camera from a buffer the root CBV hook never sees.
+// [debug] replay_scan_take (a Settings button: each press once): every copy of the left eye's camera (the view, and the view*projection, of the
+// first camera slot with a view) anywhere in the game's upload buffers, logged with whether one of our slots covers it - the right eye's shadows
+// stayed where the left eye had them: a pass reads the camera from a buffer the root CBV hook never sees.
+// 2026-11-12 (Serg's 0.213.9, d2r_vr_stall.txt): the search ran on the draw thread - every word of every upload buffer - and the game froze for
+// ~24 s, three times (a 1 left in his ini as the old tick fired it at each start, vr/debug_press.h). Now the draw thread only takes the camera
+// and the lists (microseconds) and a worker of low priority searches; a buffer the game frees meanwhile ends that buffer's search, not the game.
 std::atomic<int> g_scanWant{0};
+namespace {
+struct ScanJob {
+    float V[16] = {}, VP[16] = {};
+    bool vp = false;
+    int slots = 0;
+    std::vector<std::pair<uint64_t, int>> slotsCopy;
+    std::vector<Upload> ups;
+};
+std::atomic<bool> g_scanBusy{false};
+struct ScanHit { uint64_t va, at; bool view; };
+// One buffer's search; false = it went away under us (an access fault: the game released it). No C++ objects here (structured exceptions).
+bool ScanOne(const Upload& u, const float* V, const float* VP, bool vp, ScanHit* hits, int cap, int* nHits, int* total) {
+    __try {
+        const float* w = (const float*)u.cpu;
+        const uint64_t nw = u.size / 4;
+        for (uint64_t k = 0; k + 16 <= nw; ++k) {
+            const bool isV = w[k] == V[0] && w[k + 1] == V[1] && w[k + 5] == V[5] && memcmp(w + k, V, 64) == 0;
+            const bool isVP = !isV && vp && w[k] == VP[0] && w[k + 5] == VP[5] && memcmp(w + k, VP, 64) == 0;
+            if (!isV && !isVP) continue;
+            if (*nHits < cap) hits[(*nHits)++] = {u.va + k * 4, k * 4, isV};
+            ++*total;
+            k += 15;
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+DWORD WINAPI ScanWorker(void* p) {
+    ScanJob* job = (ScanJob*)p;
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+    uint64_t scanned = 0;
+    int hits = 0, uncovered = 0, gone = 0, told = 0;
+    const double t0 = flog::UsNow();
+    ScanHit found[40];
+    for (const Upload& u : job->ups) {
+        if (!u.cpu || u.size < 64) continue;
+        int n = 0, total = 0;
+        if (!ScanOne(u, job->V, job->VP, job->vp, found, 40 - told, &n, &total)) { ++gone; continue; }
+        scanned += u.size;
+        for (int i = 0; i < n; ++i) {
+            bool covered = false;
+            for (const auto& sc : job->slotsCopy) if (found[i].va >= sc.first && found[i].va < sc.first + (uint64_t)sc.second) covered = true;
+            if (!covered) ++uncovered;
+            LogF("vrcam: replay scan - %s at %llx (buffer %llx + %llu of %llu)%s", found[i].view ? "view" : "view*proj",
+                 (unsigned long long)found[i].va, (unsigned long long)u.va, (unsigned long long)found[i].at, (unsigned long long)u.size,
+                 covered ? " - in a slot" : " - NOT in a slot");
+        }
+        told += n;
+        hits += total;
+        Sleep(0);   // (a buffer at a time: the game's threads first)
+    }
+    LogF("vrcam: replay scan - %d copies (%d of the first %d not in a slot) in %.1f MB of %zu upload buffers (%d released meanwhile), %.1f ms on a "
+         "worker thread; slots %d", hits, uncovered, told, scanned / 1048576.0, job->ups.size(), gone, (flog::UsNow() - t0) / 1000.0, job->slots);
+    delete job;
+    g_scanBusy.store(false);
+    return 0;
+}
+}  // namespace
 void ScanCopies() {
+    if (g_scanBusy.exchange(true)) { Log("vrcam: replay scan - one is still running: this press left out"); return; }
+    ScanJob* job = new ScanJob;
     AcquireSRWLockShared(&g_slotLock);
     const int n = g_nSlots.load();
     int si = -1, vo = -1; uint8_t parts = 0;
@@ -857,42 +920,25 @@ void ScanCopies() {
         ReleaseSRWLockShared(&g_keyLock);
         if (lay.nv) { si = i; vo = lay.vo[0]; parts = lay.parts[0]; }
     }
-    float V[16] = {}, VP[16] = {};
     if (si >= 0) {
         const float* f = (const float*)Stage(g_ring, 0, si);
-        memcpy(V, f + vo, sizeof V);
-        if (parts & 4) memcpy(VP, f + vo + 64, sizeof VP);
+        memcpy(job->V, f + vo, sizeof job->V);
+        if (parts & 4) { memcpy(job->VP, f + vo + 64, sizeof job->VP); job->vp = true; }
     }
-    std::vector<std::pair<uint64_t, int>> slotsCopy;
-    for (int i = 0; i < n; ++i) slotsCopy.push_back({g_slotUse[i].gameVa, g_slotUse[i].bytes});
+    for (int i = 0; i < n; ++i) job->slotsCopy.push_back({g_slotUse[i].gameVa, g_slotUse[i].bytes});
+    job->slots = n;
     ReleaseSRWLockShared(&g_slotLock);
-    if (si < 0) { Log("vrcam: replay scan - no camera slot with a view this pass"); return; }
+    if (si < 0) { Log("vrcam: replay scan - no camera slot with a view this pass"); delete job; g_scanBusy.store(false); return; }
     AcquireSRWLockShared(&g_upLock);
-    const std::vector<Upload> ups = g_uploads;
+    job->ups = g_uploads;
     ReleaseSRWLockShared(&g_upLock);
-    uint64_t scanned = 0; int hits = 0, uncovered = 0;
-    const double t0 = flog::UsNow();
-    for (const Upload& u : ups) {
-        if (!u.cpu || u.size < 64) continue;
-        scanned += u.size;
-        const float* w = (const float*)u.cpu;
-        const uint64_t nw = u.size / 4;
-        for (uint64_t k = 0; k + 16 <= nw; ++k) {
-            const bool isV = w[k] == V[0] && w[k + 1] == V[1] && w[k + 5] == V[5] && memcmp(w + k, V, 64) == 0;
-            const bool isVP = !isV && (parts & 4) && w[k] == VP[0] && w[k + 5] == VP[5] && memcmp(w + k, VP, 64) == 0;
-            if (!isV && !isVP) continue;
-            const uint64_t va = u.va + k * 4;
-            bool covered = false;
-            for (const auto& sc : slotsCopy) if (va >= sc.first && va < sc.first + (uint64_t)sc.second) covered = true;
-            ++hits; if (!covered) ++uncovered;
-            if (hits <= 40) LogF("vrcam: replay scan - %s at %llx (buffer %llx + %llu of %llu)%s", isV ? "view" : "view*proj",
-                                 (unsigned long long)va, (unsigned long long)u.va, (unsigned long long)(k * 4),
-                                 (unsigned long long)u.size, covered ? " - in a slot" : " - NOT in a slot");
-            k += 15;
-        }
+    if (HANDLE t = CreateThread(nullptr, 0, &ScanWorker, job, 0, nullptr)) {
+        CloseHandle(t);
+        LogF("vrcam: replay scan - %zu upload buffers handed to a worker thread (the draw thread goes on)", job->ups.size());
+    } else {
+        delete job;
+        g_scanBusy.store(false);
     }
-    LogF("vrcam: replay scan - %d copies (%d not in a slot) in %.1f MB of %zu upload buffers, %.1f ms; slots %d",
-         hits, uncovered, scanned / 1048576.0, ups.size(), (flog::UsNow() - t0) / 1000.0, n);
 }
 void BeginLeft(bool redirect) {
     AcquireSRWLockExclusive(&g_vaLock); g_vas.clear(); ReleaseSRWLockExclusive(&g_vaLock);

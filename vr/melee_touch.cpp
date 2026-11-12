@@ -3615,6 +3615,20 @@ bool FindHireling(const uint32_t* classes, size_t count, HirelingView* out) {
     return found;
 }
 
+size_t HirelingSpots(const uint32_t* classes, size_t count, float (*xz)[2], size_t max) {
+    if (!xz || !max || !classes || !count) return 0;
+    size_t n = 0;
+    EachUnit(1, [&](uintptr_t, const UnitBytes& u) {
+        const uint32_t mode = U32(u, 0xC), cls = U32(u, 4);
+        if (mode == 0 || mode == 12) return true;   // dying, dead
+        bool hireling = false;
+        for (size_t i = 0; i < count; ++i) hireling = hireling || classes[i] == cls;
+        if (hireling && GridOf(u, &xz[n][0], &xz[n][1])) ++n;
+        return n < max;
+    });
+    return n;
+}
+
 bool HirelingPlace(uintptr_t unit, uint32_t id, float* x, float* z) {
     UnitBytes u;
     if (!unit || !x || !z || !Read(u.b, unit, sizeof u.b) || U32(u, 0) != 1 || U32(u, 8) != id) return false;

@@ -28,6 +28,7 @@
 #include "dome_assets.h"     // [sky] game_sky: the dome's models from the game's own Summit sky card, our mesh in it (granny_remesh.h)
 #include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
 #include "allies_place.h"    // [hud] allies_place: where the allies are shown (F4), and the one-time move of the three old ticks
+#include "campfire_assets_unleashed.h"   // [campfire] enabled: character creation's scene from the player's own game (CascLib; MPL 2.0, D2R VR Unleashed)
 #include "holes_assets.h"    // [holes] patch_world: the world's holes patched from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
@@ -707,20 +708,21 @@ std::vector<Item> g_items = {
     // The three ways kept in the list (2026-10-14, the user's decision): 0 native OpenXR (the default), 1 FlatVR stereo, 2 FlatVR 3D
     // from the depth. Stereo - eyes by turns and Mono are left out of the list; their ini keys still work. Native OpenXR - eyes by turns
     // is back as the fourth (2026-10-20, the user's wish: d2r-pcvr's by turns - one eye drawn a frame, the other made from it on the GPU).
-    // Five render types (Serg 2026-11-08), this order; one pass the default (shared/render_type.h; old inis read by their keys as before).
-    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 1,
-           {L"Native two passes", L"Native one pass (default)", L"Native eyes by turns", L"FlatVR stereo", L"FlatVR depth"},
+    // Five render types (Serg 2026-11-08), this order; two passes the default since 0.214 (shared/render_type.h; old inis read by their keys as before).
+    // 0.214 (Serg 2026-11-12, "по умолчанию ставь 2 прохода"): two passes the default - one pass hung some graphics cards
+    Only(kVr, Choice(L"@stereo3d", L"source", L"3D in the headset", 0,
+           {L"Native two passes (default)", L"Native one pass", L"Native eyes by turns", L"FlatVR stereo", L"FlatVR depth"},
            L"Native (the first three): the game is an OpenXR app and shows its own stereo pair in the headset - each eye's real view "
            L"and the head's place in the room, paced by the headset, no FlatVR - from the game's first frame. First (F4) and third "
            L"person (F2) in stereo, F1 and F3 in 3D too (Stereo tab, \"F1 and F3 in real 3D\"); menus and open panels as a flat picture "
            L"where you look. FlatVR is stopped while the game holds the headset, so BodyWalk's own panels are not in it; buttons and "
            L"gestures need BodyWalk's OpenXR layer and the profile's gesture source set to OpenXR (or \"Controls without BodyWalk\"). "
            L"Switches while the game runs. "
-           L"Native one pass (the default): the game draws the frame once and the right eye is drawn again on the graphics card from "
-           L"the same work with its own camera - about half the game's work of two passes, the most frames on a PC held back by its "
-           L"processor. F4 only; after an area change, a load or a change of the video options the frame is two passes until the "
+           L"Native two passes (the default): the game draws the whole frame twice, once for each eye - the safest choice. "
+           L"Native one pass: the game draws the frame once and the right eye is drawn again on the graphics card from "
+           L"the same work with its own camera - about half the game's work of two passes: try it if your processor is too slow for two "
+           L"passes (a few graphics cards hung with it - if the game stops with it, go back to two passes). F4 only; after an area change, a load or a change of the video options the frame is two passes until the "
            L"picture has settled (a few seconds) - never a black eye. Switching to or from it takes effect at the next game start. "
-           L"Native two passes: the game draws the whole frame twice, once for each eye (as every version from 0.203 to 0.207 did). "
            L"Native eyes by turns: the game draws one eye a frame, left and right in turn - about half the graphics card's work; the "
            L"other eye is made on the graphics card from pictures already drawn (the eye drawn this frame moved across with its depth, "
            L"its own last picture under it), so both eyes show this frame's head, and monsters where they are now. Each eye's own "
@@ -828,6 +830,24 @@ std::vector<Item> g_items = {
            L"could not reach the bottom (the main menu's Play and Create Character buttons). On: the game's interface is laid out over the "
            L"whole picture (its toolbar at the picture's bottom, as with a window of the picture's shape) and the mouse reaches all of it. Live. Off: the window's size, as before. "
            L"(Found by bearstonem/d2r-pcvr.)")),
+    // 0.214 (Serg, after his test: "Yes, remove Always" - the toolbar hung mid-view in the world): Off / With the inventory open, 0 / 2;
+    // a 1 left in an ini reads as 2 in the plugin (vr/frame/frame_order.cpp) and as none chosen here
+    Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, ChoiceValues(L"render", L"ui_band_16x9", L"Menus laid out 16:9", 0,
+           {L"Off", L"With the inventory open"}, {0, 2},
+           L"The game lays its interface out in a 16:9 band at the top of the picture instead of over the whole picture. On a picture "
+           L"taller than it is wide (a headset's own render size) the stash or a trader and the inventory then fit side by side, as on a wide "
+           L"monitor - a widened inventory from a mod no longer runs past the edges. "
+           L"With the inventory open: only while the inventory (with the stash, a trader, the cube, the tabbed menu) is open - in "
+           L"the world the toolbar stays at the bottom; the interface is laid out again as the panel opens and closes. Live. Off: the whole "
+           L"picture, as before."))),
+    // [render] ui_band_corner_icons (vr/band_icons.h, xr.cpp HangBandIcons): the same choice right in the game, from the menu's panel in F4
+    Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, Toggle(L"render", L"ui_band_corner_icons", L"Layout icons over the menus (F4)", 0,
+           L"In F4, while a menu or a panel (the inventory, the stash, a trader...) hangs in front of you, two small icons sit just above its "
+           L"top right corner: a square and a 16:9 rectangle. Point the laser at one and pull the trigger: the square lays the game's interface out "
+           L"over the whole picture, the rectangle in the 16:9 band while the inventory is open, and the choice is kept (it sets \"Menus laid out "
+           L"16:9\" above). The lit icon is the one in force. "
+           L"The icons hang outside the game's picture, so they cover none of its buttons and the click never reaches the game. Live. Off: no "
+           L"icons, as before."))),
     // [render] menu_wide (vr/vr_resolution.h MenuWide): the game's own menus drawn 16:9 in the headset
     Only(kVr, Toggle(L"render", L"menu_wide", L"Main menu at 16:9", 1,
            L"Native OpenXR: the game lays its menus out for the shape of its picture, and a square picture (the square window, a square "
@@ -837,6 +857,20 @@ std::vector<Item> g_items = {
            L"picture); in a game the picture is the size picked again once the hero has stood in the world 3 s, as the render size always "
            L"was. The monitor shows the menu stretched to the window. Live. Off: the menus in the picture's own shape, as before. "
            L"(The 16:9 menus are bearstonem/d2r-pcvr's idea.)")),
+    // [campfire] enabled (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue, bearstonem): character creation round you
+    // (0.214: hidden - still broken in the headset, Serg's rule: no half-done feature in a release; Only(kVr, ...) brings it back)
+    Only(0, Toggle(L"campfire", L"enabled", L"Character creation in 3D", 0,
+           L"Native OpenXR: the character creation screen as a 3D scene round you - you stand by the campfire with the heroes. Point at a "
+           L"hero with the right hand and pull the trigger (or A) to pick him; the name box, Create and Back are on a board in front of you, "
+           L"the picked hero's words on a board over the heroes. A click on the fire throws sparks; the fire crackles. D2R VR Settings "
+           L"rebuilds the scene from your game (its clouds taken out, the town round the fire). If the scene cannot be shown, the flat screen "
+           L"comes back by itself. Off: the flat character creation screen, as before.")),
+    // [openxr] name_keyboard (vr/vr_keyboard_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue): letters for the character's name
+    // (0.214: hidden with the 3D character creation - Only(kVr, ...) brings it back)
+    Only(0, Toggle(L"openxr", L"name_keyboard", L"Keyboard for the character's name", 0,
+           L"Native OpenXR: when a new character's name box is up, a keyboard under the menu - point at a key with the laser and pull the "
+           L"trigger. Letters, - and _, Shift for a capital, Back, Enter, Close. In the 3D character creation it comes up as soon as "
+           L"a hero is picked. Off: type the name on the real keyboard, as before.")),
     Only(kVr, Slider(L"@bodywalk", L"userHeight", L"My height, m", 1.2f, 2.3f, 0.01f, 1.75f,
            L"Your height: the world is scaled to it (Stereo > Scale and depth > Life-size world). The same number as BodyWalk's "
            L"Mapping > Avatar > Body Height, changed in both places; with BodyWalk not running it is kept here. "
@@ -1206,6 +1240,13 @@ std::vector<Item> g_items = {
            L"pass stays as it is. Variable rate shading (VRS tier 2 graphics cards), native OpenXR first person (F4); works without foveated "
            L"rendering too. Its hooks go in at the game's start when this or foveated rendering is on then. Live after that.")),
     Only(kVr, Toggle(L"render", L"lens_mask", kRenderCostLensMask, 0, kRenderCostLensMaskTip)),
+    Only(kVr, Needs(L"render", L"lens_mask", 1, Slider(L"render", L"lens_mask_margin_px", L"... its distance from what the lenses show (pixels)", 1, 128, 1, 3,
+           L"How far the skipped part stays from every pixel the headset shows. A test for a report of less grass in one eye with this on: if a "
+           L"larger distance (32 or 64) brings the grass back, a step of the game that works on coarse blocks of the picture reached past the edge. "
+           L"3 = as before. Live."))),
+    Only(kVr, Needs(L"render", L"lens_mask", 1, Toggle(L"render", L"lens_mask_strip", L"... and the strip the headset is never sent", 1,
+           L"With the centred picture each eye's picture has a strip on the nose side that is never handed to the headset; ticked, it is skipped "
+           L"too. Unticked: only the runtime's own hidden area. A test for a report of less grass in one eye with this on. Live."))),
     Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 0, kRenderCostShadowsOnceTip))),
     // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h, docs/notes/simpler_sun.md): the game's sun shadow
     // map filled for less in F4 - processor time
@@ -1257,6 +1298,38 @@ std::vector<Item> g_items = {
     // [render] potato_light_game (docs/notes/lighting_study.md, 2026-11-09): the Potato light in the game's own ambient and sun / moon colours
     Only(kVr, Needs(L"render", L"potato_light", 1, Toggle(L"render", L"potato_light_game", L"... Potato light in the game's own colours", 1,
            L"Ticked: the Potato light is not one even colour but the game's own light as its lit pass gets it - the area's sky light (its colours and strength from the area's lighting file for this time of day) and the sun or the moon (its colour, power and the side it shines on) - still without shadows, torches, light loops or reflections, so it stays as cheap. The grass and the ground keep the colour the game gives them, by day, at dusk and at night. The brightness sliders still work; the colour choice is not used. Native OpenXR first person (F4). Live. Unticked: one even light, as before."))),
+    // [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from bearstonem/d2r-pcvr; docs/notes/game_patches.md): six changes to the game's own
+    // render code for the draw thread's time, each its own tick (Serg 2026-11-12: "давай возьмем весь рендер"); unticked = the game's code as it is;
+    // all six ticked by default since 0.214 (draw_debug_names alone: 90 -> 115 fps on his PC)
+    Group(L"The game's own render code", L"Processor time saved inside the game's own drawing: six small changes to its render code, each on its own tick. Each goes in or out between two frames while the game runs. The game's bytes at each place are checked first; where they differ (another game build) the change is left out and the log (d2r_vr.log, 'game patches') says so. Rendering only: nothing of the game's play is touched. Unticked: the game's code as it is."),
+    Toggle(L"game_patches", L"transparent_filter", L"Transparent pass: test the flags first", 1,
+           L"The game's transparent pass walks every draw of the frame for each layer of transparency and, for each, reads a number from slow "
+           L"upload memory before it looks at the draw's flags - and almost every draw is then skipped. Ticked: the flags are tested first, so "
+           L"a skipped draw costs nothing; the draws kept, and their order, are the same. The biggest of the six (about 3 ms of a pass in its "
+           L"author's measure). Every view. Live. Unticked: the game's code as it is."),
+    Toggle(L"game_patches", L"profiler_accounting", L"No profiler lock on every draw", 1,
+           L"The game counts every draw for its built-in GPU profiler under one lock, which every thread that records draws takes - the passes "
+           L"drawn side by side wait for each other. The counts only feed the game's developer windows. Ticked: draws are no longer counted "
+           L"there. Every view. Live. Unticked: the game's code as it is."),
+    Toggle(L"game_patches", L"draw_debug_names", L"No debug name for every draw", 1,
+           L"The game formats a name (model, mesh, shader) for every draw and marks it for a graphics debugger. Ticked: the game's debug level "
+           L"is lowered so that draws get no names; the passes keep their own. A graphics card crash report then names the pass, not the model. "
+           L"Every view. Live. Unticked: the game's code as it is."),
+    Toggle(L"game_patches", L"selection_walk", L"No debug selection walk", 1,
+           L"Every pass the game's debug selection tool walks every drawn object to ask whether it is selected - and in play nothing ever is. "
+           L"Ticked: the walk is left out. Every view. Live. Unticked: the game's code as it is."),
+    Only(kVr, Toggle(L"game_patches", L"shadows_once", L"Two passes: sun shadows made once a pair (F4)", 1,
+           L"With \"Native two passes\" (and the two-pass frames of \"Native one pass\" after an area change or a load) the game draws each frame "
+           L"twice, once for each eye. Ticked: the second eye keeps the sun's shadow map the first eye made - its fit, its culled casters and its "
+           L"draws - instead of making the same map again. The sun's shadow follows the game's own camera, not the head, so it is the same "
+           L"picture. A camera without a look-at point is fitted per eye as before. \"Native one pass\" has its own way: \"Shadows and the grass "
+           L"map drawn once for both eyes\" above. VR first person (F4). The log says every 10 s how many passes kept the shadows. Live. "
+           L"Unticked: each eye makes its own, as the game does.")),
+    Only(kVr, Toggle(L"game_patches", L"cull_once", L"Two passes: one visibility test for both eyes (F4)", 1,
+           L"With the game drawing each frame twice (as above), each pass tests every object against its own eye's view. Ticked: the first eye "
+           L"tests against one view that holds both eyes', and the second, when its own view is inside that one, does not test again - it "
+           L"draws what the first found (a few more objects, clipped by the graphics card as anything off the picture). VR first person (F4). "
+           L"The log says every 10 s how many passes left the test out. Live. Unticked: each eye tests its own, as the game does.")),
     Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato, Low, Medium) sets everything here at once: the game's render stages, the draw distance, the fog and the sky. Room rings, models and the frame cap need a game restart."),
     // the preset, Auto beside it and the Potato light's sliders under it (QUALITY_PRESET_ITEMS above: also on Home)
     QUALITY_PRESET_ITEMS
@@ -1893,6 +1966,10 @@ std::vector<Item> g_items = {
            L"closed; with the inventory closed it is the game's key as before (the game's B opens the inventory). Live.")),
     Needs(L"belt", L"refill_key", 1, Slider(L"belt", L"refill_hold_ms", L"Belt refill: hold for, ms", 200, 2000, 50, 500,
            L"How long the button is held for the whole belt to be filled; let go sooner, it is a tap (one potion, where you point). Live.")),
+    Needs(L"belt", L"refill_key", 1, Toggle(L"belt", L"refill_inventory_alone", L"Belt refill: only with the inventory alone", 1,
+           L"On: the belt refill button is the mod's only while the inventory is the only menu open. With the stash, the Horadric Cube, a trader or "
+           L"the mercenary's inventory open beside it, the button does what the game does - its Y moves the item to the other panel (gems and runes "
+           L"into the stash). Off: the button is the mod's whenever the inventory is open, as before. Live.")),
     Only(kVr, Group(L"Pick up by pointing", L"First person (F4): stretch an arm toward an item on the floor - its name lights up - and pick it up with that hand's "
                     L"grip + trigger, or A. From D2R VR Unleashed.")),
     // [input] point_pickup (vr/unleashed_loot_aim.h, from D2R VR Unleashed's loot pick): F4, A picks up the item the hand points at
@@ -2428,13 +2505,14 @@ std::vector<Item> g_items = {
     Needs(L"stereo", L"afr", 1, Toggle(L"stereo", L"pair_per_tick", L"Both eyes from one game frame", 0,
            L"The frame is drawn twice (left, then right with the game time held) instead of one eye per frame by turns. "
            L"Same pairs per second; the game itself updates half as often.")),
-    Only(kVr, Needs(L"stereo", L"pair_per_tick", 1, Toggle(L"stereo", L"native_replay", L"... drawn once, the right eye again on the graphics card", 1,
+    Only(kVr, Needs(L"stereo", L"pair_per_tick", 1, Toggle(L"stereo", L"native_replay", L"... drawn once, the right eye again on the graphics card", 0,
            L"With Both eyes from one game frame: the game draws the frame once, and the right eye is drawn again on the graphics card from "
            L"the same work with its own camera, instead of the whole frame drawn twice. The game's thread does about half the work: on a PC "
            L"held back by its processor, many more frames a second; a PC held back by its graphics card gains little. Native OpenXR, first "
            L"person (F4) only. After an area change, a load or a change of the video options the right eye is drawn on its own until the "
-           L"picture has settled (a few seconds) - two passes then, never a black eye. On by default (\"Native one pass\" in 3D in the "
-           L"headset). Takes effect at the next game start. Off: two passes (\"Native two passes\")."))),
+           L"picture has settled (a few seconds) - two passes then, never a black eye. For a processor too slow for two passes (a few graphics "
+           L"cards hung with it). \"Native one pass\" in 3D in the headset. Takes effect at the next game start. Off: two passes (\"Native "
+           L"two passes\", the default since 0.214)."))),
     Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_fresh_slots", L"... the camera read when the graphics card needs it", 0,
            L"With one pass, the game's camera values are copied when the game records its drawing - but the game writes some of them later in "
            L"the frame (about a third, in Serg's log of 2026-11-10), so both eyes could draw with values from before: a player's headset showed "
@@ -2456,6 +2534,14 @@ std::vector<Item> g_items = {
            L"With the right eye drawn again on the graphics card: the game reuses the memory its lists' commands are in as soon as its own frame is done - before"
            L" the right eye has sent the same lists again. The game then writes new commands where the card is still reading the old ones (it hangs). "
            L"On: the game waits there until the right eye is done with them (a moment, only when the card is behind), and a frame whose memory was already reused shows the left picture in the right eye once. Off: told in the log only (as before). Live."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_fence_gate", L"... and the game's frame data kept until the right eye is done", 0,
+           L"With one pass: the game takes a frame for done as soon as the graphics card has drawn the left eye, and reuses that frame's data (its "
+           L"constants, its lights, its memory) while the card still draws the right eye from it - the card then reads another frame's numbers and "
+           L"can hang (six players' games, 2026-11-12, all inside the right eye). Ticked: the game sees a frame done only once the right eye is "
+           L"done too. Its drawing on the card is not changed. The log says every 10 s how often the game had to wait. Live. Unticked: as before."))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_hang_fallback", L"... two passes the next start after a hang", 1,
+           L"With one pass: if the graphics card hangs while one pass runs (the game ends, or stands still for 5 s), the next game start draws two "
+           L"passes instead and says why in the log. The start after that tries one pass again. Unticked: every start as chosen."))),
     Only(kVr, Needs(L"stereo", L"pair_per_tick", 0, Toggle(L"stereo", L"turn_warp", L"Eyes by turns: make the other eye from the depth", 1,
            L"Native OpenXR with the eyes by turns: the eye not drawn this frame is made on the graphics card for where the head is now - "
            L"its own last picture moved with the depth it was drawn with (what the hero holds goes with him), at this frame's pose. "
@@ -3899,6 +3985,22 @@ std::vector<Item> g_items = {
            L"and keeps it inside the mod (mods\\D2R-VR\\D2R-VR.mpq); nothing of the game itself changes, nor anything you play with. "
            L"Takes effect at the next start of the game (a game already running keeps the canoe where it was). Off: the file is taken out "
            L"again, the canoe as the game has it."),
+    Only(kVr, Toggle(L"world", L"town_heads_look", L"Town: people turn their heads to you (F4)", 0,
+           L"In a town the people near you - vendors, quest givers, townsfolk; not mercenaries - turn their heads to your eyes in the headset, "
+           L"only as far as a neck turns (the limits below, from where the body faces), eased in and out. When you walk out of range or round "
+           L"behind them they look away again. Each one decides once a visit whether it looks at you at all (the chance below). Only the "
+           L"picture: where they stand, what they do and what they say stay the game's. First person (F4) only. Live. Off: as before.")),
+    Only(kVr, Needs(L"world", L"town_heads_look", 1, Slider(L"world", L"town_heads_look_range_m", L"Town heads: within, m", 2, 20, 0.5f, 7,
+           L"How near (metres from their head to your eyes) the town's people have to be to look at you; over the last 1.5 m they ease away. Live."))),
+    Only(kVr, Needs(L"world", L"town_heads_look", 1, Slider(L"world", L"town_heads_look_chance", L"Town heads: how many look, %", 0, 100, 5, 50,
+           L"The share of the town's people that look at you. Each decides once when you come into the town and keeps to it for the visit "
+           L"(the same ones look every time you pass them until you leave). 100: all of them. Live."))),
+    Only(kVr, Needs(L"world", L"town_heads_look", 1, Slider(L"world", L"town_heads_look_yaw", L"Town heads: turn to the side, degrees", 0, 90, 5, 70,
+           L"How far a head turns to either side of where its body faces. Past that it holds there; further round behind them they look away. Live."))),
+    Only(kVr, Needs(L"world", L"town_heads_look", 1, Slider(L"world", L"town_heads_look_up", L"Town heads: look up, degrees", 0, 60, 5, 30,
+           L"How far a head tilts up to your eyes (when you stand over them, or they are short). Live."))),
+    Only(kVr, Needs(L"world", L"town_heads_look", 1, Slider(L"world", L"town_heads_look_down", L"Town heads: look down, degrees", 0, 60, 5, 40,
+           L"How far a head tilts down to your eyes (when you crouch, or they are tall). Live."))),
     Toggle(L"holes", L"patch_world", L"Holes in the world patched (a test: the bridge out of the Rogue Encampment)", 0,
            L"The game was built for a camera that looks down from above: some places were never modelled where that camera never looks - the "
            L"bridge out of the Rogue Encampment has a strip along its deck with no floor, between the deck and its parapet, through which first "
@@ -6418,6 +6520,13 @@ std::vector<Item> g_items = {
            L"Spells placed on the ground (Blizzard, Fissure, Meteor), summons, curses and auras keep the game's targeting. "
            L"Off: casting as before, with the game's auto-target. Below, a tick keeps the game's auto-target for that one spell - "
            L"one that seeks its target itself, as Chain Lightning.")),
+    Needs(L"hands", L"spell_aim", 1, Toggle(L"hands", L"spell_aim_walking", L"Spells along the hand while walking too", 1,
+           L"On: a spell cast while the hero walks or runs goes along the hand as well. Before this, the plugin could fail to recognise the "
+           L"walking hero as the caster (the game's camera trails him a little), and the spell went to the game's auto-target - into the "
+           L"nearest monster. Off: as before.")),
+    Needs(L"hands", L"spell_aim", 1, Choice(L"hands", L"spell_aim_by", L"Aim spells by", 0, {L"The hand", L"The view"},
+           L"Which way a spell that flies goes. The hand: along your hand, or the wand or staff in it (as before). The view: where your head looks - the "
+           L"heading of your view on the ground. F4 only; the game's own cast, only where it is aimed. A bow, crossbow or thrown weapon keeps its own line.")),
 #if D2RVR_FIRST_PERSON
     Toggle(L"hands", L"spell_aim_model", L"Aim spells by the drawn hand or staff", 0,
            L"VR first person (F4) only. On: the line a spell goes along comes from the hero as he is drawn, with no correction: a staff, wand or orb "
@@ -6910,7 +7019,7 @@ std::vector<Item> g_items = {
     Toggle(L"debug", L"replay_trace", L"Replay: record the queue's signals and waits", 0, L"Arms the trace below. Restart the game."),
     Toggle(L"debug", L"replay_trace_go", L"Replay: write one trace now (turn on for each)", 0, L"With the one above armed: one trace into the log each time this turns on."),
     Toggle(L"debug", L"replay_peek_go", L"Replay: compare one pair's two pictures (turn on for each)", 0, L"One pair of eyes compared, in the log, each time this turns on."),
-    Toggle(L"debug", L"replay_scan_go", L"Replay: find the left camera's copies (turn on for each)", 0, L"A scan of upload memory for the left camera, in the log, each time this turns on."),
+    Button(L"debug", L"replay_scan_take", L"Replay: find the left camera's copies now", L"A scan of upload memory for the left camera, in the log, once for each press while the game runs (on a thread of its own: the game goes on). Nothing stays switched on."),
     Toggle(L"debug", L"cb_compare", L"Compare the eyes' constant buffers", 0, L"Arms the comparison below. Restart the game."),
     Toggle(L"debug", L"cb_compare_go", L"Compare the eyes' constant buffers now (turn on for each)", 0, L"With the one above armed: one comparison into the log each time this turns on."),
     Choice(L"debug", L"fog_in_frame_paint", L"Fog in the frame's edges: paint what it does", 0,
@@ -7421,7 +7530,7 @@ rendertype::Keys RenderTypeKeys() {
     k.openxrOn = (int)GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini);
     k.afr = (int)GetPrivateProfileIntW(L"stereo", L"afr", 0, g_ini);
     k.pairPerTick = (int)GetPrivateProfileIntW(L"stereo", L"pair_per_tick", 0, g_ini);
-    k.nativeReplay = (int)GetPrivateProfileIntW(L"stereo", L"native_replay", 1, g_ini);
+    k.nativeReplay = (int)GetPrivateProfileIntW(L"stereo", L"native_replay", 0, g_ini);   // (absent: two passes, the default since 0.214)
     k.source = (int)GetPrivateProfileIntW(L"stereo", L"source", k.afr ? 2 : 1, g_ini);
     k.replayRight = (int)GetPrivateProfileIntW(L"stereo", L"replay_right", 0, g_ini);
     k.replayAhead = (int)GetPrivateProfileIntW(L"stereo", L"replay_ahead", 1, g_ini);
@@ -12483,6 +12592,42 @@ void StartHoles() {
     }
 }
 
+// [campfire] enabled: character creation's scene made from the player's own game (campfire_assets_unleashed.cpp, after D2R VR Unleashed's
+// prepare_campfire_sky.py: the clouds out, Harrogath round the fire, the tuned scene or else the plain one), into the mod's data folder, on a
+// thread of its own - the archives take a moment. At the start and when the tick changes (off: ours taken out); the result to the log. The
+// same here and now for Setup's --prepare-assets.
+std::atomic<bool> g_campfireBusy{false};
+std::atomic<bool> g_campfireAgain{false};   // the tick changed while a run was busy: once more when it is done
+
+campfireassets::Result PrepareCampfireNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    return campfireassets::Prepare(game, modRoot, GetPrivateProfileIntW(L"campfire", L"enabled", 0, g_ini) != 0);
+}
+
+void StartCampfireScene() {
+    if (g_campfireBusy.exchange(true)) {
+        g_campfireAgain.store(true);
+        return;
+    }
+    try {
+        std::thread([] {
+            do {
+                g_campfireAgain.store(false);
+                campfireassets::Result r = PrepareCampfireNow();
+                // (written while the game runs: it takes the mod's files at its start - as the Kurast boat's)
+                if (r.wrote && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")))
+                    r.text += std::wstring(L" - ") + TR(L"campfire_scene.restart", L"the game running now: restart it to see the change");
+                LogLine(L"campfire scene: " + r.text);
+                g_campfireBusy.store(false);
+            } while (g_campfireAgain.load() && !g_campfireBusy.exchange(true));   // (a tick meanwhile: once more, unless a new run took it)
+        }).detach();
+    } catch (const std::exception&) {
+        g_campfireBusy.store(false);
+        LogLine(L"campfire scene: could not be started");
+    }
+}
+
 void StartGameCeiling() {
     try {
         std::thread([] {
@@ -12603,7 +12748,7 @@ int DataModsState(const datamods::Result& r) {
 }
 
 void DataModsThread(HWND wnd) {
-    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load()); ++i) Sleep(50);   // they write D2R VR's own files into the same folder
+    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load()); ++i) Sleep(50);   // they write D2R VR's own files into the same folder
     const datamods::Result r = SyncDataMods();
     auto* p = new D2RLProgress{DataModsState(r), TRF(L"status.data_mods.result", L"Other mods: {text}", {{L"text", r.text}}), true};
     if (!PostMessageW(wnd, WM_APP_MODS, 0, (LPARAM)p)) delete p;
@@ -12634,7 +12779,7 @@ void OnDataModsDone(D2RLProgress* raw) {
 // on this thread - the game starts with the mods as they are now.
 void DataModsBeforeStart() {
     if (!ModInstall()) return;
-    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_modsBusy.load()); ++i) Sleep(50);
+    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load() || g_modsBusy.load()); ++i) Sleep(50);
     const datamods::Result r = SyncDataMods();
     if (g_headless) {
         StartSay(L"start: other mods: " + r.text);
@@ -13110,6 +13255,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"world_contact") == 0 || wcscmp(it.key, L"world_contact_hands") == 0)) StartSolidsCatalog();
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"patch_world") == 0) StartHoles();
+                if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
@@ -13168,6 +13314,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartSkyDome();
         StartGameCeiling();
         StartHoles();
+        StartCampfireScene();
         StartMenuArt();
         StartPortraits();
         StartDataMods();
@@ -13488,6 +13635,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
             timed(L"world holes", [] { return PrepareHolesNow().text; });           // [holes] patch_world: the patches over the world's holes
+            timed(L"campfire scene", [] { return PrepareCampfireNow().text; });     // [campfire] enabled: character creation's scene round the fire
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made

@@ -48,6 +48,18 @@ void SessionEnded();
 uint64_t ClientSizeAnswer(Asker asker, uint64_t native, bool on);
 // The hook went in after a size was already in force: the game is told it once more, so its interface is laid out again.
 void ClientSizeReflow();
+// [render] ui_band_16x9 (live): the interface a 16:9 band at the picture's top (vr_resolution.h UiCanvas); a change lays it out again (ClientSizeReflow).
+void SetUiBand(bool on);
+// [render] ui_band_16x9: 0 never, 1 always, 2 only while the inventory is open (UiBandTick, every frame on the draw thread: the band follows it).
+void SetUiBandMode(int mode);
+void UiBandTick(bool inventoryOpen);
+// [render] ui_band_corner_icons (xr.cpp, the laser on the icons over a menu's panel): `mode` in force at once, held over the ini's older value until the
+// ini says it too (5 s at most: the write failed) - the next UiBandTick lays the interface out for it.
+void PickUiBandMode(int mode);
+// The mode in force (0, 1, 2): which icon is lit.
+int UiBandMode();
+// The interface is laid out in the 16:9 band now (xr.cpp HangPanel: the menu's panel lowered so the band, not the canvas, is centred where it hangs).
+bool UiBandActive();
 
 // A size is in force (asked for; the game may still be taking it) - the depth pick must not take a shadow map for the picture.
 bool Active();

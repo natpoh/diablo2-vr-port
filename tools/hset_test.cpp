@@ -4636,8 +4636,10 @@ static void TestVideoRows() {
     {   // the render type (shared/render_type.h, Serg 2026-11-08): the five, in order, read from old inis by their keys
         using namespace rendertype;
         Keys k;
-        k.openxrOn = 1; k.afr = 1; k.pairPerTick = 1; k.nativeReplay = 1;
-        CHECK(FromKeys(k) == kNativeOne, "native, both eyes, no native_replay key (1): one pass - the default");
+        k.openxrOn = 1; k.afr = 1; k.pairPerTick = 1;
+        CHECK(FromKeys(k) == kNativeTwo, "native, both eyes, no native_replay key (0): two passes - the default since 0.214");
+        k.nativeReplay = 1;
+        CHECK(FromKeys(k) == kNativeOne, "native_replay=1: one pass");
         k.nativeReplay = 0;
         CHECK(FromKeys(k) == kNativeTwo, "native_replay=0: two passes");
         k.pairPerTick = 0;

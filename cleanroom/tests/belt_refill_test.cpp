@@ -165,6 +165,13 @@ int main() {
         Expect(PadOurs(x) && !KeyOurs(x), "the chat line open: the letter is typed");
         x = w; x.inWorld = false;
         Expect(!PadOurs(x) && !KeyOurs(x), "no game (the menus): the game's");
+        x = w; x.otherMenu = true;
+        Expect(PadOurs(x) && KeyOurs(x), "the stash beside the inventory, refill_inventory_alone off: ours, as before");
+        x.aloneOnly = true;
+        Expect(!PadOurs(x) && !KeyOurs(x), "the stash (cube, trader) beside the inventory, refill_inventory_alone on: the game's - its Y moves the item there");
+        x = w; x.aloneOnly = true;
+        Expect(PadOurs(x) && KeyOurs(x), "the inventory alone, refill_inventory_alone on: ours");
+        Expect(!InventoryFree(When{}), "nothing open: not free");
     }
     std::printf("belt_refill_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

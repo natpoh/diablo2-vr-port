@@ -44,6 +44,7 @@ void SkyTick() {
         seenGen = gen;
         AcquireSRWLockShared(&g_biomeLock); biome = g_biome; ReleaseSRWLockShared(&g_biomeLock);
         palette = SkyPaletteFor(biome, g_set.skyAlways.load());
+        campfire::OnBiome(biome);   // [campfire] character creation's scene in stereo (vr/campfire_unleashed.h)
         g_gameSkyboxHere.store(skydome::IsGameSkyboxArea(biome));
         // Not a world: the main menu (act2_frontend_biome) and the menu scenes of
         // their own - character creation is 'ui_characterselectscreen' (2026-10-08:
@@ -141,7 +142,10 @@ void SkyTick() {
     else if (TopPersp()) why = "the view from above";
     else if (palette < 0) why = "not outdoors";
     else if (EffectsPaused()) why = "a menu is open";   // (a menu as a panel, menu_3d: the world as without one)
-    g_skyPalette.store(why ? -1 : palette);
+    // [campfire] sky (default off; Unleashed's CampfireSky): our sky with Act 5's palette (Harrogath's - the campfire is its west gate) in
+    // the creation scene's void, over the player and above its band of mountains; fog and the rest stay off there
+    static const int kCampfirePalette = SkyPaletteFor("expansion", true);
+    g_skyPalette.store(campfire::SkyWanted() && g_set.skyOn.load() && kCampfirePalette >= 0 ? kCampfirePalette : why ? -1 : palette);
     {   // [sky] arcane_sky: the pictures looked for every 2 s (D2R_VR_Settings may make them while the game runs)
         static ULONGLONG lookedAt = 0;
         static bool toldReady = false;

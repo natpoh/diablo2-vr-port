@@ -58,12 +58,15 @@ constexpr uint64_t RVA_SET_TARGET = 0x34E0C0, RVA_LOOKUP = 0x48FE80, RVA_RELATIO
 constexpr uint64_t RVA_PREDICT = 0xFF010, RVA_DECODE_DIR = 0x3B2F20, RVA_CLIENT_STEP = 0xF9A00, RVA_AFTER_STEP = 0x100AE0, RVA_CLIENT_PLAYER = 0x9A480, RVA_WALK_DIR = 0xFEFE0;
 constexpr uint64_t RVA_CMD_FLAGS = 0x8AFD0, RVA_PATH_FLAG = 0x34F8D0, RVA_PATH_X = 0x2EF880, RVA_PATH_Y = 0x3419F0, RVA_UNITS = 0x2A23910;
 constexpr uint64_t RVA_CLIENT_GAME_TYPE = 0x2A233F4, RVA_LAUNCH_GAME_TYPE = 0x32EF888;
+constexpr uint64_t RVA_CMD_BUSY = 0xFFAC0;   // the client's "busy" test before any command (attack_path.h WalkPastBusy), its only caller 0xFABE0
 // both
 constexpr uint64_t RVA_PATH_OF = 0x34AE80, RVA_PATH_TARGET = 0x342A50, RVA_PATH_TYPE = 0x342A70, RVA_PATH_VECTOR = 0x342750, RVA_PATH_VELOCITY = 0x342AE0, RVA_PATH_MAKE = 0x340E70;
 constexpr uint64_t RVA_USED_SKILL = 0x34BA40, RVA_SKILL_FLAGS = 0x33CC00;
 
 const uint8_t kSigModeByDir[15] = {0x48, 0x89, 0x5C, 0x24, 0x08, 0x48, 0x89, 0x6C, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18};
 const uint8_t kSigPredict[15] = {0x44, 0x89, 0x4C, 0x24, 0x20, 0x89, 0x4C, 0x24, 0x08, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54};
+// push rdi; sub rsp, 0x20; mov rdi, rcx; test rcx, rcx (no rip, no rel32; the je after it stays out)
+const uint8_t kSigCmdBusy[12] = {0x40, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0xF9, 0x48, 0x85, 0xC9};
 
 constexpr uintptr_t kUnitId = 0x8, kUnitMode = 0xC, kUnitGame = 0xD8, kGameFrame = 0x170;
 constexpr uintptr_t kPathX = 0x10, kPathY = 0x12, kPathUnit = 0x70, kPathVelocity = 0xA0;
@@ -74,6 +77,7 @@ constexpr uint32_t kStepMs = 120, kSendMs = 40, kScanMs = 20;
 
 using ModeByDirFn = int (*)(uintptr_t game, uintptr_t unit, int mode, const float* dir, float mag, uint16_t x, uint16_t y);
 using PredictFn = int (*)(int type, uintptr_t unit, const uint32_t* data, int flag);
+using CmdBusyFn = bool (*)(uintptr_t unit);
 
 void (*g_log)(const char*) = nullptr;
 std::atomic<int> g_key{0};
@@ -84,6 +88,12 @@ std::atomic<int> g_state{0};
 std::atomic<bool (*)(float*, float*)> g_forward{nullptr};
 ModeByDirFn g_origModeByDir = nullptr;
 PredictFn g_origPredict = nullptr;
+CmdBusyFn g_origCmdBusy = nullptr;
+std::atomic<int> g_busyState{0};             // the busy hook: 0 not in yet, 1 in, 2 could not go in (special moves that cannot be interrupted keep the hero)
+// Our walk command on its way through the game's funnel (AfterCtrl -> 0xFEFE0 -> 0xFABE0 -> 0xFFAC0, all on the game's thread, one call deep)
+struct OurWalk { bool inFlight = false; uintptr_t unit = 0; bool acts = false; Move kind = Move::None; int32_t skill = kSkillNotRead; };
+thread_local OurWalk t_walk;
+std::atomic<uint64_t> g_pastBusy{0};
 
 std::atomic<uintptr_t> g_clientUnit{0};
 std::atomic<uint32_t> g_heroId{0};
@@ -434,6 +444,20 @@ int HookPredict(int type, uintptr_t unit, const uint32_t* data, int flag) {
         }
     }
     return g_origPredict(type, unit, data, flag);
+}
+
+// The game's "busy" answer drops every command while the used skill cannot be interrupted (Zeal, Fury): our walk of a move in a special
+// move alone goes past it (attack_path.h WalkPastBusy); the prediction and the packet are then the game's, as for a walk in Bash.
+bool HookCmdBusy(uintptr_t unit) {
+    const bool busy = g_origCmdBusy(unit);
+    const OurWalk& w = t_walk;
+    if (!busy || g_faulted.load(std::memory_order_relaxed) || !WalkPastBusy(w.inFlight, unit != 0 && unit == w.unit, w.acts, w.kind)) return busy;
+    if (g_pastBusy.fetch_add(1) < 4) {
+        const char* name = SkillName(w.skill);
+        Say("vrcam: attack path - move during skills - the game holds every command in %s%s (it cannot be interrupted): our walk goes through, any other command still waits for its end",
+            name ? name : "skill ", name ? "" : std::to_string(w.skill).c_str());
+    }
+    return false;
 }
 
 void ScanFront(uintptr_t unit, bool toHost) {
@@ -899,7 +923,10 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
             const moveattack::Walk w = moveattack::MakeWalk(grid[0], grid[1], (flags >> 8) != 0, stamina != 0, forced != 0, threshold);
             if (w.ok) {
                 lastSend = now;
-                if (!CallWalkDir(unit, w.dir, w.mag, w.run && RunAllowed(g_clientKey.load(std::memory_order_relaxed)))) { Fault("the walk command (0xFEFE0)"); return; }
+                t_walk = {true, unit, acts, KindOf(a), a.skill};   // (HookCmdBusy: this walk may pass a special move the game holds commands in)
+                const bool sent = CallWalkDir(unit, w.dir, w.mag, w.run && RunAllowed(g_clientKey.load(std::memory_order_relaxed)));
+                t_walk = {};
+                if (!sent) { Fault("the walk command (0xFEFE0)"); return; }
             }
         }
     }
@@ -907,9 +934,10 @@ void AfterCtrl(uint32_t player, uintptr_t mgr) {
     static uint64_t lastTell = 0;
     if (now - lastTell >= 3000) {
         lastTell = now;
-        Say("vrcam: attack path - so far: %llu walks predicted, %llu taken by the server, %llu server steps, %llu blows, %llu special moves' blows, %llu series restarted, %llu into the air; speed %d%%",
+        Say("vrcam: attack path - so far: %llu walks predicted, %llu taken by the server, %llu server steps, %llu blows, %llu special moves' blows, %llu series restarted, %llu into the air, "
+            "%llu walks past the game's hold; speed %d%%",
             (unsigned long long)g_predicted.load(), (unsigned long long)g_asked.load(), (unsigned long long)g_steps.load(), (unsigned long long)g_blows.load(),
-            (unsigned long long)g_skillBlows.load(), (unsigned long long)g_rearmed.load(), (unsigned long long)g_air.load(), g_percent.load());
+            (unsigned long long)g_skillBlows.load(), (unsigned long long)g_rearmed.load(), (unsigned long long)g_air.load(), (unsigned long long)g_pastBusy.load(), g_percent.load());
     }
 }
 
@@ -939,7 +967,30 @@ void ShutdownNet() {
     g_channel = nw::InvalidChannelHandle;
 }
 
+// The busy test's hook (0xFFAC0): on its own, once the two above are in. Its page decrypts when the game first sends a command, so it is
+// tried again every 2 s for as long as it takes (a menu sends no command); not in yet, special moves that cannot be interrupted - Zeal,
+// Fury - keep the hero as in the game, the rest as before.
+void InstallBusy() {
+    static ULONGLONG retryAt = 0, since = 0;
+    static bool told = false;
+    if (g_state.load() != 1 || g_busyState.load() != 0 || GetTickCount64() < retryAt) return;
+    retryAt = GetTickCount64() + 2000;
+    if (!since) since = GetTickCount64();
+    if (!d2rsig::Addr(RVA_CMD_BUSY) || !d2rsig::Check(RVA_CMD_BUSY, kSigCmdBusy, sizeof kSigCmdBusy)) {
+        if (!told && GetTickCount64() - since > 120000) {
+            told = true;
+            if (g_log) g_log("vrcam: attack path - the command hold's test (0xFFAC0) not as expected yet (tried again): until it is, Zeal and Fury keep the hero as in the game");
+        }
+        return;
+    }
+    const bool in = d2rsig::Hook(RVA_CMD_BUSY, kSigCmdBusy, sizeof kSigCmdBusy, reinterpret_cast<void*>(&HookCmdBusy), reinterpret_cast<void**>(&g_origCmdBusy));
+    g_busyState.store(in ? 1 : 2);
+    if (g_log) g_log(in ? "vrcam: attack path - the command hold is hooked: our walk goes on in Zeal and Fury too (the game holds every other command in them)"
+                        : "vrcam: attack path - the command hold's hook could not go in: Zeal and Fury keep the hero as in the game");
+}
+
 void Install() {
+    InstallBusy();
     static ULONGLONG retryAt = 0;
     if (g_state.load() != 0 || GetTickCount64() < retryAt || !Wanted()) return;
     retryAt = GetTickCount64() + 2000;

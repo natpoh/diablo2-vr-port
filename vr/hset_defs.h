@@ -402,7 +402,7 @@ inline constexpr Def kDefs[] = {
     //
     // Video (Serg 2026-11-08: "добавить туда тип рендера, убрать кнопки с разрешением экрана, оставить только ползунок, добавить селекторы
     // отрисовки тумана и неба: игрой, или движком, или не рисовать"): three rows under the render size's slider, named as D2R VR Settings names them.
-    // "Render type" (Serg 2026-11-08: five entries, one pass the default; shared/render_type.h): Native two passes, Native one pass, Native eyes by
+    // "Render type" (Serg 2026-11-08: five entries, two passes the default since 0.214; shared/render_type.h): Native two passes, Native one pass, Native eyes by
     // turns, FlatVR stereo, FlatVR depth - a stepper over [openxr] on, [stereo] afr / pair_per_tick / native_replay / source (the row sits on
     // pair_per_tick; its value box names the type, vr/hset_names.h); a step writes what D2R VR Settings' "3D in the headset" list writes for it
     // (hset_model.h). (max 4: a stepper, not a tick; the file's pair_per_tick stays 0 / 1)
@@ -453,7 +453,7 @@ inline constexpr Def kDefs[] = {
     {L"stereo", L"afr", "Stereo: by frames", "1 = native OpenXR's own stereo modes", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"stereo", L"replay_right", "Stereo: right eye replayed", "1 with both eyes a frame", 0.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"stereo", L"replay_ahead", "Stereo: replay ahead", "2 with both eyes a frame", 1.0f, 1.0f, 3.0f, 1.0f, "%.0f", "", "", kNoPage},
-    {L"stereo", L"native_replay", "Stereo: one pass", "1 = the right eye drawn again from the left pass (the default)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
+    {L"stereo", L"native_replay", "Stereo: one pass", "1 = the right eye drawn again from the left pass (0, two passes, the default)", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"stereo", L"source", "Stereo: FlatVR's source", "2 the game's pair, 1 the depth, 0 none", 2.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
     {L"openxr", L"on", "Native OpenXR", "The game in the headset itself (off: FlatVR)", 1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},
     {L"sky", L"enabled", "Sky", "The sky drawn at all", 0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage},

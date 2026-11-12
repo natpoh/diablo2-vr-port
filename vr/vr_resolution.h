@@ -88,15 +88,25 @@ inline Pt ToClient(Pt p, Size client, Size game) { return {Coordinate(p.x, game.
 // (its toolbar is hidden in VR); with ours shown, the band put the toolbar - orbs and belt - in the MIDDLE of a square picture
 // (test-33, 2026-10-15: 2048x1152 of 2048x2048). d2r-pcvr saw the game's text crash once with the full height of a 3072 square
 // in a first try; ours had the 1920x1920 window's square for months. Every other caller (movies, the renderer) its own answer.
+// [render] ui_band_16x9 (TEST, default off): the interface gets d2r-pcvr's band again - as wide as the picture, 16:9 high, at its top - so on a picture taller
+// than 16:9 (a headset's own eye size, 2112x2304) the game lays its panels out as on a wide monitor: the stash or a trader beside the inventory fit across
+// (a player's widened inventory ran past both edges of the whole-picture layout, 0.212.3). The toolbar then sits at the band's bottom (test-33's reason).
 enum class Asker : uint8_t { Other, Ui, Cursor };
-inline Size UiCanvas(Size render) { return render; }
+// [render] ui_band_16x9: the panel showing the whole canvas is lowered by this share of its own height so the band at the canvas's top is centred where the
+// canvas's centre would have been (d2r-pcvr's native_panels.h UpperBandOffset): the menus stay where the player looks. 0 for a canvas not taller than 16:9.
+inline float BandLowerShare(Size canvas) {
+    if (!canvas.w || !canvas.h) return 0.0f;
+    const float band = std::min((float)canvas.h, (float)canvas.w * 9.0f / 16.0f);
+    return 0.5f * ((float)canvas.h - band) / (float)canvas.h;
+}
+inline Size UiCanvas(Size render, bool band = false) { return band ? Size{render.w, std::min(render.h, render.w * 9u / 16u)} : render; }
 // The query's own answer packing: width in the low 32 bits, height in the high (not Pack's).
 inline uint64_t NativeSize(Size s) { return (uint64_t)s.w | (uint64_t)s.h << 32; }
 inline Size FromNative(uint64_t v) { return {(uint32_t)v, (uint32_t)(v >> 32)}; }
 // What the query answers `asker`: `native` is its own answer, `game` the size the game was told (none: no size in force).
-inline uint64_t CanvasAnswer(Asker asker, Size game, uint64_t native, bool on) {
+inline uint64_t CanvasAnswer(Asker asker, Size game, uint64_t native, bool on, bool band = false) {
     if (!on || !game || asker == Asker::Other) return native;
-    return NativeSize(asker == Asker::Ui ? UiCanvas(game) : game);   // (the same today: the whole picture for both)
+    return NativeSize(asker == Asker::Ui ? UiCanvas(game, band) : game);   // (the cursor: always the whole picture)
 }
 
 // -- the hover label over a world object (its name + the controller button's glyph) -----------------------------------------

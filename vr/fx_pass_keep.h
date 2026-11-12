@@ -28,7 +28,7 @@
 
 namespace fxpasskeep {
 
-inline constexpr const char* kPhantom[] = {"HitboxOn", "PaOn", "OrbOn", "MercOn", "PhantomOn", "BoneOn", "DbgOn"};   // bools
+inline constexpr const char* kPhantom[] = {"HitboxOn", "PaOn", "OrbOn", "MercOn", "PhantomOn", "BoneOn", "DbgOn", "SparkOn"};   // bools ([campfire] SparkOn)
 inline constexpr const char* kPhantomF[] = {"QvN", "AfOn", "LowHpAlpha", "LowMpAlpha"};                                      // 0 draws nothing
 // what FogLight leaves unread: the fog over the void (VoidFog*), the torches and the glow for the ceiling (Fire, Torch*, VoidGlow*), the
 // ceiling's height map and domes (the rest)

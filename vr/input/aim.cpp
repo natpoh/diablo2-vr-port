@@ -1015,6 +1015,28 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
         if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, aimpoint::kMaxCells, &px, &py)) { out[0] = px; out[1] = py; }   // (a bow's, a javelin's: the fixed distance; [bow] aim_distance_by_arm is for spells)
         return r;
     }
+    // [hands] spell_aim_by 1: a directed spell's point is out along where the head looks - as far as the game's own point (or, with spell_aim_model, as far as what
+    // the hero holds asks: caster_range, hand_range, staff_range_one); the arm's reach plays no part. The cast itself is the game's own.
+    if (out && g_spellCast.directed && g_spellCast.view && !g_spellCast.point && (uintptr_t)_ReturnAddress() == g_spellPointRet) {
+        float f[2]; memcpy(f, &from, sizeof f);
+        float cells = std::hypot(out[0] - f[0], out[1] - f[1]);
+#if D2RVR_FIRST_PERSON
+        if (SpellModelWanted()) {
+            const uint32_t t = gamestate::WeaponType();
+            const spellmodel::Hold hold = t == D2RVR_TYPE_STAFF ? spellmodel::Hold::Staff : t == D2RVR_TYPE_WAND || t == D2RVR_TYPE_ORB ? spellmodel::Hold::OneHandCaster : spellmodel::Hold::Hand;
+            cells = spellmodel::Cells(hold, g_set.handRange.load(), g_set.casterRange.load(), g_set.staffRangeOne.load());
+        }
+#endif
+        if (!std::isfinite(cells) || cells < 1.0f) cells = 3.0f;   // (the game's pad cast asks ~3 cells)
+        float px, py;
+        if (aimpoint::Point(f[0], f[1], g_spellCast.gx, g_spellCast.gy, cells, &px, &py)) { out[0] = px; out[1] = py; }
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 2000) {
+            told = GetTickCount64();
+            LogF("spell aim (view): the spell's point %.1f cells out where the head looks (%.2f %.2f) - [hands] spell_aim_by 1", cells, g_spellCast.gx, g_spellCast.gy);
+        }
+        return r;
+    }
 #if D2RVR_FIRST_PERSON
     // [hands] spell_aim_model: a spell that goes along the hand (spell_aim's directed cast, the game's aim turned to the hand) gets its point as far out as
     // what the hero holds asks (vr/spell_aim_model.h Cells): a wand or orb [bow] caster_range, bare hands [bow] hand_range - the game's ~3 cells were a

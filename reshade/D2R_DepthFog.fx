@@ -3617,6 +3617,8 @@ float3 QuiverArrowFx(float3 c, float3 ro, float3 rd, float3 back, float sceneZ)
 // other one every frame, and ReShade writes an effect's uniforms over the one buffer at the next frame's effects while the GPU may still
 // be drawing this frame's - per-eye flags that flipped every frame were read the next frame's way round, and the eye made's medallions
 // were hidden by the other eye's hand after all: doubled, always, the labels (which read no depth) not (the author, 2026-10-20).
+// [campfire] sparks: D2R VR Unleashed's (Kudlatytrue, MPL 2.0), in a file of its own beside this one; drawn in Phantom below.
+#include "D2R_Campfire_Unleashed.fxh"
 float OverlayDepth(float2 uv, int eye, bool made)
 {
     if (made) return OverlayMadeOn ? tex2Dlod(OverlayMadeDepthSmp, float4(uv, 0, 0)).x : 0.0;
@@ -3647,6 +3649,7 @@ float3 Phantom(float4 pos, float2 uv, int eye, bool made)
         const float d = OverlayDepth(uv, eye, made);
         c = QuiverArrowFx(c, eye == 0 ? PhantomEye0 : PhantomEye1, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, d > 1e-6 ? NearPlane / d : 1e9);
     }
+    [branch] if (SparkOn) c = Sparks(c, eye, PixelRayDir(pos.xy, eye), eye == 0 ? CamBack0 : CamBack1, OverlayDepth(uv, eye, made));   // [campfire] the fire's sparks
     if (PhantomOn) c = Segment(c, pos.xy, PhantomA, PhantomB, eye, float3(1.0, 0.05, 0.05));
     if (BoneOn) {
         c = Segment(c, pos.xy, BoneO, BoneX, eye, float3(0.1, 1.0, 0.1));

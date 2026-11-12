@@ -34,6 +34,11 @@ bool Hooked();
 struct Config {
     bool on = false;          // [render] lens_mask
     bool turnWarp = true;     // [stereo] turn_warp (eyes by turns: the eye made moved by the depth - no mask then)
+    // 2026-11-12, Serg (VirtualDesktopXR, 39.5% of each eye hidden): "one eye shows less grass than the other" in every run since lens_mask went on
+    // (two passes and one pass alike; fine before). The mask itself only covers hidden pixels - the guess is a screen-space step of the game's
+    // (a coarse depth pyramid the grass is culled against) that reaches past the mask's edge. These two find which part does it, live:
+    int margin = 3;           // [render] lens_mask_margin_px: pixels kept from every shown pixel (3 = as before; 32 / 64 = clear of coarse tiles)
+    bool strip = true;        // [render] lens_mask_strip: 1 = also the part of the picture never submitted (the nose-side strip, runtime_fov); 0 = the mesh only
 };
 void Configure(const Config& c);   // vrcam's settings load, live
 

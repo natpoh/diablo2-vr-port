@@ -13,8 +13,8 @@
 // Everything else - the fences, the replayed allocators' wait, the per-list submission, the area / long-frame / resize pause, the DLSS twin,
 // reflections_per_eye, the labels' half-disparity - is the replay's own code and comes along unchanged.
 //
-// The key decides, not [stereo] replay_right (the ReShade path's). 1 (the default since 2026-11-08, Serg: "one pass is the default"; an ini
-// without the key reads so, as shared/render_type.h's "Native one pass") = the replay; 0 = two passes, as 0.203-0.207 drew. The hooks above go
+// The key decides, not [stereo] replay_right (the ReShade path's). 1 (the default 2026-11-08 - 0.213) = the replay; 0 (the default since
+// 0.214, Serg 2026-11-12: one pass hung graphics cards; an ini without the key reads so, as shared/render_type.h's "Native two passes") = two passes. The hooks above go
 // in only when the key is on at the game's start (the upload buffers are made then); switched on later, it waits for the next start. F4 only,
 // native OpenXR only (FlatVR takes its pictures at every present). A paused pair (area change, long frame, resize) is two passes, never black.
 // Pure: vrcam drives it, tools/native_replay_test.cpp proves it on WARP.

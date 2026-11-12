@@ -22,7 +22,9 @@
 
 namespace appthread {
 
-enum Slot : int { kHostRules = 0, kHitShare, kAttackPathJoined, kAttackPathFront, kSlotCount };
+// kHitShareHost (2026-11-12, the co-op HOST crash): the host's sendToClient of the joined players' outcomes - the SDK wants the app thread
+// for the host's sends too; from the timer thread the host died at a joined player's first landed blow.
+enum Slot : int { kHostRules = 0, kHitShare, kAttackPathJoined, kAttackPathFront, kHitShareHost, kSlotCount };
 
 class Pump {
 public:

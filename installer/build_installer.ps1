@@ -204,6 +204,7 @@ $manifest = Start-Process -FilePath (Join-Path $build "D2R_VR_Settings.exe") -Wa
 if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) { throw "the Game Link manifest was not written ($($manifest.ExitCode))" }
 Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
 Copy-Item (Join-Path $root "reshade\D2R_FogEase_Unleashed.fxh") "$payload\shaders\"   # D2R_DepthFog.fx includes it (MPL 2.0, D2R VR Unleashed)
+Copy-Item (Join-Path $root "reshade\D2R_Campfire_Unleashed.fxh") "$payload\shaders\"   # ... and this one: [campfire] sparks (MPL 2.0, D2R VR Unleashed)
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
 # (The cave ceilings' pictures are not shipped any more - Serg, 2026-10-31: "текстуры потолков тоже можно из релиза убрать". The
 # ceilings are the game's own lit stone; our effect's old vault, still selectable, draws its own stone where no picture is found -

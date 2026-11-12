@@ -162,6 +162,20 @@ int main() {
     CHECK(fx::GameFogNumbersNow().end == drawdistance::FromEyeAbove(54.0f, w_stop->fogEnd));
     g_underground.store(true);
     CHECK(fx::GameFogNumbersNow().end == drawdistance::FromEyeAbove(54.0f, w_stop->cavesEnd));
+    // ... and [fog] game_fog_cover the same way (Serg 2026-11-11: the step before the effects in F3 full width too): round the hero from the
+    // head over him; off stays off; elsewhere as set
+    g_set.gameFogCover.store(200.0f);
+    CHECK(fx::GameFogCoverNow() == drawdistance::FromEyeAbove(54.0f, 200.0f));
+    g_set.gameFogCover.store(0.0f);
+    CHECK(fx::GameFogCoverNow() == 0.0f);
+    g_set.gameFogCover.store(200.0f);
+    g_floorCamOk.store(false);
+    CHECK(fx::GameFogCoverNow() == 200.0f);   // (no floor camera yet: as set)
+    g_floorCamOk.store(true);
+    w_tableFull = false;
+    CHECK(fx::GameFogCoverNow() == 200.0f);   // (F4, the flat game, the board: as set)
+    w_tableFull = true;
+    g_set.gameFogCover.store(0.0f);
     w_stop = nullptr; g_underground.store(false); g_floorEyeH.store(0.0f);
     CHECK(fx::GameFogNumbersNow().start == g_set.gameFogStart.load() && fx::GameFogNumbersNow().end == g_set.gameFogEnd.load());   // 0: the shared keys
     w_tableFull = false;

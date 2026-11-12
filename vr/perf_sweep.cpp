@@ -105,6 +105,27 @@ std::vector<Step> MakeSteps() {
     if (model > 150.0f && big > 0.0f) s.push_back({"models 150 + big objects off", {{L"render", L"model_radius", 150.0f}, {L"render", L"big_radius", 0.0f}}});
     if (model > 100.0f) s.push_back({"models 100 + big objects off", {{L"render", L"model_radius", 100.0f}, {L"render", L"big_radius", 0.0f}}});
     if (rings > 1) s.push_back({"room rings 1", {{L"render", L"rings", 1.0f}}});
+    {   // [game_patches] (vr/unleashed_game_patches.h): each of the six the other way from the file, then all six on - each goes in or out between
+        // two frames, so the step's settle covers it. shadows_once / cull_once act only when the game draws both eyes ([stereo] native_replay 0, or
+        // a one-pass pair paused): with one pass their steps are left out
+        struct Gp { const wchar_t* key; const char* name; bool twoPassOnly; };
+        static const Gp gps[] = {{L"transparent_filter", "transparent_filter", false}, {L"profiler_accounting", "profiler_accounting", false},
+                                 {L"draw_debug_names", "draw_debug_names", false}, {L"selection_walk", "selection_walk", false},
+                                 {L"shadows_once", "shadows_once", true}, {L"cull_once", "cull_once", true}};
+        const bool twoPasses = FileF(L"stereo", L"native_replay", 0.0f) == 0.0f;
+        std::vector<Over> allOn;
+        bool anyOff = false;
+        for (const Gp& g : gps) {
+            const bool on = FileF(L"game_patches", g.key, 1.0f) != 0.0f;
+            anyOff |= !on;
+            allOn.push_back({L"game_patches", g.key, 1.0f});
+            if (g.twoPassOnly && !twoPasses) continue;
+            char n[96];
+            snprintf(n, sizeof n, "game patch %s %s", g.name, on ? "OFF" : "on");
+            s.push_back({n, {{L"game_patches", g.key, on ? 0.0f : 1.0f}}});
+        }
+        if (anyOff) s.push_back({"game patches: all six on", allOn});
+    }
     if (!outline) {   // the outline's bench bit off: with no other bench key the pipe hunt's per-bind lookup is not made at all
         Step st{"the game's outline drawn (the bench's per-bind lookup idle; calls not counted)", {{L"render", L"game_outline", 1.0f}}};
         st.count = false;

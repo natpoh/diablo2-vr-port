@@ -107,6 +107,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     // moves its cursor on the screen, so turning it by the camera's yaw sent the
     // cursor the wrong way, and the right stick is the menu's too.
     if (gamestate::MenuOpen()) { if (own) { g_rightX.store(0.0f); g_rightY.store(0.0f); } return; }
+    if (campfire::Now()) return;   // [campfire]: the pad moves nothing (the hand's pick clicks; vr/campfire_unleashed.cpp)
     AimByMouse(s);
     AimByTurn(s);
     const bool aimed = BowStick(s);

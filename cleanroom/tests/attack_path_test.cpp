@@ -185,7 +185,24 @@ static void TestNet() {
     CHECK(SameFront(x, 2, x, 2) && !SameFront(x, 2, y, 2) && !SameFront(x, 1, x, 2) && SameFront(x, 0, y, 0));
 }
 
+// 2026-11-11: Zeal / Fury cannot be interrupted, so the game's client dropped every command in them - our walk too. Only our own walk of a
+// special move goes past the "busy" answer; nothing else, and not for the plain Attack (it may be interrupted: the game lets it through).
+static void TestWalkPastBusy() {
+    CHECK(WalkPastBusy(true, true, true, Move::Series));
+    CHECK(WalkPastBusy(true, true, true, Move::Single));
+    CHECK(!WalkPastBusy(false, true, true, Move::Series));   // any other command (a click, a skill, the game's own walk keys): still busy
+    CHECK(!WalkPastBusy(true, false, true, Move::Series));   // another unit
+    CHECK(!WalkPastBusy(true, true, false, Move::Series));   // we do not act now (key off, menu, view, host said no)
+    CHECK(!WalkPastBusy(true, true, true, Move::Plain));     // the game's own answer stands
+    CHECK(!WalkPastBusy(true, true, true, Move::None));      // Whirlwind, Charge, casts ...: never
+    // the flat PC's Zeal: mode 7, skill 106, do-function 13 - a series our walk may pass in
+    CHECK(WalkPastBusy(true, true, true, KindOf(7, kSkillZeal, 0, 13)));
+    CHECK(WalkPastBusy(true, true, true, KindOf(7, kSkillFury, 0, 12)));
+    CHECK(!WalkPastBusy(true, true, true, KindOf(18, kSkillLeap, 0, 77)));
+}
+
 int main() {
+    TestWalkPastBusy();
     TestNet();
     TestActs();
     TestKinds();

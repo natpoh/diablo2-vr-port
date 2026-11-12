@@ -7,6 +7,8 @@
 #include "../../shadows_once.h"   // [render] shadows_once_a_pair: the lists that only draw the shadow / grass maps not replayed for the right eye
 #include "replay_list_gen.h"   // [stereo] replay_reset_guard: no replay of a list the game reset since it submitted it
 #include "replay_alloc_guard.h"   // [stereo] replay_alloc_guard: no reset of the game's allocators under our replay of their lists
+#include "../../replay_hang_fallback.h"   // [stereo] replay_hang_fallback: two passes the session after a hang in one pass
+#include "../../fence_gate.h"   // [stereo] replay_fence_gate: the game sees a frame's fences pass only once our replay of it is done
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -226,6 +228,8 @@ void NoteGame(ID3D12CommandQueue* q, char op, ID3D12Fence* f, UINT64 v) {
 template <int S> HRESULT STDMETHODCALLTYPE HookQSignal(ID3D12CommandQueue* q, ID3D12Fence* f, UINT64 v) {
     g_sigCalls.fetch_add(1, std::memory_order_relaxed);
     if (!t_ours) NoteGame(q, 's', f, v);
+    // [stereo] replay_fence_gate (vr/fence_gate.h): a signal of the left pass's - the game's CPU sees it pass only once this pass's replay is done
+    if (!t_ours && g_capturing.load(std::memory_order_relaxed) && q->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_COPY) fencegate::NoteSignal(f, v);
     if (g_holdSignals.load(std::memory_order_relaxed)) g_sigWhileHolding.fetch_add(1, std::memory_order_relaxed);
     if (!t_ours && g_holdSignals.load(std::memory_order_relaxed) && q->GetDesc().Type != D3D12_COMMAND_LIST_TYPE_COPY) {
         g_sigHeld.fetch_add(1, std::memory_order_relaxed);
@@ -670,6 +674,31 @@ void GuardRemove(double stuckMs) {
     d5->RemoveDevice();
     d5->Release();
 }
+// -- [stereo] replay_hang_fallback (vr/replay_hang_fallback.h) ---------------------------------------------------------------------------
+// The device lost (DRED's report: gpufault::OnRemoved), or the direct queue standing for replay_hang_fallback_stall_ms with the presents stopped,
+// while Native one pass ran in the last 15 s: a note in ..\logs\ (d2r_vr_one_pass_hung.txt). The next start reads it, deletes it, and draws two
+// passes that session - told in the log with the reason. The start after that tries one pass again. Off: no note written, none read.
+std::atomic<bool> g_hangFallback{false};       // [stereo] replay_hang_fallback (load_settings.cpp)
+std::atomic<int> g_hangFallbackStallMs{5000};  // [stereo] replay_hang_fallback_stall_ms
+std::atomic<bool> g_fallbackRun{false};        // this session draws two passes for the last one's hang
+std::atomic<ULONGLONG> g_lastOnePassMs{0};     // the last pair from one pass (EndOfPairGate)
+std::atomic<bool> g_fallbackWritten{false};
+bool OnePassRanLately() {
+    const ULONGLONG at = g_lastOnePassMs.load(std::memory_order_relaxed);
+    return at && GetTickCount64() - at < 15000;
+}
+void WriteHangNote(const char* why) {
+    if (!g_hangFallback.load() || !OnePassRanLately() || g_fallbackWritten.exchange(true)) return;
+    wchar_t path[MAX_PATH];
+    if (!hangfallback::NotePath(gpufault::LogDir(), path, MAX_PATH)) return;
+    hangfallback::WriteNote(path, why);
+}
+void OnDeviceRemoved(long hr) {
+    char why[200];
+    snprintf(why, sizeof why, "the D3D12 device was removed (0x%08lX %s) while Native one pass ran", (unsigned long)hr, gpufault::ReasonName((int32_t)hr));
+    WriteHangNote(why);
+}
+
 // The watchdog thread, every half second while the presents stand. Looks at the queue with its own Progress (the draw thread's is another).
 void GuardWatch(double presentsStoodMs) {
     if (!g_guardOn.load(std::memory_order_relaxed) || !g_direct) return;
@@ -680,6 +709,11 @@ void GuardWatch(double presentsStoodMs) {
     for (const QFence& x : g_qf)
         if (x.q == g_direct && x.f) { qms = stallguard::Feed(prog, x.v, SafeDone(x.f), GuardMs()); break; }
     const double stuck = std::min(qms, presentsStoodMs);   // both: a draw thread that waits for the runtime with an idle GPU is not this
+    if (stuck >= (double)g_hangFallbackStallMs.load(std::memory_order_relaxed)) {   // [stereo] replay_hang_fallback: a soft stall
+        char why[160];
+        snprintf(why, sizeof why, "the game's direct queue stood still for %.1f s with the presents stopped while Native one pass ran", stuck / 1000.0);
+        WriteHangNote(why);
+    }
     const stallguard::Level lv = stallguard::Decide(stuck, g_guardLimits);
     if (lv == stallguard::Level::Remove && !removed) { removed = true; GuardRemove(stuck); return; }
     if (lv >= stallguard::Level::Unstick && GuardMs() - lastUnstick >= 5000.0) {
@@ -819,7 +853,7 @@ void XrPresent(reshade::api::effect_runtime* rt, ID3D12Device* dev, ID3D12Comman
     // sent first, or our copy ran on the GPU before them - the headset without the sky while the
     // window had it, in the eyes by turns (2026-10-11). The replay flushes it in EffectsAtHold.
     if (rt) rt->get_command_queue()->flush_immediate_command_list();
-    const int pairEye = g_pairNow.load() ? (g_eye.load() & 1) : -1;   // a pass of two: its eye
+    const int pairEye = g_pairNow.load() || campfire::Now() ? (g_eye.load() & 1) : -1;   // a pass of two: its eye ([campfire]: each present one eye)
     // eyes by turns, the other eye made ([stereo] turn_warp): this eye kept as it is (no overlays yet), then its overlays, its swapchain,
     // the other eye made, its overlays, its swapchain (xr.h TurnKeep)
     const bool turns = pairEye >= 0 && xr::TurnsNow();
@@ -1463,6 +1497,7 @@ void Register() {
 // ---- [stereo] native_replay (vr/native_replay.h): the replay on the plugin's own hooks ---------------------------------------------------
 // The keys as the ini has them (LoadSettings, every change): the native path takes its want from its own key, never from replay_right.
 void SetWant(int replayRight, int nativeKey) {
+    if (g_fallbackRun.load()) nativeKey = 0;   // [stereo] replay_hang_fallback: the last session hung in one pass - two passes this one
     g_replayRightIni.store(replayRight);
     g_nativeKey.store(nativeKey);
     g_want.store(g_nativeHooks.load() ? (nativeKey == 1 ? 1 : 0) : replayRight);
@@ -1472,8 +1507,19 @@ bool NativeAtStart() { return g_nativeHooks.load(); }
 // At the plugin's load, before natived3d::Install (vrcam noreshade::Install): with the key on, the device's resource creation is followed for
 // camfix (the game makes its upload buffers early: a switch later waits for the next start). Told once, either way: which path the pairs take.
 void NativeSinks(natived3d::Sinks& k) {
-    const int key = (int)IniF(L"stereo", L"native_replay", 1.0f);   // (the default: one pass - shared/render_type.h)
-    g_nativeKey.store(key);
+    const int key = (int)IniF(L"stereo", L"native_replay", 0.0f);   // (the default: two passes since 0.214 - shared/render_type.h)
+    {   // [stereo] replay_hang_fallback: the last session's note (vr/replay_hang_fallback.h) - read and deleted, the hooks still go in (two passes this session)
+        wchar_t path[MAX_PATH];
+        char why[300] = "";
+        if (hangfallback::NotePath(gpufault::LogDir(), path, MAX_PATH) && hangfallback::TakeNote(path, why, sizeof why) &&
+            IniB(L"stereo", L"replay_hang_fallback", true) && key == 1) {
+            g_fallbackRun.store(true);
+            LogF("vrcam: stereo - Native one pass is two passes this session: the last session %s ([stereo] replay_hang_fallback; the next start tries one "
+                 "pass again)", why);
+        }
+    }
+    gpufault::OnRemoved(&OnDeviceRemoved);
+    g_nativeKey.store(g_fallbackRun.load() ? 0 : key);
     if (!nativereplay::InstallAtStart(key, g_noReShade)) {
         LogF("vrcam: stereo - [stereo] native_replay=%d at the start: \"Both eyes\" draws two passes a pair (the game's whole draw twice on the CPU, "
              "as since 0.203); 1 draws the right eye from the left pass's lists (one pass, two pictures) - from the next start", key);
@@ -1504,6 +1550,7 @@ bool NativeSetup() {
     ID3D12Device* dev = nullptr;
     if (FAILED(gq->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) || !dev) return false;
     const bool root = camfix::HookNative(dev);
+    const bool gate = fencegate::Install(dev);   // [stereo] replay_fence_gate's hooks (they pass everything through while the key is 0)
     bool ecl = eclhook::Install(gq, &NativeExec);
     const D3D12_COMMAND_LIST_TYPE others[2] = {D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_LIST_TYPE_COPY};
     for (const D3D12_COMMAND_LIST_TYPE t : others) {
@@ -1520,9 +1567,9 @@ bool NativeSetup() {
     dev->Release();
     done = root && ecl ? 1 : 0;
     LogF("vrcam: native replay - set up: the camera's root hooks %s, the game's ExecuteCommandLists on its direct, compute and copy queues %s; "
-         "%zu upload buffers of the game's known so far%s%s", root ? "in" : "NOT in", ecl ? "watched" : "NOT all watched", camfix::NativeUploadsKnown(),
-         done ? "" : " - the replay stays off this session (two passes a pair)",
-         "");
+         "%zu upload buffers of the game's known so far%s; the fence gate's hooks %s ([stereo] replay_fence_gate %d)", root ? "in" : "NOT in",
+         ecl ? "watched" : "NOT all watched", camfix::NativeUploadsKnown(), done ? "" : " - the replay stays off this session (two passes a pair)",
+         gate ? "in" : "NOT in", fencegate::On() ? 1 : 0);
     return done == 1;
 }
 // Once a pair (Wanted): does this pair take the native path (vr/native_replay.h Decide)? The reason told at the first pair and at each change.
@@ -1714,6 +1761,7 @@ void BeginLeft() {
     }
     if (g_peekStage == 2) { PeekReport(); g_peekStage = 0; }
     if (g_peekStage == 1) g_peekStage = 0;   // armed but the pair went out otherwise: again
+    fencegate::DropPass();   // ([stereo] replay_fence_gate: signals of a pass that never reached its replay gate nothing)
     if (g_peekWant.exchange(0)) g_peekStage = 1;
     g_prevReplay = g_lastReplay;
     g_restorePending.store(true);
@@ -1757,6 +1805,22 @@ void SetGameBackBuffer(uint8_t* wrap, UINT index) {
     __try { *(uint32_t*)(wrap + 0x98) = index; } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
+// [stereo] replay_fence_gate (vr/fence_gate.h): the pass's signals now wait for this pair's end on our fence (the replay and the right eye's work
+// before it); a pass not replayed gates nothing. And the gate's line every 10 s while it is on (one line: a log line costs ~1 ms).
+void EndOfPairGate(bool listsAgain) {
+    if (listsAgain && g_lastReplay.f) fencegate::BindPass(g_lastReplay.f, g_lastReplay.v);
+    else fencegate::DropPass();
+    g_lastOnePassMs.store(GetTickCount64(), std::memory_order_relaxed);   // ([stereo] replay_hang_fallback: one pass ran just now)
+    static ULONGLONG since = GetTickCount64();
+    if (GetTickCount64() - since < 10000) return;
+    since = GetTickCount64();
+    const fencegate::Stats st = fencegate::TakeStats();
+    if (fencegate::On())
+        LogF("vrcam: replay - fence gate, 10 s: the game looked at its frame fences %u times, %u of them told an earlier value (our replay of that "
+             "frame still running); %u event waits, %u of them held for the replay (%u on several fences), the longest %.1f ms; %u let go at the "
+             "give-up time ([stereo] replay_fence_gate)", st.looks, st.heldLooks, st.events, st.heldEvents, st.multi, st.maxHeldMs, st.gaveUp);
+}
+
 // After the left pass, instead of the right one. False: the left eye went out as usual
 // (its Present was not held), the caller draws the right eye the usual way.
 bool RightFromLeft() {
@@ -1767,7 +1831,7 @@ bool RightFromLeft() {
     AcquireSRWLockExclusive(&g_lock);
     subs.swap(g_subs);
     ReleaseSRWLockExclusive(&g_lock);
-    if (!g_leftHeld) { ReleaseHeld(nullptr); g_fails.fetch_add(1); return false; }
+    if (!g_leftHeld) { ReleaseHeld(nullptr); fencegate::DropPass(); g_fails.fetch_add(1); return false; }
     g_leftHeld = false;
     ::CommitRightSky();   // the right eye's sky view and stamp: the left ones moved across, only now (vr/sky_view_eyes.h)
     const int mode = g_want.load();
@@ -1868,7 +1932,8 @@ bool RightFromLeft() {
             notReplayed = true;
         }
     }
-    if (mode != 3 && !notReplayed) {   // the lists again, a batch per run of one queue; a fence between queues
+    const bool listsAgain = mode != 3 && !notReplayed;   // ([stereo] replay_fence_gate: only then does this pass's replay gate the game's fences)
+    if (listsAgain) {   // the lists again, a batch per run of one queue; a fence between queues
         // (the first batch may be the compute queue's: it must see the right eye's slots too)
         if (mode == 1 && !subs.empty() && subs[0].q != g_direct) { g_why = "replay: first batch not direct"; GpuWait(subs[0].q, SignalOn(g_direct)); }
         ID3D12CommandQueue* prev = nullptr;
@@ -2014,6 +2079,7 @@ bool RightFromLeft() {
     if (OnePresent()) {
         g_why = "end of pair";
         g_lastReplay = SignalOn(g_direct);
+        EndOfPairGate(listsAgain);
         if (g_wrap) SetGameBackBuffer(g_wrap, g_native->GetCurrentBackBufferIndex());
         if (g_replays.fetch_add(1) % 900 == 0)
         {
@@ -2050,6 +2116,7 @@ bool RightFromLeft() {
         Copy(depth, DepthState(), g_leftDepth, D3D12_RESOURCE_STATE_COMMON);
     g_why = "end of pair";
     g_lastReplay = SignalOn(g_direct);
+    EndOfPairGate(listsAgain);
     SetEye(0);
     t1 = pairtime::UsNow(); g_stepUs[kCopyL] += t1 - t; t = t1;
     const HRESULT hrL = g_proxy->Present(0, g_presentFlags);

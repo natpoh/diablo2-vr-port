@@ -555,7 +555,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/fence_gate.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/unleashed_game_patches.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -604,7 +604,8 @@ target_sources(d2rl-vrcam PRIVATE vr/body/hero_facing.cpp vr/body/arms.cpp)   # 
 target_sources(d2rl-vrcam PRIVATE vr/render/depth/depth_fix.cpp vr/render/depth/scene_depth.cpp vr/render/render_switches.cpp)   # M13 the depth, the render switches
 target_sources(d2rl-vrcam PRIVATE vr/render/stereo/prev_scan.cpp vr/render/stereo/replay.cpp vr/render/stereo/frame_sync.cpp vr/render/stereo/pair_pace.cpp)   # M14 the stereo
 target_sources(d2rl-vrcam PRIVATE vr/render/effects/effects.cpp)   # M15 our effect
-target_sources(d2rl-vrcam PRIVATE vr/view/head.cpp vr/view/camera.cpp vr/view/views.cpp)   # M16 the head, our camera, the views
+target_sources(d2rl-vrcam PRIVATE vr/view/head.cpp vr/view/camera.cpp vr/view/views.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/campfire_unleashed.cpp)   # [campfire] character creation in 3D (MPL 2.0, from D2R VR Unleashed)   # M16 the head, our camera, the views
 target_sources(d2rl-vrcam PRIVATE vr/frame/frame_order.cpp)   # M17 the frame's order
 target_sources(d2rl-vrcam PRIVATE vr/combat/combat_ticks.cpp)   # the attacks' ticks
 target_sources(d2rl-vrcam PRIVATE vr/gait_lib.cpp)   # [multiplayer] pose_share_legs: the optional gait library d2r_vr_gait.dll (shared/d2r_vr_gait.h)
@@ -1326,6 +1327,11 @@ target_compile_options(unleashed_far_objects_test PRIVATE /utf-8 /W4 /EHsc /perm
 add_executable(unleashed_shapeshift_form_test cleanroom/tests/unleashed_shapeshift_form_test.cpp)
 target_include_directories(unleashed_shapeshift_form_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_shapeshift_form_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [world] town_heads_look (vr/unleashed_head_look.h, MPL, from Unleashed's steamvr/look_at.h): the town's people turn their heads to you.
+# Run: unleashed_head_look_test.exe
+add_executable(unleashed_head_look_test cleanroom/tests/unleashed_head_look_test.cpp)
+target_include_directories(unleashed_head_look_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_head_look_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [shapeshift] claw_hits (vr/claw_strike.h): a form's paw from its bones, the two paws one weapon (one shared recovery). Run: claw_strike_test.exe
 add_executable(claw_strike_test cleanroom/tests/claw_strike_test.cpp)
 target_include_directories(claw_strike_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1456,9 +1462,28 @@ target_compile_options(vr_body_pick_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(point_trigger_test cleanroom/tests/point_trigger_test.cpp)   # [input] point_pickup's grip + trigger (vr/point_trigger.h). Run: point_trigger_test.exe
 target_include_directories(point_trigger_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(point_trigger_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [openxr] name_keyboard (vr/vr_keyboard_unleashed.h, MPL 2.0 from D2R VR Unleashed): the keys, the name box, the board, the typist. Run: unleashed_vr_keyboard_test.exe
+add_executable(unleashed_vr_keyboard_test cleanroom/tests/unleashed_vr_keyboard_test.cpp)
+target_include_directories(unleashed_vr_keyboard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_vr_keyboard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+target_link_libraries(unleashed_vr_keyboard_test PRIVATE gdi32 user32)
 add_executable(unleashed_loot_aim_test cleanroom/tests/unleashed_loot_aim_test.cpp)
 target_include_directories(unleashed_loot_aim_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_loot_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from D2R VR Unleashed 853607f..9b9e28e, 1289b9a): the fingerprints, the transparent
+# filter's new code, the debug level, the call made a no-op, the shadows a second pass keeps; the one cull volume for both eyes.
+# Run: unleashed_game_patch_plan_test.exe, unleashed_cull_volume_test.exe
+add_executable(unleashed_game_patch_plan_test cleanroom/tests/unleashed_game_patch_plan_test.cpp)
+target_include_directories(unleashed_game_patch_plan_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_game_patch_plan_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+add_executable(unleashed_cull_volume_test cleanroom/tests/unleashed_cull_volume_test.cpp)
+target_include_directories(unleashed_cull_volume_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_cull_volume_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# ... and every check the six make before they write, against the game's image snapshot (dump_loader/D2R_image.bin; skipped without it).
+# Run: game_patches_image_test.exe [D2R_image.bin]
+add_executable(game_patches_image_test cleanroom/tests/game_patches_image_test.cpp)
+target_include_directories(game_patches_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(game_patches_image_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [render] room_stitch (vr/unleashed_room_stitch.h, MPL 2.0 from D2R VR Unleashed d416861, Cal): which built
 # neighbour a room's height meets. Run: unleashed_room_stitch_test.exe
 add_executable(unleashed_room_stitch_test cleanroom/tests/unleashed_room_stitch_test.cpp)
@@ -1696,6 +1721,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/kurast_boat_test.cpp")
     target_compile_definitions(kurast_boat_test PRIVATE UNICODE _UNICODE)
     target_link_libraries(kurast_boat_test PRIVATE casc_static)
     target_compile_options(kurast_boat_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+# [campfire] enabled: D2R_VR_Settings' maker of character creation's scene (tools/settings/campfire_assets_unleashed.cpp, MPL 2.0, ported
+# from D2R VR Unleashed steamvr/prepare_campfire_sky.py at 79b921a): made-up presets always; --build <charactercreate.json> <townwest.json>
+# <out folder> writes the tuned and plain scenes to compare with the script's; <game folder> <empty scratch folder> runs Settings' Prepare.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/campfire_assets_unleashed_test.cpp")
+    add_executable(campfire_assets_unleashed_test cleanroom/tests/campfire_assets_unleashed_test.cpp tools/settings/campfire_assets_unleashed.cpp)
+    target_include_directories(campfire_assets_unleashed_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings)
+    target_compile_definitions(campfire_assets_unleashed_test PRIVATE UNICODE _UNICODE)
+    target_link_libraries(campfire_assets_unleashed_test PRIVATE casc_static)
+    target_compile_options(campfire_assets_unleashed_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 # [openxr] skill_panel_game_look: D2R_VR_Settings' maker of the game's own interface art beside the plugin (tools/settings/menu_assets.cpp,
 # shared/game_ui_files.h) against the game's archives, read only. Run: menu_assets_test.exe <game folder> <empty scratch folder>
@@ -1938,7 +1973,7 @@ else()
     FetchContent_MakeAvailable(CascLib)
 endif()
 unset(CMAKE_POLICY_VERSION_MINIMUM)
-add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/menu_assets.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
+add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/menu_assets.cpp tools/settings/campfire_assets_unleashed.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
 add_dependencies(d2r_vr_settings d2r_vr_version_h)
 target_link_libraries(d2r_vr_settings PRIVATE casc_static)
 target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
@@ -2323,7 +2358,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/native_replay_test.cpp")
     # [stereo] native_replay (vr/native_replay.h) on a WARP device: the path's decision, the game's upload buffers told by the device hooks, a pair
     # end to end (the left pass captured by the ExecuteCommandLists hook, the camera slots patched, the lists submitted again), a resize while a pass
     # is recorded and the area-load pause. Run: native_replay_test.exe
-    add_executable(native_replay_test tools/native_replay_test.cpp vr/native_d3d12.cpp vr/ecl_hook.cpp vr/shadows_once.cpp)
+    add_executable(native_replay_test tools/native_replay_test.cpp vr/native_d3d12.cpp vr/ecl_hook.cpp vr/shadows_once.cpp vr/fence_gate.cpp)
     target_include_directories(native_replay_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_link_libraries(native_replay_test PRIVATE minhook d3d12 dxgi d3dcompiler)
     target_compile_options(native_replay_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -2643,6 +2678,10 @@ target_compile_options(minimap_box_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(hand_inventory_test cleanroom/tests/hand_inventory_test.cpp)
 target_include_directories(hand_inventory_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_options(hand_inventory_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [render] ui_band_corner_icons: the square and the 16:9 icon over a menu's panel in F4 - place, hit, when shown, what a click writes (vr/band_icons.h, xr.cpp): band_icons_test
+add_executable(band_icons_test cleanroom/tests/band_icons_test.cpp)
+target_include_directories(band_icons_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(band_icons_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hud] map_direction: the way our camera looks on the game's isometric map, and the arrow as rows of pixels (vr/map_direction.h, hud.cpp): map_direction_test
 add_executable(map_direction_test cleanroom/tests/map_direction_test.cpp)
 target_include_directories(map_direction_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

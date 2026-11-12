@@ -503,6 +503,8 @@ inline constexpr Sig kSigs[] = {
     {"Reassign", 0x486B20, Kind::Code, "48 85 C9 0F 84 ?? ?? ?? ?? 48 89 6C 24 10 48 89 74 24 18 48 89 7C 24 20 41 56 48 83 EC 40 41 0F B7 E9", 0x486B20, 0, 0, 0, 0, "48 85 C9 0F 84 ?? ?? ?? ??", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
     // the client's prediction of a command (type, unit, data, flag), hooked: a walk (0x1E) in an attack sets the path alone
     {"PredictCmd", 0xFF010, Kind::Code, "44 89 4C 24 20 89 4C 24 08 53 55 56 57 41 54 41 56 41 57", 0xFF010, 0, 0, 0, 0, "44 89 4C 24 20 89 4C 24 08 53 55 56 57 41 54", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
+    // the client's busy test before any command (unit), hooked: our walk passes a skill that cannot be interrupted (Zeal, Fury)
+    {"CmdBusy", 0xFFAC0, Kind::Code, "40 57 48 83 EC 20 48 8B F9 48 85 C9 74 09 E8 ?? ?? ?? ?? 85 C0", 0xFFAC0, 0, 0, 0, 0, "40 57 48 83 EC 20 48 8B F9 48 85 C9", nullptr, "moving during Zeal and Fury", "The swing does not stop the hero"},
     // a packed walk direction decoded (packed, out vector, out mag, out run), called
     {"DecodeDir", 0x3B2F20, Kind::Code, "48 8B C4 48 89 58 10 48 89 68 18 66 89 48 08 56 57", 0x3B2F20, 0, 0, 0, 0, "48 8B C4 48 89 58 10 48 89 68 18", nullptr, "the swing does not stop the hero", "The swing does not stop the hero"},
     // the client's step of a unit's path (unit, 1), called

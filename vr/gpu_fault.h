@@ -50,6 +50,12 @@ bool Removed();
 // Now: is it removed? The first time yes, the report is written. `where`: what asked. True = removed.
 bool Check(ID3D12Device* dev, const char* where);
 
+// The log folder (..\logs\ beside d2r_vr.ini, ending in a backslash), "" before Init.
+const wchar_t* LogDir();
+// Called once on the thread that writes the report, right after its first lines (the game ends ~40 ms later: keep it short), with the removal
+// reason. One callback ([stereo] replay_hang_fallback's note); a later call replaces it.
+void OnRemoved(void (*cb)(long reason));
+
 // The flight recorder. `what` must be a string literal (it is read later). a, b: two numbers worth knowing (a handle, a size).
 void Note(const char* what, uint64_t a = 0, uint64_t b = 0);
 

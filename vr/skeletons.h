@@ -1016,6 +1016,24 @@ std::string TakeWalkBackDump();
 // the last call as text for d2rloader\logs\d2r_vr_body.txt (tools/walk_legs/body_video.py). Live.
 void SetBodyDump(bool on);
 std::string TakeBodyDump();
+// [world] town_heads_look (vr/unleashed_head_look.h, from D2R VR Unleashed): the town's people turn their heads to the player's eyes - the update
+// thread, every tick. on: the key ticked, VR F4, in a town, the eyes known. eye: the camera in the world (render units); upm: render units a metre;
+// salt: the visit's (a new one each time the town is entered: who looks is decided again); hirelings: where the mercenaries stand (game units, x z)
+// - an NPC model standing there is a hireling, never turned. Drawn only: the skinning gets a turned copy of the pose (headshadow::SetLookSkin).
+struct HeadLookIn {
+    bool wanted = false;   // the key ticked (the skinning's composite hook asked for, wherever you are)
+    bool on = false;
+    float eye[3] = {};
+    float upm = 0.0f;
+    float yawDeg = 70.0f, upDeg = 30.0f, downDeg = 40.0f, rangeM = 7.0f;
+    int chance = 50;
+    uint32_t salt = 0;
+    int hirelings = 0;
+    float hireling[8][2] = {};
+};
+void SetHeadLook(const HeadLookIn& in);
+// What it did in the last 10 s, one line for the log ("" when nothing) - and once per model the head it learned (or why none).
+std::string HeadLookNote();
 #endif
 void** OrigSlot();
 void* Detour();

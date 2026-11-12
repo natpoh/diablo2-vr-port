@@ -29,7 +29,7 @@ inline const char* Name(int p) {
 constexpr float kAsIs = -987654.0f;   // a preset that leaves this key as the player has it: neither written nor matched
 constexpr bool IsAsIs(float v) { return v == kAsIs; }
 
-// "@stereo3d" "source": the render type (shared/render_type.h: 1 = Native one pass), not an ini key - Settings' own item, the headset's
+// "@stereo3d" "source": the render type (shared/render_type.h: 0 = Native two passes, 1 = Native one pass), not an ini key - Settings' own item, the headset's
 // Render type row's keys
 struct Key { const wchar_t* section; const wchar_t* key; float v[kCount]; };
 inline constexpr Key kKeys[] = {
@@ -70,7 +70,10 @@ inline constexpr Key kKeys[] = {
     {L"fog", L"game_fog_caves_black", {0, 0, 0}},
     {L"ceiling", L"enabled", {1, 1, 1}},
     {L"ceiling", L"steps", {8, 8, 12}},
-    {L"@stereo3d", L"source", {1, 1, 1}},
+    // the render type: Native two passes in all three since 0.214 (Serg 2026-11-12 "по умолчанию ставь 2 прохода", "чтобы у людей не зависало":
+    // one pass hung the graphics card inside the replayed right eye - the top crash; the game render patches made two passes nearly as fast);
+    // Native one pass stays a choice in "3D in the headset" for a processor too slow for two passes
+    {L"@stereo3d", L"source", {0, 0, 0}},
     {L"stereo", L"headset_rate", {3, 3, 3}},   // 90 Hz (the game's cap follows: Settings' ApplyFrameCap)
     // Serg 2026-11-09: "на графике нормал по умолчанию должно быть включено monitor_eye=1 а так же при записи движений чтобы слой рук был
     // поверх меню на всех режимах" - the monitor shows the left eye alone (one small copy a frame), and the hands over the Gestures tab while

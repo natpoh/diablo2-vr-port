@@ -51,6 +51,15 @@ void SetCallbacks(ViewFn view, ProjFn proj);
 // the view/projection callbacks, while a game is running (enabled or not).
 using FrameFn = void (*)();
 void SetFrameCallback(FrameFn frame);
+// [campfire] (from D2R VR Unleashed, bearstonem/d2r-pcvr, Kudlatytrue - MPL 2.0) Drive the renderer's active camera when it is
+// not the game camera (a menu scene's own: the character creation's campfire). InWorld() is false meanwhile.
+void SetUseActiveCamera(bool on);
+// The campfire: the game camera object takes the driven camera's pose for each frame (its sky and clouds).
+void SetMirrorGameCamera(bool on);
+void SetSyncActiveFields(bool on);   // testing: the driven camera's fov/aspect fields from our projection
+// While it is driven, the game's own pose for its tick turned this much about the world's up (radians): the character screen
+// finds the hero under the pointer on that camera's picture, so it is turned toward where the hand points. 0 = the game's.
+void SetActivePickTurn(float radians);
 
 // Runs the view/projection callbacks again on this frame's game camera and puts
 // the result in, as the frame sync does. For drawing one game frame twice (a

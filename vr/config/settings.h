@@ -385,6 +385,11 @@ struct Settings {
     // [hands] spell_aim_model: the aim along the hand from the hero as drawn - a staff's, wand's or orb's axis, else the hand's fingers or palm
     // (vr/spell_aim_model.h), F4 only, with no hand-set correction; off (or no fresh pose) = the controller's axes and [bow] aim_yaw / staff_aim_yaw
     std::atomic<bool>  spellAimModel{false};
+    // [hands] spell_aim_walking: a spell's caster is the hero when it is the unit the aim function works on, not only when the camera's look-at is on it
+    // (that look-at trails a walking hero: the cast went with the game's target). Off = the look-at test alone, as before
+    std::atomic<bool>  spellAimWalking{true};
+    // [hands] spell_aim_by: which way a directed spell goes - 0 along the hand (as before), 1 where the head looks (the gaze's heading on the ground). F4 only
+    std::atomic<int>   spellAimBy{0};
     // [hands] staff_upright_arm: with spell_aim_model, a staff held upright aims along the drawn arm (shoulder -> palm), blended with its own axis as it
     // tilts (vr/staff_upright.h), F4 only; staff_upright_full_deg / _none_deg: off vertical, the arm alone / the staff alone. Off = the staff's line, as before
     std::atomic<bool>  staffUprightArm{false};
@@ -451,6 +456,12 @@ struct Settings {
     std::atomic<float> forearmShare{0.5f};  // [hands] forearm_twist_share: how much of the wrist's roll the forearm bone takes, 0..1
     std::atomic<bool>  shieldForearm{true}; // [shield] forearm: the shield strapped to the left forearm, not hung on the hand (F4 only)
     std::atomic<bool>  headsHang{true};     // [shield] heads_hang: a Necromancer's head hangs from its cord under the hand and swings (F4 only; skeletons.cpp, vr/head_hang.h)
+    std::atomic<bool>  townHeadsLook{false};      // [world] town_heads_look: the town's people turn their heads to your eyes (F4, towns; vr/unleashed_head_look.h)
+    std::atomic<float> townHeadsRangeM{7.0f};     // [world] town_heads_look_range_m: within this many metres of your eyes
+    std::atomic<int>   townHeadsChance{50};       // [world] town_heads_look_chance: percent of them that look at you (decided once per character and visit)
+    std::atomic<float> townHeadsYaw{70.0f};       // [world] town_heads_look_yaw: degrees, the head's turn to either side of where the body faces
+    std::atomic<float> townHeadsUp{30.0f};        // [world] town_heads_look_up: degrees above level
+    std::atomic<float> townHeadsDown{40.0f};      // [world] town_heads_look_down: degrees below level
     std::atomic<bool>  shieldBlink{false};   // [debug] shield_blink
     std::atomic<bool>  shoulderZoneBody{false};   // [hands] shoulder_zone_body: the shoulders' reach fits the body (its height) and begins at the spine
     std::atomic<float> shieldAdj[6] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // [shield] x y z (cm), pitch yaw roll (deg)

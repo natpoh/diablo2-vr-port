@@ -117,7 +117,7 @@ int FileRenderType() {
     k.openxrOn = FileInt(L"openxr", L"on", 0);
     k.afr = FileInt(L"stereo", L"afr", 0);
     k.pairPerTick = FileInt(L"stereo", L"pair_per_tick", 0);
-    k.nativeReplay = FileInt(L"stereo", L"native_replay", 1);
+    k.nativeReplay = FileInt(L"stereo", L"native_replay", 0);   // (absent: two passes, the default since 0.214)
     k.source = FileInt(L"stereo", L"source", -1);
     return rendertype::FromKeys(k);
 }

@@ -23,7 +23,7 @@
 
 using namespace D2RL;
 
-namespace gamestate { bool InventoryOpen(); }   // (vr/gamestate.cpp: the player's inventory is among the open panels)
+namespace gamestate { bool InventoryOpen(); bool InventoryOnly(); }   // (vr/gamestate.cpp: the player's inventory is among the open panels)
 
 namespace beltrefill {
 namespace {
@@ -71,6 +71,7 @@ std::atomic<int> g_ok{-1};   // the game's fill: -1 not checked yet, 1 this buil
 
 // the settings (Configure, the update thread)
 std::atomic<bool> g_on{false};
+std::atomic<bool> g_aloneOnly{true};   // [belt] refill_inventory_alone
 std::atomic<int> g_button{1}, g_key{1};
 std::atomic<uint32_t> g_holdMs{kHoldDefaultMs};
 // the inputs
@@ -290,7 +291,7 @@ void Init(const PluginContext* ctx) {
     g_inventory = ctx && ctx->QueryService(&inv) == ServiceQueryResult::Success ? inv : nullptr;
 }
 
-void Configure(bool on, int button, int key, float holdMs) {
+void Configure(bool on, int button, int key, float holdMs, bool aloneOnly) {
     button = button < 0 || button >= kButtons ? 0 : button;
     key = key < 0 || key >= kKeys ? 0 : key;
     const uint32_t hold = ClampHold(holdMs);
@@ -298,12 +299,14 @@ void Configure(bool on, int button, int key, float holdMs) {
     changed = (g_button.exchange(button) != button) || changed;
     changed = (g_key.exchange(key) != key) || changed;
     changed = (g_holdMs.exchange(hold) != hold) || changed;
+    changed = (g_aloneOnly.exchange(aloneOnly) != aloneOnly) || changed;
     static bool told = false;
     if (changed || !told) {
         told = true;
         LogF("belt refill: %s ([belt] refill_key) - controller %s, keyboard %c, hold %u ms: with the inventory open a tap is the game's Shift + click at the "
-             "pointer (the laser in VR, the mouse cursor flat), a hold the game's own belt fill", on ? "ON" : "off", PadName(button),
-             KeyVk(key) ? (char)KeyVk(key) : '-', hold);
+             "pointer (the laser in VR, the mouse cursor flat), a hold the game's own belt fill%s", on ? "ON" : "off", PadName(button),
+             KeyVk(key) ? (char)KeyVk(key) : '-', hold,
+             aloneOnly ? "; only with the inventory alone - beside the stash, the cube or a trader the button is the game's ([belt] refill_inventory_alone)" : "");
     }
 }
 
@@ -313,6 +316,8 @@ bool PadWanted(bool laserOk) {
     When w;
     w.on = g_on.load() && PadOf(g_button.load()).bit != 0;
     w.inventoryOpen = gamestate::InventoryOpen();
+    w.aloneOnly = g_aloneOnly.load();
+    w.otherMenu = !gamestate::InventoryOnly();
     w.inWorld = g_inWorld.load();
     w.laserOk = laserOk;
     return PadOurs(w);
@@ -335,6 +340,8 @@ bool KeyMessage(unsigned msg, uintptr_t w, intptr_t l, bool chatOpen) {
     When wh;
     wh.on = g_on.load();
     wh.inventoryOpen = gamestate::InventoryOpen();
+    wh.aloneOnly = g_aloneOnly.load();
+    wh.otherMenu = !gamestate::InventoryOnly();
     wh.inWorld = g_inWorld.load();
     wh.chatOpen = chatOpen;
     if (!KeyOurs(wh) || (l & (1 << 30))) return false;   // (a repeat of a press that was the game's stays the game's)
@@ -352,7 +359,11 @@ void Tick(bool inWorld) {
         if (!vk || !(GetAsyncKeyState((int)vk) & 0x8000)) g_keyDown.store(false);
     }
     const bool pad = g_padDown.load(), key = g_keyDown.load();
-    const bool allowed = on && inWorld && gamestate::InventoryOpen();
+    When now_;
+    now_.inventoryOpen = gamestate::InventoryOpen();
+    now_.aloneOnly = g_aloneOnly.load();
+    now_.otherMenu = !gamestate::InventoryOnly();
+    const bool allowed = on && inWorld && InventoryFree(now_);
     if (!allowed) {
         g_press.Cancel();
         if (g_click.Busy()) {   // stopped half-way: let go of what is held

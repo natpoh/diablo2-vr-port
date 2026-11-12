@@ -63,6 +63,15 @@ Third-party parts, each under its own licence:
     foveated rendering ([render] foveated, foveated_gaze; steamvr/foveation_math.h, foveation.cpp and gaze.h, 63f76f4 - 7c642e3)
     vr/unleashed_room_stitch.h, cleanroom/tests/unleashed_room_stitch_test.cpp - dungeon rooms joined toward the hero
     ([render] room_stitch; steamvr/room_stitch.h and its test at d416861, by Cal)
+    vr/unleashed_head_look.h, cleanroom/tests/unleashed_head_look_test.cpp - the town's people turn their heads to you
+    ([world] town_heads_look; steamvr/look_at.h and look_at_test.cpp at 64e723b, "Heads turn to you")
+    vr/campfire_unleashed.h, vr/campfire_unleashed.cpp, vr/campfire_audio_unleashed.h, reshade/D2R_Campfire_Unleashed.fxh,
+    tools/settings/campfire_assets_unleashed.h, tools/settings/campfire_assets_unleashed.cpp,
+    cleanroom/tests/campfire_assets_unleashed_test.cpp - character creation in 3D
+    ([campfire]; PR #518, f57f881 .. 696fb19 and 79b921a, by Kudlatytrue and bearstonem; the parts of vr/xr.cpp and
+    cleanroom/camera/d2rcam.cpp marked [campfire] are from it too)
+    vr/vr_keyboard_unleashed.h, cleanroom/tests/unleashed_vr_keyboard_test.cpp - the keyboard for a new character's name
+    ([openxr] name_keyboard; 29d29b0, df1cf3a, by Kudlatytrue)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

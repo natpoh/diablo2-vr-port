@@ -211,7 +211,24 @@ static void TestNothingToDo() {
     CHECK(!h.resized);
 }
 
+// [render] ui_band_16x9: the interface's answer - the whole picture, or a 16:9 band of its width at most as high as the picture; the cursor always the whole picture
+static void TestUiBand() {
+    using namespace vrres;
+    CHECK((UiCanvas({2112, 2304}) == Size{2112, 2304}));
+    CHECK((UiCanvas({2112, 2304}, true) == Size{2112, 1188}));
+    CHECK((UiCanvas({3840, 2160}, true) == Size{3840, 2160}));   // already 16:9
+    CHECK((UiCanvas({3840, 1600}, true) == Size{3840, 1600}));   // wider than 16:9: as it is
+    const uint64_t native = NativeSize({1920, 1080});
+    CHECK((FromNative(CanvasAnswer(Asker::Ui, {2112, 2304}, native, true, true)) == Size{2112, 1188}));
+    CHECK((FromNative(CanvasAnswer(Asker::Cursor, {2112, 2304}, native, true, true)) == Size{2112, 2304}));
+    CHECK(CanvasAnswer(Asker::Ui, {2112, 2304}, native, false, true) == native);   // vr_resolution_ui off: the window's own
+    CHECK(BandLowerShare({3840, 2160}) == 0.0f);                      // 16:9: nothing to lower
+    CHECK(std::fabs(BandLowerShare({2112, 2304}) - 0.5f * (2304 - 1188) / 2304.0f) < 1e-6f);   // the band's centre where the canvas's was
+    CHECK(BandLowerShare({0, 0}) == 0.0f);
+}
+
 int main() {
+    TestUiBand();
     TestClientPixel();
     TestAuthor4k();
     TestSmallMonitors();

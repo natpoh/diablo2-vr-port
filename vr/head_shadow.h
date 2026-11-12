@@ -214,6 +214,13 @@ using ShadowFilterFn = bool (*)(uint32_t entity, uintptr_t transform, uintptr_t 
 void SetShadowFilter(ShadowFilterFn fn);
 void SetDollSkin(DollSkinFn fn);
 bool DollSkinningIn();
+// [world] town_heads_look: a townsperson's head turned to you, drawn - the composite hands the game's skinning a copy of its world pose with the neck and
+// head turned (skel looks::LookSkin, the callback: true when it turned the copy; mats null: only "might it be one of those?", n the pose's bone count
+// then). Never the hero's pose. Only in
+// the views our poses are drawn in (SetPoseView). WantForLook: the composite hook is put in for it too ([arms] head_shadow off).
+using LookSkinFn = bool (*)(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n);
+void WantForLook(bool on);
+void SetLookSkin(LookSkinFn fn);
 std::string SkinNote();
 
 }  // namespace headshadow

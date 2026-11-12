@@ -52,6 +52,7 @@
 #include "bench_lights.h"      // [render] bench_skip_point_lights: the game's local lights out, the sun alone
 #include "reflections_eye.h"   // [render] reflections_per_eye: the game's reflections by each eye's own position
 #include "shadows_once.h"     // [render] shadows_once_a_pair: the shadow / grass maps drawn once a pair in the replay
+#include "unleashed_game_patches.h"   // [game_patches]: six changes to the game's own render code (MPL 2.0, from D2R VR Unleashed)
 #include "foveation.h"        // [render] foveated: fixed foveated rendering (variable rate shading), from D2R VR Unleashed
 #include "lens_mask.h"        // [render] lens_mask: what the lenses never show left out of the game's depth-tested passes
 #include "fog_spare.h"      // [fog] spare_effects: the fog spares fire, spells and smoke (the game's transparent targets at its resolve)
@@ -358,3 +359,4 @@ namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's 
 #include "app_thread.h"   // the network SDK's client calls on the game's app thread, not the timer's (vr/app_thread_pump.h)
 #include "flat_menu_wire.h"   // [hud] game_menu_settings: the flat game's settings in the pause menu, the host's rules (vr/flat_menu.h)
 #include "hit_claim.h"   // whose blow just landed: the presses claim it, the hit observer's hand source takes it (the controller that buzzes)
+#include "campfire_unleashed.h"   // [campfire] character creation's scene in stereo (MPL 2.0, from D2R VR Unleashed)

@@ -28,11 +28,13 @@ bool FogWanted();             // our post pass's fog
 struct FogNumbers { float start, end, curve, strength; };
 FogNumbers FogNumbersNow();
 FogNumbers GameFogNumbersNow();   // the same for the game's fog ([fog] game_fog=1): a full fog below its start taken the other way round
+float GameFogCoverNow();          // [fog] game_fog_cover here (0 off): in VR F3 full width from the head above, as the fog's start and end
 bool NoGameFogUnderground();  // ... the game's fog: [fog] game_fog_caves=0 there
 bool NoFogUnderground();      // [fog] caves=0 and the area off the outdoor list (not the Arcane Sanctuary with [sky] arcane_fog): no fog at all
 bool ArcaneOwnFog();          // [fog] arcane_own, in the Arcane Sanctuary: its own numbers and colour, not the caves'
 bool ArcaneHazeFog();         // the fog's colour is the Arcane Sanctuary's sky behind each point (its sky shown; arcane_into_sky with its own fog)
 bool OurSkyWanted();          // our post pass's act sky
+extern std::atomic<bool> g_campfireSky;   // [campfire] sky: the creation scene's void under our sky (vr/campfire_unleashed.cpp)
 bool DistanceBlurWanted();    // [render] distance_blur: the far picture blurred behind a pane (our post pass, whoever draws the fog)
 bool GameSkyFixWanted();      // a fix of ours on the game's dome or fog that reads the scene's depth (its colour, its night, its horizon, the fog's match)
 bool CeilWanted();            // a cave ceiling wanted here ([ceiling] enabled, first person, a ceiling biome, no menu)

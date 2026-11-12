@@ -275,8 +275,14 @@ void Update() {
     if (told != 1)
         LogF("vrcam: game fog - the frame's fog found at +0x%X in the frame's settings (the reading said +0x%X)", (unsigned)(g_at.load() * 4),
              (unsigned)kFrameFogAt);
-    const bool changed = told != 1 || std::fabs(f.plane - toldFog.plane) > 0.5f || std::fabs(f.density - toldFog.density) > 0.0005f ||
-                         std::fabs(f.r - toldFog.r) + std::fabs(f.g - toldFog.g) + std::fabs(f.b - toldFog.b) > 0.002f;
+    // (a change told at most every 5 s: in VR F3 full width the numbers follow the head's height over the diorama - 22 pairs of lines in 12 s
+    // of Serg's 0.212.3 F3, each line ~1 ms on the present)
+    static ULONGLONG toldAt = 0;
+    const ULONGLONG nowMs = GetTickCount64();
+    const bool changed = told != 1 || ((std::fabs(f.plane - toldFog.plane) > 0.5f || std::fabs(f.density - toldFog.density) > 0.0005f ||
+                                        std::fabs(f.r - toldFog.r) + std::fabs(f.g - toldFog.g) + std::fabs(f.b - toldFog.b) > 0.002f) &&
+                                       nowMs - toldAt >= 5000);
+    if (changed) toldAt = nowMs;
     if (changed)
         LogF("vrcam: game fog - the game's own distance fog draws ours: from %.0f, %.0f%% at %.0f (density %.4f, plane %.1f), colour %s %.3f %.3f %.3f "
              "(scene; ours %.3f %.3f %.3f)%s - the area's own were density %.3f, plane %.1f; our post pass draws no fog meanwhile",
@@ -300,7 +306,7 @@ void Update() {
              line, height ? "the game's pass thinned above the eye from game_fog_top - game_fog_soft, none above game_fog_top" : "no height thinning");
     }
     told = 1;
-    toldFog = f;
+    if (changed) toldFog = f;   // (the next change measured from the numbers last told)
 }
 }  // namespace gamefogvr
 

@@ -54,6 +54,7 @@
 #include "plate_world.h"   // the hook's latest anchor for the plate, taken with each read (FollowBox)
 #include "hand_inventory.h"   // [openxr] hand_inventory: which panels are the inventory
 #include "npc_dialog_view.h"   // [hud] npc_dialog_keep_view: which menus are an NPC's talk
+#include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard: the name box (NameBox; MPL 2.0, from D2R VR Unleashed)
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
@@ -1024,6 +1025,12 @@ bool Has(const char* s, const char* part) {
 // grows the window only after it.
 std::atomic<uint64_t> g_titleAt{0};
 std::atomic<bool> g_panelManagerSpoke{false};   // the game's UI system is up: its panel manager sent a message (vr/menu_ready.h)
+// [openxr] name_keyboard (vr/vr_keyboard_unleashed.h, Unleashed 29d29b0): character creation with a hero picked - the name box is up, so the VR
+// keyboard shows; the epoch changes each time it comes up anew. Fed every UI message (the UI message thread).
+framevr::keyboard::NameBox g_nameBox;
+std::atomic<bool> g_keyboard{false};
+std::atomic<uint32_t> g_keyboardEpoch{0};
+std::atomic<bool> g_createPanel{false};   // CharacterCreatePanel open (NameBox::PanelOpen)
 SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const SharedEvents::UiMessageEvent* e, void*) noexcept {
     if (!e) return SharedEvents::UiMessageAction::Continue;
     const char* target = e->target ? e->target : "";
@@ -1038,6 +1045,11 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
         Log(b);
     }
     if (const exitend::Trigger quit = exitend::FromUi(target, command); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
+    g_nameBox.Message(target, command, text);
+    if (g_keyboard.exchange(g_nameBox.Shown()) != g_nameBox.Shown())
+        Log(g_nameBox.Shown() ? "gamestate: the name box up (a hero picked) - the VR keyboard may show ([openxr] name_keyboard)" : "gamestate: the name box gone");
+    g_keyboardEpoch.store(g_nameBox.Epoch());
+    g_createPanel.store(g_nameBox.PanelOpen());
     if (strcmp(target, "PanelManager") == 0) {
         if (!g_panelManagerSpoke.exchange(true)) Log("gamestate: the game's UI system is up (its panel manager's first message): its menus may take the mouse");
         const bool before = g_menu.load() != 0;
@@ -1581,6 +1593,9 @@ void PollCursor() {
 }
 // 1 an item on the cursor, 0 none, -1 not known (not read in the last 400 ms).
 int CursorHeld() { return GetTickCount64() - g_cursorAt.load() <= 400 ? g_cursorHeld.load() : -1; }
+bool KeyboardShown() { return g_keyboard.load(); }          // [openxr] name_keyboard: a new character's name box is up
+bool CreatePanelOpen() { return g_createPanel.load(); }     // ... the creation screen is up (a hero picked or not)
+uint32_t KeyboardEpoch() { return g_keyboardEpoch.load(); }  // ... and each time it comes up anew
 
 // [openxr] hand_inventory: vrcam's walk with the inventory up (the stick's own walk command) on the game's UI thread - where the game's
 // controller update, its clicks and its commands run. One queued at a time (a run that never comes is queued again after the ticket's lease).

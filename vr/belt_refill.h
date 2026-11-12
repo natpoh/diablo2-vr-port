@@ -185,11 +185,15 @@ inline void KindsText(const int count[kKinds], char* out, size_t n) {
 // ---- when the button is ours ----
 // The VR button (the laser's): ticked, the inventory open in a game, the laser usable (the game's window in front, the hand tracked, the picture a menu).
 // The keyboard key: ticked, the inventory open in a game, the chat line closed. Off any of these: the button / key is the game's, as before.
+// [belt] refill_inventory_alone: the inventory must be the only menu open - beside the stash, the cube, a trader or the merc's inventory the button stays the
+// game's (its own Y there moves the item to the other panel: a player, 0.212, "I can't transfer gems and runes into the chest using Y"). Off: as before.
 struct When {
     bool on = false, inventoryOpen = false, inWorld = false, laserOk = false, chatOpen = false;
+    bool aloneOnly = false, otherMenu = false;   // [belt] refill_inventory_alone; another menu (stash, cube, trader...) open beside the inventory
 };
-inline bool PadOurs(const When& w) { return w.on && w.inventoryOpen && w.inWorld && w.laserOk; }
-inline bool KeyOurs(const When& w) { return w.on && w.inventoryOpen && w.inWorld && !w.chatOpen; }
+inline bool InventoryFree(const When& w) { return w.inventoryOpen && !(w.aloneOnly && w.otherMenu); }
+inline bool PadOurs(const When& w) { return w.on && InventoryFree(w) && w.inWorld && w.laserOk; }
+inline bool KeyOurs(const When& w) { return w.on && InventoryFree(w) && w.inWorld && !w.chatOpen; }
 
 }  // namespace beltrefill
 
@@ -197,7 +201,7 @@ inline bool KeyOurs(const When& w) { return w.on && w.inventoryOpen && w.inWorld
 namespace D2RL { struct PluginContext; }
 namespace beltrefill {
 void Init(const D2RL::PluginContext* ctx);                     // D2RLoaderLoadPlugin
-void Configure(bool on, int button, int key, float holdMs);    // LoadSettings: [belt] refill_key, refill_button, refill_keyboard, refill_hold_ms
+void Configure(bool on, int button, int key, float holdMs, bool aloneOnly = true);    // LoadSettings: [belt] refill_key, refill_button, refill_keyboard, refill_hold_ms, refill_inventory_alone
 Pad PadButton();                                               // the XR thread (LaserStep): the controller button, bit 0 when off or none
 bool PadWanted(bool laserOk);                                  // ... is it ours now (decided while it is let go)
 void FeedPad(bool down, bool pointing);                        // ... held (while ours), and the laser on the picture as the mouse

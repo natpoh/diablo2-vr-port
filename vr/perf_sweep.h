@@ -12,6 +12,7 @@
 //
 // Steps (each from the player's own settings; a step that would change nothing is left out):
 //   as set | big objects 300 | big objects off | models 150 | models 150 + big objects off | models 100 + big objects off | room rings 1 |
+//   each [game_patches] patch the other way from the file (shadows_once / cull_once only with two passes) | all six on |
 //   the bench's call counting idle (the outline drawn by the game: the pipe hunt's per-bind lookup not made) | every game draw skipped
 //   (bench_skip_all: the driver's share) | ours off (bench_bare) | as set again (drift)
 // Visual only, a diagnostic: the game's state and mechanics are never touched (only what is drawn, for a few seconds each).

@@ -4,6 +4,7 @@
 // cut whole from vr/vrcam.cpp. The present's order is vr/render/effects/effects.cpp's PresentCommon. What it gives: vr/frame/frame_order.h.
 #include "../vrcam_headers.h"
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
+namespace gamestate { bool InventoryOpen(); }   // [render] ui_band_16x9 2 (vr/gamestate.cpp: the inventory among the open panels)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -158,7 +159,7 @@ bool NativePairBegin() {
     const bool native = NativeView() && (!menu || MenuAs3d()) && world && replay::XrBegin();
     const bool out = menu && (native || (!xr::Running() && FlatVrMenuPanel()));   // native's panel, or FlatVR's
     g_menu3dNow.store(out);
-    hud::SetPanelOut(out);
+    hud::SetPanelOut(out || campfire::PanelOut());   // ([campfire]: the menu's board is its copy)
     {   // [hud] low_hp_vignette: its beat moves on once a pair, so both eyes get the same opacity (F4 on native only: vr/low_hp.h InView)
         lowhp::Where where;
         where.cameraOn = g_enabled.load();
@@ -288,6 +289,9 @@ uintptr_t DrawByTurns(int a) {
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
     static bool told = false, toldWhy = false;
+    // [game_patches] (vr/unleashed_game_patches.h): the frame before is drawn, this one's first pass not begun - the only place a patch of
+    // the game's render code goes in or out. Every pass below is Alone unless the pair's two game passes say otherwise.
+    if (!depth) gamepatches::BetweenFrames(g_inWorld.load());
     if (!depth && PairWanted() && NativeByTurns()) {
         ++depth;
         const uintptr_t r = DrawByTurns(a);
@@ -299,7 +303,7 @@ uintptr_t HookDrawGameScreen(int a) {
         if (!depth) {   // no pair: a menu stays in the picture - but for FlatVR's panel (its eyes by turns)
             const bool out = gamestate::MenuOpen() && FlatVrMenuPanel();
             g_menu3dNow.store(out);
-            hud::SetPanelOut(out);
+            hud::SetPanelOut(out || campfire::PanelOut());
         }
         if (!toldWhy && g_h.blit && AfrOn() && g_set.pairPerTick.load() && !FrameTimeFound()) {
             toldWhy = true;
@@ -365,7 +369,12 @@ uintptr_t HookDrawGameScreen(int a) {
     if (replayRight) replay::BeginLeft();
     SetEye(0);
     d2rcam::Refresh();
+    // [game_patches] shadows_once, cull_once: the first of this frame's two game passes - VR first person (F4) only. A replayed pair (one
+    // pass) draws the game's frame once: its left pass stands alone, as before (nothing kept, the cull its own).
+    const bool patchPair = !replayRight && viewgate::F4();
+    if (patchPair) gamepatches::EyePass(gamepatches::Pass::First);
     const uintptr_t leftR = OrigDrawGameScreen(a);
+    gamepatches::EyePass(gamepatches::Pass::Alone);
     cbcmp::PairMiddle();
     rtrace::PairMiddle();
     const double t1 = pairtime::UsNow();
@@ -386,7 +395,10 @@ uintptr_t HookDrawGameScreen(int a) {
     foveation::BeginEye(1, native);   // [render] foveated: the right eye's mask, before its pass or the replay of the left one's lists
     lensmask::BeginEye(1, native, false);   // [render] lens_mask: the right eye's pass (the replay's lists carry it already)
     d2rcam::Refresh();
-    const uintptr_t r = replayRight && replay::RightFromLeft() ? leftR : OrigDrawGameScreen(a);
+    const bool replayed = replayRight && replay::RightFromLeft();
+    if (patchPair && !replayed) gamepatches::EyePass(gamepatches::Pass::Second);   // [game_patches]: the same game frame drawn again - what the first left may be kept
+    const uintptr_t r = replayed ? leftR : OrigDrawGameScreen(a);
+    gamepatches::EyePass(gamepatches::Pass::Alone);
     foveation::EndWorld();
     lensmask::EndWorld();
     const double tr = pairtime::UsNow();   // the right pass is over (the long-pair line)
@@ -604,7 +616,8 @@ static DWORD UpdateThreadBody() {
             } else ToggleShooter();
         }
         // our camera while on, and for the stereo view from above while off
-        d2rcam::SetEnabled(g_enabled.load() || (g_set.topStereo.load() && g_set.afr.load()));
+        campfire::Tick();   // [campfire] (vr/campfire_unleashed.h): the scene's camera driven, or the flat screen back
+        d2rcam::SetEnabled(g_enabled.load() || (g_set.topStereo.load() && g_set.afr.load()) || campfire::Now());
         MouseTick();
         FlatPickWatch();   // [debug] flat_pick
         TurnTick();
@@ -794,6 +807,7 @@ static DWORD UpdateThreadBody() {
                 }
             }
         }
+        vrres::UiBandTick(gamestate::InventoryOpen());   // [render] ui_band_16x9 2: the 16:9 band only while the inventory is open
         if (nowMs >= nextSlow) {   // twice a second
             nextSlow = nowMs + 500;
             HealthTick(nowMs);   // [debug] health: every 10 s
@@ -821,6 +835,13 @@ static DWORD UpdateThreadBody() {
             GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
             InstallClientSize(IniB(L"render", L"vr_resolution_ui", true));   // [render] vr_resolution_ui (live; the hook goes in once)
+            // [render] ui_band_16x9 (its own option since 0.214, default 0; live): 0 never, 1 always, 2 with the inventory open; [campfire]: always while the creation scene is round you -
+            // its boards are shares of that band
+            // (0.214: 1 - always - is no longer offered: the toolbar hung mid-view in the world; a 1 left in an ini is 2, with the inventory open)
+            {
+                const int band = (int)IniF(L"render", L"ui_band_16x9", 0.0f);
+                vrres::SetUiBandMode(campfire::Now() ? 1 : band == 1 ? 2 : band);
+            }
             InstallLabelWidthGuard();   // the hover label's SetMaxSize: no negative width (a hung game), whatever made it
             ApplyRender();
             ApplyPools();

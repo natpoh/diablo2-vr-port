@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <mutex>
 
+#include "band_icons.h"
 #include "render_window.h"
 
 namespace vrres {
@@ -107,21 +108,63 @@ void Setup() {
         (void*)g_gameBegin, (void*)g_gameEnd);
 }
 
+std::atomic<bool> g_uiBand{false};   // [render] ui_band_16x9
 std::atomic<uint32_t> g_clientSizeTold{0};   // [render] vr_resolution_ui: said once for the interface (1) and the cursor (2)
 
 }  // namespace
 
 uint64_t ClientSizeAnswer(Asker asker, uint64_t native, bool on) {
-    const uint64_t answer = CanvasAnswer(asker, g_window.Logical(g_attached.load()), native, on);
+    const uint64_t answer = CanvasAnswer(asker, g_window.Logical(g_attached.load()), native, on, g_uiBand.load());
     if (answer != native) {   // said once for the interface and once for the cursor
         const uint32_t bit = asker == Asker::Ui ? 1u : 2u;
         if (!(g_clientSizeTold.fetch_or(bit) & bit)) {
             const Size n = FromNative(native), a = FromNative(answer);
             Say("vrcam: render size - the game's %s is given %ux%u, not the window's %ux%u ([render] vr_resolution_ui)",
-                asker == Asker::Ui ? "interface (the whole picture)" : "cursor clamp (the whole picture)", a.w, a.h, n.w, n.h);
+                asker == Asker::Ui ? (g_uiBand.load() ? "interface (a 16:9 band at the picture's top, [render] ui_band_16x9)" : "interface (the whole picture)")
+                                   : "cursor clamp (the whole picture)", a.w, a.h, n.w, n.h);
         }
     }
     return answer;
+}
+void SetUiBand(bool on) {
+    if (g_uiBand.exchange(on) == on) return;
+    g_clientSizeTold.store(0);   // the interface's answer said again
+    Say("vrcam: render size - the interface %s ([render] ui_band_16x9): laid out again", on ? "in a 16:9 band at the picture's top, as d2r-pcvr" : "over the whole picture");
+    ClientSizeReflow();
+}
+// [render] ui_band_16x9 2: the band only while the inventory is open (alone, or beside the stash, a trader, the cube, the tabbed menu's pages) - in the
+// world the interface is the whole picture and the toolbar at its bottom (with the band always on, 1, the toolbar sat mid-picture: test 0.213.4, as test-33).
+// Each switch lays the interface out again: one WM_SIZE of the same size (ClientSizeReflow) as the panel opens and as it closes.
+std::atomic<int> g_uiBandMode{0};
+std::mutex g_bandPickLock;
+bandicons::Hold g_bandPick;   // [render] ui_band_corner_icons: the icon's click in force until the ini says the same (PickUiBandMode)
+void SetUiBandMode(int mode) {
+    mode = mode < 0 || mode > 2 ? 0 : mode;
+    {
+        std::lock_guard<std::mutex> g(g_bandPickLock);
+        const int held = g_bandPick.Apply(mode, GetTickCount64());
+        if (held != mode) return;   // (the click's own write not read back yet)
+    }
+    if (g_uiBandMode.exchange(mode) != mode)
+        Say("vrcam: render size - [render] ui_band_16x9 %d: the interface %s", mode,
+            mode == 1 ? "in a 16:9 band always" : mode == 2 ? "in a 16:9 band while the inventory (stash, trader, cube, the tabbed menu) is open, the whole picture otherwise"
+                      : "over the whole picture");
+}
+void PickUiBandMode(int mode) {
+    mode = mode < 0 || mode > 2 ? 0 : mode;
+    {
+        std::lock_guard<std::mutex> g(g_bandPickLock);
+        g_bandPick.Pick(mode, GetTickCount64());
+    }
+    if (g_uiBandMode.exchange(mode) != mode)
+        Say("vrcam: render size - [render] ui_band_16x9 %d picked by the icon over the menu ([render] ui_band_corner_icons): the interface %s", mode,
+            mode == 1 ? "in a 16:9 band always" : mode == 2 ? "in a 16:9 band while the inventory is open" : "over the whole picture");
+}
+int UiBandMode() { return g_uiBandMode.load(); }
+bool UiBandActive() { return g_uiBand.load(); }
+void UiBandTick(bool inventoryOpen) {
+    const int m = g_uiBandMode.load();
+    SetUiBand(m == 1 || (m == 2 && inventoryOpen));
 }
 void ClientSizeReflow() {
     if (const HWND h = g_attached.load(); h && g_window.Logical(h)) g_window.Request(h, g_window.Logical(h), true);

@@ -19,5 +19,8 @@ void WantForDoll(bool) {}
 void SetDollSkin(bool (*)(uintptr_t, uintptr_t, float (*)[16], int)) {}
 bool DollSkinningIn() { return false; }
 uint32_t DrawEntity() { return 0; }   // [weight] death_ragdoll: no ModelDrawCollect here
+// [world] town_heads_look's skinning composite: not in here
+void WantForLook(bool) {}
+void SetLookSkin(bool (*)(uint64_t, uint64_t, float (*)[16], int)) {}
 
 }  // namespace headshadow

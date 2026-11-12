@@ -1,5 +1,41 @@
 # What's new in D2R VR
 
+## 0.214.0
+
+Two passes by default, so the graphics card no longer hangs in one pass, and the game's own render code runs faster.
+
+- **Native two passes is the default** (Settings, "3D in the headset"; `[stereo] native_replay=0`): last week's top crash was the
+  graphics card hanging (DEVICE_HUNG) while it drew Native one pass's second eye. Every quality preset (Potato, Low, Medium) now picks two
+  passes. An update moves a kept settings file from one pass to two once (`[support] two_passes_0214`). **Native one pass is still in
+  the list**: try it if your processor is too slow for two passes. If the game hangs with it, the next start draws two passes by itself
+  and the log says why (`[stereo] replay_hang_fallback`, now on).
+- **The game's own render code runs faster** (Settings > Performance > "The game's own render code", six ticks, all on - `[game_patches]`;
+  ported from D2R VR Unleashed, bearstonem/d2r-pcvr, MPL 2.0): the transparent pass checks its flags first, no profiler lock and no debug
+  name on every draw, no debug selection walk, and with two passes the sun's shadows and the visibility test are done once for both eyes.
+  On our test PC, "No debug name for every draw" alone went from 90 to 115 fps, and with all six, two passes are nearly as fast as one
+  pass was.
+- **Crash fix: hosting a co-op game no longer closes your game when your friend hits a monster** (either side hosting, the joined
+  player's first blow): the host's hit outcomes (the swing timer, `[multiplayer] share_hit_outcomes`) were sent from the mod's own timer
+  thread; they go from the game's own thread now, as 0.212.3 did for the joined side.
+- **Spells go along the hand while you walk** (`[hands] spell_aim_walking`, on): a Bone Spear or any other flying spell cast while
+  walking went into the nearest monster instead of where your hand pointed.
+- **Belt refill (Y) works only with the inventory open on its own** (`[belt] refill_inventory_alone`, on): next to the stash, the cube or
+  a trader, Y does what the game does again.
+- **Fog before the effects in full-width F3 too**: fire stays bright, and far trees, grass and hair get fogged, as in F4.
+- **Fix: less grass in one eye at a 2048 x 2048 render size** with the lens mask on (Potato turns it on): the mask was laid on the game's
+  2048 shadow maps too, so each eye's shadows, and the grass lit by them, differed. Only the scene's depth (the one with stencil) gets
+  the mask now. The lens mask's margin and the nose strip have their own keys (`[render] lens_mask_margin_px`, `lens_mask_strip`; as before).
+- **New option: Menus laid out 16:9** (Settings, off by default - `[render] ui_band_16x9`): the game lays out its interface in a 16:9
+  band while the inventory is open, so on a headset's tall picture the stash or a trader and the inventory fit side by side, as on a
+  wide monitor; in the world the interface stays as before. The log says when it is on, and once a minute how far the laser reached
+  over the 16:9 menu. *Layout icons over the menus (F4)* (`[render] ui_band_corner_icons`, off) put a square and a 16:9 icon over the
+  menu's top right corner to switch it right in the game.
+- **Experimental (off): move during special moves** now walks through Zeal and Fury in the flat game too (the game had dropped our
+  walk command on the client).
+- New switches that ship off (as before): spells aimed where you look instead of along the hand (`[hands] spell_aim_by`), townspeople
+  turning their heads to you (`[world] town_heads_look`), and a one-pass fence gate for
+  the hang hunt (`[stereo] replay_fence_gate`). The 3D character creation and its name keyboard aren't finished: off, and hidden in Settings.
+
 ## 0.212.3
 
 A co-op hotfix: joining a friend's game no longer closes your game.
