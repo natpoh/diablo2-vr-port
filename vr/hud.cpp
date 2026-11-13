@@ -706,9 +706,35 @@ struct Globes { resource tex{}; resource_view srv{}; uint32_t w = 0, h = 0; bool
 Globes g_glb;
 std::atomic<int> g_globesWhy{0};   // why nothing was cut last time: 0 cut, 1 not asked, 2 the layer's size or the safe area's, 3 a texture could not be made
 
+std::atomic<float> g_globeIn{0.0f}, g_globeDy{0.0f}, g_globeScale{1.0f};   // [hud] wrist_globe_in / _dy / _scale: the fallback nudge (hud_globes.h Nudge)
+std::atomic<int> g_controllerLayout{-1};   // the game's interface layout (panelinput::ControllerLayoutNow): 1 controller, 0 keyboard and mouse, -1 not known
 bool CopyGlobes(command_list* cl, resource layer, uint32_t w, uint32_t h) {
-    const hudglobes::Boxes b = hudglobes::Compute(w, h, g_uiScale.load());
-    if (!b.ok) { g_globesWhy.store(2); return false; }
+    // the area: the game's own interface scale made into this layer's fraction (as the corner map's box is found), the file's Safe Screen Percent else
+    const float game = minimapbox::SafeFromScale(g_gameUiScale.load(), h), file = g_uiScale.load();
+    const hudglobes::Nudge nudge{g_globeIn.load(), g_globeDy.load(), g_globeScale.load()};
+    const int controller = g_controllerLayout.load();   // (not known: the keyboard layout, as before)
+    const hudglobes::Layout& lay = controller == 1 ? hudglobes::kControllerLayout : hudglobes::kKeyboardLayout;
+    const hudglobes::Boxes b = hudglobes::Compute(w, h, game > 0.0f ? game : file, nudge, lay);
+    if (!b.onLayer) { g_globesWhy.store(2); return false; }
+    {   // once per change: which area was taken, both places, the nudge
+        static float toldGame = -1.0f, toldFile = -1.0f, toldIn = 9.0f, toldDy = 9.0f, toldSc = 9.0f;
+        static uint32_t toldW = 0, toldH = 0;
+        static int toldLay = -9;
+        if (std::fabs(game - toldGame) > 0.002f || std::fabs(file - toldFile) > 0.002f || w != toldW || h != toldH || nudge.in != toldIn || nudge.dy != toldDy ||
+            nudge.scale != toldSc || controller != toldLay) {
+            toldGame = game; toldFile = file; toldW = w; toldH = h; toldIn = nudge.in; toldDy = nudge.dy; toldSc = nudge.scale; toldLay = controller;
+            const hudglobes::Boxes other = hudglobes::Compute(w, h, game > 0.0f ? game : file, nudge, controller == 1 ? hudglobes::kKeyboardLayout : hudglobes::kControllerLayout);
+            char line[520];
+            snprintf(line, sizeof line, "hud: the toolbar's globes for the wrists on a %ux%u layer - the game's %s HUD layout, the area %s (the game's interface scale %.3f px "
+                     "a unit makes %.3f of this layer; the file's Safe Screen Percent %.0f%%): life at %.0f,%.0f, mana at %.0f,%.0f, radius %.0f px (by the %s layout it "
+                     "would be %.0f,%.0f / %.0f,%.0f, %.0f px); nudge in %.2f dy %.2f scale %.2f ([hud] wrist_globe_in / _dy / _scale)", w, h,
+                     controller == 1 ? "controller" : controller == 0 ? "keyboard-and-mouse" : "(layout not known: keyboard-and-mouse)",
+                     game > 0.0f ? "from the game's own scale" : "from the file (the game's scale not known or not this layer's)", g_gameUiScale.load(), game,
+                     file * 100.0f, b.cx[0], b.cy, b.cx[1], b.cy, b.radius, controller == 1 ? "keyboard-and-mouse" : "controller", other.cx[0], other.cy, other.cx[1],
+                     other.cy, other.radius, nudge.in, nudge.dy, nudge.scale);
+            Log(line);
+        }
+    }
     device* dev = cl->get_device();
     const uint32_t side = (uint32_t)(2 * b.half), tw = 2 * side, th = side;
     if (!g_glb.tex.handle || g_glb.w != tw || g_glb.h != th) {
@@ -722,13 +748,15 @@ bool CopyGlobes(command_list* cl, resource layer, uint32_t w, uint32_t h) {
         }
         g_glb.w = tw; g_glb.h = th;
         char line[200];
-        snprintf(line, sizeof line, "hud: the game's own life and mana globes are cut out of its interface for the wrists: two %ux%u squares at %d,%d and %d,%d on a %ux%u layer (disc radius %.0f px)",
-                 side, side, b.left[0], b.top, b.left[1], b.top, w, h, b.radius);
+        snprintf(line, sizeof line, "hud: the game's own life and mana globes are cut out of its interface for the wrists: two %ux%u squares at %d,%d and %d,%d on a %ux%u layer (disc radius %.0f px)%s",
+                 side, side, b.left[0], b.top, b.left[1], b.top, w, h, b.radius,
+                 b.ok ? "" : " - the cut ran past the layer's edge: the squares and the disc made smaller round the same middles (the medallion and its "
+                             "base drawn)");
         Log(line);
     }
     cl->barrier(layer, resource_usage::render_target, resource_usage::copy_source);
     if (!g_glb.fresh) cl->barrier(g_glb.tex, resource_usage::shader_resource, resource_usage::copy_dest);   // made in copy_dest
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < 2; ++i) {   // (both squares inside the layer: Compute made them so)
         const subresource_box from{(uint32_t)b.left[i], (uint32_t)b.top, 0, (uint32_t)b.left[i] + side, (uint32_t)b.top + side, 1};
         const subresource_box to{(uint32_t)i * side, 0, 0, (uint32_t)i * side + side, side, 1};
         cl->copy_texture_region(layer, 0, &from, g_glb.tex, 0, &to, filter_mode::min_mag_mip_point);
@@ -1046,6 +1074,8 @@ void SetMenuOpen(bool open) { g_menu.store(open); }
 void SetPanelNoBar(bool on) { g_panelNoBar.store(on); }
 void SetMapMode(int mode) { g_mapMode.store(mode); }
 void SetInterfaceScale(float s) { g_uiScale.store(std::clamp(s, 0.3f, 1.0f)); }
+void SetGlobeNudge(float in, float dy, float scale) { g_globeIn.store(in); g_globeDy.store(dy); g_globeScale.store(scale); }
+void SetControllerLayout(int controller) { g_controllerLayout.store(controller); }
 void SetGameInterfaceScale(float k) { g_gameUiScale.store(std::isfinite(k) && k > 0.05f && k < 20.0f ? k : 0.0f); }
 void SetMapProjection(float ratio) { g_projRatio.store(std::isfinite(ratio) && ratio > 0.0f ? ratio : 0.0f); }
 void SetToolbarCut(float upPct, float downPct, bool tint) {

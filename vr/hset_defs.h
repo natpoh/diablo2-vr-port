@@ -27,12 +27,14 @@
 #include "ui_text.h"   // the rows' words in the player's language ([hud] headset_language)
 #include "quality_presets.h"   // the Video page's Quality preset: the keys it writes (shared/quality_presets.h)
 #include "draw_distance.h"   // the Video page's Draw distance: its stops (shared/draw_distance.h kReach)
+#include "wrist_look.h"   // the HUD page's "Medallions: look" ([hud] wrist_look: its three looks, shared/wrist_look.h)
 
 namespace hset {
 
 constexpr int kMaxPages = 23;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
+constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (the HUD page since its "Medallions: look"; hset_model.h TightRows)
 // A page is a line more here, in kPageNames and in kMaxPages / kPageCount (the tabs share the panel's width in proportion to their names:
 // hset_model.h kTab). The order (Serg, 2026-11-02: "пересмотреть структуру"): what every view has first - View, Options, Video, Controls (the
 // two key-binding pages, Left and Right, under one tab) - then the controllers' Vibration, the interface (HUD, the low-life vignette's Life and
@@ -183,7 +185,7 @@ inline constexpr Def kDefs[] = {
     // name short, the rest in its line). [table] full_width: no board edge, the game's own sky dome and fog round the game (vr/view/view_state.cpp
     // TableFull); [table] draw_distance: F3's own Draw distance stop, 0 = as the other views (shared/draw_distance.h ViewStop). Both live, as there.
     {L"table", L"full_width", "Full width", "The game's own sky and fog round the game, no edge",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF3, true},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF3, true},
     {L"table", L"draw_distance", "F3 draw distance", "Near (1) - far (8); 0 = as the other views",
      0.0f, 0.0f, 8.0f, 1.0f, "%.0f", "", "", kPageF3, true},
     // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too (seven rows): the
@@ -269,7 +271,7 @@ inline constexpr Def kDefs[] = {
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
     // [gameplay] quick_blow_faster (vr/quick_blow.h): the next attack once the blow is out, past the game's attack speed (quick_blow_min_ms in D2R VR Settings)
     {L"gameplay", L"quick_blow_faster", "Faster attack", "With quick blow: the next one past the game's speed (F4)",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMeleeAttack, true},
     // -- no row: Direct hit's first key (By the rules / Always is what melee_direct_client's row writes; the page's line warns while it is on).
     {L"gameplay", L"melee_direct", "Direct hit by the rules", "Changes the game's own logic: hits go to the server (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
@@ -335,8 +337,10 @@ inline constexpr Def kDefs[] = {
     // written by itself a moment after the click, the other pages' rule; the plugin follows what it follows live. Hit by touch is the Melee page's row too.
     // Contact: what stops your weapon and hands - walls, your own body ([weight] own_body), the monsters' bodies and what they hold. The walls and your own body
     // are marked "(experimental)" as in the Settings exe (Serg, 0.192.41: off by default, "кто хочет, сам включит, потестит").
-    {L"weight", L"world_contact", "Walls stop your weapon (experimental)", "Walls, pillars, trees and big props stop it (F4)",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
+    // [weight] wall_contact_mode (shared/wall_contact_mode.h): Off / Ours (the game's meshes) / Bear's (the game's wall map), named by vr/hset_names.h; an
+    // old ini without it shows world_contact=1 as Ours (hset_store.cpp)
+    {L"weight", L"wall_contact_mode", "Weapon against the walls", "Ours: the meshes (experimental); Bear's: the wall map (F4)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageWorld, true},
     {L"weight", L"world_contact_hands", "Walls stop your bare hands (experimental)", "An empty hand stays at the wall's surface (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWorld, true},
     {L"weight", L"own_body", "Your own body stops the weapon (experimental)", "It stops on your trunk and legs; never a hit on you",
@@ -438,7 +442,7 @@ inline constexpr Def kDefs[] = {
     {L"render", L"foveated", "Foveated rendering", "Less detail at each eye's edges - saves graphics card time (first switched on: from the next start)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
     {L"render", L"foveated_strength", "... how strong", "How much keeps every pixel, how coarse the rest is",
-     1.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageRender},
+     3.0f, 0.0f, 3.0f, 1.0f, "%.0f", "", "", kPageRender},
     {L"render", L"foveated_gaze", "... following the eyes", "Eye tracking where the headset gives it to games (PS VR2, Quest Pro, Steam Frame)",
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
     {L"render", L"foveated_fullscreen", "... the heavy passes too", "Grass lighting, reflections, hair: coarse at the edges as well",
@@ -446,7 +450,7 @@ inline constexpr Def kDefs[] = {
     {L"render", L"grass_lighting_coarse", "Grass lighting rate", "The grass lit at 2x1 or 2x2 over the whole picture (with or without foveated)",
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageRender},
     {L"render", L"shadows_once_a_pair", "Shadows once a pair", "One pass: the shadow maps drawn once for both eyes (first switched on: from the next start)",
-     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
     {L"render", L"lens_mask", "Lens mask", "Skip the pixels the lenses never show - saves graphics card time",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageRender},
     // -- no row: the Video page's rows' other keys
@@ -508,6 +512,12 @@ inline constexpr Def kDefs[] = {
     // and takes [hud] hide to at least 1 with it (the model, hset_model.h), "In the picture" being hide 0; hide has no row of its own.
     {L"hud", L"bar_place", "Toolbar type", "Life and mana on the wrists, or the whole toolbar",
      5.0f, 0.0f, 5.0f, 1.0f, "%.0f", "", "", kPageHud},
+    // [hud] wrist_look (shared/wrist_look.h; Serg, 2026-11-13: "the in-game overlay must have the selector too"): the look of the life and mana
+    // medallions on the wrists - the mod's glass balls, the game's own models, the game's own globes; D2R VR Settings > "Look" writes the same key.
+    // A stepper round the three in Settings' order (the model), its value box names the look (vr/hset_names.h). Live. The line under its name says
+    // when the game's models are picked and not made (hset_scene.h WristLookDetail).
+    {L"hud", L"wrist_look", "Medallions: look", "Life and mana on the wrists: one look of three (F4)",
+     0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kPageHud, true},
     {L"hud", L"monster_height", "Plates: height on the screen", "+ higher, % of the screen (F4); the bar in the room has its own",
      0.0f, -60.0f, 40.0f, 5.0f, "%+.0f%%", "", "", kPageHud},
     {L"hud", L"ordinary_mob_bars", "Plates: ordinary monsters", "Shown: all plates. Hidden: only champions, bosses, NPCs",
@@ -595,7 +605,11 @@ constexpr int kKeyMeleeTouch = IndexOf(L"gameplay", L"melee_touch");   // the Me
 constexpr int kKeyMeleeArmed = IndexOf(L"gameplay", L"melee_skill_armed");   // the Melee page's skill arming (needs the touch)
 constexpr int kKeyMeleeDirect = IndexOf(L"gameplay", L"melee_direct");   // the Melee page's Direct hit: a tick over its two keys (hset_store.cpp)
 constexpr int kKeyMeleeDirectClient = IndexOf(L"gameplay", L"melee_direct_client");
+constexpr int kKeyWallContact = IndexOf(L"weight", L"wall_contact_mode");   // the World page's Weapon against the walls (vr/hset_names.h WallContactName)
+static_assert(kKeyWallContact >= 0, "Weapon against the walls is in the table");
 constexpr int kKeyAlliesPlace = IndexOf(L"hud", L"allies_place");   // [hud] allies_place: a stepper with names (vr/hset_names.h AlliesPlaceName)
+constexpr int kKeyWristLook = IndexOf(L"hud", L"wrist_look");       // [hud] wrist_look: a stepper with names (vr/hset_names.h WristLookName)
+static_assert(kKeyWristLook >= 0, "Medallions: look is in the table");
 static_assert(kKeyMeleeDirect >= 0 && kKeyMeleeDirectClient >= 0, "Direct hit's keys are in the table");
 constexpr int kKeyGrabTrigger = IndexOf(L"belt", L"grab_trigger");   // the two-button take: the Belt page's last row (it reads the trigger through direct input)
 constexpr int kKeyVersion = IndexOf(L"calibration", L"version");
@@ -680,7 +694,7 @@ constexpr bool F4OnlyPage(int page) {
 }
 constexpr bool F4OnlyKey(int key) {
     return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||
-                                        key == IndexOf(L"hud", L"ordinary_mob_bars") || key == kKeyAlliesPlace || key == IndexOf(L"hud", L"names_own_size_pct") ||
+                                        key == IndexOf(L"hud", L"ordinary_mob_bars") || key == kKeyAlliesPlace || key == kKeyWristLook || key == IndexOf(L"hud", L"names_own_size_pct") ||
                                         key == IndexOf(L"hud", L"names_own_far_pct") || key == IndexOf(L"hud", L"names_own_alpha") ||
                                         key == IndexOf(L"hands", L"left_handed"));   // (where the allies are, our names, the left-handed swap: F4 only)
 }

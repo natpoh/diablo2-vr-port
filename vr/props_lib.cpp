@@ -38,6 +38,7 @@ struct Fns {
     D2rpMoverAtFn moverAt = nullptr;
     D2rpSetHandsFn setHands = nullptr;   // optional: [weight] grab_props (none: no hand takes a prop)
     D2rpHandAtFn handAt = nullptr;
+    D2rpSetPropMassFn setPropMass = nullptr;   // optional: [weight] prop_heft (none: every prop weighs its material)
 };
 Fns g_fns;                       // set once, before g_loaded
 std::atomic<bool> g_loaded{false};
@@ -132,6 +133,7 @@ bool Ensure() {
     f.setHands = (D2rpSetHandsFn)GetProcAddress(mod, "D2rpSetHands");
     f.handAt = (D2rpHandAtFn)GetProcAddress(mod, "D2rpHandAt");
     if (!f.setHands || !f.handAt) f.setHands = nullptr, f.handAt = nullptr;
+    f.setPropMass = (D2rpSetPropMassFn)GetProcAddress(mod, "D2rpSetPropMass");
     if (!abi || !f.create || !f.destroy || !f.clear || !f.setProps || !f.setStatics || !f.setMovers || !f.step || !f.poses || !f.knocks || !f.moverAt) {
         Say("vrcam: props world - d2r_vr_weight.dll has no props world (no D2rp* exports: a weight library older than 1.3) - [weight] knock_props does nothing");
         FreeLibrary(mod);
@@ -155,6 +157,9 @@ bool Ensure() {
                      "[weight] grab_props takes them in the hand"
                    : "vrcam: props world - the weight library's props world is loaded (d2r_vr_weight.dll, D2rp* exports): [weight] knock_props knocks the level's props about "
                      "(no hands in it - D2rpSetHands: [weight] grab_props takes nothing with this library)");
+    Say(f.setPropMass ? "vrcam: props world - it takes a prop's own mass (D2rpSetPropMass): [weight] prop_heft weighs each prop by its kind and size"
+                      : "vrcam: props world - this library has no D2rpSetPropMass (older than the prop mass): with [weight] prop_heft the props still weigh their material, "
+                        "only the pulse in the hand follows their kind and size");
     ReleaseSRWLockExclusive(&g_lock);
     return true;
 }
@@ -180,5 +185,7 @@ int32_t MoverAt(void* world, int32_t slot, D2rpMoverOut* out) { return g_loaded.
 bool HasHands() { return g_loaded.load() && g_fns.setHands; }
 int32_t SetHands(void* world, const D2rpHand* hands, int32_t n) { return HasHands() && world ? g_fns.setHands(world, hands, n) : -1; }
 int32_t HandAt(void* world, int32_t hand, D2rpHandOut* out) { return HasHands() && world ? g_fns.handAt(world, hand, out) : 0; }
+bool HasPropMass() { return g_loaded.load() && g_fns.setPropMass; }
+int32_t SetPropMass(void* world, uint32_t id, float kg) { return HasPropMass() && world ? g_fns.setPropMass(world, id, kg) : -1; }
 
 }  // namespace propslib

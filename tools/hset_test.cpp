@@ -184,7 +184,9 @@ static void TestDefs() {
         else CHECK(d.fmt[0] == '%', "a stepper has a format");
         CHECK(d.label[0] && d.detail[0], "label and detail");
     }
-    for (int p = 0; p < kMaxPages; ++p) CHECK(perPage[p] <= kRowsMax && (perPage[p] <= kRowsPerPage || CloseRows(p)), "no more rows than the page has room for (a seventh: the rows closer)");
+    for (int p = 0; p < kMaxPages; ++p)
+        CHECK(perPage[p] <= kRowsTight && (perPage[p] <= kRowsMax || TightRows(p)) && (perPage[p] <= kRowsPerPage || CloseRows(p)),
+              "no more rows than the page has room for (a seventh: the rows closer; an eighth: closest)");
     CHECK(perPage[kPageView] <= kRowsPerPage - 1, "the first page keeps its last row for the game view buttons");
     CHECK(RowsOn(kPageView) > 0 && RowsOn(kPageOptions) > 0, "the two table pages have rows");
     CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
@@ -197,9 +199,9 @@ static void TestDefs() {
         CHECK(RowsOn(kPageF3) == 2 && !CloseRows(kPageF3) && TabOf(kPageF3) == TabOf(kPageView) && !StartsTab(kPageF3) && LeadOf(kPageF3) == kPageView,
               "F3: two rows under the View tab");
         const int full = KeyAt(kPageF3, 0), dist = KeyAt(kPageF3, 1);
-        CHECK(full >= 0 && !wcscmp(kDefs[full].section, L"table") && !wcscmp(kDefs[full].key, L"full_width") && IsToggle(kDefs[full]) && kDefs[full].def == 0.0f &&
+        CHECK(full >= 0 && !wcscmp(kDefs[full].section, L"table") && !wcscmp(kDefs[full].key, L"full_width") && IsToggle(kDefs[full]) && kDefs[full].def == 1.0f &&
                   kDefs[full].live,
-              "Full width: [table] full_width, a tick, off as shipped (the board as before), live");
+              "Full width: [table] full_width, a tick, on as shipped (since 0.216), live");
         CHECK(dist >= 0 && !wcscmp(kDefs[dist].section, L"table") && !wcscmp(kDefs[dist].key, L"draw_distance") && !IsToggle(kDefs[dist]) &&
                   kDefs[dist].def == 0.0f && kDefs[dist].min == 0.0f && kDefs[dist].max == 8.0f && kDefs[dist].step == 1.0f && kDefs[dist].live,
               "F3 draw distance: [table] draw_distance, 0 (as the other views) - 8, the Draw distance slider's stops, live as the Settings slider");
@@ -2401,6 +2403,13 @@ static void Dump(const std::string& dir) {
     hm.Click({Kind::Tab, kPageHud, 0});
     Paint(hm, {}, px);
     WriteBmp(dir + "/hset_page6_hud.bmp", px);
+    // ... and the medallions' look on the game's models with their files not made: the amber line under its name
+    hm.Click({Kind::Change, kKeyWristLook, 1});
+    video::Env he = hm.Env();
+    he.wristModels = wristlook::kUnitsMissing;
+    hm.SetEnv(he);
+    Paint(hm, {}, px);
+    WriteBmp(dir + "/hset_page6_hud_look_not_made.bmp", px);
 }
 
 // -- 11. [turn] smooth / snap / speed ---------------------------------------------------------------------------
@@ -2559,8 +2568,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 58 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names, the F3 page's two and the Left page's Left-handed - not the others");
+    CHECK(live == 59 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F3 page's two and the Left page's Left-handed - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -3045,7 +3054,74 @@ static void TestHud() {
     CHECK(place >= 0 && hide >= 0 && height >= 0 && plates >= 0, "the four keys are in the table");
     CHECK(kDefs[place].page == kPageHud && kDefs[height].page == kPageHud && kDefs[plates].page == kPageHud && kDefs[hide].page == kNoPage,
           "three rows on the HUD page, hide has none");
-    CHECK(RowsOn(kPageHud) == 7 && !std::strcmp(kPageNames[kPageHud], "HUD"), "the page (Allies shown and our names' three too)");
+    CHECK(RowsOn(kPageHud) == 8 && !std::strcmp(kPageNames[kPageHud], "HUD"), "the page (the medallions' look, Allies shown and our names' three too)");
+    // [hud] wrist_look (Serg, 2026-11-13: "the in-game overlay must have the selector too"): the medallions' look, a stepper with names round the
+    // three in D2R VR Settings' order, live, F4 only; the eighth row - the page's rows closest, all above the status line
+    {
+        const int k = kKeyWristLook;
+        CHECK(k >= 0 && kDefs[k].page == kPageHud && !IsToggle(kDefs[k]) && kDefs[k].min == 0.0f && kDefs[k].max == 2.0f && kDefs[k].step == 1.0f && kDefs[k].def == 0.0f &&
+                  kDefs[k].live, "Medallions: look - a stepper 0 - 2 on the HUD page, the mod's glass balls by default, live");
+        CHECK(KeyAt(kPageHud, 1) == k && KeyAt(kPageHud, 0) == kKeyBarPlace, "right under the toolbar type");
+        CHECK(F4OnlyKey(k) && !KeyShown(k, 1) && !KeyShown(k, 3) && KeyShown(k, 4) && RowsOn(kPageHud, 1) == 1, "F4 only (F1 - F3 keep the toolbar type alone)");
+        Values v{};
+        v[k] = 0.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "Glass balls"), "its names: 0");
+        v[k] = 1.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "Game's globes"), "1");
+        v[k] = 2.0f;
+        CHECK(ValueName(v, k) && !std::strcmp(ValueName(v, k), "Game's models"), "2");
+        CHECK(TightRows(kPageHud) && CloseRows(kPageHud) && RowStep(kPageHud) == kTightRowStep && RowY(7, kPageHud) + kTightRowStep - 5 <= kStatus.y, "eight rows, the last above the status line");
+        for (int r = 0; r < kRowsTight; ++r) {
+            CHECK(Inside(kDec(r, kPageHud)) && Inside(kInc(r, kPageHud)) && Inside(kVal(r, kPageHud)) && Inside(kToggle(r, kPageHud)), "a tight row inside the atlas");
+            if (r + 1 < kRowsTight) CHECK(!Overlap(kToggle(r, kPageHud), kToggle(r + 1, kPageHud)) && !Overlap(RowDetailRect(r, kPageHud), RowLabel(r + 1, kPageHud)),
+                                          "tight rows apart, a name clear of the line above it");
+        }
+        CHECK(!TightRows(kPageMelee) && !TightRows(kPageOptions) && !TightRows(kPageVideo) && !TightRows(kPageWorld), "no other page is tight");
+        // a click steps round Settings' order (the mod's, the game's models, the game's globes) and is written by itself
+        const std::wstring path = g_dir + L"\\wristlook.ini";
+        Spit(path, "[hud]\r\nhide=1\r\nbar_place=5\r\n[other]\r\nx=1\r\n");
+        Model m;
+        m.Open(store::LoadSnapshot(path.c_str()));
+        m.Click({Kind::Tab, kPageHud, 0});
+        const auto at = [](const Rect& r) { return HitTest(kPageHud, ((float)r.x + 4.0f) / (float)kW, ((float)r.y + 4.0f) / (float)kH, 4); };
+        CHECK(at(kInc(1, kPageHud)).kind == Kind::Change && at(kInc(1, kPageHud)).index == k,
+              "its + is the second row's");
+        CHECK(at(kInc(7, kPageHud)).index == IndexOf(L"hud", L"names_own_alpha"), "the eighth row is reached");
+        m.Click({Kind::Change, k, 1});
+        CHECK(m.Get()[k] == 2.0f, "one step on from the mod's: the game's models");
+        m.Click({Kind::Change, k, 1});
+        CHECK(m.Get()[k] == 1.0f, "then the game's globes");
+        m.Click({Kind::Change, k, 1});
+        CHECK(m.Get()[k] == 0.0f, "and round to the mod's");
+        m.Click({Kind::Change, k, -1});
+        CHECK(m.Get()[k] == 1.0f, "a step back from the mod's: the globes");
+        m.Click({Kind::Change, k, -1});
+        CHECK(m.Get()[k] == 2.0f, "then the game's models");
+        // the line under its name: the game's models picked and not made says so, in amber; another toolbar type says the look is not seen
+        const auto line = [&](const Model& mm, Role* role) {
+            const Scene sc = Compose(mm, {});
+            for (const Item& it : sc)
+                if (it.type == Item::Type::Text && it.r.x == RowDetailRect(1, kPageHud).x && it.r.y == RowDetailRect(1, kPageHud).y) { *role = it.colour; return it.text; }
+            return std::string("(none)");
+        };
+        Role role = Role::Back;
+        CHECK(line(m, &role) == kDefs[k].detail && role == Role::Quiet, "the game's models, not asked yet: its own line");
+        video::Env e = m.Env();
+        e.wristModels = wristlook::kUnitsMissing;
+        const uint64_t r0 = m.revision;
+        m.SetEnv(e);
+        CHECK(m.revision != r0 && line(m, &role).find("Not made yet") == 0 && role == Role::Warn, "not made: said, in amber, and the panel repaints");
+        e.wristModels = wristlook::kUnitsLoaded;
+        m.SetEnv(e);
+        CHECK(line(m, &role) == kDefs[k].detail && role == Role::Quiet, "made: its own line");
+        e.wristModels = wristlook::kUnitsMissing;
+        m.SetEnv(e);
+        m.Click({Kind::Change, k, 1});   // (the globes)
+        CHECK(line(m, &role) == kDefs[k].detail && role == Role::Quiet, "another look: nothing to say");
+        m.Click({Kind::Change, k, -1});
+        m.Click({Kind::Change, kKeyBarPlace, 1});   // (the chest)
+        CHECK(line(m, &role).find("toolbar type Wrists") != std::string::npos && role == Role::Quiet, "another toolbar type: the look is not seen");
+    }
     // [hud] allies_place (Serg, test 0.205.6: "a selector, one of the 3"): one stepper row with names, F4 only; the three ticks are gone from the table
     {
         const int k = kKeyAlliesPlace;
@@ -3459,8 +3535,8 @@ static void TestMelee() {
             CHECK(!strcmp(name, attackKeys[r]) && kDefs[KeyAt(kPageMeleeAttack, r)].live, "the Attack page's rows in their order, live");
         }
         const int fast = KeyAt(kPageMeleeAttack, 1), timer = KeyAt(kPageMeleeAttack, 3);
-        CHECK(IsToggle(kDefs[fast]) && kDefs[fast].def == 0.0f && IsToggle(kDefs[timer]) && kDefs[timer].def == 0.0f && !wcscmp(kDefs[timer].section, L"hud"),
-              "the faster attack and the swing timer: ticks, off as shipped");
+        CHECK(IsToggle(kDefs[fast]) && kDefs[fast].def == 1.0f && IsToggle(kDefs[timer]) && kDefs[timer].def == 0.0f && !wcscmp(kDefs[timer].section, L"hud"),
+              "the faster attack and the swing timer: ticks, the faster attack on, the swing timer off as shipped (0.216)");
         const int why = KeyAt(kPageMeleeAttack, 4);
         CHECK(IsToggle(kDefs[why]) && kDefs[why].def == 1.0f && !wcscmp(kDefs[why].section, L"hud"), "the swing timer's reasons: a tick, on as shipped (shown with the timer)");
         float u, v;
@@ -4379,7 +4455,7 @@ static void TestWorld() {
     // the rows, in the order asked, with D2R VR Settings' defaults; every one live
     struct Want { int page; const wchar_t* section; const wchar_t* key; float def; };
     const Want rows[] = {
-        {kPageWorld, L"weight", L"world_contact", 0}, {kPageWorld, L"weight", L"world_contact_hands", 0}, {kPageWorld, L"weight", L"own_body", 0},
+        {kPageWorld, L"weight", L"wall_contact_mode", 0}, {kPageWorld, L"weight", L"world_contact_hands", 0}, {kPageWorld, L"weight", L"own_body", 0},
         {kPageWorld, L"weight", L"monster_bodies", 0},
         {kPageWorld, L"weight", L"monster_shields", 0},
         {kPageWorldReact, L"gameplay", L"melee_touch", 0}, {kPageWorldReact, L"weight", L"strike_by_force", 0}, {kPageWorldReact, L"weight", L"monster_ragdoll", 0},
@@ -4718,11 +4794,11 @@ static void TestVideoRows() {
         CHECK(PresetOf(m.Get()) == 2, "> at Medium: stays (the highest)");
         CHECK(m.Get()[IndexOf(L"render", L"lens_mask")] == 1.0f && m.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 1.0f,
               "Medium leaves the lens mask and the shadows once as they were (Potato set them on)");
-        {   // a fresh ini at Medium's values with the lens mask and the shadows once off (0.208's shipped): Medium, not Custom
+        {   // a fresh ini at Medium's values with the lens mask off and the shadows once on (0.216's shipped): Medium, not Custom
             Model f = OnPage(Snap(), kPageVideo);
             f.Click({Kind::Change, kKeyPreset, -1});   // Custom -> Medium
-            CHECK(PresetOf(f.Get()) == 2 && f.Get()[IndexOf(L"render", L"lens_mask")] == 0.0f && f.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 0.0f,
-                  "Medium with the lens mask and the shadows once off is still Medium");
+            CHECK(PresetOf(f.Get()) == 2 && f.Get()[IndexOf(L"render", L"lens_mask")] == 0.0f && f.Get()[IndexOf(L"render", L"shadows_once_a_pair")] == 1.0f,
+                  "Medium with the lens mask off and the shadows once on is still Medium");
         }
         m.Click({Kind::Change, IndexOf(L"render", L"potato_light_brightness"), 1});
         CHECK(PresetOf(m.Get()) == 2, "the brightness is no preset key: still Medium");

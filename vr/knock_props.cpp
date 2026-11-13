@@ -40,6 +40,7 @@
 #include "props_lib.h"
 #include "props_scene.h"
 #include "sigscan.h"
+#include "unleashed_prop_heft.h"   // [weight] prop_heft: a prop's mass by its kind and size, the knock's tick or thud (MPL 2.0)
 #include "view_gate.h"
 
 namespace knockprops {
@@ -69,6 +70,7 @@ std::atomic<float> g_glowH{0.6f};
 bool g_glowing = false;   // the tick's: props handed to the glow
 std::atomic<bool> g_grabWanted{false};   // [weight] grab_props
 std::atomic<float> g_strength{1.0f}, g_haptic{0.35f};
+std::atomic<bool> g_heft{false};   // [weight] prop_heft
 propscene::Catalog g_catalog;
 std::atomic<bool> g_catalogReady{false};
 std::atomic<int> g_state{0};   // 0 off, 1 waiting (no library / catalogue / F4), 2 running
@@ -406,6 +408,7 @@ struct Tracked {                // a prop in the world, and what the write pass 
     Box bounds;
     propscene::Vec scale{1, 1, 1};
     int kind = -1;               // the catalogue's kind (the trace's name)
+    float heftKg = 0;            // [weight] prop_heft: its mass by its kind and size (vr/unleashed_prop_heft.h)
     bool hasBounds = false, settle = false, moved = false;
     uint64_t writtenAt = 0;
 };
@@ -416,6 +419,7 @@ struct In {
     float floorY = 0;            // physics frame
     uint64_t propsSerial = 0;
     std::vector<D2rpProp> props;
+    std::vector<float> masses;   // [weight] prop_heft: each prop's mass by its kind and size (kg), as props; empty with prop_heft off
     std::vector<D2rpBox> statics;
     D2rpMover movers[2] = {};
     bool run = false;
@@ -518,8 +522,10 @@ void PhysicsThread() {
     params.propMass = 1.0f;
     void* world = nullptr;
     float strengthMade = -1.0f;
+    bool heftMade = false;
     uint64_t worldNo = 0, propsSerial = 0;
     std::vector<D2rpProp> props;
+    std::vector<float> masses;
     std::vector<D2rpBox> statics;
     D2rpPose poses[D2RP_MAX_PROPS];
     D2rpKnock knocks[32];
@@ -551,6 +557,7 @@ void PhysicsThread() {
                 if (g_in.propsSerial != propsSerial || clear) {
                     propsSerial = g_in.propsSerial;
                     props = g_in.props;
+                    masses = g_in.masses;
                     newProps = true;
                     if (statics.size() != g_in.statics.size() || !std::equal(statics.begin(), statics.end(), g_in.statics.begin(),
                                                                               [](const D2rpBox& a, const D2rpBox& b) { return std::memcmp(&a, &b, sizeof a) == 0; }))
@@ -580,11 +587,14 @@ void PhysicsThread() {
             next = Now() + 0.1;
             continue;
         }
-        if (world && strength != strengthMade) { propslib::Destroy(world); world = nullptr; clear = true; }
+        // [weight] prop_heft: the library weighs each prop by its kind and size (D2rpSetPropMass) - switched either way, the world is made anew (off: the materials' masses again)
+        const bool heft = g_heft.load() && propslib::HasPropMass();
+        if (world && (strength != strengthMade || heft != heftMade)) { propslib::Destroy(world); world = nullptr; clear = true; }
         if (!world) {
             params.strength = strength;
             world = propslib::Create(&params);
             strengthMade = strength;
+            heftMade = heft;
             if (!world) { next = Now() + 1.0; continue; }
             clear = true;
             newProps = newStatics = true;
@@ -596,7 +606,12 @@ void PhysicsThread() {
             g_out.prev = g_out.cur = Snap{};
         }
         if (newStatics || clear) propslib::SetStatics(world, statics.data(), (int32_t)statics.size());
-        if (newProps || clear) propslib::SetProps(world, props.data(), (int32_t)props.size());
+        if (newProps || clear) {
+            propslib::SetProps(world, props.data(), (int32_t)props.size());
+            if (heft && masses.size() == props.size())   // (a prop told the same mass again: nothing done in the library)
+                for (size_t i = 0; i < props.size(); ++i)
+                    if (masses[i] > 0.0f) propslib::SetPropMass(world, props[i].id, masses[i]);
+        }
         propslib::SetMovers(world, movers, 2);
         if (propslib::HasHands()) propslib::SetHands(world, hands, handsOn ? D2RP_HANDS : 0);
         int steps = 0;
@@ -816,6 +831,24 @@ D2rpProp ToProp(const Seen& s, const float origin[3], float u, propscene::Vec* s
     return p;
 }
 
+// [weight] prop_heft: what the prop weighs by its catalogue kind and the size of its bounds as the props world has them (metres), kg; 0 not known.
+float HeftKg(int kind, const D2rpProp& p) {
+    if (kind < 0) return 0.0f;
+    const propscene::CatalogKind& k = g_catalog.KindAt((unsigned)kind);
+    const char* end = static_cast<const char*>(std::memchr(k.name, 0, sizeof k.name));
+    const std::string_view name(k.name, end ? (size_t)(end - k.name) : sizeof k.name);
+    return unleashed::propheft::Mass(name, k.material, k.shape, {p.half[0] * 2.0f, p.half[1] * 2.0f, p.half[2] * 2.0f});
+}
+float g_moverKg[2] = {0.0f, 0.0f};   // the tick's: each hand's mover as last handed to the world (the steel with the hands on it, or a fist), kg
+
+// [weight] prop_heft: a heavy prop's thud, played by the tick a moment after its knock (one pulse a hand at a time: a later knock replaces it).
+struct Thud {
+    uint64_t dueMs = 0;
+    float amplitude = 0.0f;
+    int ms = 0;
+};
+Thud g_thud[2];
+
 }  // namespace
 
 void Init(LogFn log, PulseFn pulse, const wchar_t* pluginDir) {
@@ -844,6 +877,13 @@ void Init(LogFn log, PulseFn pulse, const wchar_t* pluginDir) {
         LogF("knock props: no catalogue (%s): the level's props stand where they are until D2R VR Settings makes it from your game (Weapon Weight > Knock props)",
              data.empty() ? "d2r_vr_props\\props.bin is missing" : "d2r_vr_props\\props.bin does not read");
     }
+}
+
+void ConfigureHeft(bool on) {
+    const bool was = g_heft.exchange(on);
+    if (was != on) Log(on ? "knock props: prop heft on ([weight] prop_heft) - each prop weighs what its kind and size say (a cup 0.18 kg, a barrel 48) in the props world "
+                            "(when the weight library takes it), and the hand feels a light tick or a knock and a thud"
+                          : "knock props: prop heft off ([weight] prop_heft=0) - the props weigh their material, every knock the same short pulse");
 }
 
 void Configure(bool on, float strengthPct, float haptic) {
@@ -1050,6 +1090,7 @@ void Tick(const Frame& fr) {
     const bool on = g_wanted.load() && fr.ok && viewgate::F4();
     if (!on) {
         if (g_glowing) { beltglow::SetProps(nullptr, 0, 0.0f); g_glowing = false; }
+        g_thud[0] = g_thud[1] = Thud{};   // [weight] prop_heft: a thud waiting is dropped with the view
         if (g_state.exchange(g_wanted.load() ? 1 : 0) == 2) {
             std::lock_guard<std::mutex> l(g_inMutex);
             g_in.run = false;
@@ -1096,6 +1137,7 @@ void Tick(const Frame& fr) {
         g_in.world = ++g_world;
         g_in.floorY = 0.0f;
         g_in.props.clear();
+        g_in.masses.clear();
         g_in.statics.clear();
         ++g_in.propsSerial;
     }
@@ -1116,6 +1158,7 @@ void Tick(const Frame& fr) {
             for (int i = 0; i < 3; ++i) { m.a[i] = b.a[i] - g_origin[i]; m.b[i] = b.b[i] - g_origin[i]; m.vel[i] = b.vel[i]; m.angVel[i] = b.angVel[i]; }
             m.radius = b.radius;
             m.mass = b.kind == 1 ? kFistKg : steel + kFistKg * (float)m.hands;
+            g_moverKg[s] = m.mass;
             m.time = b.time;
         }
     }
@@ -1145,6 +1188,7 @@ void Tick(const Frame& fr) {
         g_lastNearby = f.nearby;
         if (f.ok) {
             std::vector<D2rpProp> props;
+            std::vector<float> masses;
             std::vector<D2rpBox> statics;
             std::vector<Tracked> next;
             std::lock_guard<std::mutex> tl(g_trackMutex);
@@ -1153,6 +1197,7 @@ void Tick(const Frame& fr) {
                 D2rpProp p = ToProp(s, g_origin, u, &scale);
                 if (!std::isfinite(p.p[0] + p.p[1] + p.p[2])) continue;
                 props.push_back(p);
+                masses.push_back(HeftKg(s.kind, p));   // [weight] prop_heft: used only while it is on
                 // a prop the world moved lately keeps what the pass knows of it (the scan may have read it a frame old)
                 auto it = std::find_if(g_tracked.begin(), g_tracked.end(), [&](const Tracked& o) { return o.entity == s.entity; });
                 if (it != g_tracked.end() && it->moved && nowMs - it->writtenAt < kKeepMs) { next.push_back(*it); continue; }
@@ -1164,6 +1209,7 @@ void Tick(const Frame& fr) {
                 t.scale = scale;
                 t.hasBounds = true;
                 t.kind = s.kind;
+                t.heftKg = masses.back();
                 g_home.emplace(s.entity, propscene::Vec{s.world[12], s.world[13], s.world[14]});   // (where it stood when first found: its home this session)
                 next.push_back(t);
                 // what it stands on, a 2 cm plate (the floor and another prop need nothing)
@@ -1201,6 +1247,7 @@ void Tick(const Frame& fr) {
             if (f.bounds) g_boundsObject.store(f.bounds);
             std::lock_guard<std::mutex> l(g_inMutex);
             g_in.props = std::move(props);
+            g_in.masses = std::move(masses);
             g_in.statics = std::move(statics);
             ++g_in.propsSerial;
         }
@@ -1219,20 +1266,35 @@ void Tick(const Frame& fr) {
         }
     }
     static uint64_t pulsedAt[2] = {0, 0};
+    const bool heft = g_heft.load();
+    for (int s = 0; s < 2; ++s)   // [weight] prop_heft: a thud due
+        if (g_thud[s].ms > 0 && nowMs >= g_thud[s].dueMs) {
+            if (heft && g_pulse && g_haptic.load() > 0.0f) g_pulse(s, g_haptic.load() * g_thud[s].amplitude, g_thud[s].ms);
+            g_thud[s] = Thud{};
+        }
     for (const D2rpKnock& k : knocks) {
         ++g_knocks;
+        int kind = -1;
+        float heftKg = 0.0f;
+        if (g_trace.load() || heft) {
+            std::lock_guard<std::mutex> tl(g_trackMutex);
+            for (const Tracked& t : g_tracked) if (t.entity == k.id) { kind = t.kind; heftKg = t.heftKg; break; }
+        }
         if (g_trace.load()) {
-            int kind = -1;
-            {
-                std::lock_guard<std::mutex> tl(g_trackMutex);
-                for (const Tracked& t : g_tracked) if (t.entity == k.id) { kind = t.kind; break; }
-            }
-            LogF("knock props: knocked a %s (entity %08X) by %s at %.1f m/s - %.3f N s into it", kind >= 0 ? g_catalog.KindAt((unsigned)kind).name : "prop", k.id,
+            char heftText[64] = "";
+            if (heft) snprintf(heftText, sizeof heftText, " (%.2f kg by its kind and size)", heftKg);
+            LogF("knock props: knocked a %s%s (entity %08X) by %s at %.1f m/s - %.3f N s into it", kind >= 0 ? g_catalog.KindAt((unsigned)kind).name : "prop", heftText, k.id,
                  k.mover == 0 ? "the right hand" : k.mover == 1 ? "the left hand" : "another moving thing", k.speed, k.impulse);
         }
         if (k.mover >= 0 && k.mover < 2 && g_pulse && g_haptic.load() > 0.0f && nowMs - pulsedAt[k.mover] >= 80) {
             pulsedAt[k.mover] = nowMs;
-            g_pulse(k.mover, g_haptic.load() * std::clamp(0.4f + k.impulse * 2.0f, 0.4f, 1.0f), 30);
+            const unleashed::propheft::Feel fe = heft && heftKg > 0.0f ? unleashed::propheft::FeelOf(k.speed, heftKg, g_moverKg[k.mover]) : unleashed::propheft::Feel{};
+            if (fe.knockMs > 0) {   // [weight] prop_heft: a light tick, or a knock and a thud, by the share of the swing the prop took
+                g_pulse(k.mover, g_haptic.load() * fe.knock, fe.knockMs);
+                g_thud[k.mover] = fe.thudMs > 0 ? Thud{nowMs + (uint64_t)fe.thudAfterMs, fe.thud, fe.thudMs} : Thud{};
+            } else {
+                g_pulse(k.mover, g_haptic.load() * std::clamp(0.4f + k.impulse * 2.0f, 0.4f, 1.0f), 30);
+            }
         }
     }
     {

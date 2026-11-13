@@ -2,7 +2,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 // Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors (https://github.com/bearstonem/d2r-pcvr).
-// From D2R VR Unleashed vr/game_patches.cpp - commits 853607f (transparent_filter), 133465a (profiler_accounting), 30083a1 (draw_debug_names), 9b9e28e (selection_walk, shadows_once, cull_once), 1289b9a (cull volume), at tag v0.3.33-windows-preview.
+// From D2R VR Unleashed vr/game_patches.cpp - commits 853607f (transparent_filter), 133465a (profiler_accounting), 30083a1 (draw_debug_names), 9b9e28e (selection_walk, shadows_once, cull_once), 1289b9a (cull volume), at tag v0.3.33-windows-preview; b1078de (effect_listener_guard, v0.3.34).
 // Ported to D2R VR Authentic: our logging, memory reads, ini keys and pair marks (vr/frame/frame_order.cpp); present_once left out.
 // This file stays MPL 2.0.
 //
@@ -26,6 +26,7 @@
 #include "d2rcam.h"    // cleanroom/camera: the game camera's look-at point
 #include "unleashed_game_patch_plan.h"
 #include "unleashed_cull_volume.h"
+#include "unleashed_effect_listener_guard.h"
 
 namespace gamepatches {
 namespace {
@@ -61,7 +62,8 @@ struct Patch {
     std::atomic<bool> wanted{false};
     State state = State::Off;           // draw thread only
     uint32_t looks = 0;
-    explicit Patch(const char* k) : key(k) {}
+    uint32_t maxLooks = MaxLooks;       // looks before a place that differs is given up
+    explicit Patch(const char* k, uint32_t most = MaxLooks) : key(k), maxLooks(most) {}
 };
 
 // One stretch of the game's code as it is now. False (and `differs` set) when it cannot be read or is not
@@ -82,7 +84,7 @@ std::string Hex(uint64_t v) {
 
 // A place that did not hold: looked at again later, or given up (said once).
 void NotYet(Patch& p, uint64_t differs) {
-    if (++p.looks < MaxLooks) { p.state = State::Waiting; return; }
+    if (++p.looks < p.maxLooks) { p.state = State::Waiting; return; }
     p.state = State::Refused;
     Say(std::string(p.key) + " refused: bytes differ at RVA " + Hex(differs) + " (the game's code there is not what this mod knows; the game is left as it is)");
 }
@@ -518,7 +520,73 @@ void RemoveCull() {
     Say("cull_once off: its hook stays in the game's code and passes every call through");
 }
 
-// What the once-per-pair ones did, every ten seconds while any is on (draw thread, between frames).
+// --- effect_listener_guard -------------------------------------------------------------------------------------
+// The game's effect-ended listener (unleashed_effect_listener_guard.h) is not called for a handle that holds no effect: its own first
+// instructions would take a lock at address 0x20 (Unleashed's two Frozen Tundra crash reports, 2026-11-08 and 11-11). Every other call goes
+// on to the game's function as it was. What is left undone for a skipped call: the handle's entry stays on the ending effect's list (the
+// game's tell has already marked it told, so it is not called again in that round) and nothing is let go - the handle holds nothing to let
+// go. The hook runs on whichever thread ends an effect (the draw thread on both reports); it reads two pointers and counts.
+// The function's page may still be encrypted until an effect has ended once, so it is looked for longer (2000 looks, every 16th frame drawn
+// in the world: some minutes of play).
+Patch ended{"effect_listener_guard", 2000};
+std::atomic<bool> endedOn{false};             // applied and wanted
+bool endedHookIn = false;                     // draw thread only
+using EndedFn = void (*)(uintptr_t handle, uintptr_t endingAt);
+EndedFn originalEnded = nullptr;
+std::atomic<uint32_t> endedSkipped{0}, endedOther{0};
+std::atomic<uint64_t> endedSkippedAll{0};
+std::atomic<uintptr_t> endedLastHandle{0}, endedLastEffect{0};
+
+void EndedHook(uintptr_t handle, uintptr_t endingAt) {
+    const EndedFn call = Original(originalEnded);
+    if (!endedOn.load(std::memory_order_relaxed)) return call(handle, endingAt);
+    uintptr_t held = 0, ending = 0;
+    const bool read = handle && framevr::ReadMemory(&held, reinterpret_cast<const void*>(handle + EndedEffectAt), sizeof held);
+    if (endingAt) framevr::ReadMemory(&ending, reinterpret_cast<const void*>(endingAt), sizeof ending);
+    if (gamepatch::EndedCall(read, held) == gamepatch::Ended::Skip) {
+        endedSkipped.fetch_add(1, std::memory_order_relaxed);
+        endedSkippedAll.fetch_add(1, std::memory_order_relaxed);
+        endedLastHandle.store(handle, std::memory_order_relaxed);
+        endedLastEffect.store(ending, std::memory_order_relaxed);
+        return;
+    }
+    if (gamepatch::EndedOther(held, ending)) endedOther.fetch_add(1, std::memory_order_relaxed);
+    call(handle, endingAt);
+}
+
+void ApplyEnded() {
+    if (!endedHookIn) {
+        uint8_t live[64];
+        uint64_t differs = 0;
+        static_assert(sizeof EndedSig / 2 <= sizeof live && sizeof EndedCallerSig / 2 <= sizeof live);
+        if (!Holds(EndedRva, EndedSig, live, differs) || !Holds(EndedSiblingRva, EndedSiblingSig, live, differs) ||
+            !Holds(EndedTellRva, EndedTellSig, live, differs) || !Holds(EndedCallerRva, EndedCallerSig, live, differs))
+            return NotYet(ended, differs);
+        // Nothing in the function may jump into the bytes the hook's jump replaces.
+        const uintptr_t function = d2rsig::Addr(EndedRva);
+        std::vector<uint8_t> body(size_t(EndedEnd - EndedRva));
+        if (!function || !framevr::ReadMemory(body.data(), reinterpret_cast<const void*>(function), body.size())) return NotYet(ended, EndedRva);
+        if (gamepatch::BranchesInto(body.data(), body.size(), function, function + 1, function + EndedHookBytes - 1))
+            return Refuse(ended, "a jump in the game's function at RVA " + Hex(EndedRva) + " may land inside its first " +
+                                     std::to_string(EndedHookBytes) + " bytes");
+        if (!HookIn(EndedRva, EndedSig, EndedHookBytes, &EndedHook, &originalEnded))
+            return Refuse(ended, "the hook at RVA " + Hex(EndedRva) + " was refused");
+        endedHookIn = true;
+    }
+    endedOn.store(true);
+    ended.state = State::Applied;
+    Say("effect_listener_guard applied: the game's effect-ended listener is not called for an effect handle that holds no effect - where the "
+        "game's own code would write to address 0x20 (hook at RVA " + Hex(EndedRva) + "; 4 stretches of the game's code proven first). Every "
+        "other call is the game's own; a skipped one is counted here every 10 s");
+}
+
+void RemoveEnded() {
+    endedOn.store(false);
+    ended.state = State::Off;
+    Say("effect_listener_guard off: its hook stays in the game's code and passes every call through");
+}
+
+// What the once-per-pair ones did, and what the effect guard skipped, every ten seconds while any is on (draw thread, between frames).
 void Tally() {
     static ULONGLONG last = 0;
     const ULONGLONG now = GetTickCount64();
@@ -540,6 +608,18 @@ void Tally() {
                  "(%u outside the volume, %u with no volume from the first pass)", skipped, outside + none, outside, none);
         Say(text);
     }
+    if (endedOn.load(std::memory_order_relaxed)) {   // a line only when something was seen: most sessions never have one
+        const uint32_t skipped = endedSkipped.exchange(0), other = endedOther.exchange(0);
+        if (skipped || other) {
+            char text[400];
+            snprintf(text, sizeof text, "effect_listener_guard 10 s: %u effect-ended calls skipped for a handle that holds no effect (each one the "
+                     "game's crash writing address 0x20; %llu this session, the last handle %p, its ending effect %p); %u calls for a handle that "
+                     "holds another effect than the ending one (called as the game does)", skipped,
+                     static_cast<unsigned long long>(endedSkippedAll.load()), reinterpret_cast<void*>(endedLastHandle.load()),
+                     reinterpret_cast<void*>(endedLastEffect.load()), other);
+            Say(text);
+        }
+    }
 }
 
 // --- all of them ----------------------------------------------------------------------------------------------
@@ -551,6 +631,7 @@ const Entry entries[] = {
     {&selection, &ApplySelection, &RemoveSelection},
     {&shadows, &ApplyShadows, &RemoveShadows},
     {&cullOnce, &ApplyCull, &RemoveCull},
+    {&ended, &ApplyEnded, &RemoveEnded},
 };
 
 std::atomic<bool> dirty{false};       // the settings changed, or something still waits for the game's code
@@ -572,7 +653,7 @@ void SetLogger(void (*log)(const char*)) { g_log = log; }
 
 void Configure(const Wanted& wanted) {
     const bool want[] = {wanted.transparentFilter, wanted.profilerAccounting, wanted.drawDebugNames,
-                         wanted.selectionWalk, wanted.shadowsOnce, wanted.cullOnce};
+                         wanted.selectionWalk, wanted.shadowsOnce, wanted.cullOnce, wanted.effectListenerGuard};
     static_assert(std::size(want) == std::size(entries), "one wish per patch, in the entries' order");
     bool changed = false;
     for (size_t i = 0; i < std::size(entries); ++i)
@@ -595,7 +676,7 @@ void EyePass(Pass pass) {
 }
 
 void BetweenFrames(bool inWorld) {
-    if (shadowsOn.load(std::memory_order_relaxed) || cullOn.load(std::memory_order_relaxed)) Tally();
+    if (shadowsOn.load(std::memory_order_relaxed) || cullOn.load(std::memory_order_relaxed) || endedOn.load(std::memory_order_relaxed)) Tally();
     if (!dirty.load(std::memory_order_relaxed)) return;
     if (!configured.load()) return;
     // What waits for the game's code is looked for only in frames drawn in the world (code the world's draw runs may not be decrypted

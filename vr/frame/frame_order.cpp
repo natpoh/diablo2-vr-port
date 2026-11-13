@@ -50,8 +50,11 @@ bool PairOfOneFrame() { return g_pairNow.load() && !NativeByTurns(); }
 
 // Without the frame time held, the second pass would play the frame's
 // animation and particles a second time: the pair is drawn only with it.
+// [cinema] world_screen: no pair while one of the game's cinematics plays - the game draws no world, the movie goes on the big screen
+// as one picture (vr/unleashed_cinema_screen.h; CinemaPlaying is false with the key off).
 bool PairWanted() {
-    return g_h.blit && AfrOn() && (g_set.pairPerTick.load() || NativeByTurns()) && g_inWorld.load() && FrameTimeFound();
+    return g_h.blit && AfrOn() && (g_set.pairPerTick.load() || NativeByTurns()) && g_inWorld.load() && FrameTimeFound()
+        && !gamestate::CinemaPlaying();
 }
 
 void SetEye(int eye) {
@@ -292,6 +295,7 @@ uintptr_t HookDrawGameScreen(int a) {
     // [game_patches] (vr/unleashed_game_patches.h): the frame before is drawn, this one's first pass not begun - the only place a patch of
     // the game's render code goes in or out. Every pass below is Alone unless the pair's two game passes say otherwise.
     if (!depth) gamepatches::BetweenFrames(g_inWorld.load());
+    if (!depth) gamestate::CinemaWorldDrawn(GetTickCount64());   // [cinema] world_screen: no world is drawn while a cinematic plays - one drawn again ends it
     if (!depth && PairWanted() && NativeByTurns()) {
         ++depth;
         const uintptr_t r = DrawByTurns(a);
@@ -638,7 +642,7 @@ static DWORD UpdateThreadBody() {
         FlatMapZoomTick();    // [hud] flat_map_zoom
         if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
             static ULONGLONG nextScale = 0;
-            if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); }
+            if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); hud::SetControllerLayout(panelinput::ControllerLayoutNow()); }
         }
         // ... and our projection's shape: in F4 the game sizes the map's box and tiles by it, not by the picture's (vr/minimap_box.h Stretch;
         // a wide window with [openxr] runtime_fov's centred frustum: the box 0.66 of the picture wide, the map left in the picture at its top)
@@ -657,6 +661,7 @@ static DWORD UpdateThreadBody() {
             hud::SetPictureBarOffset(bx, by);
         }
         plateworld::SetOurs(MonsterNamesOwnNow());   // our own plate in force: the old plate's ways stand aside (vr/plate_world.h ours)
+        gamestate::CinemaTick(nowMs);   // [cinema] world_screen: a cinematic longer than any is over (the cap)
         fx::PlateWorldTick(nowMs);   // [hud] monster_bar_room
         fx::NoticeCardTick(nowMs);   // [hud] notice_card
         HandInventoryTick(nowMs);    // [openxr] hand_inventory
@@ -767,7 +772,8 @@ static DWORD UpdateThreadBody() {
             }
             // the interface is hidden in a game area, whatever the view, with no panel open;
             // the main menu and panels (inventory, trade...) keep all of it
-            hud::SetMenuOpen(gamestate::MenuOpen() || !g_inWorld.load());
+            // ([cinema] world_screen: a cinematic too - the movie is drawn in the interface, no strip or plate is cut out of it)
+            hud::SetMenuOpen(gamestate::MenuOpen() || !g_inWorld.load() || gamestate::CinemaPlaying());
             hud::SetPanelNoBar(g_set.npcDialogNoBar.load() && g_inWorld.load() && gamestate::NpcDialogOnly());
             // The mouse pointer in the headset: in menus, at a trader, from above and
             // from behind it is wanted (it aims there, or picks items); in first person

@@ -58,6 +58,7 @@
 #include "grip_pose.h"
 #include "table_rows.h"   // a value read from the game checked against the table it indexes (a hero rig's parents)
 #include "weapon_extents.h"   // melee by touch: the weapon model's unit in metres as drawn (PosedBlade::unitM)
+#include "shield_shape.h"   // [weight] shield_collide: the shield's face (vr/shield_parts.h) where the game draws it
 #include "grip_rig.h"
 #include "grab_bodies.h"   // [weight] grab_wrap: the palm laid on a held body without the grip library (LayPalm)
 #include "skeletons.h"
@@ -97,6 +98,7 @@
 #include "flat_weapon.h"     // [body] flat_weapon_adjust: flat F3, the arms with their weapons out of the middle of the view
 #include "corpse_watch.h"    // [weight] monster_ragdoll: a corpse is no doll
 #include "xbow_grip.h"   // [hands] xbow_grip_latch / xbow_grip_wide / xbow_support_model: the crossbow's left hand
+#include "finger_chain.h"   // [fist] from_knuckle: where a finger's curl starts on its chain
 #include "unleashed_head_look.h"   // [world] town_heads_look: the town's people turn their heads to you (MPL, from Unleashed)
 #include <array>
 
@@ -361,9 +363,11 @@ struct Hero {
     std::vector<std::string> boneNames;   // the skeleton's bone names, by index (for the log: which bones the string anchor is made of)
     // The fingers of each hand, for the fist: chains of bones from the wrist
     // out (a metacarpal first where the rig has one - it is not bent).
+    // firstBend: the chain's first bending bone by its name alone ("metacarpal" in it: 1); knuckle: by the rig's own count of bones too (vr/finger_chain.h: a
+    // four-bone finger starts with a bone inside the palm, whatever it is called) - the fist curls from there with [fist] from_knuckle.
     // kind: which finger this chain is by its first bone's name (bowhook::Kind: the Amazon's "R_ind_finger_01_bind_jnt" ...), -1 when the rig's
     // names do not say - the game's own draw pose (vr/bow_hook.h) is laid on the chains it can name.
-    struct Finger { std::vector<int> bones; int firstBend = 0; bool thumb = false; int kind = -1; };
+    struct Finger { std::vector<int> bones; int firstBend = 0; int knuckle = 0; bool thumb = false; int kind = -1; };
     std::vector<Finger> fingers[2];
     bool bindOk = false;
     int cls = -1;   // kHeroClasses, from the model's folder
@@ -984,6 +988,7 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
                 if (k.size() != 1) break;
                 b = k[0];
             }
+            f.knuckle = fingerchain::FirstBend((int)f.bones.size(), f.thumb, f.firstBend == 1, true);
             if ((int)f.bones.size() > f.firstBend + 1) h->fingers[side].push_back(f);
         }
     }
@@ -1643,6 +1648,7 @@ ArmBoxRead g_armBoxes;
 std::atomic<const char*> g_armWorldWhy{"not yet posed"};   // why the last pose could not put the arm in the world (HeroArmWhy); "" while it could
 
 SRWLOCK g_forearmLock = SRWLOCK_INIT;
+std::atomic<ArmPosedFn> g_armPosed{nullptr};   // [hud] wrist_game_models: told the arm as posed at last (SetArmPosed)
 ForearmOut g_forearm[2] = {};
 // [hands] spell_aim_model (CastPoseNow): each hand and the weapon's attach bone as the finished pose draws them, head frame, metres from the eye
 struct CastHandOut { float palm[3], fingers[3], face[3]; ULONGLONG at; };
@@ -1727,6 +1733,9 @@ V3 PalmInHandOf(const Hero& h, int side, const std::vector<Mat>& pose) {
 // space: x the hero's left, y up, z ahead; a vertical fist thumb up, the
 // right palm faces +x). Each finger bends about one axis, square to its first
 // segment and the palm, joint after joint from the knuckle out.
+// knuckle ([fist] from_knuckle): the curl starts at the finger's knuckle as the rig's own bones tell it (Hero::Finger::knuckle, vr/finger_chain.h) - on the
+// Amazon's, the Paladin's and the Druid's rig a finger's first bone lies inside the palm, and bending it folded the palm in half; off = at the chain's first
+// bone unless its name says "metacarpal" (as it was up to 0.215).
 constexpr float kFingerFistDeg[3] = {80.0f, 95.0f, 65.0f};   // knuckle, middle, tip
 constexpr float kThumbFistDeg[3] = {25.0f, 35.0f, 40.0f};
 
@@ -1734,7 +1743,7 @@ constexpr float kThumbFistDeg[3] = {25.0f, 35.0f, 40.0f};
 // whether a pose took.
 // thumb: how far the thumb follows the fingers (1 = the same; the string hand's hook leaves it loose).
 float Curl(const Hero& h, int side, const std::vector<Mat>& w);
-void Fist(const Hero& h, int side, float grip, float closed, float open, const std::vector<Mat>& oldW, std::vector<Mat>& newW, float thumb = 1.0f, float* curl = nullptr) {
+void Fist(const Hero& h, int side, float grip, float closed, float open, bool knuckle, const std::vector<Mat>& oldW, std::vector<Mat>& newW, float thumb = 1.0f, float* curl = nullptr) {
     const int k = h.hand[side], i = h.ind[side], m = h.mid[side], p = h.pnk[side];
     if (k < 0 || i < 0 || m < 0 || p < 0 || h.fingers[side].empty()) return;
     for (const Hero::Finger& f : h.fingers[side])
@@ -1747,11 +1756,12 @@ void Fist(const Hero& h, int side, float grip, float closed, float open, const s
     const float amount = open + (closed - open) * std::clamp(grip, 0.0f, 1.0f);   // [fist], per class
     for (const Hero::Finger& f : h.fingers[side]) {
         const int nb = (int)f.bones.size();
-        const V3 u = Norm(Sub(Pos(newW[f.bones[f.firstBend + 1]]), Pos(newW[f.bones[f.firstBend]])));
+        const int first = knuckle && f.knuckle + 1 < nb ? f.knuckle : f.firstBend;
+        const V3 u = Norm(Sub(Pos(newW[f.bones[first + 1]]), Pos(newW[f.bones[first]])));
         const V3 axis = Norm(Cross(u, palm));
         const V3 toPalm = Norm(Cross(axis, u));
         const float* deg = f.thumb ? kThumbFistDeg : kFingerFistDeg;
-        for (int j = f.firstBend, n = 0; j < nb && n < 3; ++j, ++n) {
+        for (int j = first, n = 0; j < nb && n < 3; ++j, ++n) {
             const float t = deg[n] * amount * (f.thumb ? thumb : 1.0f) * 0.0174532925f;
             const Mat R = RotBetween(u, Add(Scale(u, cosf(t)), Scale(toPalm, sinf(t))));
             const V3 P = Pos(newW[f.bones[j]]);
@@ -1939,7 +1949,7 @@ const char* LibBuildRig(const Hero& h, int side, const GripPoseKept& kept, const
     if (!have) {   // no game pose: the fist table's
         std::vector<Mat> tmp = now;
         const int cls = h.cls >= 0 ? h.cls : 3;
-        Fist(h, side, 1.0f, in.fistClose[cls], in.fistOpen[cls], now, tmp);
+        Fist(h, side, 1.0f, in.fistClose[cls], in.fistOpen[cls], in.fistKnuckle, now, tmp);
         if (!coordsOf(tmp)) return "a finger bone has no axes";
     }
     std::vector<griprig::Bone> bones;
@@ -1972,7 +1982,8 @@ const char* LibGripRun(const Hero& h, int side, const Input& in, const GripPoseK
     AcquireSRWLockExclusive(&g_libGripLock);
     LibGripHand& L = g_libGrip[side];
     const uint64_t key = ((uint64_t)h.skel * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(uint32_t)(in.weaponType + 7) << 40) ^ ((uint64_t)(side + 1) << 56) ^
-                         (kept.ok ? (((uint64_t)(kept.side + 3) << 16) ^ ((uint64_t)(uint32_t)kept.type << 24) ^ 0x1) : 0x55);
+                         (kept.ok ? (((uint64_t)(kept.side + 3) << 16) ^ ((uint64_t)(uint32_t)kept.type << 24) ^ 0x1) : 0x55) ^
+                         (in.fistKnuckle ? 1ull << 60 : 0);   // ([fist] from_knuckle flipped live: the rig's closed pose is the fist's)
     if (L.key != key) {   // another hero, hand, weapon, or the game's pose has come: the rig again, the grab afresh
         L.key = key;
         L.why = LibBuildRig(h, side, kept, in, now, upm, &L);
@@ -2043,7 +2054,7 @@ const char* LibGrabRun(const Hero& h, int side, const Input& in, const std::vect
     if (!step) return "no grip library (d2r_vr_grip.dll) - the palm is laid on, the fist closes";
     AcquireSRWLockExclusive(&g_libGripLock);
     LibGripHand& L = g_libGrab[side];
-    const uint64_t key = ((uint64_t)h.skel * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(side + 1) << 56) ^ 0x6772616275ull;
+    const uint64_t key = ((uint64_t)h.skel * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)(side + 1) << 56) ^ 0x6772616275ull ^ (in.fistKnuckle ? 1ull << 60 : 0);
     if (L.key != key) {
         L.key = key;
         L.why = LibBuildRig(h, side, GripPoseKept{}, in, now, upm, &L);
@@ -5943,7 +5954,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 const float squeeze = in.weight.haveRawGrip ? in.weight.rawGrip[side] : in.grip[side];
                 Fist(h, side, onWeapon ? ((in.weight.gripFit || wo.gripLib) ? gripfit::Close(squeeze) : 1.0f) : in.grip[side],
                      in.fistCap[side] >= 0.0f ? std::min(in.fistClose[h.cls >= 0 ? h.cls : 3], in.fistCap[side]) : in.fistClose[h.cls >= 0 ? h.cls : 3],
-                     in.fistOpen[h.cls >= 0 ? h.cls : 3], oldW, newW);
+                     in.fistOpen[h.cls >= 0 ? h.cls : 3], in.fistKnuckle, oldW, newW);
                 if (side == 1) leftFisted = true; else rightFisted = true;
             }
         }
@@ -6020,6 +6031,44 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 XbowNote(b);
             }
         }
+    }
+    // [weight] shield_collide (vr/shield_shape.h): the shield's face where the game draws it now - its mesh's capsules (vr/shield_parts.h) through the class's
+    // attachment fit and the shield bone as this pose leaves it (strapped, mirrored to the right forearm, shrunk when put away) - told to the weight model in the
+    // hands' frame, where the weapon in the other hand meets it. Nothing is drawn or changed here.
+    if (in.weight.shieldCollide && in.mode == 2 && !in.along) {   // (the hero's own rig only: one posed along with it tells nothing)
+        static_assert(shieldparts::kParts <= weight::kShieldParts, "the weight model takes every part of a shield");
+        const shieldparts::Shape* shape = shieldparts::Of(in.weight.shieldCode);
+        const int bone = h.shield >= 0 ? h.shield : h.weapon[1];
+        const int strap = g_shieldStrapped.load();
+        const int arm = strap == 3 ? 0 : 1;   // (the right forearm when strapped there, else the left: where the game draws it)
+        float parts[weight::kShieldParts][7];
+        int np = 0;
+        if (shape && bone >= 0 && bone < n && strap != 2 && !headHangs && (in.haveEye || h.head >= 0)) {
+            const V3 eye = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+            const float upm = std::clamp(eye.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre (as the weight block's)
+            shieldshape::Capsule cap[shieldparts::kParts];
+            np = shieldshape::InHands(*shape, h.cls, newW[bone].m, {eye.x, eye.y, eye.z}, upm, c, s, {in.handOffset[0], in.handOffset[1], in.handOffset[2]}, cap,
+                                      shieldparts::kParts);
+            for (int i = 0; i < np; ++i) {
+                const float p7[7] = {cap[i].a.x, cap[i].a.y, cap[i].a.z, cap[i].b.x, cap[i].b.y, cap[i].b.z, cap[i].r};
+                memcpy(parts[i], p7, sizeof p7);
+            }
+            static uint32_t toldCode = 0;
+            static int toldCls = -2;
+            if (np > 0 && (toldCode != in.weight.shieldCode || toldCls != h.cls)) {   // told once for each shield (and class): its size and where it hangs by the hand
+                toldCode = in.weight.shieldCode;
+                toldCls = h.cls;
+                const shieldshape::Size z = shieldshape::SizeOf(cap, np);
+                const shieldshape::V hand{in.hand[arm][0], in.hand[arm][1], in.hand[arm][2]};
+                char b[300];
+                snprintf(b, sizeof b, "shield_collide: the shield '%s' (%s, %s's fit%s) is drawn %.0f x %.0f cm, its face %d capsule(s) r %.1f - %.1f cm, its middle %.0f cm from the %s controller",
+                         std::string(reinterpret_cast<const char*>(&in.weight.shieldCode), 4).c_str(), shape->asset, h.cls >= 0 ? kHeroClasses[h.cls] : "?",
+                         h.cls >= 0 && h.cls < shieldparts::kClasses && shape->fit[h.cls].have ? "" : " - none, as the mesh is", z.longM * 100.0f, z.wideM * 100.0f, np,
+                         z.rMinM * 100.0f, z.rMaxM * 100.0f, shieldshape::Len(shieldshape::Sub(z.centre, hand)) * 100.0f, arm == 0 ? "right" : "left");
+                weight::Say(b);
+            }
+        }
+        weight::SetDrawnShield(np > 0 ? &parts[0][0] : nullptr, np, arm, in.weight.shieldCode);
     }
     // ... and the weapon's drawn bone set again where it was carried: a step since (a hand laid on a body it holds) may have moved the right wrist, which carries it
     if (carriedB >= 0) {
@@ -6124,7 +6173,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         if (const float g = shieldfist::Grip(want); g >= 0.0f)
             Fist(h, shieldSide, g,
                  in.fistCap[shieldSide] >= 0.0f ? std::min(in.fistClose[h.cls >= 0 ? h.cls : 3], in.fistCap[shieldSide]) : in.fistClose[h.cls >= 0 ? h.cls : 3],
-                 in.fistOpen[h.cls >= 0 ? h.cls : 3], oldW, newW);
+                 in.fistOpen[h.cls >= 0 ? h.cls : 3], in.fistKnuckle, oldW, newW);
     }
 
 #if D2RVR_FIRST_PERSON
@@ -6190,7 +6239,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             }
             const float hook = std::clamp(in.bowHook, 0.0f, 1.0f), open = in.fistOpen[h.cls >= 0 ? h.cls : 3];
             float curl = -1.0f;
-            Fist(h, side, used, hook, open, oldW, newW, bowhand::kThumbShare, &curl);
+            Fist(h, side, used, hook, open, in.fistKnuckle, oldW, newW, bowhand::kThumbShare, &curl);
             if (game && wDraw > 0.001f) {
                 const float e = wDraw * wDraw * (3.0f - 2.0f * wDraw);   // (eased at both ends: the fingers do not snap)
                 for (const Hero::Finger& f : h.fingers[side])
@@ -6453,7 +6502,18 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 f.worldOk = true;
                 f.worldAt = GetTickCount64();
             }
+            const bool tell = f.at && in.armWorldLate;
             ReleaseSRWLockExclusive(&g_forearmLock);
+            if (const ArmPosedFn posed = tell ? g_armPosed.load() : nullptr) {   // [hud] wrist_game_models: the medallions laid on the arm as drawn now
+                HeroArm a{};
+                a.elbow[0] = ew.x; a.elbow[1] = ew.y; a.elbow[2] = ew.z;
+                a.wrist[0] = ww.x; a.wrist[1] = ww.y; a.wrist[2] = ww.z;
+                a.across[0] = xw.x; a.across[1] = xw.y; a.across[2] = xw.z;
+                a.point[0] = pw.x; a.point[1] = pw.y; a.point[2] = pw.z;
+                a.face[0] = fw.x; a.face[1] = fw.y; a.face[2] = fw.z;
+                a.hand = handW;
+                posed(side, a);
+            }
         }
     }
     {   // [multiplayer] pose_share (formats 5, 6): the bones the others hang our hero's weapon and hands on - both attach bones, both hands and elbows, the head bone -
@@ -9213,7 +9273,7 @@ bool PoseRemoteHero(uintptr_t self, const Hero& h, const Input& base) {
     if (r.grips) {   // [format 5] the fingers closed as hard as his hands grip (the class's own open and closed fists)
         const int cls = h.cls >= 0 ? h.cls : 3;
         for (int side = 0; side < 2; ++side)
-            if (r.flags & (side ? poseshare::kLeft : poseshare::kRight)) Fist(h, side, r.grip[side], in.fistClose[cls], in.fistOpen[cls], oldW, newW);
+            if (r.flags & (side ? poseshare::kLeft : poseshare::kRight)) Fist(h, side, r.grip[side], in.fistClose[cls], in.fistOpen[cls], in.fistKnuckle, oldW, newW);
     }
     for (int i = 0; i < n; ++i)   // a bone that is not a number keeps the game's own pose (as PoseBody)
         for (int j = 0; j < 16; ++j)
@@ -9767,6 +9827,7 @@ bool HeroPalmModel(int side, float palm[3]) {
     memcpy(palm, f.palmModel, sizeof f.palmModel);
     return true;
 }
+void SetArmPosed(ArmPosedFn fn) { g_armPosed.store(fn); }
 bool HeroArmWorld(int side, HeroArm* out, unsigned maxAgeMs, unsigned* ageMs) {
     AcquireSRWLockShared(&g_forearmLock);
     const auto f = g_forearm[side & 1];

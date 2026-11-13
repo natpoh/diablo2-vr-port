@@ -15,6 +15,7 @@ var
   IniTakeNew: Boolean;   // decided on the Ready page, done after the files are in
   IniChanged: Boolean;   // the player's file differs from the defaults the last Setup put in (or they cannot be compared)
   IniOldDeathRagdoll: String;   // [weight] death_ragdoll in the defaults the last Setup put in ('<none>': not there / no defaults)
+  IniWasThere: Boolean;  // a d2r_vr.ini was there before this Setup (an update): the one-time moves of the author's settings only then
 
 // A value as vrcam reads it: up to an inline ';' comment, trimmed.
 function IniValue(S: String): String;
@@ -252,6 +253,7 @@ begin
   IniOldDeathRagdoll := '<none>';
   Ini := ModPlugins(Dir) + 'd2r_vr.ini';
   Def := ModPlugins(Dir) + 'd2r_vr.default.ini';
+  IniWasThere := FileExists(Ini);
   if not FileExists(Ini) then Exit;   // first install: the defaults go in as they are
   if FileExists(Def) then IniOldDeathRagdoll := IniValue(GetIniString('weight', 'death_ragdoll', '<none>', Def));   // (before the new defaults overwrite it)
   Changed := True;                     // no defaults from an earlier Setup: cannot tell
@@ -293,6 +295,80 @@ begin
       mbConfirmation, MB_YESNO, IDYES) = IDNO;
 end;
 
+// Kept settings from before Weapon against the walls (Serg 2026-11-13: one choice Off / Ours / Bear's, [weight] wall_contact_mode, instead of the
+// world_contact tick): an ini without wall_contact_mode that has world_contact=1 gets wall_contact_mode=1 (Ours) - before the new keys go in, which
+// would add it as 0 and leave the tick unread. No mark: once the key is there this does nothing.
+procedure MoveToWallContactMode(Ini: String);
+begin
+  if GetIniString('weight', 'wall_contact_mode', '<none>', Ini) <> '<none>' then Exit;
+  if IniValue(GetIniString('weight', 'world_contact', '<none>', Ini)) = '1' then
+  begin
+    SetIniString('weight', 'wall_contact_mode', '1', Ini);
+    Log('d2r_vr.ini: [weight] world_contact=1 from an older version - Weapon against the walls: Ours (wall_contact_mode=1)');
+  end;
+end;
+
+// Kept settings from before 0.216 (Serg 2026-11-13, after the ini review releases/analysis/ini_diff_0216.md: "players get his settings"): the 40
+// values he plays with become every player's once - a kept (tuned) d2r_vr.ini gets each of them at the first update that has this (its mark
+// [support] serg_settings_0216, one of the shipped defaults, comes in with the other new keys right after this - missing = not done yet). Only
+// these keys: the personal sections, the places (map_big_*, panel_grab_*), the sky radius, the window and render sizes, sun_shadows and
+// hand_inventory_front are never touched. A value changed again after that stays.
+procedure MoveKey0216(Sec, Key, Val, Ini: String);
+var
+  Was: String;
+begin
+  Was := GetIniString(Sec, Key, '<none>', Ini);
+  if IniValue(Was) = Val then Exit;
+  SetIniString(Sec, Key, Val, Ini);
+  Log('d2r_vr.ini: [' + Sec + '] ' + Key + '=' + Was + ' -> ' + Val + ' (0.216: the settings the author plays with, once)');
+end;
+
+procedure MoveToSergSettings0216(Ini: String);
+begin
+  if not IniWasThere then Exit;   // a first install: the shipped defaults are these already
+  if GetIniString('support', 'serg_settings_0216', '<none>', Ini) <> '<none>' then Exit;
+  MoveKey0216('hud', 'swing_timer', '0', Ini);
+  MoveKey0216('hud', 'map_click_big', '0', Ini);
+  MoveKey0216('hud', 'map_stick_zoom', '0', Ini);
+  MoveKey0216('hud', 'labels_own', '1', Ini);
+  MoveKey0216('hud', 'npc_names_own', '1', Ini);
+  MoveKey0216('hud', 'own_labels_drop_game', '1', Ini);
+  MoveKey0216('hud', 'wrist_game_glow', '25', Ini);
+  MoveKey0216('hud', 'wrist_game_glass', '0.1', Ini);
+  MoveKey0216('hud', 'wrist_globe_in', '-0.06', Ini);
+  MoveKey0216('hud', 'wrist_globe_scale', '1.46', Ini);
+  MoveKey0216('render', 'ui_band_corner_icons', '1', Ini);
+  MoveKey0216('render', 'shadows_once_a_pair', '1', Ini);
+  MoveKey0216('render', 'foveated_strength', '3', Ini);
+  MoveKey0216('render', 'monitor_eye_fit', '0', Ini);
+  MoveKey0216('render', 'phantom_rects', '1', Ini);
+  MoveKey0216('render', 'preset_game_options', '1', Ini);
+  MoveKey0216('render', 'game_depth_fog', '1', Ini);
+  MoveKey0216('render', 'game_fog_scan_safe', '0', Ini);
+  MoveKey0216('table', 'full_width', '1', Ini);
+  MoveKey0216('body', 'leap_camera_up_pct', '30', Ini);
+  MoveKey0216('weight', 'leap_landing_scatter', '1', Ini);
+  MoveKey0216('gameplay', 'leap_air_aim', '1', Ini);
+  MoveKey0216('gameplay', 'move_during_skills', '1', Ini);
+  MoveKey0216('gameplay', 'quick_blow_faster', '1', Ini);
+  MoveKey0216('gameplay', 'flat_move_while_attacking', '2', Ini);
+  MoveKey0216('gameplay', 'flat_attack_path', '1', Ini);
+  MoveKey0216('gameplay', 'melee_touch_thrown', '0', Ini);
+  MoveKey0216('hands', 'shoulder_draw_shield_stow', '1', Ini);
+  MoveKey0216('ceiling', 'height_act1_barracks', '14.3', Ini);
+  MoveKey0216('ceiling', 'relief_act1_barracks', '1', Ini);
+  MoveKey0216('ceiling', 'height_act1_catacombs', '14.8', Ini);
+  MoveKey0216('ceiling', 'relief_act1_catacombs', '1', Ini);
+  MoveKey0216('autotune', 'enabled', '1', Ini);
+  MoveKey0216('fog', 'game_fog_top_from_floor', '1', Ini);
+  MoveKey0216('fog', 'caves', '0', Ini);
+  MoveKey0216('fog', 'ease_in', '1', Ini);
+  MoveKey0216('fog', 'game_fog_act1_dusk', '#050505', Ini);
+  MoveKey0216('stereo', 'replay_fresh_slots', '1', Ini);
+  MoveKey0216('mods', 'merge_data_mods', '0', Ini);
+  MoveKey0216('fist', 'from_knuckle', '1', Ini);   // (new in 0.216: only a test build's 0 moves)
+end;
+
 procedure ApplyIni(Dir: String);
 var
   Ini, Def: String;
@@ -319,6 +395,8 @@ begin
     MoveToRoomStitch(Ini);  // (the same: its mark [support] room_stitch_on_0209 is one of them)
     MoveToFogBeforeFx(Ini); // (the same: its mark [support] fog_before_fx_0209 is one of them)
     MoveToTwoPasses(Ini);   // (the same: its mark [support] two_passes_0214 is one of them)
+    MoveToWallContactMode(Ini);   // (the same: wall_contact_mode itself is one of them)
+    MoveToSergSettings0216(Ini);  // (the same: its mark [support] serg_settings_0216 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

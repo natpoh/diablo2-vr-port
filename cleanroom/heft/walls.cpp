@@ -262,6 +262,15 @@ bool Resolve(State& st, const State* before, const Body& b, const contact::Blade
 			e.prefer = HeldFace(w, bs);
 			if (e.prefer >= 0) e.faces |= 1 << e.prefer;
 		}
+		if (w.open != 0x3F) {   // [weight] wall_contact_mode 2 (Bear's): only the sides no other cell of the wall stands against
+			const int was = e.faces;
+			e.faces &= w.open;
+			if (e.prefer >= 0 && !(w.open >> e.prefer & 1)) e.prefer = -1;
+			if (was && !e.faces) {   // it came at this cell through a neighbour of the same wall: that one holds it out
+				e.off = true;
+				continue;
+			}
+		}
 		if (!e.faces) {   // no face it came in by: inside since the wall was first given - alone until clear
 			if (in) {
 				e.side->ignore = true;
@@ -416,6 +425,15 @@ V3 Block(V3 a, V3 b, double r, const V3* wasA, const V3* wasB, const Wall* walls
 		if (const BodySide* bs = mem.Body(BodyOf(w), false); bs && mem.tick - bs->seen <= (uint32_t)std::max(0, p.holdSteps)) {   // its body's face held
 			e.prefer = HeldFace(w, bs);
 			if (e.prefer >= 0) e.faces |= 1 << e.prefer;
+		}
+		if (w.open != 0x3F) {   // [weight] wall_contact_mode 2 (Bear's)'s cells: only the open sides (as Resolve)
+			const int was = e.faces;
+			e.faces &= w.open;
+			if (e.prefer >= 0 && !(w.open >> e.prefer & 1)) e.prefer = -1;
+			if (was && !e.faces) {
+				e.off = true;
+				continue;
+			}
 		}
 		if (!e.faces && Overlaps(la, lb, r, w.half)) {
 			e.side->ignore = true;

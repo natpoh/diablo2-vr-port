@@ -202,6 +202,13 @@ typedef int32_t (*D2rpSetHandsFn)(void* world, const D2rpHand* hands, int32_t n)
 /* (optional) A hand after the steps since the last call for it (its events and pulse are read out). 1, or 0 when that hand has no body (not tracked). */
 typedef int32_t (*D2rpHandAtFn)(void* world, int32_t hand, D2rpHandOut* out);
 
+/* ---- A prop's own mass ([weight] prop_heft) - an OPTIONAL export: a library without D2rpSetPropMass weighs every prop by its material (the ABI stays 1) ----
+ * By default a prop weighs its material's density (D2RP_MAT_*) times its shape's volume, times D2rpParams.propMass. This gives one prop a mass of its own: kg, absolute
+ * (propMass does not scale it), held to 0.01 .. 1000. Its shape's density is made what weighs that, so its inertia follows its shape as before; a moving prop's body takes it at
+ * once, a frozen one when it is set going, one in a hand when it is let go. Call it after D2rpSetProps listed the id; it holds while the prop is in the world (one that leaves and
+ * is added again weighs its material until it is told again). 1 set, 0 no such prop, < 0 an error (no world, kg not a positive number). */
+typedef int32_t (*D2rpSetPropMassFn)(void* world, uint32_t id, float kg);
+
 D2RP_API int32_t D2rpAbi(void);
 D2RP_API void* D2rpCreate(const D2rpParams* params);
 D2RP_API void D2rpDestroy(void* world);
@@ -215,6 +222,7 @@ D2RP_API int32_t D2rpKnocks(void* world, D2rpKnock* out, int32_t max);
 D2RP_API int32_t D2rpMoverAt(void* world, int32_t slot, D2rpMoverOut* out);
 D2RP_API int32_t D2rpSetHands(void* world, const D2rpHand* hands, int32_t n);
 D2RP_API int32_t D2rpHandAt(void* world, int32_t hand, D2rpHandOut* out);
+D2RP_API int32_t D2rpSetPropMass(void* world, uint32_t id, float kg);
 
 #ifdef __cplusplus
 }

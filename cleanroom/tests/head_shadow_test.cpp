@@ -156,6 +156,11 @@ void TestDecide() {
     EXPECT(Decide(g) == Why::EyesOnly, "all there: the head in the pose, shrunk for the eyes");
     Gate t = g; t.wanted = false; EXPECT(Decide(t) == Why::Off, "unticked: as before");
     t = g; t.f4 = false; EXPECT(Decide(t) == Why::NotF4, "not F4: as before");
+    // [arms] head_shadow_flat: a flat first-person view (the pose hides the head there too) - wanted is that key's there
+    t = g; t.f4 = false; t.flat = true; EXPECT(Decide(t) == Why::EyesOnly, "a flat first-person view with head_shadow_flat: the head in the pose, shrunk for the view");
+    t = g; t.f4 = false; t.flat = true; t.wanted = false; EXPECT(Decide(t) == Why::Off, "a flat first-person view with head_shadow_flat=0: as before");
+    t = g; t.f4 = false; t.flat = true; t.xformIn = false; EXPECT(Decide(t) == Why::NoXform, "flat, no world-matrix hook (a helm would show): as before");
+    t = g; t.f4 = false; t.flat = true; t.eyesSeenAt = 0; EXPECT(Decide(t) == Why::NotSeenYet, "flat, the view's copy not seen taken yet: shrunk in the pose meanwhile");
     t = g; t.faulted = true; EXPECT(Decide(t) == Why::Faulted, "a fault: as before");
     t = g; t.hooksIn = false; EXPECT(Decide(t) == Why::NoHooks, "no hooks: as before");
     t = g; t.xformIn = false; EXPECT(Decide(t) == Why::NoXform, "no world-matrix hook (a helm would show): as before");

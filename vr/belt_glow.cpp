@@ -52,6 +52,12 @@ std::atomic<int> g_propCount{0};
 std::atomic<float> g_propH{0.0f};
 std::atomic<bool> g_propsWanted{false};
 std::atomic<unsigned> g_propWritten{0};
+// [hud] wrist_game_models: the medallions' liquid entities and their highlights, written by the hook too
+std::atomic<uint32_t> g_orbEnt[kMaxOrbs] = {};
+std::atomic<float> g_orbH[kMaxOrbs] = {};
+std::atomic<int> g_orbCount{0};
+std::atomic<bool> g_orbsWanted{false};
+std::atomic<unsigned> g_orbWritten{0};
 // the log's counts
 std::atomic<unsigned> g_hookRuns{0}, g_hookWritten{0};
 unsigned g_frames = 0, g_seenOurs = 0, g_seenZero = 0, g_seenOther = 0, g_noHighlight = 0, g_opacityWritten = 0, g_noOpacity = 0;   // the registry thread's
@@ -113,6 +119,18 @@ uintptr_t HookUpdate(void* layer, void* a, void* b, void* c) {
             return r;
         }
         g_propWritten.fetch_add((unsigned)w, std::memory_order_relaxed);
+    }
+    const int no = std::min(g_orbCount.load(std::memory_order_acquire), kMaxOrbs);
+    if (no > 0) {   // [hud] wrist_game_models: the medallions' pulse
+        uint32_t oe[kMaxOrbs];
+        float oh[kMaxOrbs];
+        for (int i = 0; i < no; ++i) { oe[i] = g_orbEnt[i].load(std::memory_order_relaxed); oh[i] = g_orbH[i].load(std::memory_order_relaxed); }
+        const int w = WriteHighlights(oe, oh, no);
+        if (w < 0) {
+            if (!g_faulted.exchange(true)) Log("belt glow: a fault writing the wrist medallions' highlight - off for this session");
+            return r;
+        }
+        g_orbWritten.fetch_add((unsigned)w, std::memory_order_relaxed);
     }
     const int n = std::min(g_count.load(std::memory_order_acquire), kMax);
     if (n <= 0) return r;
@@ -188,7 +206,7 @@ bool Wanted() { return g_on.load() && !g_faulted.load() && g_hook.load() == 1; }
 void SetTrace(bool on) { g_trace.store(on); }
 
 void Install() {
-    if (g_hook.load() != 0 || !(g_on.load() || (g_emptyOn.load() && g_dark.load() != 0.0f) || g_propsWanted.load())) return;
+    if (g_hook.load() != 0 || !(g_on.load() || (g_emptyOn.load() && g_dark.load() != 0.0f) || g_propsWanted.load() || g_orbsWanted.load())) return;
     const bool ok = d2rsig::Addr(RVA_UPDATE_HIGHLIGHT) && Storages() &&
                     d2rsig::Hook(RVA_UPDATE_HIGHLIGHT, kSigUpdate, sizeof kSigUpdate, reinterpret_cast<void*>(&HookUpdate), reinterpret_cast<void**>(&g_orig));
     g_hook.store(ok ? 1 : -1);
@@ -209,6 +227,70 @@ void SetProps(const uint32_t* entities, int n, float h) {
         toldAt = now;
         LogF("belt glow: knock props glow - %d props lit at h %.2f; the hook %s, %u highlight values written after the game's reset in the last ten seconds (0: the props' entities have "
              "no highlight component)", n, g_propH.load(), g_hook.load() == 1 ? "in" : g_hook.load() < 0 ? "FAILED" : "not in yet", g_propWritten.exchange(0));
+    }
+}
+
+void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n) {
+    n = std::clamp(n, 0, kMaxOrbs);
+    bool any = false;
+    for (int i = 0; i < n; ++i) any = any || highlights[i] != 0.0f;
+    if (any && !g_orbsWanted.exchange(true)) Log("belt glow: the wrist medallions' pulse asked ([hud] wrist_game_models) - the hook on the game's highlight goes in for it");
+    g_orbCount.store(0, std::memory_order_release);
+    for (int i = 0; i < n; ++i) {
+        g_orbEnt[i].store(entities[i], std::memory_order_relaxed);
+        g_orbH[i].store(g_hook.load() == 1 ? highlights[i] : 0.0f, std::memory_order_relaxed);
+    }
+    g_orbCount.store(g_faulted.load() ? 0 : n, std::memory_order_release);
+    if (!n || g_faulted.load() || !Storages()) return;
+    // what the liquid's entities carry now, read back before ours is written (the game's per-tick reset leaves 0 between, so the hook's last write shows here)
+    static unsigned rbOurs = 0, rbZero = 0, rbOther = 0, rbMissing = 0;
+    static float rbOtherValue = 0.0f, rbWant = 0.0f;
+    {
+        const uintptr_t hs = reinterpret_cast<StorageFn>(d2rsig::Addr(RVA_HIGHLIGHT_STORAGE))(d2rsig::Addr(RVA_ECS_REGISTRY));
+        for (int i = 0; i < n; ++i) {
+            if (highlights[i] == 0.0f) continue;
+            uintptr_t el = 0;
+            float was = 0.0f;
+            if (!hs || !potionhide::StorageElement(&ReadAt, hs, entities[i], kHighlightSize, &el) || !ReadAt(el, &was, sizeof was)) { ++rbMissing; continue; }
+            rbWant = highlights[i];
+            if (std::fabs(was - highlights[i]) < 0.02f) ++rbOurs;
+            else if (was == 0.0f) ++rbZero;
+            else { ++rbOther; rbOtherValue = was; }
+        }
+    }
+    // and now, on the registry's own thread (0 too: a pulse that ended is taken away at once)
+    Entry e[kMaxOrbs];
+    for (int i = 0; i < n; ++i) e[i] = Entry{entities[i], highlights[i], opacities ? opacities[i] : -1.0f, true};
+    const unsigned opWas = g_opacityWritten, noOpWas = g_noOpacity;
+    if (WriteNow(e, n) < 0) {
+        if (!g_faulted.exchange(true)) Log("belt glow: a fault writing the wrist medallions' highlight - off for this session");
+        return;
+    }
+    static unsigned opWritten = 0, opMissing = 0;
+    opWritten += g_opacityWritten - opWas;
+    opMissing += g_noOpacity - noOpWas;
+    g_opacityWritten = opWas;   // (the belt's own counts stay the belt's)
+    g_noOpacity = noOpWas;
+    static ULONGLONG opToldAt = 0;
+    const ULONGLONG now = GetTickCount64();
+    if ((opWritten || opMissing) && now - opToldAt >= 30000) {   // the glass's see-through: does its entity have the game's transparency component
+        opToldAt = now;
+        float op = -1.0f;
+        for (int i = 0; i < n; ++i) if (opacities && opacities[i] >= 0.0f) op = opacities[i];
+        LogF("belt glow: wrist medallions' glass - opacity %.2f written %u times in 30 s, %u times its entity had no transparency component (then it stays solid)",
+             op, opWritten, opMissing);
+        opWritten = opMissing = 0;
+    }
+    static ULONGLONG toldAt = 0;
+    if (any && now - toldAt >= 10000) {
+        toldAt = now;
+        float top = 0.0f;
+        for (int i = 0; i < n; ++i) top = std::max(top, highlights[i]);
+        LogF("belt glow: wrist medallions' liquid - highlight h up to %.2f (the glow at rest + the beat: colour x %.2f) on %d entities; read back at the frame's "
+             "start: ours %u, 0 %u (the game's reset after our last write), another value %u (last %.2f), no highlight component %u (last asked h %.2f); the hook "
+             "%s, %u values written after the game's reset in the last ten seconds", top, 1.0f + top, n, rbOurs, rbZero, rbOther, rbOtherValue, rbMissing, rbWant,
+             g_hook.load() == 1 ? "in" : g_hook.load() < 0 ? "FAILED" : "not in yet", g_orbWritten.exchange(0));
+        rbOurs = rbZero = rbOther = rbMissing = 0;
     }
 }
 

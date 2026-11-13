@@ -600,8 +600,19 @@ uintptr_t g_slotSelectRet = 0, g_slotSetRet = 0;
 std::atomic<int> g_slotSkillHook{0};   // 0 not in yet, 1 in, 2 not possible
 
 int SlotSkillFor(int slot, uintptr_t ret, int* boundOut) {
-    const int bound = OrigSlotSkill(slot);
-    *boundOut = bound;
+    int bound = OrigSlotSkill(slot);
+    *boundOut = bound;   // (the press trace shows the game's own binding: -1 -> 0 when the fallback below answered)
+    // [gameplay] melee_touch_empty_attack (vr/touch_empty_slot.h): the touch's press with nothing on the attack slot (the game left A empty after a skill point:
+    // a player's touches cast nothing, no damage) - the cast's two reads answer the plain Attack, and everything below treats the slot as one that holds it
+    // (the armed melee skill, a thrown weapon's Throw). Only while the touch's own press is young (F4); any other read, slot or press as the game has it.
+    if (slot == 0 && (ret == g_slotSelectRet || ret == g_slotSetRet)) {
+        const int was = bound;
+        bound = touchemptyslot::Answer(bound, slot, true, g_set.meleeTouch.load() && g_set.touchEmptyAttack.load(), bound < 0 && meleetouch::TargetPending());
+        static touchemptyslot::Teller teller;   // (the game's thread only: the hook runs there)
+        if (teller.Read(was, bound != was))
+            LogF("melee touch: the attack slot (A) holds no skill (%d) - the touch's press is read by the game as its plain Attack ([gameplay] melee_touch_empty_attack; "
+                 "put a skill or Attack on A in the game's skill menu to choose another)", was);
+    }
     if (bound != 0) {   // (the common case first: any other binding is the game's)
         // a bow skill on the attack's slot with no bow or crossbow in hand: the old bow quiver (to 0.174) loaded its arrow skills there and the game
         // keeps that slot in the save - every attack, the touch's included, went to the game as that bow skill, which it refuses for a melee weapon
@@ -701,7 +712,7 @@ bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHo
 
 void InstallSlotSkillHook() {
     if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::WantsHook() || meleearm::On() ||
-                                                    g_set.bowDrawArrow.load())) return;
+                                                    g_set.bowDrawArrow.load() || (g_set.meleeTouch.load() && g_set.touchEmptyAttack.load()))) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);

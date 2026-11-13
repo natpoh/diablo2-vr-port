@@ -119,6 +119,11 @@ struct Config {
     float orbPatina = 0.55f;      // [hud] hand_vitals_orb_patina (percent): how aged the base's metal is, 0 clean - 1 heavy verdigris
     int orbMetal = 0;             // [hud] hand_vitals_orb_metal: the base's metal, 0 gold, 1 bronze, 2 silver
     int orbDiscFaces = 1;         // [hud] hand_vitals_orb_disc: the game's own globes' disc (full ball shape): 0 turns to the eyes, 1 fixed on the wrist
+    // [hud] wrist_game_models (the glass-ball look only, VR F4): the medallions drawn by the GAME from its own models and materials (vr/wrist_models.h,
+    // shared/wrist_orb_models.h) instead of our effect's ray-cast; the same place, level and heartbeat. Off: our effect's, as before.
+    bool gameModels = false;
+    float gamePulse = 1.0f;       // [hud] wrist_game_pulse: the liquid's highlight at the heartbeat's top (the game's hover value: colour x (1 + h)); 0 = no pulse
+    float gameGlass = 0.25f;      // [hud] wrist_game_glass: the glass dome's opacity (the game's per-entity opacity); 0 = no glass
 };
 constexpr int kStyleOrbs = 0, kStylePanel = 1, kStyleGlobes = 2;
 // The fill directions: the liquid fills along a direction of the wrist's frame (the hand's axis toward the knuckles, across it toward the thumb, out of the back of the hand) - the

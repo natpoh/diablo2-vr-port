@@ -25,6 +25,7 @@ namespace vrc {
 
 FILETIME g_iniTime{};
 static bool g_toldLefty = false;   // [hands] left_handed told once at the start, then on each change
+static bool g_toldTouchEmpty = false;   // [gameplay] melee_touch_empty_attack told once at the start, then on each change
 
 void LoadSettings() {
     campfire::Load();   // [campfire] character creation in 3D (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed)
@@ -124,6 +125,9 @@ void LoadSettings() {
     owneffects::Configure(IniB(L"render", L"dim_own_effects", false), IniF(L"render", L"dim_own_effects_pct", 30.0f), IniF(L"render", L"dim_own_auras_pct", 50.0f));   // the hero's own effects fainter (vr/own_effects.h), F4 only
     owneffects::ConfigureSpeed(IniB(L"render", L"slow_own_effects", false), IniF(L"render", L"own_effects_speed_pct", 20.0f));   // Bone Armor (the solid effects) turning slower, F4 only
     owneffects::ConfigureHeight(IniB(L"render", L"lower_own_effects", false), IniF(L"render", L"own_effects_height_cm", 0.0f));   // Bone Armor (the solid effects) drawn lower, F4 only
+    // [cinema] world_screen (vr/unleashed_cinema_screen.h, MPL 2.0 from D2R VR Unleashed): the game's cinematics on a big screen standing in the world,
+    // native OpenXR, every view; its place and size: xr.cpp ([cinema] distance_m, width_m). Live. 0: as before.
+    gamestate::SetCinemaEnabled(IniB(L"cinema", L"world_screen", true));
     // [belt] refill_key (Settings > Hands > Belt refill; vr/belt_refill.h): the inventory open, a tap of the button = the game's Shift + click at the pointer,
     // a hold = the game's own belt fill; every view. Live.
     beltrefill::Configure(IniB(L"belt", L"refill_key", false), (int)IniF(L"belt", L"refill_button", 3.0f), (int)IniF(L"belt", L"refill_keyboard", 5.0f),
@@ -183,7 +187,7 @@ void LoadSettings() {
     {   // [hud] hand_vitals (vr/hand_vitals.h): life and mana on the hand when the palm turns to the face, VR F4 on native OpenXR only
         handvitals::Config hv;
         // The toolbar's placement list has a fifth entry, "Wrists" ([hud] bar_place = 5): life on the left wrist, mana on the right, drawn by the plugin
-        // (FlatVR is given "not shown", below). Its look is [hud] wrist_look (0 the glass orbs, 1 the game's own globes). The older keys (hand_vitals, hand_vitals_style)
+        // (FlatVR is given "not shown", below). Its look is [hud] wrist_look (0 the glass orbs, 1 the game's own globes, 2 the glass orbs by the game's own models). The older keys (hand_vitals, hand_vitals_style)
         // still work without it.
         const bool wrists = (int)IniF(L"hud", L"bar_place", 5.0f) == 5;
         hv.on = (wrists || IniB(L"hud", L"hand_vitals", false)) && !g_benchBare.load();   // ([render] bench_bare: none)
@@ -196,7 +200,8 @@ void LoadSettings() {
         hv.pulseEq = IniB(L"hud", L"hand_vitals_pulse_eq", false);   // the balls beat with the low life / low mana vignettes (their equalizers); off = as before
         hv.lowFrac = IniF(L"hud", L"low_hp_threshold", 30.0f) * 0.01f;   // the low-life vignette's threshold: under it the pulse starts
         hv.flip = IniB(L"debug", L"hand_vitals_flip", false);
-        hv.style = wrists ? (IniF(L"hud", L"wrist_look", 0.0f) >= 0.5f ? handvitals::kStyleGlobes : handvitals::kStyleOrbs)
+        const int wristLook = (int)std::lround(IniF(L"hud", L"wrist_look", 0.0f));   // 0 the mod's glass balls, 1 the game's globes, 2 the glass balls by the game's own models
+        hv.style = wrists ? (wristLook == 1 ? handvitals::kStyleGlobes : handvitals::kStyleOrbs)
                           : (int)IniF(L"hud", L"hand_vitals_style", 0.0f);   // 0 the glass orbs on the wrists, 1 the palm panel, 2 the game's own globes
         hv.orbHands = (int)IniF(L"hud", L"hand_vitals_orb_hands", 0.0f);
         {   // the way the liquid fills: hand_vitals_orb_fill 0 - 5 (a fixed direction of the wrist's frame, the default out of the hand); the older hand_vitals_orb_liquid 0 / 1 is 0 / 5
@@ -208,6 +213,12 @@ void LoadSettings() {
         hv.orbMetal = (int)IniF(L"hud", L"hand_vitals_orb_metal", 0.0f);               // 0 gold, 1 bronze, 2 silver
         hv.orbDiscFaces = (int)IniF(L"hud", L"hand_vitals_orb_disc", 1.0f);            // the game's globe's disc as a ball: 1 fixed on the wrist, 0 turns to the eyes
         hv.orbSizeCm = IniF(L"hud", L"hand_vitals_orb_size_cm", 5.0f);
+        hv.gameModels = wristLook == 2 || (wristLook == 0 && IniB(L"hud", L"wrist_game_models", false));   // the medallions by the game's own models (VR F4): the Look's
+                                                                                                            // 2, or the older tick with 0 (an ini Settings has not moved yet)
+        hv.gamePulse = std::clamp(IniF(L"hud", L"wrist_game_pulse", 1.0f), 0.0f, 3.0f);  // their liquid's highlight at the low-life heartbeat's top
+        hv.gameGlass = std::clamp(IniF(L"hud", L"wrist_game_glass", 0.1f), 0.0f, 1.0f); // their glass dome's opacity (0: no glass)
+        g_set.wristGameModels.store(hv.on && hv.style == handvitals::kStyleOrbs && hv.gameModels);   // (engitem: its hook wanted)
+        g_set.wristGameGlow.store(IniF(L"hud", L"wrist_game_glow", 25.0f));                             // (engitem: a change loads the liquids again)
         // The ball's place on each wrist, in the wrist's own frame (cm): along the arm, across (+ toward the thumb), up out of the back of the hand. The older single
         // hand_vitals_orb_up_cm / _along_cm are what a wrist starts from while its own key is not in the ini.
         const float oldUp = IniF(L"hud", L"hand_vitals_orb_up_cm", 4.0f), oldAlong = IniF(L"hud", L"hand_vitals_orb_along_cm", 3.0f);
@@ -290,6 +301,9 @@ void LoadSettings() {
     g_set.hudMap.store(std::clamp((int)IniF(L"hud", L"map", 0.0f), 0, 1));
     hud::SetMapMode(g_set.hudMap.load());
     hud::SetInterfaceScale(GameInterfaceScale());
+    hud::SetGlobeNudge(std::clamp(IniF(L"hud", L"wrist_globe_in", -0.06f), -5.0f, 5.0f), std::clamp(IniF(L"hud", L"wrist_globe_dy", 0.0f), -3.0f, 3.0f),
+                       std::clamp(IniF(L"hud", L"wrist_globe_scale", 1.46f), 0.5f, 2.0f));   // the game's own globes' cut: a fallback nudge (0 0 1 = none; the old
+                                                                                            // wrist_globe_dx moved both one way - not read)
     // [hud] hide = 1 takes the toolbar's strip out of the game's interface layer: that strip is worked out from the layer's size and Safe Screen Percent and fits the game's art only as
     // far as the 1920 x 1920 picture it was measured on - at the user's 2048 x 2048 (80 %) the horns, the statues' hands and the globes' tops stayed 10 - 55 px over the cut. So the strip
     // can be made taller above (hide_up_pct) and below (hide_down_pct), percent of the picture's height; [debug] hide_strip_tint paints the strip a see-through magenta to see its edges.
@@ -382,8 +396,8 @@ void LoadSettings() {
     // (the plate's hook notes the target and where it hung the plate in VR F1, F2, F3 too - read only, nothing of its answer changed: vr/mob_bars.cpp)
     plateworld::SetElsewhere((g_set.monsterNamesOwn.load() && g_set.monsterNamesOwnAllViews.load()) || g_set.plateDepthThird.load() > 0.005f ||
                              g_set.plateDepthFloor.load() > 0.005f);
-    g_set.npcNamesOwn.store(IniB(L"hud", L"npc_names_own", false));
-    g_set.ownDropGame.store(IniB(L"hud", L"own_labels_drop_game", false));   // the game's own layer not drawn under ours (labels.cpp DropGameLayer), live
+    g_set.npcNamesOwn.store(IniB(L"hud", L"npc_names_own", true));
+    g_set.ownDropGame.store(IniB(L"hud", L"own_labels_drop_game", true));   // the game's own layer not drawn under ours (labels.cpp DropGameLayer), live
     g_set.ownLabelsDump.store(IniB(L"debug", L"own_labels_dump", false));   // our labels' atlas to a picture once (view only), live
     g_set.namesSize.store(std::clamp(IniF(L"hud", L"names_own_size_pct", 100.0f), 20.0f, 300.0f));   // our names' own size, by distance, backdrop (ownnames::NameLook), live
     g_set.namesFar.store(std::clamp(IniF(L"hud", L"names_own_far_pct", 60.0f), 10.0f, 150.0f));
@@ -393,7 +407,7 @@ void LoadSettings() {
                           g_set.monsterNamesOwn.load() || plateworld::Elsewhere());   // (monster_names_own: our names stand in the plate's box)   // F4 needs the plate's box: the hook says where the plate hangs (PlateBoxUv)
     g_set.labelsDepthBody.store(std::clamp(IniF(L"hud", L"labels_depth_body", 0.0f), 0.0f, 150.0f) * 0.01f);
     g_set.labelsFarBody.store(std::clamp(IniF(L"hud", L"labels_far", 100.0f), 20.0f, 100.0f) * 0.01f);
-    g_set.labelsOwn.store(IniB(L"hud", L"labels_own", false));   // F4: our own sharp item labels in the game's places (vr/own_labels.h), live
+    g_set.labelsOwn.store(IniB(L"hud", L"labels_own", true));   // F4: our own sharp item labels in the game's places (vr/own_labels.h), live
     ownlabels::SetWanted(g_set.labelsOwn.load());
     for (int i = 0; i < 2; ++i) {
         const wchar_t* sec = i == 0 ? L"hud_top" : L"hud_third";
@@ -495,8 +509,8 @@ void LoadSettings() {
     g_set.convergence.store(std::clamp(IniF(L"stereo", L"convergence", 15.0f), 0.0f, 1000.0f));
     g_set.bgFullSpeed.store(IniB(L"render", L"background_full_speed", true));
     g_set.gameHeightFog.store(IniB(L"render", L"game_height_fog", false));
-    g_set.gameDepthFog.store(IniB(L"render", L"game_depth_fog", false));
-    g_set.gameFogScanSafe.store(IniB(L"render", L"game_fog_scan_safe", true));
+    g_set.gameDepthFog.store(IniB(L"render", L"game_depth_fog", true));
+    g_set.gameFogScanSafe.store(IniB(L"render", L"game_fog_scan_safe", false));
     g_ownDepth.store(IniB(L"render", L"own_depth", true));
     g_squareWin.store(IniB(L"openxr", L"square_window", false));
     {   // the game's light culling at non-16:10 sizes: made whenever the key is on (read at the game's start), bound in VR, and in flat mode with light_bounds_flat
@@ -512,7 +526,7 @@ void LoadSettings() {
     {   // [render] foveated (vr/foveation.h): fixed foveated rendering in F4 - live (its hooks go in only when it was on at the start)
         foveation::Config fc;
         fc.on = IniB(L"render", L"foveated", false);
-        fc.strength = (int)IniF(L"render", L"foveated_strength", 1.0f);
+        fc.strength = (int)IniF(L"render", L"foveated_strength", 3.0f);
         fc.radius = IniF(L"render", L"foveated_radius", 0.0f);
         fc.unseen = IniB(L"render", L"foveated_unseen", true);
         fc.abSeconds = (int)IniF(L"render", L"foveated_ab", 0.0f);
@@ -572,7 +586,7 @@ void LoadSettings() {
                  rendertype::Name(type), k.openxrOn, k.afr, k.pairPerTick, k.nativeReplay, k.source, when);
         }
     }
-    shadowsonce::SetOn(IniB(L"render", L"shadows_once_a_pair", false));   // (live once its hooks went in at the start; vr/shadows_once.h)
+    shadowsonce::SetOn(IniB(L"render", L"shadows_once_a_pair", true));   // (live once its hooks went in at the start; vr/shadows_once.h)
     {   // [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from D2R VR Unleashed): six changes to the game's own render code, each its own key,
         // 0 = the game's code as it is. Live: each goes in or out between two frames (drawn in the world)
         gamepatches::Wanted w;
@@ -582,6 +596,7 @@ void LoadSettings() {
         w.selectionWalk = IniB(L"game_patches", L"selection_walk", true);
         w.shadowsOnce = IniB(L"game_patches", L"shadows_once", true);
         w.cullOnce = IniB(L"game_patches", L"cull_once", true);
+        w.effectListenerGuard = IniB(L"game_patches", L"effect_listener_guard", true);   // a crash guard, not a render change (vr/unleashed_effect_listener_guard.h)
         gamepatches::Configure(w);
     }
     // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): the game's sun shadow map filled for less in F4 - live
@@ -605,7 +620,7 @@ void LoadSettings() {
     g_viewMask.store((int)IniF(L"stereo", L"replay_view_mask", 0.0f));
     g_replayPositions.store((int)IniF(L"stereo", L"replay_positions", 2.0f));
     camfix::g_positionKeys.store(IniB(L"stereo", L"replay_position_keys", true));
-    camfix::g_freshSlots.store(IniB(L"stereo", L"replay_fresh_slots", false));   // 1: each camera slot read again at its lists' first submission (vr/replay_slot_check.h)   // 0: position-only camera buffers bound as the game's own (vr/replay_slot_check.h)
+    camfix::g_freshSlots.store(IniB(L"stereo", L"replay_fresh_slots", true));   // 1: each camera slot read again at its lists' first submission (vr/replay_slot_check.h)   // 0: position-only camera buffers bound as the game's own (vr/replay_slot_check.h)
     g_replayPrev.store((int)IniF(L"stereo", L"replay_prev", 1.0f));
     replay::g_fxSync.store(IniB(L"stereo", L"replay_fx_sync", true));
     replay::g_marksOn.store(std::clamp((int)IniF(L"debug", L"replay_marks", 1.0f), 0, 4));   // how the replayed lists are submitted (replay_groups.h): 0 batched, 1 one by one with a signal after each, 2 one by one, 3 as the game's calls, 4 the same with a signal after each
@@ -616,7 +631,7 @@ void LoadSettings() {
     replay::g_replayCopy.store(IniB(L"stereo", L"replay_copy", true));
     replay::g_fxAtHold.store(IniB(L"stereo", L"replay_fx", true));
     // [render] monitor_eye: the window one eye (0 as before, 1 left, 2 right), cropped to the window's shape; by turns the eye made or only drawn ones
-    monitoreye::Configure((int)IniF(L"render", L"monitor_eye", 1.0f), IniB(L"render", L"monitor_eye_fit", true), IniB(L"render", L"monitor_eye_drawn_only", false));
+    monitoreye::Configure((int)IniF(L"render", L"monitor_eye", 1.0f), IniB(L"render", L"monitor_eye_fit", false), IniB(L"render", L"monitor_eye_drawn_only", false));
     monitoreye::ConfigureLens(IniB(L"render", L"monitor_eye_crop_lens", false));   // its own key: what the lens shows of the eye, not its masked edges (0 = the whole picture)
     // [render] monitor_panels: the panels the headset shows (the menu's panel, the toolbar, the map, the laser...) over the window's picture too
     monitorlayers::Configure(IniB(L"render", L"monitor_panels", false));
@@ -660,7 +675,7 @@ void LoadSettings() {
         // only noted: a capture begins on a change while the game runs.
         // [autotune] enabled: the "Auto" graphics tuning (its button in the headset's Video page and in D2R VR Settings); run / keep / undo:
         // Settings' buttons write a new value - a run starts, its result is kept / undone on a change while the game runs (vr/auto_tune_run.h)
-        autotunerun::Configure(g_iniPath, IniB(L"autotune", L"enabled", false), (int)IniF(L"autotune", L"run", 0.0f), (int)IniF(L"autotune", L"keep", 0.0f),
+        autotunerun::Configure(g_iniPath, IniB(L"autotune", L"enabled", true), (int)IniF(L"autotune", L"run", 0.0f), (int)IniF(L"autotune", L"keep", 0.0f),
                                (int)IniF(L"autotune", L"undo", 0.0f));
         static int lastDiag = INT_MIN;
         const int diag = (int)IniF(L"debug", L"diag_go", 0.0f);
@@ -680,7 +695,7 @@ void LoadSettings() {
     g_set.tableTurnDeg.store(std::clamp(IniF(L"table", L"turn", 0.0f), -180.0f, 180.0f));
     g_set.tablePlace.store((int)IniF(L"table", L"place", 0.0f));
     g_set.tableBounds.store(std::clamp(IniF(L"table", L"bounds", 1.0f), 0.0f, 5.0f));
-    g_set.tableFull.store(IniB(L"table", L"full_width", false));   // 0 = the board with its edge and the keyed void, as before
+    g_set.tableFull.store(IniB(L"table", L"full_width", true));   // 0 = the board with its edge and the keyed void, as before
     g_set.tableDistance.store(std::clamp((int)IniF(L"table", L"draw_distance", 0.0f), 0, drawdistance::kCount));
     g_set.tableAheadM.store(std::clamp(IniF(L"table", L"ahead_m", 1.0f), 0.0f, 5.0f));
     LoadTableBackground();
@@ -746,7 +761,7 @@ void LoadSettings() {
     g_set.fogHeight.store(IniB(L"fog", L"game_fog_height", false));
     g_set.fogTop.store(std::clamp(IniF(L"fog", L"game_fog_top", 60.0f), -100.0f, 2000.0f));
     g_set.fogSoft.store(std::clamp(IniF(L"fog", L"game_fog_soft", 50.0f), 1.0f, 1000.0f));
-    g_set.fogTopFromFloor.store(IniB(L"fog", L"game_fog_top_from_floor", false));
+    g_set.fogTopFromFloor.store(IniB(L"fog", L"game_fog_top_from_floor", true));
     g_set.fogMist.store(IniB(L"fog", L"game_fog_mist", true));
     g_set.fogCavesBlack.store(IniB(L"fog", L"game_fog_caves_black", true));
     g_set.fogBeforeFx.store(IniB(L"fog", L"game_fog_before_fx", true));
@@ -766,9 +781,17 @@ void LoadSettings() {
     g_set.gameFogPlanesCount.store(std::clamp((int)IniF(L"fog", L"game_fog_planes_count", 8.0f), 1, 64));
     g_set.gameFogPlanesSoft.store(std::clamp(IniF(L"fog", L"game_fog_planes_soft", 1.0f), 0.0f, 1.0f));
     g_set.gameFogCover.store(std::clamp(IniF(L"fog", L"game_fog_cover", 0.0f), 0.0f, 10000.0f));   // (0 off; live)
-    g_set.fogCaves.store(IniB(L"fog", L"caves", true));
+    g_set.gameFogHairStrict.store(IniB(L"fog", L"game_fog_hair_strict", true));
+    g_set.gameFogOwnBehind.store(IniB(L"fog", L"game_fog_own_distance_behind", true));
+    g_set.gameFogSceneOneSize.store(IniB(L"fog", L"game_fog_scene_one_size", true));
+    g_set.gameFogMissKeeps.store(IniB(L"fog", L"game_fog_miss_keeps_fog", true));
+    g_set.gameFogSceneByName.store(IniB(L"fog", L"game_fog_scene_by_name", true));
+    g_set.gameFogLayersInOrder.store(IniB(L"fog", L"game_fog_layers_in_order", true));
+    g_set.aoVr.store(IniB(L"render", L"ao_vr", true));
+    g_set.aoVrRadiusM.store(std::clamp(IniF(L"render", L"ao_vr_radius_m", 0.3f), 0.05f, 5.0f));
+    g_set.fogCaves.store(IniB(L"fog", L"caves", false));
     g_set.gameFogCaves.store(IniB(L"fog", L"game_fog_caves", g_set.fogCaves.load()));
-    g_set.fogEaseIn.store(IniB(L"fog", L"ease_in", false));
+    g_set.fogEaseIn.store(IniB(L"fog", L"ease_in", true));
     g_set.fogNoRiver.store(IniB(L"fog", L"no_fog_river", false));
     {
         wchar_t poke[256];
@@ -940,7 +963,7 @@ void LoadSettings() {
     g_set.domeGainOnce.store(IniB(L"sky", L"dome_gain_once", false));
     g_set.fxLeanBuild.store(IniB(L"render", L"fx_lean_build", true));   // (live)
     g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
-    g_set.phantomRects.store(IniB(L"render", L"phantom_rects", false));   // (our effect's wrist-orb pass in rectangles: vr/phantom_rect.h; 0 = full screen - 0.208 ships it off)
+    g_set.phantomRects.store(IniB(L"render", L"phantom_rects", true));   // (our effect's wrist-orb pass in rectangles: vr/phantom_rect.h; 0 = full screen - 0.208 ships it off)
     g_set.domeInGameColour.store(IniB(L"sky", L"dome_in_game_colour", true));
     g_set.domePastFar.store(IniB(L"sky", L"dome_past_far", false));
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
@@ -1012,7 +1035,8 @@ void LoadSettings() {
     cavelight::Load();
     g_set.armsMode.store(std::clamp((int)IniF(L"arms", L"mode", 0.0f), 0, 2));
     g_set.hideHead.store(IniB(L"arms", L"hide_head", false));
-    headshadow::Configure(IniB(L"arms", L"head_shadow", true));   // the hidden head still casts its shadow: shrunk in the eyes' skinning only (vr/head_shadow.h), F4 only
+    headshadow::Configure(IniB(L"arms", L"head_shadow", true));
+    headshadow::ConfigureFlat(IniB(L"arms", L"head_shadow_flat", true));   // ... and in the flat first-person views (off: as before)   // the hidden head still casts its shadow: shrunk in the eyes' skinning only (vr/head_shadow.h), F4 only
     g_set.armScale.store(std::clamp(IniF(L"arms", L"scale", 1.0f), 0.3f, 3.0f));
     g_set.fullReach.store(IniB(L"arms", L"full_reach", true));
     g_set.defaultSpan.store(IniB(L"calibration", L"default_span", true));
@@ -1170,7 +1194,7 @@ void LoadSettings() {
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     {   // [body] leap_camera_up_pct: an ini with no _pct key keeps what leap_camera_up said (on = the whole arc)
-        const float pct = IniF(L"body", L"leap_camera_up_pct", -1.0f);
+        const float pct = IniF(L"body", L"leap_camera_up_pct", IniF(L"body", L"leap_camera_up", -1.0f) >= 0.0f ? -1.0f : 30.0f);   // (neither key: 30 %, 0.216)
         g_set.leapCameraPct.store(undercam::RisePct(pct >= 0.0f, pct, g_set.leapCameraUp.load()));
     }
     g_set.crouch.store(IniB(L"body", L"crouch", false));
@@ -1203,13 +1227,13 @@ void LoadSettings() {
     shoulderwire::Configure(IniB(L"hands", L"shoulder_swap", false), IniF(L"hands", L"shoulder_swap_hand", 0.0f) != 0.0f);   // 0 right, 1 left
     g_set.shoulderDraw.store(IniB(L"hands", L"shoulder_draw", false));
     g_set.shieldDraw.store(IniB(L"hands", L"shoulder_draw_shield", true));
-    g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", false));
+    g_set.shieldStow.store(IniB(L"hands", L"shoulder_draw_shield_stow", true));
     stowedblock::Configure(IniB(L"hands", L"shield_stow_no_block", false));
     spatialaudio::Configure(IniB(L"audio", L"head_follow", true), IniB(L"audio", L"listener_turn", true),
                             IniF(L"audio", L"forward_sign", -1.0f), IniF(L"audio", L"depth_scale", 2.0f));
     g_set.rangedHolster.store(IniB(L"hands", L"shoulder_draw_ranged", false));
     g_set.rangedSwap.store(IniB(L"hands", L"shoulder_draw_ranged_swap", false));
-    g_set.bowSwapByGrab.store(IniB(L"bow", L"swap_by_grab", false));
+    g_set.bowSwapByGrab.store(IniB(L"bow", L"swap_by_grab", true));
     {   // [bow] bow_hand: "1" / "0" as written (Settings' choice), "left" / "right" by hand
         wchar_t side[16] = {};
         GetPrivateProfileStringW(L"bow", L"bow_hand", L"1", side, (DWORD)std::size(side), g_iniPath);
@@ -1227,7 +1251,7 @@ void LoadSettings() {
     // ... flat: [bow] arrow_flight_flat, the arrow drawn into the crosshair (vr/flat_arrow.h); VR: [bow] arrow_flight
     const bool arrowOn = g_set.platform.load() == 0 ? IniB(L"bow", L"arrow_flight_flat", true) : IniB(L"bow", L"arrow_flight", false);
     arrowflightwire::Configure(arrowOn, IniB(L"debug", L"arrow_flight_trace", false), IniB(L"debug", L"arrow_flight_fx_off", false),
-                               IniB(L"bow", L"arrow_flight_straight", false));
+                               IniB(L"bow", L"arrow_flight_straight", false), IniB(L"bow", L"arrow_flight_elemental", false));
     {   // [bow] quiver: a button of the string hand, while the string is drawn, loads the next / previous bow skill (the controls: [direct] quiver_next / quiver_prev)
         auto name = [](const wchar_t* key, const wchar_t* def, char* out, size_t n) {
             wchar_t w[48];
@@ -1324,7 +1348,7 @@ void LoadSettings() {
     g_set.teleportCircle.store(IniB(L"gameplay", L"teleport_circle", true));
     g_set.leapArc.store(IniB(L"gameplay", L"leap_arc", false));
     g_set.leapArcHead.store(IniB(L"gameplay", L"leap_arc_head", false));
-    g_set.leapAirAim.store(IniB(L"gameplay", L"leap_air_aim", false));
+    g_set.leapAirAim.store(IniB(L"gameplay", L"leap_air_aim", true));
     g_set.leapHeadGain.store(pointcast::HeadGain(IniF(L"gameplay", L"leap_head_gain", pointcast::kDefaultHeadGain)));
     g_set.pointMaxCells.store(pointcast::CapCells(IniF(L"gameplay", L"point_max_cells", pointcast::kDefaultCapCells)));
     g_set.pointArcHeightPct.store(pointcast::HeightScale(IniF(L"gameplay", L"point_arc_height", pointcast::kDefaultHeightPct)) * 100.0f);
@@ -1437,6 +1461,14 @@ void LoadSettings() {
     g_set.flailHitPct.store(std::clamp(IniF(L"flail", L"hit_pct", 100.0f), 0.0f, 200.0f));
     g_set.flailWeightPct.store(std::clamp(IniF(L"flail", L"ball_weight_pct", 100.0f), 25.0f, 400.0f));
     g_set.meleeTouch.store(IniB(L"gameplay", L"melee_touch", false));
+    {   // F4, hit by touch: the touch's press with nothing on the attack slot (A) is read by the game as its plain Attack - ON by default (a fix: no hit, no damage, players confused); 0 = as before (vr/touch_empty_slot.h)
+        const bool on = IniB(L"gameplay", L"melee_touch_empty_attack", true);
+        if (g_set.touchEmptyAttack.exchange(on) != on || !g_toldTouchEmpty) {
+            g_toldTouchEmpty = true;
+            Log(on ? "melee touch: an empty attack slot (A) strikes with the game's plain Attack ([gameplay] melee_touch_empty_attack)"
+                   : "melee touch: an empty attack slot (A) casts nothing, as before ([gameplay] melee_touch_empty_attack=0)");
+        }
+    }
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
     doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f),
                            IniB(L"hands", L"double_swing_combo", false));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
@@ -1459,7 +1491,7 @@ void LoadSettings() {
     g_set.meleeTouchUnchecked.store(IniB(L"debug", L"melee_touch_unchecked", false));
     g_set.meleeTouchClientVerdict.store(IniB(L"debug", L"melee_touch_client_verdict", false));
     meleetouch::SetWanted(g_set.meleeTouch.load());
-    meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", true));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
+    meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", false));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
     meleetouch::SetClawHits(g_set.clawHits.load());   // [shapeshift] claw_hits: the form's paws strike by touch
     meleetouch::SetClawMinSpeed(IniF(L"shapeshift", L"wolf_min_speed", 0.0f), IniF(L"shapeshift", L"bear_min_speed", 0.0f));   // ... their least speed per form (0 / no key: as before)
@@ -1467,13 +1499,13 @@ void LoadSettings() {
                                  IniF(L"gameplay", L"melee_touch_barrels_min_speed", 2.0f));   // ... from this swing speed, its own gate
     standstill::SetWanted(IniB(L"gameplay", L"attack_in_place", true));   // F4: the plugin's attack presses never walk the hero (vr/stand_still.h)
     moveattack::SetWanted(IniB(L"gameplay", L"move_while_attacking", true));   // F4, EXPERIMENTAL: a spear / bow hero walks on once the blow is out (vr/move_attack.h)
-    const int attackPath = (int)IniF(L"gameplay", L"flat_attack_path", 0.0f);   // the prototype: the swing does not stop the hero; it replaces the cut below
+    const int attackPath = (int)IniF(L"gameplay", L"flat_attack_path", 1.0f);   // the prototype: the swing does not stop the hero; it replaces the cut below
     attackpath::SetWanted(attackPath, IniF(L"gameplay", L"flat_attack_path_cone", 45.0f));
-    attackpath::SetSkillsWanted((int)IniF(L"gameplay", L"move_during_skills", 0.0f));   // EXPERIMENTAL: the hero moves during special moves (Zeal, Double Swing ...), F2 / F3 and VR F4
-    moveattack::SetFlatWanted(attackPath > 0 ? 0 : (int)IniF(L"gameplay", L"flat_move_while_attacking", 0.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
+    attackpath::SetSkillsWanted((int)IniF(L"gameplay", L"move_during_skills", 1.0f));   // EXPERIMENTAL: the hero moves during special moves (Zeal, Double Swing ...), F2 / F3 and VR F4
+    moveattack::SetFlatWanted(attackPath > 0 ? 0 : (int)IniF(L"gameplay", L"flat_move_while_attacking", 2.0f));   // the flat game's F2 / F3: W A S D walk on once the blow is out (0 off, 1 spear / bow, 2 every weapon)
     // [gameplay] quick_blow, EXPERIMENTAL, on by default since 0.204 (vr/quick_blow.h): VR F4 - the blow on the first frame, the hero walks through the swing, the touch is the game's
     // attack, its target in reach; quick_blow_faster: the next attack cuts the animation once the blow is out and quick_blow_min_ms passed
-    moveattack::SetQuick(IniB(L"gameplay", L"quick_blow", true), IniB(L"gameplay", L"quick_blow_faster", false), (int)IniF(L"gameplay", L"quick_blow_min_ms", (float)quickblow::kMinMsDefault));
+    moveattack::SetQuick(IniB(L"gameplay", L"quick_blow", true), IniB(L"gameplay", L"quick_blow_faster", true), (int)IniF(L"gameplay", L"quick_blow_min_ms", (float)quickblow::kMinMsDefault));
     straywalk::SetWalkWanted(IniB(L"gameplay", L"block_stray_walk", true));     // F4: a walk or run to a point out of a click on bare ground is dropped (vr/stray_walk.h)
     straywalk::SetAttackRunWanted(IniB(L"gameplay", L"block_attack_run", false));   // F4: the run the game starts out of the pad cast of an attack of ours is dropped
     shottrace::SetWanted(IniB(L"debug", L"shot_trace", false));   // the log tells, shot by shot, what the game does with an attack of ours (vr/shot_trace.h)
@@ -1642,6 +1674,18 @@ void LoadSettings() {
         g_set.fistClose[c].store(std::clamp(IniF(L"fist", close, c == 3 ? 65.0f : 100.0f), 0.0f, 150.0f));
         g_set.fistOpen[c].store(std::clamp(IniF(L"fist", open, 20.0f), 0.0f, 150.0f));
     }
+    {   // [fist] from_knuckle (vr/finger_chain.h; live): told once, and again when it changes
+        const bool knuckle = IniB(L"fist", L"from_knuckle", true);
+        g_set.fistKnuckle.store(knuckle);
+        static int told = -1;
+        if (told != (int)knuckle) {
+            told = knuckle;
+            LogF(knuckle ? "vrcam settings: [fist] from_knuckle=1 - a free hand's fingers curl from the knuckle the rig's own bones tell: a four-bone finger chain's first bone "
+                           "(inside the palm - the Amazon's, the Paladin's, the Druid's rig) is not bent"
+                         : "vrcam settings: [fist] from_knuckle=0 - a free hand's fingers curl from their chain's first bone unless its name says metacarpal (as up to 0.215: "
+                           "the Amazon's, the Paladin's and the Druid's palm folds as the hand closes)");
+        }
+    }
 #endif
     for (int t = 1; t < D2RVR_TYPE_COUNT; ++t) {
         wchar_t sec[40] = L"weapon_";
@@ -1713,6 +1757,7 @@ void LoadSettings() {
     g_set.weightOn.store(IniB(L"weight", L"on", false));
     g_set.weightSecondLetsGo.store(IniB(L"weight", L"second_lets_go", true));
     g_set.weightDualCollide.store(IniB(L"weight", L"dual_collide", true));
+    g_set.weightShieldCollide.store(IniB(L"weight", L"shield_collide", true));   // [weight] shield_collide: the weapon on the hero's own shield (off: as before)
     weightwire::ConfigureGripNoChord(IniB(L"weight", L"weapon_grip_no_chord", false));   // a grip on the weapon is no modifier of the panels' chords and the A / RT slot controls (vr/weight_wire.h)
     shoulderwire::SetDraw(g_set.shoulderDraw.load() && (g_set.weightOn.load() || g_set.shieldStow.load() || g_set.rangedHolster.load()));   // [hands] shoulder_draw: a weapon to draw (the weight model) or the shield to put away
     g_set.weightFeel.store(std::clamp(IniF(L"weight", L"feel", 50.0f), 0.0f, 300.0f));
@@ -1809,6 +1854,7 @@ void LoadSettings() {
         const bool knock = IniB(L"weight", L"knock_props", false);
         knockprops::Configure(knock, IniF(L"weight", L"knock_strength_pct", 100.0f), std::clamp(IniF(L"weight", L"knock_haptic_pct", 35.0f), 0.0f, 100.0f) / 100.0f);
         potionhide::WantHooksForProps(knock);
+        knockprops::ConfigureHeft(IniB(L"weight", L"prop_heft", true));   // [weight] prop_heft: a prop's mass by its kind and size, the knock's tick or thud (live)
         knockprops::SetTrace(IniB(L"debug", L"knock_props_trace", false));   // [debug] knock_props_trace: a log line per knock and per scan
         knockprops::SetGlow(IniB(L"debug", L"knock_props_glow", false), 0.6f);   // [debug] knock_props_glow: the props found, lit (h 0.6: x1.6 bright)
         g_set.weightGrabProps.store(IniB(L"weight", L"grab_props", false));   // [weight] grab_props: the props in the hand (its own box; with knock_props)
@@ -1823,7 +1869,11 @@ void LoadSettings() {
             dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
             worldcontact::Init(&Log, [](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); }, dir.c_str());
         }
-        worldcontact::Configure(IniB(L"weight", L"world_contact", false), IniB(L"weight", L"world_contact_hands", false), IniB(L"debug", L"world_contact_draw", false));
+        // [weight] wall_contact_mode (shared/wall_contact_mode.h): what stops the weapon at walls - Off, Ours (world_contact, the meshes) or Bear's
+        // (wall_collide, the game's wall map), one at a time; an old ini's world_contact=1 reads as Ours. The bare hands keep their own tick.
+        const int mode = wallcontact::FromKeys(IniF(L"weight", L"wall_contact_mode", -1.0f), IniB(L"weight", L"world_contact", false));
+        wallcollide::Configure(mode == wallcontact::kBears);
+        worldcontact::Configure(mode == wallcontact::kOurs, IniB(L"weight", L"world_contact_hands", false), IniB(L"debug", L"world_contact_draw", false));
     }
     // [weight] monster_shields: the monsters' shields and weapons stop the held weapon, a blow they stop is no hit (F4 with the bodies: they are F4 only)
     meleetouch::SetShieldsWanted(g_set.weightMonsterBodies.load() && IniB(L"weight", L"monster_shields", false));
@@ -1855,7 +1905,7 @@ void LoadSettings() {
         ks.strength = g_set.weightStrength.load() * 0.01f;
         ks.deathOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"death_ragdoll", false);
         ks.deathFlatOn = IniB(L"weight", L"death_ragdoll_flat", false);   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, by the game's own swing (no bodies key needed)   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
-        ks.leapOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"leap_landing_scatter", false);   // [weight] leap_landing_scatter: a Leap's landing throws them apart (vr/leap_scatter.h)
+        ks.leapOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"leap_landing_scatter", true);   // [weight] leap_landing_scatter: a Leap's landing throws them apart (vr/leap_scatter.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
@@ -1967,7 +2017,7 @@ void LoadSettings() {
     {   // [render] preset_game_options (shared/quality_presets.h kGameOptions): the Quality preset the keys match also puts the game's own AO,
         // shadows and lights - once, when the preset changes (vr/patch_hunt.cpp PresetGameOptions); unticked: the game's options never touched.
         // Every view (the game's own setter, as its menu). The match as the headset window's: a missing key at the plugin's own default.
-        const bool on = IniB(L"render", L"preset_game_options", false);
+        const bool on = IniB(L"render", L"preset_game_options", true);
         int preset = qualitypreset::kCount;
         if (on) {
             rendertype::Keys rk;

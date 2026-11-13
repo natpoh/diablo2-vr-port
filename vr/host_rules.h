@@ -37,17 +37,17 @@ struct Rule {
 
 // The Mechanics tab's "who hosts decides" keys (2026-11-05). A new one is a line more (and its Label below).
 inline constexpr Rule kRules[] = {
-    {1, L"gameplay", L"flat_attack_path", "The swing does not stop the hero (2D)", 0, 3, {"Off", "Walk", "Walk or run"}},
-    {2, L"gameplay", L"flat_move_while_attacking", "2D views: strafe after each blow", 0, 3, {"Off", "Spear and bow", "Every weapon"}},
+    {1, L"gameplay", L"flat_attack_path", "The swing does not stop the hero (2D)", 1, 3, {"Off", "Walk", "Walk or run"}},
+    {2, L"gameplay", L"flat_move_while_attacking", "2D views: strafe after each blow", 2, 3, {"Off", "Spear and bow", "Every weapon"}},
     {3, L"gameplay", L"move_while_attacking", "Spear and bow: walk on after the blow (VR F4)", 1, 2, {"Off", "On"}},
     {4, L"gameplay", L"melee_direct_client_cleave", "Two-handed swing hits each monster (VR)", 0, 2, {"Off", "On"}},
     {5, L"gameplay", L"quick_blow", "Quick blow: the swing never stops the hero (VR)", 1, 2, {"Off", "On"}},
-    {6, L"gameplay", L"quick_blow_faster", "Quick blow: faster than the animation", 0, 2, {"Off", "On"}},
+    {6, L"gameplay", L"quick_blow_faster", "Quick blow: faster than the animation", 1, 2, {"Off", "On"}},
     // 2026-11-08 (vr/hit_share.h): the host's box decides whether the joined players' swing timers get their blows' outcomes
     {7, L"multiplayer", L"share_hit_outcomes", "Send the joined players what their blows did", 0, 2, {"Off", "On"}},
     {8, L"gameplay", L"shot_at_release", "The arrow goes where you aim as it leaves the bow", 0, 2, {"Off", "On"}},   // (vr/shot_release.h, 2026-11-06)
     // 2026-11-10 (vr/attack_path.h KindOf): the hero moves during special moves (Zeal, Double Swing, Frenzy, Bash ...)
-    {9, L"gameplay", L"move_during_skills", "Move during special moves", 0, 3, {"Off", "Walk", "Walk or run"}},
+    {9, L"gameplay", L"move_during_skills", "Move during special moves", 1, 3, {"Off", "Walk", "Walk or run"}},
 };
 inline constexpr int kCount = static_cast<int>(sizeof kRules / sizeof kRules[0]);
 constexpr int kMaxRules = 16;   // what a message may carry (a newer host's extra ids are skipped by an older client)

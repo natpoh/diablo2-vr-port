@@ -25,6 +25,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <string>
 #include <utility>
@@ -57,6 +58,7 @@
 #include "npc_dialog_view.h"   // [hud] npc_dialog_keep_view: which menus are an NPC's talk
 #include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard: the name box (NameBox; MPL 2.0, from D2R VR Unleashed)
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice, counted and its panel's rect read here
+#include "unleashed_cinema_screen.h"   // [cinema] world_screen: whether one of the game's cinematics plays (MPL 2.0, from D2R VR Unleashed)
 
 namespace skel { int HeroClass(); }   // the hero's class from the posed model's folder (vr/skeletons.cpp): -1 not known
 namespace xr { void EndOnExit(int trigger); }   // [openxr] end_session_on_exit: the title screen's Exit ends the headset session first (vr/xr.cpp)
@@ -1032,7 +1034,50 @@ framevr::keyboard::NameBox g_nameBox;
 std::atomic<bool> g_keyboard{false};
 std::atomic<uint32_t> g_keyboardEpoch{0};
 std::atomic<bool> g_createPanel{false};   // CharacterCreatePanel open (NameBox::PanelOpen)
-SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const SharedEvents::UiMessageEvent* e, void*) noexcept {
+// [cinema] world_screen (vr/unleashed_cinema_screen.h): the tracker under its lock - messages on the UI thread, world draws on the draw
+// thread, the cap on the update timer; g_cinema the answer for all. It runs whatever the key; CinemaPlaying() answers only with it on.
+std::mutex g_cinemaLock;
+cinema::Tracker g_cinemaTracker;
+std::atomic<bool> g_cinema{false}, g_cinemaOn{false};
+void TellCinema(const cinema::Change& c, const char* target, const char* command) {
+    if (!c.changed) return;
+    char b[300];
+    if (c.playing) snprintf(b, sizeof b, "gamestate: a cinematic plays ('%s' '%s') - %s", target, command,
+                            g_cinemaOn.load() ? "on the big screen in the world ([cinema] world_screen=1)" : "left as it was ([cinema] world_screen=0)");
+    else if (c.why == cinema::Why::Message) snprintf(b, sizeof b, "gamestate: the cinematic is over ('%s' '%s')", target, command);
+    else snprintf(b, sizeof b, "gamestate: the cinematic is over - %s", cinema::Reason(c.why));
+    Log(b);
+}
+// Where the game lays its movie panels out (the interface's own units), once a cinematic starts with the screen on: the screen
+// shows the film's 16:9 in the middle of the window-sized top left of the frame (FilmIn), and this line says where the movie really is.
+void TellMoviePanels(const PluginContext* ctx) {
+    if (!g_widgets || !g_widgets->findPanel || !g_widgets->getWidgetRect || !ctx) return;
+    for (const char* name : {"InGameMoviePlayerPanel", "MoviePlayerPanel", "LogoMenuPanel"}) {
+        Widgets::WidgetHandle panel = Widgets::InvalidHandle, movie = Widgets::InvalidHandle;
+        Widgets::Rect root{}, child{};
+        if (g_widgets->findPanel(ctx, name, &panel) != Widgets::Result::Success || g_widgets->getWidgetRect(ctx, panel, &root) != Widgets::Result::Success) continue;
+        const bool found = g_widgets->findWidget && g_widgets->findWidget(ctx, panel, "MoviePlayer", &movie) == Widgets::Result::Success &&
+                           g_widgets->getWidgetRect(ctx, movie, &child) == Widgets::Result::Success;
+        char b[240];
+        if (found) snprintf(b, sizeof b, "gamestate: cinema - %s at %d,%d %dx%d, its MoviePlayer at %d,%d %dx%d", name, root.x, root.y, root.width, root.height,
+                            child.x, child.y, child.width, child.height);
+        else snprintf(b, sizeof b, "gamestate: cinema - %s at %d,%d %dx%d (no MoviePlayer widget by that name)", name, root.x, root.y, root.width, root.height);
+        Log(b);
+    }
+}
+void CinemaMessage(const PluginContext* ctx, const char* target, const char* command, const char* text) {
+    const cinema::Signal signal = cinema::Classify(target, command, text);
+    if (signal == cinema::Signal::None) return;
+    cinema::Change c;
+    {
+        std::lock_guard<std::mutex> lock(g_cinemaLock);
+        c = g_cinemaTracker.Message(signal, GetTickCount64());
+        g_cinema.store(g_cinemaTracker.Playing());
+    }
+    TellCinema(c, target, command);
+    if (c.changed && c.playing && g_cinemaOn.load()) TellMoviePanels(ctx);
+}
+SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, const SharedEvents::UiMessageEvent* e, void*) noexcept {
     if (!e) return SharedEvents::UiMessageAction::Continue;
     const char* target = e->target ? e->target : "";
     const char* command = e->command ? e->command : "";
@@ -1047,6 +1092,7 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext*, const Sh
     }
     if (const exitend::Trigger quit = exitend::FromUi(target, command); quit != exitend::Trigger::None) xr::EndOnExit((int)quit);
     g_nameBox.Message(target, command, text);
+    CinemaMessage(ctx, target, command, text);   // [cinema] world_screen
     if (g_keyboard.exchange(g_nameBox.Shown()) != g_nameBox.Shown())
         Log(g_nameBox.Shown() ? "gamestate: the name box up (a hero picked) - the VR keyboard may show ([openxr] name_keyboard)" : "gamestate: the name box gone");
     g_keyboardEpoch.store(g_nameBox.Epoch());
@@ -1307,6 +1353,38 @@ bool LeftShield() { return g_leftShield.load(); }
 bool RightShield() { return g_rightShield.load(); }
 int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
+// [cinema] world_screen (vr/unleashed_cinema_screen.h): one of the game's cinematics plays and goes on the big screen in the world.
+bool CinemaPlaying() { return g_cinemaOn.load() && g_cinema.load(); }
+void SetCinemaEnabled(bool on) {
+    static int said = -1;   // (the start's value said once, then each change)
+    g_cinemaOn.store(on);
+    if (said == (int)on) return;
+    said = on;
+    Log(on ? "gamestate: the game's cinematics on a big screen standing in the world ([cinema] world_screen=1)"
+           : "gamestate: the game's cinematics as before, on the flat picture ([cinema] world_screen=0)");
+}
+// DrawGameScreen ran (the draw thread): a cinematic whose end was missed ends - none draws the world.
+void CinemaWorldDrawn(uint64_t now) {
+    if (!g_cinema.load()) return;
+    cinema::Change c;
+    {
+        std::lock_guard<std::mutex> lock(g_cinemaLock);
+        c = g_cinemaTracker.WorldDrawn(now);
+        g_cinema.store(g_cinemaTracker.Playing());
+    }
+    TellCinema(c, "", "");
+}
+// The update timer: the cap.
+void CinemaTick(uint64_t now) {
+    if (!g_cinema.load()) return;
+    cinema::Change c;
+    {
+        std::lock_guard<std::mutex> lock(g_cinemaLock);
+        c = g_cinemaTracker.Tick(now);
+        g_cinema.store(g_cinemaTracker.Playing());
+    }
+    TellCinema(c, "", "");
+}
 bool PauseMenuOpen() { return g_pause.load(); }   // [hud] game_menu_settings: the game's pause menu (Esc) is open
 bool InventoryOpen() { return g_invOpen.load(); }   // [belt] refill_key (vr/belt_refill.h): the inventory is open, with other panels or alone
 bool InventoryOnly() { return g_invOnly.load(); }   // [openxr] hand_inventory: the menu open is the inventory alone (the tabbed menu or the inventory panel)

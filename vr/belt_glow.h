@@ -44,4 +44,10 @@ void SetEntries(const Entry* entries, int n);
 constexpr int kMaxProps = 192;
 void SetProps(const uint32_t* entities, int n, float h);
 
+// [hud] wrist_game_models (vr/wrist_models.h): the wrist medallions' entities, the highlight each gets (the liquid's low-life pulse; 0 = none) and its
+// opacity (the glass: see-through; < 0 = left alone). Called on the registry's own thread (engitem::WristOrbsFrame) every frame: written at once, the
+// highlight again after the game's reset each tick. The hook goes in once it is asked with a highlight (Install, once wanted). n 0: none.
+constexpr int kMaxOrbs = 16;
+void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n);
+
 }  // namespace beltglow

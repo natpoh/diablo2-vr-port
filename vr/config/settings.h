@@ -209,6 +209,23 @@ struct Settings {
     // whatever lies at or past this distance (world units) is the fog's colour whole - the world, the hair and foliage, the particles, their
     // light gone; 0 = as far as the fog's own curve reaches (as before)
     std::atomic<float> gameFogCover{0.0f};
+    // [fog] game_fog_hair_strict / game_fog_own_distance_behind (2026-11-13, vr/fog_before_fx.h Params::hairStrict / ownBehind): the hair /
+    // foliage sent to the step's own target only when its pixel shader writes the game's see-through weight, nothing left over from a step
+    // that did not fold it; their own distance never past the scene behind them. Live; 0 = as 0.215
+    std::atomic<bool>  gameFogHairStrict{true};
+    std::atomic<bool>  gameFogOwnBehind{true};
+    // [fog] game_fog_scene_one_size / game_fog_miss_keeps_fog (2026-11-13, Serg on 0.215.6 "the fog flickers"): the scene the resolve's tables
+    // name taken only at the depth's size (Params::sceneOneSize); a frame the step did not draw keeps the game's fog colour (vr/fog_height.h
+    // SetPick). Live; 0 = as 0.215
+    std::atomic<bool>  gameFogSceneOneSize{true};
+    std::atomic<bool>  gameFogMissKeeps{true};
+    // [fog] game_fog_scene_by_name (2026-11-13): the scene the game's own debug name gives ("Main Color 0/1"), the search as the fallback
+    std::atomic<bool>  gameFogSceneByName{true};
+    // [fog] game_fog_layers_in_order (2026-11-13, Params::layersInOrder): particles and hair / foliage near over far, not by the game's weight
+    std::atomic<bool>  gameFogLayersInOrder{true};
+    // [render] ao_vr / ao_vr_radius_m (2026-11-13, vr/ao_vr.h): the game's AO with a radius for our eyes (metres) in F4; off: the game's
+    std::atomic<bool>  aoVr{true};
+    std::atomic<float> aoVrRadiusM{0.3f};
     std::atomic<float> gameArcaneFogStart{150.0f}, gameArcaneFogEnd{600.0f};
     std::atomic<bool>  arcaneFogIntoSky{true};
     std::atomic<float> fogBlur{3.0f};      // the fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away
@@ -271,6 +288,8 @@ struct Settings {
     std::atomic<bool>  gameCeiling{false};       // [ceiling] game_ceiling: the vault as the game's own lit rock slab (engitem::CeilingFrame), VR F4
     std::atomic<bool>  gameCeilingWall{false};   // [ceiling] game_ceiling_wall: its rim bent down into a wall of the same rock (the void past its edge closed)
     std::atomic<bool>  gameCeilingBeams{false};  // [ceiling] game_ceiling_beams: the barracks' own wooden ceiling frame under the slab (engitem::CeilingFrame)
+    std::atomic<float> wristGameGlow{13.0f};     // [hud] wrist_game_glow: the liquids' baked glow - its change has the liquids loaded again (engitem::WristOrbsFrame)
+    std::atomic<bool>  wristGameModels{false};   // [hud] wrist_game_models with the wrists' glass-ball look: the medallions as the game's own models (engitem::WristOrbsFrame), VR F4
     std::atomic<bool>  holesPatch{false};        // [holes] patch_world: the world's holes patched by the game's own pieces (engitem::HolesFrame; shared/world_holes_list.h), VR F4
     std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
     std::atomic<float> ceilHeadroomM{1.0f};      // [ceiling] min_headroom_m: the ceiling's lowest at least this many metres over the eyes, 0 = off (gameceiling::HeadroomNeed)
@@ -441,6 +460,7 @@ struct Settings {
     std::atomic<bool>  bowStringAnchor{true};   // [bow] string_anchor: the bow's string is drawn to the first joints of the hooked fingers, not to the grip point in the middle of the palm (vr/bow_hook.h)
     std::atomic<float> bowAnchorCm[3] = {0.0f, 0.0f, 0.8f};   // [bow] string_anchor_along_cm / across_cm / palm_cm: that point moved along the fingers, toward the thumb side, out of the palm (-15..15; live)
     std::atomic<bool>  meleeTouch{false};   // [gameplay] melee_touch: the blade touching a monster picks the target and the moment of the game's own attack
+    std::atomic<bool>  touchEmptyAttack{true};   // [gameplay] melee_touch_empty_attack: the touch's press with no skill on the attack slot (A) is read as the plain Attack (vr/touch_empty_slot.h)
     std::atomic<bool>  meleeTouchUnchecked{false};   // [debug] melee_touch_unchecked: no hostility / wall check from the server (to see whether it is what stops a touch)
     std::atomic<bool>  meleeTouchClientVerdict{false};   // [debug] melee_touch_client_verdict: the client's units answer it even offline (what a TCP/IP client gets)
     // [autotarget] s<skill>=1: that skill keeps the game's auto-target whatever spell_aim, bow_aim, throw_aim say - one
@@ -450,6 +470,7 @@ struct Settings {
     // grip squeezed / let go - per hero class (skel::kHeroClasses), the rigs bend differently
     std::atomic<float> fistClose[8] = {100.0f, 100.0f, 100.0f, 65.0f, 100.0f, 100.0f, 100.0f, 100.0f};
     std::atomic<float> fistOpen[8] = {20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f, 20.0f};
+    std::atomic<bool>  fistKnuckle{true};   // [fist] from_knuckle: the fingers curl from the knuckle the rig's own bones tell (vr/finger_chain.h); 0 = from the chain's first bone (up to 0.215)
     std::atomic<bool>  fist{true};          // [hands] fist: a free hand closes with its controller's grip, relaxes when let go
     std::atomic<bool>  shieldFist{true};    // [hands] shield_fist: the hand with a shield on it does the same (F4 only; the fingers only)
     std::atomic<bool>  leftSlotDrawn{true}; // [hands] left_slot_drawn_left: a weapon alone in the left slot drawn in the hand that holds it, not the game's right (F4 only; vr/drawn_hand.h)
@@ -509,6 +530,7 @@ struct Settings {
     std::atomic<bool>  weightOn{false};      // [weight] on
     std::atomic<bool>  weightSecondLetsGo{true};   // [weight] second_lets_go (read once at load: arms.cpp asked the ini file on every tick - half a core on a player's PC)
     std::atomic<bool>  weightDualCollide{true};    // [weight] dual_collide (the same)
+    std::atomic<bool>  weightShieldCollide{false}; // [weight] shield_collide (the same)
     std::atomic<float> weightFeel{50.0f};   // [weight] feel: % of the weapon's mass
     std::atomic<float> weightStrength{100.0f};   // [weight] strength: % of the hands' strength
     std::atomic<float> weightGravity{100.0f};    // [weight] gravity_pct: % of g (0 = no gravity, only inertia)
@@ -543,7 +565,7 @@ struct Settings {
     std::atomic<bool>  shieldDraw{true};            // [hands] shoulder_draw_shield: with shoulder_draw, the shield too (it follows the sword to the forearm opposite the hand that holds it)
     std::atomic<bool>  rangedHolster{false};        // [hands] shoulder_draw_ranged: with shoulder_draw, a bow or crossbow can be put away behind a shoulder and drawn from it
     std::atomic<bool>  rangedSwap{false};           // [hands] shoulder_draw_ranged_swap: a bow is drawn into the hand that reached (a crossbow always back into its own)
-    std::atomic<bool>  bowSwapByGrab{false};        // [bow] swap_by_grab: the free hand's grip squeezed at the bow's grip takes the bow (F4, bows only; vr/bow_swap.h)
+    std::atomic<bool>  bowSwapByGrab{true};         // [bow] swap_by_grab: the free hand's grip squeezed at the bow's grip takes the bow (F4, bows only; vr/bow_swap.h)
     std::atomic<int>   bowHandSide{1};              // [bow] bow_hand: the hand the bow is in with swap_by_grab, remembered across runs (0 right, 1 left)
     std::atomic<bool>  shieldStow{false};           // [hands] shoulder_draw_shield_stow: with shoulder_draw, a grip behind the LEFT shoulder puts the shield away and draws it (the weapon is drawn from the right shoulder only then)
     std::atomic<float> shoulderDrawStowMs{1000.0f}; // [hands] shoulder_draw_stow_ms: how long a weapon let go lies on the floor (it is recalled by a grip meanwhile) before it goes to the back

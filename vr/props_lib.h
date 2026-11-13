@@ -34,5 +34,8 @@ int32_t MoverAt(void* world, int32_t slot, D2rpMoverOut* out);
 bool HasHands();
 int32_t SetHands(void* world, const D2rpHand* hands, int32_t n);
 int32_t HandAt(void* world, int32_t hand, D2rpHandOut* out);
+// [weight] prop_heft: a prop's own mass - the optional D2rpSetPropMass (a library without it: HasPropMass false, every prop weighs its material, one log line says so).
+bool HasPropMass();
+int32_t SetPropMass(void* world, uint32_t id, float kg);
 
 }  // namespace propslib

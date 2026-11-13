@@ -29,12 +29,30 @@ inline const char* DirectHitName(int mode) {
     }
 }
 
+// The World page's "Weapon against the walls" ([weight] wall_contact_mode, shared/wall_contact_mode.h): its three values, short for the value box.
+inline const char* WallContactName(int mode) {
+    switch (mode) {
+        case 1: return uitext::Tr("vr.wallcontact.ours", "Ours");
+        case 2: return uitext::Tr("vr.wallcontact.bears", "Bear's");
+        default: return uitext::Tr("vr.wallcontact.off", "Off");
+    }
+}
+
 // The HUD page's "Allies shown" ([hud] allies_place, shared/allies_place.h): its three places, short for the value box.
 inline const char* AlliesPlaceName(int place) {
     switch (place) {
         case 1: return uitext::Tr("vr.allies.map", "Under the map");
         case 2: return uitext::Tr("vr.allies.wrist", "On the wrist");
         default: return uitext::Tr("vr.allies.game", "At the top");
+    }
+}
+
+// The HUD page's "Medallions: look" ([hud] wrist_look, shared/wrist_look.h): its three looks, short for the value box.
+inline const char* WristLookName(int look) {
+    switch (wristlook::Clamp(look)) {
+        case wristlook::kGameModels: return uitext::Tr("vr.wristlook.models", "Game's models");
+        case wristlook::kGlobes: return uitext::Tr("vr.wristlook.globes", "Game's globes");
+        default: return uitext::Tr("vr.wristlook.mod", "Glass balls");
     }
 }
 
@@ -152,7 +170,9 @@ inline const char* ValueName(const Values& v, int key) {
     if (key == kKeyGrassRate) return GrassRateName((int)std::lround(v[key]));
     if (key == kKeyGameSky) return DrawByName(drawby::FromKeys(v[kKeySkyOn] > 0.5f, v[kKeyGameSky] > 0.5f), true);
     if (key == kKeyGameFog) return DrawByName(drawby::FromKeys(v[kKeyFogOn] > 0.5f, v[kKeyGameFog] > 0.5f, true), false);
+    if (key == kKeyWallContact) return WallContactName((int)std::lround(v[kKeyWallContact]));
     if (key == kKeyAlliesPlace) return AlliesPlaceName((int)std::lround(v[kKeyAlliesPlace]));
+    if (key == kKeyWristLook) return WristLookName((int)std::lround(v[kKeyWristLook]));
     if (key == kKeyBarPlace) return ToolbarName(toolbartype::TypeOf((int)std::lround(v[kKeyHide]), (int)std::lround(v[kKeyBarPlace])));
     if (key == kKeyMeleeDirectClient) return DirectHitName((int)std::lround(v[kKeyMeleeDirectClient]));
     return nullptr;

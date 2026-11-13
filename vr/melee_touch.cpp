@@ -118,6 +118,7 @@ std::atomic<bool> g_noAttack{false};   // [debug] melee_touch_no_attack: a touch
 std::atomic<ULONGLONG> g_liveAt{0};   // the last time Tick had a weapon it swings (melee, bare hands, a throwing weapon) posed and striking: GetTickCount64
 std::atomic<uint32_t> g_liveKind{0};  // ... and its D2RVR_WeaponType
 std::atomic<bool> g_throwWanted{false};   // [hands] throw_autoaim_deg: the monsters near the hero are wanted for a throw's auto-aim
+std::atomic<bool> g_wallsWanted{false};   // [weight] wall_contact_mode 2 (Bear's): the server's game and the hero's unit are wanted for the wall cells (vr/unleashed_wall_cells.cpp)
 std::atomic<bool> g_moveWanted{false};    // [weight] grab_moves_unit: the server's game is wanted for the knockback (vr/grab_move.cpp)
 std::atomic<bool> g_bowWanted{false};     // [bow] pitch_aim: ... and for a bow's or crossbow's shot aimed by its line (vr/bow_pitch_wire.cpp)
 std::atomic<bool> g_leapWanted{false};    // [gameplay] leap_by_gaze: ... and for the monster a Barbarian's Leap Attack looks at
@@ -3453,7 +3454,7 @@ bool PressDown() {
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_pickWanted.load() && !g_statusWanted.load() && !g_moveWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
+    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_pickWanted.load() && !g_statusWanted.load() && !g_moveWanted.load() && !g_wallsWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
         GetTickCount64() < retryAt)
         return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
@@ -3481,6 +3482,7 @@ ULONGLONG g_thrScanAt = 0;   // the timer's thread only
 
 void SetThrowWanted(bool on) { g_throwWanted.store(on); }
 void SetMoveWanted(bool on) { g_moveWanted.store(on); }
+void SetWallsWanted(bool on) { g_wallsWanted.store(on); }
 uint32_t HeroId() { return g_heroId.load(); }
 bool ThrowWanted() { return g_throwWanted.load(); }
 void SetBowWanted(bool on) { g_bowWanted.store(on); }

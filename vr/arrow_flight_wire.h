@@ -27,8 +27,10 @@ void SetViewGate(bool (*fn)());
 // [bow] arrow_flight (the box: off = nothing here does anything, the game draws its arrow as ever), [debug] arrow_flight_trace (log lines: each arrow
 // taken, its entities, its flight's summary), [debug] arrow_flight_fx_off (the arrow's effect entities - an elemental arrow's fire, frost, light - switched
 // off by the game's own switch while ours flies: for a test, in case the game's effects do not follow the matrix), [bow] arrow_flight_straight (the shot's own
-// arrow straight along its line when the line met nothing; off: it joins the game's path, as 0.179 drew it). Any thread, live.
-void Configure(bool on, bool trace, bool fxOff, bool straight = true);
+// arrow straight along its line when the line met nothing; off: it joins the game's path, as 0.179 drew it), [bow] arrow_flight_elemental (an arrow with an effect
+// of its own - Fire, Magic, Ice, Cold, Exploding, Immolation, Freezing, Guided - drawn by us too; off: left to the game, whole, since the game draws its effect
+// where the missile is and a moved one was two: the arrow on our line, its flame on the game's path). Any thread, live.
+void Configure(bool on, bool trace, bool fxOff, bool straight = true, bool elemental = false);
 bool On();
 
 // vrcam, at the game's own read of a shot's aim (its thread; F4, a bow or crossbow in hand): the shot's line from the arrow's release point o along d (render

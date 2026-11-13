@@ -30,6 +30,7 @@ struct ID3D12Device;
 struct ID3D12PipelineState;
 struct ID3D12CommandQueue;
 struct ID3D12CommandList;
+struct ID3D12GraphicsCommandList;
 struct D3D12_GRAPHICS_PIPELINE_STATE_DESC;
 struct D3D12_PIPELINE_STATE_STREAM_DESC;
 namespace natived3d { struct Sinks; }
@@ -49,7 +50,12 @@ bool Hooked();   // FillSinks was called (the key on at the game's start, no ReS
 void OnGraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* desc, ID3D12PipelineState* pso);
 void OnStreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* desc, ID3D12PipelineState* pso);
 void MarkResolve(ID3D12PipelineState* pso, int blends = -1);
-void MarkFogBehind(ID3D12PipelineState* pso);   // (the test: a pipeline taken as a hair / foliage one - fogged by the depth behind it)   // (the test: a pipeline taken as the resolve's; blends: 1 into its target, 0 not, -1 not known)
+// (the test: a pipeline taken as a hair / foliage one - fogged by the depth behind it; oit: its pixel shader writes the game's weight)
+void MarkFogBehind(ID3D12PipelineState* pso, bool oit = true);
+// The pixel shader writes the game's weighted-blended weight 1e6 / (1e5 - z^3): its bytecode holds both constants as immediates (the game's
+// see-through permutations of ps_hair_p, ps_foliage_p, ps_models_p, ps_alpha_threshold_p, ps_models_blend_p, ps_grunge_p, ...; their opaque
+// twins - same containers, the bench's same stage - hold neither: 2026-11-13, every permutation of the game's 3.3 containers checked)
+bool HasOitWeight(const void* bytecode, size_t n);
 
 // The fog as the present has it, each frame
 struct Params {
@@ -99,6 +105,28 @@ struct Params {
     float part[2] = {1.0f, 1.0f};
     int planes = 0;
     float planesStart = 55.0f, planesEnd = 140.0f, planesStrength = 1.0f, planesSoft = 1.0f;
+    // [fog] game_fog_hair_strict (2026-11-13: Serg's grass black without DLSS; martin039383's hair and grass fogged at other distances): only
+    // draws whose pixel shader writes the game's weight (HasOitWeight) are sent into our hair / foliage target - the effects' weighted colour
+    // texture is the game's pooled 2048 RGBA16F one, drawn into by other passes too (the 10 s line saw a shadow pipeline in it), and an
+    // opaque lit draw into it was taken from its pass; and nothing of ours is left over from a step that did not fold it (no step at the
+    // resolve, the effects' colour or revealage not taken): cleared, never folded into a later frame. false: as 0.215
+    bool hairStrict = true;
+    // [fog] game_fog_own_distance_behind: the hair / foliage and particles' own distance (read from the game's weight) never past the opaque
+    // scene behind them at that pixel (they passed the depth test there) - a weight read too small (overlapping layers, a half-folded frame)
+    // fogged near grass as far ground. false: as 0.215
+    bool ownBehind = true;
+    // [fog] game_fog_scene_one_size: the scene the resolve's own tables name is taken only when it is the depth's size. Serg 2026-11-13 on
+    // 0.215.6: the tables also named the game's 1024 x 1024 half-size effects layer (once bound with the 2048 depth); taken as the scene, the
+    // step refused it for its size and missed hundreds of frames in 10 s. false: as 0.215 (the first named one)
+    bool sceneOneSize = true;
+    // [fog] game_fog_scene_by_name: the scene is the view in the resolve's own tables the game named "Main Color 0" / "Main Color 1" (its
+    // renderer names its targets, its D3D12 back end passes the names on) - known, not guessed; no such view: the search as before.
+    // false: the search only (as 0.215)
+    bool sceneByName = true;
+    // [fog] game_fog_layers_in_order: the particles and the hair / foliage laid near over far by their own distance and coverage, not
+    // averaged by the game's weight (made for its camera far above: from our eyes a near haze particle outweighs a far bush 80 times and
+    // the bush took the haze's pale colour - Serg 2026-11-13 on 0.215.8). false: as 0.215 (one weighted average)
+    bool layersInOrder = true;
 };
 void Configure(const Params& p);
 // The fog's share each plane adds (the fog after plane i: strength x (i + 1) / n), and its view depth - the shader's PlanesKeep, the log
@@ -123,5 +151,8 @@ bool LastProbe(float out[80]);
 void ResetSceneCheck(int mode);
 // Only the found scene, depth and effects' targets watched (the sinks no longer search): the test, the 10 s line
 bool Watching();
+// [fog] game_fog_miss_keeps_fog (vr/fog_height.h SetPick): did the step write at the resolve the game's fog pass on `cl` follows - the list's
+// own last resolve since its reset, else the last resolve on any list; none seen yet: true (the colour left out, as before)
+bool StepDrewAt(ID3D12GraphicsCommandList* cl);
 
 }  // namespace fogfx

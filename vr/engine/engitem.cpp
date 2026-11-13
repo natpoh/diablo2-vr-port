@@ -7,6 +7,9 @@
 #include "held_units.h"   // the units we placed let go, as the game does, when a game is left
 #include "sky_atlas.h"    // the domes' atlas: its layout's mark (DomeAtlasHasCap)
 #include "world_holes_file.h"   // [holes] patch_world: the places and the measures file D2R_VR_Settings writes
+#include "../wrist_models.h"    // [hud] wrist_game_models: the medallions' matrices
+#include "wrist_orb_paths.h"    // ... and the units D2R_VR_Settings writes for them
+#include "wrist_look.h"         // ... and what the ask for them found, for the headset panel (shared/)
 
 #include <array>
 
@@ -1284,6 +1287,41 @@ void RemoteCopiesFrame() {
 // [weight] world_contact's scan takes the level's entities with a parent for its pieces: our instances' meshes hang on a root of ours with no parent, never on the
 // hero, so the belt's bottles were laid by their renderer's boxes as walls round his hips and the weapons stopped on them (Serg, 0.197.1, a weapon in each hand).
 // Every entity of the belt's bottles, the emptied ones, the items in a hand and the other players' copies, five times a second (the scan reads twice a second).
+// ---- [hud] wrist_game_models: the life and mana medallions on the wrists as the game's own models (vr/wrist_models.h, shared/wrist_orb_models.h) ----
+// The effect's frame block (vr/render/effects/effects.cpp) works out each medallion as today (its place on the drawn wrist, its frame, the eased level, the
+// low-life heartbeat) and hands it here (SetWristOrbs); each frame on the registry's thread the game's glass ball, its aluminium ball as the plate and our
+// liquid lens in the potions' material are laid there (WristOrbsFrame) - the game draws them: both eyes, its depth, its lights, its glass. Placed once a
+// game (let go as the belt's: LetGoAll), laid far under the ground while not wanted (not F4, a menu, no fresh want).
+SRWLOCK g_wristLock = SRWLOCK_INIT;
+SRWLOCK g_wristPartsLock = SRWLOCK_INIT;  // the parts below: Work holds it to place / lay / let go, the skeleton hook (WristArmPosed) to lay again
+wristmodels::Want g_wristWant;            // under g_wristLock
+float g_wristPulse = 1.0f;                // under g_wristLock: [hud] wrist_game_pulse
+struct WristPart { Shared inst{}; uint32_t root = 0xFFFFFFFFu; bool parked = true; bool placed = false; bool modelTold = false; ULONGLONG placedAt = 0; int variant = -1; };
+constexpr int kWristUnits = 6;            // glass, the gold plate, life liquid, mana liquid, the bronze plate, the silver plate
+Shared g_wristDef[kWristUnits];
+bool g_wristDefOk[kWristUnits] = {};
+ULONGLONG g_wristDefAt = 0;               // when the units were last asked (again every 10 s while one is missing)
+std::atomic<int> g_wristUnitsState{wristlook::kUnitsUnknown};   // what the last ask found (WristUnitsState: the headset panel's "Medallions: look" says "not made")
+WristPart g_wristGlass[2], g_wristPlate[2], g_wristLiquid[2];   // the glass and the plate by the medallion's slot, the liquid by its kind
+int g_wristLevel[2] = {};                 // the level mesh each liquid shows (1 - kLevels; the log)
+unsigned g_wristLevelWaits = 0;           // frames a liquid's level could not be set yet (the log)
+const char* WristUnit(int u) {
+    switch (u) {
+    case 0: return wristorbs::kGlassUnit;
+    case 1: return wristorbs::kPlateMetal[0].unit;
+    case 4: return wristorbs::kPlateMetal[1].unit;
+    case 5: return wristorbs::kPlateMetal[2].unit;
+    default: return wristorbs::kLiquidUnit[u - 2];
+    }
+}
+int WristUnitsState() { return g_wristUnitsState.load(); }
+void SetWristOrbs(const wristmodels::Want& w, float pulse) {
+    AcquireSRWLockExclusive(&g_wristLock);
+    g_wristWant = w;
+    g_wristPulse = pulse;
+    ReleaseSRWLockExclusive(&g_wristLock);
+}
+
 void PublishOwnModels() {
     static ULONGLONG at = 0;
     const ULONGLONG now = GetTickCount64();
@@ -1298,6 +1336,8 @@ void PublishOwnModels() {
     for (const Bottle& b : g_bottles) if (!b.dead) add(b.inst.p);
     for (const Loose& l : g_loose) if (!l.dead) add(l.inst.p);
     for (const HeldCopy& c : g_copies) if (!c.dead) add(c.inst.p);
+    for (int k = 0; k < 2; ++k)   // ([hud] wrist_game_models: the medallions ride the wrists)
+        for (const WristPart* w : {&g_wristGlass[k], &g_wristPlate[k], &g_wristLiquid[k]}) if (w->inst.p && !w->parked) add(w->inst.p);
     for (const RemoteDrawn& r : g_remoteDrawn) if (!r.dead) add(r.inst.p);
     ownmodels::Publish(std::move(ents));
 }
@@ -2358,6 +2398,364 @@ void ResetDome(Dome& d) {
     d.def = {}; d.inst = {}; d.root = 0xFFFFFFFFu; d.loadTried = false; d.parked = true; d.tries = 0;
     d.loadedAt = d.placedAt = d.modelAt = 0; d.told = "?"; d.toldR = -1.0f; d.toldPlace = false; d.fileTold.clear();
 }
+// [hud] wrist_game_models: the liquid's level - its file holds wristorbs::kLevels meshes (the dome cut flat at each level), the game's own mesh flipbook
+// shows one: ModelInstance::SetActiveMesh (0xF3F390: `cmp [rcx+8],rdx; je; mov [rcx+8],rdx; jmp 0xF3FFF0` - the visible list and its render items
+// rebuilt), on the registry's thread, only once the model is loaded (the rebuild blocks on a model still loading). -1 shows every mesh at once.
+constexpr uint64_t RVA_SET_ACTIVE_MESH = 0xF3F390;
+constexpr uint8_t kSetActiveMeshBytes[] = {0x48, 0x39, 0x51, 0x08, 0x74, 0x09, 0x48, 0x89, 0x51, 0x08, 0xE9};
+using SetActiveMeshFn = void(__fastcall*)(void* inst, int64_t index);
+int g_levelCheck = 0;   // 1 the game's function is where 3.3.93787 has it, -1 not
+// The level shown on the placed liquid: true when its model shows mesh `index` now (set if it did not)
+bool ShowLevel(void* placed, int64_t index) {
+    if (g_levelCheck == 0) {
+        g_levelCheck = d2rsig::Check(RVA_SET_ACTIVE_MESH, kSetActiveMeshBytes, sizeof kSetActiveMeshBytes) ? 1 : -1;
+        Log(g_levelCheck > 0 ? "vrcam: wrist medallions - the liquid's level: the game's mesh flipbook (SetActiveMesh 0xF3F390) is where 3.3.93787 has it"
+                             : "vrcam: wrist medallions - the game's mesh flipbook (0xF3F390) is NOT as in 3.3.93787: the liquid is not shown");
+    }
+    if (g_levelCheck < 0) return false;
+    uint32_t e[16];
+    const int n = Entities(placed, e, 16);
+    bool shown = false;
+    for (int i = 0; i < n; ++i) {
+        const uintptr_t mi = skel::EntityModelInstance(e[i]);
+        if (!mi) continue;
+        int64_t now = 0;
+        uintptr_t res = 0;
+        uint32_t state = 0;
+        if (!::SafeRead(&now, (const void*)(mi + 0x08), 8)) continue;
+        if (now == index) { shown = true; continue; }
+        if (!::SafeRead(&res, (const void*)(mi + 0x20), 8) || !res || !::SafeRead(&state, (const void*)(res + 0xC8), 4) || state != 4) continue;   // (not loaded yet)
+        __try {
+            reinterpret_cast<SetActiveMeshFn>(d2rsig::Addr(RVA_SET_ACTIVE_MESH))((void*)mi, index);
+            shown = true;
+        } __except (EXCEPTION_EXECUTE_HANDLER) {
+            g_levelCheck = -1;
+            Log("vrcam: wrist medallions - a fault setting the liquid's level (the game's mesh flipbook): the liquid is not shown from now");
+            return false;
+        }
+    }
+    return shown;
+}
+void ParkWrist(WristPart& w);
+// The skeleton hook, as the hero's arm is posed at last (skel::SetArmPosed): each medallion on that wrist laid again on the arm as drawn NOW, from its place in
+// the wrist's frame the frame block worked out - the same frame the game skins the hero with (Work's lay is the frame block's world place, a frame old:
+// it lagged behind the wrist while the hero moved - 0.214.5). Only the parts Work shows; the liquid's level stays Work's. Any thread: the parts' lock,
+// skipped (not waited for) while Work holds it.
+std::atomic<unsigned> g_wristRelaid{0}, g_wristRelaySkipped{0};
+// Our instance's matrices written straight (no game call - this runs on the skeleton hook's thread, not the registry's): the root's local and world
+// (+0x00, +0x40: a root, no parent) `m`, every other entity's world its own local times it. The renderer works out no world for a unit with nothing
+// behind it (see Lay), so nothing of the game writes these after us.
+bool WriteWorld(uint32_t e, const float* local, const float m[16], bool root) {
+    uintptr_t comp = 0;
+    if (e == 0xFFFFFFFFu || !skel::EntityTransform(e, &comp)) return false;
+    __try {
+        float* t = reinterpret_cast<float*>(comp);
+        if (root) { memcpy(t, m, 64); memcpy(t + 16, m, 64); return true; }
+        float l[16], w[16];
+        memcpy(l, local ? local : t, 64);
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c) w[r * 4 + c] = l[r * 4] * m[c] + l[r * 4 + 1] * m[4 + c] + l[r * 4 + 2] * m[8 + c] + l[r * 4 + 3] * m[12 + c];
+        memcpy(t + 16, w, 64);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+void LayFast(void* inst, uint32_t root, const float m[16]) {
+    if (!WriteWorld(root, nullptr, m, true)) return;
+    uint32_t e[16];
+    const int n = Entities(inst, e, 16);
+    for (int i = 0; i < n; ++i) if (e[i] != root) WriteWorld(e[i], nullptr, m, false);
+}
+// Each wrist's arm as the skeleton hook last posed it, and when (QPC) and in which eye's pass (0 left, 1 right; g_eye): Work lays from it too (0.214.6, native
+// two passes: Work, once a pair, laid the frame block's world place - a frame old - over the left pass's fresh re-lay; the left eye lagged, the right did not)
+SRWLOCK g_wristArmLock = SRWLOCK_INIT;
+#if D2RVR_FIRST_PERSON
+skel::HeroArm g_wristArm[2];                  // under g_wristArmLock
+#endif
+LARGE_INTEGER g_wristArmAt[2] = {};           // under g_wristArmLock: QPC when posed (0 never)
+std::atomic<unsigned> g_wristPosedEye[2] = {};   // re-lays by the eye's pass (the log)
+std::atomic<unsigned> g_wristWorkFromArm{0}, g_wristWorkFromWorld{0};   // Work's lays: from the last posed arm / from the frame block's world place
+std::atomic<long long> g_wristWorkArmAgeUs{0};    // the summed age of the posed arm at Work's lays (the log: its mean)
+// One medallion `k` of the want on its wrist's posed arm: its place, back and along from its place in the wrist's frame. False: no place in the frame.
+#if D2RVR_FIRST_PERSON
+bool OrbOnArm(const wristmodels::Want& w, int k, const skel::HeroArm& arm, wristmodels::Orb* o) {
+    if (!w.rel[k] || !(w.perM > 0.0f)) return false;
+    wristmodels::ArmFrame fr;
+    if (!wristmodels::MakeFrame(arm.wrist, arm.elbow, arm.hand ? arm.point : nullptr, arm.hand ? arm.face : arm.across, &fr)) return false;
+    *o = w.orb[k];
+    wristmodels::FromFrame(fr, w.relC[k], true, w.perM, o->c);
+    wristmodels::FromFrame(fr, w.relBack[k], false, 1.0f, o->back);
+    wristmodels::FromFrame(fr, w.relAlong[k], false, 1.0f, o->along);
+    o->radius = w.radiusM[k] * w.perM;
+    return true;
+}
+void WristArmPosed(int side, const skel::HeroArm& arm) {
+    if (!g_set.wristGameModels.load(std::memory_order_relaxed)) return;
+    side &= 1;
+    {   // kept for Work: the newest posed arm of this wrist
+        LARGE_INTEGER t;
+        QueryPerformanceCounter(&t);
+        AcquireSRWLockExclusive(&g_wristArmLock);
+        g_wristArm[side] = arm;
+        g_wristArmAt[side] = t;
+        ReleaseSRWLockExclusive(&g_wristArmLock);
+    }
+    wristmodels::Want w;
+    AcquireSRWLockShared(&g_wristLock);
+    w = g_wristWant;
+    ReleaseSRWLockShared(&g_wristLock);
+    const ULONGLONG now = GetTickCount64();
+    if (!w.stamp || now < w.stamp || now - w.stamp >= 250 || !(w.perM > 0.0f)) return;
+    if (!TryAcquireSRWLockShared(&g_wristPartsLock)) { g_wristRelaySkipped.fetch_add(1, std::memory_order_relaxed); return; }
+    for (int k = 0; k < 2; ++k) {
+        if (!w.rel[k] || w.side[k] != side) continue;
+        wristmodels::Orb o;
+        if (!OrbOnArm(w, k, arm, &o)) continue;
+        float m[wristmodels::kParts][16];
+        bool show[wristmodels::kParts] = {};
+        if (!wristmodels::Matrices(o, m, show)) continue;
+        const int kind = o.kind == wristorbs::kMana ? 1 : 0;
+        WristPart* parts[wristmodels::kParts] = {&g_wristGlass[k], &g_wristPlate[k], &g_wristLiquid[kind]};
+        for (int p = 0; p < wristmodels::kParts; ++p)
+            if (show[p] && parts[p]->inst.p && !parts[p]->parked && parts[p]->root != 0xFFFFFFFFu) LayFast(parts[p]->inst.p, parts[p]->root, m[p]);
+        g_wristRelaid.fetch_add(1, std::memory_order_relaxed);
+        g_wristPosedEye[g_eye.load(std::memory_order_relaxed) & 1].fetch_add(1, std::memory_order_relaxed);
+    }
+    ReleaseSRWLockShared(&g_wristPartsLock);
+}
+#endif
+void ParkWrist(WristPart& w) {
+    if (w.parked || !w.inst.p) return;
+    const float m[16] = {0.001f, 0, 0, 0, 0, 0.001f, 0, 0, 0, 0, 0.001f, 0, g_heroPosNow[0], g_heroPosNow[1] - 5000.0f, g_heroPosNow[2], 1};
+    if (Lay(w.inst.p, w.root, m)) w.parked = true;
+}
+// One part shown at `m`: placed the first time (its unit's definition `def`), laid; false when it could not be (its entity gone: let go, placed again next frame)
+bool ShowWrist(WristPart& w, const Shared& def, const float m[16], const char* what) {
+    if (!w.inst.p) {
+        if (!def.p || w.placed) return false;   // (placed once a game: a placing that made no instance is not asked again)
+        w.placed = true;
+        w.placedAt = GetTickCount64();
+        if (!PlaceAt(def.p, m + 12, &w.inst)) { LogF("vrcam: wrist medallions - the %s could not be placed: not drawn", what); return false; }
+        w.root = RootOf(w.inst.p);
+        LogF("vrcam: wrist medallions - the %s placed (instance %p, root entity %X)", what, w.inst.p, w.root);
+    }
+    if (w.root == 0xFFFFFFFFu) w.root = RootOf(w.inst.p);
+    if (!Lay(w.inst.p, w.root, m)) {   // its entity is gone (an area change): let go, placed again
+        ReleaseInstance(&w.inst, &g_areaTally);
+        w = WristPart{};
+        return false;
+    }
+    w.parked = false;
+    if (!w.modelTold) {
+        const bool model = HasModel(w.inst.p);
+        if (model || GetTickCount64() - w.placedAt > 5000) {
+            w.modelTold = true;
+            LogF("vrcam: wrist medallions - the %s: %s", what, model ? "the game made its model - drawn by the game" :
+                 "NO model made 5 s after placing (its model file not where the game takes it: run D2R VR Settings with the tick on, then restart the game)");
+        }
+    }
+    return true;
+}
+void WristOrbsFrameLocked(bool fullBody);
+void WristOrbsFrame(bool fullBody) {
+#if D2RVR_FIRST_PERSON
+    static bool hooked = false;   // the medallions laid again on the arm as it is posed (the skeleton hook)
+    if (!hooked && g_set.wristGameModels.load()) { hooked = true; skel::SetArmPosed(&WristArmPosed); }
+#endif
+    AcquireSRWLockExclusive(&g_wristPartsLock);
+    WristOrbsFrameLocked(fullBody);
+    ReleaseSRWLockExclusive(&g_wristPartsLock);
+}
+void WristOrbsFrameLocked(bool fullBody) {
+    const bool on = g_set.wristGameModels.load();
+    bool any = false;
+    for (int k = 0; k < 2; ++k) any = any || g_wristGlass[k].inst.p || g_wristPlate[k].inst.p || g_wristLiquid[k].inst.p;
+    if (!on && !any) return;
+    wristmodels::Want w;
+    float pulse = 1.0f;
+    AcquireSRWLockShared(&g_wristLock);
+    w = g_wristWant;
+    pulse = g_wristPulse;
+    ReleaseSRWLockShared(&g_wristLock);
+    const ULONGLONG now = GetTickCount64();
+    const bool fresh = on && fullBody && viewgate::F4() && w.stamp && now >= w.stamp && now - w.stamp < 250;
+    {   // once per change: why nothing is drawn (0.214.1 said only "0 of N frames")
+        const char* why = !on ? "[hud] wrist_game_models off" : !viewgate::F4() || !fullBody ? "not VR first person (F4)" :
+                          !w.stamp ? "the wrists' frame never handed over (the effect's frame block: wrists not on, the effect runtime not running, a menu, or the "
+                                     "glass-ball look not chosen)" :
+                          now < w.stamp || now - w.stamp >= 250 ? "the wrists' frame stale (older than 250 ms: a menu, the hero loading, the effect paused)" : "";
+        static std::string toldWhy = "-";
+        if (toldWhy != why) {
+            toldWhy = why;
+            if (*why) LogF("vrcam: wrist medallions - not drawn by the game now: %s", why);
+            else Log("vrcam: wrist medallions - the wrists' frame comes fresh: drawn by the game from now (its units asked if not yet)");
+        }
+    }
+    if (fresh) {   // the units: asked once a game, again every 10 s while one is missing (D2R VR Settings not run yet)
+        bool missing = false;
+        for (int u = 0; u < kWristUnits; ++u) missing = missing || !g_wristDefOk[u];
+        if (missing && (!g_wristDefAt || now - g_wristDefAt >= 10000)) {
+            g_wristDefAt = now;
+            std::string told;
+            for (int u = 0; u < kWristUnits; ++u) {
+                if (g_wristDefOk[u]) continue;
+                g_wristDefOk[u] = LoadDef(WristUnit(u), &g_wristDef[u]);
+                if (!g_wristDefOk[u]) told += std::string(told.empty() ? "" : ", ") + WristUnit(u);
+            }
+            g_wristUnitsState.store(told.empty() ? wristlook::kUnitsLoaded : wristlook::kUnitsMissing);
+            static std::string toldWas = "-";
+            if (told != toldWas) {
+                toldWas = told;
+                if (told.empty()) Log("vrcam: wrist medallions - the glass dome, the gold / bronze / silver bases and the liquid lens in the potions' own materials "
+                                      "(life, mana): all six units loaded - drawn by the game in VR F4 ([hud] wrist_game_models)");
+                else LogF("vrcam: wrist medallions - these units did not load: %s (made by D2R VR Settings with [hud] wrist_game_models ticked, into the mod's data); "
+                          "asked again every 10 s - not drawn till then", told.c_str());
+            }
+        }
+    }
+    uint32_t litEnt[beltglow::kMaxOrbs];
+    float litH[beltglow::kMaxOrbs], litOp[beltglow::kMaxOrbs];
+    int lit = 0;
+    bool liquidUsed[2] = {};
+    for (int k = 0; k < 2; ++k) {
+        wristmodels::Orb o = w.orb[k];
+#if D2RVR_FIRST_PERSON
+        if (fresh && w.rel[k]) {   // the newest posed arm of its wrist (under 100 ms old): the place the skeleton hook lays it, not the frame block's older one
+            skel::HeroArm arm;
+            LARGE_INTEGER at, t, hz;
+            AcquireSRWLockShared(&g_wristArmLock);
+            arm = g_wristArm[w.side[k] & 1];
+            at = g_wristArmAt[w.side[k] & 1];
+            ReleaseSRWLockShared(&g_wristArmLock);
+            QueryPerformanceCounter(&t);
+            QueryPerformanceFrequency(&hz);
+            const long long ageUs = at.QuadPart && hz.QuadPart ? (t.QuadPart - at.QuadPart) * 1000000LL / hz.QuadPart : -1;
+            wristmodels::Orb onArm;
+            if (ageUs >= 0 && ageUs < 100000 && OrbOnArm(w, k, arm, &onArm)) {
+                o = onArm;
+                g_wristWorkFromArm.fetch_add(1, std::memory_order_relaxed);
+                g_wristWorkArmAgeUs.fetch_add(ageUs, std::memory_order_relaxed);
+            } else {
+                g_wristWorkFromWorld.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+#endif
+        float m[wristmodels::kParts][16];
+        bool show[wristmodels::kParts] = {};
+        int level = 0;
+        const bool shown = fresh && wristmodels::Matrices(o, m, show, &level);
+        const int kind = o.kind == wristorbs::kMana ? 1 : 0;
+        if (shown && show[wristmodels::kGlass] && ShowWrist(g_wristGlass[k], g_wristDef[0], m[wristmodels::kGlass], k ? "second medallion's glass" : "first medallion's glass")) {
+            uint32_t e[16];   // see-through: the game's own per-entity opacity on every entity of the glass (the draw blends below 1)
+            const int n = Entities(g_wristGlass[k].inst.p, e, 16);
+            const float op = std::min(1.0f, std::max(wristmodels::kGlassOpacityMin, o.glass));
+            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i) { litEnt[lit] = e[i]; litH[lit] = 0.0f; litOp[lit] = op; ++lit; }
+        } else {
+            ParkWrist(g_wristGlass[k]);
+        }
+        {   // the base of the metal chosen ([hud] hand_vitals_orb_metal): its own unit - another metal's instance let go; clean or aged by the patina (its two meshes)
+            const int metal = o.metal >= 0 && o.metal <= 2 ? o.metal : 0;
+            const int def = metal == 0 ? 1 : metal == 1 ? 4 : 5;
+            if (g_wristPlate[k].inst.p && g_wristPlate[k].variant != metal) {
+                ReleaseInstance(&g_wristPlate[k].inst, &g_areaTally);
+                g_wristPlate[k] = WristPart{};
+            }
+            if (shown && show[wristmodels::kPlate] && ShowWrist(g_wristPlate[k], g_wristDef[def], m[wristmodels::kPlate], k ? "second medallion's plate" : "first medallion's plate")) {
+                g_wristPlate[k].variant = metal;
+                ShowLevel(g_wristPlate[k].inst.p, o.patina >= wristorbs::kPatinaAged ? 1 : 0);
+            } else {
+                ParkWrist(g_wristPlate[k]);
+            }
+        }
+        if (shown && show[wristmodels::kLiquid] && !liquidUsed[kind] &&
+            ShowWrist(g_wristLiquid[kind], g_wristDef[2 + kind], m[wristmodels::kLiquid], kind ? "mana liquid" : "life liquid")) {
+            liquidUsed[kind] = true;
+            if (!ShowLevel(g_wristLiquid[kind].inst.p, level - 1)) ++g_wristLevelWaits;   // (its model not loaded yet: every mesh at once till it is)
+            g_wristLevel[kind] = level;
+            uint32_t e[16];
+            const int n = Entities(g_wristLiquid[kind].inst.p, e, 16);
+            const float h = wristmodels::GlowHighlight(g_set.wristGameGlow.load()) + wristmodels::Highlight(o.glow, pulse);   // (the glow at rest, the beat on top)
+            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i) { litEnt[lit] = e[i]; litH[lit] = h; litOp[lit] = -1.0f; ++lit; }
+        }
+    }
+    for (int kind = 0; kind < 2; ++kind) if (!liquidUsed[kind]) ParkWrist(g_wristLiquid[kind]);
+    beltglow::SetOrbs(litEnt, litH, litOp, lit);
+    static ULONGLONG toldAt = 0;   // every 30 s while on: what is shown
+    static unsigned frames = 0, shownFrames = 0;
+    ++frames;
+    if (fresh) ++shownFrames;
+    if (on && now - toldAt >= 30000) {
+        toldAt = now;
+        const int life = w.orb[0].kind == wristorbs::kLife ? 0 : 1;
+        int units = 0, placed = 0, modelled = 0;
+        for (int u = 0; u < kWristUnits; ++u) units += g_wristDefOk[u] ? 1 : 0;   // (of six)
+        for (int k = 0; k < 2; ++k)
+            for (const WristPart* p : {&g_wristGlass[k], &g_wristPlate[k], &g_wristLiquid[k]})
+                if (p->inst.p) { ++placed; modelled += HasModel(p->inst.p) ? 1 : 0; }
+        LogF("vrcam: wrist medallions, 30 s - drawn by the game in %u of %u frames (VR F4, the wrists' frame fresh); units loaded %d of 6, parts placed %d of 6, "
+             "with a model %d; the frame handed over %s; life level %.2f (mesh %d of %d), mana level %.2f (mesh %d); the base %s, %s; %u frames a level waited for its model; "
+             "laid again on the posed arm %u times (left eye's pass %u, right eye's %u; %u skipped: Work busy); Work laid them from the last posed arm %u "
+             "times (it was %.1f ms old on average), from the frame block's world place %u times (no fresh posed arm); heartbeat life %.2f, mana %.2f "
+             "(the liquid's highlight up to %.2f at its top)",
+             shownFrames, frames, units, placed, modelled, !w.stamp ? "NEVER" : now - w.stamp < 250 ? "just now" : "a while ago",
+             w.orb[life].fill, g_wristLevel[0], wristorbs::kLevels, w.orb[1 - life].fill, g_wristLevel[1],
+             wristorbs::kPlateMetal[w.orb[0].metal >= 0 && w.orb[0].metal <= 2 ? w.orb[0].metal : 0].name,
+             w.orb[0].patina >= wristorbs::kPatinaAged ? "aged (its rosette)" : "clean", g_wristLevelWaits,
+             g_wristRelaid.exchange(0), g_wristPosedEye[0].exchange(0), g_wristPosedEye[1].exchange(0), g_wristRelaySkipped.exchange(0),
+             g_wristWorkFromArm.load(), g_wristWorkFromArm.load() ? (double)g_wristWorkArmAgeUs.load() / g_wristWorkFromArm.load() / 1000.0 : 0.0,
+             g_wristWorkFromWorld.load(), w.orb[life].glow, w.orb[1 - life].glow, pulse);
+        // the sizes, both ways (0.215.12, Serg: "the old medallions' diameter is a bit bigger"): the effect's base radius Rb (the size slider / 2) against the
+        // game-drawn base's - its entities' world matrices as they are now, read back (the x axis's length: the mesh's radius 1 times it), in metres
+        for (int k = 0; k < 2; ++k) {
+            const WristPart& pl = g_wristPlate[k];
+            float drawn = 0.0f, glassDrawn = 0.0f;
+            auto axis = [](const void* inst, uint32_t root) {
+                float most = 0.0f;
+                uint32_t e[16];
+                int n = inst ? Entities(const_cast<void*>(inst), e, 16) : 0;
+                if (n <= 0 && root != 0xFFFFFFFFu) { e[0] = root; n = 1; }
+                for (int i = 0; i < n; ++i) {
+                    uintptr_t comp = 0;
+                    if (!skel::EntityTransform(e[i], &comp)) continue;
+                    __try {
+                        const float* t = reinterpret_cast<const float*>(comp) + 16;
+                        most = std::max(most, std::sqrt(t[0] * t[0] + t[1] * t[1] + t[2] * t[2]));
+                    } __except (EXCEPTION_EXECUTE_HANDLER) {}
+                }
+                return most;
+            };
+            if (pl.inst.p && !pl.parked) drawn = axis(pl.inst.p, pl.root);
+            if (g_wristGlass[k].inst.p && !g_wristGlass[k].parked) glassDrawn = axis(g_wristGlass[k].inst.p, g_wristGlass[k].root);
+            const float per = w.perM > 0.0f ? w.perM : 1.0f;
+            LogF("vrcam: wrist medallions - sizes, %s: the effect's base radius Rb %.4f m (hand_vitals_orb_size_cm %.2f), its dome %.4f m; the game-drawn base "
+                 "%.4f m (world x axis %.2f units / %.1f units a metre x its mesh's radius 1.000), its glass dome %.4f m%s",
+                 w.orb[k].kind == wristorbs::kMana ? "mana" : "life", w.radiusM[k], w.radiusM[k] * 200.0f, w.radiusM[k] * handorbs::kDomeR, drawn / per, drawn, per,
+                 glassDrawn / per, drawn > 0.0f && std::fabs(drawn / per - w.radiusM[k]) > 0.02f * w.radiusM[k] ? " - NOT THE SAME" : drawn > 0.0f ? " - the same" : " (not shown now)");
+        }
+        g_wristWorkFromArm.store(0);
+        g_wristWorkFromWorld.store(0);
+        g_wristWorkArmAgeUs.store(0);
+        g_wristLevelWaits = 0;
+        frames = shownFrames = 0;
+    }
+}
+void LetGoWrist(heldunits::Tally* t, bool instances) {
+    AcquireSRWLockExclusive(&g_wristPartsLock);
+    struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_wristPartsLock); } } unlock;
+    for (int k = 0; k < 2; ++k)
+        for (WristPart* w : {&g_wristGlass[k], &g_wristPlate[k], &g_wristLiquid[k]}) {
+            if (instances) ReleaseInstance(&w->inst, t);
+            else *w = WristPart{};
+        }
+    if (!instances) {
+        for (int u = 0; u < kWristUnits; ++u) { ReleaseDefinition(&g_wristDef[u], t); g_wristDefOk[u] = false; }
+        g_wristDefAt = 0;
+        g_wristUnitsState.store(wristlook::kUnitsUnknown);
+        beltglow::SetOrbs(nullptr, nullptr, nullptr, 0);
+    }
+}
+
 void ResetSlab(Slab& s) {
     s.def = {}; s.inst = {}; s.root = 0xFFFFFFFFu; s.loadTried = false; s.parked = true; s.tries = 0;
     s.loadedAt = s.placedAt = s.modelAt = 0; s.told = "?";
@@ -2379,6 +2777,7 @@ heldunits::Tally LetGoAll() {
     for (Slab& s : g_beams) ReleaseInstance(&s.inst, &t);
     for (Slab& s : g_vaults) ReleaseInstance(&s.inst, &t);
     for (Slab& s : g_holes) ReleaseInstance(&s.inst, &t);
+    LetGoWrist(&t, true);   // ([hud] wrist_game_models)
     if (t.kept) return t;   // (not the owner thread: nothing forgotten - the definitions stay with the instances that need them)
     // then the definitions
     for (Shared& d : g_defs) ReleaseDefinition(&d, &t);
@@ -2390,6 +2789,7 @@ heldunits::Tally LetGoAll() {
     for (Slab& s : g_beams) ReleaseDefinition(&s.def, &t);
     for (Slab& s : g_vaults) ReleaseDefinition(&s.def, &t);
     for (Slab& s : g_holes) ReleaseDefinition(&s.def, &t);
+    LetGoWrist(&t, false);
     // and all of it forgotten: the next game places its own
     g_bottles.clear(); g_loose.clear(); g_copies.clear(); g_remoteDrawn.clear(); g_placed.clear(); g_domeOld.clear(); g_slabOld.clear();
     g_copyDefs.clear(); g_placedDefs.clear();
@@ -2507,6 +2907,7 @@ void Work() {
     BeltFrame(g_fullBody.load());
     if (g_set.weightGrabItems.load() || !g_copies.empty()) HeldItemFrame(g_fullBody.load());   // [weight] grab_items: the copy of an item taken off the ground
     if (g_remoteCopiesOn.load()) RemoteCopiesFrame();   // [multiplayer] pose_share_held: the other players' potions and items
+    WristOrbsFrame(g_fullBody.load());   // [hud] wrist_game_models: the life and mana medallions as the game's own models
     PublishOwnModels();   // ([weight] world_contact: the belt's bottles and what the hands hold are never walls)
     if (const unsigned long code = GuardedSkyDomeFrame()) {   // [sky] game_sky: our sky as the game's own dome - a fault in it told, not swallowed
         static unsigned long toldCode = 0;
@@ -2637,7 +3038,8 @@ bool Wanted() {
            g_set.gameSky.load() ||                                                                               // ([sky] game_sky: the dome)
            g_set.summitBackdropHidden.load() ||                                                                  // ([sky] summit_backdrop_hidden: the Summit's ground picture)
            g_set.gameCeiling.load() ||                                                                           // ([ceiling] game_ceiling: the slab)
-           g_set.holesPatch.load();                                                                              // ([holes] patch_world: the patches)
+           g_set.holesPatch.load() ||                                                                            // ([holes] patch_world: the patches)
+           g_set.wristGameModels.load();                                                                         // ([hud] wrist_game_models: the medallions)
 }
 void InstallHook() {
     if (g_hook.load() != 0 || !Wanted()) return;

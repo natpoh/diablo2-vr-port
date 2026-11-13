@@ -128,6 +128,10 @@ const BoneDef kBones[] = {
 	{"two_hand_weapon_attach", 2, 0, 4.0f, 0.3f},           // 27
 	{nullptr, 0, 0, 1, 0},                                  // 28: its name runs into the page that does not read
 	{"R_hand_bind_jnt\x01", 0, 0, 1, 0},                    // 29: a letter that is not printable (read as no name: not a second right hand)
+	// [fist] from_knuckle: the left index runs to four bones (the Amazon's make: the first inside the palm); the right one stays short. (No more than these
+	// two: the bow's cache reads rigs of up to 32 bones, and OtherCaches gives it this one.)
+	{"L_ind_finger_03_bind_jnt", 18, 0.7f, 2.8f, 0.1f},     // 30
+	{"L_ind_finger_04_bind_jnt", 30, 0.7f, 2.7f, 0.1f},     // 31
 };
 constexpr int kCount = (int)(sizeof kBones / sizeof kBones[0]);
 
@@ -211,7 +215,13 @@ void Learned() {
 	CHECK(h.leg[1][0] == 24 && h.leg[1][1] == 25 && h.leg[1][2] == 26);
 	CHECK(h.twist[0].size() == 1 && h.twist[0][0].bone == 9 && h.twist[1].empty());
 	CHECK(h.fingers[0].size() == 1 && h.fingers[0][0].bones == std::vector<int>({11, 12}));
-	CHECK(h.fingers[1].size() == 1 && h.fingers[1][0].bones == std::vector<int>({17, 18}));
+	CHECK(h.fingers[1].size() == 1 && h.fingers[1][0].bones == std::vector<int>({17, 18, 30, 31}));
+	// [fist] from_knuckle (vr/finger_chain.h): where each chain's curl starts - by its name (firstBend, as before) and by the rig's own count of bones (knuckle)
+	if (h.fingers[0].size() == 1 && h.fingers[1].size() == 1) {
+		CHECK(h.fingers[0][0].firstBend == 0 && h.fingers[0][0].knuckle == 0);   // a short chain: its first bone
+		CHECK(!h.fingers[1][0].thumb && h.fingers[1][0].kind == bowhook::kIndex);
+		CHECK(h.fingers[1][0].firstBend == 0 && h.fingers[1][0].knuckle == 1);   // four bones, no "metacarpal" in the name: the knuckle is its second bone
+	}
 	CHECK(h.bindOk);
 	CHECK(std::fabs(h.eyeY - 6.1f) < 1e-4f);
 	// every bone name as the letter-at-a-time loop reads it

@@ -188,9 +188,14 @@ using AtlasStandInFn = bool (*)(ID3D12Device*, ID3D12Resource*, const D3D12_SHAD
 void SetAtlasStandIn(AtlasStandInFn fn);
 ID3D12Resource* SrvResource(uint64_t handle);
 unsigned SrvIncrement();
+// The debug name the game gave a resource (its D3D12 back end names its targets through SetPrivateData(WKPDID_D3DDebugObjectName) - the
+// renderer's "Main Color 0", "Revealage", ...; the wide name too). False: none. [fog] game_fog_scene_by_name
+bool ResourceName(ID3D12Resource* r, char* out, size_t n);
 // Our recording on a list of the game's (the stand-in for ReShade's command list, vr/native_rsapi.h): what it calls does not reach the sinks,
 // as ReShade does not report an add-on's own calls. On this thread, until set back.
 void SetOurs(bool ours);
+// The game's list a psoSwap is for (the SetPipelineState being recorded on this thread; nullptr outside one): [fog] game_fog_miss_keeps_fog
+ID3D12GraphicsCommandList* SwapList();
 // The native replay's camera hooks (camfix, vr/render/depth/depth_fix.cpp) on list functions hooked here already - [fog] game_fog_before_fx's
 // root signature / compute root CBV calls (MinHook takes one hook a function: until 0.209.9 camfix's did not go in and the replay was skipped
 // for the session, two passes a pair). HoldsHook: a function hooked here. SetRootChain: camfix's handlers, run first inside these hooks on

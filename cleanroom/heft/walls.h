@@ -37,6 +37,9 @@ struct Wall {
 	uint32_t id = 0;                                         // the box (a piece's part: the memory below is kept by it)
 	uint32_t body = 0;                                       // the one object it is part of (touching pieces of a wall in a row are one): its contact, its
 	                                                         // face held, its strike are the body's; 0: the box is its own
+	uint8_t  open = 0x3F;                                    // the faces it may put the weapon (the hand) out of, a bit each (face numbering below): [weight]
+	                                                         // wall_collide's cells close a side another wall cell stands against - the cells of one wall are one
+	                                                         // face, no seam catches a blade sliding along (vr/unleashed_wall_cells.h); all six: any face, as before
 };
 
 constexpr int kMaxWalls = 256;   // (the level pieces' parts near the hands: shared/world_solids.h)

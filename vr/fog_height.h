@@ -40,6 +40,15 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone = false, bo
 // fogged - noFog above. A stream's pixel shader (its bytecode in the stream as given), for the resolve's pipeline found the same way.
 // How many times our patched pass was bound in the game's place so far: it grows while the game's fog is drawn by it (height, our curve)
 uint32_t Bound();
+// [fog] game_fog_miss_keeps_fog: while noFog is wanted, a twin with the fog's colour KEPT is made beside each variant, and every bind of
+// the game's fog pass picks one: `pick` (the bind's thread, the list being recorded - vr/native_d3d12.h SwapList) true = the step drew at
+// this frame's resolve, the colour left out; false = no step there, the game's colour kept for that frame. Serg 2026-11-13 on 0.215.6:
+// frames the step missed had no fog at all (the pass had left its colour out for the quarter second the step was last seen).
+using PickFn = bool (*)();
+void SetPick(PickFn pick);
+void SetKeepOnMiss(bool on);
+// The pick's binds since the last call: with the colour left out, with it kept
+void TakePicks(uint32_t* out, uint32_t* kept);
 // Variants of the fog pass made so far (the test: a top moving with the head makes none per frame)
 uint32_t Builds();
 bool StreamPixelShader(const D3D12_PIPELINE_STATE_STREAM_DESC* desc, const void** code, size_t* size);

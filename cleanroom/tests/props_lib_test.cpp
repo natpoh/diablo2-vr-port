@@ -130,6 +130,49 @@ int wmain(int argc, wchar_t** argv) {
         EXPECT(propslib::SetHands(g, nullptr, 0) == 0 && propslib::HandAt(g, 0, &o) == 1 && (o.events & D2RP_HEV_RELEASE), "no hands: let go (events %d)", o.events);
         propslib::Destroy(g);
     }
+    // [weight] prop_heft: a prop's own mass (the optional D2rpSetPropMass): a cup told 0.18 kg weighs that as the hand sees it over it. A library without it
+    // (older than the prop mass): the log says so and the call does nothing.
+    if (!propslib::HasPropMass()) {
+        EXPECT(g_log.find("has no D2rpSetPropMass") != std::string::npos, "an older library: the log says so");
+        EXPECT(propslib::SetPropMass(reinterpret_cast<void*>(1), 1, 1.0f) < 0, "an older library: the call does nothing");
+        std::printf("props_lib_test: this library has no D2rpSetPropMass (older than the prop mass): checked only that\n");
+    } else if (void* g = propslib::HasHands() ? propslib::Create(nullptr) : nullptr) {
+        EXPECT(g_log.find("takes a prop's own mass") != std::string::npos, "the log says it takes a prop's own mass");
+        propslib::Clear(g, 0.0f);
+        D2rpProp cup{};
+        cup.id = 9;
+        cup.shape = D2RP_SHAPE_ROUND;
+        cup.material = D2RP_MAT_CERAMIC;
+        cup.q[3] = 1;
+        cup.centre[1] = 0.05f;
+        cup.half[0] = 0.04f; cup.half[1] = 0.05f; cup.half[2] = 0.04f;
+        propslib::SetProps(g, &cup, 1);
+        D2rpHand h{};
+        h.tracked = 1;
+        h.mayTake = 1;
+        h.grip = 0.0f;
+        h.pos[1] = 0.15f;
+        h.rot[3] = 1;
+        D2rpHandOut o{};
+        double t = 0;
+        auto hover = [&]() {
+            for (int i = 0; i < 6; ++i) {
+                h.time = t;
+                propslib::SetHands(g, &h, 1);
+                propslib::Step(g, t, 1.0f / 120.0f);
+                t += 1.0 / 120.0;
+                propslib::HandAt(g, 0, &o);
+            }
+            return o.state == D2RP_HAND_HOVER && o.id == 9 ? o.massKg : -1.0f;
+        };
+        const float own = hover();
+        EXPECT(own > 0.15f && own < 0.5f, "the cup weighs its ceramic first (%.3f kg)", own);
+        EXPECT(propslib::SetPropMass(g, 9, 0.18f) == 1, "told 0.18 kg");
+        const float told = hover();
+        EXPECT(std::fabs(told - 0.18f) < 0.002f, "it weighs what it was told (%.3f kg)", told);
+        EXPECT(propslib::SetPropMass(g, 1234, 1.0f) == 0 && propslib::SetPropMass(g, 9, -1.0f) < 0, "no such prop: 0; no mass: an error");
+        propslib::Destroy(g);
+    }
     std::printf(g_fails ? "props_lib_test: %d check(s) failed\n" : "props_lib_test: all checks passed\n", g_fails);
     return g_fails ? 1 : 0;
 }

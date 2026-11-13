@@ -482,6 +482,17 @@ int main() {
         {
             const Config m = Settings();   // the medallion's settings are live too
             EXPECT(m.orbFill == kFillThumb && m.orbShape == kShapeBall && m.orbMetal == 2 && std::fabs(m.orbPatina - 0.3f) < 1e-6f && m.orbDiscFaces == 0);
+            EXPECT(!m.gameModels && std::fabs(m.gamePulse - 1.0f) < 1e-6f);   // [hud] wrist_game_models: off and its default pulse until set
+        }
+        {   // [hud] wrist_game_models / wrist_game_pulse are live through Settings() too (0.214.1 lost them: the game's medallions never asked)
+            Config g = c;
+            g.gameModels = true;
+            g.gamePulse = 1.7f;
+            g.gameGlass = 0.6f;
+            Configure(g);
+            EXPECT(Settings().gameModels && std::fabs(Settings().gamePulse - 1.7f) < 1e-6f && std::fabs(Settings().gameGlass - 0.6f) < 1e-6f);
+            Configure(c);
+            EXPECT(!Settings().gameModels && std::fabs(Settings().gamePulse - 1.0f) < 1e-6f);
         }
         {   // the wrist under a shield: the tick and its seven coefficients are live too (defaults: ticked, a half turn, nothing added)
             EXPECT(Settings().orbUnderShield && std::fabs(Settings().orbShield.turnDeg - 180.0f) < 1e-6f && Settings().orbShield.upCm == 0.0f);

@@ -181,6 +181,7 @@ namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); v
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
 namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void SetMapPlaceFlat(int mode); void SetFlatMapZoom(int steps); bool FlatMapZoomSeen(float* game, float* drawn, int* mode); int FlatMapZoomHooks(); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
+namespace gamestate { bool CinemaPlaying(); void SetCinemaEnabled(bool on); void CinemaWorldDrawn(uint64_t now); void CinemaTick(uint64_t now); }   // [cinema] world_screen (vr/unleashed_cinema_screen.h, gamestate.cpp)
 namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
@@ -209,6 +210,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "frame_hitch.h"
 #include "pair_world.h"   // [stereo] slow_pair_world: a pair after a pass of over a second is still the world's (the pure rule)
 #include "gpu_fault.h"   // [debug] dred: the D3D12 device lost, told at once with what the GPU was doing (vr/gpu_fault.h)
+#include "ao_vr.h"      // [render] ao_vr: the game's ambient occlusion with a radius for our eyes
 #include "fog_height.h"  // [fog] game_fog_height: the game's own fog thinned with height in its own pass
 #include "stall_guard.h"  // [debug] stall_guard: a queue that stands still for good (vr/stall_guard.h)
 #include "ecl_hook.h"     // [debug] replay_marks 3, 4: the game's own ExecuteCommandLists calls (vr/ecl_hook.h)
@@ -270,6 +272,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "throw_aim.h"
 #include "throw_hand.h"
 #include "throw_cast.h"
+#include "touch_empty_slot.h"   // [gameplay] melee_touch_empty_attack: an empty attack slot is read as the plain Attack for the touch's press
 #include "throw_trace.h"
 #include "panel_input.h"
 #include "typed_keys.h"   // [openxr] laser_typing: the plugin's own keys carry kOwnKeyTag; a real one lets the keyboard layout in
@@ -302,6 +305,8 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "throw_born.h"
 #include "potion_hide.h"
 #include "knock_props.h"   // [weight] knock_props: the level's small props knocked about (drawn only)
+#include "wall_contact_mode.h"   // [weight] wall_contact_mode: Off / Ours (world_contact) / Bear's (wall_collide)
+#include "wall_collide.h"    // [weight] wall_contact_mode 2 (Bear's): the weapon stops at the game's own wall cells (drawn and felt only)
 #include "world_contact.h"   // [weight] world_contact: the weapon and the bare hands meet the level's walls (drawn only)
 #include "own_models.h"      // [weight] world_contact: the entities of our item models (the belt's bottles), never walls
 #include "own_effects.h"          // [render] dim_own_effects: the hero's own effects (Bone Armor ...) drawn fainter in first person
@@ -330,7 +335,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (NoticeCardTick)
 #include "hand_inventory.h"   // [openxr] hand_inventory: away from town the inventory on the left hand, the left stick walking on (HandInventoryTick)
 namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale); void SetNoticeCut(bool want, const int32_t widget[4], float scale); }   // [hud] monster_bar_room: where the plate is, to be cut out (vr/hud.cpp)
-namespace hud { void SetGameInterfaceScale(float k); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
+namespace hud { void SetGameInterfaceScale(float k); void SetGlobeNudge(float in, float dy, float scale); void SetControllerLayout(int controller); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
 namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's x over y scale - the corner map's box drawn that much wider in a picture of another shape
 #include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
 #include "roof_keep.h"     // [render] keep_roofs: in F4 the roof of a building you walk into stays

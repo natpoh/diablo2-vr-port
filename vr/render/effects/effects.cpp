@@ -9,6 +9,7 @@
 #include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 at the load (shared/)
 #include "../../ecl_hook.h"   // [fog] game_fog_before_fx: the submission order seen (fogfx::OnExecute, the tap)
 #include "../../phantom_rect.h"   // [render] phantom_rects: the vignette pass only where its carriers are
+#include "../../wrist_models.h"   // [hud] wrist_game_models: the medallions handed to the game's own models (engitem)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -1561,6 +1562,11 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.planesSoft = g_set.gameFogPlanesSoft.load();
         }
         if (!fp.ours) fp.cover = GameFogCoverNow();
+        fp.hairStrict = g_set.gameFogHairStrict.load();   // [fog] game_fog_hair_strict
+        fp.ownBehind = g_set.gameFogOwnBehind.load();     // [fog] game_fog_own_distance_behind
+        fp.sceneOneSize = g_set.gameFogSceneOneSize.load();   // [fog] game_fog_scene_one_size
+        fp.sceneByName = g_set.gameFogSceneByName.load();     // [fog] game_fog_scene_by_name
+        fp.layersInOrder = g_set.gameFogLayersInOrder.load(); // [fog] game_fog_layers_in_order
         // the part of the target the scene is drawn in (DLSS: 0.667 x 0.667 at the top left) - the step's rays from it (renderscale's last share)
         fp.part[0] = renderscale::g_last[0];
         fp.part[1] = renderscale::g_last[1];   // [fog] game_fog_cover: the fog's colour whole from this distance on (0 off; F3 full width from the head above)
@@ -1580,9 +1586,21 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         const bool tweaks = !TableFull();
         fogheight::Curve curveHere = curve;
         if (!tweaks) curveHere.on = false;
+        // [fog] game_fog_miss_keeps_fog: each bind of the game's fog pass picks the colour left out (the step drew at its resolve) or kept
+        // (no step there) - Serg 2026-11-13 on 0.215.6: missed frames had no fog at all
+        fogheight::SetKeepOnMiss(g_set.gameFogMissKeeps.load());
+        fogheight::SetPick([]() { return fogfx::StepDrewAt(natived3d::SwapList()); });
         fogheight::Frame(((tweaks && (height || mist || voidAlone || curve.on)) || noFog) && gamefogvr::Active() && GameFogDrawnView(),
                          tweaks && height ? FogTopNow() : 1.0e9f, tweaks && height ? g_set.fogSoft.load() : 1.0f, tweaks && mist, tweaks && voidAlone,
                          noFog, curveHere);
+    }
+    {   // [render] ao_vr / ao_vr_radius_m (vr/ao_vr.h): the game's AO given a radius for our eyes - wherever our camera stands at eye level
+        // in a world: VR F4, and the flat game's own first person (F3: Serg 2026-11-13 "put this slider in 2D too" - the same camera, the same
+        // black grass); from above (F1), behind (F2), the table and menus: the game's own
+        const float metres = g_set.aoVrRadiusM.load();
+        const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // (the world's units a metre, as the body's)
+        const bool eyeLevel = viewgate::F4() || (g_set.platform.load() == 0 && g_enabled.load() && !ThirdPerson() && !Overhead());
+        aovr::Frame(g_set.aoVr.load() && metres > 0.0f && g_inWorld.load() && eyeLevel, metres * upm, metres);
     }
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
     // [render] fx_fence: the next frame's pass waits for these effects; by turns ([stereo] turn_fx_fence) for its overlays too - marked after them
@@ -1625,7 +1643,8 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     // a panel open in a game: the flat picture at the panels' distance from its first frame
     xr::SetPanelOpen(gamestate::MenuOpen() && g_inWorld.load());
     // [openxr] laser: the flat picture's menus - a panel in a game, or the title and character screens
-    xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load());   // ([campfire]: the laser on the menu's board; off it, the hand's pick)
+    // ([cinema] world_screen: a cinematic in a game too - the laser on the big screen, the controllers as in a menu, a click or the pad skips it)
+    xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load() || gamestate::CinemaPlaying());   // ([campfire]: the laser on the menu's board; off it, the hand's pick)
     FlatRawTick();   // FlatVR: BodyWalk's raw controllers into the plugin's own layout ([direct] flatvr_controls)
     if (xr::On() || xr::Running() || xr::StopPending())
         replay::XrPresent(rt, dev, q, bb);
@@ -1939,6 +1958,26 @@ void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandLi
         in.fogBand = g_set.domeFogBakedStrength.load();
         in.fogBandTop = std::sin(g_set.domeFogBakedTopDeg.load() * 3.14159265f / 180.0f);   // ([sky] dome_fog_baked_top_deg)
     }
+    {   // the sky's fog band: baked or not, and why not - once each change (martin039383 2026-11-13 on 0.215: "the fog no longer goes into the
+        // sky"; no line said whether the band was baked)
+        const int band = engitem::DomeBand();
+        const int why = !in.on ? 1 : !g_set.domeFogBaked.load() ? 2 : g_set.domeFogBakedStrength.load() <= 0.0f ? 3 : !gamefogvr::Active() ? 4
+                      : band < 0 || band >= 5 ? 5 : g_underground.load() ? 6 : g_arcaneSky.load() ? 7 : 0;
+        static int told = -1;
+        static float toldTop = -1.0f;
+        const float top = g_set.domeFogBakedTopDeg.load();
+        if (why != told || (why == 0 && std::fabs(top - toldTop) > 0.25f)) {
+            told = why;
+            toldTop = top;
+            static const char* const kWhy[] = {"", "the game's dome not baked by us ([sky] game_sky / dome_in_game_colour)", "[sky] dome_fog_baked off",
+                                               "[sky] dome_fog_baked_strength 0", "the game's fog not drawing ours now (not VR F4 / F3 full width, or "
+                                               "the game's fog not chosen)", "no act's dome shown", "underground", "the Arcane Sanctuary's sky"};
+            if (why == 0)
+                LogF("vrcam: game sky - the fog's band baked into the dome: up to %.1f degrees, strength %.2f, colour %.4f %.4f %.4f (the game's "
+                     "fog colour now), act %d's band", top, g_set.domeFogBakedStrength.load(), in.fog[0], in.fog[1], in.fog[2], band + 1);
+            else LogF("vrcam: game sky - the fog's band NOT baked into the dome: %s", kWhy[why]);
+        }
+    }
     if (ready && g_domeBake.slot > 0) {
         char n[24];
         snprintf(n, sizeof n, "SkyNBand%dTex", g_domeBake.slot);
@@ -2197,6 +2236,7 @@ void ClearDsvChain(ID3D12GraphicsCommandList* cl, uint64_t dsv, ID3D12Resource* 
 // the game's pipelines as made: [fog] game_fog_height's fog pass and [fog] game_fog_before_fx's transparent resolve
 void GraphicsPso(ID3D12Device* dev, const D3D12_GRAPHICS_PIPELINE_STATE_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnGraphicsPso(dev, d, pso);
+    aovr::OnGraphicsPso(dev, d, pso);        // [render] ao_vr: the AO's generate pass
     fogfx::OnGraphicsPso(dev, d, pso);
     refleye::OnGraphicsPso(dev, d, pso);   // [render] reflections_per_eye: the reflections' resolve
     pipehunt::OnGraphicsPso(d, pso);       // [debug] skip_pipeline / patch_hunt 8, Ctrl+F10's pipe trace: its pixel shader's hash
@@ -2210,6 +2250,7 @@ void ComputePso(ID3D12Device* dev, const D3D12_COMPUTE_PIPELINE_STATE_DESC* d, I
 }
 void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D12PipelineState* pso) {
     fogheight::OnStreamPso(dev, d, pso);
+    aovr::OnStreamPso(dev, d, pso);          // [render] ao_vr
     fogfx::OnStreamPso(dev, d, pso);
     lightbounds::OnStreamPso(dev, d, pso);   // [render] light_bounds_fix without ReShade: the light bins' compute pipeline, if made from a stream
     benchlights::OnStreamPso(dev, d, pso);   // [render] bench_skip_point_lights
@@ -2219,7 +2260,7 @@ void StreamPso(ID3D12Device* dev, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3
 }
 // a pipeline the game binds: [render] light_bounds_fix's light bins (compute), then [fog] game_fog_height's fog pass (graphics)
 // and [render] reflections_per_eye's two reflection passes
-ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return refleye::Swap(fogheight::Swap(lightbounds::Swap(benchlights::Swap(litflat::Swap(pso))))); }
+ID3D12PipelineState* PsoSwap(ID3D12PipelineState* pso) { return aovr::Swap(refleye::Swap(fogheight::Swap(lightbounds::Swap(benchlights::Swap(litflat::Swap(pso)))))); }
 // At the plugin's load, MinHook initialised, before the game makes its device and swap chain.
 void Install() {
     natived3d::Sinks k;
@@ -2243,6 +2284,7 @@ void Install() {
     litflat::SetLog(&Log);       // [render] bench_lit_flat (vr/lit_flat.h)
     litflat::SetAreaColour(&FogColourNow);   // [render] potato_light_colour 3: the area's own (the sky's horizon / the act's fog colour)
     litflat::SetUnderground([] { return g_underground.load(std::memory_order_relaxed); });   // [render] potato_light_brightness_caves: the fog's split
+    aovr::SetLog(&Log);      // [render] ao_vr: the AO's generate pass with our radius (vr/ao_vr.h)
     refleye::SetLog(&Log);   // [render] reflections_per_eye: the reflections' two passes, copies bound in their place (vr/reflections_eye.h)
     k.computePso = &ComputePso;
     // [debug] skip_pipeline / patch_hunt 8, [render] skip_shaders, Ctrl+F10's pipe trace: a game pass left out by its pipeline (vr/pipe_hunt.h)
@@ -2303,7 +2345,7 @@ void Install() {
     replay::NativeSinks(k);
     // [render] shadows_once_a_pair (vr/shadows_once.h): what the game's lists write followed, so that the replay leaves out the lists that only
     // draw the shadow / grass maps - its hooks only with the replay's in and the key on at the start; then switched on and off live
-    if (replay::NativeOn() && IniB(L"render", L"shadows_once_a_pair", false)) {
+    if (replay::NativeOn() && IniB(L"render", L"shadows_once_a_pair", true)) {
         shadowsonce::FillSinks(k, &Log);
         Log("vrcam: shadows once a pair - [render] shadows_once_a_pair on at the start: what the game's lists write is followed; the lists that only "
             "draw the shadow maps and the grass map are not replayed for the right eye (F4, one pass)");
@@ -3370,6 +3412,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 };
                 const D2RVR_Shared* sh = Shared();
                 const bool shOk = sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid;
+                bool drawnArm[2] = {};   // ([hud] wrist_game_models: the wrist's frame is the drawn arm's this frame - the medallion can be re-laid on the posed arm)
                 for (int side = 0; side < 2; ++side) {   // the skeleton's: 0 right, 1 left
                     handorbs::Wrist w;
                     if (shOk && (sh->handsValid & (side == 0 ? 1u : 2u))) {   // the controller: its point, and its axes from its orientation (the hand frame -> the world)
@@ -3417,6 +3460,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                     }
                     const handorbs::Resolved r = orbTrack.Resolve(side, w, in.time);
                     in.arm[side] = r.arm;
+                    drawnArm[side] = r.src == handorbs::Src::Drawn;
                     if (r.changed) {   // once per change: where the wrist's frame comes from, and how long the last one lasted
                         const unsigned n = ++orbSrcLogged[side];
                         if (n <= 60 || n % 25 == 0) {
@@ -3487,6 +3531,48 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 static const float kWorldR[3] = {1.0f, 0.0f, 0.0f}, kWorldF[3] = {0.0f, 0.0f, -1.0f};   // identity: forward -z, so (x, y, z) goes through as it is
                 ou = handorbs::Pack(set, kWorldR, kWorldF, upm, in.time, fit);
                 if (set.globes && !cutOk) ou.on = false;
+                if (in.cfg.gameModels && !set.globes && viewgate::F4()) {   // [hud] wrist_game_models: the game's own models draw them (engitem::WristOrbsFrame), not this effect
+                    wristmodels::Want want;
+                    want.stamp = GetTickCount64();
+                    for (int k = 0; k < 2; ++k) {
+                        const handorbs::Orb& o = set.orb[k];
+                        wristmodels::Orb& g = want.orb[k];
+                        g.on = set.any && o.on && o.opacity > 0.02f;   // (faded out with the distance, the numbers not known: put away)
+                        g.c[0] = eyeW[0] + o.c.x * upm; g.c[1] = eyeW[1] + o.c.y * upm; g.c[2] = eyeW[2] + o.c.z * upm;   // (eye-relative metres -> the world)
+                        g.back[0] = o.back.x; g.back[1] = o.back.y; g.back[2] = o.back.z;
+                        g.along[0] = o.along.x; g.along[1] = o.along.y; g.along[2] = o.along.z;
+                        g.radius = o.radius * upm;
+                        g.fill = o.fill;
+                        g.glow = o.glow;
+                        g.glass = in.cfg.gameGlass;
+                        g.metal = in.cfg.orbMetal;
+                        g.patina = in.cfg.orbPatina;
+                        g.kind = o.kind;
+                        // its place in its wrist's frame (the drawn arm only): engitem re-lays it on the arm as the skeleton hook poses it
+                        const int sd = o.side & 1;
+                        const handorbs::Arm& a = in.arm[sd];
+                        wristmodels::ArmFrame fr;
+                        const float aw[3] = {a.wrist.x, a.wrist.y, a.wrist.z}, ae[3] = {a.elbow.x, a.elbow.y, a.elbow.z}, ap[3] = {a.point.x, a.point.y, a.point.z},
+                                    ax[3] = {a.across.x, a.across.y, a.across.z};
+                        if (g.on && drawnArm[sd] && a.ok && wristmodels::MakeFrame(aw, ae, a.hasPoint ? ap : nullptr, ax, &fr)) {
+                            const float oc[3] = {o.c.x, o.c.y, o.c.z}, ob[3] = {o.back.x, o.back.y, o.back.z}, oa[3] = {o.along.x, o.along.y, o.along.z};
+                            wristmodels::ToFrame(fr, oc, true, want.relC[k]);
+                            wristmodels::ToFrame(fr, ob, false, want.relBack[k]);
+                            wristmodels::ToFrame(fr, oa, false, want.relAlong[k]);
+                            want.rel[k] = true;
+                            want.side[k] = sd;
+                            want.radiusM[k] = o.radius;
+                        }
+                    }
+                    want.perM = upm;
+                    engitem::SetWristOrbs(want, in.cfg.gamePulse);
+                    static bool told = false;
+                    if (!told) {
+                        told = true;
+                        Log("vrcam: hand vitals - the wrist medallions are drawn by the game's own models ([hud] wrist_game_models): this effect's glass balls are not drawn");
+                    }
+                    ou.on = false;
+                }
             } else {
                 orbState.Reset();
                 orbTrack.Reset();

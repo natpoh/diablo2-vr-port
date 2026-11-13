@@ -24,7 +24,7 @@ constexpr Forced kBench[] = {
     {L"ceiling", L"enabled", 0}, {L"ceiling", L"game_ceiling", 0},
     {L"render", L"distance_blur", 0}, {L"render", L"effect_world", 0}, {L"render", L"fog_in_frame", 0},
     {L"hud", L"hand_vitals", 0}, {L"hud", L"ordinary_mob_bars", 0}, {L"hud", L"monster_bar_room", 0},
-    {L"weight", L"knock_props", 0}, {L"weight", L"grab_props", 0}, {L"weight", L"grab_items", 0}, {L"weight", L"grab_items_empty_grip", 0}, {L"weight", L"world_contact", 0},
+    {L"weight", L"knock_props", 0}, {L"weight", L"grab_props", 0}, {L"weight", L"grab_items", 0}, {L"weight", L"grab_items_empty_grip", 0}, {L"weight", L"world_contact", 0}, {L"weight", L"wall_contact_mode", 0},
     {L"weight", L"world_contact_hands", 0}, {L"weight", L"monster_ragdoll", 0}, {L"weight", L"monster_bodies", 0}, {L"weight", L"npc_bodies", 0},
     {L"weight", L"knock_down", 0},
     {L"body", L"legs_rear", 0}, {L"body", L"legs_side_ragdoll", 0},

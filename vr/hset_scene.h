@@ -128,6 +128,21 @@ inline std::string ChoiceDetail(const Model& m, int key) {
     return std::string(kDefs[key].detail) + " = " + text + (rowOff ? uitext::Tr("vr.hset.second_row_off", " - the second row (LT) is off") : "");
 }
 
+// The HUD page's "Medallions: look": the line under its name. The game's models picked and their files not there (D2R VR Settings makes them from
+// the player's game when it starts with this look in the ini, and takes them out again with another look - a pick here finds none): said, in
+// amber, instead of empty wrists with no word. Another toolbar type than Wrists: the look is not seen at all.
+inline bool WristLookSeen(const Model& m) {
+    return toolbartype::TypeOf((int)std::lround(m.Get()[kKeyHide]), (int)std::lround(m.Get()[kKeyBarPlace])) == toolbartype::kWrists;
+}
+inline bool WristLookNotMade(const Model& m) {
+    return WristLookSeen(m) && wristlook::NotMade((int)std::lround(m.Get()[kKeyWristLook]), m.Env().wristModels);
+}
+inline std::string WristLookDetail(const Model& m) {
+    if (!WristLookSeen(m)) return uitext::Tr("vr.hset.wrist_look.needs_wrists", "Seen with the toolbar type Wrists (the row above)");
+    if (WristLookNotMade(m)) return uitext::Tr("vr.hset.wrist_look.not_made", "Not made yet: start D2R VR Authentic Settings, then the game");
+    return DefDetail(kKeyWristLook);
+}
+
 // The Options page's Players row: the line under its name - what it does, or why - / + do nothing now.
 inline std::string PlayersDetail(const Model& m) {
     if (!m.PlayersOn()) return uitext::Tr("vr.hset.players.off", "Off: D2R VR Authentic Settings, Players from the headset");
@@ -512,8 +527,8 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         for (int i = 0; i < kViews; ++i) b.Button(kViewBtn(i), names[i], {Kind::View, i + 1, 0}, m.View() == i + 1, true, m.View() == i + 1 ? Role::Accent : Role::Text, Part::Choice);
     }
     const int pg = m.page;   // (the rows' places: hset_model.h RowBand / RowLabel / RowDetailRect - seven rows closer, World's and Video's closer still)
-    const bool world = HasSubRow(pg) || pg == kPageVideo;   // under a tab's page buttons (World, Controls), the Video page's seven: closer still, the name in the normal face
-    const int rowsMax = pg == kPageVideo && m.AutoShown() ? 0 : kRowsMax;   // (the Video page's rows hidden under the Auto run's lines)
+    const bool world = HasSubRow(pg) || pg == kPageVideo || TightRows(pg);   // under a tab's page buttons (World, Controls), the Video page's seven: closer still, the name in the normal face
+    const int rowsMax = pg == kPageVideo && m.AutoShown() ? 0 : kRowsTight;   // (the Video page's rows hidden under the Auto run's lines)
     for (int r = 0; r < rowsMax; ++r) {
         const int key = KeyAt(pg, r, m.View());   // (the view's rows: VR F1 - F3 leave out F4's, hset_defs.h KeyShown)
         if (key < 0) break;
@@ -528,8 +543,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         if (RowDetail(pg))
             b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
                    : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
+                   : key == kKeyWristLook ? WristLookDetail(m)
                    : d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
-                   RowDetailRect(r, pg), Face::Small, onePassWaits ? Role::Warn : Role::Quiet);
+                   RowDetailRect(r, pg), Face::Small, onePassWaits || (key == kKeyWristLook && WristLookNotMade(m)) ? Role::Warn : Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
             const bool usable = m.PlayersUsable();

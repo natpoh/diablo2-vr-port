@@ -38,6 +38,7 @@
 #include "strike_direction.h"
 #include "parry.h"   // [weight] parry_feel: the knock's ease (Knock)
 #include "clash_loud.h"   // [weight] clash_sound: how loud and how hard the knock of the two weapons is
+#include "shield_collide.h"   // [weight] shield_collide: the weapon on the hero's own shield - through past 60 cm, the knock
 #include "stick_strength.h"
 #include "strike_measure.h"
 #include "strike_force.h"   // [weight] cleave: the weapon's strike threshold the cleave's numbers are times
@@ -620,6 +621,103 @@ int WithDual(const heft::contact::Capsule* caps, int n, const DualPieces& other,
     }
     return keep + other.n;
 }
+// [weight] shield_collide (vr/shield_collide.h): the hero's own shield - its face as drawn (SetDrawnShield: the hands' frame, metres; the arm it is on), handed to
+// the first weapon with the bodies as the pair's other weapon is (held 1, firm, its velocity from the step before) under an id no monster has. The weapon stops on
+// its face and glances along it, its hand drawn where it holds it; pressed on past shieldcollide::kGiveM it goes through until it is clear; a knock is felt, a hard
+// one heard. Under g_lock.
+struct DrawnShield {
+    float part[weight::kShieldParts][7] = {};
+    int n = 0, arm = 1;
+    uint32_t code = 0;
+    ULONGLONG at = 0;
+};
+DrawnShield g_shieldDrawn;
+struct ShieldPieces {
+    heft::contact::Capsule c[weight::kShieldParts];
+    int n = 0;
+    double t = 0.0;
+};
+ShieldPieces g_shieldOf;
+shieldcollide::Pass g_shieldPass;
+shieldcollide::Touches g_shieldTouches;
+bool g_shieldTouch = false;   // the weapon on the shield after the last step
+ULONGLONG g_shieldToldAt = 0;
+unsigned g_shieldTold = 0;
+uint64_t g_shieldToldKey = 0;   // (the shield and the weapon told: a line when either changes)
+// The weight model's own pieces among the bodies (the pair's other weapon, the shield): never a strike, never a monster.
+inline bool OwnPiece(uint32_t id) { return id == kDualId || id == shieldcollide::kId; }
+// The shield's face where it is drawn now, into the room, with each capsule's velocity from where it was the step before (t: the step's clock, s).
+void NoteShieldPieces(const Head& head, double t) {
+    const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+    ShieldPieces& d = g_shieldOf;
+    const double dt = t - d.t;
+    const bool same = d.n == g_shieldDrawn.n && dt > 1e-4 && dt < 0.1;
+    for (int i = 0; i < g_shieldDrawn.n; ++i) {
+        const float* p = g_shieldDrawn.part[i];
+        heft::contact::Capsule c;
+        c.a = ToRoom(head, p, ident).pos;
+        c.b = ToRoom(head, p + 3, ident).pos;
+        c.radius = p[6];
+        c.id = shieldcollide::kId;
+        c.held = 1;          // (a held thing: stops the weapon, never a stab, no doll, no strike)
+        c.firm = true;       // (never left inside it - contact.h Capsule::firm)
+        c.part = -1;
+        if (same) c.vel = heft::Mul(heft::Sub(heft::Mul(heft::Add(c.a, c.b), 0.5), heft::Mul(heft::Add(d.c[i].a, d.c[i].b), 0.5)), 1.0 / dt);
+        d.c[i] = c;
+    }
+    d.n = g_shieldDrawn.n;
+    d.t = t;
+}
+// The bodies of this step (n of them in caps) with the shield's face after them, into `out` (room for monsterbodies::kMax): the monsters' cut to leave room.
+int WithShield(const heft::contact::Capsule* caps, int n, heft::contact::Capsule* out) {
+    const ShieldPieces& sh = g_shieldOf;
+    const int keep = std::min(n, monsterbodies::kMax - sh.n);
+    for (int i = 0; i < keep; ++i) out[i] = caps[i];
+    for (int i = 0; i < sh.n; ++i) {
+        out[keep + i] = sh.c[i];
+        g_capHeld[keep + i] = 1;
+        g_capBone[keep + i] = -1;
+        g_capOf[keep + i] = -1;
+    }
+    return keep + sh.n;
+}
+// How far the hold's weapon is from the shield's face (its pieces' surfaces, metres; under 0 inside; very large: no weapon, no shield).
+double ShieldGap(const hh::Hold& h) {
+    heft::contact::Capsule w[kDualPieces];
+    const int nw = h.Held() ? h.RoomPieces(w, kDualPieces) : 0;
+    shieldcollide::Seg a[kDualPieces], b[weight::kShieldParts];
+    for (int i = 0; i < nw; ++i) a[i] = {{w[i].a.x, w[i].a.y, w[i].a.z}, {w[i].b.x, w[i].b.y, w[i].b.z}, w[i].radius};
+    for (int i = 0; i < g_shieldOf.n; ++i) {
+        const heft::contact::Capsule& c = g_shieldOf.c[i];
+        b[i] = {{c.a.x, c.a.y, c.a.z}, {c.b.x, c.b.y, c.b.z}, c.radius};
+    }
+    return shieldcollide::Gap(a, nw, b, g_shieldOf.n);
+}
+// After the first weapon's step: did it meet the shield - a new touch at shieldcollide::kFeltMps or faster is felt in the weapon's hand(s) and the shield's, a
+// hard one (kSoundMps) is heard too: the game's block sound as loud as clashloud says. Resting on it, sliding along it: silent.
+void ShieldKnock(const hh::Hold& h) {
+    const heft::contact::Report& c = h.LastContact();
+    double approach = 0.0;
+    bool touch = false;
+    for (int i = 0; c.bodies > 0 && i < c.nMet; ++i)
+        if (c.met[i].id == shieldcollide::kId) { touch = true; approach = std::max(approach, c.met[i].approach); }
+    g_shieldTouch = touch;
+    const ULONGLONG nowMs = GetTickCount64();
+    if (!g_shieldTouches.Step(touch, nowMs)) return;
+    const shieldcollide::Knock k = shieldcollide::KnockOf((float)approach);
+    if (!k.felt) return;
+    if (const HapticFn pulse = g_haptic.load())
+        for (int side = 0; side < 2; ++side)
+            if (g_out[side].holds || side == g_shieldDrawn.arm) pulse(side, k.amplitude, k.ms);   // (the weapon's hand and the shield's)
+    const ClashSoundFn sound = k.heard ? g_clashSound.load() : nullptr;
+    if (sound) sound((float)approach, k.gameVolume, "the weapon on the hero's own shield");
+    if (++g_shieldTold <= 10 || nowMs - g_shieldToldAt >= 1000) {
+        g_shieldToldAt = nowMs;
+        LogF("vrcam: weight - shield_collide: the weapon struck the %s arm's shield at %.1f m/s - a pulse %.2f for %d ms in its hand and the shield's, %s", HandName(g_shieldDrawn.arm),
+             approach, k.amplitude, k.ms, !k.heard ? "silent (under 1 m/s)" : sound ? "the game's block sound" : "no sound registered");
+    }
+}
+
 // A knock of the two: a new touch of the one hold's weapon on the other's pieces at least clashloud::kQuietMps fast (the closing speed) - the game's block sound
 // as loud as the knock was hard ([weight] clash_sound), a pulse as hard in every hand on either weapon, and a line (the first ten each, then once a second);
 // resting on it (or sliding along it slowly) is silent. The user, 2026-10-24: «со стальным звуком, чем сильней стукнулись, тем сильней звук».
@@ -832,7 +930,7 @@ void StepSecond(const skel::Input& in, const hh::HandIn hi[2], const int drawZon
     const heft::contact::Report& c = g_hold2.LastContact();
     if (wt.monsterBodies && wt.worldOk) {
         if (wt.monsterRagdoll) PushBack(g_hold2, head, g_contactWas2, nBodies);
-        const bool strike = c.bodies > 0 && c.id != g_contactWas2 && c.id != kDualId;
+        const bool strike = c.bodies > 0 && c.id != g_contactWas2 && !OwnPiece(c.id);
         if (strike && c.approach >= 0.5) {   // the pulse in its hand, as the first weapon's
             const HapticFn pulse = g_haptic.load();
             static ULONGLONG pulseAt = 0, toldAt = 0;
@@ -1337,10 +1435,50 @@ void Apply(skel::Input* in, Out* out) {
         // [weight] dual_collide: the first weapon meets the second's pieces (where they were after its last step) as it meets a monster's weapon
         const bool dual = wt.second && wt.dualCollide && g_hold2.Placed() && g_hold2.Held() && g_hold.Held();
         if (!dual) { g_dualOf[0].n = g_dualOf[1].n = 0; g_dualTouch = false; }
+        // [weight] shield_collide: the weapon in one hand meets the shield on the other arm, where it is drawn - not a weapon in each hand, not with the shield's own
+        // hand on the weapon; pressed on past shieldcollide::kGiveM (its hand that far off its controller) it goes through until it is clear (shieldcollide::Pass)
+        const int shieldArm = g_shieldDrawn.arm & 1, weaponHand = g_hold.Main();
+        const bool shieldFresh = g_shieldDrawn.n > 0 && GetTickCount64() - g_shieldDrawn.at <= 200;
+        const bool shieldOn = wt.shieldCollide && shieldFresh && !wt.second && g_hold.Held() && weaponHand >= 0 && weaponHand != shieldArm && !g_out[shieldArm].holds;
+        bool shieldMeets = false;
+        if (shieldOn) {
+            NoteShieldPieces(head, (double)now.QuadPart / (double)f.QuadPart);
+            const double lag = heft::Len(heft::Sub(hi[weaponHand].pose.pos, g_out[weaponHand].pose.pos));
+            const bool wasThrough = g_shieldPass.Through();
+            const double gap = ShieldGap(g_hold);
+            shieldMeets = g_shieldPass.Step(g_shieldTouch, (float)lag, (float)gap);
+            if (g_shieldPass.Through() && !wasThrough)
+                LogF("vrcam: weight - shield_collide: pressed on through the shield - the hand %.0f cm off its controller (%.0f at most): the weapon goes through until it is clear (%u time(s))",
+                     lag * 100.0, shieldcollide::kGiveM * 100.0, g_shieldPass.Count());
+            else if (!g_shieldPass.Through() && wasThrough)
+                LogF("vrcam: weight - shield_collide: the weapon is clear of the shield again (%.0f cm off it, the hand %.0f cm off its controller): it meets the shield again", gap * 100.0, lag * 100.0);
+        } else {
+            g_shieldOf.n = 0;
+            g_shieldPass.Reset();
+            g_shieldTouch = false;
+            g_shieldTouches.Reset();
+        }
+        {   // told when the shield comes in or goes out (its item, its arm, the weapon's hand), with why it is left out
+            const uint64_t tellKey = shieldOn ? (1ull << 40) | ((uint64_t)g_shieldDrawn.code << 4) | ((uint64_t)shieldArm << 2) | (uint64_t)(weaponHand & 3) : wt.shieldCollide ? 2ull : 0ull;
+            if (tellKey != g_shieldToldKey) {
+                if (shieldOn) {
+                    double rLo = 1e9, rHi = 0.0;
+                    for (int i = 0; i < g_shieldDrawn.n; ++i) { rLo = std::min(rLo, (double)g_shieldDrawn.part[i][6]); rHi = std::max(rHi, (double)g_shieldDrawn.part[i][6]); }
+                    const char c4[5] = {(char)(g_shieldDrawn.code & 0xFF), (char)(g_shieldDrawn.code >> 8 & 0xFF), (char)(g_shieldDrawn.code >> 16 & 0xFF), (char)(g_shieldDrawn.code >> 24 & 0xFF), 0};
+                    LogF("vrcam: weight - shield_collide: the %s arm's shield ('%s') is a face of %d capsule(s), r %.1f - %.1f cm, where the game's mesh is drawn: the %s hand's %s stops on it "
+                         "and slides along it, its hand giving way up to %.0f cm", HandName(shieldArm), c4, g_shieldDrawn.n, rLo * 100.0, rHi * 100.0, HandName(weaponHand),
+                         hh::KindName(g_hold.WeaponKind()), shieldcollide::kGiveM * 100.0);
+                } else if (g_shieldToldKey >> 40) {
+                    LogF("vrcam: weight - shield_collide: the shield is left out (%s)", !wt.shieldCollide ? "off, or no shield, or not F4" : !shieldFresh ? "its face not drawn lately (put away, hidden, no table row)"
+                         : wt.second ? "a weapon in each hand" : !g_hold.Held() ? "no weapon in a hand" : weaponHand == shieldArm ? "the weapon is in the shield's hand" : "the shield's hand is on the weapon too");
+                }
+                g_shieldToldKey = tellKey;
+            }
+        }
         {
             static heft::contact::Capsule withDual[monsterbodies::kMax];
-            const int n1 = dual ? WithDual(g_monsterCaps, nBodies, g_dualOf[1], withDual) : nBodies;
-            if (n1 > 0) g_hold.SetBodies(dual ? withDual : g_monsterCaps, n1);
+            const int n1 = dual ? WithDual(g_monsterCaps, nBodies, g_dualOf[1], withDual) : shieldMeets ? WithShield(g_monsterCaps, nBodies, withDual) : nBodies;
+            if (n1 > 0) g_hold.SetBodies(dual || shieldMeets ? withDual : g_monsterCaps, n1);
             else g_hold.SetBodies(nullptr, 0);
             g_hold2.SetBodies(nBodies > 0 ? g_monsterCaps : nullptr, nBodies);   // (a weapon in each hand: the other one meets the same bodies - and the first's pieces, StepSecond)
             s.bodies = n1 > 0;
@@ -1405,6 +1543,7 @@ void Apply(skel::Input* in, Out* out) {
             NoteDualPieces(g_dualOf[0], g_hold, (double)now.QuadPart / (double)f.QuadPart);
             DualKnock(g_hold, "the first");
         }
+        if (shieldOn) ShieldKnock(g_hold);   // [weight] shield_collide: the knock of the weapon on the shield
         g_steelKg.store(g_hold.Placed() ? (float)g_hold.SteelKg() : 0.0f);
         if (nWalls > 0) {   // [weight] world_contact: what the weapon met - a pulse at a new strike, the log, the debug view (the room's points back in the render world)
             const WallNoteFn note = g_wallNote.load();
@@ -1446,7 +1585,7 @@ void Apply(skel::Input* in, Out* out) {
             g_contactNote = note;
             if (wt.monsterRagdoll) PushBack(g_hold, head, g_contactWas, nBodies);   // [weight] monster_ragdoll: the body takes the push back
             const ULONGLONG nowMs = GetTickCount64();
-            const bool strike = c.bodies > 0 && c.id != g_contactWas && c.id != kDualId;   // a new body met (not every step it rests on one; the other weapon of a pair is its own knock)
+            const bool strike = c.bodies > 0 && c.id != g_contactWas && !OwnPiece(c.id);   // a new body met (not every step it rests on one; the other weapon of a pair and the shield are their own knock)
             if (strike && c.approach >= 0.5) {
                 const HapticFn pulse = g_haptic.load();
                 if (pulse && nowMs - g_contactPulseAt >= 150) {   // (PS VR2 feels 0.7 / 45 ms; a gentler one is lost - vr/haptics.h)
@@ -1881,6 +2020,21 @@ void SetDrawnHeadParts2(const float* parts, int n) {
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+void SetDrawnShield(const float* parts, int n, int arm, uint32_t code) {
+    DrawnShield d;
+    d.arm = arm & 1;
+    d.code = code;
+    for (int i = 0; parts && i < n && i < kShieldParts; ++i) {
+        const float* p = parts + 7 * i;
+        if (!(p[6] > 0.0f) || !std::isfinite(p[0] + p[1] + p[2] + p[3] + p[4] + p[5] + p[6])) { d.n = 0; break; }   // (all of it or none)
+        memcpy(d.part[d.n++], p, sizeof d.part[0]);
+    }
+    d.at = d.n > 0 ? GetTickCount64() : 0;
+    AcquireSRWLockExclusive(&g_lock);
+    g_shieldDrawn = d;
+    ReleaseSRWLockExclusive(&g_lock);
+}
+
 // (one capsule: a, b, radius; none for null ends or no radius)
 static int OnePart(const float a[3], const float b[3], float radius, float out[7]) {
     if (!a || !b || !(radius > 0.0f)) return 0;
@@ -2044,6 +2198,7 @@ void SetDrawnHead(const float*, const float*, float) {}
 void SetDrawnHead2(const float*, const float*, float) {}
 void SetDrawnHeadParts(const float*, int) {}
 void SetDrawnHeadParts2(const float*, int) {}
+void SetDrawnShield(const float*, int, int, uint32_t) {}
 bool LastThrow(ThrowOutcome* out) { if (out) *out = ThrowOutcome{}; return false; }
 void SetHaptic(HapticFn) {}
 void SetClashSound(ClashSoundFn) {}

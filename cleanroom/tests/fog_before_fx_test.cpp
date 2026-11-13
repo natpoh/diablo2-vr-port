@@ -35,12 +35,22 @@ ID3D12Resource* RtvResource(uint64_t h) { const auto it = g_rtvs.find(h); return
 void TrackSceneViews(bool) {}
 ID3D12Resource* SrvResource(uint64_t h) { const auto it = g_srvs.find(h); return it != g_srvs.end() ? it->second : nullptr; }
 unsigned SrvIncrement() { return g_srvInc; } unsigned RtvIncrement() { return 32; }   // (the sinks' handles are the test's own: a call with `single` steps by this)
+// the game's debug names, as its D3D12 back end sets them (SetPrivateData): read back the same way ([fog] game_fog_scene_by_name)
+bool ResourceName(ID3D12Resource* r, char* out, size_t n) {
+    static const GUID kNameA = {0x429b8c22, 0x9188, 0x4b0c, {0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00}};
+    UINT size = (UINT)(n - 1);
+    if (!r || FAILED(r->GetPrivateData(kNameA, &size, out)) || !size) return false;
+    out[size < n ? size : n - 1] = 0;
+    return out[0] != 0;
+}
 ID3D12CommandQueue* GameQueue() { return g_q; }
 }  // namespace natived3d
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
-static void Log(const char* s) { std::printf("  %s\n", s); }
+static int g_lines = 0;   // the step's lines written (the rate limit's check)
+static bool g_quiet = false;
+static void Log(const char* s) { ++g_lines; if (!g_quiet) std::printf("  %s\n", s); }
 
 static std::vector<uint8_t> Compile(const char* src, const char* target) {
     ID3DBlob *code = nullptr, *err = nullptr;
@@ -202,7 +212,7 @@ int main(int argc, char** argv) {
     dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&rtvHeap);
     hd = {D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 1};
     dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&dsvHeap);
-    hd = {D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 1, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};
+    hd = {D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 2, D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE};   // (the second: the by-name case's next view)
     dev->CreateDescriptorHeap(&hd, __uuidof(ID3D12DescriptorHeap), (void**)&srvHeap);
     const UINT rtvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     const D3D12_CPU_DESCRIPTOR_HANDLE rtvScene = rtvHeap->GetCPUDescriptorHandleForHeapStart(), rtvOut{rtvScene.ptr + rtvInc};
@@ -240,6 +250,7 @@ int main(int argc, char** argv) {
     sv.Texture2D.MipLevels = 1;
     dev->CreateShaderResourceView(scene, &sv, srvHeap->GetCPUDescriptorHandleForHeapStart());
     g_srvInc = dev->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    dev->CreateShaderResourceView(scene, &sv, D3D12_CPU_DESCRIPTOR_HANDLE{srvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g_srvInc});
     g_srvs[srvHeap->GetCPUDescriptorHandleForHeapStart().ptr] = scene;   // (the resolve's t0 here: the scene, as the hook would note it)
 
     // the game's resolve: its root signature (a table: t0), its pipeline (marked as the game's resolve)
@@ -298,6 +309,8 @@ int main(int argc, char** argv) {
     bool sceneBlack = false;       // the scene cleared black ...
     bool frameLit = false;         // ... and the resolve's own target holding a lit picture before it draws (Serg's 0.209.11 probe)
     bool halfLayer = false;        // the game's half-size effects target (R11G11B10 too) bound with the same depth after the scene
+    bool oneSizeKey = true;        // [fog] game_fog_scene_one_size
+    bool byNameKey = true;         // [fog] game_fog_scene_by_name
     bool decoyAfter = false;       // a full-size R11G11B10 target the resolve does not read, bound with the same depth after the scene
     bool holes = false;            // holes in the depth: one pixel (10, 10); a line of three at (20 - 22, 40)
     bool holeKey = false;          // [fog] game_fog_fx_depth on
@@ -334,6 +347,8 @@ int main(int argc, char** argv) {
         p.planesEnd = 80.0f;
         p.planesStrength = 1.0f;
         p.planesSoft = planesSoft;
+        p.sceneOneSize = oneSizeKey;
+        p.sceneByName = byNameKey;
         fogfx::Configure(p);
         fogfx::Frame();   // (a present between frames)
         alloc->Reset();
@@ -699,6 +714,75 @@ int main(int argc, char** argv) {
         std::printf("  a half-size effects target after the scene, pixel 32 32: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2],
                     want[0], want[1], want[2]);
         CHECK(near3(got, want) && word == 0x5EED1234u);
+        CHECK(fogfx::StepDrewAt(cl));   // [fog] game_fog_miss_keeps_fog: the fog pass after this resolve leaves its colour out
+    }
+    {   // 2e': ... and the resolve's own tables name only that half-size layer (Serg 2026-11-13 16:37 on 0.215.6: the step took it, refused
+        // it for its size and drew nothing - hundreds of frames in 10 s without fog). [fog] game_fog_scene_one_size: the scene of the depth's
+        // size still fogged; off (0.215): nothing drawn, and the fog pass after it told so (StepDrewAt false: its colour kept)
+        const auto keep = g_srvs;
+        g_srvs[srvHeap->GetCPUDescriptorHandleForHeapStart().ptr] = halfTarget;
+        const float d = nearPlane / 45.0f;
+        frame(true, d, 32, 32, got, &word);
+        expect(d, 32, 32, want);
+        const bool drewOn = fogfx::StepDrewAt(cl);
+        std::printf("  the tables name the half-size layer only, the key on: %.4f %.4f %.4f (the formula %.4f %.4f %.4f), drew %d\n", got[0], got[1],
+                    got[2], want[0], want[1], want[2], drewOn ? 1 : 0);
+        CHECK(near3(got, want) && drewOn);
+        oneSizeKey = false;
+        frame(true, d, 32, 32, got, &word);
+        const bool drewOff = fogfx::StepDrewAt(cl);
+        std::printf("  ... the key off (0.215): %.4f %.4f %.4f (the scene as it is: %.4f), drew %d\n", got[0], got[1], got[2], grey, drewOff ? 1 : 0);
+        CHECK(std::fabs(got[0] - grey) < 0.01f && !drewOff);
+        // 2e'': the tables flip between the half-size layer and the scene at every resolve (16:37 - 16:39: ~6 lines a frame, the game
+        // stuttered; every other frame without fog). The key off: the step's lines held to a burst a kind, not a few a frame
+        const uint64_t sceneSrv = srvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+        g_quiet = true;
+        g_lines = 0;
+        int drewOffN = 0;
+        for (int f = 0; f < 40; ++f) {
+            g_srvs[sceneSrv] = (f & 1) ? scene : halfTarget;
+            frame(true, d, 32, 32, got, &word);
+            drewOffN += fogfx::StepDrewAt(cl) ? 1 : 0;
+        }
+        const int linesOff = g_lines;
+        // ... the key on: every frame drawn, the scene kept (no search again), hardly a line
+        oneSizeKey = true;
+        g_lines = 0;
+        int drewOnN = 0;
+        for (int f = 0; f < 40; ++f) {
+            g_srvs[sceneSrv] = (f & 1) ? scene : halfTarget;
+            frame(true, d, 32, 32, got, &word);
+            drewOnN += fogfx::StepDrewAt(cl) && near3(got, want) ? 1 : 0;
+        }
+        const int linesOn = g_lines;
+        g_quiet = false;
+        std::printf("  the tables flipping at every resolve, 40 frames: the key off %d drawn, %d lines; the key on %d drawn, %d lines\n", drewOffN,
+                    linesOff, drewOnN, linesOn);
+        CHECK(drewOffN <= 21 && linesOff <= 40 && drewOnN == 40 && linesOn <= 2);
+        // 2e''': the game's own names ([fog] game_fog_scene_by_name): the tables name the half-size layer first and the scene after it, both
+        // named as the game names them; with the size rule off (the search alone would take the half layer and draw nothing), the name finds
+        // the scene; the name rule off too: nothing drawn (0.215)
+        static const GUID kNameA = {0x429b8c22, 0x9188, 0x4b0c, {0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00}};
+        scene->SetPrivateData(kNameA, 12, "Main Color 0");
+        halfTarget->SetPrivateData(kNameA, 19, "Tonemapped Additive");
+        g_srvs[sceneSrv] = halfTarget;
+        g_srvs[sceneSrv + g_srvInc] = scene;
+        oneSizeKey = false;
+        frame(true, d, 32, 32, got, &word);
+        const bool drewNamed = fogfx::StepDrewAt(cl);
+        std::printf("  the scene by the game's name (the size rule off, the half layer named first): %.4f %.4f %.4f (the formula %.4f %.4f %.4f), "
+                    "drew %d\n", got[0], got[1], got[2], want[0], want[1], want[2], drewNamed ? 1 : 0);
+        CHECK(near3(got, want) && drewNamed);
+        byNameKey = false;
+        frame(true, d, 32, 32, got, &word);
+        const bool drewNoName = fogfx::StepDrewAt(cl);
+        std::printf("  ... the name rule off too (0.215): %.4f, drew %d\n", got[0], drewNoName ? 1 : 0);
+        CHECK(std::fabs(got[0] - grey) < 0.01f && !drewNoName);
+        byNameKey = true;
+        oneSizeKey = true;
+        scene->SetPrivateData(kNameA, 0, nullptr);
+        halfTarget->SetPrivateData(kNameA, 0, nullptr);
+        g_srvs = keep;
     }
     halfLayer = false;
     frameIsR11 = false;
@@ -1046,6 +1130,36 @@ int main(int argc, char** argv) {
             CHECK(SUCCEEDED(dev->CreateGraphicsPipelineState(&ld, __uuidof(ID3D12PipelineState), (void**)&fxLeaf)));
         }
         fogfx::MarkFogBehind(fxLeaf);
+        // [fog] game_fog_hair_strict: a pipeline is taken as the game's see-through one by its pixel shader writing the game's weight - both
+        // constants in its bytecode (the leaf above has its weight folded into one number: no); an opaque shader never
+        {
+            const std::vector<uint8_t> oitPs = Compile("float4 main(float4 p : SV_Position) : SV_Target { float z = p.z * 300.0; "
+                                                       "float w = max(1e6 / (1e5 - z * z * z), 0.0); return float4(0.2, 0.6, 0.2, 1.0) * w; }", "ps_5_0");
+            const std::vector<uint8_t> opaquePs = Compile("float4 main(float4 p : SV_Position) : SV_Target { return float4(p.z, 0.6, 0.2, 1.0); }", "ps_5_0");
+            const bool oit = fogfx::HasOitWeight(oitPs.data(), oitPs.size()), opaque = fogfx::HasOitWeight(opaquePs.data(), opaquePs.size()),
+                       folded = fogfx::HasOitWeight(lps.data(), lps.size());
+            std::printf("  the game's see-through weight in a pixel shader: written %d, an opaque shader %d, a weight folded to a number %d (want 1 0 0)\n",
+                        oit ? 1 : 0, opaque ? 1 : 0, folded ? 1 : 0);
+            CHECK(oit && !opaque && !folded);
+        }
+        // a leaf whose weight reads farther than it is drawn (80 units, drawn at 44 before the wall at 45: a weight read too small) - its
+        // own distance never past the wall behind it ([fog] game_fog_own_distance_behind)
+        const float leafFarZ = 80.0f, leafFarW = 1e6f / (1e5f + leafFarZ * leafFarZ * leafFarZ);
+        std::snprintf(leafSrc, sizeof leafSrc, "struct O { float4 c : SV_Target0; float4 r : SV_Target1; }; O main() { O o; float a = %.6f, w = %.6f; "
+                      "o.c = float4(float3(0.2, 0.6, 0.2) * a * w, a * w); o.r = float4(1, 1, 1, a); return o; }", leafAlpha, leafFarW);
+        const std::vector<uint8_t> lfps = Compile(leafSrc, "ps_5_0");
+        ID3D12PipelineState* fxLeafFar = nullptr;
+        {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC ld = ed;
+            ld.PS = {lfps.data(), lfps.size()};
+            ld.NumRenderTargets = 2;
+            ld.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            ld.BlendState.IndependentBlendEnable = TRUE;
+            ld.BlendState.RenderTarget[1] = {TRUE, FALSE, D3D12_BLEND_ZERO, D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_BLEND_ZERO,
+                                             D3D12_BLEND_INV_SRC_ALPHA, D3D12_BLEND_OP_ADD, D3D12_LOGIC_OP_NOOP, D3D12_COLOR_WRITE_ENABLE_ALL};
+            CHECK(SUCCEEDED(dev->CreateGraphicsPipelineState(&ld, __uuidof(ID3D12PipelineState), (void**)&fxLeafFar)));
+        }
+        fogfx::MarkFogBehind(fxLeafFar);
         const float fireZ = 60.0f, fireW = 1e6f / (1e5f + fireZ * fireZ * fireZ);
         char fireSrc[320];
         std::snprintf(fireSrc, sizeof fireSrc, "struct O { float4 c : SV_Target0; float4 r : SV_Target1; }; O main() { O o; float a = %.6f, w = %.6f; "
@@ -1086,6 +1200,9 @@ int main(int argc, char** argv) {
         float leafD = 0.0f;      // the leaf card drawn at this depth (0: not)
         float farFireD = 0.0f;   // a far fire drawn as the game's particles are (its weight and revealage) at this depth (0: not)
         bool stepOn = true;   // (off: the step not asked - the game's fog alone)
+        bool leafFar = false;      // the leaf drawn by fxLeafFar (its weight reads 80 units)
+        bool ownBehindOn = true;   // [fog] game_fog_own_distance_behind
+        bool layersKey = true;     // [fog] game_fog_layers_in_order
         auto fxFrame = [&](bool fxDepth, float wallD, float effD, float px, float py, float rgb[3]) {
             fogfx::Params p;
             p.on = stepOn;
@@ -1094,6 +1211,8 @@ int main(int argc, char** argv) {
             p.density = density;
             std::memcpy(p.colour, fog, sizeof fog);
             p.nearPlane = nearPlane;
+            p.ownBehind = ownBehindOn;
+            p.layersInOrder = layersKey;
             fogfx::Configure(p);
             fogfx::Frame();
             alloc->Reset();
@@ -1158,8 +1277,8 @@ int main(int argc, char** argv) {
                 uint32_t lz = 0;
                 std::memcpy(&lz, &leafD, 4);
                 ec->SetGraphicsRoot32BitConstant(0, lz, 0);
-                ec->SetPipelineState(fxLeaf);
-                k.fxBound(ec, fxLeaf);
+                ec->SetPipelineState(leafFar ? fxLeafFar : fxLeaf);
+                k.fxBound(ec, leafFar ? fxLeafFar : fxLeaf);
                 k.fxDraw(ec, false, 3, 1, 0, 0, 0);
                 ec->DrawInstanced(3, 1, 0, 0);
             }
@@ -1302,6 +1421,60 @@ int main(int argc, char** argv) {
                 std::printf("  %s: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", c.what, got[0], got[1], got[2], want[0], want[1], want[2]);
                 CHECK(near3(got, want));
             }
+            // a leaf whose weight reads 80 units, drawn at 44 before the wall at 45: fogged as at the wall (the limit on), as at 80 (off: 0.215)
+            for (int on = 1; on >= 0; --on) {
+                flameOn = false;
+                leafD = nearPlane / leafZ;
+                leafFar = true;
+                ownBehindOn = on != 0;
+                for (int f = 0; f < 3; ++f) fxFrame(false, wall, nearPlane / 10.0f, 32, 32, got);
+                const float zl = on ? nearPlane / wall : leafFarZ;   // (wall: the wall's depth)
+                const float tlf = keepAt(nearPlane / zl, u, u), ts = keepAt(wall, u, u), ug = 33.5f / 64.0f, tg = keepAt(wall, ug, ug);
+                for (int i = 0; i < 3; ++i) {
+                    const float s = fog[i] + (grey - fog[i]) * ts;
+                    want[i] = s * 0.5f + (leafColour[i] * tlf + fog[i] * (1.0f - tlf)) * 0.5f + fxGlow[i] * tg;   // (the test's resolve: R = S / 2 + the effects' mean / 2 + G)
+                }
+                std::printf("  a leaf at 44 whose weight reads 80, the wall at 45, the limit %s: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", on ? "on" : "off",
+                            got[0], got[1], got[2], want[0], want[1], want[2]);
+                CHECK(near3(got, want));
+            }
+            // [fog] game_fog_layers_in_order: a particle with its revealage (the rain's haze, weight read 60 units) and a leaf card (ours) over
+            // the sky. The game's weight averages them; in order, the nearer laid over the farther by each one's coverage (0.8 both).
+            // Serg 2026-11-13 on 0.215.8: far bushes behind the near haze took its pale colour
+            for (int farLeaf = 1; farLeaf >= 0; --farLeaf)
+                for (int on = 1; on >= 0; --on) {
+                    flameOn = false;
+                    farFireD = nearPlane / fireZ;
+                    leafD = nearPlane / (farLeaf ? leafFarZ : leafZ);
+                    leafFar = farLeaf != 0;
+                    layersKey = on != 0;
+                    for (int f = 0; f < 3; ++f) fxFrame(false, 0.0f, nearPlane / 10.0f, 32, 32, got);
+                    const float zL = farLeaf ? leafFarZ : leafZ, wL = farLeaf ? leafFarW : leafW;
+                    const float tl2 = keepAt(nearPlane / zL, u, u), tf = keepAt(nearPlane / fireZ, u, u);
+                    const float ug = 33.5f / 64.0f, tg = keepAt(nearPlane / fireZ, ug, ug);
+                    const float fireRgb[3] = {0.8f, 0.4f, 0.1f};
+                    for (int i = 0; i < 3; ++i) {
+                        const float cl = leafColour[i] * tl2 + fog[i] * (1.0f - tl2), cf = fireRgb[i] * tf + fog[i] * (1.0f - tf);
+                        float c;
+                        if (on) {   // near over far: the far one's share left by the near one's coverage
+                            const bool leafNear = zL <= fireZ;
+                            const float cn = leafNear ? cl : cf, cfar = leafNear ? cf : cl;
+                            c = (cfar * leafAlpha * (1.0f - leafAlpha) + cn * leafAlpha) / (1.0f - (1.0f - leafAlpha) * (1.0f - leafAlpha));
+                        } else {    // the game's weighted average
+                            c = (cl * leafAlpha * wL + cf * leafAlpha * fireW) / (leafAlpha * wL + leafAlpha * fireW);
+                        }
+                        want[i] = grey * 0.5f + c * 0.5f + fxGlow[i] * tg;
+                    }
+                    std::printf("  the haze at 60 and a leaf at %.0f over the sky, in order %s: %.4f %.4f %.4f (want %.4f %.4f %.4f)\n", zL, on ? "on" : "off (0.215)",
+                                got[0], got[1], got[2], want[0], want[1], want[2]);
+                    CHECK(near3(got, want));
+                }
+            farFireD = 0.0f;
+            layersKey = true;
+            leafFar = false;
+            ownBehindOn = true;
+            leafD = 0.0f;
+            flameOn = true;
             // standing aside (no lit picture proven - mode 2): nothing of ours at all - the flame and the leaf drawn into the game's targets as
             // they are, the picture pixel-identical to the step not asked (0.209.21, VR F4: with the step flipping off, the leaves were lost)
             {

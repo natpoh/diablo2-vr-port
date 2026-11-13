@@ -128,9 +128,17 @@ constexpr int kWorldRowY0 = 200, kWorldRowStep = 52, kWorldRowH = 46;
 // 0.209.18 shot: each name sat on the line above it), so the Video page's rows are its name alone, centred on its buttons (RowDetail); the render
 // type's "after a restart" goes to the line under the rows instead (hset_scene.h)
 constexpr int kVidRowY0 = 264, kVidRowStep = 39, kVidRowH = 36;
+// A page with more rows than kRowsMax (the HUD page's eight, kRowsTight): closest - a tab's page rows' faces and lines (the name in the normal face),
+// from the usual first row, the last one still above the status line.
+constexpr int kTightRowStep = 51, kTightRowH = 45;
+constexpr bool TightRows(int page) { return page >= 0 && page < kPageCount && !HasSubRow(page) && page != kPageVideo && RowsOn(page) > kRowsMax; }
 constexpr bool CloseRows(int page) { return page >= 0 && page < kPageCount && (RowsOn(page) > kRowsPerPage || HasSubRow(page) || page == kPageVideo); }
-constexpr int RowStep(int page) { return HasSubRow(page) ? kWorldRowStep : page == kPageVideo ? kVidRowStep : CloseRows(page) ? kRowStepClose : kRowStep; }
-constexpr int RowH(int page) { return HasSubRow(page) ? kWorldRowH : page == kPageVideo ? kVidRowH : CloseRows(page) ? kRowHClose : kRowH; }
+constexpr int RowStep(int page) {
+    return HasSubRow(page) ? kWorldRowStep : page == kPageVideo ? kVidRowStep : TightRows(page) ? kTightRowStep : CloseRows(page) ? kRowStepClose : kRowStep;
+}
+constexpr int RowH(int page) {
+    return HasSubRow(page) ? kWorldRowH : page == kPageVideo ? kVidRowH : TightRows(page) ? kTightRowH : CloseRows(page) ? kRowHClose : kRowH;
+}
 constexpr int RowY(int row, int page) { return (HasSubRow(page) ? kWorldRowY0 : page == kPageVideo ? kVidRowY0 : kRowY0) + row * RowStep(page); }
 // A row's parts on the left: its band, its name and the grey line under the name (none on the Video page: RowDetail). The next row's name never
 // reaches the line above it (hset_test).
@@ -141,14 +149,14 @@ constexpr Rect RowBand(int row, int page) {
 constexpr Rect RowLabel(int row, int page) {
     const int y = RowY(row, page);
     return page == kPageVideo ? Rect{48, y, 530, kVidRowH}
-           : HasSubRow(page)  ? Rect{48, y - 5, 530, 27}
+           : HasSubRow(page) || TightRows(page) ? Rect{48, y - 5, 530, 27}
            : CloseRows(page)  ? Rect{48, y - 4, 520, 30}
                               : Rect{48, y - 2, 520, 32};
 }
 constexpr Rect RowDetailRect(int row, int page) {
     const int y = RowY(row, page);
     return !RowDetail(page) ? Rect{48, y, 0, 0}
-           : HasSubRow(page) ? Rect{48, y + 21, 530, 24}
+           : HasSubRow(page) || TightRows(page) ? Rect{48, y + 21, 530, 24}
            : CloseRows(page) ? Rect{48, y + 24, 530, 26}
                              : Rect{48, y + 28, 530, 28};
 }
@@ -162,7 +170,7 @@ constexpr Rect kViewBtn(int i) { return {584 + i * 104, kRowY0 + kViewRow * kRow
 constexpr Rect kStatus = {32, 566, 960, 40};
 constexpr bool RowsFit() {
     for (int p = 0; p < kPageCount; ++p)
-        if (RowsOn(p) > kRowsMax || (RowsOn(p) > 0 && RowY(RowsOn(p) - 1, p) + RowStep(p) - 5 > kStatus.y)) return false;
+        if (RowsOn(p) > kRowsTight || (RowsOn(p) > 0 && RowY(RowsOn(p) - 1, p) + RowStep(p) - 5 > kStatus.y)) return false;
     return true;
 }
 static_assert(RowsFit(), "every page's rows end above the status line");
@@ -365,7 +373,7 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
         if (kSpanDec.Contains(x, y)) return {Kind::Span, -1, -1};
         if (kSpanInc.Contains(x, y)) return {Kind::Span, -1, 1};
     }
-    for (int r = 0; r < kRowsMax; ++r) {
+    for (int r = 0; r < kRowsTight; ++r) {
         const int key = KeyAt(page, r, view);
         if (key < 0) break;
         if (IsToggle(kDefs[key])) {
@@ -877,6 +885,12 @@ public:
                     draft_[onKey] = (float)on;
                     draft_[hit.index] = (float)game;
                     if (Differ(wasOn, draft_[onKey]) || Differ(wasGame, draft_[hit.index])) { result = Result::None; ++revision; }
+                    return a;
+                }
+                if (hit.index == kKeyWristLook) {   // the HUD page's medallions' look: round the three in Settings' order (shared/wrist_look.h)
+                    const float was = draft_[kKeyWristLook];
+                    draft_[kKeyWristLook] = Normalize(kKeyWristLook, (float)wristlook::Step((int)std::lround(was), hit.delta));
+                    if (Differ(was, draft_[kKeyWristLook])) { result = Result::None; ++revision; }
                     return a;
                 }
                 if (hit.index == kKeyBarPlace) {   // the HUD page's toolbar type: a step over bar_place and hide together (shared/toolbar_type.h)

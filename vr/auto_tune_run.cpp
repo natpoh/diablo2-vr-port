@@ -212,7 +212,7 @@ std::vector<KnobDef> MakeKnobs(uint32_t recW, uint32_t recH, std::vector<autotun
     int fovKnob = -1, fovStart = 0;
     if (foveation::Usable()) {
         const bool on = FileInt(L"render", L"foveated", 0) != 0;
-        const int strength = std::clamp(FileInt(L"render", L"foveated_strength", 1), 0, 3);
+        const int strength = std::clamp(FileInt(L"render", L"foveated_strength", 3), 0, 3);
         std::vector<int> cheaper;   // the strengths to try, the coarsest first: Maximum (3), Medium (1)
         for (const int st : {3, 1})
             if (!on || st > strength) cheaper.push_back(st);

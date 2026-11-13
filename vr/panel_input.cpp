@@ -259,6 +259,14 @@ void InstallTooltips() {
 }
 }  // namespace
 
+int ControllerLayoutNow() {
+    static int checked = 0;   // 1 the bytes are 3.3.93787's, -1 not
+    if (!checked) checked = d2rsig::Addr(RVA_IS_CONTROLLER) && (g_in.controller || d2rsig::Check(RVA_IS_CONTROLLER, kSigIsController, sizeof kSigIsController)) ? 1 : -1;
+    if (checked < 0) return -1;
+    const QueryFn fn = g_origIsController ? g_origIsController : reinterpret_cast<QueryFn>(d2rsig::Addr(RVA_IS_CONTROLLER));
+    __try { return fn() ? 1 : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { checked = -1; return -1; }
+}
+
 void Init(const PluginContext* ctx) { g_ctx = ctx; }
 bool Ready() { return g_ready.load(); }
 

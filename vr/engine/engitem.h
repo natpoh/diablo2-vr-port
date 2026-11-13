@@ -10,6 +10,7 @@
 #include "ceiling_measures.h"   // ceilmeasure::Beam, Dome
 
 namespace skel { struct Input; }
+namespace wristmodels { struct Want; }
 
 namespace vrc {
 // What engitem reads of vrcam.cpp: the hero, the head, the eye, the hands, the area's act and skybox, the item a hand took.
@@ -38,6 +39,8 @@ namespace engitem {
 extern std::atomic<int> g_gameCeilKind;   // [ceiling] game_ceiling: the area's kind (-1: none - not on game_ceiling_biomes, or no fitting model)
 std::string ModDataText(const char* rel, std::wstring* file);   // a text file of the mod's data folder (and where it was)
 int HoverSpheres(float (*out)[8], int max);                      // the balls over the belt's bottles (xr.cpp, through D2rvrHoverSpheres)
+int WristUnitsState();   // the game-drawn medallions' units (shared/wrist_look.h kUnits*): 1 all loaded, 0 some missing (not made), -1 not asked this game
+void SetWristOrbs(const wristmodels::Want& w, float pulse);      // [hud] wrist_game_models: the medallions this frame (the effect's frame block, any thread)
 namespace weather {   // [sky] weather_first_person
 void Install();
 void Tick();

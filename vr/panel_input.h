@@ -24,6 +24,9 @@ bool Ready();
 void OwnPointer();
 // The pad navigates the panel (a stick, a face button): the focus is the pad's again.
 void UseController();
+// The game's own answer to "is the interface in controller layout" (IsControllerLayout 0x77E10 - its original, past our hook): 1 controller, 0 keyboard
+// and mouse, -1 not known (another build, a fault). The update thread (the HUD layout the toolbar's globes are cut by: hud_globes.h).
+int ControllerLayoutNow();
 
 // [openxr] laser_tooltips (the ini, live): the game's item tooltip and its equipped-item comparison at once
 // under the laser (vr/laser_tooltip.h, panel_input.cpp). Install() hooks the three queries after the laser's own

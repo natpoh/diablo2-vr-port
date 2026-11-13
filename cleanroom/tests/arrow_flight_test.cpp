@@ -54,6 +54,17 @@ static void TestClasses() {
     u.type = 1;
     Expect(!IsHeroArrow(u, 7), "not a missile");
     Expect(Homes(kGuidedArrow) && !Homes(kArrow), "Guided Arrow homes");
+    // the arrows whose look is an effect of their own (a fire arrow's flame stays on the game's path when its mesh is moved): the game's unless asked
+    for (uint32_t c : {kFireArrow, kMagicArrow, kIceArrow, kColdArrow, kExplodingArrow, kImmolationArrow, kGuidedArrow, kFreezingArrow}) {
+        Expect(CarriesEffect(c), "an elemental arrow carries an effect", c);
+        Expect(!DrawsClass(c, false, false), "an elemental arrow is the game's: one flame, where its missile is", c);
+        Expect(DrawsClass(c, true, false), "arrow_flight_elemental: drawn by us anyway", c);
+        Expect(DrawsClass(c, false, true), "arrow_flight_fx_off: its effect off, drawn by us", c);
+    }
+    for (uint32_t c : {kArrow, kBolt, kMultiArrow, kMultiBolt, kStrafeArrow, kStrafeBolt}) {
+        Expect(!CarriesEffect(c) && DrawsClass(c, false, false), "a plain arrow or bolt is drawn by us", c);
+    }
+    Expect(!DrawsClass(42u, true, true), "never a missile that is not an arrow");
     Shot s;
     s.ok = true;
     s.atMs = 1000;

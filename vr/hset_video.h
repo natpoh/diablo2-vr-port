@@ -34,6 +34,9 @@ struct Env {
     // render type row says one pass comes after a restart (Serg's 0.207.7 report: a choice that did nothing must say why)
     bool replayAtStart = true;
     int vrs = -1;   // variable rate shading tier 2 on this card: 1 yes, 0 no (the foveation rows greyed), -1 not known yet
+    // the game-drawn wrist medallions' units as the plugin found them (shared/wrist_look.h kUnits*: 1 all there, 0 some missing - not made by D2R VR
+    // Settings yet, -1 not asked this game): the HUD page's "Medallions: look" says so under its name
+    int wristModels = -1;
     bool operator==(const Env&) const = default;
 };
 

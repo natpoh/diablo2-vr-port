@@ -49,6 +49,21 @@ inline bool IsArrowClass(uint32_t c) {
             return false;
     }
 }
+// An arrow whose look is a particle effect of its own - the fire, frost, magic or light around the arrow (Fire, Magic, Ice, Cold, Exploding, Immolation,
+// Freezing, Guided Arrow). The game draws that effect where its missile is, whatever matrix is written for the entity (the thrown potion's effect did not
+// follow its matrix either, vr/potion_hide.cpp): moved by us, such an arrow is two - our arrow on our line and its flame on the game's path (Serg, 0.215.9:
+// "when I shoot a fire arrow, two fires fly"). The plain arrow and bolt, and the arrows of Multiple Shot and Strafe, are meshes alone.
+inline bool CarriesEffect(uint32_t c) {
+    switch (c) {
+        case kFireArrow: case kMagicArrow: case kIceArrow: case kColdArrow: case kExplodingArrow: case kImmolationArrow: case kGuidedArrow: case kFreezingArrow:
+            return true;
+        default:
+            return false;
+    }
+}
+// Do we draw this arrow? elemental: [bow] arrow_flight_elemental (draw those too - their effect then stays on the game's path), effectsOff: [debug]
+// arrow_flight_fx_off (their effects are switched off, nothing is left behind). Else an arrow with an effect is the game's, drawn where its missile is.
+inline bool DrawsClass(uint32_t c, bool elemental, bool effectsOff) { return IsArrowClass(c) && (!CarriesEffect(c) || elemental || effectsOff); }
 // Guided Arrow homes on its target: the game's path bends, a straight line of ours would leave it - always Blend.
 inline bool Homes(uint32_t c) { return c == kGuidedArrow; }
 // A fan of arrows from one shot (Multiple Shot, Strafe): only the one along the heading given is the shot's own - told by its heading. Any other arrow class

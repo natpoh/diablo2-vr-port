@@ -42,6 +42,7 @@ hset::video::Env HsEnv() {
     e.recommended = size(g_vrRecommended.load());
     e.maximum = size(g_vrMaximum.load());
     e.replayAtStart = g_replayAtStart.load();   // ([stereo] native_replay's hooks at the start: the render type row's "after a restart")
+    e.wristModels = ::D2rvrWristUnitsState();   // (the HUD page's "Medallions: look": the game's models picked and not made)
     e.vrs = ::foveation::VrsTier2();   // (the Render page's foveation rows greyed on a card without it)
     return e;
 }

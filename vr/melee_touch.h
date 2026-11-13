@@ -51,6 +51,8 @@ void SetStatusHero(uint32_t id);
 bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
 // [weight] grab_moves_unit (vr/grab_move.cpp): the lookup hook is put in for it too - the server's game is what its knockback is asked of.
 void SetMoveWanted(bool on);
+// [weight] wall_contact_mode 2 (Bear's) (vr/wall_collide.cpp): the lookup hook is put in for it too - the game's wall cells are read from the hero's server room.
+void SetWallsWanted(bool on);
 // The hero's unit id as the scan last read it (0: none) - the server's unit of the hero is looked up by it (grab_move: the hero in a knockback's way).
 uint32_t HeroId();
 // The server's game learned is dropped: leaving a game frees it, and the next game is another one. Called when the client's own player read

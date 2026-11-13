@@ -34,13 +34,50 @@ namespace {
 using natived3d::RootCall;
 
 LogFn g_log = nullptr;
+// The step's lines rate-limited per format: a burst of kLineBurst, then one a second each (a line costs ~1.2 ms here, 29 ms on a player's
+// PC). Serg 2026-11-13 16:37 - 16:39 on 0.215.6: the scene flipping between two targets at every resolve told ~6 lines a frame, 30,000 in
+// 2.5 minutes - the game stuttered. A line held back is counted and the next one of its kind says how many were not written.
+constexpr int kLineKinds = 64;
+constexpr double kLineBurst = 5.0;
+struct LineKind { const char* fmt = nullptr; double tokens = kLineBurst; ULONGLONG at = 0; uint32_t held = 0; };
+LineKind g_lineKinds[kLineKinds];
+SRWLOCK g_lineLock = SRWLOCK_INIT;
+std::atomic<uint32_t> g_linesHeld{0};   // held back since the 10 s line
+// true: write it (`held` = how many of its kind were not written since the last one)
+bool LineAllowed(const char* fmt, uint32_t* held) {
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockExclusive(&g_lineLock);
+    LineKind* k = nullptr;
+    for (LineKind& e : g_lineKinds)
+        if (e.fmt == fmt || !e.fmt) { k = &e; break; }
+    bool ok = true;
+    if (k) {
+        if (!k->fmt) { k->fmt = fmt; k->at = now; }
+        k->tokens = (std::min)(kLineBurst, k->tokens + (double)(now - k->at) / 1000.0);
+        k->at = now;
+        if (k->tokens >= 1.0) {
+            k->tokens -= 1.0;
+            *held = k->held;
+            k->held = 0;
+        } else {
+            ++k->held;
+            ok = false;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_lineLock);
+    if (!ok) g_linesHeld.fetch_add(1, std::memory_order_relaxed);
+    return ok;
+}
 void Line(const char* fmt, ...) {
     if (!g_log) return;
-    char b[400];
+    uint32_t held = 0;
+    if (!LineAllowed(fmt, &held)) return;
+    char b[480];
     va_list va;
     va_start(va, fmt);
-    vsnprintf(b, sizeof b, fmt, va);
+    int n = vsnprintf(b, sizeof b, fmt, va);
     va_end(va);
+    if (held && n > 0 && n < (int)sizeof b) snprintf(b + n, sizeof b - n, " [%u more of these not written: at most one a second]", held);
     g_log(b);
 }
 // One line per reason while it lasts; 0 = drawing
@@ -158,17 +195,27 @@ void ReArm(const char* why) {
 // target of ours (the game's revealage target kept), and at the step ours is fogged by the depth behind it and added into the game's.
 SRWLOCK g_fbLock = SRWLOCK_INIT;
 std::unordered_set<ID3D12PipelineState*> g_fogBehind;
-std::atomic<uint32_t> g_fogBehindN{0}, g_redirected{0};
+std::unordered_set<ID3D12PipelineState*> g_fogBehindOit;   // ... of them, those whose pixel shader writes the game's weight (HasOitWeight)
+std::atomic<uint32_t> g_fogBehindN{0}, g_fogBehindOitN{0}, g_redirected{0}, g_notOit{0};
+std::atomic<bool> g_hairStrict{true}, g_ownBehind{true};   // [fog] game_fog_hair_strict / game_fog_own_distance_behind (Params)
+std::atomic<bool> g_sceneOneSize{true};    // [fog] game_fog_scene_one_size (Params::sceneOneSize; ReadScene)
+std::atomic<bool> g_sceneByName{true};     // [fog] game_fog_scene_by_name (Params::sceneByName; NamedScene)
+std::atomic<uint32_t> g_byName{0}, g_bySearch{0};   // resolves whose scene the game's name gave / the search gave (the key on), since the 10 s line
+std::atomic<int> g_lastResolveStep{-1};    // [fog] game_fog_miss_keeps_fog: the last resolve anywhere - 1 the step wrote, 0 not, -1 none yet
+std::atomic<uint32_t> g_pickOwn{0}, g_pickLast{0}, g_pickNone{0};   // StepDrewAt's answers by: the list's own resolve, the last anywhere, none
+thread_local bool t_stepped = false;       // Insert on this thread recorded a step (OnDraw)
 uint64_t Fnv64(const void* p, size_t n) {   // (vr/pipe_hunt.cpp's - the bench's hashes)
     uint64_t h = 1469598103934665603ull;
     for (size_t i = 0; i < n; ++i) { h ^= ((const uint8_t*)p)[i]; h *= 1099511628211ull; }
     return h;
 }
-void NoteFogBehind(ID3D12PipelineState* pso) {
+void NoteFogBehind(ID3D12PipelineState* pso, bool oit) {
     AcquireSRWLockExclusive(&g_fbLock);
     const bool added = g_fogBehind.insert(pso).second;
+    const bool addedOit = oit && g_fogBehindOit.insert(pso).second;
     ReleaseSRWLockExclusive(&g_fbLock);
     if (added) g_fogBehindN.fetch_add(1, std::memory_order_relaxed);
+    if (addedOit) g_fogBehindOitN.fetch_add(1, std::memory_order_relaxed);
 }
 // Every pipeline's pixel shader hash (the 10 s line below names the ones drawing into the effects' weighted colour that are not sent - the
 // particles, and any foliage / grass the bench's stages do not know: Serg 2026-11-10 on 0.210.4, far crowns, bushes and small grass on
@@ -183,17 +230,23 @@ void NoteIfFogBehind(ID3D12PipelineState* pso, const void* ps, size_t n) {
     g_psHashOf[pso] = h;
     ReleaseSRWLockExclusive(&g_fbLock);
     const uint8_t st = renderbench::StageOf(h);
-    if (st == renderbench::kLit || st == renderbench::kWaterGlassHair) NoteFogBehind(pso);
+    if (st == renderbench::kLit || st == renderbench::kWaterGlassHair) NoteFogBehind(pso, HasOitWeight(ps, n));
 }
-bool IsFogBehind(ID3D12PipelineState* pso) {
+// A hair / foliage pipeline (the bench's lit or hair stage); *oit: its pixel shader writes the game's weight
+bool IsFogBehind(ID3D12PipelineState* pso, bool* oit = nullptr) {
+    if (oit) *oit = false;
     if (!pso) return false;
     AcquireSRWLockShared(&g_fbLock);
     const bool is = g_fogBehind.count(pso) != 0;
+    if (is && oit) *oit = g_fogBehindOit.count(pso) != 0;
     ReleaseSRWLockShared(&g_fbLock);
     return is;
 }
 std::atomic<bool> g_foldOk{false};   // the last step folded ours into the game's weighted colour: the hair / foliage draws may be sent there
 std::atomic<bool> g_foldReveal{false};   // ... and our revealage into the game's: their revealage may be sent to ours too (their own distance)
+std::atomic<bool> g_sentSinceFold{false};   // a draw was sent to ours since the last step that read it (folded or cleared)
+std::atomic<bool> g_revealSentSinceFold{false};   // ... its revealage to ours too
+std::atomic<uint32_t> g_unfolded{0}, g_revealDropped{0};   // (10 s) resolves that went on without folding what was sent; revealage cleared unfolded
 
 // ---- the game's resolve pipelines
 constexpr int kResolves = 16;
@@ -279,6 +332,7 @@ struct List {
     // The step at this list's resolve (the submission order's proof, OnExecute): the scene it took, whether this list set its state before
     // the draw, and - when the step drew on the chain's state - the state it took
     bool redirected = false;   // our weighted colour target bound in the game's (a hair / foliage draw) - given back before the next other draw
+    int8_t resolveStep = -1;   // [fog] game_fog_miss_keeps_fog: this list's last resolve since its reset - 1 the step wrote, 0 it did not, -1 none
     ID3D12Resource* stepRes[4] = {};   // (0 the scene, 1 the effects' weighted colour, 2 their revealage, 3 their additive light - the chains)
     bool stepOwn[4] = {};
     bool stepOnChain[4] = {};
@@ -307,6 +361,7 @@ struct List {
             stepOwn[i] = stepOnChain[i] = false;
         }
         redirected = false;
+        resolveStep = -1;
         nRt = 0;
         single = hasDsv = false;
         FxDone();
@@ -511,15 +566,28 @@ ID3D12Resource* SceneOf(ID3D12Resource* ds, ID3D12Resource* resolveTarget) {
 // of those targets in the tables; `elsewhere` then counts R11G11B10 views in them of targets never bound with the depth (only compared).
 // PC1 2026-10-28 17:43: the step ran every frame (0.09 ms) on the target last bound with the depth, and no fog reached the picture.
 constexpr unsigned kTableLook = 16;   // the descriptors looked at from each table's start (the resolve reads t10 - t13)
-ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) {
+ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere, int* sized) {
     *elsewhere = 0;
+    *sized = 0;
     const unsigned inc = natived3d::SrvIncrement();
     if (!inc || !l.gSet || !l.nHeaps) return nullptr;
     ID3D12Resource* cand[kScenePairs];
-    int nc = 0;
+    ID3D12Resource* other[kScenePairs];   // (bound with the depth but not its size: neither a candidate nor counted as elsewhere)
+    int nc = 0, no = 0;
+    // [fog] game_fog_scene_one_size: only a target of the depth's size is a candidate. Serg 2026-11-13 16:37 on 0.215.6 - the resolve's
+    // tables also read a 1024 x 1024 two-mip R11G11B10 target once bound with the 2048 depth (the game's half-size effects layer); it was
+    // taken as the scene, the step then refused it for its size and the frame had no fog (thousands of frames over two minutes)
+    const bool oneSize = g_sceneOneSize.load(std::memory_order_relaxed);
+    const D3D12_RESOURCE_DESC dd = depth->GetDesc();
     AcquireSRWLockShared(&g_sceneLock);
     for (const ScenePair& p : g_scenes)
-        if (p.ds == depth && p.scene && p.scene != l.rt0 && !IsFxR11(p.scene)) cand[nc++] = p.scene;
+        if (p.ds == depth && p.scene && p.scene != l.rt0 && !IsFxR11(p.scene)) {
+            if (oneSize) {
+                const D3D12_RESOURCE_DESC sd = p.scene->GetDesc();
+                if (sd.Width != dd.Width || sd.Height != dd.Height) { other[no++] = p.scene; continue; }
+            }
+            cand[nc++] = p.scene;
+        }
     ReleaseSRWLockShared(&g_sceneLock);
     for (unsigned h = 0; h < l.nHeaps; ++h) {
         ID3D12DescriptorHeap* heap = l.heaps[h];
@@ -538,11 +606,60 @@ ID3D12Resource* ReadScene(const List& l, ID3D12Resource* depth, int* elsewhere) 
                 if (!r) continue;
                 for (int c = 0; c < nc; ++c)
                     if (cand[c] == r) return r;
-                ++*elsewhere;
+                bool skip = false;
+                for (int c = 0; c < no && !skip; ++c) skip = other[c] == r;
+                if (!skip) ++*elsewhere;
+                else ++*sized;
             }
         }
     }
     return nullptr;
+}
+
+// [fog] game_fog_scene_by_name (2026-11-13, Serg: "find a faster method without searching the scene's targets every frame"): the game's
+// renderer makes its targets with names (D2R image: "Main Color 0", "Main Color 1", "Main Color Copy/Mips", "Revealage", "Accumulation",
+// "Main Depth Mip %d" - one function at RVA 0xE1C700 - 0xE1CA41) and its D3D12 back end names what it makes through
+// SetPrivateData(WKPDID_D3DDebugObjectName) (26 references at 0x10B0000 - 0x10C9000). So the scene the resolve reads is the view in its
+// own tables named "Main Color 0" or "Main Color 1" (not "Main Color Copy...", not its own target), of the depth's size: known, not guessed
+// from what was bound with the depth. nullptr: no such view (names not set in this build, the views not seen) - the search as before.
+// `names`: the tables' named views ("name WxH"), for the line that tells them once a change.
+bool MainColourName(const char* s) {
+    return std::strncmp(s, "Main Color ", 11) == 0 && (s[11] == '0' || s[11] == '1') && s[12] == 0;
+}
+ID3D12Resource* NamedScene(const List& l, ID3D12Resource* depth, char* names, size_t namesN) {
+    if (names && namesN) names[0] = 0;
+    const unsigned inc = natived3d::SrvIncrement();
+    if (!inc || !l.gSet || !l.nHeaps || !depth) return nullptr;
+    const D3D12_RESOURCE_DESC dd = depth->GetDesc();
+    ID3D12Resource* found = nullptr;
+    size_t len = 0;
+    for (unsigned h = 0; h < l.nHeaps; ++h) {
+        ID3D12DescriptorHeap* heap = l.heaps[h];
+        if (!heap) continue;
+        const D3D12_DESCRIPTOR_HEAP_DESC hd = heap->GetDesc();
+        if (hd.Type != D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV || !(hd.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE)) continue;
+        const UINT64 g0 = heap->GetGPUDescriptorHandleForHeapStart().ptr;
+        const SIZE_T c0 = heap->GetCPUDescriptorHandleForHeapStart().ptr;
+        for (uint32_t i = 0; i < 32; ++i) {
+            if (!(l.gSet & (1u << i))) continue;
+            const uint64_t gpu = l.gTables[i];
+            if (gpu < g0 || gpu >= g0 + (UINT64)hd.NumDescriptors * inc) continue;
+            const UINT first = (UINT)((gpu - g0) / inc);
+            for (UINT j = 0; j < kTableLook && first + j < hd.NumDescriptors; ++j) {
+                ID3D12Resource* r = natived3d::SrvResource(c0 + (SIZE_T)(first + j) * inc);
+                if (!r) continue;
+                char nm[64];
+                if (!natived3d::ResourceName(r, nm, sizeof nm)) continue;
+                const D3D12_RESOURCE_DESC rd = r->GetDesc();
+                if (names && len + 1 < namesN) {
+                    const int w = snprintf(names + len, namesN - len, "%s'%s' %llux%u", len ? ", " : "", nm, (unsigned long long)rd.Width, rd.Height);
+                    if (w > 0) len = (std::min)(namesN - 1, len + (size_t)w);
+                }
+                if (!found && r != l.rt0 && MainColourName(nm) && rd.Width == dd.Width && rd.Height == dd.Height) found = r;
+            }
+        }
+    }
+    return found;
 }
 
 void OnTargets(ID3D12GraphicsCommandList* cl, unsigned n, const D3D12_CPU_DESCRIPTOR_HANDLE* rts, bool single, ID3D12Resource* ds,
@@ -688,7 +805,7 @@ cbuffer K : register(b0) {
     uint glowW, glowH; float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
-    float partX, partY, pad0, pad1;
+    float partX, partY, ownBehind, layersInOrder;
 };
 // The share of the target the scene is drawn in (Params::part): 1 x 1, or an upscaler's part at the top left (DLSS at 0.667: the scene in
 // the top-left 2/3, the camera's whole view over it). A pixel's place in the view - its ray, so its distance and the dome test - from that
@@ -867,6 +984,8 @@ void ProbeAt(uint2 p, float3 c, float3 o) {
         Probe.Store4(i * 64 + 16, asuint(float4(c, SkyAt(p, d) ? 1.0 : 0.0)));
         Probe.Store4(i * 64 + 32, asuint(float4(o, 1.0)));
         Probe.Store4(i * 64 + 48, asuint(float4(Target[p], 0.0)));
+        Probe.Store4(320 + i * 32, asuint(float4(0.0, 0.0, 0.0, 0.0)));   // (the hair / foliage probe: fxAccum writes it when it runs)
+        Probe.Store4(320 + i * 32 + 16, asuint(float4(0.0, 0.0, 0.0, 0.0)));
     }
 }
 [numthreads(8, 8, 1)]
@@ -891,13 +1010,32 @@ void main(uint3 id : SV_DispatchThreadID) {
 // depth 0): as they are. The weighted-blended colour toward the fog's colour (its weight kept: the resolve divides by it), the additive
 // light down. Over the void (the sky goes there after) the colour fades out rather than into the fog's colour: a far fire's halo above
 // the palisade it stands on fades with its lower half (Serg's 0.192.1 shot: an orange disc on the horizon)
+// The view depth of the opaque scene behind a see-through draw at the depth d (reverse-Z): what its own distance never passes ([fog]
+// game_fog_own_distance_behind - it passed the depth test there); none (0) for the void and the game's dome, or with the key off
+float BehindZ(uint2 p, float d) { return ownBehind > 0.5 && d > 1e-7 && !SkyAt(p, d) ? nearPlane / d : 0.0; }
+// A view depth read from the game's weight w = 1e6 / (1e5 + z^3), never past zMax (0: no limit); 0 when unreadable
+float ZOfWeight(float w, float zMax) {
+    const float z = w > 1e-6 ? pow(max(1e6 / w - 1e5, 0.0), 1.0 / 3.0) : 0.0;
+    return zMax > 0.0 && z > zMax ? zMax : z;
+}
 // What the fog leaves of the particles at full-size pixel p (their weighted colour a): their view depth read from the game's weight
-// (1e6 / (1e5 + z^3)) over their opacity (1 - the game's revealage); none there or unreadable: 1
-float ParticleKeep(uint2 p, float2 uv, float4 a) {
+// (1e6 / (1e5 + z^3)) over their opacity (1 - the game's revealage), never past zMax; none there or unreadable: 1
+float ParticleKeep(uint2 p, float2 uv, float4 a, float zMax) {
     const float op = 1.0 - saturate(Reveal[p].a);
     const float w = op > 1e-4 && a.a > 0.0 ? a.a / op : 0.0;
-    const float z = w > 1e-6 ? pow(max(1e6 / w - 1e5, 0.0), 1.0 / 3.0) : 0.0;
+    const float z = ZOfWeight(w, zMax);
     return z > 0.0 ? KeepZ(uv, z) : 1.0;
+}
+// The probe's hair / foliage half (fxAccum, after the main entry's ProbeAt zeroed it): at the same five points their weighted alpha, their
+// opacity, the view depth read from the weight and the one used, the scene's behind, what the fog leaves of them and of the particles, and
+// what ran (1 hair by their own distance, 2 by the depth behind, + 4 the limit on)
+void HairProbeAt(uint2 p, float ha, float op, float zRead, float zUsed, float zBehind, float th, float tp, float how) {
+    [unroll] for (int i = 0; i < 5; ++i) {
+        const uint2 q = min(uint2(kProbe[i] * float2(width, height) * float2(partX, partY)), uint2(width - 1, height - 1));
+        if (q.x != p.x || q.y != p.y) continue;
+        Probe.Store4(320 + i * 32, asuint(float4(ha, op, zRead, zUsed)));
+        Probe.Store4(320 + i * 32 + 16, asuint(float4(zBehind, th, tp, how + (ownBehind > 0.5 ? 4.0 : 0.0))));
+    }
 }
 [numthreads(8, 8, 1)]
 void fxAccum(uint3 id : SV_DispatchThreadID) {
@@ -907,22 +1045,41 @@ void fxAccum(uint3 id : SV_DispatchThreadID) {
     const float2 uv = UvOf(float2(id.xy));
     if (accumBehind > 0.5) {   // the hair / foliage (ours) fogged, added in; the particles as drawn
         const float4 h = Hair[id.xy];
+        const float zb = BehindZ(id.xy, o);
         if (revealOn > 0.5) {   // by their own distance: the opacity from our revealage, the weight 1e6 / (1e5 + z^3) from the weighted colour
             const float4 hr = HairReveal[id.xy];
             const float op = 1.0 - saturate(hr.a);
             const float w = op > 1e-4 ? h.a / op : 0.0;
-            const float z = w > 1e-6 ? pow(max(1e6 / w - 1e5, 0.0), 1.0 / 3.0) : 0.0;
+            const float z = ZOfWeight(w, zb);
             const float th = h.a > 0.0 ? (z > 0.0 ? KeepZ(uv, z) : KeepAt(id.xy, uv, o)) : 1.0;
             // the particles (the game's own weighted colour) by their own distance as well - the same reading of the game's weight, their
             // opacity from the game's revealage (theirs alone: the hair / foliage revealage is ours): a near flame as drawn, a far fire fading
             // into the fog with the land round it (Serg 2026-11-09: "far fires show as red / orange blobs with halos through the fog")
-            const float tp = ParticleKeep(id.xy, uv, a);
-            OutAccum[id.xy] = float4(a.rgb * tp + fogColour * (a.a * (1.0 - tp)), a.a) + float4(h.rgb * th + fogColour * (h.a * (1.0 - th)), h.a);
+            const float opP = 1.0 - saturate(Reveal[id.xy].a);
+            const float zP = ZOfWeight(opP > 1e-4 && a.a > 0.0 ? a.a / opP : 0.0, zb);
+            const float tp = zP > 0.0 ? KeepZ(uv, zP) : 1.0;   // (ParticleKeep's, its distance kept for the order below)
+            const float4 accP = float4(a.rgb * tp + fogColour * (a.a * (1.0 - tp)), a.a);
+            const float4 accH = float4(h.rgb * th + fogColour * (h.a * (1.0 - th)), h.a);
+            // [fog] game_fog_layers_in_order: the two groups - the particles (the game's targets) and the hair / foliage (ours) - laid near
+            // over far, not averaged by the game's weight. That weight, 1e6 / (1e5 + z^3), is even across its camera's 550 - 1060 units; from
+            // our eyes a haze particle 10 units off weighs 80 times a bush 120 off, so a bush behind the rain's haze took the haze's pale
+            // colour over its whole, nearly opaque silhouette (Serg 2026-11-13 on 0.215.8, night rain, Blood Moor). Each group's coverage from
+            // its revealage, its distance from its weight; the resolve then gives R scene + (1 - R) c with R their joint revealage
+            if (layersInOrder > 0.5 && a.a > 0.0 && h.a > 0.0 && opP > 1e-4 && op > 1e-4 && zP > 0.0 && z > 0.0) {
+                const bool hNear = z <= zP;
+                const float3 cP = accP.rgb / accP.a, cH = accH.rgb / accH.a;
+                const float3 cN = hNear ? cH : cP, cF = hNear ? cP : cH;
+                const float oN = hNear ? op : opP, oF = hNear ? opP : op;
+                const float cover = 1.0 - (1.0 - oN) * (1.0 - oF);
+                OutAccum[id.xy] = float4((cF * (oF * (1.0 - oN)) + cN * oN) / max(cover, 1e-4), 1.0) * (accP.a + accH.a);
+            } else OutAccum[id.xy] = accP + accH;
             OutReveal[id.xy] = Reveal[id.xy] * hr;
+            HairProbeAt(id.xy, h.a, op, ZOfWeight(w, 0.0), z, zb, th, tp, 1.0);
             return;
         }
         const float th = h.a > 0.0 ? KeepAt(id.xy, uv, o) : 1.0;   // (their revealage not ours: by the opaque depth behind them)
         OutAccum[id.xy] = a + float4(h.rgb * th + (!SkyAt(id.xy, o) ? fogColour * (h.a * (1.0 - th)) : 0.0), h.a);
+        HairProbeAt(id.xy, h.a, 0.0, 0.0, 0.0, zb, th, 1.0, 2.0);
         return;
     }
     const float t = a.a > 0.0 && e > 1e-7 ? Keep(uv, max(e, o)) : 1.0;
@@ -936,7 +1093,7 @@ void fxGlow(uint3 id : SV_DispatchThreadID) {
         const uint2 fp = min(uint2((float2(id.xy) + 0.5) * float2(width, height) / float2(glowW, glowH)), uint2(width - 1, height - 1));
         const float2 fuv = UvOf(float2(fp));
         const float4 a = Accum[fp];
-        const float tp = a.a > 0.0 ? ParticleKeep(fp, fuv, a) : KeepAt(fp, fuv, Depth[fp]);
+        const float tp = a.a > 0.0 ? ParticleKeep(fp, fuv, a, BehindZ(fp, Depth[fp])) : KeepAt(fp, fuv, Depth[fp]);
         OutGlow[id.xy] = g * tp;   // (light fades out, it does not turn into the fog's colour)
         return;
     }
@@ -961,13 +1118,14 @@ struct Consts {
     float holes, skyDepth;
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
-    float partX, partY, pad0, pad1;
+    float partX, partY, ownBehind, layersInOrder;
 };
 static_assert(sizeof(Consts) == 40 * 4, "forty root constants");
 
 constexpr int kSlots = 64;   // descriptor sets and timestamp pairs used in turn (the GPU is never that many steps behind)
 constexpr UINT kViews = 15;   // a step's views: t0 - t9, u0 - u4
-constexpr UINT kProbeBytes = 5 * 64;   // the probe's five points (the shader's ProbeAt)
+constexpr UINT kProbeMain = 5 * 64;   // the probe's five points (the shader's ProbeAt)
+constexpr UINT kProbeBytes = kProbeMain + 5 * 32;   // ... and their hair / foliage half (HairProbeAt; the buffer holds 512)
 struct Gpu {
     ID3D12Device* dev = nullptr;
     ID3D12RootSignature* root = nullptr;
@@ -1478,11 +1636,12 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         scene = nullptr;
     if (!scene) scene = SceneOf(depth, l.rt0);
     {   // the scene the resolve's own tables name, when they name one: it wins
-        int elsewhere = 0;
-        ID3D12Resource* read = ReadScene(l, depth, &elsewhere);
+        int elsewhere = 0, sized = 0;
+        ID3D12Resource* read = ReadScene(l, depth, &elsewhere, &sized);
         static int toldHow = -1;   // 0 the tables name the target taken, 1 they name another of the depth's, 2 one not bound with it, 3 none seen
         const int how = read ? (read == scene ? 0 : 1) : elsewhere ? 2 : 3;
-        if (how != toldHow) {
+        // (only targets left out for their size named - [fog] game_fog_scene_one_size: nothing new to tell, the note stays as it was)
+        if (how != toldHow && !(how == 3 && sized)) {
             toldHow = how;
             if (how == 0) Line("vrcam: fog before the effects - the resolve's own tables read the scene %p: the target taken", (void*)read);
             else if (how == 1)
@@ -1495,6 +1654,26 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
                       (void*)scene);
         }
         if (read) scene = read;
+    }
+    if (g_sceneByName.load(std::memory_order_relaxed)) {   // [fog] game_fog_scene_by_name: the game's own name wins over the search
+        char names[320];
+        ID3D12Resource* named = NamedScene(l, depth, names, sizeof names);
+        static char toldNames[320] = "-";
+        static ID3D12Resource* toldNamed = nullptr;
+        if (std::strcmp(names, toldNames) != 0 || named != toldNamed) {
+            std::memcpy(toldNames, names, sizeof toldNames);
+            toldNamed = named;
+            if (named)
+                Line("vrcam: fog before the effects - the scene known by the game's own name: %p ([fog] game_fog_scene_by_name); the resolve's "
+                     "tables name: %s", (void*)named, names);
+            else
+                Line("vrcam: fog before the effects - no view named \"Main Color 0/1\" of the depth's size in the resolve's tables (%s): the scene "
+                     "found by the search as before", names[0] ? names : "no named views");
+        }
+        if (named) {
+            scene = named;
+            g_byName.fetch_add(1, std::memory_order_relaxed);
+        } else g_bySearch.fetch_add(1, std::memory_order_relaxed);
     }
     if (!scene || scene == l.rt0) {
         static ID3D12Resource* toldRt = nullptr;   // what IS bound at the resolve: again whenever it changes (a menu's size, the render size)
@@ -1831,6 +2010,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         else g_fxIdle.fetch_add(1, std::memory_order_relaxed);
     }
     const uint32_t step = g_slot++;
+    t_stepped = true;
     const uint32_t k = step % kSlots;
     g_slotMode[k] = onTarget ? 1 : 0;
     // this step's views: t0 the depth, t1 the scene, t2 - t5 the effects' depths and targets, u0 - u2 ours (the effects' none: empty views)
@@ -1927,6 +2107,8 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.coverAt = p.ours ? 0.0f : std::max(p.cover, 0.0f);
     c.partX = std::clamp(p.part[0], 0.25f, 1.0f);   // (an upscaler's share of the target: the pixels' rays from that part)
     c.partY = std::clamp(p.part[1], 0.25f, 1.0f);
+    c.ownBehind = p.ownBehind ? 1.0f : 0.0f;   // ([fog] game_fog_own_distance_behind)
+    c.layersInOrder = p.layersInOrder ? 1.0f : 0.0f;   // ([fog] game_fog_layers_in_order)
     g_planesDrawnInto.store(write ? (onTarget ? 2 : 1) : 0, std::memory_order_relaxed);
 
     natived3d::SetOurs(true);
@@ -1955,12 +2137,18 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     cl->Dispatch((UINT)((sd.Width + 7) / 8), (sd.Height + 7) / 8, 1);
     FxPart* parts[3] = {&fa, &fg, &fr};
     if (fa.game || fg.game) {   // the effects': their targets and our depths read
-        D3D12_RESOURCE_BARRIER fb[6];
+        D3D12_RESOURCE_BARRIER fb[7];
         UINT nf = 0;
         for (FxPart* f : parts) {
             if (!f->game) continue;
             if (f->r != f->s) fb[nf++] = Transition(f->game, f->s, f->r, 0);
             if (f->z) fb[nf++] = Transition(f->z->tex, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        }
+        if (fa.game) {   // (the probe's hair half after the main entry zeroed it: in that order)
+            D3D12_RESOURCE_BARRIER ub{};
+            ub.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            ub.UAV.pResource = g.probe;
+            fb[nf++] = ub;
         }
         if (nf) cl->ResourceBarrier(nf, fb);
         if (fa.game) {
@@ -2017,7 +2205,18 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
         cl->ResourceBarrier(revealOn ? 2 : 1, hb);
         const float zero[4] = {0, 0, 0, 0}, ones[4] = {1, 1, 1, 1};
         cl->ClearRenderTargetView(g.rtvHeap->GetCPUDescriptorHandleForHeapStart(), zero, 0, nullptr);
-        if (revealOn) cl->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{g.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g.rtvInc}, ones, 0, nullptr);
+        // ([fog] game_fog_hair_strict: their revealage sent to ours but the game's not taken this step - not multiplied in, so cleared too,
+        // never carried into a later frame's: it piled up there, the grass's opacity of frames before, and their distance read too far)
+        const bool dropReveal = !revealOn && g.hairReveal && g_hairStrict.load(std::memory_order_relaxed) && g_revealSentSinceFold.load(std::memory_order_relaxed);
+        if (revealOn || dropReveal) cl->ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE{g.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g.rtvInc}, ones, 0, nullptr);
+        if (dropReveal) g_revealDropped.fetch_add(1, std::memory_order_relaxed);
+        g_sentSinceFold.store(false, std::memory_order_relaxed);
+        g_revealSentSinceFold.store(false, std::memory_order_relaxed);
+    } else if (g_hairStrict.load(std::memory_order_relaxed) && g_sentSinceFold.exchange(false, std::memory_order_relaxed)) {
+        // ([fog] game_fog_hair_strict: sent to ours, but this step took no weighted colour - cleared before a step reads ours again)
+        g.hairFresh = true;
+        g_revealSentSinceFold.store(false, std::memory_order_relaxed);
+        g_unfolded.fetch_add(1, std::memory_order_relaxed);
     }
     g_foldOk.store(hair, std::memory_order_relaxed);   // (the next frame's hair / foliage may be sent there - folded at its step)
     g_foldReveal.store(revealOn, std::memory_order_relaxed);
@@ -2082,8 +2281,15 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
 }
 void Redirect(ID3D12GraphicsCommandList* cl, List& l) {
     ID3D12Resource* acc = g_fxAccum.load(std::memory_order_relaxed);
-    const bool want = acc && l.rt0 == acc && g_foldOk.load(std::memory_order_relaxed) && g_sceneMode.load(std::memory_order_relaxed) != 2 &&
-                      g_lastWrote.load(std::memory_order_relaxed) && l.nRt >= 1 && IsFogBehind(l.pso);
+    bool oit = false;
+    bool want = acc && l.rt0 == acc && g_foldOk.load(std::memory_order_relaxed) && g_sceneMode.load(std::memory_order_relaxed) != 2 &&
+                g_lastWrote.load(std::memory_order_relaxed) && l.nRt >= 1 && IsFogBehind(l.pso, &oit);
+    // [fog] game_fog_hair_strict: an opaque lit draw into the pooled texture (another pass's use of it) is never taken from its pass
+    if (want && !oit && g_hairStrict.load(std::memory_order_relaxed)) {
+        want = false;
+        g_notOit.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (want) g_sentSinceFold.store(true, std::memory_order_relaxed);   // (each draw sent: a step must fold or clear ours)
     if (acc && l.rt0 == acc && !want && l.pso) {   // (a draw into the weighted colour left as drawn: counted by its pipeline)
         AcquireSRWLockExclusive(&g_notSentLock);
         if (g_notSent.size() < 4096 || g_notSent.count(l.pso)) ++g_notSent[l.pso];
@@ -2110,7 +2316,10 @@ void Redirect(ID3D12GraphicsCommandList* cl, List& l) {
         // game's shaders write, 1e6 / (1e5 + d^3), over the opacity) - a branch against the sky fogged by its own distance, not the sky's
         if (l.nRt >= 2 && g_foldReveal.load(std::memory_order_relaxed) && natived3d::RtvResource(rts[1].ptr) == g_fxReveal.load(std::memory_order_relaxed)) {
             std::lock_guard<std::mutex> one(g_gpuMx);
-            if (g_gpu.hairReveal) rts[1] = D3D12_CPU_DESCRIPTOR_HANDLE{g_gpu.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g_gpu.rtvInc};
+            if (g_gpu.hairReveal) {
+                rts[1] = D3D12_CPU_DESCRIPTOR_HANDLE{g_gpu.rtvHeap->GetCPUDescriptorHandleForHeapStart().ptr + g_gpu.rtvInc};
+                g_revealSentSinceFold.store(true, std::memory_order_relaxed);
+            }
         }
         cl->OMSetRenderTargets(l.nRt, rts, FALSE, l.hasDsv ? &l.dsv : nullptr);
         g_redirected.fetch_add(1, std::memory_order_relaxed);
@@ -2144,14 +2353,54 @@ void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned in
         return;
     }
     g_drawSeen.fetch_add(1, std::memory_order_relaxed);
-    if (!l->tracked) { g_drawUntracked.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!l->tracked) {
+        g_drawUntracked.fetch_add(1, std::memory_order_relaxed);
+        l->resolveStep = 0;
+        g_lastResolveStep.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const uint32_t stepsBefore = g_slot;
+    t_stepped = false;
     Insert(cl, *l);
+    {   // [fog] game_fog_miss_keeps_fog: what the game's fog pass after this resolve is to do (StepDrewAt)
+        const int8_t drew = t_stepped && g_lastWrote.load(std::memory_order_relaxed) ? 1 : 0;
+        l->resolveStep = drew;
+        g_lastResolveStep.store(drew, std::memory_order_relaxed);
+    }
+    (void)stepsBefore;
+    if (!t_stepped && g_hairStrict.load(std::memory_order_relaxed) && g_sentSinceFold.exchange(false, std::memory_order_relaxed)) {
+        // [fog] game_fog_hair_strict: the resolve went on without the step - the hair / foliage draws sent to ours this frame are not folded:
+        // none sent from here on until a step folds again, and what ours holds cleared before the next step reads it (never a later frame's)
+        if (g_foldOk.exchange(false, std::memory_order_relaxed)) g_unfolded.fetch_add(1, std::memory_order_relaxed);
+        g_foldReveal.store(false, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> one(g_gpuMx);
+        g_gpu.hairFresh = true;
+    }
     l->FxDone();   // (the next effects on this list clear our depths again)
 }
 
 }  // namespace
 
 bool Watching() { return g_watching.load(std::memory_order_relaxed); }
+bool StepDrewAt(ID3D12GraphicsCommandList* cl) {
+    // the list's own resolve first (the fog pass recorded after it on the same list: certain); else the last resolve anywhere; none yet:
+    // as before (the colour left out while the step is drawn)
+    if (cl) {
+        if (List* l = Find(cl)) {
+            if (l->tracked && l->resolveStep >= 0) {
+                g_pickOwn.fetch_add(1, std::memory_order_relaxed);
+                return l->resolveStep == 1;
+            }
+        }
+    }
+    const int last = g_lastResolveStep.load(std::memory_order_relaxed);
+    if (last >= 0) {
+        g_pickLast.fetch_add(1, std::memory_order_relaxed);
+        return last == 1;
+    }
+    g_pickNone.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
 void SetLog(LogFn log) { g_log = log; }
 void OnExecute(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* lists) {
     if (!Wanted() || !q || !lists) return;
@@ -2206,7 +2455,7 @@ void OnExecute(ID3D12CommandQueue* q, unsigned n, ID3D12CommandList* const* list
 bool LastProbe(float out[80]) {
     std::lock_guard<std::mutex> one(g_gpuMx);
     if (!g_gpu.probes || !g_slot) return false;
-    std::memcpy(out, g_gpu.probes + (size_t)((g_slot - 1) % kSlots) * (kProbeBytes / 4), kProbeBytes);
+    std::memcpy(out, g_gpu.probes + (size_t)((g_slot - 1) % kSlots) * (kProbeBytes / 4), kProbeMain);
     return true;
 }
 
@@ -2343,7 +2592,20 @@ void OnStreamPso(ID3D12Device*, const D3D12_PIPELINE_STATE_STREAM_DESC* d, ID3D1
     Keep(pso, t, il);
 }
 void MarkResolve(ID3D12PipelineState* pso, int blends) { AddResolve(pso, nullptr, blends); }
-void MarkFogBehind(ID3D12PipelineState* pso) { NoteFogBehind(pso); }
+void MarkFogBehind(ID3D12PipelineState* pso, bool oit) { NoteFogBehind(pso, oit); }
+bool HasOitWeight(const void* bytecode, size_t n) {
+    // (DXBC immediates are whole 32-bit tokens: l(1000000.0) = 0x49742400, l(100000.0) = 0x47C35000 - looked for on token boundaries)
+    if (!bytecode || n < 8) return false;
+    const uint8_t* b = (const uint8_t*)bytecode;
+    bool hasBig = false, hasSmall = false;
+    for (size_t i = 0; i + 4 <= n && !(hasBig && hasSmall); i += 4) {
+        uint32_t t;
+        std::memcpy(&t, b + i, 4);
+        hasBig = hasBig || t == 0x49742400u;
+        hasSmall = hasSmall || t == 0x47C35000u;
+    }
+    return hasBig && hasSmall;
+}
 
 void Configure(const Params& p) {
     AcquireSRWLockExclusive(&g_paramLock);
@@ -2352,6 +2614,21 @@ void Configure(const Params& p) {
     g_ours.store(p.on && p.ours, std::memory_order_relaxed);
     g_fxDepth.store(p.on && p.fxDepth, std::memory_order_relaxed);
     g_on.store(p.on, std::memory_order_relaxed);
+    {   // [fog] game_fog_hair_strict / game_fog_own_distance_behind: live, a line each change
+        static int told = -1;
+        const int now = (p.hairStrict ? 1 : 0) | (p.ownBehind ? 2 : 0);
+        g_hairStrict.store(p.hairStrict, std::memory_order_relaxed);
+        g_ownBehind.store(p.ownBehind, std::memory_order_relaxed);
+        g_sceneOneSize.store(p.sceneOneSize, std::memory_order_relaxed);
+        g_sceneByName.store(p.sceneByName, std::memory_order_relaxed);
+        if (now != told && p.on) {
+            told = now;
+            Line("vrcam: fog before the effects - the hair / foliage: %s ([fog] game_fog_hair_strict %d); their own distance %s ([fog] "
+                 "game_fog_own_distance_behind %d)", p.hairStrict ? "only draws writing the game's see-through weight sent to ours, nothing "
+                 "left over from a step that did not fold it" : "every lit / hair draw into the effects' weighted colour sent (0.215)",
+                 p.hairStrict ? 1 : 0, p.ownBehind ? "never past the scene behind them" : "as read from the weight (0.215)", p.ownBehind ? 1 : 0);
+        }
+    }
     // [fog] game_fog_cover: once each time it changes (Serg 2026-11-09 on 0.210.2: "не работает заглушка тумана" - the log said nothing of it)
     static float toldCover = -1.0f;
     const float cover = p.on && !p.ours ? std::max(p.cover, 0.0f) : 0.0f;
@@ -2607,6 +2884,26 @@ void Frame() {
                                 q[7] > 0.5f ? " (sky)" : "", q[4], q[5], q[6], q[8], q[9], q[10], q[12], q[13], q[14]);
             }
             if (g_log) g_log(b);   // (longer than Line takes)
+            // the hair / foliage half (HairProbeAt): only when the step folded them at one of the points
+            bool any = false;
+            for (int i = 0; i < 5; ++i) any = any || r[80 + i * 8 + 7] > 0.5f;
+            if (any) {
+                len = snprintf(b, sizeof b, "vrcam: fog before the effects - the probe's hair / foliage (ours, folded at the step; the limit at the "
+                               "scene behind %s):", r[80 + 7] >= 4.0f || r[80 + 15] >= 4.0f ? "on" : "off");
+                for (int i = 0; i < 5 && len > 0 && len < (int)sizeof b; ++i) {
+                    const float* q = r + 80 + i * 8;
+                    const int how = (int)(q[7] + 0.5f) & 3;
+                    if (how == 0) len += snprintf(b + len, sizeof b - len, "%s %s: -", i ? ";" : "", kAt[i]);
+                    else if (how == 2)
+                        len += snprintf(b + len, sizeof b - len, "%s %s: weighted alpha %.4f, by the depth behind (view depth %.1f), fog %.0f%%", i ? ";" : "",
+                                        kAt[i], q[0], q[4], 100.0f * (1.0f - q[5]));
+                    else
+                        len += snprintf(b + len, sizeof b - len, "%s %s: weighted alpha %.4f, opacity %.3f -> view depth read %.1f, used %.1f (the scene "
+                                        "behind %.1f), fog %.0f%%; the particles' fog %.0f%%", i ? ";" : "", kAt[i], q[0], q[1], q[2], q[3], q[4],
+                                        100.0f * (1.0f - q[5]), 100.0f * (1.0f - q[6]));
+                }
+                if (g_log) g_log(b);
+            }
         }
     }
     const uint32_t bound = g_boundSeen.exchange(0), boundU = g_boundUntracked.exchange(0), drawn = g_drawSeen.exchange(0), drawnU = g_drawUntracked.exchange(0);
@@ -2618,9 +2915,16 @@ void Frame() {
              "game's kept), %u draws of those pipelines into other targets, %u not drawn again (no step took it for %u steps in a row); %u "
              "steps fogged the effects by it, %u with effects not fogged",
              twinDraws, twinsMade, g_twinsKept.load(), other, skipped, kFxIdleSteps, fogged, notFogged);
-    if (const uint32_t sent = g_redirected.exchange(0))   // (the hair / foliage draws sent into ours, fogged by the depth behind them)
-        Line("vrcam: fog before the effects, 10 s: %u hair / foliage draws sent into our weighted colour target (fogged by the depth behind "
-             "them; %u such pipelines known); the particles as drawn", sent, g_fogBehindN.load());
+    {   // (the hair / foliage draws sent into ours; [fog] game_fog_hair_strict: the opaque lit draws into the same texture kept in their pass,
+        // and what was sent but not folded cleared)
+        const uint32_t sent = g_redirected.exchange(0), notOit = g_notOit.exchange(0), unfolded = g_unfolded.exchange(0), dropped = g_revealDropped.exchange(0);
+        if (sent || notOit || unfolded || dropped)
+            Line("vrcam: fog before the effects, 10 s: %u hair / foliage draws sent into our weighted colour target (fogged by their own "
+                 "distance; %u such pipelines known, %u of them writing the game's see-through weight); %u opaque lit draws into the same "
+                 "texture left in their own pass ([fog] game_fog_hair_strict %d); %u times sent but not folded (cleared), %u times their "
+                 "revealage cleared unfolded; the particles as drawn", sent, g_fogBehindN.load(), g_fogBehindOitN.load(), notOit,
+                 g_hairStrict.load() ? 1 : 0, unfolded, dropped);
+    }
     {   // the draws into the weighted colour NOT sent, the most drawn pipelines by pixel shader hash and the bench's stage (the particles are
         // "-": fogged by their own distance at the step; a foliage or grass pipeline here is one the hair / foliage table misses)
         std::unordered_map<ID3D12PipelineState*, uint32_t> ns;
@@ -2671,6 +2975,19 @@ void Frame() {
          draws, ours ? "our effect's fog" : "the game's fog", g_resolveN.load() ? "" : " - the game's resolve pipeline NOT found (another build?)",
          n ? ms / n : 0.0, n, g_on.load() && !draws ? (ours ? " - NONE drawn: our post pass's fog as before" : " - NONE drawn: the game's fog as before") : "",
          bound, boundU, drawn, drawnU);
+    {   // [fog] game_fog_miss_keeps_fog: how the game's fog pass knew whether the step drew (vr/fog_height.cpp's line: which variant it took)
+        const uint32_t own = g_pickOwn.exchange(0), last = g_pickLast.exchange(0), none = g_pickNone.exchange(0);
+        if (own || last || none)
+            Line("vrcam: fog before the effects, 10 s: the game's fog pass asked whether the step drew %u times - %u by its own list's resolve, "
+                 "%u by the last resolve on another list, %u with none seen yet", own + last + none, own, last, none);
+        const uint32_t byName = g_byName.exchange(0), bySearch = g_bySearch.exchange(0);
+        if (byName || bySearch)
+            Line("vrcam: fog before the effects, 10 s: the scene by the game's own name at %u resolves, by the search at %u ([fog] "
+                 "game_fog_scene_by_name)", byName, bySearch);
+        if (const uint32_t held = g_linesHeld.exchange(0))
+            Line("vrcam: fog before the effects, 10 s: %u of its lines NOT written (each kind at most one a second after a burst of 5) - "
+                 "something flips every frame", held);
+    }
 }
 
 }  // namespace fogfx

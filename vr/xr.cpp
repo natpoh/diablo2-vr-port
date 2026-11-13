@@ -43,6 +43,7 @@
 
 // vrcam.cpp: the balls over the belt's bottles a hand is at (x y z in BodyWalk's frame, radius m, alpha, r g b)
 int D2rvrHoverSpheres(float (*out)[8], int max);
+int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wrist_look.h kUnits*)
 #include "hud_native.h"
 #include "native_d3d12.h"   // natived3d::SetOurs: our submissions marked ours ([stereo] native_replay)
 #include "plate_world.h"   // [hud] monster_bar_room: the monster's health bar over its head, in the room (HangPlate)
@@ -56,6 +57,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "hand_trackers.h"   // [openxr] hand_trackers: no hand trackers on Meta's runtime - they take the controllers' places away (the pure rule)
 #include "campfire_unleashed.h"   // [campfire] the creation scene's boards (MPL 2.0, from D2R VR Unleashed)
 #include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard (MPL 2.0, from D2R VR Unleashed)
+#include "unleashed_cinema_screen.h"   // [cinema] world_screen: the big screen's part of the frame and its place (MPL 2.0, from D2R VR Unleashed)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "hand_keep.h"       // [openxr] hands_kept / bare_hand_poses / panels_key: the hands and the panels when the runtime gives no controllers
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
@@ -135,6 +137,7 @@ int D2rvrHoverSpheres(float (*out)[8], int max);
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
 #include "hand_swap.h"      // [hands] left_handed: the controllers traded once in Publish; Phys() names the controller a hand reads
 
+namespace gamestate { bool CinemaPlaying(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
 namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); bool KeyboardShown(); uint32_t KeyboardEpoch(); bool CreatePanelOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
@@ -180,6 +183,7 @@ struct Cfg {
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
+    float cinemaDistM = 5.0f, cinemaWidthM = 6.0f;   // [cinema] distance_m, width_m: the big screen of world_screen (vr/unleashed_cinema_screen.h), live
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
     bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
@@ -243,6 +247,7 @@ struct Cfg {
     float hapticsScale = 1.0f;   // haptics_scale: their strength times this
     bool hapticsHands = true; // haptics_hand_actions: a vibration action of its own for each hand, no hand filter (taken at a session start)
     bool hapticsStop = true;  // haptics_stop: each pulse stopped by xrStopHapticFeedback when its time is up (live)
+    int hapticsIndexHz = xrprofiles::kIndexHapticHzDefault;   // haptics_index_frequency_hz: the frequency an Index hand's pulse is sent with (0: unspecified, as before; live)
     rendersize::Pick vrPick;  // [render] vr_resolution_px / vr_resolution: the render size the game is given (render_size.h); Desktop = the window's own
     bool menuWide = false;    // [render] menu_wide: the game's own menus drawn 16:9 (vr_resolution.h MenuWide), live
 };
@@ -673,6 +678,11 @@ FlatShown g_flatShown{};
 // rules, kept apart from it; anchored again at a recentre.
 struct PanelPlace { bool anchored = false; float yaw = 0.0f; XrVector3f pos{}; double shownUs = 0.0, offSince = 0.0; bool told = false; };
 PanelPlace g_panelPlace;
+// [cinema] world_screen (vr/unleashed_cinema_screen.h): while one of the game's cinematics plays the flat picture is a big screen -
+// placed once in front at eye height as the cinematic starts, then held in the room (no bringing round to the gaze); placed anew at a
+// recentre (F11, g_epoch) and while the head is not yet tracked ([openxr] menus_wait_tracking). The draw thread's (CloseFrame).
+struct CinemaPlace { bool placed = false; uint32_t epoch = 0; float yaw = 0.0f; XrVector3f pos{}; };
+CinemaPlace g_cinemaPlace;
 // [openxr] panel_grab (vr/panel_grab.h): the panel's place in the room while it is carried or once it was put somewhere this opening (or opened
 // at the kept place); not ok: HangPanel's own place. g_panelSpotAgain: a recentre / the focus back - placed afresh from the kept place.
 panelgrab::Panel g_panelSpot;
@@ -2302,15 +2312,29 @@ bool ApplyHaptic(int hand, float amplitude, int durationMs) {
     const XrHapticActionInfo ai = HapticInfo(hand);
     XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
     v.duration = (XrDuration)durationMs * 1000000;   // ns
-    v.frequency = XR_FREQUENCY_UNSPECIFIED;
+    // [openxr] haptics_index_frequency_hz: an Index hand (the physical controller's profile) gets a real frequency - SteamVR plays 0 Hz as silence there
+    const int phys = handswap::Phys(hand) & 1;
+    const float hz = xrprofiles::HapticFrequency(g_inNow.profile[phys], g_cfg.hapticsIndexHz);
+    v.frequency = hz > 0.0f ? hz : XR_FREQUENCY_UNSPECIFIED;
     v.amplitude = amplitude;
+    {
+        static int toldHz[2] = {-1, -1};   // once per controller and frequency
+        if (hz > 0.0f && toldHz[phys] != (int)hz) {
+            toldHz[phys] = (int)hz;
+            LogF("vrcam: haptics - the %s controller runs the Valve Index profile: its pulses are sent at %d Hz (SteamVR plays an unspecified frequency on an Index as "
+                 "0 Hz - silence; [openxr] haptics_index_frequency_hz, 0 = unspecified as before)", phys ? "right" : "left", (int)hz);
+        }
+    }
     frametrace::Scope trace(frametrace::kHaptic);   // [debug] frame_trace: the runtime's call - some runtimes make a round trip of it
     const XrResult applied = xrApplyHapticFeedback(g_session, &ai, (const XrHapticBaseHeader*)&v);
     const bool ok = Ok(applied, "xrApplyHapticFeedback");
     static std::atomic<int> told{0};
-    if (told.fetch_add(1) < 4)   // the first calls, as the runtime gets them: what a controller that stays still was sent
-        LogF("vrcam: haptics - xrApplyHapticFeedback: %s hand, amplitude %.2f, %d ms, frequency unspecified (the runtime's own) -> %s", hand ? "right" : "left", amplitude,
-             durationMs, Res(applied));
+    if (told.fetch_add(1) < 4) {   // the first calls, as the runtime gets them: what a controller that stays still was sent
+        char freq[48];
+        if (hz > 0.0f) snprintf(freq, sizeof freq, "frequency %d Hz (Index)", (int)hz);
+        else snprintf(freq, sizeof freq, "frequency unspecified (the runtime's own)");
+        LogF("vrcam: haptics - xrApplyHapticFeedback: %s hand, amplitude %.2f, %d ms, %s -> %s", hand ? "right" : "left", amplitude, durationMs, freq, Res(applied));
+    }
     if (ok && g_cfg.hapticsStop && g_hapticTimer->Start(&StopHaptic)) g_hapticTimer->Arm(hand & 1, (uint32_t)std::max(durationMs, 1));
     return ok;
 }
@@ -6812,8 +6836,45 @@ void CloseFrame() {
         nl = HangWheel(layers, nl, most, wheelPanel, wheelBeam, wheelDot);   // the skill wheel, nearest of all
         if (proj.views == pv) nl = HangNear(layers, nl, most, pv, nearProj, nearPv);   // [openxr] hands_over_panels: ... but the hands and the weapon over them
         if (runesOverPanel) nl = HangRunes(layers, nl, most);   // ... but the trail drawn for the Gestures tab lies over it (the window keeps its place)
+        g_cinemaPlace.placed = false;   // [cinema] world_screen: the world again - the next cinematic's screen placed in front anew
         ++g_st.pairs;
     } else if (g_fs.shouldRender && g_kind == kMono && g_copied[0]) {
+        const bool cinemaNow = gamestate::CinemaPlaying();   // [cinema] world_screen: the flat picture is the big screen (false with the key off)
+        if (cinemaNow) {
+            // The film only: the movie player draws at the window's own size in the frame's top left (MovieBand), the film's 16:9 in the
+            // middle of that (FilmIn). Its rows and columns as the swapchain's, the laser's point mapped into them (the crop).
+            RECT client{};
+            const bool win = g_wnd && GetClientRect(g_wnd, &client) && client.right > 0 && client.bottom > 0;
+            const cinema::Crop band = cinema::MovieBand(g_quadChain.w, g_quadChain.h, win ? (uint32_t)client.right : 0u, win ? (uint32_t)client.bottom : 0u);
+            const cinema::Crop film = cinema::FilmIn(band);
+            const cinema::Size size = cinema::ScreenSize(film, g_cfg.cinemaWidthM);
+            const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
+            const bool again = !g_cinemaPlace.placed || g_cinemaPlace.epoch != g_epoch || !g_anchorReady;
+            if (again) {   // in front at eye height, level, at [cinema] distance_m - not FlatDistance's easing nor the menus' limits
+                g_cinemaPlace.placed = true;
+                g_cinemaPlace.epoch = g_epoch;
+                g_cinemaPlace.yaw = YawOf(g_views[0].pose.orientation);
+                const cinema::Point c = cinema::Place({0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)}, g_cinemaPlace.yaw, g_cfg.cinemaDistM);
+                g_cinemaPlace.pos = {c.x, c.y, c.z};
+            }
+            quad.space = g_space;
+            quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+            quad.subImage.swapchain = g_quadChain.sc;
+            quad.subImage.imageRect = {{(int32_t)film.x, (int32_t)film.y}, {(int32_t)film.w, (int32_t)film.h}};
+            quad.pose.orientation = Yaw(g_cinemaPlace.yaw);
+            quad.pose.position = g_cinemaPlace.pos;
+            quad.size = {size.width, size.height};
+            layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
+            FlatShown shown{quad.pose, quad.size, true};
+            cinema::Fractions(film, g_quadChain.w, g_quadChain.h, shown.crop);
+            g_flatShown = shown;   // where the next frame's laser points: the film's own pixels of the window
+            if (PointerQuad(quad, &pointer, shown.crop)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+            if (again && g_anchorReady)
+                LogF("vrcam: openxr - cinema: the big screen placed %.1f m ahead at eye height %.2f m, %.2f x %.2f m, showing the frame's %ux%u at %u,%u "
+                     "(the window's %ux%u of the %ux%u frame, the film's 16:9 in its middle) ([cinema] world_screen=1)", g_cfg.cinemaDistM,
+                     g_cinemaPlace.pos.y, size.width, size.height, film.w, film.h, film.x, film.y, band.w, band.h, g_quadChain.w, g_quadChain.h);
+        } else {
+        g_cinemaPlace.placed = false;   // (the next cinematic placed in front anew)
         // the picture where the head looked when it came up, level, world-locked
         const XrQuaternionf q = Yaw(g_monoAnchored ? g_monoYaw : g_cYaw);
         const XrVector3f at = g_monoAnchored ? g_monoPos : g_cPos;
@@ -6829,6 +6890,7 @@ void CloseFrame() {
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
         g_flatShown = FlatShown{quad.pose, quad.size, true};   // where the next frame's laser points
         if (PointerQuad(quad, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+        }
         nl = HangKeyboard(layers, nl, most, kbBoard, kbLit);   // [openxr] name_keyboard under the flat picture (the character screen)
         nl = HangLaser(layers, nl, most, beam, dot);
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, hsRoom);
@@ -7157,6 +7219,15 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.panelM = std::isfinite(menuM) && menuM > 0.0f ? std::clamp(menuM, 0.5f, 20.0f) : 0.0f;
     }
     g_cfg.quadWidthM = std::clamp(f(L"flat_width_m", 2.4f), 0.3f, 20.0f);
+    {   // [cinema] distance_m, width_m: where world_screen's big screen stands and how wide it is (its height the film's); the key itself is gamestate's
+        wchar_t b[32];
+        GetPrivateProfileStringW(L"cinema", L"distance_m", L"5", b, 32, ini);
+        const float d = wcstof(b, nullptr);
+        GetPrivateProfileStringW(L"cinema", L"width_m", L"6", b, 32, ini);
+        const cinema::Screen s = cinema::Clamped(d, wcstof(b, nullptr));
+        g_cfg.cinemaDistM = s.distance;
+        g_cfg.cinemaWidthM = s.width;
+    }
     {
         static float said[3] = {};
         if (on && (g_cfg.quadM != said[0] || g_cfg.panelM != said[1] || g_cfg.quadWidthM != said[2])) {
@@ -7439,8 +7510,8 @@ void LoadSettings(const wchar_t* ini) {
     {   // a menu in F4 as a panel, the world in stereo (D2R VR Settings > UI: F4 body > Menus), live
         g_cfg.menu3d = f(L"menu_3d", 1.0f) != 0.0f;
         g_cfg.vrResUi = GetPrivateProfileIntW(L"render", L"vr_resolution_ui", 1, ini) != 0;
-        g_cfg.bandIcons = GetPrivateProfileIntW(L"render", L"ui_band_corner_icons", 0, ini) != 0;   // [render] ui_band_corner_icons (live)
-        static int saidIcons = 0;   // (off at the start: not a word)
+        g_cfg.bandIcons = GetPrivateProfileIntW(L"render", L"ui_band_corner_icons", 1, ini) != 0;   // [render] ui_band_corner_icons (live)
+        static int saidIcons = -1;   // (said once at the start either way)
         if ((int)g_cfg.bandIcons != saidIcons) {
             saidIcons = g_cfg.bandIcons;
             Log(g_cfg.bandIcons ? "vrcam: openxr - a menu's panel in F4: a square and a 16:9 icon over its top right corner - the laser's click switches the interface between "
@@ -7547,6 +7618,10 @@ void LoadSettings(const wchar_t* ini) {
         g_cfg.hapticsHands = f(L"haptics_hand_actions", 1.0f) != 0.0f;   // (taken at the next session start)
         g_cfg.hapticsStop = f(L"haptics_stop", 1.0f) != 0.0f;            // live
         haptics::SetMotorChoice((int)f(L"haptics_motor", 0.0f));         // live: 0 by the headset's name, 1 plain, 2 weak (the low-life beat lifted for the PlayStation VR2 Sense)
+        {   // live: the frequency of an Index hand's pulses (0 = unspecified, as before; other controllers always unspecified)
+            const float hz = f(L"haptics_index_frequency_hz", (float)xrprofiles::kIndexHapticHzDefault);
+            g_cfg.hapticsIndexHz = std::isfinite(hz) ? (int)std::clamp(hz, 0.0f, (float)xrprofiles::kIndexHapticHzMax) : xrprofiles::kIndexHapticHzDefault;
+        }
         haptics::Extras x;   // the Vibration tab's extra pulses (vr/haptics.h), each off by default, live
         x.touch = f(L"haptics_touch", 0.0f) != 0.0f;
         x.hitLong = f(L"haptics_hit_long", 0.0f) != 0.0f;

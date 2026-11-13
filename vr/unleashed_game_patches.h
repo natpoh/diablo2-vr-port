@@ -2,8 +2,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 //
 // Copyright (c) 2026 bearstonem and the D2R VR Unleashed contributors (https://github.com/bearstonem/d2r-pcvr).
-// From D2R VR Unleashed vr/game_patches.h - commits 853607f (transparent_filter), 133465a (profiler_accounting), 30083a1 (draw_debug_names), 9b9e28e (selection_walk, shadows_once, cull_once), 1289b9a (cull volume), at tag v0.3.33-windows-preview.
+// From D2R VR Unleashed vr/game_patches.h - commits 853607f (transparent_filter), 133465a (profiler_accounting), 30083a1 (draw_debug_names), 9b9e28e (selection_walk, shadows_once, cull_once), 1289b9a (cull volume), at tag v0.3.33-windows-preview; b1078de (effect_listener_guard, v0.3.34).
 // Ported to D2R VR Authentic: each patch behind its own [game_patches] key, default 0 (the game as before); present_once left out.
+// (The ini's defaults are 1 since 0.214; Wanted below stays all false: what the settings say is what goes in.)
 // This file stays MPL 2.0.
 //
 #pragma once
@@ -16,6 +17,8 @@
 //   selection_walk        the debug selection tool's walk over every drawn entity left out (a call made a no-op)
 //   shadows_once          the second eye pass of a pair keeps the first's sun shadow views, map and culled casters (two passes only)
 //   cull_once             the first eye pass culls with one volume holding both eyes; the second, inside it, does not cull again (two passes only)
+//   effect_listener_guard no render change but a crash guard: the game's effect-ended listener is not called for an effect handle that holds
+//                         no effect, where the game's own code would write to address 0x20 (vr/unleashed_effect_listener_guard.h)
 // The first four act in every draw the game makes, flat and every view; the two "once" ones only in the second pass of a pair the game draws
 // itself from one game frame ("Native two passes", and the two-pass pairs of "Native one pass" while it is paused). "Native one pass" draws the
 // game's frame once and replays it for the right eye, so there is no second pass for them; "Native eyes by turns" has none either. Our
@@ -34,6 +37,7 @@ struct Wanted {
     bool selectionWalk = false;       // [game_patches] selection_walk
     bool shadowsOnce = false;         // [game_patches] shadows_once
     bool cullOnce = false;            // [game_patches] cull_once
+    bool effectListenerGuard = false; // [game_patches] effect_listener_guard
 };
 
 // Where the lines go (vrcam's log). Before the first Configure.

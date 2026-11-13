@@ -21,6 +21,8 @@
 //      still draw it.
 // Nothing of the game's state is changed: no pose the game keeps, no list, no component - only what the eyes' passes are handed while they are made.
 // Visual only. F4 only (viewgate::F4()). Unticked ([arms] head_shadow=0), not ready or faulted: the head is shrunk in the pose as before.
+// [arms] head_shadow_flat (Serg, 2026-11-13: the head's shadow in the 2D mode too): the same in the flat first-person views, where the pose hides the head as well
+// (flat F3; VR F1 drawn as a flat window) - its own key, off by default (not tried there yet); off: those views exactly as before.
 //
 // Which passes: only those whose collector passes 0 lose the head - the scene's depth and colour of each eye (the head shrunk there as before); the shadow maps
 // keep it. The game's models' list for the shadow (the +0x380 render items of a model with shadow proxies) is the game's and is not touched.
@@ -95,8 +97,9 @@ inline bool EyesPass(int pass) { return pass != kPassNone && pass != kPassShadow
 // -- the decision the pose makes each time: keep the head in the world pose (true) or shrink it there as before (false).
 inline constexpr uint64_t kFreshMs = 300;       // the eyes' substitution seen this recently
 struct Gate {
-    bool wanted = false;      // [arms] head_shadow
+    bool wanted = false;      // [arms] head_shadow in F4, [arms] head_shadow_flat in a flat first-person view
     bool f4 = false;          // viewgate::F4()
+    bool flat = false;        // a first-person view that is not F4 (flat F3, VR F1 drawn as a flat window): the head is hidden there too ([arms] head_shadow_flat)
     bool hooksIn = false;     // ModelDrawCollect and the composite thunk hooked, the attachment getter checked
     bool xformIn = false;     // the world-matrix function's hook is in (potion_hide's): the helm's entities are known
     bool faulted = false;     // a fault in one of our hooks this session
@@ -107,7 +110,7 @@ struct Gate {
 enum class Why : uint8_t { EyesOnly, Off, NotF4, NoHooks, NoXform, Faulted, Along, TooManyBones, NotSeenYet };
 inline Why Decide(const Gate& g) {
     if (!g.wanted) return Why::Off;
-    if (!g.f4) return Why::NotF4;
+    if (!g.f4 && !g.flat) return Why::NotF4;
     if (g.faulted) return Why::Faulted;
     if (!g.hooksIn) return Why::NoHooks;
     if (!g.xformIn) return Why::NoXform;
@@ -119,8 +122,8 @@ inline Why Decide(const Gate& g) {
 inline const char* Text(Why w) {
     switch (w) {
         case Why::EyesOnly: return "the head is in the pose (its shadow is cast), shrunk in the eyes' passes only";
-        case Why::Off: return "off ([arms] head_shadow=0): the head is shrunk in the pose, the shadow has none";
-        case Why::NotF4: return "not VR first person (F4)";
+        case Why::Off: return "off ([arms] head_shadow=0 in F4, head_shadow_flat=0 in the flat views): the head is shrunk in the pose, the shadow has none";
+        case Why::NotF4: return "not a first-person view (F4, or a flat one with head_shadow_flat)";
         case Why::Faulted: return "a fault in one of its hooks this session: the head is shrunk in the pose as before";
         case Why::NoHooks: return "the renderer's functions are not hooked (not found in this build?): the head is shrunk in the pose as before";
         case Why::NoXform: return "the world-matrix hook is not in (a helm would show): the head is shrunk in the pose as before";
@@ -152,6 +155,8 @@ void Init(const D2RL::PluginContext* ctx);
 // [arms] head_shadow (default on): live.
 void Configure(bool wanted);
 bool Wanted();
+// [arms] head_shadow_flat (default off): the same in the flat first-person views (flat F3, VR F1 drawn as a flat window), where the head is hidden too. Live.
+void ConfigureFlat(bool wanted);
 // Hooks the two renderer functions once they are found (tried again now and then) and asks potion_hide for the world-matrix hook; a line in the log when the
 // state changes, a count once a minute while the head is in the pose. Cheap to call every frame.
 void Install();

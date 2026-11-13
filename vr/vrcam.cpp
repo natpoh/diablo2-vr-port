@@ -60,6 +60,16 @@ bool Matches(uint64_t rva, const uint8_t* sig, size_t n) {
 // to a file of our own as they come, and an exception the game dies of to d2r_vr_crash.txt.
 namespace crash { void Install(const char* version); void Uninstall(); void Keep(); void Mirror(const char* text); void Step(const char* name); void Mark(const char* what); }
 
+// [weight] wall_contact_mode: the weight model's walls from the one that is on - 2 Bear's (wall_collide, the game's cells) or 1 Ours (world_contact, the
+// meshes); load_settings.cpp turns on only one of them.
+int WeaponWalls(const monsterbodies::View& v, heft::walls::Wall* out, int max) {
+    return wallcollide::Wanted() ? wallcollide::Walls(v, out, max) : worldcontact::Walls(v, out, max);
+}
+void WeaponWallNote(const worldcontact::WeaponNote& n) {
+    if (wallcollide::Wanted()) wallcollide::NoteWeapon(n);
+    else worldcontact::NoteWeapon(n);
+}
+
 void Log(const char* text) {
     frametrace::Scope trace(frametrace::kLog);   // [debug] frame_trace: what the host's log costs the thread that wrote the line (one relaxed load when off)
     if (g_ctx != nullptr) logasync::Info(g_ctx, text);
@@ -993,10 +1003,11 @@ void StartProbe() {
 
 // For xr.cpp (this file's own namespace is not seen from there): the balls over the belt's bottles.
 int D2rvrHoverSpheres(float (*out)[8], int max) { return engitem::HoverSpheres(out, max); }
+int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: the headset panel's "Medallions: look" - the game's models not made)
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.215.0";
+static const char g_info_version[] = "0.216.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1230,7 +1241,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
 #else
     weight::SetBodiesSource(&meleetouch::Bodies);
 #endif   // [weight] monster_bodies: the hostile monsters' capsules from the touch's scan
-    weight::SetWallsSource(&worldcontact::Walls, &worldcontact::NoteWeapon);   // [weight] world_contact
+    weight::SetWallsSource(&WeaponWalls, &WeaponWallNote);   // [weight] wall_contact_mode: world_contact (Ours) or wall_collide (Bear's)
     weight::SetStabSource(&meleetouch::StabbingNow);   // [weight] stab_in: the touch's thrust rule and path say when a point-first strike goes in
     weight::SetStabNoteSink(&fx::StabNoteSink);       // [debug] stab_debug: the stab's word for the readout and the marks
     weight::SetStabEnterSink(&knockdown::OnStabEntered);   // [weight] impale_drag: a stab that goes in may carry the body on the blade
@@ -1344,6 +1355,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     meleearm::Init(ctx);   // [gameplay] melee_skill_armed: the log
     meleetouch::Init(ctx);
     grabmove::Init(ctx);   // [weight] grab_moves_unit (vr/grab_move.cpp)
+    wallcollide::Init(ctx, &Log, [](int side, float amplitude, int ms) { haptics::Pulse(haptics::FromSkel(side), amplitude, ms); });   // [weight] wall_contact_mode 2 (Bear's)
     attackpath::InitNet(ctx);   // [gameplay] flat_attack_path: a joined player's channel to the host
     flatmenu::Init(ctx, g_iniPath);   // [hud] game_menu_settings: the host's rules channel "HR" (always: D2RLoader takes channels at the load only) and the console's "vrrules"
     meleedirectclient::InitNet(ctx);   // [gameplay] melee_direct_client_cleave: who hosts decides - the channel always (D2RLoader takes it at the load only)

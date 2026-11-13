@@ -30,6 +30,8 @@ void Say(const char* s) { if (g_log) g_log(s); }
 struct Entry {
     ID3D12PipelineState* game = nullptr;
     std::atomic<ID3D12PipelineState*> ours{nullptr};
+    std::atomic<ID3D12PipelineState*> kept{nullptr};   // [fog] game_fog_miss_keeps_fog: `ours` with the fog's colour kept (made only while noFog)
+    bool keepTwin = false;                             // what `kept` was made for: noFog with the key on
     ID3D12Device* dev = nullptr;
     bool stream = false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{};   // (a graphics description)
@@ -52,6 +54,9 @@ std::atomic<bool> g_on{false};
 std::atomic<uint32_t> g_swaps{0}, g_streams{0}, g_streamsUnread{0};
 std::atomic<uint32_t> g_bound{0};   // our variant bound in the game's place, in all (never reset: Bound)
 std::atomic<uint32_t> g_builds{0}, g_moves{0};   // variants made in all (Builds); of them, since the 10 s line, for the top's move or noFog
+std::atomic<PickFn> g_pick{nullptr};             // [fog] game_fog_miss_keeps_fog (SetPick)
+std::atomic<bool> g_keepOnMiss{true};
+std::atomic<uint32_t> g_pickOut{0}, g_pickKept{0};
 // The top as Frame is given it moves with every move of the head (FogTopNow: above the eye, [fog] game_fog_top_from_floor counted from
 // the hero's floor) and was baked into the pipeline: PC1 2026-10-31 on 0.192.19 - a new pipeline and a log line nearly every frame, 400 -
 // 600 in 10 s, the game's draw thread 11 -> 18 ms a pair, 65 -> 40 frames/s. A variant is made again for the top only when it moved by a
@@ -80,6 +85,9 @@ void Told(int n, const dxbcfog::Found& f, const char* how) {
 }
 
 // ours for the setting (on the present's thread); false when the device would not make it
+// a pipeline of the entry with `patched` as its pixel shader (null: the device refused it - told once)
+ID3D12PipelineState* Make(Entry& e, const std::vector<uint8_t>& patched);
+
 bool Build(Entry& e, float top, float soft, bool mist, bool voidAlone, bool noFog, const dxbcfog::Curve& curve) {
     std::string why;
     const std::vector<uint8_t>& ps = e.codes[0];
@@ -93,6 +101,33 @@ bool Build(Entry& e, float top, float soft, bool mist, bool voidAlone, bool noFo
         e.failed = true;
         return false;
     }
+    ID3D12PipelineState* p = Make(e, patched);
+    if (!p) return false;
+    // [fog] game_fog_miss_keeps_fog: the same variant with the fog's colour kept, for a frame the step did not draw (Swap picks per bind)
+    const bool twin = noFog && g_keepOnMiss.load(std::memory_order_relaxed);
+    ID3D12PipelineState* k = nullptr;
+    if (twin) {
+        std::string why2;
+        const std::vector<uint8_t> keptCode = dxbcfog::Patch(ps.data(), ps.size(), top, soft, &why2, mist, voidAlone, false, &curve);
+        if (!keptCode.empty()) k = Make(e, keptCode);
+    }
+    ID3D12PipelineState* oldKept = e.kept.exchange(k);
+    if (oldKept) g_retired.push_back({oldKept, GetTickCount64()});
+    e.keepTwin = twin;
+    ID3D12PipelineState* old = e.ours.exchange(p);
+    if (old) g_retired.push_back({old, GetTickCount64()});
+    e.top = top;
+    e.soft = soft;
+    e.mist = mist;
+    e.voidAlone = voidAlone;
+    e.noFog = noFog;
+    e.curve = curve;
+    e.builtAt = GetTickCount64();
+    g_builds.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
+ID3D12PipelineState* Make(Entry& e, const std::vector<uint8_t>& patched) {
     ID3D12PipelineState* p = nullptr;
     HRESULT hr = E_FAIL;
     natived3d::SetOurs(true);   // (our own pipeline: not told to ourselves)
@@ -119,19 +154,9 @@ bool Build(Entry& e, float top, float soft, bool mist, bool voidAlone, bool noFo
             Say(b);
         }
         e.failed = true;
-        return false;
+        return nullptr;
     }
-    ID3D12PipelineState* old = e.ours.exchange(p);
-    if (old) g_retired.push_back({old, GetTickCount64()});
-    e.top = top;
-    e.soft = soft;
-    e.mist = mist;
-    e.voidAlone = voidAlone;
-    e.noFog = noFog;
-    e.curve = curve;
-    e.builtAt = GetTickCount64();
-    g_builds.fetch_add(1, std::memory_order_relaxed);
-    return true;
+    return p;
 }
 
 // a new entry under g_lock (null when full)
@@ -286,13 +311,27 @@ ID3D12PipelineState* Swap(ID3D12PipelineState* pso) {
     for (int i = 0; i < n; ++i)
         if (g_e[i].game == pso) {
             ID3D12PipelineState* o = g_e[i].ours.load(std::memory_order_acquire);
-            if (o) { g_swaps.fetch_add(1, std::memory_order_relaxed); g_bound.fetch_add(1, std::memory_order_relaxed); return o; }
-            return pso;
+            if (!o) return pso;
+            // [fog] game_fog_miss_keeps_fog: the colour left out only where this frame's step drew; else the twin that keeps it
+            if (ID3D12PipelineState* k = g_e[i].kept.load(std::memory_order_acquire)) {
+                const PickFn pick = g_pick.load(std::memory_order_relaxed);
+                if (pick && !pick()) { o = k; g_pickKept.fetch_add(1, std::memory_order_relaxed); }
+                else g_pickOut.fetch_add(1, std::memory_order_relaxed);
+            }
+            g_swaps.fetch_add(1, std::memory_order_relaxed);
+            g_bound.fetch_add(1, std::memory_order_relaxed);
+            return o;
         }
     return pso;
 }
 
 uint32_t Bound() { return g_bound.load(std::memory_order_relaxed); }
+void SetPick(PickFn pick) { g_pick.store(pick); }
+void SetKeepOnMiss(bool on) { g_keepOnMiss.store(on); }
+void TakePicks(uint32_t* out, uint32_t* kept) {
+    if (out) *out = g_pickOut.exchange(0);
+    if (kept) *kept = g_pickKept.exchange(0);
+}
 uint32_t Builds() { return g_builds.load(std::memory_order_relaxed); }
 
 void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog, const Curve& oc) {
@@ -307,7 +346,8 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
         for (int i = 0; i < n; ++i) {
             Entry& e = g_e[i];
             if (e.failed) continue;
-            const bool settings = std::isnan(e.top) || e.soft != soft || e.mist != mist || e.voidAlone != voidAlone || e.curve != curve;
+            const bool settings = std::isnan(e.top) || e.soft != soft || e.mist != mist || e.voidAlone != voidAlone || e.curve != curve ||
+                                  (e.noFog == noFog && e.keepTwin != (noFog && g_keepOnMiss.load(std::memory_order_relaxed)));   // (the key flipped)
             const float step = (std::max)(kTopStepMin, kTopStepShare * soft);
             const bool moved = (top > 1.0e8f) != (e.top > 1.0e8f) || std::fabs(top - e.top) >= step || e.noFog != noFog;
             if (settings || (moved && now0 - e.builtAt >= kMoveGapMs)) {
@@ -356,10 +396,15 @@ void Frame(bool on, float top, float soft, bool mist, bool voidAlone, bool noFog
     static ULONGLONG toldAt = 0;
     if (on && now - toldAt > 10000) {
         toldAt = now;
-        char b[260];
-        snprintf(b, sizeof b, "fog height, 10 s: %u binds of the thinned fog pass, %u variants made again for the top's move (a step, once a "
+        char b[520];
+        const int len = snprintf(b, sizeof b, "fog height, 10 s: %u binds of the thinned fog pass, %u variants made again for the top's move (a step, once a "
                  "second at most) (%d of the game's fog pipelines known; %u made from streams so far%s)",
                  g_swaps.exchange(0), g_moves.exchange(0), n, g_streams.load(), n ? "" : " - none of the fog's: the fog stays as it is");
+        uint32_t out = 0, kept = 0;
+        TakePicks(&out, &kept);
+        if ((out || kept) && len > 0 && len < (int)sizeof b)
+            snprintf(b + len, sizeof b - len, "; the fog's colour left out at %u binds (the step drew at that resolve), KEPT at %u (no step there: "
+                     "the game's own fog that frame, [fog] game_fog_miss_keeps_fog)", out, kept);
         Say(b);
     }
 }

@@ -118,6 +118,8 @@ inline constexpr Sig kSigs[] = {
     {"ServerRoomOf", 0x34B440, Kind::Ref, "E8 ?? ?? ?? ?? 4C 8B E0 48 85 C0 74 0A 45 85 FF 74 05", 0x9BFFA, 0, 1, 5, 0, "40 53 48 83 EC 20 48 8B D9 48 85 C9", nullptr, "the potion explodes where the model lands", "Aim and attack"},
     // the room of a unit's level that holds a point (room, x, y) - 0: no room there, called read-only
     {"ServerRoomPoint", 0x38DFB0, Kind::Code, "48 89 5C 24 10 55 56 57 48 83 EC 20 41 8B F0 8B EA 48 8B F9", 0x38DFB0, 0, 0, 0, 0, "48 89 5C 24 10 55 56 57 48 83 EC 20 41 8B F0", nullptr, "the potion explodes where the model lands", "Aim and attack"},
+    // the collision bits of a room's cell (room, x, y, size, mask), called read-only
+    {"ServerCellMask", 0x364D50, Kind::Ref, "E8 ?? ?? ?? ?? 66 85 C0 75 A9 B8 01 00 00 00 EB A4", 0x5A7DED, 0, 1, 5, 0, "48 89 5C 24 08 48 89 6C 24 10 48 89 74 24 18 57", nullptr, "the weapon stops at walls", "Aim and attack"},
     // the renderer's visual-init callback (assets, definition, entity, unit), once per entity of a unit's visual, hooked to look
     {"ClientVisualInit", 0x771A10, Kind::Code, "40 55 53 56 57 41 55 41 56 41 57 48 8D AC 24 90 FD FF FF 48 81 EC 70 03 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 85 10 02 00 00 49 8B F1", 0x771A10, 0, 0, 0, 0, "40 55 53 56 57 41 55 41 56 41 57 48 8D AC 24 90 FD FF FF", nullptr, "the game's own thrown potion is not hidden", "Aim and attack"},
     // the renderer's world-matrix function (out, entity, TransformComponent*): the world matrix at +0x40 is what is drawn, hooked

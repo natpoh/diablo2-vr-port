@@ -1,4 +1,4 @@
-// game_patches_image_test.cpp - [game_patches] (vr/unleashed_game_patches.h): every check the six patches make in the running game before
+// game_patches_image_test.cpp - [game_patches] (vr/unleashed_game_patches.h): every check the six patches and effect_listener_guard make in the running game before
 // they write, made here against a snapshot of the game's image in memory (tools/dump_d2r.py with D2RLoader.exe: dump_loader/D2R_image.bin,
 // RVA = file offset). It proves, without starting the game, that on the build the mod knows (D2R 3.3.93787 under D2RLoader) each patch would
 // go in: every fingerprint at its place, no jump into the filter's or the selection call's replaced bytes, the debug level's reader and
@@ -12,6 +12,7 @@
 
 #include "unleashed_game_patch_plan.h"
 #include "unleashed_game_patch_signatures.h"
+#include "unleashed_effect_listener_guard.h"
 
 namespace {
 int g_fail = 0, g_pass = 0;
@@ -94,6 +95,22 @@ int main(int argc, char** argv) {
                                                  size_t(call - SelectionFunctionRva), gamepatch::CallBytes) == 0,
               "selection_walk: no jump into the call");
         Check(gamepatch::PlanCallNop(g_img.data() + call).ok, "selection_walk: a relative call, made a five-byte no-op");
+    }
+    // effect_listener_guard: its four stretches, nothing in the listener jumps into the hooked prologue, the listener's lock call reaches the
+    // helper the crash's RIP (0xA4696A) is in, the function names itself, and the caller reaches the tell's function.
+    Check(At(EndedRva, EndedSig) && At(EndedSiblingRva, EndedSiblingSig) && At(EndedTellRva, EndedTellSig) && At(EndedCallerRva, EndedCallerSig),
+          "effect_listener_guard: its 4 stretches");
+    {
+        const uint8_t* fn = g_img.data() + EndedRva;
+        Check(gamepatch::BranchesInto(fn, size_t(EndedEnd - EndedRva), EndedRva, EndedRva + 1, EndedRva + EndedHookBytes - 1) == 0,
+              "effect_listener_guard: no jump into the hooked prologue");
+        Check(EndedRva + 31 + int64_t(Rel(EndedRva + 27)) == EndedLockRva, "effect_listener_guard: the lock call on effect + 0x20 reaches the lock helper");
+        // The crash: lock cmpxchg [rdx],r13d at 0xA4696A, rdx = effect + 0x20 = 0x20 when the handle holds none.
+        const uint8_t cmpxchg[] = {0xF0, 0x44, 0x0F, 0xB1, 0x2A};
+        Check(!std::memcmp(g_img.data() + 0xa4696a, cmpxchg, sizeof cmpxchg), "effect_listener_guard: the crash's RIP is the lock helper's lock cmpxchg [rdx]");
+        Check(gamepatch::LeaSelf(EndedSig, sizeof EndedSig / 2, EndedSelfAt), "effect_listener_guard: the function names itself");
+        Check(EndedCallerRva + 28 + int64_t(Rel(EndedCallerRva + 24)) == EndedTellFunctionRva, "effect_listener_guard: the caller reaches the tell's function");
+        Check(EndedHookBytes <= sizeof EndedSig / 2, "effect_listener_guard: the hook's bytes inside its fingerprint");
     }
     // The hooks' byte counts lie inside the proven prologues.
     Check(ShadowUpdateHookBytes <= sizeof ShadowUpdateSig / 2 && ShadowCollectHookBytes <= sizeof ShadowCollectSig / 2 &&

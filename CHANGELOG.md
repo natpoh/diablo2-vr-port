@@ -1,5 +1,74 @@
 # What's new in D2R VR
 
+## 0.216.0
+
+Your touch always strikes, the fog no longer flickers or lags, no black grass or pale bushes, Valve Index controllers vibrate, the game's
+videos on a big screen, props with weight, your weapon meets your own shield, and the head's shadow in the flat first person too.
+
+- **Hit by touch always strikes** (`[gameplay] melee_touch_empty_attack`, on): when the game left the attack slot (A) empty, after a
+  skill point for example, a touch pressed A and nothing happened - monsters were knocked about but took no damage. A touch with nothing
+  on A now strikes with the game's normal Attack, through the game's own attack (checks, animation, reach, rolls).
+- **Fog before the effects: no flicker and no lag** (`[fog] game_fog_scene_one_size`, `game_fog_miss_keeps_fog`, on): every other frame
+  could come out without fog when the game drew its half-size layer, and the log filled with ~6 lines a frame, which lagged the game.
+  Now only the scene at the depth's size is fogged, a frame the step misses keeps the game's own fog, and those log lines are limited.
+  The scene is found by the game's own name for it (`game_fog_scene_by_name`, on; the search stays as the fallback).
+- **No pale bushes behind rain and haze** (`[fog] game_fog_layers_in_order`, on): smoke and haze near you outweighed a bush far behind
+  in the game's blend, so far bushes showed as pale silhouettes. Haze and leaves are now laid near over far. Hair and leaves are fogged
+  only from the game's see-through draws and never past the ground behind them (`game_fog_hair_strict`, `game_fog_own_distance_behind`, on).
+- **No black grass without DLSS** (Settings, "Ambient occlusion sized for your eyes", on, radius 0.3 m - `[render] ao_vr`,
+  `ao_vr_radius_m`): the game's ambient occlusion is sized for its camera high above, so from eye level dense grass a metre away went
+  fully dark and the see-through grass cards turned black. Its radius now fits our eyes - in VR first person and in the flat game's
+  first person too; the game's strength, blur and the rest stay its own.
+- **Valve Index controllers vibrate** (Settings > Vibration, "Valve Index frequency", 170 Hz - `[openxr] haptics_index_frequency_hz`):
+  every pulse went out without a frequency, which the Index driver plays as nothing. Other controllers are unchanged.
+- **Crash fix in the Frozen Tundra** (`[game_patches] effect_listener_guard`, on): the game called its effect-ended listener for an
+  effect that was already gone and crashed; that one call is skipped now.
+- **The game's videos on a big screen** (Settings, "Videos on a big screen", on - `[cinema] world_screen`): the intro, the act videos and
+  the ending play on a 6 m screen standing 5 m in front of you instead of the flat picture; F11 places it again, the laser works on it.
+- **Props have weight** (Settings, Weapon Weight, "Props have weight: a tick for a cup, a thud for a barrel", on - `[weight] prop_heft`):
+  each knockable prop weighs what its kind and size say - a cup 0.18 kg, a chair 9.8, a barrel 48 - so a light poke sends a cup
+  flying and a sword barely shifts a barrel, and the hand feels a tick or a thud (it needs the new weight library, which
+  this installer brings).
+- **Your weapon meets your own shield** (Settings, Weapon Weight, "The weapon strikes your own shield", on - `[weight] shield_collide`):
+  the weapon in one hand stops on the shield on your other arm and slides along it, shaped by the game's own shield model, with a knock
+  in both hands and the game's block sound on a hard blow. Only drawn, felt and heard - never an attack or a block. F4 only.
+- **The Amazon's, Paladin's and Druid's fingers bend at the knuckles** (Settings > Fists, "Fingers bend at the knuckles, not in the palm",
+  on - `[fist] from_knuckle`): their hands have a bone inside the palm, and bending it folded the palm in half - twisted knuckles, the
+  thumb across the index. The other heroes' hands are the same as before.
+- **The head's shadow in the flat first person too** (Settings > Body, "... and in the flat first-person views", on - `[arms]
+  head_shadow_flat`): flat F3 and VR F1 drawn as a flat window kept the head out of the shadow; now it casts its shadow there as in F4.
+- **Bow: a fire arrow flies with one flame** (`[bow] arrow_flight`): an elemental arrow (Fire, Ice, Magic...) is left to the game whole,
+  so its flame no longer flies on a second path; plain arrows, bolts, Multiple Shot and Strafe are drawn on the shot's line as before.
+  Drawing the elemental ones too has its own switch, off (`arrow_flight_elemental`).
+- **New option (a test): wrist medallions drawn by the game's own models** (Settings, the medallions' Look, "Drawn by the game's own
+  models" - `[hud] wrist_look=2`): the medallions drawn by the game from its own potion models, a glass dome on a metal base; D2R VR
+  Settings makes the models from your game when you pick it. The Look is on the headset's settings panel too (HUD page, live). The
+  mod's 3D glass balls stay the default.
+- **New defaults - the settings we play with** (each still has its own control in Settings). The update gives a settings file you
+  changed these values too, once (`[support] serg_settings_0216`); your own places, sizes, calibration and the rest stay yours, and
+  what you change back afterwards stays:
+  - Item labels and the names over NPCs drawn by the mod, sharp, and the game's own copy not drawn under them (`[hud] labels_own`,
+    `npc_names_own`, `own_labels_drop_game`).
+  - Moving during special moves (Zeal, Double Swing...), the quick blow striking faster than the animation, and in the 2D views the
+    swing not stopping the hero, with strafing after each blow for every weapon (`[gameplay] move_during_skills`, `quick_blow_faster`,
+    `flat_attack_path`, `flat_move_while_attacking`). In co-op the host's values decide these, as before.
+  - Barbarian: the next leap aimed in the air, the camera rising 30 % of the leap's arc, monsters thrown apart where you land
+    (`[gameplay] leap_air_aim`, `[body] leap_camera_up_pct`, `[weight] leap_landing_scatter`).
+  - The shield put away and drawn from behind the left shoulder (`[hands] shoulder_draw_shield_stow`); thrown weapons no longer hit by
+    touch (`[gameplay] melee_touch_thrown` off).
+  - The swing timer off, the map no longer made big by a laser click or zoomed by the stick (`[hud] swing_timer`, `map_click_big`,
+    `map_stick_zoom`); the layout icons over the menus on (`[render] ui_band_corner_icons`).
+  - Auto graphics tuning on, foveated rendering at its strongest, the shadows drawn once a pair, the Quality preset also setting the
+    game's own graphics options (`[autotune] enabled`, `[render] foveated_strength`, `shadows_once_a_pair`, `preset_game_options`).
+  - F3 at full width with the game's own sky and fog round it (`[table] full_width`); the game's own depth fog, the fog eased in, no
+    fog in caves (`[render] game_depth_fog`, `[fog] ease_in`, `caves`).
+  - **Your other D2RMM mods are no longer loaded with D2R VR by default** (`[mods] merge_data_mods` off): tick "Load my other mods with
+    D2R VR (D2RMM)" in Settings to have them back.
+- **Bow: pass it to the other hand by grabbing it, on for everyone** (Settings, "Bow: pass it to the other hand by grabbing it" -
+  `[bow] swap_by_grab`): squeeze the free hand's grip at the bow's grip and the bow is in that hand - the string, the draw, the aim and
+  the quiver go with it; the hand is remembered for next time. Every bow and crossbow feature is on in this version - please tell us
+  how it shoots.
+
 ## 0.215.0
 
 Fixes: big lags on weaker PCs, no more hang when you apply the video options in VR, the sky no longer cut to a circle with DLSS, and the

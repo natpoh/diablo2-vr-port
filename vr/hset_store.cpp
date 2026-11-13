@@ -15,6 +15,7 @@
 #include <mutex>
 #include <vector>
 
+#include "wall_contact_mode.h"   // the World page's Weapon against the walls: an old ini's world_contact=1 shown as Ours (shared/)
 #include "direct_hit_mode.h"   // the Melee page's Direct hit: one tick over [gameplay] melee_direct and melee_direct_client (shared/)
 #include "hset_store.h"
 #include "ini_txn.h"
@@ -302,6 +303,11 @@ Snapshot LoadSnapshot(const wchar_t* path) {
         s.file[kKeyMeleeDirectScope] = s.values[kKeyMeleeDirectScope] = scopeRaw;
         s.values[kKeyMeleeDirect] = mode == directhit::kCleave || mode == directhit::kRules ? 1.0f : 0.0f;
         s.values[kKeyMeleeDirectClient] = (float)mode;
+        // Weapon against the walls: missing (an ini from before the choice), [weight] world_contact=1 is Ours (shared/wall_contact_mode.h); the file's text stays
+        // what a conflict is judged by
+        const float wallRaw = Parse(ini::Read(path, kDefs[kKeyWallContact].section, kDefs[kKeyWallContact].key), -1.0f);
+        const float legacy = Parse(ini::Read(path, L"weight", L"world_contact"), 0.0f);
+        s.values[kKeyWallContact] = (float)wallcontact::FromKeys(wallRaw, legacy > 0.5f);
     }
     return s;
 }

@@ -279,6 +279,7 @@ void PushArms() {
         }
     }
     for (int c = 0; c < 8; ++c) { in.fistClose[c] = g_set.fistClose[c].load() * 0.01f; in.fistOpen[c] = g_set.fistOpen[c].load() * 0.01f; }
+    in.fistKnuckle = g_set.fistKnuckle.load();   // [fist] from_knuckle (every view the fist acts in: it is the same fist, bent at the right bones)
     for (int side = 0; side < 2; ++side) in.fistCap[side] = engitem::FistCap(side);   // a belt potion in it: round the bottle, not a full fist
     {
         const uint32_t held = gamestate::HandsHeld(), type = gamestate::WeaponType();
@@ -330,6 +331,10 @@ void PushArms() {
         w.secondKind = holds.secondKind;
         w.secondLetsGo = g_set.weightSecondLetsGo.load();   // (from the settings' load: reading the 220 KB ini here on every tick held the update thread ~50 %, crash batch 2026-11-05)
         w.dualCollide = g_set.weightDualCollide.load();   // [weight] dual_collide: the two weapons of a pair meet each other, steel on steel   // [weight] second_lets_go: the second weapon let go by its grip, as the first
+        // [weight] shield_collide: the weapon in one hand meets the hero's own shield on the other arm (F4 only; the shield's code: its slot's - the left one, or the
+        // right one beside a weapon alone in the left slot)
+        w.shieldCode = gamestate::LeftShield() ? gamestate::HandCode(1) : gamestate::RightShield() ? gamestate::HandCode(0) : 0u;
+        w.shieldCollide = g_set.weightShieldCollide.load() && viewgate::F4() && w.shieldCode != 0;
         if (w.on) {
             w.kind = kind;
             w.twoHanded = (two & D2RVR_TWO_HANDED) != 0;
@@ -452,7 +457,7 @@ void PushArms() {
             w.recallAny = g_set.weightRecallAny.load();
             w.monsterBodies = g_set.weightMonsterBodies.load() && viewgate::F4();   // [weight] monster_bodies: VR first person only
             w.ownBody = meleetouch::OwnBodyWanted() && viewgate::F4();               // [weight] own_body: the same, on its own
-            w.worldContact = worldcontact::WeaponWanted() && viewgate::F4();         // [weight] world_contact: the same
+            w.worldContact = (worldcontact::WeaponWanted() || wallcollide::Wanted()) && viewgate::F4();   // [weight] world_contact / wall_collide: the same (the walls from the one that is on)
             w.stabIn = g_set.weightStabIn.load() && viewgate::F4();                 // [weight] stab_in: the same
             w.stabMinSpeed = g_set.stabMinSpeed.load();
             w.stabMaxAngleDeg = g_set.stabMaxAngleDeg.load();

@@ -206,6 +206,11 @@ struct Input {
         // (weight::SetDrawnShaft2), so a hand that takes it closes on the drawn weapon - the right hand on the left's sword in its palm, not beside it. 0, 0: not known.
         // [weight] dual_collide: the two weapons of a pair meet each other - steel on steel: each stops on the other, glances along it, a knock is felt (a pulse). Off: they pass.
         bool dualCollide = true;
+        // [weight] shield_collide: the weapon in one hand meets the hero's own shield on the other arm - stops on its face, slides along it, its hand giving way (up to
+        // 60 cm, then through), a knock felt, a hard one heard. F4 only. The skeleton tells the shield's face where it is drawn (weight::SetDrawnShield) while it is on:
+        // shieldCode is the shield's item code (gamestate::HandCode of its slot; 0: no shield).
+        bool shieldCollide = false;
+        uint32_t shieldCode = 0;
         int secondTipAxis = 2;
         float shaft2TipM = 0.0f, shaft2ButtM = 0.0f;
         // ... and with [gameplay] melee_head_volume, each weapon's head as its own volume - the capsules of vr/weapon_head_parts.h where its mesh is (an axe's blade
@@ -338,6 +343,10 @@ struct Input {
     // fist rolled the paladin's fingers into his palm (2026-10-06).
     float fistClose[8] = {1.0f, 1.0f, 1.0f, 0.65f, 1.0f, 1.0f, 1.0f, 1.0f};
     float fistOpen[8] = {0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f, 0.2f};
+    // [fist] from_knuckle (vr/finger_chain.h): a finger curls from its knuckle as the rig's own bones tell it - a four-bone finger chain (the Amazon's, the
+    // Paladin's, the Druid's; the Assassin's ring and little finger) starts with a bone inside the palm, which is not bent. Off = from the chain's first bone
+    // unless its name says "metacarpal" (up to 0.215: those three rigs' palms folded in half as the hand closed).
+    bool fistKnuckle = true;
     // >= 0: the hand closes at most this far (a part, as fistClose) - a belt potion in it ([hands] belt_hold_close)
     float fistCap[2] = {-1.0f, -1.0f};
     float staffGrabM = 0.15f;   // the grip takes the staff only with the left hand this close to it (metres)
@@ -578,6 +587,10 @@ bool HeroPalmModel(int side, float palm[3]);
 // game's mesh binds to that bone, OBB in the bone's frame - vr/monster_rig.h), false when the hero's meshes gave that bone none or it is off.
 struct HeroArm { float elbow[3], wrist[3], across[3], point[3], face[3]; bool hand; bool box; float boxC[3], boxH[3][3]; };
 bool HeroArmWorld(int side, HeroArm* out, unsigned maxAgeMs = 250, unsigned* ageMs = nullptr);
+// [hud] wrist_game_models: told the arm in the world as the pose ends (the same instant HeroArmWorld's last copy is made, before the game skins the
+// hero with it) - the medallions are laid on it then, with no frame of lag (engitem::WristArmPosed). Any thread the hook runs on; null: none.
+using ArmPosedFn = void (*)(int side, const HeroArm& arm);
+void SetArmPosed(ArmPosedFn fn);
 // Why the newest pose could not put the arm in the world ("" when it could): the entity tables not found, the transform not read ...
 const char* HeroArmWhy();
 #endif

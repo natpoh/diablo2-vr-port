@@ -58,6 +58,8 @@ constexpr uint64_t kMarkTtlMs = 500;      // a helm's entity stays left out this
 
 const PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_wanted{true}, g_faulted{false};
+std::atomic<bool> g_flatWanted{false};   // [arms] head_shadow_flat: the flat first-person views too
+bool AnyHeadWanted() { return g_wanted.load() || g_flatWanted.load(); }
 std::atomic<int> g_state{0};   // 0 not tried, 1 hooked, 2 not possible
 DrawFn g_origDraw = nullptr;
 CompositeFn g_origComposite = nullptr;
@@ -605,6 +607,14 @@ void Configure(bool wanted) {
 }
 bool Wanted() { return g_wanted.load(); }
 
+void ConfigureFlat(bool wanted) {
+    const bool was = g_flatWanted.exchange(wanted);
+    if (wanted == was) return;
+    if (!wanted) Clear();
+    Log(wanted ? "head shadow: on in the flat first-person views too ([arms] head_shadow_flat) - the hidden head casts its shadow there as in F4 (visual only)"
+               : "head shadow: off in the flat first-person views ([arms] head_shadow_flat=0) - the head is shrunk in the pose there, as before");
+}
+
 void Install() {
     static ULONGLONG retryAt = 0, whySince = 0, summaryAt = 0;
     static unsigned tries = 0;
@@ -632,7 +642,7 @@ void Install() {
                      "collect %u)", subs, eyes, shadows, none);
         }
     }
-    if (g_wanted.load() && g_state.load() == 1) {
+    if (AnyHeadWanted() && g_state.load() == 1) {
         // a line when the state has held for a second (a log line costs a millisecond: not every frame), and a short count of the hooks' work once a minute while on
         const int why = g_why.load();
         if (why != whySeen) { whySeen = why; whySince = now; }
@@ -646,7 +656,7 @@ void Install() {
             summaryAt = now + 60000;
         }
     }
-    if (g_wanted.load() && g_ctx) {
+    if (AnyHeadWanted() && g_ctx) {
         // the world-matrix hook (potion_hide puts it in; this only reads there), asked for and put in from here, at the plugin's start: left to direct input's
         // first frame in the game it came too late - no room near the game's image for its trampoline (MH_ERROR_MEMORY_ALLOC, 2026-10-26) and the head was
         // shrunk in the pose again (no head shadow). Cheap once it is in (or given up).
@@ -663,7 +673,7 @@ void Install() {
         }
         potionhide::Install();
     }
-    if (!(g_wanted.load() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load() || g_filterWanted.load() || g_lookWanted.load()) ||
+    if (!(AnyHeadWanted() || g_dollWanted.load() || g_oursWanted.load() || g_othersWanted.load() || g_filterWanted.load() || g_lookWanted.load()) ||
         g_state.load() != 0 || !g_ctx ||
         now < retryAt)
         return;
@@ -696,16 +706,17 @@ void Install() {
 
 bool Publish(uintptr_t self, const char* flags, int count, int pivot, bool along) {
     Gate g;
-    g.wanted = g_wanted.load();
     g.faulted = g_faulted.load();
     g.hooksIn = g_state.load() == 1 && g_attachmentOf.load() != nullptr;
     g.xformIn = potionhide::HooksIn() && !potionhide::Faulted();
     g.f4 = viewgate::F4();
+    g.flat = !g.f4;   // (the pose publishes only while it hides the head: a first-person view - F4, or a flat one)
+    g.wanted = g.f4 ? g_wanted.load() : g_flatWanted.load();
     g.along = along;
     g.bones = count;
     g.now = GetTickCount64();
     g.eyesSeenAt = g_eyesAt.load();
-    const bool usable = g.wanted && !g.faulted && g.hooksIn && g.f4 && !along && flags && count > 0 && count <= kMaxBones && pivot >= 0 && pivot < count;
+    const bool usable = g.wanted && !g.faulted && g.hooksIn && (g.f4 || g.flat) && !along && flags && count > 0 && count <= kMaxBones && pivot >= 0 && pivot < count;
     if (usable) {
         uintptr_t cur = 0, prev = 0;
         if (!ReadAt(self + kSelfPose, &cur, sizeof cur) || !ReadAt(self + kSelfPrevPose, &prev, sizeof prev) || cur < 0x10000) {

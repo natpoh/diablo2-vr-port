@@ -91,6 +91,12 @@ void SetDrawnHead2(const float a[3], const float b[3], float radius);
 constexpr int kHeadParts = 12;
 void SetDrawnHeadParts(const float* parts, int n);
 void SetDrawnHeadParts2(const float* parts, int n);
+// [weight] shield_collide (vr/shield_collide.h): the hero's own shield's face as DRAWN - its capsules (vr/shield_parts.h, the game's own mesh) where the game hangs
+// the mesh on his shield bone (vr/shield_shape.h), in the hands' frame (metres from the eye, the head's turn only - the frame of Input::hand): n of them, each 7
+// floats (a, b, radius), at most kShieldParts; arm: the forearm it is on (0 right, 1 left); code: the item's code (for the log). Told every pose while the option is
+// on and the shield is drawn; n 0: none (put away, hidden, no row). The weapon in the other hand stops on it and slides along it.
+constexpr int kShieldParts = 24;
+void SetDrawnShield(const float* parts, int n, int arm, uint32_t code);
 // [weight] grip_fit (vr/grip_fit.h): what the skeleton hook did to a hand on the weapon, told on every pose while it is fitted: the weight model logs it once for each
 // take (the log is where the next test sees why a hand did not sit on the shaft). taker: the hand that took the weapon (the fit is snapped and aligned), not the game's slot
 // hand (corrections only). settled: the hand is fully on the weapon. offAxisCm / alignDeg: how far the drawn palm's middle was off the shaft's axis and its knuckle line off the

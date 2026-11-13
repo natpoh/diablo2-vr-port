@@ -124,6 +124,38 @@ float4 main(float4 pos : SV_Position) : SV_Target {
     }
     fogheight::Frame(false, 120, 30, true);
     CHECK(fogheight::Swap(gameFog) == gameFog);         // off again
+    {   // [fog] game_fog_miss_keeps_fog: the colour left out only where the step drew; a missed frame binds the twin that keeps it
+        static bool drew = true;
+        fogheight::SetPick([]() { return drew; });
+        fogheight::SetKeepOnMiss(true);
+        fogheight::Frame(true, 1.0e9f, 1, false, false, true);   // (noFog alone: the step drawn)
+        drew = true;
+        ID3D12PipelineState* out = fogheight::Swap(gameFog);
+        drew = false;
+        ID3D12PipelineState* kept = fogheight::Swap(gameFog);
+        CHECK(out && out != gameFog && kept && kept != gameFog && kept != out);   // two of ours: left out, kept
+        drew = true;
+        CHECK(fogheight::Swap(gameFog) == out);                 // per bind, no new variant
+        uint32_t nOut = 0, nKept = 0;
+        fogheight::TakePicks(&nOut, &nKept);
+        CHECK(nOut == 2 && nKept == 1);
+        fogheight::SetKeepOnMiss(false);                         // the key off: one variant, the colour left out whatever the step did
+        fogheight::Frame(true, 1.0e9f, 1, false, false, true);
+        drew = false;
+        ID3D12PipelineState* only = fogheight::Swap(gameFog);
+        CHECK(only && only != gameFog && only != kept);
+        drew = true;
+        CHECK(fogheight::Swap(gameFog) == only);
+        fogheight::SetKeepOnMiss(true);
+        fogheight::Frame(true, 1.0e9f, 1, false, false, false);  // the step not drawn at all: one variant (the colour kept), no pick
+        drew = true;
+        ID3D12PipelineState* plain = fogheight::Swap(gameFog);
+        drew = false;
+        CHECK(fogheight::Swap(gameFog) == plain);
+        fogheight::SetPick(nullptr);
+        fogheight::Frame(false, 120, 30, true);
+        CHECK(fogheight::Swap(gameFog) == gameFog);
+    }
     // as the game makes them (PC1 2026-10-27): from a pipeline state stream - a root signature, the shaders, the target's format, the
     // topology, the rasterizer, a cached blob (taken out of ours)
     struct alignas(void*) RootSub { D3D12_PIPELINE_STATE_SUBOBJECT_TYPE t = D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE; ID3D12RootSignature* v; };

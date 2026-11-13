@@ -483,6 +483,14 @@ void MeleeTouchTick() {
         wf.session = f.session;
         worldcontact::Tick(wf);
     }
+    {   // [weight] wall_contact_mode 2 (Bear's) (vr/wall_collide.h): the game's wall cells round the hero asked for on the game thread - VR first person only
+        wallcollide::Frame cf;
+        cf.ok = f.ok && viewgate::F4();
+        for (int i = 0; i < 3; ++i) cf.hero[i] = g_heroPosNow[i];
+        cf.upm = f.upm;
+        cf.session = f.session;
+        wallcollide::Tick(cf);
+    }
 #endif
 }
 

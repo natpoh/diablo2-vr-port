@@ -135,6 +135,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/world_contact_test.cpp")
     target_include_directories(world_contact_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_compile_options(world_contact_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [weight] wall_collide: the game's wall cells as boxes (vr/unleashed_wall_cells.h, MPL 2.0) and the weapon against them through the weight model
+add_executable(unleashed_wall_cells_test cleanroom/tests/unleashed_wall_cells_test.cpp)
+target_link_libraries(unleashed_wall_cells_test PRIVATE heft)
+target_include_directories(unleashed_wall_cells_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(unleashed_wall_cells_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/monster_bodies_test.cpp")
     add_executable(monster_bodies_test cleanroom/tests/monster_bodies_test.cpp)
     target_link_libraries(monster_bodies_test PRIVATE heft)
@@ -452,6 +457,13 @@ target_include_directories(drawn_hand_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DI
 target_link_libraries(drawn_hand_rig_test PRIVATE d2rcam heft user32)
 target_compile_definitions(drawn_hand_rig_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(drawn_hand_rig_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
+# [fist] from_knuckle (vr/finger_chain.h): the fist curls a finger from the knuckle the rig's own bones tell - the rule on the game's eight hero rigs' chains, Fist itself on toy
+# hands of the three makes (the Amazon's four-bone fingers: the palm bone not bent, the last joint bent; the other makes bit for bit the same with the key on and off)
+add_executable(fist_knuckle_test cleanroom/tests/fist_knuckle_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
+target_include_directories(fist_knuckle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_link_libraries(fist_knuckle_test PRIVATE d2rcam heft user32)
+target_compile_definitions(fist_knuckle_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(fist_knuckle_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
 # ... the arm's IK on a toy rig: [arms] full_reach puts the wrist on a target past the arm's reach (the collarbone turned, then the arm lengthened), no pile-up, off as before
 add_executable(full_reach_rig_test cleanroom/tests/full_reach_rig_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
 target_include_directories(full_reach_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -477,6 +489,13 @@ target_include_directories(weight_dual_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/
 target_link_libraries(weight_dual_test PRIVATE heft)
 target_compile_definitions(weight_dual_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(weight_dual_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [weight] shield_collide: the weapon on the hero's own shield - the shield's face read off the game's meshes (vr/shield_parts.h), put where it is drawn
+# (vr/shield_shape.h), the rules (vr/shield_collide.h) and the contact through vr/weight.cpp
+add_executable(shield_collide_test cleanroom/tests/shield_collide_test.cpp vr/weight.cpp vr/weight_lib.cpp vr/grip_lib.cpp)
+target_include_directories(shield_collide_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_link_libraries(shield_collide_test PRIVATE heft)
+target_compile_definitions(shield_collide_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(shield_collide_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hands] shoulder_draw through the same glue: it lies where it fell, the shoulder draws it, the cross draw (vr/shoulder_draw.h)
 add_executable(weight_draw_wire_test cleanroom/tests/weight_draw_wire_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp)
 target_include_directories(weight_draw_wire_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
@@ -555,7 +574,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/fence_gate.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/unleashed_game_patches.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/fence_gate.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/unleashed_game_patches.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/ao_vr.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -578,7 +597,7 @@ target_sources(d2rl-vrcam PRIVATE vr/doll_lib.cpp)      # [weight] monster_ragdo
 target_sources(d2rl-vrcam PRIVATE vr/grab_move.cpp)   # [weight] grab_moves_unit: a carried or thrown body put by the game's own knockback on the cell under it (vr/grab_move.h)
 target_sources(d2rl-vrcam PRIVATE vr/fall_lib.cpp vr/knock_down.cpp)   # [weight] knock_down: a struck humanoid drawn falling, lying and getting up - the weight library's knock-down (D2rf* exports, shared/d2r_vr_fall.h)
 target_sources(d2rl-vrcam PRIVATE vr/grab_wire.cpp vr/grab_lib.cpp)   # [weight] grab_bodies: an empty hand's grip holds a body - the weight library's grab (d2r_vr_weight.dll 1.4, shared/d2r_vr_grab.h)
-target_sources(d2rl-vrcam PRIVATE vr/props_lib.cpp vr/knock_props.cpp vr/world_contact.cpp)   # [weight] knock_props: the weight library's props world (shared/d2r_vr_props.h), the level's props near the hero, the physics thread
+target_sources(d2rl-vrcam PRIVATE vr/props_lib.cpp vr/knock_props.cpp vr/world_contact.cpp vr/wall_collide.cpp vr/unleashed_wall_cells.cpp)   # [weight] knock_props: the weight library's props world (shared/d2r_vr_props.h), the level's props near the hero, the physics thread
 target_sources(d2rl-vrcam PRIVATE vr/api_layers_lib.cpp)   # [openxr] block_foreign_layers: other programs' implicit OpenXR layers off in this process (shared/api_layers.h)
 target_sources(d2rl-vrcam PRIVATE vr/frame_gen_lib.cpp)   # [openxr] frame_generation: OFXR Bridge for this process only (shared/frame_gen.h)
 target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1: the grip library d2r_vr_grip.dll, when it is beside the plugin (shared/d2r_vr_grip.h)
@@ -819,6 +838,10 @@ target_compile_options(double_swing_combo_test PRIVATE /utf-8 /W4 /EHsc /permiss
 target_sources(d2rl-vrcam PRIVATE vr/melee_arm_game.cpp)
 add_executable(melee_arm_test cleanroom/tests/melee_arm_test.cpp)
 target_compile_options(melee_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] melee_touch_empty_attack: the touch's press with no skill on the attack slot (A) is read by the game as its plain Attack (vr/touch_empty_slot.h decides,
+# vrcam's slot-skill hook answers - vr/input/spell_aim.cpp SlotSkillFor): touch_empty_slot_test
+add_executable(touch_empty_slot_test cleanroom/tests/touch_empty_slot_test.cpp)
+target_compile_options(touch_empty_slot_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_skill_armed_icon: the armed skill's icon on the bottom of the mana medallion (vr/armed_icon.h decides what is drawn and how strong, the circle it is cut to and the
 # bake of the game's icon; vrcam uploads it into D2R_DepthFog.fx OrbIconTex and the effect lays it under the liquid): armed_icon_test
 add_executable(armed_icon_test cleanroom/tests/armed_icon_test.cpp)
@@ -1467,9 +1490,20 @@ add_executable(unleashed_vr_keyboard_test cleanroom/tests/unleashed_vr_keyboard_
 target_include_directories(unleashed_vr_keyboard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_vr_keyboard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 target_link_libraries(unleashed_vr_keyboard_test PRIVATE gdi32 user32)
+# [cinema] world_screen (vr/unleashed_cinema_screen.h, MPL 2.0 from D2R VR Unleashed): the cinematic told from the UI messages, the failsafes,
+# the film's part of the frame, the screen's size and place, the laser's crop. Run: unleashed_cinema_screen_test.exe [vr/gamestate.cpp
+# vr/frame/frame_order.cpp vr/xr.cpp vr/render/effects/effects.cpp vr/config/load_settings.cpp] (with the paths: the wiring too)
+add_executable(unleashed_cinema_screen_test cleanroom/tests/unleashed_cinema_screen_test.cpp)
+target_include_directories(unleashed_cinema_screen_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_cinema_screen_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(unleashed_loot_aim_test cleanroom/tests/unleashed_loot_aim_test.cpp)
 target_include_directories(unleashed_loot_aim_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_loot_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [weight] prop_heft (vr/unleashed_prop_heft.h, MPL 2.0 from D2R VR Unleashed fbb31fb): a knockable prop's mass by its kind and size, the knock's tick or thud.
+# Run: unleashed_prop_heft_test.exe
+add_executable(unleashed_prop_heft_test cleanroom/tests/unleashed_prop_heft_test.cpp)
+target_include_directories(unleashed_prop_heft_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(unleashed_prop_heft_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from D2R VR Unleashed 853607f..9b9e28e, 1289b9a): the fingerprints, the transparent
 # filter's new code, the debug level, the call made a no-op, the shadows a second pass keeps; the one cull volume for both eyes.
 # Run: unleashed_game_patch_plan_test.exe, unleashed_cull_volume_test.exe
@@ -1479,7 +1513,12 @@ target_compile_options(unleashed_game_patch_plan_test PRIVATE /utf-8 /W4 /EHsc /
 add_executable(unleashed_cull_volume_test cleanroom/tests/unleashed_cull_volume_test.cpp)
 target_include_directories(unleashed_cull_volume_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_cull_volume_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
-# ... and every check the six make before they write, against the game's image snapshot (dump_loader/D2R_image.bin; skipped without it).
+# [game_patches] effect_listener_guard (vr/unleashed_effect_listener_guard.h, MPL 2.0 from D2R VR Unleashed b1078de): the four fingerprints,
+# the hooked prologue, the lock at + 0x20, and the listener called only for a handle that holds an effect. Run: unleashed_effect_listener_guard_test.exe
+add_executable(unleashed_effect_listener_guard_test cleanroom/tests/unleashed_effect_listener_guard_test.cpp)
+target_include_directories(unleashed_effect_listener_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_effect_listener_guard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# ... and every check the six and the effect guard make before they write, against the game's image snapshot (dump_loader/D2R_image.bin; skipped without it).
 # Run: game_patches_image_test.exe [D2R_image.bin]
 add_executable(game_patches_image_test cleanroom/tests/game_patches_image_test.cpp)
 target_include_directories(game_patches_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1760,6 +1799,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/holes_assets_test.cpp")
     target_link_libraries(holes_assets_test PRIVATE casc_static)
     target_compile_options(holes_assets_test PRIVATE /utf-8 /EHsc)
 endif()
+# [hud] wrist_game_models: the medallions' matrices and the liquid lens (pure), and D2R_VR_Settings' maker of their game models (tools/settings/orb_assets.cpp)
+# on the game's own files into a scratch mod folder. Run: wrist_orb_models_test.exe [<game folder> <empty scratch folder>]
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/wrist_orb_models_test.cpp")   # (not in the public tree's allow-list)
+    add_executable(wrist_orb_models_test cleanroom/tests/wrist_orb_models_test.cpp tools/settings/orb_assets.cpp)
+    target_include_directories(wrist_orb_models_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3)
+    target_compile_definitions(wrist_orb_models_test PRIVATE UNICODE _UNICODE)
+    target_compile_features(wrist_orb_models_test PRIVATE cxx_std_20)
+    target_link_libraries(wrist_orb_models_test PRIVATE casc_static)
+    target_compile_options(wrist_orb_models_test PRIVATE /utf-8 /EHsc)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/arcane_assets_test.cpp")   # (not in the public tree's allow-list)
     add_executable(arcane_assets_test cleanroom/tests/arcane_assets_test.cpp tools/settings/arcane_assets.cpp)
     target_include_directories(arcane_assets_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings)
@@ -1973,7 +2022,7 @@ else()
     FetchContent_MakeAvailable(CascLib)
 endif()
 unset(CMAKE_POLICY_VERSION_MINIMUM)
-add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/menu_assets.cpp tools/settings/campfire_assets_unleashed.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
+add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/orb_assets.cpp tools/settings/menu_assets.cpp tools/settings/campfire_assets_unleashed.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
 add_dependencies(d2r_vr_settings d2r_vr_version_h)
 target_link_libraries(d2r_vr_settings PRIVATE casc_static)
 target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
@@ -2196,6 +2245,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dxbc_fog_height_test.cpp"
     target_link_libraries(dxbc_fog_height_test PRIVATE d3d11 d3dcompiler)
     target_compile_options(dxbc_fog_height_test PRIVATE /utf-8 /EHsc)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dxbc_ao_radius_test.cpp")
+    # [render] ao_vr_radius_m: the game's ASSAO generate pass given a radius for eyes near the ground (shared/dxbc_ao_radius.h); drawn on WARP.
+    # Run: dxbc_ao_radius_test.exe [<folder of the game's ps_assao_generate_p permutations NNN.dxbc>]
+    add_executable(dxbc_ao_radius_test cleanroom/tests/dxbc_ao_radius_test.cpp)
+    target_include_directories(dxbc_ao_radius_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_link_libraries(dxbc_ao_radius_test PRIVATE d3d11 d3dcompiler)
+    target_compile_options(dxbc_ao_radius_test PRIVATE /utf-8 /EHsc)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dxbc_ppr_eye_test.cpp")
     # [render] reflections_per_eye: the game's reflection passes' bytecode patched to take each eye's own position (shared/dxbc_ppr_eye.h);
     # the projection run on WARP for the left eye and the replay's folded right eye. Run: dxbc_ppr_eye_test.exe [<folder of the game's *.dxbc>]
@@ -2226,6 +2283,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_before_fx_test.cpp")
     target_include_directories(fog_before_fx_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_link_libraries(fog_before_fx_test PRIVATE d3d12 d3dcompiler dxgi)
     target_compile_options(fog_before_fx_test PRIVATE /utf-8 /EHsc)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/ao_vr_test.cpp")
+    # vr/ao_vr.cpp on a WARP D3D12 device: the AO generate pipeline kept, a variant with our radius bound in its place while on
+    add_executable(ao_vr_test cleanroom/tests/ao_vr_test.cpp vr/ao_vr.cpp)
+    target_include_directories(ao_vr_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_link_libraries(ao_vr_test PRIVATE d3d12 d3dcompiler dxgi)
+    target_compile_options(ao_vr_test PRIVATE /utf-8 /EHsc)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/fog_height_test.cpp")
     # vr/fog_height.cpp on a WARP D3D12 device: the fog pass's pipeline kept, a variant made and bound in its place while on

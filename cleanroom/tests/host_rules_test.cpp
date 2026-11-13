@@ -42,10 +42,10 @@ static void Table() {
     CHECK(keys.count(L"gameplay/flat_attack_path") && keys.count(L"gameplay/melee_direct_client_cleave") &&
           keys.count(L"gameplay/move_while_attacking") && keys.count(L"gameplay/flat_move_while_attacking"));
     // the defaults as vrcam's LoadSettings has them (a missing key)
-    CHECK(Parse(IndexOf(1), L"") == 0);   // flat_attack_path 0
+    CHECK(Parse(IndexOf(1), L"") == 1);   // flat_attack_path 1 (walk; the default since 0.216)
     CHECK(Parse(IndexOf(3), L"") == 1);   // move_while_attacking true
     CHECK(Parse(IndexOf(4), L"") == 0);   // melee_direct_client_cleave false
-    CHECK(keys.count(L"gameplay/move_during_skills") && Parse(IndexOf(9), L"") == 0 && Parse(IndexOf(9), L"2") == 2 && Parse(IndexOf(9), L"7") == 2);   // move_during_skills: off by default, 2 = walk or run
+    CHECK(keys.count(L"gameplay/move_during_skills") && Parse(IndexOf(9), L"") == 1 && Parse(IndexOf(9), L"2") == 2 && Parse(IndexOf(9), L"7") == 2);   // move_during_skills: walk by default (0.216), 2 = walk or run
     CHECK(std::string(ValueName(IndexOf(9), 2)) == "Walk or run" && std::string(ValueName(IndexOf(9), 0)) == "Off");
 }
 
@@ -55,7 +55,7 @@ static void Parsing() {
     CHECK(Parse(path, L"2.9") == 2);      // (int)IniF
     CHECK(Parse(path, L"5") == 2);        // clamped: walk or run
     CHECK(Parse(path, L"-1") == 0);
-    CHECK(Parse(path, L"abc") == 0);      // not a number: the default
+    CHECK(Parse(path, L"abc") == 1);      // not a number: the default (walk since 0.216)
     CHECK(Parse(mwa, L"1") == 1);
     CHECK(Parse(walk, L"0") == 0);
     CHECK(Parse(walk, L"0.5") == 1);      // IniB: any number but 0

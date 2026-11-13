@@ -51,6 +51,17 @@ inline bool HasThumbstick(const char* profile) {
     return IsFrame(profile);
 }
 
+// Valve Index haptics ([openxr] haptics_index_frequency_hz, 170): every pulse went out with XR_FREQUENCY_UNSPECIFIED (0), SteamVR hands
+// that to the Index driver as 0 Hz, and the Index motor plays nothing at 0 Hz - an Index never vibrated. A hand running the Index profile
+// is sent this frequency instead; every other controller, and 0 in the ini, keeps the unspecified frequency (the runtime's own), as before.
+// The result is the XrHapticVibration frequency in Hz; 0 = XR_FREQUENCY_UNSPECIFIED.
+constexpr int kIndexHapticHzDefault = 170;
+constexpr int kIndexHapticHzMax = 500;
+inline float HapticFrequency(const char* profile, int indexHz) {
+    if (indexHz <= 0 || !IsIndex(profile)) return 0.0f;
+    return (float)(indexHz > kIndexHapticHzMax ? kIndexHapticHzMax : indexHz);
+}
+
 // PS VR2 on SteamVR (the headset's name ends in "playstation_vr2") runs as a Touch controller, and SteamVR's own remapping for it
 // (PlayStation VR2 App\SteamVR_Plug-In\resources\input\playstation_vr2_sense_controller_remapping.json, the layout from oculus_touch)
 // turns the Touch LEFT menu button (application_menu) into the RIGHT controller's OPTIONS button; the left controller's CREATE button

@@ -90,9 +90,25 @@ static void TestHasThumbstick() {
     CHECK(!xrprofiles::HasThumbstick("/interaction_profiles/hp/mixed_reality_controller"));   // not suggested: no binding, no verdict
 }
 
+// [openxr] haptics_index_frequency_hz: only an Index hand gets a frequency (SteamVR plays an unspecified one there as 0 Hz - silence); 0 = unspecified as before.
+static void TestIndexHapticFrequency() {
+    const char* index = "/interaction_profiles/valve/index_controller";
+    CHECK(xrprofiles::kIndexHapticHzDefault == 170);
+    CHECK(xrprofiles::HapticFrequency(index, 170) == 170.0f);
+    CHECK(xrprofiles::HapticFrequency(index, 80) == 80.0f);
+    CHECK(xrprofiles::HapticFrequency(index, 0) == 0.0f);       // the key at 0: unspecified, as before
+    CHECK(xrprofiles::HapticFrequency(index, -5) == 0.0f);
+    CHECK(xrprofiles::HapticFrequency(index, 9000) == (float)xrprofiles::kIndexHapticHzMax);
+    // every other controller keeps the unspecified frequency, whatever the key says
+    for (const char* p : {"/interaction_profiles/oculus/touch_controller", "/interaction_profiles/valve/frame_controller_valve", "/interaction_profiles/htc/vive_controller",
+                          "/interaction_profiles/microsoft/motion_controller", "/interaction_profiles/khr/simple_controller", "", (const char*)nullptr})
+        CHECK(xrprofiles::HapticFrequency(p, 170) == 0.0f);
+}
+
 int main() {
     TestFrameTable();
     TestIndexGrip();
+    TestIndexHapticFrequency();
     TestPs2Menu();
     TestHasThumbstick();
     std::printf("xr_profiles_test: %d checks, %d failed\n", g_checks, g_failures);

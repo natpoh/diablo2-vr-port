@@ -42,6 +42,7 @@ constexpr uint64_t kNewFrameUs = 4000;   // a matrix asked for again within this
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<bool> g_on{false}, g_trace{false}, g_fxOff{false}, g_faulted{false};
 std::atomic<bool> g_straight{false};   // [bow] arrow_flight_straight: the shot's own arrow along its line when nothing was met (arrowflight::Params::straight)
+std::atomic<bool> g_elemental{false};  // [bow] arrow_flight_elemental: an arrow with an effect of its own (Fire Arrow...) drawn by us too - its effect stays on the game's path
 bool (*g_heroId)(uint32_t*) = nullptr;
 bool (*g_viewGate)() = nullptr;   // where ours is drawn (SetViewGate); none: VR F4 only
 bool ViewOn() { return g_viewGate ? g_viewGate() : viewgate::F4(); }
@@ -221,7 +222,16 @@ void OnVisual(uint32_t entity, uintptr_t unit) {
     if (g_heroId) { uint32_t id = 0; if (g_heroId(&id)) hero = id; }
     arrowflight::Shot sh;
     bool take = false, remote = false;
-    if (windowed && ViewOn() && arrowflight::IsHeroArrow(u, hero)) {
+    // an arrow whose look is an effect of its own (a Fire Arrow's flame, an Ice Arrow's frost): the game draws that effect where its missile is, not where we put
+    // the entity - moved, it would be two (our arrow on our line, its flame on the game's path). Left to the game, whole, unless asked otherwise.
+    const bool drawsClass = arrowflight::DrawsClass(u.cls, g_elemental.load(std::memory_order_relaxed), g_fxOff.load(std::memory_order_relaxed));
+    if (!drawsClass && (windowed || remoteWindowed) && u.type == arrowflight::kTypeMissile && arrowflight::IsArrowClass(u.cls) && g_trace.load() &&
+        g_otherTold.fetch_add(1) < 6)
+        LogF("arrow flight: the %s #%u (entity %08X) carries an effect of its own (its fire, frost or light, drawn where the game's missile is): left to the game, "
+             "drawn on its own path ([bow] arrow_flight_elemental=1 draws it too)", ClassName(u.cls), u.id, entity);
+    if (!drawsClass) {
+        // (not ours to take; an entity index the game reused for it is let go below)
+    } else if (windowed && ViewOn() && arrowflight::IsHeroArrow(u, hero)) {
         AcquireSRWLockShared(&g_shotLock);
         sh = g_shot;
         ReleaseSRWLockShared(&g_shotLock);
@@ -401,11 +411,12 @@ void Init(const D2RL::PluginContext* ctx) {
 void SetHeroIdSource(bool (*fn)(uint32_t* id)) { g_heroId = fn; }
 void SetViewGate(bool (*fn)()) { g_viewGate = fn; }
 
-void Configure(bool on, bool trace, bool fxOff, bool straight) {
+void Configure(bool on, bool trace, bool fxOff, bool straight, bool elemental) {
     const bool was = g_on.exchange(on);
     g_trace.store(trace);
     g_fxOff.store(fxOff);
     g_straight.store(straight);
+    g_elemental.store(elemental);
     potionhide::WantHooksForArrows(on);
     if (was != on && g_ctx)
         Log(on ? "arrow flight: on ([bow] arrow_flight) - the hero's shot arrow is drawn by us from the bow along the shot's line; the game's missile is the game's (F4)"

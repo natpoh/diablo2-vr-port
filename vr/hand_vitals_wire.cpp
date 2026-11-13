@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <mutex>
@@ -59,6 +60,11 @@ std::atomic<float> g_orbShieldClassUp[kHeroCount] = {}, g_orbShieldClassAlong[kH
 std::atomic<float> g_orbShieldClassRot[3][kHeroCount] = {};                                          // ... and its turn about X / Y / Z there, degrees
 std::atomic<int> g_orbFill{kFillOutOfHand}, g_orbShape{kShapeMedallion}, g_orbMetal{0}, g_orbDisc{1};
 std::atomic<float> g_orbPatina{0.55f};
+// [hud] wrist_game_models / wrist_game_pulse: kept here as every other field, or Settings() hands the frame block a Config without them (0.214.1: the
+// medallions stayed the effect's and the game's models were never asked - the frame block saw the tick off)
+std::atomic<bool> g_gameModels{false};
+std::atomic<float> g_gamePulse{1.0f};
+std::atomic<float> g_gameGlass{0.25f};
 
 Config Current() {
     Config c;
@@ -109,6 +115,9 @@ Config Current() {
     c.orbMetal = g_orbMetal.load(std::memory_order_relaxed);
     c.orbDiscFaces = g_orbDisc.load(std::memory_order_relaxed);
     c.orbPatina = g_orbPatina.load(std::memory_order_relaxed);
+    c.gameModels = g_gameModels.load(std::memory_order_relaxed);
+    c.gamePulse = g_gamePulse.load(std::memory_order_relaxed);
+    c.gameGlass = g_gameGlass.load(std::memory_order_relaxed);
     return c;
 }
 
@@ -363,6 +372,11 @@ void Configure(const Config& config) {
     g_orbMetal.store(c.orbMetal);
     g_orbDisc.store(c.orbDiscFaces);
     g_orbPatina.store(c.orbPatina);
+    if (g_gameModels.exchange(c.gameModels) != c.gameModels && c.on)
+        Log(c.gameModels && c.style == kStyleOrbs ? "vrcam: hand vitals - [hud] wrist_game_models on: the wrist medallions drawn by the game's own models (VR F4)"
+                                                  : "vrcam: hand vitals - [hud] wrist_game_models off (or not the glass-ball look): the wrist medallions are the effect's");
+    g_gamePulse.store(std::isfinite(c.gamePulse) ? c.gamePulse : 1.0f);
+    g_gameGlass.store(std::isfinite(c.gameGlass) ? c.gameGlass : 0.25f);
     const int wasStyle = g_style.exchange(c.style);
     if (c.on != was || (c.on && c.style != wasStyle)) {
         char b[420];

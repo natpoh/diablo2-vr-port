@@ -30,6 +30,7 @@
 #include "allies_place.h"    // [hud] allies_place: where the allies are shown (F4), and the one-time move of the three old ticks
 #include "campfire_assets_unleashed.h"   // [campfire] enabled: character creation's scene from the player's own game (CascLib; MPL 2.0, D2R VR Unleashed)
 #include "holes_assets.h"    // [holes] patch_world: the world's holes patched from the player's own game (CascLib)
+#include "orb_assets.h"      // [hud] wrist_game_models: the wrist medallions' game models from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
 #include <tlhelp32.h>
@@ -80,6 +81,7 @@
 #include "bw_path.h"        // how BodyWalk's input reaches the game: Game Link direct, or its gamepad and Mapping (the Status row, tested)
 #include "bw_autorun.h"     // what the 3D choice and START start or close of BodyWalk and FlatVR (tested)
 #include "frame_cap.h"       // the game's frame cap in Settings.json: VR's rate is VR's, flat mode has the player's own (the plugin's policy, tested)
+#include "wall_contact_mode.h"   // [weight] wall_contact_mode: Weapon against the walls - Off / Ours / Bear's (one key; an old world_contact=1 reads as Ours)
 #include "direct_hit_mode.h"   // the Strikes tab's "Direct hit": one choice over [gameplay] melee_direct and melee_direct_client (tested)
 #include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
 #include "ceiling_levels.h"   // the Ceiling tab's rooms in the game's order, with the levels each covers (checked by dome_assets_test)
@@ -150,6 +152,7 @@ struct Item {
     int cell = -1;                           // a row of a table (the Strikes tab's kinds): which cell, 0 = the row's label, which starts the row; the others sit beside it (a slider shows its number box only)
     int band = -1, bands = 0;                // Slider: a band of an equalizer (Band) - a vertical slider, the top its highest; band 0 starts the row of `bands` side by side, its number box and name under it
     struct ShowFor { const wchar_t* section = nullptr; const wchar_t* key = nullptr; unsigned mask = 0; int item = -1; } showFor;
+    ShowFor showAlso;                        // a second one, both must hold (ShowAlso: the wrists' Look under Where = Wrists)
     bool off = false;                        // left out while showFor's key has a value not in its mask (UpdateEnabled)
     const wchar_t* oldKey = nullptr;         // Slider / Choice: while its own key is not in the ini yet it starts from this older key of the same section (ReadValue)
     std::vector<float> values;               // Choice: the ini's value of each entry, when it is not the entry's place (ChoiceValues: a key's code); a value not listed: none chosen
@@ -356,6 +359,10 @@ Item ManaBand(int k) {
 Item ShowFor(const wchar_t* section, const wchar_t* key, unsigned mask, Item i) {
     i.showFor.section = section; i.showFor.key = key; i.showFor.mask = mask; return i;
 }
+// ... and while a second Choice has one of the values in its mask as well (an item already under a ShowFor).
+Item ShowAlso(const wchar_t* section, const wchar_t* key, unsigned mask, Item i) {
+    i.showAlso.section = section; i.showAlso.key = key; i.showAlso.mask = mask; return i;
+}
 // The items of "A dropped weapon" that only matter while the weapon goes away ([weight] after_drop 1 = the back, 2 = vanishes): on the page then,
 // greyed unless the arms are on the controllers and weight is on. And those that place it on the back, for 1 alone.
 Item AwayShow(Item i) { return ShowFor(L"weight", L"after_drop", (1u << 1) | (1u << 2), Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, i))); }
@@ -411,7 +418,7 @@ constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves in
            L"The Draw distance slider (Home) sets the distance apart: 1 is Low and Potato's, 2 Medium's, farther past it. "  \
            L"Room rings and the models' radius take effect at the next game start. Changing any of them by hand shows Custom."),  \
     /* [render] preset_game_options (shared/quality_presets.h kGameOptions, Serg 2026-11-09): the preset also sets the game's own Video options */  \
-    Toggle(L"render", L"preset_game_options", L"... the preset also sets the game's own graphics options", 0,  \
+    Toggle(L"render", L"preset_game_options", L"... the preset also sets the game's own graphics options", 1,  \
            L"Ticked: picking a Quality preset also changes three of the game's own Options > Video settings, as if you had set them in its menu "  \
            L"(the game keeps them in its Settings.json): Potato - Ambient Occlusion off, Shadow Quality low, Light Quality low; Low - all three "  \
            L"medium; Medium - Ambient Occlusion high, Shadow Quality high, Light Quality high. They are set once, when the preset changes (or when "  \
@@ -755,7 +762,7 @@ std::vector<Item> g_items = {
     // and the grass rate are on Performance > Render cost (twins of the items there: the same keys and words)
     Only(kVr, Toggle(L"render", L"foveated", kRenderCostFoveated, 0, kRenderCostFoveatedTip)),
     Only(kVr, Hide(Status(L"vrs", L""))),   // (a card without variable rate shading: why the foveation rows are greyed - shown by UpdateVrsStatus)
-    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 0, kRenderCostShadowsOnceTip))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 1, kRenderCostShadowsOnceTip))),
     Only(kVr, Toggle(L"render", L"lens_mask", kRenderCostLensMask, 0, kRenderCostLensMaskTip)),
     // Start BodyWalk from here, so nobody hunts for its shortcut: shown while a
     // BodyWalk is found and not running (RefreshStatus, BodyWalkExe).
@@ -841,7 +848,7 @@ std::vector<Item> g_items = {
            L"the world the toolbar stays at the bottom; the interface is laid out again as the panel opens and closes. Live. Off: the whole "
            L"picture, as before."))),
     // [render] ui_band_corner_icons (vr/band_icons.h, xr.cpp HangBandIcons): the same choice right in the game, from the menu's panel in F4
-    Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, Toggle(L"render", L"ui_band_corner_icons", L"Layout icons over the menus (F4)", 0,
+    Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, Toggle(L"render", L"ui_band_corner_icons", L"Layout icons over the menus (F4)", 1,
            L"In F4, while a menu or a panel (the inventory, the stash, a trader...) hangs in front of you, two small icons sit just above its "
            L"top right corner: a square and a 16:9 rectangle. Point the laser at one and pull the trigger: the square lays the game's interface out "
            L"over the whole picture, the rectangle in the 16:9 band while the inventory is open, and the choice is kept (it sets \"Menus laid out "
@@ -864,6 +871,13 @@ std::vector<Item> g_items = {
            L"picture); in a game the picture is the size picked again once the hero has stood in the world 3 s, as the render size always "
            L"was. The monitor shows the menu stretched to the window. Live. Off: the menus in the picture's own shape, as before. "
            L"(The 16:9 menus are bearstonem/d2r-pcvr's idea.)")),
+    // [cinema] world_screen (vr/unleashed_cinema_screen.h, MPL 2.0; xr.cpp CloseFrame): the game's cinematics on a big screen in the world
+    Only(kVr, Toggle(L"cinema", L"world_screen", L"Videos on a big screen", 1,
+           L"Native OpenXR: the game's videos - the intro, the act videos, the ending and the main menu's Cinematics - play on a big flat "
+           L"screen standing in the world: 6 m wide, 5 m in front of you at eye height, placed as the video starts and still while you look "
+           L"round (F11 puts it in front of you again). Only the film is shown, black round it, and the laser works on it as in a menu "
+           L"(click or press the game's skip button to skip). The sound is the game's. Live. Off: the game's whole picture on the flat "
+           L"picture close in front of you, as before.")),
     // [campfire] enabled (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue, bearstonem): character creation round you
     // (0.214: hidden - still broken in the headset, Serg's rule: no half-done feature in a release; Only(kVr, ...) brings it back)
     Only(0, Toggle(L"campfire", L"enabled", L"Character creation in 3D", 0,
@@ -991,7 +1005,7 @@ std::vector<Item> g_items = {
            L"may be running: it finds the pictures within 2 seconds."),
     // [mods] merge_data_mods: D2R loads one -mod, ours; the player's other data mods (D2RMM's output) merged into it (shared/data_mods.h, StartDataMods).
     InColumn(2, Group(L"Other mods", L"Load the mods you build with D2RMM (or put in the game's mods folder) together with D2R VR. Ticked, their files are merged into D2R VR's mod at each START; D2R VR's own VR changes stay on top of yours.")),
-    Toggle(L"mods", L"merge_data_mods", L"Load my other mods with D2R VR (D2RMM)", 1,
+    Toggle(L"mods", L"merge_data_mods", L"Load my other mods with D2R VR (D2RMM)", 0,
            L"The game loads only one mod, and D2R VR is that mod, so the mods you build with D2RMM (mods\\D2RMM) or put in the game's mods "
            L"folder yourself were not loaded with it. On: at START (and the launcher's Play) their data files are copied into D2R VR's mod "
            L"(mods\\D2R-VR\\D2R-VR.mpq) and loaded with it; when you build your mods again in D2RMM the next START takes the new files. "
@@ -1166,7 +1180,7 @@ std::vector<Item> g_items = {
            L"fraction of a millisecond). With \"Native OpenXR - eyes by turns\" the frames that draw the other eye show this eye as the "
            L"headset has it then: made on the graphics card for that frame (smooth), or, with the box below, its last picture the game drew. "
            L"Menus and loading show the flat picture as before. Live. The idea is bearstonem/d2r-pcvr's.")),
-    Only(kVr, ShowFor(L"render", L"monitor_eye", 6u, Toggle(L"render", L"monitor_eye_fit", L"Monitor: the eye at its own proportions (cropped to the window)", 1,
+    Only(kVr, ShowFor(L"render", L"monitor_eye", 6u, Toggle(L"render", L"monitor_eye_fit", L"Monitor: the eye at its own proportions (cropped to the window)", 0,
            L"With a VR render size apart from the window (Resolution, In the headset: a square picture in a wide window) Windows stretches the picture "
            L"over the window - the monitor showed it squashed. On: the middle of the eye's picture in the window's shape is drawn over the whole "
            L"picture first, so the window shows it at its real proportions (the top and bottom, or the sides, cut off). Nothing changes when "
@@ -1208,7 +1222,7 @@ std::vector<Item> g_items = {
     Group(L"Render cost", L"Graphics card time saved where you do not look closely: foveated rendering (less detail at each eye's edges), the grass lit at a lower rate, the pixels the lenses never show skipped, and the shadows drawn once for both eyes; and processor time: the game's sun shadow map filled for less (or not at all). First person (F4), native OpenXR."),
     Only(kVr, Toggle(L"render", L"foveated", kRenderCostFoveated, 0, kRenderCostFoveatedTip)),
     Only(kVr, Hide(Status(L"vrs", L""))),   // (a card without variable rate shading: why the foveation rows are greyed - shown by UpdateVrsStatus)
-    Only(kVr, Needs(L"render", L"foveated", 1, Choice(L"render", L"foveated_strength", L"... how strong", 1,
+    Only(kVr, Needs(L"render", L"foveated", 1, Choice(L"render", L"foveated_strength", L"... how strong", 3,
            {L"Low (sharp area 0.70, 2x2)", L"Medium (0.55, 2x2)", L"High (0.55, 4x4)", L"Maximum (0.35, 4x4)"},
            L"How much of each eye keeps every pixel (the sharp ellipse round the lens centre, in halves of the part of the picture "
            L"the headset shows) and how coarse the rest is: 2 x 2 or 4 x 4 pixels a shade (4 x 4 falls back to 2 x 2 on cards "
@@ -1254,7 +1268,16 @@ std::vector<Item> g_items = {
     Only(kVr, Needs(L"render", L"lens_mask", 1, Toggle(L"render", L"lens_mask_strip", L"... and the strip the headset is never sent", 1,
            L"With the centred picture each eye's picture has a strip on the nose side that is never handed to the headset; ticked, it is skipped "
            L"too. Unticked: only the runtime's own hidden area. A test for a report of less grass in one eye with this on. Live."))),
-    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 0, kRenderCostShadowsOnceTip))),
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"render", L"shadows_once_a_pair", kRenderCostShadowsOnce, 1, kRenderCostShadowsOnceTip))),
+    // [render] ao_vr / ao_vr_radius_m (vr/ao_vr.h, shared/dxbc_ao_radius.h; Serg 2026-11-13: black grass cards without DLSS)
+    Toggle(L"render", L"ao_vr", L"Ambient occlusion sized for your eyes", 1,
+           L"The game's own ambient occlusion (the soft shade in corners and under grass) is made for its camera far above: from your eyes "
+           L"dense grass a metre away filled it, and the tall grass went black without DLSS. Ticked: the same shading with a radius for eyes "
+           L"near the ground (below); its strength and blur stay the game's. In VR first person and the flat game's first person; from above "
+           L"and behind the game's numbers. Unticked: the game's numbers, as before. Live."),
+    Needs(L"render", L"ao_vr", 1, Slider(L"render", L"ao_vr_radius_m", L"... its radius in metres", 0.1f, 2.0f, 0.05f, 0.3f,
+           L"How far the shade reaches: smaller, only what touches darkens; larger, more shade in grass and corners (too large and the grass "
+           L"goes dark again). Live.")),
     // [render] sun_shadows / sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h, docs/notes/simpler_sun.md): the game's sun shadow
     // map filled for less in F4 - processor time
     Only(kVr, Choice(L"render", L"sun_shadows", L"Sun shadows (F4)", 2,
@@ -1308,7 +1331,7 @@ std::vector<Item> g_items = {
     // [game_patches] (vr/unleashed_game_patches.h, MPL 2.0 from bearstonem/d2r-pcvr; docs/notes/game_patches.md): six changes to the game's own
     // render code for the draw thread's time, each its own tick (Serg 2026-11-12: "давай возьмем весь рендер"); unticked = the game's code as it is;
     // all six ticked by default since 0.214 (draw_debug_names alone: 90 -> 115 fps on his PC)
-    Group(L"The game's own render code", L"Processor time saved inside the game's own drawing: six small changes to its render code, each on its own tick. Each goes in or out between two frames while the game runs. The game's bytes at each place are checked first; where they differ (another game build) the change is left out and the log (d2r_vr.log, 'game patches') says so. Rendering only: nothing of the game's play is touched. Unticked: the game's code as it is."),
+    Group(L"The game's own render code", L"Processor time saved inside the game's own drawing: six small changes to its render code, each on its own tick. Each goes in or out between two frames while the game runs. The game's bytes at each place are checked first; where they differ (another game build) the change is left out and the log (d2r_vr.log, 'game patches') says so. Rendering only: nothing of the game's play is touched. The last tick is no speed change but a guard against a crash in the game's own effect code. Unticked: the game's code as it is."),
     Toggle(L"game_patches", L"transparent_filter", L"Transparent pass: test the flags first", 1,
            L"The game's transparent pass walks every draw of the frame for each layer of transparency and, for each, reads a number from slow "
            L"upload memory before it looks at the draw's flags - and almost every draw is then skipped. Ticked: the flags are tested first, so "
@@ -1337,13 +1360,20 @@ std::vector<Item> g_items = {
            L"tests against one view that holds both eyes', and the second, when its own view is inside that one, does not test again - it "
            L"draws what the first found (a few more objects, clipped by the graphics card as anything off the picture). VR first person (F4). "
            L"The log says every 10 s how many passes left the test out. Live. Unticked: each eye tests its own, as the game does.")),
+    // [game_patches] effect_listener_guard (vr/unleashed_effect_listener_guard.h, MPL 2.0 from bearstonem/d2r-pcvr b1078de): no render change but
+    // a crash guard in the game's own effect code; on by default (Serg 2026-11-13: take it)
+    Toggle(L"game_patches", L"effect_listener_guard", L"Guard: a particle effect that ends", 1,
+           L"Not a speed change but a crash guard. When one of the game's particle effects ends, the game tells everything listening to it; "
+           L"one of its listeners reaches into the effect it holds without checking that it holds one, and if it holds none the game crashes "
+           L"(seen in the Frozen Tundra). Ticked: such a listener is not called - as the game's other listener beside it already does - and "
+           L"every other call is the game's own. The game's bytes are checked first. Every view. Live. Unticked: the game's code as it is."),
     Group(L"Quality", L"How much the game draws and how good it looks against how fast it runs. A preset (Potato, Low, Medium) sets everything here at once: the game's render stages, the draw distance, the fog and the sky. Room rings, models and the frame cap need a game restart."),
     // the preset, Auto beside it and the Potato light's sliders under it (QUALITY_PRESET_ITEMS above: also on Home)
     QUALITY_PRESET_ITEMS
     // [autotune] (vr/auto_tune_run.h, Serg 2026-11-05): "Auto" - the game measures its frames/s at the headset's rate; short of it, the ladder
     // (2026-11-08): the render size to 1600, the presets down, the size to 1300, foveation, the size to 1200, eyes by turns; the player keeps or undoes it.
     // Unticked: no Auto anywhere.
-    Only(kVr, Toggle(L"autotune", L"enabled", L"Auto graphics tuning", 0,
+    Only(kVr, Toggle(L"autotune", L"enabled", L"Auto graphics tuning", 1,
            L"Adds an Auto button to the headset's settings panel (Video page, beside the render size slider) and beside the Quality preset above. Press it standing still in the game (in "
            L"town is best): the game measures its frames a second with your settings. If they hold the headset's rate, nothing changes - on "
            L"any graphics card (a size above the headset's own stays: it is sharper). If not, it steps down in a fixed order, measuring each "
@@ -1525,7 +1555,7 @@ std::vector<Item> g_items = {
            L"Stand up straight: the floor is found from your height in BodyWalk."),
     // [table] full_width (Serg 2026-11-08, after a player's wish for a sky in F3): no board edge, no keyed void - the game's own dome and fog
     // round the diorama (vr/view/view_state.cpp TableFull). Unticked: the board as before; the board's own items below are greyed while ticked.
-    Toggle(L"table", L"full_width", L"Full width: the game's own sky and fog round the game", 0,
+    Toggle(L"table", L"full_width", L"Full width: the game's own sky and fog round the game", 1,
            L"F3 is not cut at the board's edge: the world as far as it is drawn, with the game's own sky dome all round and the game's own "
            L"fog over the far ground, as in F4 (the Sky tab's \"Sky drawn by\" and the World tab's fog choice must be the game's). The "
            L"background colour is not used then, so no passthrough / chroma key. Use F3's Draw distance below for how far. Live. "
@@ -1578,6 +1608,10 @@ std::vector<Item> g_items = {
            L"F4: the head (and the helm) is hidden from your eyes as before, but the hero's shadow on the ground keeps it - the game's shadows are drawn "
            L"from his whole pose, only what your eyes see has the head shrunk away. Visual only. Off: the head is shrunk in the pose itself and his "
            L"shadow has no head, as before. Live.")),
+    Toggle(L"arms", L"head_shadow_flat", L"... and in the flat first-person views", 1,
+           L"The same in first person on the monitor (flat F3, and VR F1 drawn as a flat window), where the hero's head is hidden too: his shadow "
+           L"on the ground and the walls keeps the head and the helm, by a torch and in the sun, while the view has none. Visual only. Off: the head "
+           L"is shrunk in his pose there and the shadow has no head, as before. Live."),
     Needs(L"arms", L"mode", 2, Slider(L"arms", L"scale", L"Arm length (scale)", 0.3f, 3, 0.05f, 1, L"Arm reach on top of the hero-to-your-height ratio.")),
     Needs(L"arms", L"mode", 2, Only(kVr, Toggle(L"arms", L"full_reach", L"Hands always reach the controllers", 1,
            L"F4: a hand farther from the hero's shoulder than his arm is long - a slash across the body, the second hand on a two-handed "
@@ -1656,7 +1690,7 @@ std::vector<Item> g_items = {
            L"camera stands: the camera stays on the ground and the body with it (or, with the slider below, the camera goes up with part of "
            L"the leap's arc). Only the drawn body and the camera: where he stands, his hit box, his path and the leap itself stay the game's. "
            L"VR first person (F4) only. Off = as before. Live.")),
-    Needs(L"body", L"under_camera", 1, Only(kVr, Slider(L"body", L"leap_camera_up_pct", L"Camera rises with the leap's arc, %", 0, 100, 5, 0,
+    Needs(L"body", L"under_camera", 1, Only(kVr, Slider(L"body", L"leap_camera_up_pct", L"Camera rises with the leap's arc, %", 0, 100, 5, 30,
            L"A Leap or a Leap Attack lifts the hero about 3.5 m at the top of its arc. The camera follows this share of it, eased like the arc "
            L"itself, the body always under it: 0 = the camera stays at your height over the ground and the body is kept down with it, 100 = "
            L"the whole arc, 20 - 30 = a little lift for the feeling of the jump. Under a ceiling (the cave and room ceilings of the Ceiling "
@@ -1935,7 +1969,7 @@ std::vector<Item> g_items = {
     // it (its server drops a walk until the attack's last frame), so a warning. Shown in both modes.
     Warning(L"flat_move_attack_warn", L"Changes the game's own logic: in Diablo II the hero stands until his attack's animation is over. The choice below "
             L"has the game's server let the walk in as soon as the blow is out. Off = the game's own rule."),
-    Choice(L"gameplay", L"flat_move_while_attacking", L"2D views: strafe after each blow (changes the game)", 0,
+    Choice(L"gameplay", L"flat_move_while_attacking", L"2D views: strafe after each blow (changes the game)", 2,
            {L"Off", L"Spear and bow", L"Every weapon"},
            L"The monitor's third and first person (F2, F3) with W A S D, and the headset's F1, F2, F3 with the left stick: with a walk held the "
            L"hero walks on - sideways, back or ahead, where the camera looks - as soon as the blow lands or the arrow or javelin leaves, instead "
@@ -2087,7 +2121,7 @@ std::vector<Item> g_items = {
     Tab(L"Mechanics"),
     Group(L"Combat"),   // (a page lays out its groups only: LayoutPage)
     Warning(L"mechanics_warn", L"These mechanics can change how you interact with the game and depart from the classic Diablo engine. Off = the game as it is."),
-    Toggle(L"gameplay", L"flat_attack_path", L"The swing does not stop the hero", 0,
+    Toggle(L"gameplay", L"flat_attack_path", L"The swing does not stop the hero", 1,
            L"The monitor's third and first person (F2, F3), plain attacks and throws. With W A S D held the hero keeps walking while he swings, in the "
            L"attack's own full animation: its blow, hit chance, damage and rate stay the game's. Once he walked in the swing, a melee blow goes to the monster you "
            L"attacked while it stays before the camera, else to whoever stands there when it lands; nobody there, it hits the air. A swing with no walk in it "
@@ -2095,7 +2129,7 @@ std::vector<Item> g_items = {
            L"from a monster with a short weapon mostly misses. A TCP/IP game: who hosts decides. The host's box holds for every player with the same "
            L"version of the mod; a joined player's own box means nothing there. It replaces the 2D strafe option on the Controls tab. Unticked: the game's own rule."),
     // [gameplay] move_during_skills (vr/attack_path.h KindOf, Serg 2026-11-10: past early Act 1 every fight is special moves): who hosts decides, as the box above
-    Toggle(L"gameplay", L"move_during_skills", L"Move during special moves", 0,
+    Toggle(L"gameplay", L"move_during_skills", L"Move during special moves", 1,
            L"EXPERIMENTAL - CHANGES HOW THE GAME PLAYS. The monitor's third and first person (F2, F3) with W A S D held, and VR first person (F4) with "
            L"the stick: the hero keeps moving during special moves - Zeal, Double Swing, Frenzy, Fury, and the one-blow ones such as Bash, Stun, "
            L"Berserk, Concentrate, Sacrifice, Vengeance or Power Strike. The skill stays the game's: its number of blows, its animation, attack speed, "
@@ -2127,7 +2161,7 @@ std::vector<Item> g_items = {
            L"miss for distance (a wall still stops it). The animation's length and so the attack speed stay the game's, unless the box below is "
            L"ticked. A TCP/IP game: who hosts decides - the host's box holds for every hero in its game (a joined player with the same mod version "
            L"walks through the swing too). Unticked: the game's own rule. Live."),
-    Needs(L"gameplay", L"quick_blow", 1, Toggle(L"gameplay", L"quick_blow_faster", L"Quick blow: strike faster than the animation", 0,
+    Needs(L"gameplay", L"quick_blow", 1, Toggle(L"gameplay", L"quick_blow_faster", L"Quick blow: strike faster than the animation", 1,
            L"GOES PAST THE GAME'S ATTACK SPEED. With quick blow on: once a blow is out, the next attack is let in without waiting for the rest "
            L"of the animation (the game would queue it or refuse it until the animation's end), so every touch lands a blow - no sooner than the "
            L"least wait below after the last blow. Never before a blow is out, never while the game refuses for its own reasons (a hit taken, "
@@ -2520,7 +2554,7 @@ std::vector<Item> g_items = {
            L"picture has settled (a few seconds) - two passes then, never a black eye. For a processor too slow for two passes (a few graphics "
            L"cards hung with it). \"Native one pass\" in 3D in the headset. Takes effect at the next game start. Off: two passes (\"Native "
            L"two passes\", the default since 0.214)."))),
-    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_fresh_slots", L"... the camera read when the graphics card needs it", 0,
+    Only(kVr, Needs(L"stereo", L"native_replay", 1, Toggle(L"stereo", L"replay_fresh_slots", L"... the camera read when the graphics card needs it", 1,
            L"With one pass, the game's camera values are copied when the game records its drawing - but the game writes some of them later in "
            L"the frame (about a third, in Serg's log of 2026-11-10), so both eyes could draw with values from before: a player's headset showed "
            L"the world squashed into a thin slice. Ticked: each copy is read again just before the game hands that drawing to the graphics "
@@ -3205,7 +3239,7 @@ std::vector<Item> g_items = {
            L"A potion thrown to the mercenary that lands within this distance of his feet is his. Live.")),
     Group(L"Item labels on the ground", L"The names of items on the ground in first person (F4): the box's opacity, their size, smaller far away, and their stereo depth, so each label sits at its own item instead of floating far off. The names over monsters are set in Monster plates."),
     // [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): our own sharp names in the game's places, F4
-    Toggle(L"hud", L"labels_own", L"Item labels: our own, sharp (test)", 0,
+    Toggle(L"hud", L"labels_own", L"Item labels: our own, sharp", 1,
            L"The names of items on the ground drawn by the mod instead of the game's copy: sharp at any render size, in the item's colour, each at its "
            L"own item's depth. The game still lays them out, so pointing at them, the mouse, Show Items and picking up work as before. The opacity "
            L"below applies to them too; their size by distance is their own (the \"Our labels\" sliders below). First person (F4). Needs the D2R_DepthFog.fx of the same build. Live. Unticked: "
@@ -3265,13 +3299,13 @@ std::vector<Item> g_items = {
            L"it stands over the monster's head at its own depth in each eye, and the game's plate under it is not drawn - no doubled bar. The game's "
            L"own camera from above (flat F1) keeps the game's plate. Needs the tick above. Live. Unticked: F4 only, as before.")),
     // [hud] npc_names_own (vr/own_names.h): the hover names over NPCs, objects, portals - the game's hover tooltip's texts drawn by us, F4
-    Toggle(L"hud", L"npc_names_own", L"Names over NPCs and objects: our own, sharp (test)", 0,
+    Toggle(L"hud", L"npc_names_own", L"Names over NPCs and objects: our own, sharp", 1,
            L"The names the game shows over the NPCs (Warriv, Kashya, Akara...), objects, portals and exits you point at, drawn by the mod instead of "
            L"the game's copy: sharp at any render size, where the game puts them, on the game's own dark box, with the size and backdrop of \"Our names\" "
            L"below. First person (F4). Needs the "
            L"D2R_DepthFog.fx of the same build. Live. Unticked: the game's names, as before."),
     // [hud] own_labels_drop_game (vr/hud/labels.cpp DropGameLayer): the game's own layer under ours not drawn at all - its own tick since 0.206.8's crash
-    Toggle(L"hud", L"own_labels_drop_game", L"Our labels and names: the game's not drawn at all (test)", 0,
+    Toggle(L"hud", L"own_labels_drop_game", L"Our labels and names: the game's not drawn at all", 1,
            L"With our item labels or names on (the ticks above), the game's own labels, monster plate and hover names under them are not drawn at "
            L"all instead of hidden by the effect. A test: the builds that had it lost the graphics device a few minutes in. Live. Unticked: the "
            L"game's are drawn and hidden, as in 0.206.5."),
@@ -3556,21 +3590,53 @@ std::vector<Item> g_items = {
            L"mana, as two balls on the back of the wrists like medallions - life on the left, mana on the right (first person, F4; they only read your "
            L"life and mana; the rest of the toolbar is not shown in the headset then). Needs the new D2R_DepthFog.fx in ReShade. 'Toolbar type' above sets this and Hide the game's interface together"),
     // On the wrists (bar_place 5): the look and the place of the two balls (vr/hand_orbs.h)
-    ShowFor(L"hud", L"bar_place", kBarWrist, Choice(L"hud", L"wrist_look", L"Look", 0,
-           {L"3D glass balls with liquid", L"The game's own globes (cut out of its toolbar)"},
-           L"Glass balls: real 3D balls the mod draws (a liquid rising and falling with the numbers, glass, a halo), with depth - a hand or a monster in front "
-           L"hides them. The game's own globes: the life and mana globes of the game's toolbar, cut out of its interface as they are drawn, with the real "
-           L"level of liquid, laid on the same wrist balls (they cannot be cut where the game's safe screen area is smaller than the globes; the log says so).")),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Choice(L"hud", L"hand_vitals_orb_shape", L"Shape", 0,
+    ShowFor(L"hud", L"bar_place", kBarWrist, ChoiceValues(L"hud", L"wrist_look", L"Look", 0,
+           {L"3D glass balls drawn by the mod", L"Drawn by the game's own models", L"The game's own globes (cut out of its toolbar)"}, {0.0f, 2.0f, 1.0f},
+           L"Glass balls drawn by the mod: real 3D medallions the mod's effect draws (a liquid rising and falling with the numbers, glass, a gold base, a halo), "
+           L"with depth - a hand or a monster in front hides them. Drawn by the game's own models: the same medallions drawn by the GAME in its own potion "
+           L"materials - a see-through glass dome on a gold base with the lesser healing / lesser mana potion's liquid inside, cut flat at its level, softly "
+           L"glowing in the dark and beating when your life is low; lit, shaded and hidden by the game as its own (this program makes its files from your "
+           L"game's own; the next start of the game). The game's own globes: the life and mana globes of the game's toolbar, cut out of its interface as "
+           L"they are drawn, with the real level of liquid, laid on the same wrist balls (they cannot be cut where the game's safe screen area is smaller than "
+           L"the globes; the log says so). First person in the headset (F4).")),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 1, Slider(L"hud", L"wrist_globe_in", L"The game's globes: closer together / apart", -5, 5, 0.02f, -0.06f,
+           L"A fallback nudge of the cut, in the globe's own radius (1 = one radius of the cut disc, about 120 px of the game's interface on a 2048 picture): "
+           L"+ moves the life and the mana globe toward the toolbar's middle, - apart (the two in "
+           L"opposite directions, one number for both). The cut follows the game's own toolbar layout and interface size first; use this only if a globe still "
+           L"comes cut off-centre. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 1, Slider(L"hud", L"wrist_globe_dy", L"The game's globes: move down / up", -3, 3, 0.02f, 0,
+           L"The same up and down (+ down). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 1, Slider(L"hud", L"wrist_globe_scale", L"The game's globes: size of the cut", 0.5f, 2, 0.02f, 1.46f,
+           L"How big a disc is cut round each globe (1 = the game's own size). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Slider(L"hud", L"wrist_game_glow",
+           L"Drawn by the game: glow in the dark", 0, 40, 1, 25,
+           L"How bright the liquid is: the game's own highlight on it (what lights a unit under your pointer), its colour times 1 + this x 0.05 - "
+           L"13 is 1.65 times, 40 three times, 0 as the game draws it. The low-life beat adds on top. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Slider(L"hud", L"wrist_game_glass",
+           L"Drawn by the game: glass", 0, 1, 0.05f, 0.1f,
+           L"The glass dome over the liquid: 0 no glass at all; above 0 the lesser mana potion's own glass, see-through as the game draws it (the game "
+           L"gives these models no opacity of their own to set, so the number above 0 does not change how clear it is). Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Toggle(L"hud", L"wrist_game_liquid_glass",
+           L"Drawn by the game: see-through liquid", 0,
+           L"The liquid in the game's own see-through glass (the healing potion's glass, which shows what is behind it through its colour), coloured by "
+           L"the lesser healing / lesser mana potion's own red and blue - in place of the potions' solid liquid. A test: how see-through it comes out is "
+           L"the game's. This program makes the liquid's files again when you tick it; the next start of the game."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Slider(L"hud", L"wrist_game_pulse",
+           L"Drawn by the game: pulse when low", 0, 3, 0.1f, 1,
+           L"How much brighter the liquid gets at each beat when your life is low (with Soft heartbeat at low life ticked; mana too with Balls beat with the vignettes): "
+           L"the game's own highlight, 1 = twice as bright at the top of a beat. 0: no pulse. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", (1u << 0) | (1u << 1), Choice(L"hud", L"hand_vitals_orb_shape", L"Shape", 0,
            {L"Medallion (a glass dome on a metal base)", L"Full glass ball"},
            L"The medallion: a half ball of glass - the liquid in it - sitting on a round metal base, flat on the back of the wrist, like the frame of the game's own globes "
-           L"(Size is the medallion's diameter, the base's). The game's own globes sit on the same base. Full glass ball: the ball alone, as before. Live.")),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_shape", 0, Choice(L"hud", L"hand_vitals_orb_metal", L"Base: metal", 0,
-           {L"Gold", L"Bronze", L"Silver"}, L"The base's metal. Live."))),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_shape", 0, Slider(L"hud", L"hand_vitals_orb_patina", L"Base: patina, %", 0, 100, 5, 55,
+           L"(Size is the medallion's diameter, the base's). The game's own globes sit on the same base. Full glass ball: the ball alone, as before. Live."))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", (1u << 0) | (1u << 1) | (1u << 2), Needs(L"hud", L"hand_vitals_orb_shape", 0, Choice(L"hud", L"hand_vitals_orb_metal", L"Base: metal", 0,
+           {L"Gold", L"Bronze", L"Silver"}, L"The base's metal. Drawn by the game's own models: the game's own metal from its potions (the full mana potion's "
+           L"gold, the elixir's bronze, the antidote's pewter). Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", (1u << 0) | (1u << 1) | (1u << 2), Needs(L"hud", L"hand_vitals_orb_shape", 0, Slider(L"hud", L"hand_vitals_orb_patina", L"Base: patina, %", 0, 100, 5, 55,
            L"How aged the base is: 0 clean metal; more and it darkens, goes green in the crevices and at the foot of the dome, and stays bright where it would be worn - "
-           L"the same on every frame, fixed on the medallion (it does not swim as the hand moves). Live."))),
-    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"wrist_look", 0, StartsFromMapped(L"hand_vitals_orb_liquid", {0.0f, 5.0f},
+           L"the same on every frame, fixed on the medallion (it does not swim as the hand moves). Drawn by the game's own models: under 30 the clean metal, "
+           L"from 30 the game's own worn, embossed rosette of that metal (its dark crevices). Live.")))),
+    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 0, StartsFromMapped(L"hand_vitals_orb_liquid", {0.0f, 5.0f},
            Choice(L"hud", L"hand_vitals_orb_fill", L"Fill direction", 4,
            {L"Along the arm: the elbow side full", L"Along the arm, the other way: the hand side full", L"Across the hand: the thumb side full",
             L"Across the hand: the little finger side full", L"Out of the hand: from the skin up, the level parallel to the back of the hand", L"Level in the world"},
@@ -4219,6 +4285,30 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Slider(L"fog", L"game_fog_cover", L"The fog covers everything from", 0, 2000, 10, 0,
            L"With the fog before smoke and fire: from this distance on, everything is the fog's colour whole - far trees, buildings, far fires "
            L"and their glow gone into the fog. World units (the hero is ~7.5 tall). 0: the fog's own curve all the way (as before). Live."))),
+    // (2026-11-13: grass black without DLSS on Serg's PC; hair and grass fogged at other distances than the rest - martin039383)
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_hair_strict", L"Fog only the see-through hair and leaves apart", 1,
+           L"With the fog before smoke and fire: only the see-through draws (hair, leaves, grass cards) are taken aside to be fogged by their own "
+           L"distance; an opaque draw into the same picture (the game uses it for other passes too) stays where the game drew it, and nothing "
+           L"taken aside is kept over from a frame the fog did not run in. Off: as 0.215. Live."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_own_distance_behind", L"Hair and leaves never fogged past the ground behind them", 1,
+           L"With the fog before smoke and fire: hair, leaves, grass and particles are fogged by their own distance, read from the game's "
+           L"transparency weight - never farther than the world right behind them (a misread weight fogged near grass like far ground). "
+           L"Off: as 0.215. Live."))),
+    // (2026-11-13, Serg on 0.215.6: "the fog flickers" - single frames without any fog)
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_scene_one_size", L"Fog before smoke and fire: the right picture only", 1,
+           L"With the fog before smoke and fire: the picture to fog is taken only when it has the full size; the game's half-size effects "
+           L"layer was taken for it at times and those frames had no fog. Off: as 0.215. Live."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_miss_keeps_fog", L"No frame without fog", 1,
+           L"With the fog before smoke and fire: a frame it could not draw keeps the game's own fog (over smoke and fire too, as without it) "
+           L"instead of no fog at all - no flicker. Off: as 0.215. Live."))),
+    // (2026-11-13, Serg on 0.215.8: "the game's haze whitens the objects behind" - far bushes as pale silhouettes behind the rain's haze)
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_layers_in_order", L"Fog before smoke and fire: haze and leaves in depth order", 1,
+           L"With the fog before smoke and fire: smoke, rain haze and the see-through leaves and hair are laid nearer over farther, each by "
+           L"its own distance. The game mixes them by a weight made for its camera far above: from your eyes a near haze outweighed far bushes, "
+           L"which then showed as pale silhouettes. Off: as 0.215. Live."))),
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_scene_by_name", L"Fog before smoke and fire: the picture by the game's own name", 1,
+           L"With the fog before smoke and fire: the picture to fog is the one the game itself names as its main colour, instead of guessed "
+           L"from what was drawn with the depth; where the game gives no name, the guess as before. Off: the guess only (as 0.215). Live."))),
     // (Serg 2026-11-09, his drawing: "новый вид тумана плоскости перед игроком с затуманиванием")
     Sub(L"Fog planes before the player"),
     Needs(L"fog", L"game_fog_planes", 1, Slider(L"fog", L"game_fog_planes_count", L"How many planes", 1, 64, 1, 8,
@@ -4299,7 +4389,7 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"curve", L"Falloff", 0.3f, 4, 0.05f, 1.6f, L"1 = linear; more = a clearer middle distance."))),
     Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Slider(L"fog", L"blur", L"Depth blur, px (0 = off)", 0, 12, 0.5f, 3,
            L"The fog over a 5x5 grid this many pixels apart: holes and specks in the depth melt away."))),
-    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"ease_in", L"Fog eased in, no hard ring", 0,
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"ease_in", L"Fog eased in, no hard ring", 1,
            L"The fog fades in softly over its first 40 units past its start: no sharp edge round the clear ground at your feet. Wherever our "
            L"curve draws the fog: our effect, and the game's fog with \"The game's fog by our curve\" on (not the game's own curve). From "
            L"D2R VR Unleashed (bearstonem). Live. Off: the fog as before."))),
@@ -4313,7 +4403,7 @@ std::vector<Item> g_items = {
            L"sky and the black beyond the world keep the fog as before. With an act's own fog colour (World > Sky); VR F4 "
            L"only. Applies when the game is started again; off = the fog as before. Over \"Fog spares fire\" when both are on."))),
     Sub(L"Caves and dungeons"),
-    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 1,
+    Needs(L"fog", L"enabled", 1, Needs(L"fog", L"game_fog", 0, Toggle(L"fog", L"caves", L"Fog in caves and dungeons", 0,
            L"Off: no fog underground (every area that is not outdoors) - neither our effect's nor the game's own fog, and nothing laid "
            L"before the smoke and fire there; the open air keeps it. The Arcane Sanctuary has its own switch (Sky > Arcane Sanctuary: fog "
            L"fades into its sky): on, it keeps its fog with either fog. Live."))),
@@ -4358,10 +4448,10 @@ std::vector<Item> g_items = {
            L"The distance fog ([fog] on, World > Fog) in the Arcane Sanctuary too: the far platforms dissolve into the sky behind "
            L"them - its dark and its nebula, not its stars. Off: no fog under that sky, the platforms sharp to the end."),
     Group(L"Advanced", L"The game's own built-in fogs, which our numbers replace, and how they are found."),
-    Toggle(L"render", L"game_depth_fog", L"The game's own depth fog", 0,
+    Toggle(L"render", L"game_depth_fog", L"The game's own depth fog", 1,
            L"Every outdoor area has it, from its camera's distance out: a grey haze in the four corners of the picture "
            L"(from above too), over the near ground from our camera. Off: vrcam sets it to 0."),
-    Toggle(L"render", L"game_fog_scan_safe", L"Find the game's fog safely", 1,
+    Toggle(L"render", L"game_fog_scan_safe", L"Find the game's fog safely", 0,
            L"How D2R VR finds the game's height and depth fog to turn them off: by reading copies of the game's memory, so a block the game "
            L"frees meanwhile is skipped without an error (D2RLoader wrote those up as crash reports), only definitions where the game's areas "
            L"have them, and a value is changed only while it still is what was just read. Off: direct reads, as before. Live."),
@@ -4406,7 +4496,7 @@ std::vector<Item> g_items = {
            L"How high the game's fog reaches: none above this, world units above your eyes (the hero is ~7.5 tall; the sky dome at its radius). Live.")),
     Hide(Slider(L"fog", L"game_fog_soft", L"The game's fog: softness of its top, units", 1, 300, 1, 50,
            L"How far below its top the game's fog fades out: small, a sharp edge; large, a long soft fade. Live.")),
-    Hide(Toggle(L"fog", L"game_fog_top_from_floor", L"The game's fog: its top counted from the hero's floor", 0,
+    Hide(Toggle(L"fog", L"game_fog_top_from_floor", L"The game's fog: its top counted from the hero's floor", 1,
            L"The top above is counted from the floor the hero stands on, not from your eyes: a camera high over the hero (third person, "
            L"the view from above) no longer moves where the fog ends, and land below your eyes is not all fogged with a line at eye height. "
            L"Off: from the eyes, as before. Unticking \"thins with height\" instead gives the fog by distance alone, as our own fog. Live.")),
@@ -4498,7 +4588,7 @@ std::vector<Item> g_items = {
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
 
     Group(CeilTitle("act1_barracks"), CeilHelp("act1_barracks", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_barracks", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 14,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_barracks", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 14.3f,
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
     Group(CeilTitle("act1_court_to_barracks"), CeilHelp("act1_court_to_barracks", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
@@ -4509,7 +4599,7 @@ std::vector<Item> g_items = {
            L"World units (the hero is ~7.5 tall). Below the walls' tops they pierce the ceiling. 0: on the room's walls' top as "
            L"measured from your game's files (with \"Ceiling height from the room's walls\"), else 18.")),
     Group(CeilTitle("act1_catacombs"), CeilHelp("act1_catacombs", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
-    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_catacombs", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 20,
+    Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act1_catacombs", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 14.8f,
            L"World units (the hero is ~7.5 tall). What the game draws higher is cut off by the ceiling.")),
     Group(CeilTitle("act2_sewer"), CeilHelp("act2_sewer", L"The ceiling's height over this room's floor - 0: on its own walls' top (\"Ceiling height from the room's walls\"), else 18.")),
     Needs(L"ceiling", L"enabled", 1, Slider(L"ceiling", L"height_act2_sewer", L"Height over the floor (0 = from the walls)", 0, 150, 0.1f, 35,
@@ -4728,6 +4818,11 @@ std::vector<Item> g_items = {
            L"With \"draw the shot arrow ourselves\": an arrow whose line met nothing (aim up and down off, a shot into the air) flies straight along the line it was "
            L"drawn along, from the bow - no bend. Off: it leaves the bow and swings onto the game's own path, which runs from your body beside the line, over the "
            L"first 2.5 m. Side arrows of Multiple Shot and Strafe, and Guided Arrow, swing onto their own paths either way. Live."))),
+    Only(kVr, Needs(L"bow", L"arrow_flight", 1, Toggle(L"bow", L"arrow_flight_elemental", L"Bow: draw the elemental arrows ourselves too (Fire, Ice, Magic...)", 0,
+           L"With \"draw the shot arrow ourselves\": an arrow with an effect of its own - Fire, Magic, Ice, Cold, Exploding, Immolation, Freezing or Guided "
+           L"Arrow - is drawn on the shot's line too. The game draws its fire, frost or light where its own missile is, so two fly: the arrow on the line, the flame on "
+           L"the game's path. Off: such an arrow is the game's, whole - arrow and flame together where its missile really is; the plain arrow, the bolt and the arrows "
+           L"of Multiple Shot and Strafe are drawn on the line. Live."))),
     Only(kVr, Toggle(L"bow", L"shot_line_hold", L"Bow draw: the shot keeps the line it was drawn along until the game takes it", 0,
            L"The game reads a shot's aim when it takes the press - at once when the hero is free, else when his last attack is over. Until 0.179 the drawn line "
            L"was the aim for 0.4 s and not while a new draw was held: a later shot took the bow hand's own pointing instead, and flew off to the side. On: the "
@@ -4896,7 +4991,7 @@ std::vector<Item> g_items = {
            L"Only our own light on the arrow: the game's missile, its effects and its damage are the game's. Off: the effect stays until the game hides the arrow, as before. F4 only. Live."))),
     Needs(L"bow", L"quiver", 1, Needs(L"bow", L"arrow_fx", 1, Needs(L"bow", L"arrow_fire_cut", 1, Slider(L"bow", L"arrow_fire_cut_ms", L"Arrow effects: out at the release - after, ms", 0.0f, 2000.0f, 10.0f, 0.0f,
            L"How long after the release the effect goes out: 0 = at the release. A new draw, or the next arrow shown, before then lights it on that arrow. Live.")))),
-    Only(kVr, Toggle(L"bow", L"swap_by_grab", L"Bow: pass it to the other hand by grabbing it", 0,
+    Only(kVr, Toggle(L"bow", L"swap_by_grab", L"Bow: pass it to the other hand by grabbing it", 1,
            L"VR first person (F4), a bow: squeeze the free hand's grip AT THE BOW'S GRIP (within 25 cm of the bow hand, nearer the grip than the string) and the bow is in "
            L"that hand, with a short pulse in it; the string is the other hand's from then on - a left-handed archer holds the bow in the right hand and draws with the left. "
            L"The same back. The drawn bow, the string and its draw, the aim, the quiver and its orbs all go with it. Only the picture and which controller does what: the "
@@ -5226,7 +5321,7 @@ std::vector<Item> g_items = {
     Needs(L"gameplay", L"leap_arc", 1, Needs(L"gameplay", L"leap_arc_head", 1, Slider(L"gameplay", L"leap_head_gain", L"Barbarian: how far a tilt of the head reaches", 0.5f, 4, 0.1f, 1,
            L"The head's tilt is multiplied by this before it aims the leap's arc: 2 lands as far with half the tilt, so a small raise of the head already reaches "
            L"far; 1 = the head's own tilt. The farthest is still the leap's own range. Live."))),
-    Needs(L"gameplay", L"leap_arc", 1, Toggle(L"gameplay", L"leap_air_aim", L"Barbarian: aim the next leap in the air", 0,
+    Needs(L"gameplay", L"leap_arc", 1, Toggle(L"gameplay", L"leap_air_aim", L"Barbarian: aim the next leap in the air", 1,
            L"With the leap's arc on: hold Leap or Leap Attack while the hero is in the air and the arc and circle show there too; let go in the air and the NEXT "
            L"leap goes to that circle - its button is held through the landing until the game casts it. The leap already in the air still lands where the game set "
            L"it when it was cast: nothing can re-aim a leap under way without changing the game itself. Off: a release in the air is pressed at once, as on the "
@@ -5407,6 +5502,14 @@ std::vector<Item> g_items = {
            L"click on a monster does), its hit rolls and speed. A blade held still or waved slowly does nothing; a swing hits "
            L"a monster once. The skill on the attack button is what is pressed - a spell there is cast at the monster you touched. "
            L"Works with BodyWalk's tracking and with native OpenXR. Off: as before. F4 only."),
+    // [gameplay] melee_touch_empty_attack (vr/touch_empty_slot.h; Serg 2026-11-13: a player's A slot was left empty after a skill point - his touches did no damage)
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_empty_attack", L"Empty touch slot: strike with the normal Attack", 1,
+           L"Sometimes the game leaves the attack button (A) with no skill on it - after spending a skill point, for example. A touch then presses "
+           L"a button the game has nothing on: no attack, no damage, while the monsters still fall over from the weapon's weight. Ticked: such a "
+           L"touch is the game's plain Attack, exactly as if Attack were on A - its own animation, reach, hit rolls and speed (in co-op the host "
+           L"decides as ever). A skill on A is still cast as before, and nothing else about the button changes: put a skill or Attack on A in the "
+           L"game's skill menu to choose for yourself. The log says once when it happens (\"the attack slot (A) holds no skill\"). Unticked: a touch "
+           L"with nothing on A does nothing, as before. Live. F4 only.")),
     Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 20, 0.1f, 0.8f,
            L"How fast the blade must be moving for a contact to count. A blade moving slower than this does nothing, however it touches "
            L"a monster - so a gentle poke hits only if this is low. The same number for every weapon (the weapon's own blade is its only "
@@ -5425,7 +5528,7 @@ std::vector<Item> g_items = {
            L"moved this far within about a tenth of a second, and fast enough (above). Smaller: a short jab counts; larger: only a long swing does. "
            L"A blade moving slower than the least speed above does nothing, a monster is hit once per stroke. Default 8 as before. "
            L"Live. F4 only.")),
-    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_thrown", L"Thrown weapons hit by touch too (a point-blank throw)", 1,
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_thrown", L"Thrown weapons hit by touch too (a point-blank throw)", 0,
            L"A javelin, a throwing knife or a throwing axe in hand is swung like any weapon: its blade through a monster's body presses the "
            L"game's own attack at it - for a thrown weapon that is the game's Throw at that monster, point blank, with the ammunition spent as "
            L"the game spends it (never the Direct hit route). Throwing potions are not swung. The throw by gesture (Weapon Adjust > Throws: by the "
@@ -5734,7 +5837,7 @@ std::vector<Item> g_items = {
            L"stays drawn only. F4. Unticked: only the drawing falls, the game keeps it on its cell, as before."))),
     Sub(L"Monsters round your Leap's landing (Weapon Weight > Monsters' bodies)"),
     // [weight] leap_landing_scatter: the humanoids round a Leap / Leap Attack's landing thrown apart as drawn, their units after them by the game's knockback (vr/leap_scatter.h)
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"leap_landing_scatter", L"Monsters fly apart where you land from a Leap (a test)", 0,
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"monster_bodies", 1, Toggle(L"weight", L"leap_landing_scatter", L"Monsters fly apart where you land from a Leap", 1,
            L"Needs Weapon Weight > Monsters' bodies and the weight library with the knock-down. Live. Ticked: when your Barbarian lands from a Leap or a Leap "
            L"Attack, the humanoid monsters within about 3 m of the spot (and any the game's own Leap knockback hits a little farther) are thrown ONE cell away "
            L"from where you land - the game's own knockback puts each unit on that cell and its body falls onto it, so where you see it and where the game has it "
@@ -6013,15 +6116,22 @@ std::vector<Item> g_items = {
            L"capsules across its face, a weapon one along it; Debug: melee boxes draws them violet and orange). A blow they stop is no hit: hit by touch presses the "
            L"attack only once your weapon has reached the monster's body - the game's own block roll stays the game's for the blows that land. They push no doll "
            L"and take no stab. Unticked: they are transparent to your weapon, as before.")))),
-    // [weight] world_contact / world_contact_hands: the weapon and the bare hands meet the level's walls (vr/world_contact.h, cleanroom/heft/walls.h)
-    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"world_contact", L"Walls stop your weapon (experimental)", 0,
-           L"Live. VR first person (F4) only. Ticked: the weapon in your hands strikes the level's walls, pillars, trees and big props instead of passing through "
-           L"them - it stops on the surface with a small bounce and a pulse in the hand, a slash slides along, and your controller goes on into the wall while the "
-           L"weapon (and your hand on it) stays outside; it follows again when the controller comes back. Push the controller far past the wall and the weapon "
-           L"goes back into your hand through it. Only what you see: the game's attacks, its hits and your hero's movement are the game's as ever. The walls are "
-           L"made from the game's own meshes when this program starts with the box ticked (about a minute, once per game build; the status says when): a doorway "
-           L"stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop it (Debug: \"World contact: "
-           L"draw the walls\" shows them). Unticked: the weapon passes through walls, as before. Experimental: off by default, and it may still misbehave."))),
+    // [weight] wall_contact_mode (shared/wall_contact_mode.h): what stops the weapon at walls - Off, Ours (world_contact: the game's meshes, vr/world_contact.h,
+    // cleanroom/heft/walls.h) or Bear's (wall_collide: the game's wall map, vr/wall_collide.h, vr/unleashed_wall_cells.h), never two at once
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Choice(L"@wallcontact", L"mode", L"Weapon against the walls", 0,
+           {L"Off", L"Ours: the game's meshes (experimental)", L"Bear's: the game's wall map"},
+           L"Live. VR first person (F4) only. What stops the weapon in your hands at the level's walls - one of two ways, to compare them. "
+           L"OFF: the weapon passes through walls, as before. "
+           L"OURS: the walls, pillars, trees and big props from the game's own meshes - it stops on the surface with a small bounce and a pulse in the hand, a "
+           L"slash slides along. The walls are made from the game's meshes when this program starts with it chosen (about a minute, once per game build; the "
+           L"status says when): a doorway stays open, a tree stops the weapon at its trunk, not its leaves, and bushes, grass and other small plants never stop "
+           L"it (Debug: \"World contact: draw the walls\" shows them). Experimental: it may still misbehave. "
+           L"BEAR'S: the walls and closed doors of the game's own collision map (the cells arrows stop at, about half a metre each) and the floor, flat around "
+           L"your hero - it stops and slides the same way, a knock in the hand. A barrel's or a chest's footprint never stops it (the barrel itself still breaks), "
+           L"nor does an open doorway. Single player or when you host (the walls are read from the game's server). "
+           L"Either way your controller goes on into the wall while the weapon (and your hand on it) stays outside; it follows again when the controller comes "
+           L"back, and pushed far past, the weapon goes back into your hand through the wall. Only what you see and feel: the game's attacks, its hits and your "
+           L"hero's movement are the game's as ever."))),
     Needs(L"arms", L"mode", 2, Toggle(L"weight", L"world_contact_hands", L"Walls stop your bare hands (experimental)", 0,
            L"Live. VR first person (F4) only. Ticked: an empty hand (or one with a bow, a shield, a potion) is held at the surface of the level's walls, pillars, "
            L"trees and big props while your controller goes on into them, sliding along as you move; it comes back with the controller. Push the controller "
@@ -6039,6 +6149,11 @@ std::vector<Item> g_items = {
            L"is felt in both hands (and heard, with the clash sound below), resting one on the other is silent. With 'Heads as their own volume' ticked (hit by touch) "
            L"an axe's blade, a hammer's face, a mace's head is steel of its own beside the shaft, where the game's model has it: a sword stops on it too. Only how they "
            L"move, feel and sound - no hit, nothing of the game's. Unticked: they pass through each other, as before."))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"shield_collide", L"The weapon strikes your own shield", 1,
+           L"Live. VR first person (F4) only. The weapon in one hand meets the shield on your other arm: it stops on the shield's face and slides along it - the "
+           L"shield's shape is the game's own model, where the game draws it - and the hand on the weapon gives way while your controller goes on, up to 60 cm; "
+           L"pressed further, the weapon goes through until it is clear. A knock is felt in both hands, and a hard blow plays the game's own block sound. Only how "
+           L"they move, feel and sound - never an attack, a block or anything of the game's. Unticked: the weapon passes through your shield, as before."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"clash_sound", L"Steel on steel sounds: the harder the knock, the louder", 1,
            L"Live. The two weapons in your hands striking each other, and a parry's clash (a monster's weapon meeting your weapon or shield), play the game's own "
            L"block sound - as loud as they met hard: a light tap quiet, a hard blow as loud as the game plays it, under 0.5 m/s nothing. The pulse in the hands "
@@ -6200,6 +6315,13 @@ std::vector<Item> g_items = {
            L"more; higher: the weapon goes through more. Takes effect a moment later (the props' world is made anew)."))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Slider(L"weight", L"knock_haptic_pct", L"Knock: the pulse in the hand, %", 0, 100, 5, 35,
            L"Live. The short pulse in the hand whose weapon set a prop going (harder for a harder knock). 0: none."))),
+    // [weight] prop_heft: a prop's mass by its kind and size, the knock's tick or thud (vr/unleashed_prop_heft.h, MPL 2.0)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Toggle(L"weight", L"prop_heft", L"Props have weight: a tick for a cup, a thud for a barrel", 1,
+           L"Live. Ticked: each prop weighs what its kind and size say - a cup about 0.2 kg, a stool 2, a chair 10, a barrel 48, a sack of grain 60. A light poke sends "
+           L"a cup flying, a sword barely shifts a barrel, a maul shoves it. The hand whose weapon sets one going feels it too: a light, short tick for a cup or a plate, "
+           L"a hard knock and a longer, duller thud after it for a barrel, a sack or a chair (harder the more of your swing the prop took, so a dagger feels a barrel more "
+           L"than a maul does); the pulse's strength is the slider above. The masses need a weight library that takes them (the log says so); with an older one only the "
+           L"pulse changes. Unticked: the props weigh what their material says and every knock is the same short pulse, as before."))),
     // [weight] grab_props: an empty hand's grip takes a prop (vr/knock_props.h, grab_wire.cpp; the hands are the props world's, D2rpSetHands)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Toggle(L"weight", L"grab_props", L"Take the props in your hand (a test)", 0,
            L"Live. Ticked: squeeze the grip of an EMPTY hand (no weapon, shield, bow or bottle in it) firmly with the palm on or near a cup, a jar, a book, a skull, a stool... "
@@ -6414,7 +6536,7 @@ std::vector<Item> g_items = {
            L"it cannot take the weapon. Live."))),
     // The shield put away, and its no-block (a server rule): hidden, off as shipped - Serg, 2026-11-02: «уборку щита можно вообще отключить, она не имеет значения».
     // The keys still work from the ini.
-    Hide(Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield_stow", L"... and the shield can be put away and drawn from behind the left shoulder", 0,
+    Hide(Needs(L"arms", L"mode", 2, Needs(L"hands", L"shoulder_draw", 1, Toggle(L"hands", L"shoulder_draw_shield_stow", L"... and the shield can be put away and drawn from behind the left shoulder", 1,
            L"A grip squeezed behind the LEFT shoulder by a hand that holds nothing PUTS THE SHIELD AWAY (it is not drawn and bashes nothing; it is still your equipped shield) - or, as with a "
            L"weapon, carry it there: the hand that wears the shield holds its grip (squeezed anywhere, or held already) and LETS GO behind the left shoulder. The "
            L"same grip while it is away DRAWS it onto the arm of the hand that reached - the right hand puts it on the right forearm, mirrored. Independent of the tick above: "
@@ -6498,6 +6620,12 @@ std::vector<Item> g_items = {
            L"Live. When the weapon hits a monster by touch (Strikes: hit by touch), the head bounces back off it: 100 = it comes back at about a third of "
            L"its speed; 0 = no bounce (it swings through); 200 = it is thrown back harder. Only the look - the hit itself is the game's."))),
     Only(kVr, Tab(L"Fists")),
+    // [fist] from_knuckle (vr/finger_chain.h): the curl starts at the knuckle the rig's own bones tell; live
+    Needs(L"arms", L"mode", 2, Toggle(L"fist", L"from_knuckle", L"Fingers bend at the knuckles, not in the palm", 1,
+           L"On: a closing hand's fingers bend at the knuckle and the two joints after it, where the hero's own skeleton has them. The Amazon's, the Paladin's and the "
+           L"Druid's fingers each start with a bone inside the palm; bending that one folded the palm in half - twisted knuckles, the thumb across the index. "
+           L"The other heroes' hands are the same either way. If the Amazon's, the Paladin's or the Druid's fist now closes too little, raise their "
+           L"\"Grip squeezed\" below. Untick for the hands as they were up to 0.215.")),
     Group(L"Amazon", L"How far the Amazon's empty hand closes with the grip squeezed and how bent it stays with the grip let go. Each hero's hand is built differently, so it is set per hero."),
     Needs(L"arms", L"mode", 2, Slider(L"fist", L"amazon_close", L"Grip squeezed, %", 0, 150, 1, 100, 
            L"With the arms on the controllers, a hand holding nothing (or the left one on a two-handed hilt) closes as you squeeze the grip: "
@@ -6610,6 +6738,10 @@ std::vector<Item> g_items = {
            L"A PlayStation VR2's Sense controllers under SteamVR do not show short, gentle pulses (a Quest's do): the low-life heartbeat, the low mana alert, a "
            L"cast's pulse and the game's soft rumble are lifted for them to a strength they show, in the same order (stronger stays stronger). By the headset's "
            L"name: weak for a PlayStation VR2, plain for the rest (the log says which). Plain: every pulse as it is made. Live.")),
+    Needs(L"openxr", L"haptics", 1, Slider(L"openxr", L"haptics_index_frequency_hz", L"Vibration: Valve Index frequency (Hz)", 0.0f, 320.0f, 10.0f, 170.0f,
+           L"Valve Index controllers stay silent when a pulse comes with no frequency (SteamVR plays it as 0 Hz), so an Index hand's pulses are sent at "
+           L"this frequency. Only Index controllers are touched; every other controller is as before. 0 = no frequency for the Index too, as before "
+           L"(silent). Live.")),
     Group(L"Blows", L"How a blow feels. Hit by touch (Strikes) counts a contact when the blade meets a monster fast enough; the game then rolls the blow."),
     Needs(L"openxr", L"haptics", 1, Toggle(L"openxr", L"haptics_touch", L"A pulse on every counted touch, landed or not", 0,
            L"Hit by touch: the blade's hand buzzes the moment a contact is counted, whether the game then lands the blow, misses it or refuses it - you feel "
@@ -7159,7 +7291,7 @@ std::vector<Item> g_items = {
            L"The outline round the monster or item under the pointer (its mask and two full-screen blurs) is not drawn. VR first person (F4) only. Live."),
     // [render] phantom_rects (vr/phantom_rect.h): our wrist-orb pass in rectangles - off by default in 0.208 (Serg: of today's performance
     // features only one pass ships on), the tick to try it
-    Toggle(L"render", L"phantom_rects", L"Our wrist orbs' pass only where the orbs are (the same picture, cheaper)", 0,
+    Toggle(L"render", L"phantom_rects", L"Our wrist orbs' pass only where the orbs are (the same picture, cheaper)", 1,
            L"Our effect draws the wrist orbs, the quiver's orbs, the arrow's glow and the merc tint in one pass that went over the whole picture (0.93 ms a present at 2880 x 2880). Ticked: only the rectangles they reach are drawn - the picture is the same, pixel for pixel; the whole picture still while the low-life or low-mana vignette, the point skill's arc or a debug draw is on. The log says every 10 s how much of the picture it drew and its time. Live. Unticked: the whole picture, as before (to compare)."),
     // ([render] bench_lit_flat / _level / _colour: on Performance > Render cost as the Potato light now; the bench keys still work in the ini)
     // [render] bench_skip_point_lights (vr/bench_lights.h): the game's light bins and volumes given no light - the sun alone
@@ -7442,6 +7574,12 @@ constexpr int kPresets = qualitypreset::kCount;   // Potato, Low, Medium; then C
 using PresetKey = qualitypreset::Key;
 constexpr const auto& kPreset = qualitypreset::kKeys;
 float ReadValue(const Item& it);
+void StartSolidsCatalog();
+// [weight] wall_contact_mode as the plugin reads it (shared/wall_contact_mode.h): missing, an old world_contact=1 is Ours
+int WallContactMode() {
+    return wallcontact::FromKeys((float)(int)GetPrivateProfileIntW(L"weight", L"wall_contact_mode", -1, g_ini),
+                                 GetPrivateProfileIntW(L"weight", L"world_contact", 0, g_ini) != 0);
+}
 const Item* PresetItem(const wchar_t* section, const wchar_t* key) {
     for (const Item& it : g_items)
         if (it.key && it.section && wcscmp(it.section, section) == 0 && wcscmp(it.key, key) == 0) return &it;
@@ -7851,6 +7989,7 @@ float ReadValue(const Item& it) {
         if (way == drawby::kGame && GetPrivateProfileIntW(L"fog", L"game_fog_planes", 0, g_ini) != 0) return 3.0f;   // (the planes: the game's fog drawn as them)
         return way == drawby::kGame ? 1.0f : way == drawby::kOurs ? 2.0f : 0.0f;
     }
+    if (wcscmp(it.section, L"@wallcontact") == 0) return (float)WallContactMode();   // Weapon against the walls: Off 0, Ours 1, Bear's 2 ([weight] wall_contact_mode)
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: Off 0 / 0, By the rules 2 / 1, Fully on 1 / 2 ([gameplay] melee_direct / melee_direct_client)
         return (float)directhit::FromKeys(GetPrivateProfileIntW(L"gameplay", L"melee_direct", 0, g_ini), GetPrivateProfileIntW(L"gameplay", L"melee_direct_client", 0, g_ini),
                                           (int)GetPrivateProfileIntW(L"gameplay", L"melee_direct_scope", -1, g_ini), GetPrivateProfileIntW(L"gameplay", L"quick_blow", 1, g_ini) != 0);
@@ -7924,6 +8063,14 @@ void WriteValue(const Item& it, float v) {
         WritePrivateProfileStringW(L"fog", L"game_fog_planes", pick == 3 ? L"1" : L"0", g_ini);   // (Fog planes before the player: the game's fog as planes)
         RefreshControls();   // (each block greyed or not by the two keys)
         ShowPreset();
+        return;
+    }
+    if (wcscmp(it.section, L"@wallcontact") == 0) {   // Weapon against the walls: the one key, and world_contact kept saying whether Ours is on (an older plugin reads it)
+        const int m = wallcontact::FromKeys(v, false);
+        WritePrivateProfileStringW(L"weight", L"wall_contact_mode", std::to_wstring(m).c_str(), g_ini);
+        WritePrivateProfileStringW(L"weight", L"world_contact", m == wallcontact::kOurs ? L"1" : L"0", g_ini);
+        if (m == wallcontact::kOurs) StartSolidsCatalog();   // (Ours needs the walls made from the meshes)
+        RefreshControls();
         return;
     }
     if (wcscmp(it.section, L"@directhit") == 0) {   // Direct hit: one choice writes the key where the server runs and the joined player's
@@ -8406,9 +8553,10 @@ void Build(HWND page) {
                     nd.orItem = (int)j;
             }
     for (Item& it : g_items)
-        if (it.showFor.key)
-            for (size_t j = 0; j < g_items.size(); ++j)
-                if (g_items[j].key && wcscmp(g_items[j].section, it.showFor.section) == 0 && wcscmp(g_items[j].key, it.showFor.key) == 0) it.showFor.item = (int)j;
+        for (Item::ShowFor* sf : {&it.showFor, &it.showAlso})
+            if (sf->key)
+                for (size_t j = 0; j < g_items.size(); ++j)
+                    if (g_items[j].key && wcscmp(g_items[j].section, sf->section) == 0 && wcscmp(g_items[j].key, sf->key) == 0) sf->item = (int)j;
 }
 
 // Greys out what the current values make unused (the FOV slider while the FOV comes from FlatVR...).
@@ -8454,9 +8602,13 @@ void UpdateVrsStatus() {
 void UpdateEnabled() {
     bool moved = false;   // a ShowFor item came or went: the page laid out again
     for (Item& it : g_items) {
-        if (it.showFor.item < 0) continue;
-        const long v = std::lround(ReadValue(g_items[it.showFor.item]));
-        const bool off = v < 0 || v > 31 || !(it.showFor.mask & (1u << v));
+        if (it.showFor.item < 0 && it.showAlso.item < 0) continue;
+        bool off = false;
+        for (const Item::ShowFor* sf : {&it.showFor, &it.showAlso}) {
+            if (sf->item < 0) continue;
+            const long v = std::lround(ReadValue(g_items[sf->item]));
+            off = off || v < 0 || v > 31 || !(sf->mask & (1u << v));
+        }
         if (off != it.off) { it.off = off; moved = true; }
     }
     if (moved && g_page) LayoutPage();
@@ -12499,7 +12651,7 @@ void SolidsThread(HWND wnd, std::wstring game, std::wstring pluginDir) {
 }
 
 void StartSolidsCatalog() {
-    const bool on = GetPrivateProfileIntW(L"weight", L"world_contact", 0, g_ini) != 0 || GetPrivateProfileIntW(L"weight", L"world_contact_hands", 0, g_ini) != 0;
+    const bool on = WallContactMode() == wallcontact::kOurs || GetPrivateProfileIntW(L"weight", L"world_contact_hands", 0, g_ini) != 0;
     if (!on) {
         SetStatus(L"world_contact", kUnknown, TR(L"@status.world_contact.label", L"World contact walls: off ([weight] world_contact, Weapon Weight)"));
         return;
@@ -12604,6 +12756,37 @@ void StartHoles() {
         }).detach();
     } catch (const std::exception&) {
         LogLine(L"world holes: could not be started");
+    }
+}
+
+// [hud] wrist_game_models: the wrist medallions' game models made from the player's own game (orb_assets.cpp), at the start on a thread of its own and
+// when the tick or the glow changes (off: ours taken out); the result to the log. The same here and now for Setup's --prepare-assets.
+// [hud] wrist_look 2 (the game's own models) took the place of the separate tick [hud] wrist_game_models (0.215.8, Serg: "add the old way to this
+// selector"): an ini with wrist_look 0 and the tick on is moved once to wrist_look 2 with the tick off - so the Look opens on "Drawn by the game's own
+// models" and a later "3D glass balls drawn by the mod" means the mod's. The plugin reads the old pair the same way for an ini not moved yet.
+void MoveWristLook() {
+    if (GetPrivateProfileIntW(L"hud", L"wrist_look", 0, g_ini) != 0 || GetPrivateProfileIntW(L"hud", L"wrist_game_models", 0, g_ini) == 0) return;
+    if (WritePrivateProfileStringW(L"hud", L"wrist_look", L"2", g_ini) && WritePrivateProfileStringW(L"hud", L"wrist_game_models", L"0", g_ini))
+        LogLine(L"wrist medallions: [hud] wrist_game_models=1 moved onto the Look - wrist_look=2 (drawn by the game's own models), wrist_game_models=0");
+}
+
+orbassets::Result PrepareOrbsNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    wchar_t glow[32] = {};
+    GetPrivateProfileStringW(L"hud", L"wrist_game_glow", L"25", glow, 32, g_ini);
+    const int look = GetPrivateProfileIntW(L"hud", L"wrist_look", 0, g_ini);
+    return orbassets::Prepare(game, modRoot, look == 2 || (look == 0 && GetPrivateProfileIntW(L"hud", L"wrist_game_models", 0, g_ini) != 0), (float)_wtof(glow),
+                              GetPrivateProfileIntW(L"hud", L"wrist_game_liquid_glass", 0, g_ini) != 0);
+}
+void StartOrbs() {
+    try {
+        std::thread([] {
+            const orbassets::Result r = PrepareOrbsNow();
+            LogLine(L"wrist medallions by the game: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"wrist medallions by the game: could not be started");
     }
 }
 
@@ -12726,7 +12909,7 @@ std::atomic<bool> g_modsAgain{false};
 datamods::Result SyncDataMods() {
     const std::wstring game = GameFolder();
     const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
-    const bool on = GetPrivateProfileIntW(L"mods", L"merge_data_mods", 1, g_ini) != 0;
+    const bool on = GetPrivateProfileIntW(L"mods", L"merge_data_mods", 0, g_ini) != 0;
     wchar_t skip[1024] = {};
     GetPrivateProfileStringW(L"mods", L"merge_skip", L"", skip, 1024, g_ini);
     datamods::Result r;
@@ -13174,6 +13357,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 const float v = FromPos(it, (int)SendMessageW(it.ctl, TBM_GETPOS, 0, 0));
                 ShowValue(it, v);
                 WriteValue(it, v);
+                if (LOWORD(w) == TB_ENDTRACK && wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"wrist_game_glow") == 0) StartOrbs();   // (baked into the liquid's file)
             }
         }
         return 0;
@@ -13235,6 +13419,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 UpdateEnabled();
                 if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"game_sky") == 0) StartSkyDome();   // (a choice since the dome: its files made or taken out now)
                 if (wcscmp(it.section, L"ceiling") == 0 && wcscmp(it.key, L"game_ceiling") == 0) StartGameCeiling();
+                if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"wrist_look") == 0) StartOrbs();   // (the game's own models: their files made or taken out)
             } else if (HIWORD(w) == BN_CLICKED && it.kind == Kind::Button && wcscmp(it.section, L"@update") == 0) {
                 if (wcscmp(it.key, L"check_now") == 0) StartUpdateCheck(true);
                 else OpenDownload();
@@ -13267,9 +13452,10 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"update") == 0) StartUpdateCheck();   // switched on, or the other channel
                 if (wcscmp(it.section, L"sky") == 0 && wcscmp(it.key, L"arcane_sky") == 0) StartArcaneSky();
                 if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"knock_props") == 0 || wcscmp(it.key, L"grab_items") == 0)) StartPropsCatalog();
-                if (wcscmp(it.section, L"weight") == 0 && (wcscmp(it.key, L"world_contact") == 0 || wcscmp(it.key, L"world_contact_hands") == 0)) StartSolidsCatalog();
+                if (wcscmp(it.section, L"weight") == 0 && wcscmp(it.key, L"world_contact_hands") == 0) StartSolidsCatalog();   // ([weight] wall_contact_mode's Ours: its own write)
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"patch_world") == 0) StartHoles();
+                if (wcscmp(it.section, L"hud") == 0 && (wcscmp(it.key, L"wrist_game_models") == 0 || wcscmp(it.key, L"wrist_game_liquid_glass") == 0)) StartOrbs();
                 if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
@@ -13329,6 +13515,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartSkyDome();
         StartGameCeiling();
         StartHoles();
+        StartOrbs();
         StartCampfireScene();
         StartMenuArt();
         StartPortraits();
@@ -13638,6 +13825,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             // Setup goes on whatever comes back: the program makes them again at its next start.
             LocalFree(argv);
             FindIni();   // the mod's d2r_vr.ini (mods\D2R-VR\d2rloader\plugins), as the window finds it - not a path of the global layout
+            if (GetFileAttributesW(g_ini) != INVALID_FILE_ATTRIBUTES) MoveWristLook();   // (the Look's second entry, before the makers read it)
             // A player who installs and presses Play in the launcher without opening this window got no dome and no ceiling (Serg: "или
             // будет чёрное небо"): the window's own makers run here too, each by its own ticks (off: ours taken out, as the window does) -
             // none changes what this returns; each one's time in the log
@@ -13650,6 +13838,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
             timed(L"world holes", [] { return PrepareHolesNow().text; });           // [holes] patch_world: the patches over the world's holes
+            timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });   // [hud] wrist_game_models: the medallions' game models
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });     // [campfire] enabled: character creation's scene round the fire
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
@@ -13698,6 +13887,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
 
     FindIni();
     LoadLanguage();   // ([settings] language of d2r_vr_settings.ini, or Windows' language: before any word is shown)
+    if (GetFileAttributesW(g_ini) != INVALID_FILE_ATTRIBUTES) MoveWristLook();   // (before the page reads the Look)
     lang::g_tr = TR;  // (the asset makers' and the other mods' lines too)
     if (GetFileAttributesW(g_ini) == INVALID_FILE_ATTRIBUTES) {
         MessageBoxW(nullptr, TR(L"msg.no_ini", L"There is no d2r_vr.ini in mods\\D2R-VR\\d2rloader\\plugins (nor in d2rloader\\plugins) next to this program.\n"

@@ -72,6 +72,19 @@ Third-party parts, each under its own licence:
     cleanroom/camera/d2rcam.cpp marked [campfire] are from it too)
     vr/vr_keyboard_unleashed.h, cleanroom/tests/unleashed_vr_keyboard_test.cpp - the keyboard for a new character's name
     ([openxr] name_keyboard; 29d29b0, df1cf3a, by Kudlatytrue)
+    vr/unleashed_game_patches.h, vr/unleashed_game_patches.cpp, vr/unleashed_game_patch_signatures.h,
+    vr/unleashed_game_patch_plan.h, vr/unleashed_cull_volume.h, cleanroom/tests/unleashed_game_patch_plan_test.cpp,
+    cleanroom/tests/unleashed_cull_volume_test.cpp - six patches of the game's own render code ([game_patches];
+    853607f, 133465a, 30083a1, 9b9e28e, 1289b9a, v0.3.33)
+    vr/unleashed_effect_listener_guard.h, cleanroom/tests/unleashed_effect_listener_guard_test.cpp - a guard against the
+    game's crash when a particle effect ends ([game_patches] effect_listener_guard; b1078de, v0.3.34)
+    vr/unleashed_cinema_screen.h, cleanroom/tests/unleashed_cinema_screen_test.cpp - the game's cinematics on a big screen in the world
+    ([cinema] world_screen; steamvr/cinema_screen.h and cinema_screen_test.cpp at 7e470e3, a28bee8, df3f71d; the parts of
+    vr/gamestate.cpp, vr/xr.cpp and vr/frame/frame_order.cpp marked [cinema] call into it)
+    vr/unleashed_prop_heft.h, cleanroom/tests/unleashed_prop_heft_test.cpp - props have weight: a knockable prop's
+    mass by its kind and size, the knock's tick or thud ([weight] prop_heft; steamvr/prop_heft.h and prop_heft_test.cpp at fbb31fb)
+    vr/unleashed_wall_cells.h, vr/unleashed_wall_cells_game.h, vr/unleashed_wall_cells.cpp, cleanroom/tests/unleashed_wall_cells_test.cpp -
+    the weapon stops at the game's walls, closed doors and the floor ([weight] wall_contact_mode 2 (Bear's); b0f8eb1, "Weapons hit walls")
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

@@ -28,6 +28,11 @@ void Init(LogFn log, PulseFn pulse, const wchar_t* pluginDir);
 // [weight] knock_props (off by default), [weight] knock_strength_pct (the hands' drive on the weapon, 100), knock_haptic (0..1, the pulse of a knock, 0.35); from the ini.
 void Configure(bool on, float strengthPct, float haptic);
 bool Wanted();
+// [weight] prop_heft (off by default; live): each prop weighs what its kind and size say (vr/unleashed_prop_heft.h, MPL 2.0 - a cup 0.18 kg, a barrel 48):
+// the props world takes each mass (the library's optional D2rpSetPropMass, handed over after D2rpSetProps; switched, the world is made anew) and the hand
+// whose weapon sets one going feels it - a light tick for a light thing, a knock and a thud for a heavy one; the trace names the mass. A library without
+// D2rpSetPropMass: only the pulse. Off: no call, the props weigh their material, every knock the same short pulse, as before.
+void ConfigureHeft(bool on);
 // [debug] knock_props_trace (live): a log line for every knock and every scan (what is near, what each stands on). The log only.
 void SetTrace(bool on);
 // [debug] knock_props_glow (live, off): every prop in the props world (the catalogued ones within 3 m) lit with the game's own hover highlight, h (vr/belt_glow.h) - to see

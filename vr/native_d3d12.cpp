@@ -40,6 +40,7 @@ void LogF(const char* fmt, ...) {
 }
 
 thread_local bool t_ours = false;      // between OpenList and Submit: our own list's calls are not the game's
+thread_local ID3D12GraphicsCommandList* t_swapList = nullptr;   // HookSetPso: the list a psoSwap is for (SwapList)
 thread_local int t_present = 0;        // inside a Present (Present1 may come through Present): the sink once
 thread_local int t_create = 0;         // inside a swap chain's creation (one may make it through the other)
 // Inside a list's hooked call: the D3D12 debug layer's list forwards each call to the runtime's, both hooked - only the outer one is told
@@ -151,6 +152,27 @@ bool Ours(ID3D12Resource* r) {
     size = std::min<UINT>(size, sizeof name - sizeof(wchar_t));
     if (FAILED(r->GetPrivateData(kName, &size, name))) return false;
     return wcsncmp(name, L"d2rvr", 5) == 0;
+}
+bool ResourceNameImpl(ID3D12Resource* r, char* out, size_t n) {
+    if (!r || !out || n < 2) return false;
+    out[0] = 0;
+    static const GUID kNameA = {0x429b8c22, 0x9188, 0x4b0c, {0x87, 0x42, 0xac, 0xb0, 0xbf, 0x85, 0xc2, 0x00}};   // WKPDID_D3DDebugObjectName
+    static const GUID kNameW = {0x4cca5fd8, 0x921f, 0x42c8, {0x85, 0x66, 0x70, 0xca, 0xf2, 0xa9, 0xb7, 0x41}};   // WKPDID_D3DDebugObjectNameW
+    UINT size = (UINT)(n - 1);
+    if (SUCCEEDED(r->GetPrivateData(kNameA, &size, out)) && size) {
+        out[size < n ? size : n - 1] = 0;
+        return out[0] != 0;
+    }
+    wchar_t w[96] = L"";
+    size = sizeof w - sizeof(wchar_t);
+    if (SUCCEEDED(r->GetPrivateData(kNameW, &size, w)) && size) {
+        w[size / sizeof(wchar_t)] = 0;
+        size_t i = 0;
+        for (; w[i] && i + 1 < n; ++i) out[i] = w[i] < 128 ? (char)w[i] : '?';
+        out[i] = 0;
+        return out[0] != 0;
+    }
+    return false;
 }
 // ... and its render-target views ([hud]: which one is the interface's layer)
 using CreateRtvFn = void(STDMETHODCALLTYPE*)(ID3D12Device*, ID3D12Resource*, const D3D12_RENDER_TARGET_VIEW_DESC*, D3D12_CPU_DESCRIPTOR_HANDLE);
@@ -659,7 +681,11 @@ void STDMETHODCALLTYPE HookSetPso(ID3D12GraphicsCommandList* cl, ID3D12PipelineS
     if (in.outer && !t_ours) Count(kCensusPso);
     if (in.outer && !t_ours && g_sinks.huntBound) g_sinks.huntBound(cl, pso);   // (the game's own, before a swap of ours)
     if (in.outer && !t_ours && g_sinks.vrsBound) g_sinks.vrsBound(cl, pso);     // [render] foveated: the game's own too
-    if (pso && !t_ours && g_sinks.psoSwap) pso = g_sinks.psoSwap(pso);
+    if (pso && !t_ours && g_sinks.psoSwap) {
+        t_swapList = cl;
+        pso = g_sinks.psoSwap(pso);
+        t_swapList = nullptr;
+    }
     g_origSetPso(cl, pso);
     if (in.outer && !t_ours && g_sinks.fxBound) g_sinks.fxBound(cl, pso);
 }
@@ -1335,9 +1361,11 @@ void TrackSceneViews(bool on) { g_trackSrv.store(on); }
 void WatchDomeAtlas(bool on) { g_watchAtlas.store(on, std::memory_order_relaxed); }
 void SetAtlasStandIn(AtlasStandInFn fn) { g_atlasStandIn.store(fn); }
 ID3D12Resource* SrvResource(uint64_t handle) { return SrvAt((SIZE_T)handle); }
+bool ResourceName(ID3D12Resource* r, char* out, size_t n) { return ResourceNameImpl(r, out, n); }
 unsigned SrvIncrement() { return g_srvInc.load(); }
 ID3D12CommandQueue* GameQueue() { return g_queue.load(); }
 void SetOurs(bool ours) { t_ours = ours; }
+ID3D12GraphicsCommandList* SwapList() { return t_swapList; }
 bool HoldsHook(void* fn) {
     std::lock_guard<std::mutex> l(g_hookMx);
     return fn && std::find(g_hooked.begin(), g_hooked.end(), fn) != g_hooked.end();

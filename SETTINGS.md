@@ -1340,7 +1340,10 @@ each controller's motor has its own vibration action, so a pulse cannot go to th
 hand), *stop each pulse on time* (on: a pulse is stopped by its own call when its time is
 up, even while the game loads - some controllers buzzed on past a short pulse) and *the
 controllers' motor* (by the headset's name; weak for a PlayStation VR2, whose Sense
-controllers do not show gentle pulses: they are lifted).
+controllers do not show gentle pulses: they are lifted). *Valve Index frequency (Hz)*
+(170): Index controllers stayed silent because every pulse went out without a frequency,
+which SteamVR plays there as 0 Hz; an Index hand's pulses are now sent at this frequency.
+Every other controller is as before; 0 = no frequency for the Index too, as before.
 
 New, each off by default (after bearstonem/d2r-pcvr, MIT):
 
