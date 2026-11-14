@@ -108,6 +108,7 @@ void LogF(const char* fmt, ...) {
 std::atomic<int> g_hide{0};   // 0 nothing, 1 the toolbar, 2 everything
 std::atomic<float> g_uiScale{1.0f};
 std::atomic<float> g_gameUiScale{0.0f};   // the game's own interface scale, pixels a layout unit (SetGameInterfaceScale; 0 not known): where the map's box is looked for
+std::atomic<uint32_t> g_winW{0};          // the game window's client width (SetGameWindowWidth; 0 not known): how wide the map's box is (vr/minimap_box.h WindowBox)
 std::atomic<float> g_projRatio{0.0f};     // F4: our projection's x scale over its y scale (SetMapProjection; 0 the game's own shape): how wide the map's box is drawn
 std::atomic<float> g_cutUp{0.0f}, g_cutDown{0.0f};   // [hud] hide_up_pct / hide_down_pct: the toolbar's strip taller above / below, percent of the layer's height
 std::atomic<bool> g_cutTint{false};                  // [debug] hide_strip_tint: the strip taken out is painted a see-through magenta instead, to see its edges
@@ -336,7 +337,8 @@ float GameSafe(const minimapbox::Canvas& c) { return minimapbox::SafeFromScale(g
 float MapStretch(const minimapbox::Canvas& c) { return minimapbox::Stretch(g_projRatio.load(), 1.0f, c.w, c.h); }
 bool IsMapScissor(const rect& r, const Drawing& d) {
     const minimapbox::Canvas c = CanvasOf(d);
-    return minimapbox::Find(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, GameSafe(c), g_uiScale.load(), g_mapCorner.load(), MapStretch(c)) != 0;
+    return minimapbox::Find(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, GameSafe(c), g_uiScale.load(), g_mapCorner.load(), MapStretch(c),
+                            g_winW.load()) != 0;
 }
 
 // The map scissor last seen, and the layer size it was seen at: what the
@@ -383,20 +385,22 @@ void TellNoMap(uint32_t w, uint32_t h) {
     uint64_t upper = 0;
     for (int i = 0; i < g_seenN; ++i) upper += g_seenBoxes[i].top - c.y < (int32_t)(c.h / 2) ? 1 : 0;
     static uint64_t told = 0;
+    const uint32_t winW = g_winW.load();
     const uint64_t key = (uint64_t)w << 48 ^ (uint64_t)h << 32 ^ (uint64_t)(game * 1000.0f) << 16 ^ (uint64_t)(file * 1000.0f) ^ (uint64_t)(stretch * 100.0f) << 8
-                         ^ (upper ? 1ull << 63 : 0);
+                         ^ (uint64_t)winW << 20 ^ (upper ? 1ull << 63 : 0);
     if (key == told) return;
     told = key;
     static int lines = 0;   // (the map opened and shut again and again: not a line every ten seconds all session)
     if (++lines > 20) return;
     char line[640];
     int n = snprintf(line, sizeof line, "hud: no map box in the game's interface on a %ux%u layer (canvas %d,%d %ux%u; interface area %.3f by the game's "
-                     "scale, %.3f by Settings.json; corner %d; drawn %.2f times as wide) - the map off in the game (Tab), or not where it is looked "
-                     "for; its boxes:", w, h, c.x, c.y, c.w, c.h, game, file, g_mapCorner.load(), stretch);
+                     "scale, %.3f by Settings.json; corner %d; drawn %.2f times as wide; the window %u wide: a box ~%u) - the map off in the game (Tab), "
+                     "or not where it is looked for; its boxes:", w, h, c.x, c.y, c.w, c.h, game, file, g_mapCorner.load(), stretch, winW,
+                     (unsigned)((float)winW * minimapbox::kWindowShare + 0.5f));
     const float safe = game > 0.0f ? game : file;
     for (int i = 0; i < g_seenN && n > 0 && n < (int)sizeof line; ++i) {
         const rect& r = g_seenBoxes[i];
-        const char* why = minimapbox::WhyNot(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, safe, g_mapCorner.load(), stretch);
+        const char* why = minimapbox::WhyNot(minimapbox::Box{r.left, r.top, r.right, r.bottom}, c, safe, g_mapCorner.load(), stretch, winW);
         n += snprintf(line + n, sizeof line - n, " %d,%d-%d,%d (%s)", r.left, r.top, r.right, r.bottom, why ? why : "?");
     }
     if (!g_seenN && n > 0 && n < (int)sizeof line) snprintf(line + n, sizeof line - n, " none");
@@ -1077,6 +1081,7 @@ void SetInterfaceScale(float s) { g_uiScale.store(std::clamp(s, 0.3f, 1.0f)); }
 void SetGlobeNudge(float in, float dy, float scale) { g_globeIn.store(in); g_globeDy.store(dy); g_globeScale.store(scale); }
 void SetControllerLayout(int controller) { g_controllerLayout.store(controller); }
 void SetGameInterfaceScale(float k) { g_gameUiScale.store(std::isfinite(k) && k > 0.05f && k < 20.0f ? k : 0.0f); }
+void SetGameWindowWidth(uint32_t w) { g_winW.store(w); }
 void SetMapProjection(float ratio) { g_projRatio.store(std::isfinite(ratio) && ratio > 0.0f ? ratio : 0.0f); }
 void SetToolbarCut(float upPct, float downPct, bool tint) {
     g_cutUp.store(hudrects::UpPct(upPct));

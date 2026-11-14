@@ -2712,13 +2712,25 @@ std::vector<Item> g_items = {
     // [hud_third], [hud_floor] and [hud_inside] are that view's own; unset, the old shared
     // [hud] value is read (vrcam does the same). Full body keeps [hud].
     Only(kVr, Tab(L"UI: F1 above")),
-    Group(L"View from above", L"How the view from above (F1) is drawn. Tick Real geometry to see it through our own camera in true perspective and real stereo instead of the game's flat picture; the tilt slider turns the camera nearer the horizon, to show more of the world ahead."),
+    Group(L"View from above", L"How the view from above (F1) is drawn. Tick Real geometry to see it through our own camera in true perspective and real stereo instead of the game's flat picture; the tilt slider turns the camera nearer the horizon, to show more of the world ahead; the distance slider zooms out for more of the world round the hero; the game's own sky and fog can be drawn round it."),
     Toggle(L"top", L"perspective", L"Real geometry", 0,
            L"The view from above through our own camera: the same picture, but in true perspective - the field of view of "
            L"the FlatVR screen and real stereo (Real stereo on the Stereo tab), the hero on the screen's plane. Off = the "
            L"game's own flat picture."),
     Needs(L"top", L"perspective", 1, Slider(L"top", L"tilt", L"Real geometry: camera tilt, °", -40, 60, 1, 0,
            L"The camera turned about the hero: more = nearer the horizon, more of the world ahead and the sky past it.")),
+    Needs(L"top", L"perspective", 1, Slider(L"top", L"distance", L"Real geometry: camera distance, %", 50, 300, 5, 100,
+           L"How far back the camera stands, % of the game's own: more = zoomed out, more of the world round the hero (all of it "
+           L"smaller), less = nearer. Clicks still land under the pointer. Far out, rooms past the Draw distance (Home) stay empty: "
+           L"raise it there. 100 = the game's own height. Live.")),
+    Needs(L"top", L"perspective", 1, Needs(L"sky", L"game_sky", 1, Toggle(L"top", L"sky", L"Real geometry: the game's own sky", 0,
+           L"The game's own sky dome round the world, as in F4 - seen past the ground when the camera is tilted towards the horizon. Only the "
+           L"game's dome (the Sky tab's \"Sky drawn by\" must be the game), nothing of ours over it. Needs Real geometry: the game's own flat "
+           L"picture is its camera looking down, with no sky. Live. Off = no sky from above, as before."))),
+    Needs(L"top", L"perspective", 1, Needs(L"fog", L"game_fog", 1, Toggle(L"top", L"fog", L"Real geometry: the game's own fog", 0,
+           L"The game's own fog over the far ground, as in F4, its distances kept round the hero (measured from the camera high above him). "
+           L"Only the game's fog pass (the World tab's fog choice must be the game's), no fog tweak of ours. Needs Real geometry: the game's "
+           L"own flat picture has no fog of the game's. Live. Off = no fog from above, as before."))),
     Group(L"Toolbar and map, from above", L"Where the toolbar, the map, the names over monsters and the mouse pointer sit in the view from above (F1). Keep the toolbar and map in the picture or hang them in the room as in F4, then size and move the toolbar and set how near the labels and the pointer are in stereo."),
     Choice(L"hud_top", L"classic", L"Toolbar and map", 0, {L"In the picture", L"Hung in the room (as F4)"},
            L"In the picture: the map as the game draws it, the toolbar at the bottom of the screen at the depth below. "
@@ -3537,8 +3549,8 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_top_down", L"Map in the hand: seen from above", 0, kMapTopDownTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_rotate", L"Map in the hand: turns with you", 0, kMapRotateTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_compass", L"Compass over the map in the hand", 0, kMapCompassTip)),
-    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_click_big", L"Map in the hand: laser click makes it big", 0, kMapClickBigTip)),
-    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_stick_zoom", L"Zoom the map: laser on it + right stick up / down", 0, kMapStickZoomTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_click_big", L"Map in the hand: laser click makes it big", 1, kMapClickBigTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_stick_zoom", L"Zoom the map: laser on it + right stick up / down", 1, kMapStickZoomTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_two_sizes", L"Map: two sizes only (small in the hand, big in front)", 1, kMapTwoSizesTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_on_hand", L"Big map held on the left hand", 0, kMapBigOnHandTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_beside_inventory", L"Map beside the inventory on the hand", 0, kMapBesideInventoryTip)),
@@ -3560,6 +3572,14 @@ std::vector<Item> g_items = {
     Needs(L"openxr", L"on", 1, ShowFor(L"hud", L"allies_place", 1u << 2, Slider(L"hud", L"allies_wrist_cols", L"Allies on the wrist: tiles across", 1, 8, 1, 3,
            L"How many tiles stand side by side over the right wrist (each a 2.5th of the wrist status panel's width); the rows are as many as your "
            L"allies need, the bottom one on the panel's place. Live."))),
+    // [hud] skill_under_map (vr/ally_portraits.h SkillTiles): the armed skills' row under the map in the hand, over the allies there (Serg, 2026-11-13)
+    Needs(L"openxr", L"on", 1, Choice(L"hud", L"skill_under_map", L"Armed skill under the map in the hand (F4)", 2,
+           {L"Never", L"Always", L"With the game's medallions"},
+           L"VR first person (F4), native OpenXR. The skill each hand has armed - what the mana and life medallions show on their bottom: on the right the "
+           L"bow's chosen skill, a skill a glyph armed, or the armed melee skill; on the left a skill a glyph armed - as the game's own icon with its name, "
+           L"in a row under the map held in your hand (and under the big map). Faint while you cannot pay it. With the allies under the map too, they move "
+           L"down by that row. With the game's medallions (the default): only while the medallions' Look is the game's models or the game's globes - they "
+           L"cannot show the icon; the mod's glass balls show it themselves. Live.")),
     Choice(L"hud", L"hide", L"Hide the game's interface", 0, {L"Nothing", L"The toolbar", L"All of it"},
            L"The game draws its whole interface into a layer of its own. \"The toolbar\" empties only the toolbar's strip "
            L"(found from the screen's size and the game's interface size); "
@@ -3614,13 +3634,8 @@ std::vector<Item> g_items = {
            L"13 is 1.65 times, 40 three times, 0 as the game draws it. The low-life beat adds on top. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Slider(L"hud", L"wrist_game_glass",
            L"Drawn by the game: glass", 0, 1, 0.05f, 0.1f,
-           L"The glass dome over the liquid: 0 no glass at all; above 0 the lesser mana potion's own glass, see-through as the game draws it (the game "
-           L"gives these models no opacity of their own to set, so the number above 0 does not change how clear it is). Live."))),
-    ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Toggle(L"hud", L"wrist_game_liquid_glass",
-           L"Drawn by the game: see-through liquid", 0,
-           L"The liquid in the game's own see-through glass (the healing potion's glass, which shows what is behind it through its colour), coloured by "
-           L"the lesser healing / lesser mana potion's own red and blue - in place of the potions' solid liquid. A test: how see-through it comes out is "
-           L"the game's. This program makes the liquid's files again when you tick it; the next start of the game."))),
+           L"The glass dome over the liquid: 0 no glass at all; above 0 the lesser mana potion's own glass, as solid as this number (the game's own "
+           L"opacity on the model: 1 solid, 0.1 nearly clear). Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, ShowAlso(L"hud", L"wrist_look", 1u << 2, Slider(L"hud", L"wrist_game_pulse",
            L"Drawn by the game: pulse when low", 0, 3, 0.1f, 1,
            L"How much brighter the liquid gets at each beat when your life is low (with Soft heartbeat at low life ticked; mana too with Balls beat with the vignettes): "
@@ -4184,7 +4199,7 @@ std::vector<Item> g_items = {
     Group(L"Day and night", L"Lets the sky and the outdoor fog darken at dusk and brighten at dawn with the game's own light. Set how bright the sky stays at night and which game light counts as full day and full night."),
     Toggle(L"sky", L"day_night", L"Sky follows the game's day and night", 1,
            L"The sky and the outdoor fog darken at dusk and brighten at dawn with the game's own light, at the same pace."),
-    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"night_brightness", L"Sky at night", 0, 1, 0.01f, 0.25f,
+    Needs(L"sky", L"day_night", 1, Slider(L"sky", L"night_brightness", L"Sky at night", 0, 1, 0.01f, 0.3f,
            L"How bright the sky and the fog stay at full night, times their day brightness.")),
     Needs(L"sky", L"day_night", 1, Slider(L"sky", L"light_day", L"Game light that is full day", 1, 255, 1, 128,
            L"The game's light runs 0..255 (vrcam's log writes it as it changes). From this up: full day.")),
@@ -5850,7 +5865,7 @@ std::vector<Item> g_items = {
     Toggle(L"stats", L"strike_stats", L"Count my strikes (statistics)", 1,
            L"VR first person (F4), Hit by touch: every blow your blade hands to the game is counted - this game and all time, for each hero and each weapon (the base item: Long Sword, Axe...): how many, the speed where the blade touched (m/s, the average and the best) and the strike's force (N s, when the weapon has weight), and the swings that touched a monster but landed nothing (too slow, or the rules: the shaft, not toward it...). The game's roll still decides hit or miss: these are the blows you struck. Kept in Saved Games > Diablo II Resurrected > D2R VR Stats > strike_stats.txt (your heroes' names stay on this computer, never in a log or a report); delete the file to start over. Counting only - nothing of the game or the touch changes. Unticked: nothing counted, the file left as it is. Live."),
     Group(L"Skills to BodyWalk", L"Your character's skills go to BodyWalk (Mapping > Game skills): give each one a gesture you record or a button there, and BodyWalk tells the game which skill to cast. The game casts it its own way, from its skill buttons."),
-    Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 0,
+    Toggle(L"gestures", L"skill_link", L"Skills to BodyWalk: a gesture or a button per skill", 1,
            L"Your character's learned skills (their names in your game's language, their trees, which of the game's skill buttons each is on) go to "
            L"BodyWalk through Game Link. In BodyWalk (Mapping > Game skills, its own tick there) you record a gesture for a skill - drawn in the air, "
            L"shown in the headset as you draw it - or give it a button. Kept in your BodyWalk profile, per class. When BodyWalk recognises the "
@@ -7057,6 +7072,12 @@ std::vector<Item> g_items = {
     Toggle(L"debug", L"own_labels_dump", L"Write our labels' and names' picture once (d2r_vr_own_labels.bmp)", 0,
            L"With our own item labels or names over monsters on: once they are shown, the picture they are drawn from (every name painted so far) is written to "
            L"d2rloader\\logs\\d2r_vr_own_labels.bmp, to hold against the game's own text. It only writes the file; it changes nothing in play."),
+    // [debug] client_size_callers (vrcam.cpp TellOtherCaller): which parts of the game still read the window's own size under a render size - view only
+    Toggle(L"debug", L"client_size_callers", L"Log the game's readers of the window size", 0,
+           L"With a render size of its own (Performance > render size) the game's picture can be much bigger than its window on the monitor (a "
+           L"small main display: a 1080p TV gives a 1020 square). Most of the game is told the picture's size; this writes to the log, once each, "
+           L"the places in the game that still read the window's own size - an interface part laid out for the small window. It only writes the "
+           L"log; it changes nothing in play."),
     Toggle(L"debug", L"frame_log", L"Log every frame", 0,
            L"Every pair, view, hero pose and present to d2r_vr_frames.csv beside the ini, and FlatVR its per-frame pose trace."),
     Toggle(L"debug", L"frame_trace", L"Log the long frames and what the plugin spent in them", 0,
@@ -12776,8 +12797,7 @@ orbassets::Result PrepareOrbsNow() {
     wchar_t glow[32] = {};
     GetPrivateProfileStringW(L"hud", L"wrist_game_glow", L"25", glow, 32, g_ini);
     const int look = GetPrivateProfileIntW(L"hud", L"wrist_look", 0, g_ini);
-    return orbassets::Prepare(game, modRoot, look == 2 || (look == 0 && GetPrivateProfileIntW(L"hud", L"wrist_game_models", 0, g_ini) != 0), (float)_wtof(glow),
-                              GetPrivateProfileIntW(L"hud", L"wrist_game_liquid_glass", 0, g_ini) != 0);
+    return orbassets::Prepare(game, modRoot, look == 2 || (look == 0 && GetPrivateProfileIntW(L"hud", L"wrist_game_models", 0, g_ini) != 0), (float)_wtof(glow));
 }
 void StartOrbs() {
     try {
@@ -13455,7 +13475,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"weight") == 0 && wcscmp(it.key, L"world_contact_hands") == 0) StartSolidsCatalog();   // ([weight] wall_contact_mode's Ours: its own write)
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"patch_world") == 0) StartHoles();
-                if (wcscmp(it.section, L"hud") == 0 && (wcscmp(it.key, L"wrist_game_models") == 0 || wcscmp(it.key, L"wrist_game_liquid_glass") == 0)) StartOrbs();
+                if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"wrist_game_models") == 0) StartOrbs();
                 if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();

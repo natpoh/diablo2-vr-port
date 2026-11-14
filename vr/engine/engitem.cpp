@@ -1529,8 +1529,9 @@ const char* DomeWhyNot() {
     v.enabled = g_enabled.load();
     v.gameDrawnFlat = g_set.gameDrawnFlat.load();
     v.tableFull = g_set.tableFull.load();
+    v.topSky = TopSky();   // ([top] sky: VR F1 through our camera)
     in.viewWhy = skydome::ViewWhyNot(v);
-    in.f4 = !*in.viewWhy && !TopPersp() && (!TableView() || TableFull());   // ([table] full_width: the table too)
+    in.f4 = !*in.viewWhy && (!TopPersp() || TopSky()) && (!TableView() || TableFull());   // ([table] full_width: the table too; [top] sky: F1)
     in.inWorld = g_inWorld.load();
     in.palette = g_skyPalette.load();
     in.act = g_fogAct.load();
@@ -1552,7 +1553,7 @@ const char* SkyCannot() {
         t.gaveUp = d->tries > 4;
         t.placeFailed = d->toldPlace && !d->inst.p;
     }
-    return skypaths::GameSkyCannot(GameDrawnView(), d != nullptr, t, g_set.gameSkybox.load() && g_gameSkyboxHere.load());
+    return skypaths::GameSkyCannot(GameDrawnView() || TopSky(), d != nullptr, t, g_set.gameSkybox.load() && g_gameSkyboxHere.load());   // ([top] sky: F1 too)
 }
 void SkyDomeFrame() {
     g_domeFrames.fetch_add(1, std::memory_order_relaxed);
@@ -2607,8 +2608,26 @@ void WristOrbsFrameLocked(bool fullBody) {
             static std::string toldWas = "-";
             if (told != toldWas) {
                 toldWas = told;
-                if (told.empty()) Log("vrcam: wrist medallions - the glass dome, the gold / bronze / silver bases and the liquid lens in the potions' own materials "
-                                      "(life, mana): all six units loaded - drawn by the game in VR F4 ([hud] wrist_game_models)");
+                if (told.empty()) {
+                    Log("vrcam: wrist medallions - the glass dome, the gold / bronze / silver bases and the liquid lens in the potions' own materials "
+                        "(life, mana): all six units loaded - drawn by the game in VR F4 ([hud] wrist_game_models)");
+                    // which material the liquids' made files are in (0.216.3: Serg's ini still had 0.216.0's wrist_game_liquid_glass on - the installed
+                    // liquid was the game's GlassMaterial, whose shader takes no per-entity opacity and draws a potion picture solid; the opacity
+                    // reached the draw, 0.15 in every call, and nothing changed on the wrist)
+                    bool glass[2] = {}, found[2] = {};
+                    for (int kind = 0; kind < 2; ++kind) {
+                        std::wstring file;
+                        const std::string bytes = ModDataText(wristorbs::kLiquidFile[kind], &file);
+                        found[kind] = !bytes.empty();
+                        glass[kind] = bytes.find("GlassMaterial") != std::string::npos;
+                    }
+                    const auto name = [&](int kind) { return !found[kind] ? "not read" : glass[kind] ? "the game's GlassMaterial" : "StandardMaterial"; };
+                    LogF("vrcam: wrist medallions - the liquids' made files: life in %s, mana in %s. %s", name(0), name(1),
+                         glass[0] || glass[1] ? "A GLASSMATERIAL LIQUID is one made by 0.216.0's wrist_game_liquid_glass (not the potions' own liquid) - D2R VR "
+                                                "Settings of this version makes them in the potions' own material again at its start; then the game "
+                                                "once more"
+                                              : "the potions' own material, as the glass dome's");
+                }
                 else LogF("vrcam: wrist medallions - these units did not load: %s (made by D2R VR Settings with [hud] wrist_game_models ticked, into the mod's data); "
                           "asked again every 10 s - not drawn till then", told.c_str());
             }
@@ -2616,6 +2635,7 @@ void WristOrbsFrameLocked(bool fullBody) {
     }
     uint32_t litEnt[beltglow::kMaxOrbs];
     float litH[beltglow::kMaxOrbs], litOp[beltglow::kMaxOrbs];
+    uint8_t litRole[beltglow::kMaxOrbs] = {};   // (0 the glass, 1 the liquid: the log's line of what the draw has)
     int lit = 0;
     bool liquidUsed[2] = {};
     for (int k = 0; k < 2; ++k) {
@@ -2647,10 +2667,11 @@ void WristOrbsFrameLocked(bool fullBody) {
         const bool shown = fresh && wristmodels::Matrices(o, m, show, &level);
         const int kind = o.kind == wristorbs::kMana ? 1 : 0;
         if (shown && show[wristmodels::kGlass] && ShowWrist(g_wristGlass[k], g_wristDef[0], m[wristmodels::kGlass], k ? "second medallion's glass" : "first medallion's glass")) {
-            uint32_t e[16];   // see-through: the game's own per-entity opacity on every entity of the glass (the draw blends below 1)
-            const int n = Entities(g_wristGlass[k].inst.p, e, 16);
+            uint32_t e[16];   // see-through: the game's own per-entity opacity on the glass's drawn entity (the draw blends below 1; its root is not drawn
+            const int n = Entities(g_wristGlass[k].inst.p, e, 16);   // and has no such component)
             const float op = std::min(1.0f, std::max(wristmodels::kGlassOpacityMin, o.glass));
-            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i) { litEnt[lit] = e[i]; litH[lit] = 0.0f; litOp[lit] = op; ++lit; }
+            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i)
+                if (skel::EntityModelInstance(e[i])) { litEnt[lit] = e[i]; litH[lit] = 0.0f; litOp[lit] = op; litRole[lit] = 0; ++lit; }
         } else {
             ParkWrist(g_wristGlass[k]);
         }
@@ -2676,11 +2697,14 @@ void WristOrbsFrameLocked(bool fullBody) {
             uint32_t e[16];
             const int n = Entities(g_wristLiquid[kind].inst.p, e, 16);
             const float h = wristmodels::GlowHighlight(g_set.wristGameGlow.load()) + wristmodels::Highlight(o.glow, pulse);   // (the glow at rest, the beat on top)
-            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i) { litEnt[lit] = e[i]; litH[lit] = h; litOp[lit] = -1.0f; ++lit; }
+            // (its opacity is left alone: a see-through liquid cannot be had under the dome - the game lays a faded model's depth before its colour,
+            // so the see-through dome hid a see-through liquid whole; [hud] wrist_game_liquid of the 0.216 test builds is gone)
+            for (int i = 0; i < n && lit < beltglow::kMaxOrbs; ++i)
+                if (skel::EntityModelInstance(e[i])) { litEnt[lit] = e[i]; litH[lit] = h; litOp[lit] = -1.0f; litRole[lit] = 1; ++lit; }
         }
     }
     for (int kind = 0; kind < 2; ++kind) if (!liquidUsed[kind]) ParkWrist(g_wristLiquid[kind]);
-    beltglow::SetOrbs(litEnt, litH, litOp, lit);
+    beltglow::SetOrbs(litEnt, litH, litOp, lit, litRole);
     static ULONGLONG toldAt = 0;   // every 30 s while on: what is shown
     static unsigned frames = 0, shownFrames = 0;
     ++frames;

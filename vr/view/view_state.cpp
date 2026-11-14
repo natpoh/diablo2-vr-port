@@ -116,6 +116,15 @@ bool Overhead() { return TableView() || TopPersp(); }
 // dome ([sky] game_sky) and the game's own fog ([fog] game_fog) round it, as in F4. Only the game's objects and its fog pass: our post pass's
 // sky, fog and blur stay out, and no fog tweak. Unticked: the board as before.
 bool TableFull() { return TableView() && g_set.tableFull.load(); }
+// VR F1 through our camera (Real geometry) with [top] sky / [top] fog (Serg 2026-11-13: "F1 also needs the fog and sky tick"): the game's own
+// sky dome ([sky] game_sky) / the game's own fog pass ([fog] game_fog) round the world, as F3 full width has them - each its own tick. Only the
+// game's objects and its fog pass: our post pass's sky and fog, the dome fixes and the fog tweaks stay out there, with no fallback of ours. The
+// game's own flat F1 (Real geometry off) is the game's camera: neither is drawn there. Unticked: no sky, no fog from above, as before.
+bool TopSky() { return TopPersp() && g_set.topSky.load(); }
+bool TopFog() { return TopPersp() && g_set.topFog.load(); }
+// From above with the game's own dome / fog round the world: VR F3 full width (both) or VR F1 with its tick
+bool GameSkyOverhead() { return TableFull() || TopSky(); }
+bool GameFogOverhead() { return TableFull() || TopFog(); }
 // F3's own Draw distance ([table] draw_distance) while F3 is the view; nullptr: the shared keys (every other view, or 0)
 const drawdistance::Stop* ViewDistanceStop() { return TableView() ? drawdistance::ViewStop(g_set.tableDistance.load()) : nullptr; }
 int RingsNow() { const drawdistance::Stop* s = ViewDistanceStop(); return s ? drawdistance::FromAboveRings(*s) : g_set.rings.load(); }   // (F3: the tiles seen from above)

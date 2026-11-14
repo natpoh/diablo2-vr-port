@@ -335,7 +335,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (NoticeCardTick)
 #include "hand_inventory.h"   // [openxr] hand_inventory: away from town the inventory on the left hand, the left stick walking on (HandInventoryTick)
 namespace hud { void SetPlateCut(bool want, const int32_t layout[4], float scale); void SetNoticeCut(bool want, const int32_t widget[4], float scale); }   // [hud] monster_bar_room: where the plate is, to be cut out (vr/hud.cpp)
-namespace hud { void SetGameInterfaceScale(float k); void SetGlobeNudge(float in, float dy, float scale); void SetControllerLayout(int controller); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
+namespace hud { void SetGameInterfaceScale(float k); void SetGameWindowWidth(uint32_t w); void SetGlobeNudge(float in, float dy, float scale); void SetControllerLayout(int controller); }   // the game's own interface scale: where the corner map's box is looked for (vr/minimap_box.h)
 namespace hud { void SetMapProjection(float ratio); }   // F4: our projection's x over y scale - the corner map's box drawn that much wider in a picture of another shape
 #include "low_hp_game.h"   // [hud] low_hp_vignette: the red heartbeat vignette at low life (vr/low_hp.h)
 #include "roof_keep.h"     // [render] keep_roofs: in F4 the roof of a building you walk into stays

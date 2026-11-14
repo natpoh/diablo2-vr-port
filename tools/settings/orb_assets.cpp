@@ -91,7 +91,7 @@ bool CascRead(HANDLE storage, const std::string& name, std::string* out) {
 
 }  // namespace
 
-Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, float glow, bool glassLiquid) {
+Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, float glow) {
     Result r;
     const std::wstring mpq = modRoot.empty() ? std::wstring() : modRoot + L"D2R-VR.mpq\\";
     if (mpq.empty() || !IsDir(mpq)) {
@@ -131,7 +131,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, f
     const bool haveBuild = CascGetStorageInfo(storage, CascStorageProduct, &product, sizeof product, nullptr) && product.BuildNumber;
     const wristorbs::Reader read = [storage](const std::string& name, std::string* out) { return CascRead(storage, name, out); };
     wristorbs::Made made;
-    const bool ok = wristorbs::Make(read, glow, &made, glassLiquid);
+    const bool ok = wristorbs::Make(read, glow, &made);
     CascCloseStorage(storage);
     if (!ok) {
         r.text = L"could not be made from your game: " + Wide(made.why) + L" - the medallions stay the effect's";
@@ -169,9 +169,6 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, f
                made.liquid[1].u, made.liquid[1].v, made.liquid[1].height * 100.0f, made.glass.u, made.glass.v, made.glass.height * 100.0f, made.plate.u,
                made.plate.v);
     r.text = std::wstring(r.wrote ? L"made from your game (takes effect at the next start of the game): " : L"ready: ") + b + L" (mods\\D2R-VR\\D2R-VR.mpq)";
-    if (glassLiquid)
-        r.text += L"; [hud] wrist_game_liquid_glass: both liquids in the healing potion's see-through GlassMaterial instead, its pictures swapped for the "
-                  L"lesser healing / lesser mana potion's own (the same texels; no baked glow)";
     if (kept) r.text += L" - " + std::to_wstring(kept) + L" of its files changed by you: left as they are";
     return r;
 }

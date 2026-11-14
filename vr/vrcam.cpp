@@ -252,6 +252,8 @@ std::atomic<float> g_headOverStand{0.0f};   // [ceiling] min_headroom_m: the rea
 std::atomic<float> g_gazeLook[3] = {};   // [gameplay] teleport_circle: the look-at of the same view (the hero as drawn: the arc's ground and the circle's middle)
 std::atomic<ULONGLONG> g_gazeAt{0};
 std::atomic<bool> g_floorCamOk{false};
+std::atomic<float> g_topEyeDist{0.0f};   // VR F1 through our camera: the eye's distance from the hero, world units (TopCamera; [top] fog's rings)
+std::atomic<bool> g_topEyeOk{false};
 // ... and the projection it is drawn with (VrProj): M[0], M[5], the eyes apart and zero parallax, world units.
 std::atomic<float> g_projSx{0.0f}, g_projSy{0.0f}, g_stereoIpd{0.0f}, g_stereoConv{0.0f};
 // The off-axis shift of the left eye's projection (M[8]; the right eye's is minus it), 0 without:
@@ -547,7 +549,7 @@ bool GameDrawnView() {
 // The game's fog's own (Serg: "у каждого свои ползунки и свой блок"): the flat game by [fog] game_fog_flat - missing: game_drawn_flat
 bool GameFogDrawnView() {
     if (viewgate::F4()) return true;
-    if (TableFull()) return true;
+    if (GameFogOverhead()) return true;   // (VR F3 full width; VR F1 Real geometry with [top] fog - our camera, the game's fog pass)
     return g_set.gameFogFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
 }
 
@@ -782,6 +784,33 @@ ClientSizeFn OrigClientSize = nullptr;
 uintptr_t g_clientSizeUiRet[7] = {}, g_clientSizeCursorRet[2] = {}, g_labelWidthRet[13] = {};   // (filled before the hook goes in)
 std::atomic<bool> g_clientSizeOn{true};
 
+// The game's other callers of the query - given the window's own size - said once each while a render size is in force and the window is
+// not the picture's size (2026-11-14, zeezour: a TV as the main display made the window 1020 under a 3072 picture; the corner map's box
+// came a third of the WINDOW wide and the mercenary's inventory lost its two right columns to the laser - which part of the game still
+// reads the window is what this tells). At most kOtherCallersMax places, each line once; nothing else changes. Only with [debug]
+// client_size_callers=1 (view only: a log line, the answer is the window's as without it).
+constexpr int kOtherCallersMax = 32;
+std::atomic<uintptr_t> g_otherCallers[kOtherCallersMax] = {};
+std::atomic<bool> g_tellClientCallers{false};
+void TellOtherCaller(uintptr_t from, uint64_t native) {
+    static std::atomic<int> full{0};
+    if (!g_tellClientCallers.load(std::memory_order_relaxed) || full.load(std::memory_order_relaxed) || !g_gameWnd) return;
+    vrres::Size game;
+    const vrres::Size win = vrres::FromNative(native);
+    if (!vrres::GameSize(g_gameWnd, &game) || !game || game == win) return;
+    for (int i = 0; i < kOtherCallersMax; ++i) {
+        uintptr_t seen = g_otherCallers[i].load(std::memory_order_relaxed);
+        if (seen == from) return;
+        if (!seen) {
+            if (!g_otherCallers[i].compare_exchange_strong(seen, from)) { if (seen == from) return; continue; }
+            LogF("vrcam: render size - the game's client-size query from D2R.exe+%llX keeps the window's %ux%u (the picture is %ux%u; [render] vr_resolution_ui - "
+                 "an interface part sized by it lays out for the window)", (unsigned long long)(from - g_base), win.w, win.h, game.w, game.h);
+            return;
+        }
+    }
+    full.store(1, std::memory_order_relaxed);
+}
+
 uint64_t HookClientSize() {
     const uintptr_t from = reinterpret_cast<uintptr_t>(_ReturnAddress());
     const uint64_t native = OrigClientSize();
@@ -791,6 +820,7 @@ uint64_t HookClientSize() {
         for (uintptr_t r : g_clientSizeUiRet) if (from == r) { asker = vrres::Asker::Ui; break; }
         if (asker == vrres::Asker::Other) for (uintptr_t r : g_labelWidthRet) if (r && from == r) { asker = vrres::Asker::Ui; break; }
     }
+    if (asker == vrres::Asker::Other) TellOtherCaller(from, native);
     return asker == vrres::Asker::Other ? native : vrres::ClientSizeAnswer(asker, native, g_clientSizeOn.load());
 }
 // The target of a relative CALL (E8) or JMP (E9) at `site` when it is one (0 otherwise).
@@ -1007,7 +1037,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.216.0";
+static const char g_info_version[] = "0.217.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file

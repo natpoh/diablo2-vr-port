@@ -561,7 +561,10 @@ and towns. Visual only, live.
 ![UI F1 above](screenshots/settings_05_ui_f1_above.png)
 
 - **View from above** - *Real geometry*: the top view through our own camera in
-  true perspective, and its tilt.
+  true perspective, its tilt, and its distance (`[top] distance`, % of the game's
+  own: zoom out for more of the world round the hero), and the game's own sky
+  and fog round it (`[top] sky`, `[top] fog`; greyed without Real geometry and
+  without the game drawing that sky / fog).
 - **Toolbar and map, from above** - where they go (in the picture or the
   game's own way), size, distance, position; the tilt of the item labels; the
   depth of the mouse pointer at the top, middle and bottom of the screen, and

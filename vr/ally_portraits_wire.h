@@ -27,13 +27,17 @@ Config Settings();      // as last read (any thread)
 bool Enabled();         // the allies are not the game's row: under the map or on the wrist (the reads run, the game's row is hidden)
 bool GridWanted();      // ... under the map
 bool WristWanted();     // ... on the right wrist
+bool UnderMapWanted();  // something to hang under the map: the allies there, or [hud] skill_under_map (the armed skills' row)
+
+// The two pictures: under the map (the armed skills' row, then the allies when they are there) and on the right wrist (the allies).
+constexpr int kUnderMap = 0, kOnWrist = 1;
 
 // vrcam's timer: `inGame` = the camera is on and the hero is in a game area. Queues the reads (5 a second) while wanted, in F4 and in a game.
 void Tick(bool inGame);
 
 // xr.cpp (the draw thread), each frame the place is there (a map hung, the wrist turned): true when there are portraits to hang now (a fresh read with a
 // tile or more), with the revision of the picture it must not be shown before. False: nothing to do.
-bool Want(uint32_t* needRevision);
+bool Want(int where, uint32_t* needRevision);
 
 // On the wrist: where the wrist status panel would stand over the right wrist now (its centre and turn, in the room's space), its height, whether that
 // panel is up there too, the tiles' width, and the fade (grow: the size factor, alpha 0 - 1). False: the wrist is not turned to the eyes.
@@ -50,7 +54,7 @@ bool WristPanel(WristLayer* layer);
 bool GameCornerToHide(float* units);
 
 // A finished picture (premultiplied pixels, R in the low byte, width x height: PicW(cols) x PicH(n, cols)) newer than the last fetched, with its revision.
-bool Picture(std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height);
+bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height);
 
 // With the session (Teardown): the picture is forgotten (the swapchain goes with the session).
 void Teardown();

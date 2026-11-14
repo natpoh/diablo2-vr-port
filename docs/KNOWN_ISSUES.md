@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.198), what we already know
+What is broken or unfinished right now (D2R VR 0.217), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -75,6 +75,9 @@ ice caves and Nihlathak's Temple.
 - The settings app: the Ceiling group in `tools/settings/settings.cpp`.
 
 ### 3. The fog eats fire [repo]
+
+**Status (0.211):** fog before the effects, on by default since 0.211 (`[fog] game_fog_before_fx`), draws the game's fog
+inside its frame before its fire, spells and smoke, so they lie over the fog. The notes below are from before that.
 
 **What you see:** torches, braziers and fire spells fade
 into D2R VR's fog with distance, like everything else. A fire down a dark
@@ -184,6 +187,9 @@ still on the screen.
   - objects moving along the line between the eyes.
 
 ### 9. "Stereo - one pass" hangs: the cure works, the cause is unknown [repo]
+
+**Status (0.214):** Native two passes is the default in every preset; one pass stays a choice for slow processors, and
+`[stereo] replay_hang_fallback` starts the next game in two passes after a hang in one pass. The cause is still unknown.
 
 - Without a fix, the GPU stopped after 20-70 seconds: the game's draw thread
   waited forever for its own frame fence.
@@ -515,6 +521,22 @@ Game Link plugin work with a plugin built this way.
 then drop the workaround (this note, the README's and the CHANGELOG line) and the
 tree builds as it is. The runes themselves also need a BodyWalk that writes the
 block, which is not out yet.
+
+### 29. The game-drawn wrist medallions: the liquid cannot be see-through [repo]
+
+**What you see:** with the medallions' Look "Drawn by the game's own models" (a test, not the default) the life and mana
+liquid is solid under the see-through glass dome.
+
+**What we know:** the game lays a faded model's depth before its colour (pass bit 23, set on every faded model's draw, with
+no switch per model or material), so a see-through dome hides a see-through liquid whole: any opacity under 1 only made the
+liquid vanish. The keys tried for it (`[hud] wrist_game_liquid_glass`, `wrist_game_liquid`) are gone (0.216.4 / 0.216.5).
+Notes: docs/notes/wrist_orbs_game_objects.md. That is why the mod's 3D glass balls stay the default.
+
+### 30. Weapon against the walls is not tried yet, so it ships off [repo]
+
+**Where it stands:** `[weight] wall_contact_mode` - 0 off (the default), 1 ours (walls, pillars and trees from the game's own
+meshes), 2 the game's wall map (from D2R VR Unleashed, MPL 2.0: vr/unleashed_wall_cells.h). Neither has been tried in the
+headset by the author yet. Compare the two and tell us on Discord which one feels right.
 
 ---
 

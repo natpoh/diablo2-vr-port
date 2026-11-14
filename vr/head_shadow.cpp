@@ -334,6 +334,7 @@ uintptr_t OthersPose(uintptr_t pose) {
 }
 
 std::atomic<void (*)(uint32_t, bool)> g_beforeDraw{nullptr};   // [weight] knock_down (SetBeforeDraw)
+std::atomic<void (*)(uint32_t, bool, uintptr_t)> g_drawProbe{nullptr};   // [hud] wrist_game_models: the opacity the draw has (SetDrawProbe)
 std::atomic<ShadowFilterFn> g_shadowFilter{nullptr};            // [render] sun_shadow_radius_m / sun_shadow_every (SetShadowFilter)
 std::atomic<bool> g_filterWanted{false};                        // ... the hooks put in for it ([arms] head_shadow off too)
 
@@ -443,6 +444,7 @@ __declspec(noinline) uintptr_t HookDraw(uintptr_t a1, uintptr_t a2, uintptr_t a3
                                         uintptr_t a9, uintptr_t a10, uintptr_t a11) {
     const int pass = (int)(uint32_t)a11;
     if (const auto before = g_beforeDraw.load(std::memory_order_relaxed)) before((uint32_t)entity, EyesPass(pass));   // [weight] knock_down: its bounds, last
+    if (const auto probe = g_drawProbe.load(std::memory_order_relaxed)) probe((uint32_t)entity, EyesPass(pass), a7);   // (read only: the wrist medallions' opacity)
     if (pass == kPassShadow) {   // [render] sun_shadow_radius_m / sun_shadow_every (vr/simpler_sun.h): a model left out of the sun's map
         if (const ShadowFilterFn filter = g_shadowFilter.load(std::memory_order_relaxed); filter && filter((uint32_t)entity, a5, a8, a9))
             return 0;   // as the game's own early return for a model faded to nothing: no draw call made for this pass
@@ -554,6 +556,8 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
 }
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes)) { g_beforeDraw.store(fn); }
+void SetDrawProbe(void (*fn)(uint32_t entity, bool eyes, uintptr_t constants)) { g_drawProbe.store(fn); }
+bool DrawHooked() { return g_origDraw != nullptr; }
 void SetShadowFilter(ShadowFilterFn fn) {
     g_shadowFilter.store(fn);
     if (fn && !g_filterWanted.exchange(true))

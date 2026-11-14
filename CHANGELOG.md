@@ -1,5 +1,33 @@
 # What's new in D2R VR
 
+## 0.217.0
+
+A crash fix, the view from above (F1) in the headset with the game's own sky and fog, and the armed skill under the map in the hand.
+
+- **Crash fix: fog before the effects no longer reads a freed picture** (a player's crash on 0.216.0, right after the square window
+  was made again at a new size): when it looked for the scene by the game's own name, it opened every picture the game had named,
+  some already let go. Now it opens only the pictures it holds itself.
+- **Fix: the map comes into the hand with a small game window** (a TV as Windows' main display, under Virtual Desktop): the game
+  sizes its corner map by its window - a third of the window's width - not by the picture, so a small window under a big render
+  size gave a box the mod refused, and the map never came into the left hand. The window's own width counts now.
+- **Fix: the laser points at the map in the hand again** - a click makes it big, the stick zooms it (`[hud] map_click_big`,
+  `map_stick_zoom`, on by default again): 0.216 shipped both off with the settings we play with, and its update moved every kept
+  setting to off. This update turns both on once (`[support] map_laser_0217`); turned off again after that, they stay off.
+- **View from above (F1) in the headset:** the headset's settings panel has an F1 page - Real geometry, Camera tilt and Camera
+  distance - opened from the View page; live. The camera distance is new: 50 - 300 % of the game's own height (Settings, UI: F1
+  above, "Real geometry: camera distance, %" - `[top] distance`), and clicks still land under the pointer.
+- **The game's own sky and fog in F1 with Real geometry** (Settings and the headset's F1 page, a tick each - `[top] sky`, `[top] fog`):
+  the game's sky dome and its fog pass, as F3 at full width has them. Off: no sky and no fog from above, as before.
+- **The armed skill under the map in the hand** (Settings, "Skill under the map" - `[hud] skill_under_map`): a row under the map
+  shows the skill each hand has armed - the game's own icon, faint while you cannot pay for it, and its name. By default it shows
+  with the game-drawn medallions, which cannot show the icon themselves; the mod's glass balls show it as before. The allies move
+  down a row.
+- **The game-drawn medallions' liquid is always solid** (the test Look): a see-through liquid under the glass dome cannot be had by
+  the game's own means, so the test switches for it are gone (a line left in your settings is not read).
+- **New defaults from the settings we play with:** Skills to BodyWalk on (`[gestures] skill_link=1`: your skills go to BodyWalk's
+  Mapping > Game skills for a gesture or a button each; without BodyWalk nothing changes), and the sky at night a little brighter
+  (`[sky] night_brightness` 0.25 -> 0.3). A value you set yourself is kept.
+
 ## 0.216.0
 
 Your touch always strikes, the fog no longer flickers or lags, no black grass or pale bushes, Valve Index controllers vibrate, the game's

@@ -268,7 +268,14 @@ void BigWindowTick() {
         LogF("vrcam: square window - the game's window has no frame (%dx%d): its Options > Video > Window Mode is not Windowed - "
              "the square wants Windowed", (int)c.right, (int)c.bottom);
     }
-    const int asked = followSide ? std::clamp(followSide, 320, 4000) : std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
+    int asked = followSide ? std::clamp(followSide, 320, 4000) : std::clamp((int)IniF(L"openxr", L"window_size", 2000.0f), 640, 4000);
+    // [openxr] square_window_max (TEST, 0 off): the square no bigger than that - a small main display (zeezour's TV, 1920x1080: a 1020 square)
+    // made on a big one, to see what the game does with a small window under a big picture
+    if (const int most = (int)IniF(L"openxr", L"square_window_max", 0.0f); most >= 320 && most < asked) {
+        static int toldMost = 0;
+        if (toldMost != most) { toldMost = most; LogF("vrcam: square window - no bigger than %d ([openxr] square_window_max, a test; %d asked)", most, asked); }
+        asked = most;
+    }
     {   // the window's size and what it follows, whenever either changes
         static int toldAsked = -1, toldFollow = -1;
         if (asked != toldAsked || followSide != toldFollow) {

@@ -275,7 +275,7 @@ struct Settings {
     std::atomic<bool>  domeTint{false};
     std::atomic<bool>  skyCrossfade{false};
     std::atomic<float> threeBright[4] = {1.0f, 1.0f, 1.0f, 1.0f};
-    std::atomic<float> nightBright{0.25f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
+    std::atomic<float> nightBright{0.3f};  // [sky] night_brightness: the sky and the fog at full night, times their day brightness
     std::atomic<bool>  skyAlways{false};    // whatever the biome (testing): caves get a sky too
     std::atomic<bool>  arcaneSky{true};     // [sky] arcane_sky: the Arcane Sanctuary's own star layers all round (after bearstonem/d2r-pcvr), [sky] enabled or not
     std::atomic<bool>  arcaneFog{false};    // [sky] arcane_fog: the fog in the Arcane Sanctuary too, fading into its sky (off: no fog under that sky, as before)
@@ -664,6 +664,9 @@ struct Settings {
     std::atomic<float> tableScale{15.0f};   // world units per metre of the room, from [table] hero_cm: the game laid on the floor at that size
     std::atomic<bool>  topPersp{false};     // [top] perspective: VR F1 through our camera, the game's view in true perspective
     std::atomic<float> topTilt{0.0f};       // [top] tilt: that camera turned about the hero, degrees; + nearer the horizon
+    std::atomic<bool>  topSky{false};       // [top] sky: VR F1 Real geometry with the game's own sky dome round the world ([sky] game_sky's path)
+    std::atomic<bool>  topFog{false};       // [top] fog: ... and the game's own fog pass ([fog] game_fog's path)
+    std::atomic<float> topDistance{1.0f};   // [top] distance: that camera's distance, times the game's (percent / 100); 1 = as before
     std::atomic<float> tableHeightM{0.0f};  // [table] height_m: the game's ground this far above the room's floor (0 = on the floor, ~0.75 = a table)
     std::atomic<float> tableAheadM{1.0f};
     std::atomic<float> tableBounds{1.0f};

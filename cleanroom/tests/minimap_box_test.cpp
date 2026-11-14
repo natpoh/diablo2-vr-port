@@ -222,6 +222,58 @@ int main() {
         Check(minimapbox::Find(tall, c, game, 0.8f, 0, 1.04f) == 0, "1024: not a capped width much taller than wide", 1024, 1024, 80);
         Check(minimapbox::Find(wide, c, game, 0.8f, 0, 1.04f) == 0, "1024: not a box wider than the cap", 1024, 1024, 80);
     }
+    // The box is a third of the game WINDOW's client width (WindowBox, 2026-11-14): the players' logs - window -> box, every picture
+    {
+        struct P { unsigned win; int box; } seen[] = {{987, 328}, {1380, 459}, {1392, 477}, {1920, 639}, {1920, 640}};
+        for (const P& q : seen) {
+            Check(minimapbox::WindowBox((float)q.box, (float)q.box, 3264.0f, q.win), "a player's box is a third of the window", q.win, q.win, 0);
+            Check(!minimapbox::WindowBox((float)q.box * 1.3f, (float)q.box, 3264.0f, q.win), "a box 30 % wider is not", q.win, q.win, 0);
+            Check(!minimapbox::WindowBox((float)q.box * 0.7f, (float)q.box, 3264.0f, q.win), "a box 30 % narrower is not", q.win, q.win, 0);
+        }
+        Check(minimapbox::WindowBox(640.0f, 360.0f, 1080.0f, 1920), "1920x1080: 640 x 360", 1920, 1080, 0);
+        Check(!minimapbox::WindowBox(640.0f, 200.0f, 1080.0f, 1920), "not a flat strip of that width", 1920, 1080, 0);
+        Check(!minimapbox::WindowBox(340.0f, 340.0f, 3264.0f, 0), "no window known: no window rule", 0, 0, 0);
+        Check(!minimapbox::WindowBox(100.0f, 100.0f, 3264.0f, 300), "a window too small to be known: no window rule", 300, 300, 0);
+    }
+    {   // zeezour's TV (2026-11-13): the main display 1920x1080, the window 1020x1020 under a 3072x3264 picture, interface 74 %: the box a
+        // third of the window (340), at the right area's side and top as at 1380 (his box there 2212,481 - 2671,940 on 3072x3072)
+        const Canvas c{0, 0, 3072, 3264};
+        const float game = minimapbox::SafeFromScale(GameScale(3264, 0.74f), 3264);
+        const int side = (int)std::lround(0.5f * 3072.0f * 0.26f), top = (int)std::lround(0.5f * 3264.0f * 0.26f) + 82;
+        const Box tv{3072 - side - 340, top, 3072 - side, top + 340};
+        Check(minimapbox::Find(tv, c, game, 0.74f, 0, 0.98f) == 0, "the TV's box was refused before (no map in the hand)", 3072, 3264, 74);
+        Check(minimapbox::Find(tv, c, game, 0.74f, 0, 0.98f, 1020) == 2, "the TV's box found with the window's width", 3072, 3264, 74);
+        Check(minimapbox::WhyNot(tv, c, game, 0, 0.98f, 1020) == nullptr, "the TV's box: no reason against it", 3072, 3264, 74);
+        const char* before = minimapbox::WhyNot(tv, c, game, 0, 0.98f);
+        Check(before && std::strcmp(before, "width") == 0, "the TV's box: 'width' without the window", 3072, 3264, 74);
+        Check(minimapbox::Find(tv, c, game, 0.74f, 1, 0.98f, 1020) == 0, "the TV's box: not when the left corner is asked for", 3072, 3264, 74);
+        Box mirror = tv;
+        mirror.left = side; mirror.right = side + 340;
+        Check(minimapbox::Find(mirror, c, game, 0.74f, 0, 0.98f, 1020) == 1, "the TV's box in the left corner found", 3072, 3264, 74);
+        // not the map at that window either: the map's size far under the area's top, in from its side, at the top middle; the toolbar strip
+        Box low = tv; low.top += 900; low.bottom += 900;
+        Box in = tv; in.left -= 500; in.right -= 500;
+        const Box middle{1366, top, 1706, top + 340}, strip{0, 2700, 3072, 3000}, whole{0, 0, 3072, 3264};
+        Check(minimapbox::Find(low, c, game, 0.74f, 0, 0.98f, 1020) == 0, "TV: not the box far under the area's top", 3072, 3264, 74);
+        Check(minimapbox::Find(in, c, game, 0.74f, 0, 0.98f, 1020) == 0, "TV: not the box well in from the area's side", 3072, 3264, 74);
+        Check(minimapbox::Find(middle, c, game, 0.74f, 0, 0.98f, 1020) == 0, "TV: not the box at the top middle", 3072, 3264, 74);
+        Check(minimapbox::Find(strip, c, game, 0.74f, 0, 0.98f, 1020) == 0 && minimapbox::Find(whole, c, game, 0.74f, 0, 0.98f, 1020) == 0,
+              "TV: not the toolbar's strip, not the whole picture", 3072, 3264, 74);
+        // his 1380 window (no TV): the box he had is found as before, with the window or without
+        const Canvas sq{0, 0, 3072, 3072};
+        const float g2 = minimapbox::SafeFromScale(GameScale(3072, 0.74f), 3072);
+        const Box his{2212, 481, 2671, 940};
+        Check(minimapbox::Find(his, sq, g2, 0.74f, 0, 0.98f) == 2 && minimapbox::Find(his, sq, g2, 0.74f, 0, 0.98f, 1380) == 2,
+              "1380 window: his box found, the window known or not", 3072, 3072, 74);
+    }
+    {   // Serg's 1024 picture in his 1920 window: the window rule takes the capped box, and refuses what the cap refused
+        const Canvas c{0, 0, 1024, 1024};
+        const float game = minimapbox::SafeFromScale(GameScale(1024, 0.8f), 1024);
+        const Box capped{512, 132, 1151, 771}, low{512, 432, 1151, 1071}, tall{512, 132, 1151, 1024}, wide{300, 132, 1100, 771};
+        Check(minimapbox::Find(capped, c, game, 0.8f, 0, 1.04f, 1920) == 2, "1024 in a 1920 window: the box found", 1024, 1024, 80);
+        Check(minimapbox::Find(low, c, game, 0.8f, 0, 1.04f, 1920) == 0 && minimapbox::Find(tall, c, game, 0.8f, 0, 1.04f, 1920) == 0 &&
+              minimapbox::Find(wide, c, game, 0.8f, 0, 1.04f, 1920) == 0, "1024 in a 1920 window: low / tall / wide still refused", 1024, 1024, 80);
+    }
     std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "passed", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

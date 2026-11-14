@@ -319,19 +319,53 @@ struct Tile {
     }
 };
 
+// [hud] skill_under_map (Serg, 2026-11-13: "show the selected skill under the map, where the allies are, move them a little"): the skill each hand
+// has armed - what the mana and life medallions show on their bottom (vr/armed_icon.h): the right hand's (the bow's chosen skill, else a glyph's,
+// else the armed melee skill) and the left hand's (a glyph's). A tile each, in a row of their own over the allies' rows: the allies move down by that
+// row. `enough`: the hero can pay it now (a faint icon when not, as the medallion's).
+constexpr int kMaxSkills = 2;
+struct SkillTile {
+    int32_t skill = -1;
+    bool enough = true;
+    uint8_t hand = 1;   // 1 right, 0 left
+    char name[kNameBytes] = {};
+    bool operator==(const SkillTile& o) const { return skill == o.skill && enough == o.enough && hand == o.hand && std::strncmp(name, o.name, kNameBytes) == 0; }
+};
+
 // What the painter draws: everything that changes the picture, and nothing else.
 struct Look {
     std::array<Tile, kMaxTiles> tile{};
     uint8_t n = 0;
     uint8_t cols = alliesplace::kMapColsDefault;   // tiles across ([hud] allies_map_cols / allies_wrist_cols): the rows are as many as the tiles need
-    uint32_t art = 0;   // the portraits' revision (found, or not, on the painter's thread): a change repaints
+    std::array<SkillTile, kMaxSkills> skill{};     // [hud] skill_under_map: the armed skills' row, over the allies (under the map only)
+    uint8_t nSkills = 0;
+    uint32_t art = 0;   // the portraits' revision, and the skill icons' (found, or not, on the painter's thread): a change repaints
     bool operator==(const Look& o) const {
-        if (n != o.n || cols != o.cols || art != o.art) return false;
+        if (n != o.n || cols != o.cols || nSkills != o.nSkills || art != o.art) return false;
         for (int i = 0; i < n; ++i)
             if (!(tile[(size_t)i] == o.tile[(size_t)i])) return false;
+        for (int i = 0; i < nSkills; ++i)
+            if (!(skill[(size_t)i] == o.skill[(size_t)i])) return false;
         return true;
     }
 };
+
+// [hud] skill_under_map: 0 never, 1 always, 2 (the default) with the game's medallions - Serg (2026-11-13): "then the game's medallions get the current
+// skill under the map": the row stands in for the icon the medallions drawn by the game cannot show ([hud] wrist_look 2, the game's models; 1, its
+// own globes, cannot either), and stays off with the mod's glass balls (wrist_look 0), whose mana and life medallions show it themselves.
+constexpr int kSkillsNever = 0, kSkillsAlways = 1, kSkillsWithGameMedallions = 2;
+constexpr bool SkillsShown(int mode, int wristLook) {
+    return mode == kSkillsAlways || ((mode < 0 || mode > 2 || mode == kSkillsWithGameMedallions) && wristLook != 0 && wristLook >= 0 && wristLook <= 2);
+}
+
+// The armed skills as tiles: the right hand's first, the left hand's after it (left out when it is the same skill). -1: none on that hand.
+inline uint8_t SkillTiles(int32_t right, bool rightEnough, int32_t left, bool leftEnough, std::array<SkillTile, kMaxSkills>* out) {
+    uint8_t n = 0;
+    if (right >= 0) (*out)[n++] = SkillTile{right, rightEnough, 1, {}};
+    if (left >= 0 && left != right) (*out)[n++] = SkillTile{left, leftEnough, 0, {}};
+    for (uint8_t i = n; i < kMaxSkills; ++i) (*out)[i] = SkillTile{};
+    return n;
+}
 
 inline void CopyName(char (&dst)[kNameBytes], const char* src) {
     std::memset(dst, 0, sizeof dst);
@@ -430,6 +464,23 @@ inline Cell CellOf(int i, int n, int cols) {
     return {(PicW(c) - inRow * kTilePx) / 2 + col * kTilePx, row * kTilePx};
 }
 
+// A whole look's picture (the armed skills' row, then the allies'): its tiles across - the count across, or the skills' when more (one across with
+// two skills: two) - and its rows; the allies' cells moved down by the skills' row. Without skills: the same as above.
+inline int SkillRows(const Look& l) { return l.nSkills > 0 ? 1 : 0; }
+inline int AcrossOf(const Look& l) { return std::max(ColsOf(l.cols), (int)std::min<uint8_t>(l.nSkills, kMaxSkills)); }
+inline int PicW(const Look& l) { return AcrossOf(l) * kTilePx; }
+inline int PicH(const Look& l) { return std::max(1, SkillRows(l) + RowsFor(std::min<int>(l.n, kMaxTiles), AcrossOf(l))) * kTilePx; }
+inline Cell AllyCell(const Look& l, int i) {
+    Cell c = CellOf(i, l.n, AcrossOf(l));
+    if (i >= 0 && i < std::min<int>(l.n, kMaxTiles)) c.y += SkillRows(l) * kTilePx;
+    return c;
+}
+inline Cell SkillCell(const Look& l, int j) {
+    const int n = std::min<int>(l.nSkills, kMaxSkills);
+    if (j < 0 || j >= n) return {};
+    return {(PicW(l) - n * kTilePx) / 2 + j * kTilePx, 0};
+}
+
 // The life bar: how much of it is filled (0 - 1), and its colour - green above half, yellow above a quarter, red below; not known: empty.
 inline float LifeFill(int life) { return life < 0 ? 0.0f : std::clamp(life, 0, 100) / 100.0f; }
 enum class Tone : uint8_t { Unknown, Green, Yellow, Red, Dead };
@@ -451,6 +502,7 @@ struct Config {
     float sizePct = 125.0f;                              // [hud] ally_portraits_size: the grid's width at 4 across, % of the map's (the orb: its ball)
     int mapCols = alliesplace::kMapColsDefault;          // [hud] allies_map_cols: tiles across under the map
     int wristCols = alliesplace::kWristColsDefault;      // [hud] allies_wrist_cols: tiles across on the wrist
+    bool skills = false;                                 // [hud] skill_under_map: the armed skills' row under the map (off: as before)
 };
 inline Config Sanitized(Config c) {
     c.place = alliesplace::Sanitized(c.place);
@@ -472,10 +524,11 @@ inline float HideUnits(bool readKnown, int players, int rowIcons) { return readK
 
 // The grid's width under a map `mapWidthM` wide (the orb: its ball's diameter; the big map: its width), `big` while the big map is up: sizePct of the
 // map at four across, a tile the same size at any other count across - within reach of the eye (at most 40 cm on the hand, 60 cm under the big map).
-inline float GridWidthM(float mapWidthM, bool big, const Config& cfg) {
+// `across`: the picture's tiles across (0: the setting's count; a skills' row wider than it: its own, AcrossOf).
+inline float GridWidthM(float mapWidthM, bool big, const Config& cfg, int across = 0) {
     if (!std::isfinite(mapWidthM) || mapWidthM <= 0.0f) return 0.0f;
     const Config c = Sanitized(cfg);
-    const float w = mapWidthM * c.sizePct * 0.01f * (float)c.mapCols / (float)alliesplace::kMapColsDefault;
+    const float w = mapWidthM * c.sizePct * 0.01f * (float)(across > 0 ? across : c.mapCols) / (float)alliesplace::kMapColsDefault;
     return std::clamp(w, kMinWidthM, big ? kMaxWidthBigM : kMaxWidthHandM);
 }
 // The grid's height for its width: rows / cols of it.

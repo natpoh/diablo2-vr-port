@@ -151,6 +151,9 @@ bool LastProbe(float out[80]);
 void ResetSceneCheck(int mode);
 // Only the found scene, depth and effects' targets watched (the sinks no longer search): the test, the 10 s line
 bool Watching();
+// [fog] game_fog_scene_by_name: the resolve tables' views not opened so far - not one of the targets the step holds (a freed one may sit
+// there after a resize; row 358). The test
+uint32_t NamesSkipped();
 // [fog] game_fog_miss_keeps_fog (vr/fog_height.h SetPick): did the step write at the resolve the game's fog pass on `cl` follows - the list's
 // own last resolve since its reset, else the last resolve on any list; none seen yet: true (the colour left out, as before)
 bool StepDrewAt(ID3D12GraphicsCommandList* cl);

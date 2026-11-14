@@ -356,39 +356,14 @@ static void Game(std::wstring game, std::wstring scratch, bool keep) {
     // another glow: the liquids written again
     const orbassets::Result glow = orbassets::Prepare(game, modRoot, true, 3.0f);
     CHECK(glow.state == orbassets::kMade && glow.wrote);
-    // [hud] wrist_game_liquid_glass: the liquids in the healing potion's GlassMaterial, its pictures the lesser potions', the same texels
-    {
-        float solidU[2], solidV[2];
-        for (int kind = 0; kind < 2; ++kind) {
-            std::string bytes, why;
-            grannyremesh::File f;
-            grannyremesh::Mesh lens;
-            CHECK(ReadAll(In(mpq, wristorbs::kLiquidFile[kind]), &bytes) && grannyremesh::Read(bytes, &f, &why) && grannyremesh::MeshOf(f, &lens, &why));
-            CHECK(wristorbs::LiquidUv(lens, &solidU[kind], &solidV[kind]));
-        }
-        const orbassets::Result gl = orbassets::Prepare(game, modRoot, true, 3.0f, true);
-        std::printf("glass liquid: %ls\n", gl.text.c_str());
-        CHECK(gl.state == orbassets::kMade && gl.wrote);
-        for (int kind = 0; kind < 2; ++kind) {
-            std::string bytes, why, name;
-            grannyremesh::File f;
-            grannyremesh::Mesh lens;
-            CHECK(ReadAll(In(mpq, wristorbs::kLiquidFile[kind]), &bytes) && grannyremesh::Read(bytes, &f, &why) && grannyremesh::MeshOf(f, &lens, &why));
-            CHECK(bytes.find("GlassMaterial") != std::string::npos);   // the game's see-through material
-            float u = 0, v = 0, emissive = 1.0f;
-            CHECK(wristorbs::LiquidUv(lens, &u, &v) && Near(u, solidU[kind], 1e-3f) && Near(v, solidV[kind], 1e-3f));   // the same texel
-            CHECK(wristorbs::EditMaterial(f, "probe", -1.0f, &name, &emissive, &why) && name == wristorbs::kMaterialName[kind] && emissive == 0.0f);
-            const std::vector<std::string> pics = wristorbs::TexturesOf(f);
-            CHECK(pics.size() >= 3);
-            for (const std::string& p : pics) CHECK(p.find(wristorbs::kLiquidPictures[kind]) != std::string::npos && p.find("/healing_potion/") == std::string::npos);
-            std::string unit;
-            CHECK(ReadAll(In(mpq, wristorbs::kLiquidUnit[kind]), &unit) && unit.find(wristorbs::kLiquidPictures[kind]) != std::string::npos);
-            CHECK(wristorbs::MeshIndex(f, "orb_level_64") == wristorbs::kLevels - 1);
-            std::printf("glass liquid %d: %zu pictures, first %s, uv %.3f %.3f\n", kind, pics.size(), pics.empty() ? "" : pics[0].c_str(), u, v);
-        }
-        CHECK(orbassets::Prepare(game, modRoot, true, 3.0f, false).wrote);   // unticked: the solid liquid again
-        std::string bytes;
-        CHECK(ReadAll(In(mpq, wristorbs::kLiquidFile[1]), &bytes) && bytes.find("GlassMaterial") == std::string::npos);
+    // the liquids are in the potions' own StandardMaterial - as the glass
+    // dome's; never the healing potion's GlassMaterial (0.216.0's wrist_game_liquid_glass: its shader takes no opacity and draws the picture solid)
+    for (int kind = 0; kind < 2; ++kind) {
+        std::string bytes, glassBytes;
+        CHECK(ReadAll(In(mpq, wristorbs::kLiquidFile[kind]), &bytes) && bytes.find("GlassMaterial") == std::string::npos &&
+              bytes.find("StandardMaterial") != std::string::npos);
+        CHECK(ReadAll(In(mpq, wristorbs::kGlassFile), &glassBytes) && glassBytes.find("GlassMaterial") == std::string::npos &&
+              glassBytes.find("StandardMaterial") != std::string::npos);
     }
     if (keep) { orbassets::Prepare(game, modRoot, true, 6.0f); return; }   // (left made at the default glow)
     // off: ours out
@@ -397,9 +372,31 @@ static void Game(std::wstring game, std::wstring scratch, bool keep) {
     for (const std::string& rel : wristorbs::OurPaths()) CHECK(GetFileAttributesW(In(mpq, rel).c_str()) == INVALID_FILE_ATTRIBUTES);
 }
 
+// wrist_orb_models_test.exe <game> <a copy of an installed mods\D2R-VR folder> upgrade: files an older version made (their receipt beside them) are
+// made again by this one - the liquids a 0.216.0 wrist_game_liquid_glass left in the game's GlassMaterial come out in the potions' own material.
+static void Upgrade(std::wstring game, std::wstring modRoot) {
+    if (!modRoot.empty() && modRoot.back() != L'\\') modRoot += L'\\';
+    const std::wstring mpq = modRoot + L"D2R-VR.mpq\\";
+    int glassBefore = 0;
+    for (int kind = 0; kind < 2; ++kind) {
+        std::string bytes;
+        if (ReadAll(In(mpq, wristorbs::kLiquidFile[kind]), &bytes) && bytes.find("GlassMaterial") != std::string::npos) ++glassBefore;
+    }
+    const orbassets::Result r = orbassets::Prepare(game, modRoot, true, 25.0f);
+    std::printf("upgrade: %d liquid file(s) in GlassMaterial before; Prepare: %ls\n", glassBefore, r.text.c_str());
+    CHECK(r.state == orbassets::kMade);
+    CHECK(glassBefore == 0 || r.wrote);
+    for (int kind = 0; kind < 2; ++kind) {
+        std::string bytes;
+        CHECK(ReadAll(In(mpq, wristorbs::kLiquidFile[kind]), &bytes) && bytes.find("GlassMaterial") == std::string::npos &&
+              bytes.find("StandardMaterial") != std::string::npos);
+    }
+}
+
 int wmain(int argc, wchar_t** argv) {
     Pure();
-    if (argc >= 3) Game(argv[1], argv[2], argc >= 4 && std::wstring(argv[3]) == L"keep");
+    if (argc >= 4 && std::wstring(argv[3]) == L"upgrade") Upgrade(argv[1], argv[2]);
+    else if (argc >= 3) Game(argv[1], argv[2], argc >= 4 && std::wstring(argv[3]) == L"keep");
     else std::printf("(no game folder given: the maker on the game's files not run)\n");
     std::printf("%d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;

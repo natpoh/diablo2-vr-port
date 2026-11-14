@@ -21,9 +21,10 @@ constexpr const char* kPlateFile = "data/hd/bvt/models/skin_sphere_lod0.model";
 constexpr const char* kGlassMaterial = "d2r_vr_wrist_orb_glass";
 constexpr const char* kPlateMaterial = "d2r_vr_wrist_orb_base";
 constexpr const char* kPlateSourceMesh = "solidShape";   // the potion's cork, cap and rope: its gold
-// The glass: the lesser mana potion's glass mesh's material (its own painted glass - see-through as the game draws it; our per-entity opacity never
-// reaches these entities: they have no TransparentComponent) at its top-tenth texel. (0.215.8 tried the healing potion's "alphaShape", GlassMaterial:
-// in the headset an opaque milky-white egg over the liquid - Serg: "bring the glass back as it was".)
+// The glass: the lesser mana potion's glass mesh's material (its own painted glass, a StandardMaterial) at its top-tenth texel, see-through by the
+// game's per-entity opacity ([hud] wrist_game_glass: the TransparentComponent of its drawn entity, the model's - the unit's root has none; the liquid
+// under it stays solid - a see-through one is hidden whole by the dome's depth). (0.215.8 tried the healing potion's "alphaShape", GlassMaterial: in the headset an opaque milky-white egg
+// over the liquid - a GlassMaterial is as see-through as 1 - its albedo picture's alpha, and every potion picture's alpha is 255.)
 constexpr const char* kGlassSource = "data/hd/items/misc/potion/lesser_mana_potion/lesser_mana_potion_lod0.model";
 constexpr const char* kGlassSourceMesh = "glassShape";
 // Our liquid lens in the potions' files, at two more of the game's test models (only "_lod0": the game ships these with that one LOD)
@@ -34,15 +35,6 @@ constexpr const char* kSource[2] = {"data/hd/items/misc/potion/lesser_healing_po
                                     "data/hd/items/misc/potion/lesser_mana_potion/lesser_mana_potion_lod0.model"};
 constexpr const char* kSourceMesh = "glassShape";
 constexpr const char* kMaterialName[2] = {"d2r_vr_wrist_orb_life", "d2r_vr_wrist_orb_mana"};
-// [hud] wrist_game_liquid_glass (test, 0 by default): the liquids in the game's one see-through material instead - the healing potion's glass
-// ("alphaShape", GlassMaterial: refraction, the albedo tinting what is seen through it). Its three pictures (albedo, normal, ORM) swapped for the
-// lesser healing / lesser mana potion's own, the uv the same liquid texel as the opaque liquid's: the game's own red / blue tinting a see-through glass.
-// (Every other potion, the mana ones too, is a StandardMaterial - opaque; every potion picture's alpha is 255. 0.215.8's dome in this material with
-// the healing potion's own clear texel read as a milky-white egg.)
-constexpr const char* kGlassLiquidSource = "data/hd/items/misc/potion/healing_potion/healing_potion_lod0.model";
-constexpr const char* kGlassLiquidMesh = "alphaShape";
-constexpr const char* kGlassLiquidPictures = "healing_potion/misc_healing_potion_";   // its pictures' paths: this part swapped for ...
-constexpr const char* kLiquidPictures[2] = {"lesser_healing_potion/misc_lesser_healing_potion_", "lesser_mana_potion/misc_lesser_mana_potion_"};
 // The base for each metal ([hud] hand_vitals_orb_metal: 0 gold, 1 bronze, 2 silver) and its patina ([hud] hand_vitals_orb_patina): the effect's plate in a
 // potion's own cap material, from a potion picture with that metal's embossed rosette (decoded 2026-11-13, uv = pixel / size): the full mana potion's gold
 // sunburst, the elixir's big bronze sunburst, the antidote's pewter disc with its carved face. Each file holds two meshes for the game's mesh flipbook:

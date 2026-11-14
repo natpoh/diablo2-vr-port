@@ -486,31 +486,6 @@ inline std::vector<std::string> TexturesOf(grannyremesh::File& f) {
     return out;
 }
 
-// Every picture of the file whose path holds `from` pointed at the same path with `to` there instead (the file's Textures - each material's maps
-// point at these). The count swapped.
-inline int SwapPictures(grannyremesh::File& f, const std::string& from, const std::string& to) {
-    using namespace grannyremesh;
-    Walk g(f);
-    const Addr rt{f.h.rootType.section, f.h.rootType.offset}, ro{f.h.rootObj.section, f.h.rootObj.offset};
-    Addr t;
-    const Addr tex = g.Member(rt, ro, "Textures", &t);
-    if (!tex.ok() || g.Kind(t) != 4) return 0;
-    const Addr texType = g.Ref(t), arr = g.Ptr(tex.at(4));
-    int n = 0;
-    for (int32_t k = 0; k < g.Get<int32_t>(tex) && k < 256; ++k) {
-        Addr e;
-        const Addr at = g.Member(texType, g.Ptr(arr.at((uint32_t)k * 8)), "FromFileName", &e);
-        if (!at.ok()) continue;
-        std::string s = g.Str(g.Ptr(at));
-        const size_t p = s.find(from);
-        if (p == std::string::npos) continue;
-        s.replace(p, from.size(), to);
-        g.SetPtr(at, g.Append(0, s.c_str(), s.size() + 1, 4));
-        ++n;
-    }
-    return n;
-}
-
 // ---- the units ------------------------------------------------------------------------------------------------------------------------------------
 
 // A unit of ours: one entity with `model`, its textures as dependencies. lightMask 19 (the game's lights reach it), shadowMask 0 (it throws none).
@@ -557,10 +532,6 @@ struct Part {
     unsigned salt;
     bool levels = false;   // the liquid: kLevels meshes, the dome cut flat at each level (ZoneMesh), in place of the one lens
     bool base = false;     // the base: the effect's plate with its bezel (BaseMesh)
-    const char* uvSource = nullptr;     // the texel from this file's `uvMesh` (its band) instead of the source's own mesh ...
-    const char* uvMesh = nullptr;
-    const char* picturesFrom = nullptr; // ... and the source's pictures swapped to that file's (SwapPictures)
-    const char* picturesTo = nullptr;
 };
 inline bool MakePart(const Reader& read, const Part& p, std::string* bytes, Liquid* info, std::string* why) {
     std::string src;
@@ -573,16 +544,7 @@ inline bool MakePart(const Reader& read, const Part& p, std::string* bytes, Liqu
     if (!grannyremesh::KeepOnlyMesh(f, k, &w)) { *why = std::string(p.source) + ": " + w; return false; }
     grannyremesh::Mesh mesh;
     if (!grannyremesh::MeshOf(f, &mesh, &w)) { *why = std::string(p.source) + " " + p.meshName + ": " + w; return false; }
-    if (p.uvSource) {   // the texel in another potion's layout (its pictures swapped in below)
-        std::string usrc;
-        grannyremesh::File uf;
-        grannyremesh::Mesh um;
-        if (!read(p.uvSource, &usrc)) { *why = std::string("could not read ") + p.uvSource; return false; }
-        const int uk = grannyremesh::Read(usrc, &uf, &w) ? MeshIndex(uf, p.uvMesh) : -1;
-        if (uk < 0 || !grannyremesh::KeepOnlyMesh(uf, uk, &w) || !grannyremesh::MeshOf(uf, &um, &w)) { *why = std::string(p.uvSource) + ": no mesh " + p.uvMesh; return false; }
-        if (!LiquidUv(um, &info->u, &info->v, &info->height, p.bandLow, p.bandHigh)) { *why = std::string(p.uvSource) + ": no texel in " + p.uvMesh; return false; }
-    } else if (!LiquidUv(mesh, &info->u, &info->v, &info->height, p.bandLow, p.bandHigh)) { *why = std::string(p.source) + ": no texel in " + p.meshName; return false; }
-    if (p.picturesFrom && p.picturesTo && SwapPictures(f, p.picturesFrom, p.picturesTo) < 1) { *why = std::string(p.source) + ": none of its pictures is " + p.picturesFrom; return false; }
+    if (!LiquidUv(mesh, &info->u, &info->v, &info->height, p.bandLow, p.bandHigh)) { *why = std::string(p.source) + ": no texel in " + p.meshName; return false; }
     if (!EditMaterial(f, p.material, p.emissive, &info->oldMaterial, &info->oldEmissive, &w)) { *why = std::string(p.source) + ": " + w; return false; }
     grannyremesh::Mesh lens = p.levels ? ZoneMesh(1.0f / kLevels, info->u, info->v) : p.base ? BaseMesh(info->u, info->v) : LensMesh(info->u, info->v, p.closed);
     grannyremesh::Salt(&lens, p.salt);
@@ -599,10 +561,7 @@ inline bool MakePart(const Reader& read, const Part& p, std::string* bytes, Liqu
     return true;
 }
 // One liquid: the potion's glass mesh's material, its liquid's texel, glowing.
-inline bool MakeLiquid(const Reader& read, int kind, float glow, std::string* bytes, Liquid* info, std::string* why, bool glass = false) {
-    if (glass)   // [hud] wrist_game_liquid_glass: the healing potion's GlassMaterial (no EmissiveIntensity: the glow is the live highlight alone)
-        return MakePart(read, Part{kGlassLiquidSource, kGlassLiquidMesh, kUvBandLow, kUvBandHigh, kMaterialName[kind], -1.0f, true, (unsigned)kind + 1, true, false,
-                                   kSource[kind], kSourceMesh, kGlassLiquidPictures, kLiquidPictures[kind]}, bytes, info, why);
+inline bool MakeLiquid(const Reader& read, int kind, float glow, std::string* bytes, Liquid* info, std::string* why) {
     return MakePart(read, Part{kSource[kind], kSourceMesh, kUvBandLow, kUvBandHigh, kMaterialName[kind], GlowClamp(glow), true, (unsigned)kind + 1, true}, bytes, info, why);
 }
 
@@ -633,11 +592,11 @@ inline bool MakePlate(const Reader& read, int metal, std::string* bytes, Liquid*
 }
 
 // Everything: the two liquids, the glass, the three bases and the six units.
-inline bool Make(const Reader& read, float glow, Made* out, bool glassLiquid = false) {
+inline bool Make(const Reader& read, float glow, Made* out) {
     *out = Made{};
     std::string bytes;
     for (int kind = 0; kind < 2; ++kind) {
-        if (!MakeLiquid(read, kind, glow, &bytes, &out->liquid[kind], &out->why, glassLiquid)) return false;
+        if (!MakeLiquid(read, kind, glow, &bytes, &out->liquid[kind], &out->why)) return false;
         out->files.push_back({kLiquidFile[kind], bytes});
         out->files.push_back({kLiquidUnit[kind], UnitJson(kind == kLife ? "wrist_orb_life" : "wrist_orb_mana", kLiquidModel[kind], out->liquid[kind].textures)});
     }

@@ -31,6 +31,10 @@ bool TableView();         // VR F3, the game on the floor
 bool TopPersp();          // VR F1 through our camera
 bool Overhead();          // TableView or TopPersp
 bool TableFull();         // VR F3 with [table] full_width: no board edge, the game's own dome and fog
+bool TopSky();            // VR F1 Real geometry with [top] sky: the game's own dome round the world
+bool TopFog();            // VR F1 Real geometry with [top] fog: the game's own fog pass
+bool GameSkyOverhead();   // TableFull or TopSky: from above with the game's dome, nothing of our post pass's sky
+bool GameFogOverhead();   // TableFull or TopFog: from above with the game's fog, nothing of ours, no fog tweak
 int RingsNow();           // [render] rings, or F3's own Draw distance stop ([table] draw_distance) while F3 is the view
 float ModelRadiusNow();   // [render] model_radius, likewise
 float GameSkyRadiusNow(); // [sky] game_sky_radius_m in world units, likewise

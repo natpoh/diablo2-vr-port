@@ -212,6 +212,11 @@ void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t 
 // ... and what runs at ModelDrawCollect for each entity, just before the game's own (vr/knock_down.cpp BeforeDraw: a drawn-away body's bounds grown again
 // there, after anything that made them again this frame; null: none). eyes: an eyes' pass (not the shadows'). The render workers.
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes));
+// ... and a look at what the game is about to draw an entity with (vr/belt_glow.cpp DrawProbe: the wrist medallions' opacity as the draw has it): its
+// entity, whether it is an eyes' pass, and ModelDrawCollect's 7th argument - the per-instance constants (+0x138 the opacity; null: none given). Read only.
+void SetDrawProbe(void (*fn)(uint32_t entity, bool eyes, uintptr_t constants));
+// The draw hook is in (the probe is called).
+bool DrawHooked();
 // ... and, for the shadow passes only (pass 1), whether a model is left out of them (vr/simpler_sun.cpp Filter: true = the game's own early return, no
 // draw for it in this pass): its entity, its TransformComponent (the 5th argument), and the 8th and 9th (the light's culling matrix, the matrix its draws
 // are made with). Null: none. Setting one puts the hooks in for it too ([arms] head_shadow off). The render workers.

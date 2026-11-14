@@ -37,10 +37,15 @@ int main(int argc, char** argv) {
         v.tableFull = true; CHECK(!*ViewWhyNot(v));                                             // ... with [table] full_width: the dome round it
         v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // (VR F1 still not)
         v.tableFull = false;
+        v.topSky = true; CHECK(!*ViewWhyNot(v));                                                // VR F1 (Real geometry) with [top] sky: the dome round it
+        v.view = 3; CHECK(std::strstr(ViewWhyNot(v), "table") != nullptr);                      // (VR F3 not by it)
+        v.view = 1; v.topSky = false;
         v.view = 2; v.enabled = false; CHECK(std::strstr(ViewWhyNot(v), "F12") != nullptr);
         v.vr = false; v.enabled = true; v.gameDrawnFlat = true;
         for (int k = 2; k <= 3; ++k) { v.view = k; CHECK(!*ViewWhyNot(v)); }                    // flat F2, F3
         v.view = 1; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                      // flat F1
+        v.topSky = true; CHECK(std::strstr(ViewWhyNot(v), "above") != nullptr);                 // (flat F1: the game's camera, [top] sky is VR's)
+        v.topSky = false;
         v.view = 2; v.gameDrawnFlat = false; CHECK(std::strstr(ViewWhyNot(v), "game_drawn_flat") != nullptr);
         in = ok; in.inWorld = false; CHECK(std::strstr(WhyNot(in), "world") != nullptr);
         in = ok; in.palette = -1; CHECK(std::strstr(WhyNot(in), "no sky wanted") != nullptr);

@@ -31,7 +31,7 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 23;
+constexpr int kMaxPages = 24;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (the HUD page since its "Medallions: look"; hset_model.h TightRows)
@@ -51,12 +51,14 @@ constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (
 // F3 (Serg 2026-11-08: "Yes, add them" - the Draw distance slider looked for in the headset and not found) has no tab either: it is the View tab's
 // second page, reached by the View page's F3 button (the bottom bar) and back by its View button, as Render is Video's; VR F3 only (its keys are
 // [table]'s: the game on the floor) - D2R VR Settings > Camera > "F3 The game on your floor" has the same two.
+// F1 (Serg 2026-11-13: the view from above's controls in the headset too) is F3's twin for VR F1: the View tab's second page there, reached by the
+// View page's F1 button and back by its View button; VR F1 only (its keys are [top]'s) - D2R VR Settings > UI: F1 above > "View from above".
 enum Page : int {
-    kPageView = 0, kPageF3 = 1, kPageOptions = 2, kPageVideo = 3, kPageRender = 4, kPageKeysL = 5, kPageKeysR = 6, kPageVibration = 7, kPageHud = 8,
-    kPageLife = 9, kPageLook = 10, kPageBody = 11, kPageBelt = 12, kPageMelee = 13, kPageMeleeAttack = 14,
-    kPageWorld = 15, kPageWorldReact = 16, kPageWorldGrab = 17, kPageWorldMore = 18, kPageCoop = 19, kPageParty = 20, kPageStats = 21, kPageGuide = 22
+    kPageView = 0, kPageF1 = 1, kPageF3 = 2, kPageOptions = 3, kPageVideo = 4, kPageRender = 5, kPageKeysL = 6, kPageKeysR = 7, kPageVibration = 8,
+    kPageHud = 9, kPageLife = 10, kPageLook = 11, kPageBody = 12, kPageBelt = 13, kPageMelee = 14, kPageMeleeAttack = 15,
+    kPageWorld = 16, kPageWorldReact = 17, kPageWorldGrab = 18, kPageWorldMore = 19, kPageCoop = 20, kPageParty = 21, kPageStats = 22, kPageGuide = 23
 };
-constexpr int kPageCount = 23;
+constexpr int kPageCount = 24;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 // Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
@@ -71,9 +73,9 @@ constexpr bool IsMeleePage(int page) { return page >= kPageMelee && page < kPage
 constexpr bool HasSubRow(int page) { return IsWorldPage(page) || IsKeysPage(page) || IsMeleePage(page); }
 constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKeysPage(page) ? kPageKeysL : IsMeleePage(page) ? kPageMelee : page; }
 constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : IsMeleePage(page) ? kMeleePages : 1; }
-// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, F3's View, else the page itself.
+// The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, F1's and F3's View, else the page itself.
 constexpr int LeadOf(int page) {
-    return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page == kPageF3 ? kPageView : page;
+    return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page == kPageF1 || page == kPageF3 ? kPageView : page;
 }
 constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
 // The tab a page is under, and the page a tab opens.
@@ -90,8 +92,8 @@ constexpr int TabPage(int tab) {
 constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
 static_assert(kTabCount == 15 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
                   TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && TabOf(kPageRender) == TabOf(kPageVideo) && TabPage(TabOf(kPageVideo)) == kPageVideo &&
-                  TabOf(kPageF3) == TabOf(kPageView) && TabPage(TabOf(kPageF3)) == kPageView,
-              "fifteen tabs over the twenty-three pages");
+                  TabOf(kPageF3) == TabOf(kPageView) && TabPage(TabOf(kPageF3)) == kPageView && TabOf(kPageF1) == TabOf(kPageView),
+              "fifteen tabs over the twenty-four pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 256 bits: the Vibration page took the
@@ -181,6 +183,23 @@ inline constexpr Def kDefs[] = {
     // seventh row: the page's rows stand closer (hset_model.h RowStep). [openxr] headset_players (no row, below) switches it on.
     {L"game", L"players", "Players (difficulty)", "As /players: tougher monsters, more experience and drops",
      1.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kPageOptions, false, DefType::Game},
+    // F1 (the View tab's second page in VR F1): the view from above's three of D2R VR Settings > UI: F1 above > "View from above", in its words.
+    // [top] perspective: Real geometry - our own camera in true perspective instead of the game's flat picture (vr/view/view_state.cpp TopPersp);
+    // [top] tilt: that camera turned about the hero, + nearer the horizon; [top] distance: how far back it stands, % of the game's own (TopCamera:
+    // more = zoomed out; the clicks go through the same camera). Tilt and distance act with Real geometry on (their lines say so). All live, as there.
+    {L"top", L"perspective", "Real geometry", "True perspective; off = the game's flat picture",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF1, true},
+    {L"top", L"tilt", "Camera tilt", "With Real geometry: + nearer the horizon, more ahead",
+     0.0f, -40.0f, 60.0f, 5.0f, "%+.0f deg", "", "", kPageF1, true},
+    {L"top", L"distance", "Camera distance", "With Real geometry: + zooms out, more round the hero",
+     100.0f, 50.0f, 300.0f, 10.0f, "%.0f%%", "", "", kPageF1, true},
+    // [top] sky / fog (Serg 2026-11-13: "F1 also needs the fog and sky tick"): the game's own dome / fog pass round the world in Real geometry
+    // (vr/view/view_state.cpp TopSky / TopFog), each its own key; their lines say what they need (Real geometry, the game drawing that sky /
+    // fog: hset_scene.h TopViewDetail).
+    {L"top", L"sky", "Game's sky", "With Real geometry: the game's sky dome round the world",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF1, true},
+    {L"top", L"fog", "Game's fog", "With Real geometry: the game's fog over the far ground",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF1, true},
     // F3 (the View tab's second page): the game on the floor's two of D2R VR Settings > Camera > "F3 The game on your floor", in its words (a row's
     // name short, the rest in its line). [table] full_width: no board edge, the game's own sky dome and fog round the game (vr/view/view_state.cpp
     // TableFull); [table] draw_distance: F3's own Draw distance stop, 0 = as the other views (shared/draw_distance.h ViewStop). Both live, as there.
@@ -608,6 +627,9 @@ constexpr int kKeyMeleeDirectClient = IndexOf(L"gameplay", L"melee_direct_client
 constexpr int kKeyWallContact = IndexOf(L"weight", L"wall_contact_mode");   // the World page's Weapon against the walls (vr/hset_names.h WallContactName)
 static_assert(kKeyWallContact >= 0, "Weapon against the walls is in the table");
 constexpr int kKeyAlliesPlace = IndexOf(L"hud", L"allies_place");   // [hud] allies_place: a stepper with names (vr/hset_names.h AlliesPlaceName)
+constexpr int kKeyTopPersp = IndexOf(L"top", L"perspective"), kKeyTopTilt = IndexOf(L"top", L"tilt"), kKeyTopDistance = IndexOf(L"top", L"distance"),
+              kKeyTopSky = IndexOf(L"top", L"sky"), kKeyTopFog = IndexOf(L"top", L"fog");   // the F1 page's (hset_scene.h TopViewDetail)
+static_assert(kKeyTopPersp >= 0 && kKeyTopTilt >= 0 && kKeyTopDistance >= 0 && kKeyTopSky >= 0 && kKeyTopFog >= 0, "the F1 page's keys are in the table");
 constexpr int kKeyWristLook = IndexOf(L"hud", L"wrist_look");       // [hud] wrist_look: a stepper with names (vr/hset_names.h WristLookName)
 static_assert(kKeyWristLook >= 0, "Medallions: look is in the table");
 static_assert(kKeyMeleeDirect >= 0 && kKeyMeleeDirectClient >= 0, "Direct hit's keys are in the table");
@@ -650,7 +672,7 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "F3", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
+constexpr const char* kPageNames[kMaxPages] = {"View", "F1", "F3", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
                                                "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Guide"};
 constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
                                               "World", "Co-op", "Stats", "Guide"};
@@ -699,10 +721,15 @@ constexpr bool F4OnlyKey(int key) {
                                         key == IndexOf(L"hands", L"left_handed"));   // (where the allies are, our names, the left-handed swap: F4 only)
 }
 // F3's page (the game on the floor's keys): VR F3 only, and view 0 (not known: a test) - "only what relates" (Serg, 2026-11-02) the other way round.
+// F1's page (the view from above's keys) the same way: VR F1 only, and view 0.
 constexpr bool F3OnlyPage(int page) { return page == kPageF3; }
+constexpr bool F1OnlyPage(int page) { return page == kPageF1; }
 constexpr bool PageShown(int page, int view) {
-    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)) && !(F3OnlyPage(page) && view != 0 && view != 3);
+    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)) && !(F3OnlyPage(page) && view != 0 && view != 3) &&
+           !(F1OnlyPage(page) && view != 0 && view != 1);
 }
+// The View page's bottom button: the view's own page - F1's in VR F1, F3's in VR F3 and view 0 (as before) - or none (-1).
+constexpr int ViewSubPage(int view) { return view == 1 ? kPageF1 : PageShown(kPageF3, view) ? kPageF3 : -1; }
 constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key)); }
 constexpr bool TabShown(int tab, int view) { return tab >= 0 && tab < kTabCount && PageShown(TabPage(tab), view); }
 static_assert(IndexOf(L"openxr", L"menu_3d") >= 0 && IndexOf(L"hud", L"monster_height") >= 0 && IndexOf(L"hud", L"ordinary_mob_bars") >= 0,

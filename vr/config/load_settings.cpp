@@ -296,6 +296,7 @@ void LoadSettings() {
         ap.sizePct = IniF(L"hud", L"ally_portraits_size", 125.0f);
         ap.mapCols = (int)IniF(L"hud", L"allies_map_cols", (float)alliesplace::kMapColsDefault);
         ap.wristCols = (int)IniF(L"hud", L"allies_wrist_cols", (float)alliesplace::kWristColsDefault);
+        ap.skills = allyportraits::SkillsShown((int)std::lround(IniF(L"hud", L"skill_under_map", 2.0f)), (int)std::lround(IniF(L"hud", L"wrist_look", 0.0f)));   // [hud] skill_under_map: the armed skills' row under the map - by default with the game's medallions (wrist_look 1 / 2), which cannot show the icon
         allyportraits::Configure(ap);
     }
     g_set.hudMap.store(std::clamp((int)IniF(L"hud", L"map", 0.0f), 0, 1));
@@ -399,6 +400,7 @@ void LoadSettings() {
     g_set.npcNamesOwn.store(IniB(L"hud", L"npc_names_own", true));
     g_set.ownDropGame.store(IniB(L"hud", L"own_labels_drop_game", true));   // the game's own layer not drawn under ours (labels.cpp DropGameLayer), live
     g_set.ownLabelsDump.store(IniB(L"debug", L"own_labels_dump", false));   // our labels' atlas to a picture once (view only), live
+    g_tellClientCallers.store(IniB(L"debug", L"client_size_callers", false));   // the game's window-size readers to the log (view only), live
     g_set.namesSize.store(std::clamp(IniF(L"hud", L"names_own_size_pct", 100.0f), 20.0f, 300.0f));   // our names' own size, by distance, backdrop (ownnames::NameLook), live
     g_set.namesFar.store(std::clamp(IniF(L"hud", L"names_own_far_pct", 60.0f), 10.0f, 150.0f));
     g_set.namesAlpha.store(std::clamp(IniF(L"hud", L"names_own_alpha", 0.0f), 0.0f, 1.0f));   // F4: the hover names over NPCs, objects, portals drawn by us (vr/own_names.h), live   // F4: the names in the target's plate drawn by us, sharp (vr/own_names.h), live
@@ -691,6 +693,9 @@ void LoadSettings() {
     g_set.tableScale.store(6.0f / (std::clamp(IniF(L"table", L"hero_cm", 40.0f), 5.0f, 250.0f) * 0.01f));
     g_set.topPersp.store(IniB(L"top", L"perspective", false));
     g_set.topTilt.store(std::clamp(IniF(L"top", L"tilt", 0.0f), -40.0f, 60.0f));
+    g_set.topSky.store(IniB(L"top", L"sky", false));   // 0 = no sky from above, as before
+    g_set.topFog.store(IniB(L"top", L"fog", false));   // 0 = no fog from above, as before
+    g_set.topDistance.store(std::clamp(IniF(L"top", L"distance", 100.0f), 50.0f, 300.0f) * 0.01f);   // percent of the game's own; 100 = as before
     g_set.tableHeightM.store(std::clamp(IniF(L"table", L"height_m", 0.0f), -2.0f, 2.0f));
     g_set.tableTurnDeg.store(std::clamp(IniF(L"table", L"turn", 0.0f), -180.0f, 180.0f));
     g_set.tablePlace.store((int)IniF(L"table", L"place", 0.0f));
@@ -985,7 +990,7 @@ void LoadSettings() {
     g_set.skyDrift.store(IniB(L"sky", L"drift", false));
     g_set.lightDay.store(std::clamp(IniF(L"sky", L"light_day", 128.0f), 1.0f, 255.0f));
     g_set.lightNight.store(std::clamp(IniF(L"sky", L"light_night", 65.0f), 0.0f, 254.0f));
-    g_set.nightBright.store(std::clamp(IniF(L"sky", L"night_brightness", 0.25f), 0.0f, 1.0f));
+    g_set.nightBright.store(std::clamp(IniF(L"sky", L"night_brightness", 0.3f), 0.0f, 1.0f));
     {   // [sky] bright_<period>: Serg's own, one a period of the game's day (the game's order, env::Now)
         static const wchar_t* const kKeys[6] = {L"bright_dawn", L"bright_day_start", L"bright_day", L"bright_dusk", L"bright_night_start", L"bright_night"};
         for (int i = 0; i < 6; ++i) g_set.periodBright[i].store(std::clamp(IniF(L"sky", kKeys[i], 1.0f), 0.0f, 3.0f));
@@ -1447,7 +1452,7 @@ void LoadSettings() {
                                  IniB(L"gestures", L"glyph_cast_hold", false));
         skilllinkwire::SetSelectIcon(IniB(L"gestures", L"select_icon", true));   // the armed skills' icons in the medallions
     }
-    skilllinkwire::Configure(IniB(L"gestures", L"skill_link", false),
+    skilllinkwire::Configure(IniB(L"gestures", L"skill_link", true),   // (0.217: on by default, Serg 2026-11-14)
                              (int)std::lround(IniF(L"gestures", L"skill_link_slot", (float)skilllink::kDefaultSpareSlot)),
                              IniB(L"gestures", L"skill_link_settle", true));
     shieldsmite::SetTuning(IniF(L"gameplay", L"shield_smite_min_speed", 0.8f), IniF(L"gameplay", L"shield_smite_stroke_cm", 8.0f));   // the shield bash's own speed and start distance (vr/shield_smite.h BashParams), live

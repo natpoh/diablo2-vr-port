@@ -1226,11 +1226,17 @@ tab.ui_f1_above = UI: F1 above
 
 # --- View from above ---
 group.view_from_above = View from above
-group.view_from_above.help = How the view from above (F1) is drawn. Tick Real geometry to see it through our own camera in true perspective and real stereo instead of the game's flat picture; the tilt slider turns the camera nearer the horizon, to show more of the world ahead.
+group.view_from_above.help = How the view from above (F1) is drawn. Tick Real geometry to see it through our own camera in true perspective and real stereo instead of the game's flat picture; the tilt slider turns the camera nearer the horizon, to show more of the world ahead; the distance slider zooms out for more of the world round the hero; the game's own sky and fog can be drawn round it.
 top.perspective.label = Real geometry
 top.perspective.tip = The view from above through our own camera: the same picture, but in true perspective - the field of view of the FlatVR screen and real stereo (Real stereo on the Stereo tab), the hero on the screen's plane. Off = the game's own flat picture.
 top.tilt.label = Real geometry: camera tilt, °
 top.tilt.tip = The camera turned about the hero: more = nearer the horizon, more of the world ahead and the sky past it.
+top.distance.label = Real geometry: camera distance, %
+top.distance.tip = How far back the camera stands, % of the game's own: more = zoomed out, more of the world round the hero (all of it smaller), less = nearer. Clicks still land under the pointer. Far out, rooms past the Draw distance (Home) stay empty: raise it there. 100 = the game's own height. Live.
+top.sky.label = Real geometry: the game's own sky
+top.sky.tip = The game's own sky dome round the world, as in F4 - seen past the ground when the camera is tilted towards the horizon. Only the game's dome (the Sky tab's "Sky drawn by" must be the game), nothing of ours over it. Needs Real geometry: the game's own flat picture is its camera looking down, with no sky. Live. Off = no sky from above, as before.
+top.fog.label = Real geometry: the game's own fog
+top.fog.tip = The game's own fog over the far ground, as in F4, its distances kept round the hero (measured from the camera high above him). Only the game's fog pass (the World tab's fog choice must be the game's), no fog tweak of ours. Needs Real geometry: the game's own flat picture has no fog of the game's. Live. Off = no fog from above, as before.
 
 # --- Toolbar and map, from above ---
 group.toolbar_and_map_from_above = Toolbar and map, from above
@@ -1845,6 +1851,11 @@ hud.ally_portraits_size.label = Allies under the map: width, % of the map
 hud.ally_portraits_size.tip = How wide four tiles are, in percent of the map's width (the orb in the hand: its ball); more or fewer across keep the tiles that size. 125: a little wider than the orb. At most 40 cm under the map in the hand and 60 cm under the big map. Live.
 hud.allies_wrist_cols.label = Allies on the wrist: tiles across
 hud.allies_wrist_cols.tip = How many tiles stand side by side over the right wrist (each a 2.5th of the wrist status panel's width); the rows are as many as your allies need, the bottom one on the panel's place. Live.
+hud.skill_under_map.label = Armed skill under the map in the hand (F4)
+hud.skill_under_map.tip = VR first person (F4), native OpenXR. The skill each hand has armed - what the mana and life medallions show on their bottom: on the right the bow's chosen skill, a skill a glyph armed, or the armed melee skill; on the left a skill a glyph armed - as the game's own icon with its name, in a row under the map held in your hand (and under the big map). Faint while you cannot pay it. With the allies under the map too, they move down by that row. With the game's medallions (the default): only while the medallions' Look is the game's models or the game's globes - they cannot show the icon; the mod's glass balls show it themselves. Live.
+hud.skill_under_map.choice0 = Never
+hud.skill_under_map.choice1 = Always
+hud.skill_under_map.choice2 = With the game's medallions
 hud.hide.label = Hide the game's interface
 hud.hide.tip = The game draws its whole interface into a layer of its own. "The toolbar" empties only the toolbar's strip (found from the screen's size and the game's interface size); labels over monsters, tooltips and shops stay. "All of it": the world alone. 'Toolbar type' above sets this and Where together.
 hud.hide.choice1 = The toolbar
@@ -1884,9 +1895,7 @@ hud.wrist_globe_scale.tip = How big a disc is cut round each globe (1 = the game
 hud.wrist_game_glow.label = Drawn by the game: glow in the dark
 hud.wrist_game_glow.tip = How bright the liquid is: the game's own highlight on it (what lights a unit under your pointer), its colour times 1 + this x 0.05 - 13 is 1.65 times, 40 three times, 0 as the game draws it. The low-life beat adds on top. Live.
 hud.wrist_game_glass.label = Drawn by the game: glass
-hud.wrist_game_glass.tip = The glass dome over the liquid: 0 no glass at all; above 0 the lesser mana potion's own glass, see-through as the game draws it (the game gives these models no opacity of their own to set, so the number above 0 does not change how clear it is). Live.
-hud.wrist_game_liquid_glass.label = Drawn by the game: see-through liquid
-hud.wrist_game_liquid_glass.tip = The liquid in the game's own see-through glass (the healing potion's glass, which shows what is behind it through its colour), coloured by the lesser healing / lesser mana potion's own red and blue - in place of the potions' solid liquid. A test: how see-through it comes out is the game's. This program makes the liquid's files again when you tick it; the next start of the game.
+hud.wrist_game_glass.tip = The glass dome over the liquid: 0 no glass at all; above 0 the lesser mana potion's own glass, as solid as this number (the game's own opacity on the model: 1 solid, 0.1 nearly clear). Live.
 hud.wrist_game_pulse.label = Drawn by the game: pulse when low
 hud.wrist_game_pulse.tip = How much brighter the liquid gets at each beat when your life is low (with Soft heartbeat at low life ticked; mana too with Balls beat with the vignettes): the game's own highlight, 1 = twice as bright at the top of a beat. 0: no pulse. Live.
 hud.hand_vitals_orb_shape.label = Shape
@@ -3995,7 +4004,6 @@ group.d2r_rooms_bridge_create_game_through_a_relay.help = D2R Rooms is a D2RLoad
 @rooms.mode.label = Go through a relay
 @rooms.mode.tip = Auto: only when D2RLoader reports that your port cannot be reached from outside (no port forwarding, a router without UPnP, carrier-grade NAT). Always: every room you host goes through a relay. Never: the room is listed, friends connect straight to you. [relay] mode in d2r-rooms.ini.
 @rooms.mode.choice0 = Only when my port cannot be reached (auto)
-@rooms.mode.choice1 = Always
 @rooms.mode.choice2 = Never (friends need my port open)
 @rooms.edit.label = Add or remove relays (d2r-rooms.ini in Notepad)
 @rooms.edit.tip = Opens d2r-rooms.ini: one relay per line under [relays], as  name = wss://address  - a private relay's key after a space. Save it and the list here follows. Running a relay of your own: docs/host_a_relay.md of the D2R Rooms repository.
@@ -4094,6 +4102,8 @@ debug.game_sky_test.choice3 = The Summit's unit naming our magenta model
 debug.game_sky_test.choice4 = Our magenta model at the Summit's own path
 debug.own_labels_dump.label = Write our labels' and names' picture once (d2r_vr_own_labels.bmp)
 debug.own_labels_dump.tip = With our own item labels or names over monsters on: once they are shown, the picture they are drawn from (every name painted so far) is written to d2rloader\logs\d2r_vr_own_labels.bmp, to hold against the game's own text. It only writes the file; it changes nothing in play.
+debug.client_size_callers.label = Log the game's readers of the window size
+debug.client_size_callers.tip = With a render size of its own (Performance > render size) the game's picture can be much bigger than its window on the monitor (a small main display: a 1080p TV gives a 1020 square). Most of the game is told the picture's size; this writes to the log, once each, the places in the game that still read the window's own size - an interface part laid out for the small window. It only writes the log; it changes nothing in play.
 debug.frame_log.label = Log every frame
 debug.frame_log.tip = Every pair, view, hero pose and present to d2r_vr_frames.csv beside the ini, and FlatVR its per-frame pose trace.
 debug.frame_trace.label = Log the long frames and what the plugin spent in them
@@ -4385,6 +4395,7 @@ status.layer_warn.toolkit.how = tick "Disable OpenXR Toolkit" in OpenXR Toolkit 
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = View
+vr.hset.page.f1 = F1
 vr.hset.page.f3 = F3
 vr.hset.page.options = Options
 vr.hset.page.video = Video
@@ -4438,6 +4449,16 @@ vr.hset.turn.speed.label = Smooth turn speed
 vr.hset.turn.speed.detail = Degrees per second, while smooth turning is on
 vr.hset.game.players.label = Players (difficulty)
 vr.hset.game.players.detail = As /players: tougher monsters, more experience and drops
+vr.hset.top.perspective.label = Real geometry
+vr.hset.top.perspective.detail = True perspective; off = the game's flat picture
+vr.hset.top.tilt.label = Camera tilt
+vr.hset.top.tilt.detail = With Real geometry: + nearer the horizon, more ahead
+vr.hset.top.distance.label = Camera distance
+vr.hset.top.distance.detail = With Real geometry: + zooms out, more round the hero
+vr.hset.top.sky.label = Game's sky
+vr.hset.top.sky.detail = With Real geometry: the game's sky dome round the world
+vr.hset.top.fog.label = Game's fog
+vr.hset.top.fog.detail = With Real geometry: the game's fog over the far ground
 vr.hset.table.full_width.label = Full width
 vr.hset.table.full_width.detail = The game's own sky and fog round the game, no edge
 vr.hset.table.draw_distance.label = F3 draw distance
@@ -5663,6 +5684,9 @@ vr.hset.custom_empty = (a line the list does not name)
 vr.hset.second_row_off =  - the second row (LT) is off
 vr.hset.wrist_look.needs_wrists = Seen with the toolbar type Wrists (the row above)
 vr.hset.wrist_look.not_made = Not made yet: start D2R VR Authentic Settings, then the game
+vr.hset.top.needs_persp = Needs Real geometry (the first row)
+vr.hset.top.needs_game_sky = Needs Sky drawn by: the game (Video page)
+vr.hset.top.needs_game_fog = Needs Fog drawn by: the game (Video page)
 vr.hset.players.off = Off: D2R VR Authentic Settings, Players from the headset
 vr.hset.players.unknown = The game's count is read once your hero is in a game
 vr.hset.players.not_here = Only in a game of your own: single player or a TCP/IP host
@@ -5724,7 +5748,9 @@ vr.party.back = Relay
 vr.hset.render.go = Render
 vr.hset.render.back = Video
 vr.hset.f3.go = F3
+vr.hset.f1.go = F1
 vr.hset.f3.back = View
+vr.hset.f1.back = View
 vr.hset.recentre = Recentre view
 vr.hset.close = Close
 vr.hset.apply = Apply

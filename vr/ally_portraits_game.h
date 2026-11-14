@@ -24,5 +24,10 @@ void Tick(bool wantRead);
 // did not add up, the guards did not pass).
 bool Latest(Look* look, double* ageMs);
 
+// [hud] skill_under_map: the armed skills whose names are wanted now (any thread; -1 none) - the next read asks the game's text for them (the skill
+// icon cache's string key, as the skill wheel names its skills) - and a name found, in the game's language. False: not found (yet).
+void WantSkillNames(int32_t a, int32_t b);
+bool SkillName(int32_t id, char (&out)[kNameBytes]);
+
 }  // namespace game
 }  // namespace allyportraits

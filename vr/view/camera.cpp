@@ -127,7 +127,12 @@ bool TopCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right,
     const bool ortho = fabsf(P[11]) < 0.5f;
     const float hz = L[0] * G[2] + L[1] * G[6] + L[2] * G[10] + G[14];   // the hero in the game's view space (looks down -z)
     const float half = ortho ? 1.0f / m5 : std::max(-hz, 1.0f) / m5;
-    const float dist = half * 2.0f * sd / sh;   // our camera that far back sees the same height on the screen
+    // Our camera that far back sees the same height on the screen; [top] distance moves it farther (more of the world round the hero,
+    // all of it smaller) or nearer along the same line. The world's scale goes with it (units per metre below: the hero stays on the
+    // screen's plane, the stereo and native's window keep the picture's own scale) and the game's mouse rays come from these matrices
+    // (d2rcam's ScreenToRay), so a click lands where the pointer is drawn. 1 = the game's own height, as before.
+    const float zoom = std::clamp(g_set.topDistance.load(), 0.5f, 3.0f);
+    const float dist = half * 2.0f * sd / sh * zoom;
     *fwd = {-G[2], -G[6], -G[10]};
     *up = {G[1], G[5], G[9]};
     *right = {G[0], G[4], G[8]};
@@ -149,11 +154,16 @@ bool TopCamera(const d2rcam::WorldView& in, V3* eye, V3* fwd, V3* up, V3* right,
         *eye = V3{w.x, w.y, w.z};
     }
     g_topUnitsPerM.store(dist / sd);
-    static bool told = false;
-    if (!told) {
-        told = true;
-        LogF("vrcam: from above in true perspective - %s game view, camera %.1f units back, %.2f units per metre%s", ortho ? "orthographic" : "perspective", dist,
-             dist / sd, xe ? " - native OpenXR: a window of the room, the eyes look through it" : "");
+    {   // [top] fog: the game's fog rings kept round the hero, measured from this eye (sky_choice.cpp GameFogNumbersNow)
+        const V3 d = *eye - V3{L[0], L[1], L[2]};
+        const float len = sqrtf(d.x * d.x + d.y * d.y + d.z * d.z);
+        if (std::isfinite(len)) { g_topEyeDist.store(len); g_topEyeOk.store(true); }
+    }
+    static float toldZoom = 0.0f;   // once, and again when [top] distance changes
+    if (zoom != toldZoom) {
+        toldZoom = zoom;
+        LogF("vrcam: from above in true perspective - %s game view, camera %.1f units back (%.0f%% of the game's, [top] distance), %.2f units per metre%s",
+             ortho ? "orthographic" : "perspective", dist, zoom * 100.0f, dist / sd, xe ? " - native OpenXR: a window of the room, the eyes look through it" : "");
     }
     return true;
 }

@@ -33,6 +33,8 @@
 
 #include "sigscan.h"
 #include "ui_ticket.h"
+#include "melee_arm.h"     // [hud] skill_under_map: the melee list's names (when the game's text does not answer)
+#include "wheel_icons.h"   // ... the skill icon cache's string key of a skill's name
 
 using namespace D2RL;
 
@@ -375,8 +377,58 @@ void LogChange(const Look& l) {
     Log(line);
 }
 
+// ---- [hud] skill_under_map: the armed skills' names (the skill icon cache's string key, asked of the localization service as "d2r:<key>" - the way the
+// skill wheel names its skills, vr/wheel_game.cpp; the melee list's English word when the game does not answer) -----------------------------------------
+
+std::atomic<int32_t> g_skillWanted[kMaxSkills] = {-1, -1};
+struct SkillNamed {
+    int32_t id = -1;
+    char name[kNameBytes] = {};
+    ULONGLONG triedAt = 0;   // not found: asked again after a few seconds (the text service may not be ready yet)
+};
+std::mutex g_skillMutex;
+SkillNamed g_skillNamed[16];
+
+void NameSkills() {
+    for (int h = 0; h < kMaxSkills; ++h) {
+        const int32_t id = g_skillWanted[h].load();
+        if (id < 0) continue;
+        {
+            std::lock_guard<std::mutex> lock(g_skillMutex);
+            bool known = false;
+            for (const SkillNamed& s : g_skillNamed)
+                if (s.id == id && (s.name[0] || GetTickCount64() - s.triedAt < 5000)) known = true;
+            if (known) continue;
+        }
+        char text[kNameBytes * 2] = {};
+        const std::string key = wheelicons::NameKey(id);
+        if (!key.empty() && g_strings && g_strings->getStringByKey) {
+            const std::string full = "d2r:" + key;
+            uint32_t need = 0;
+            if (g_strings->getStringByKey(g_ctx, full.c_str(), text, sizeof text, &need) != Localization::Result::Success) text[0] = 0;
+        }
+        if (!text[0] && meleearm::IsMelee(id)) snprintf(text, sizeof text, "%s", meleearm::Name(id));
+        std::lock_guard<std::mutex> lock(g_skillMutex);
+        SkillNamed* slot = &g_skillNamed[0];
+        for (SkillNamed& s : g_skillNamed)
+            if (s.id == id) { slot = &s; break; }
+            else if (s.triedAt < slot->triedAt) slot = &s;   // (the oldest goes)
+        slot->id = id;
+        CopyName(slot->name, text);
+        slot->triedAt = GetTickCount64();
+        static int told = 0;
+        if (told < 6) {
+            ++told;
+            char b[200];
+            snprintf(b, sizeof b, "vrcam: skill under the map - skill %d is \"%s\" (key \"%s\")", (int)id, slot->name, key.c_str());
+            Log(b);
+        }
+    }
+}
+
 void __cdecl UiJob(const PluginContext*, void* user) noexcept {
     if (!g_ticket.Claim(uiticket::FromUser(user))) return;
+    NameSkills();   // (before the hero's read: the skills are named in a menu's pause too)
     uint32_t me = 0;
     uint8_t bank = 0;
     const HeroRead r = ReadHeroId(&me, &bank);
@@ -448,6 +500,19 @@ bool Latest(Look* look, double* ageMs) {
     *look = g_look;
     *ageMs = (double)(GetTickCount64() - g_at);
     return true;
+}
+
+void WantSkillNames(int32_t a, int32_t b) {
+    g_skillWanted[0].store(a);
+    g_skillWanted[1].store(b);
+}
+
+bool SkillName(int32_t id, char (&out)[kNameBytes]) {
+    out[0] = 0;
+    std::lock_guard<std::mutex> lock(g_skillMutex);
+    for (const SkillNamed& s : g_skillNamed)
+        if (s.id == id && s.name[0]) { CopyName(out, s.name); return true; }
+    return false;
 }
 
 }  // namespace game

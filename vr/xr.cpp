@@ -4019,7 +4019,7 @@ uint32_t HangHud(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uint3
             if (++told == 1) Log("vrcam: openxr - the map in the hand beside the inventory on the left hand ([hud] map_beside_inventory)");
         }
         layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
-        if (map && allyportraits::GridWanted()) {   // [hud] allies_place=1: under this map (the orb: under its ball, not its quad)
+        if (map && allyportraits::UnderMapWanted()) {   // [hud] allies_place=1 / skill_under_map: under this map (the orb: under its ball, not its quad)
             const float vw = orb ? q.size.width / kOrbSpan : q.size.width, vh = orb ? q.size.height / kOrbSpan : q.size.height;
             g_allyAnchor = AllyAnchor{true, false, q, vw, 0.5f * vh};
         }
@@ -5109,7 +5109,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     quad(g_bigLayer[0], o.sc, turned ? XrRect2Di{{0, 0}, {(int32_t)side, (int32_t)side}} : XrRect2Di{{0, 0}, {(int32_t)src.w, (int32_t)rows}}, pl.at, pl.w, pl.h);
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&g_bigLayer[0];
     keep(g_bigQuad, pl.at, pl.w, pl.h);
-    if (allyportraits::GridWanted())   // [hud] allies_place=1: under the big map - in front under its Rotate button too (maplaser::PlaceAt: 4 cm under it), on the hand the button is over it
+    if (allyportraits::UnderMapWanted())   // [hud] allies_place=1 / skill_under_map: under the big map - in front under its Rotate button too (maplaser::PlaceAt: 4 cm under it), on the hand the button is over it
         g_allyAnchor = AllyAnchor{true, true, g_bigLayer[0], pl.w, onHand ? 0.5f * pl.h : 0.5f * pl.h + 0.04f + pl.bh};
     if (g_cfg.mapCompass && headingKnown) {   // [hud] map_compass over the big map too, at most half a metre wide; on the hand the Rotate button over it
         XrCompositionLayerQuad cq = g_bigLayer[0];
@@ -6709,10 +6709,11 @@ void FreeIdle() {
         QuadAtlasRetire(g_bannerAtlas, "banner");
         g_bannerUp = 0;
     }
-    if (g_apAtlas.sc && idle(g_apAtlas.usedAt)) {   // [hud] ally_portraits
-        QuadAtlasRetire(g_apAtlas, "ally portraits");
-        g_apPxPending = !g_apPx.empty();
-    }
+    for (ApOut& o : g_ap)   // [hud] allies_place / skill_under_map
+        if (o.atlas.sc && idle(o.atlas.usedAt)) {
+            QuadAtlasRetire(o.atlas, "ally portraits");
+            o.pending = !o.px.empty();
+        }
     if (g_chains.Changed()) {   // once when the number changes, not each frame (a log line costs ~1 ms)
         char b[192];
         g_chains.Describe(b, sizeof b);
@@ -6978,7 +6979,7 @@ void CloseFrame() {
             else if (p == &g_plateOut.layer) nm = "monster bar";
             else if (p == &g_noticeOut.layer) nm = "notice card";
             else if (p == &g_swingLayer) nm = "swing timer";
-            else if (p == &g_apLayer) nm = "ally portraits";
+            else if (p == &g_ap[0].layer || p == &g_ap[1].layer) nm = "ally portraits";
             else if (p == &g_bigLayer[0] || p == &g_bigLayer[1]) nm = "big map";
             else if (p == &g_compassLayer[0] || p == &g_compassLayer[1]) nm = "compass";
             else if (p == &g_mapBeamLayer[0] || p == &g_mapBeamLayer[1]) nm = "map laser";
@@ -7403,8 +7404,8 @@ void LoadSettings(const wchar_t* ini) {
             g_cfg.mapTopDown = GetPrivateProfileIntW(L"hud", L"map_top_down", 0, ini) != 0;
             g_cfg.mapRotate = GetPrivateProfileIntW(L"hud", L"map_rotate", 0, ini) != 0;
             g_cfg.mapCompass = GetPrivateProfileIntW(L"hud", L"map_compass", 0, ini) != 0;
-            g_cfg.mapClickBig = GetPrivateProfileIntW(L"hud", L"map_click_big", 0, ini) != 0;
-            g_cfg.mapStickZoom = GetPrivateProfileIntW(L"hud", L"map_stick_zoom", 0, ini) != 0;
+            g_cfg.mapClickBig = GetPrivateProfileIntW(L"hud", L"map_click_big", 1, ini) != 0;
+            g_cfg.mapStickZoom = GetPrivateProfileIntW(L"hud", L"map_stick_zoom", 1, ini) != 0;
             static int saidZoom = 0;
             if ((int)g_cfg.mapStickZoom != saidZoom) {
                 saidZoom = g_cfg.mapStickZoom;

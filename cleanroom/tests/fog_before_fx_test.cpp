@@ -780,6 +780,20 @@ int main(int argc, char** argv) {
         CHECK(std::fabs(got[0] - grey) < 0.01f && !drewNoName);
         byNameKey = true;
         oneSizeKey = true;
+        // ... and a slot whose target the game has let go (a resize makes its targets again; the slot map still names the old one - row 358 on
+        // 0.216.0, an access violation reading its name): never opened. A fake object with no table of calls stands for it - any call into
+        // it would end the test - and the named scene in the next slot is still found
+        {
+            static void* deadObject[8] = {};   // (its first word, the table of calls, null)
+            g_srvs[sceneSrv] = reinterpret_cast<ID3D12Resource*>(deadObject);
+            const uint32_t skippedBefore = fogfx::NamesSkipped();
+            frame(true, d, 32, 32, got, &word);
+            const bool drewPastDead = fogfx::StepDrewAt(cl);
+            std::printf("  a freed target in the resolve's table before the named scene: %.4f %.4f %.4f (the formula %.4f %.4f %.4f), drew %d, "
+                        "views not opened %u\n", got[0], got[1], got[2], want[0], want[1], want[2], drewPastDead ? 1 : 0, fogfx::NamesSkipped() - skippedBefore);
+            CHECK(near3(got, want) && drewPastDead && fogfx::NamesSkipped() > skippedBefore);
+            g_srvs[sceneSrv] = halfTarget;
+        }
         scene->SetPrivateData(kNameA, 0, nullptr);
         halfTarget->SetPrivateData(kNameA, 0, nullptr);
         g_srvs = keep;

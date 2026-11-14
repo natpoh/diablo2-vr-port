@@ -87,6 +87,19 @@ inline bool SizeOk(float rw, float rh, float W, float H, float f) { return rw > 
 inline bool CappedBox(float rw, float rh, float W, float H, float f) {
     return !SizeOk(rw, rh, W, H, f) && rw >= kCapMinPx && rw <= kCapMaxPx && rh > H / 8.0f && rh <= 1.1f * rw;
 }
+// ... and that cap is the game WINDOW's: the box is a third of the window's client width in the picture's pixels, whatever the picture
+// (a render size: [render] vr_resolution) - 640 for the 1920 windows above. Players' logs (2026-10-31 .. 11-14): window 987 -> box 328
+// (pictures 2240 and 1280), 1380 -> 459 (3072), 1392 -> 477 (2112x2304), 1920 -> 639 (3008x1692), 1920x1080 -> 640 x 360. A small window
+// under a big picture gives a box under the size rule's eighth: zeezour's TV as the main display (2026-11-13) made the window 1020 under
+// a 3072x3264 picture - a 340 px box, refused, no map in the hand. A box within 10 % of a third of the window's width is the map's
+// size (its outer edge may run past the picture, as the capped one's); not taller than the size rule allows, nor flatter than half its width.
+constexpr float kWindowShare = 1.0f / 3.0f, kWindowTol = 0.1f;
+constexpr uint32_t kWindowMin = 320;   // (a window narrower than that: not known)
+inline bool WindowBox(float rw, float rh, float H, uint32_t winW) {
+    if (winW < kWindowMin) return false;
+    const float want = (float)winW * kWindowShare;
+    return std::fabs(rw - want) <= kWindowTol * want && rh >= 0.5f * rw && rh <= std::max(1.1f * rw, 0.6f * H);
+}
 // In which top corner the box's outer edge lies: 1 left, 2 right, 0 neither. `capped`: CappedBox - the edge may run past the picture.
 inline int SideOf(float l, float rr, float W, float side, float tol, bool capped) {
     if (l + rr < W && (capped ? rr > 0.0f : l > -tol) && l < side + tol) return 1;
@@ -96,14 +109,14 @@ inline int SideOf(float l, float rr, float W, float side, float tol, bool capped
 
 // 0: not the map's box at the area fraction `safe`; 1: a box in the top left corner; 2: the top right one. `corner` ([hud] map_corner):
 // 0 either, 1 the left one only, 2 the right one only. `stretch`: Stretch - the box's width bounds in the map's own shape (it never
-// reaches past the picture).
-inline int Corner(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f) {
+// reaches past the picture). `winW`: the game window's client width (WindowBox; 0 not known).
+inline int Corner(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f, uint32_t winW = 0) {
     if (c.w < 64 || c.h < 64 || !std::isfinite(safe) || safe <= 0.0f) return 0;
     const float s = std::clamp(safe, kSafeMin, kSafeMax), W = (float)c.w, H = (float)c.h;
     const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
     const float rw = rr - l, rh = b - t;
     const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
-    const bool capped = CappedBox(rw, rh, W, H, f);
+    const bool capped = CappedBox(rw, rh, W, H, f) || WindowBox(rw, rh, H, winW);
     if (!capped && !SizeOk(rw, rh, W, H, f)) return 0;
     const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
     if (std::fabs(t - top) >= tol) return 0;
@@ -116,13 +129,13 @@ inline int Corner(const Box& r, const Canvas& c, float safe, int corner, float s
 // Why Corner says 0 for a box, for the log (hud.cpp TellNoMap; 2026-10-28, a player at 2764x2780 whose log could not tell the corner rule from the
 // size): "no area" (no canvas or interface size), "width", "height", "top" (not at the area's top), "side" (in neither top corner), "corner" (in the
 // other corner than [hud] map_corner takes); nullptr when Corner takes it. The same steps as Corner.
-inline const char* WhyNot(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f) {
+inline const char* WhyNot(const Box& r, const Canvas& c, float safe, int corner, float stretch = 1.0f, uint32_t winW = 0) {
     if (c.w < 64 || c.h < 64 || !std::isfinite(safe) || safe <= 0.0f) return "no area";
     const float s = std::clamp(safe, kSafeMin, kSafeMax), W = (float)c.w, H = (float)c.h;
     const float l = (float)(r.left - c.x), t = (float)(r.top - c.y), rr = (float)(r.right - c.x), b = (float)(r.bottom - c.y);
     const float rw = rr - l, rh = b - t;
     const float f = std::isfinite(stretch) ? std::clamp(stretch, 0.25f, 4.0f) : 1.0f;
-    const bool capped = CappedBox(rw, rh, W, H, f);
+    const bool capped = CappedBox(rw, rh, W, H, f) || WindowBox(rw, rh, H, winW);
     if (!capped && !(rw > W / 8.0f * f && rw < std::min(W / 2.0f * f, W))) return "width";
     if (!capped && !(rh > H / 8.0f && rh < 0.6f * H)) return "height";
     const float side = 0.5f * W * (1.0f - s), top = 0.5f * H * (1.0f - s), tol = kTol * H;
@@ -134,9 +147,9 @@ inline const char* WhyNot(const Box& r, const Canvas& c, float safe, int corner,
 }
 
 // The map's box at either guess of the area: the game's own (SafeFromScale) first, the file's second. 0 / 1 / 2 as Corner.
-inline int Find(const Box& r, const Canvas& c, float safeGame, float safeFile, int corner, float stretch = 1.0f) {
-    if (const int k = Corner(r, c, safeGame, corner, stretch)) return k;
-    return Corner(r, c, safeFile, corner, stretch);
+inline int Find(const Box& r, const Canvas& c, float safeGame, float safeFile, int corner, float stretch = 1.0f, uint32_t winW = 0) {
+    if (const int k = Corner(r, c, safeGame, corner, stretch, winW)) return k;
+    return Corner(r, c, safeFile, corner, stretch, winW);
 }
 
 }  // namespace minimapbox

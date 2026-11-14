@@ -1486,7 +1486,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         fp.on = beforeFx && gamefogvr::Active();
         fp.fxDepth = g_set.fogFxDepth.load();   // [fog] game_fog_fx_depth: the effects fogged by their own distance (either fog)
-        fp.ourCurve = curve.on && !TableFull();   // (VR F3 full width: the game's pass keeps its own curve there - the step the same)
+        fp.ourCurve = curve.on && !GameFogOverhead();   // (VR F3 full width: the game's pass keeps its own curve there - the step the same)
         fp.start = curve.start; fp.end = curve.end; fp.curve = curve.curve; fp.strength = curve.strength; fp.ease = curve.ease;
         // ... or our effect's fog ([fog] game_fog=0): its curve by the view's depth (FogAmount), its colour as the post pass lays it in the
         // scene's units; the post pass then leaves a drawn pixel's fog to the step (FogInFrame). Only with a colour of its own (the act's, a
@@ -1546,7 +1546,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.nearPlane = g_lastNear.load();
             fp.sx = g_projSx.load();
             fp.sy = g_projSy.load();
-            fp.height = height && !TableFull();   // (VR F3 full width: no thinning in the game's pass there - nor in the step)
+            fp.height = height && !GameFogOverhead();   // (VR F3 full width: no thinning in the game's pass there - nor in the step)
             fp.top = FogTopNow();
             fp.soft = g_set.fogSoft.load();
             fp.up[0] = g_viewRightY.load(); fp.up[1] = g_viewUpY.load(); fp.up[2] = g_viewFwdY.load();
@@ -1583,7 +1583,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         const bool noFog = fogfx::Drawn() && !fogfx::OursDrawn();   // (our effect's fog in the step: the game's pass has none of ours to leave out)
         // (VR F3 full width: only the step's own - the game's pass leaves the colour the step laid out; its other tweaks off there as before)
-        const bool tweaks = !TableFull();
+        const bool tweaks = !GameFogOverhead();   // (VR F1 with [top] fog the same)
         fogheight::Curve curveHere = curve;
         if (!tweaks) curveHere.on = false;
         // [fog] game_fog_miss_keeps_fog: each bind of the game's fog pass picks the colour left out (the step drew at its resolve) or kept
@@ -2703,7 +2703,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         // [fog] fog_into_sky: in the open air under an act's sky (ours or the game's dome - the same painted pictures), the fog fades the far
         // into the sky straight behind it, as the Arcane Sanctuary's ([sky] arcane_fog). Underground nothing but rock is behind: as before
         SetBool(rt, "FogIntoSky", g_set.fogIntoSky.load() && gamefogvr::Active() && g_skyPalette.load() >= 0 && !g_arcaneSky.load() && !g_underground.load() &&
-                                 !TableFull());   // (VR F3 full width: the game's fog as it draws it)
+                                 !GameFogOverhead());   // (VR F3 full width, VR F1 with [top] fog: the game's fog as it draws it)
     }
     const int pal = g_skyPalette.load();
     // The eye of the frame being presented. Read straight from the block it
@@ -2756,7 +2756,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     // ([sky] game_sky: the game draws it - chosen, ours not at all, also while its dome is not shown; vr/sky_paths.h)
     const char* cannot = g_set.gameSky.load() && pal >= 0 ? engitem::SkyCannot() : nullptr;   // (chosen and unable here for good: ours instead)
     // (VR F3 with [table] full_width: the game's dome or nothing - no sky of ours, not even in its place)
-    bool sky = skypaths::OurSky(pal >= 0, skypaths::GameHolds(g_set.gameSky.load(), cannot), arcane, engitem::DomeShown()) && !TableFull();
+    bool sky = skypaths::OurSky(pal >= 0, skypaths::GameHolds(g_set.gameSky.load(), cannot), arcane, engitem::DomeShown()) && !GameSkyOverhead();   // (VR F1 with [top] sky the same)
     {   // who draws the sky now, and why: each change once
         const char* by = arcane ? "our effect - the Arcane Sanctuary's own sky (the game has none there)"
                          : g_set.gameSky.load() ? (engitem::DomeShown() ? "the game's dome ([sky] game_sky=1; our effect's sky off)"

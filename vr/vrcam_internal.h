@@ -318,8 +318,11 @@ extern const uint8_t kSigMapClick[16];
 extern MapClickFn OrigMapClick;
 extern std::atomic<int> g_mapClick;   // 0 not in yet, 1 in, 2 not possible
 extern HWND g_gameWnd;
+extern std::atomic<bool> g_tellClientCallers;   // [debug] client_size_callers: the game's callers of its client-size query that keep the window's size, to the log (vrcam.cpp)
 extern std::atomic<bool> g_floorCamOk;
 extern std::atomic<float> g_floorEyeH, g_floorFwdY, g_floorUpY;
+extern std::atomic<float> g_topEyeDist;   // VR F1 through our camera: the eye's distance from the hero (TopCamera), [top] fog's rings
+extern std::atomic<bool> g_topEyeOk;
 extern std::atomic<float> g_viewFwdY;
 extern std::atomic<float> g_projSx, g_projSy, g_stereoIpd, g_stereoConv;
 extern std::atomic<bool> g_handWalk;

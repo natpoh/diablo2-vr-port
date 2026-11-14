@@ -201,6 +201,7 @@ std::atomic<bool> g_hairStrict{true}, g_ownBehind{true};   // [fog] game_fog_hai
 std::atomic<bool> g_sceneOneSize{true};    // [fog] game_fog_scene_one_size (Params::sceneOneSize; ReadScene)
 std::atomic<bool> g_sceneByName{true};     // [fog] game_fog_scene_by_name (Params::sceneByName; NamedScene)
 std::atomic<uint32_t> g_byName{0}, g_bySearch{0};   // resolves whose scene the game's name gave / the search gave (the key on), since the 10 s line
+std::atomic<uint32_t> g_namesSkipped{0};   // NamedScene: table views not of a held pair - compared, not opened (NamesSkipped, the test)
 std::atomic<int> g_lastResolveStep{-1};    // [fog] game_fog_miss_keeps_fog: the last resolve anywhere - 1 the step wrote, 0 not, -1 none yet
 std::atomic<uint32_t> g_pickOwn{0}, g_pickLast{0}, g_pickNone{0};   // StepDrewAt's answers by: the list's own resolve, the last anywhere, none
 thread_local bool t_stepped = false;       // Insert on this thread recorded a step (OnDraw)
@@ -631,6 +632,21 @@ ID3D12Resource* NamedScene(const List& l, ID3D12Resource* depth, char* names, si
     const unsigned inc = natived3d::SrvIncrement();
     if (!inc || !l.gSet || !l.nHeaps || !depth) return nullptr;
     const D3D12_RESOURCE_DESC dd = depth->GetDesc();
+    // Only what this step holds is ever opened: the scene targets of the pairs (each held by a reference of ours, NoteScene), each given
+    // one more reference for the walk. A view's resource from natived3d's slot map is a raw pointer - the game may have let it go (a
+    // resize makes its targets again) and its slot not yet made over: compared, never touched. A player's crash on 0.216.0 (row 358, RTX
+    // 4060 Ti, SteamVR): an access violation in D3D12Core reading the name of a target freed by the square window's new swap chain
+    // (2704 x 2704), 18 ms after the first name was read. The old search only compared these pointers.
+    ID3D12Resource* held[kScenePairs];
+    int nh = 0;
+    AcquireSRWLockShared(&g_sceneLock);
+    for (const ScenePair& p : g_scenes)
+        if (p.scene) {
+            bool dup = false;
+            for (int k = 0; k < nh && !dup; ++k) dup = held[k] == p.scene;
+            if (!dup) { p.scene->AddRef(); held[nh++] = p.scene; }
+        }
+    ReleaseSRWLockShared(&g_sceneLock);
     ID3D12Resource* found = nullptr;
     size_t len = 0;
     for (unsigned h = 0; h < l.nHeaps; ++h) {
@@ -648,6 +664,9 @@ ID3D12Resource* NamedScene(const List& l, ID3D12Resource* depth, char* names, si
             for (UINT j = 0; j < kTableLook && first + j < hd.NumDescriptors; ++j) {
                 ID3D12Resource* r = natived3d::SrvResource(c0 + (SIZE_T)(first + j) * inc);
                 if (!r) continue;
+                bool alive = false;   // (one of ours: held, so alive)
+                for (int k = 0; k < nh && !alive; ++k) alive = held[k] == r;
+                if (!alive) { g_namesSkipped.fetch_add(1, std::memory_order_relaxed); continue; }
                 char nm[64];
                 if (!natived3d::ResourceName(r, nm, sizeof nm)) continue;
                 const D3D12_RESOURCE_DESC rd = r->GetDesc();
@@ -659,6 +678,7 @@ ID3D12Resource* NamedScene(const List& l, ID3D12Resource* depth, char* names, si
             }
         }
     }
+    for (int k = 0; k < nh; ++k) held[k]->Release();   // (`found` stays held by its pair, as SceneOf's result is)
     return found;
 }
 
@@ -2382,6 +2402,7 @@ void OnDraw(ID3D12GraphicsCommandList* cl, bool indexed, unsigned n, unsigned in
 }  // namespace
 
 bool Watching() { return g_watching.load(std::memory_order_relaxed); }
+uint32_t NamesSkipped() { return g_namesSkipped.load(std::memory_order_relaxed); }
 bool StepDrewAt(ID3D12GraphicsCommandList* cl) {
     // the list's own resolve first (the fog pass recorded after it on the same list: certain); else the last resolve anywhere; none yet:
     // as before (the colour left out while the step is drawn)

@@ -642,7 +642,13 @@ static DWORD UpdateThreadBody() {
         FlatMapZoomTick();    // [hud] flat_map_zoom
         if (g_inWorld.load()) {   // the corner map's box follows the game's own interface scale: a window, render size or interface size of any kind
             static ULONGLONG nextScale = 0;
-            if (nowMs >= nextScale) { nextScale = nowMs + 250; hud::SetGameInterfaceScale(GameUiScaleNow()); hud::SetControllerLayout(panelinput::ControllerLayoutNow()); }
+            if (nowMs >= nextScale) {
+                nextScale = nowMs + 250;
+                hud::SetGameInterfaceScale(GameUiScaleNow());
+                hud::SetControllerLayout(panelinput::ControllerLayoutNow());
+                RECT rc{};   // ... and the window's real width: the game sizes the map's box by it, not by the picture (vr/minimap_box.h WindowBox)
+                hud::SetGameWindowWidth(g_gameWnd && GetClientRect(g_gameWnd, &rc) && rc.right > 0 ? (uint32_t)rc.right : 0u);
+            }
         }
         // ... and our projection's shape: in F4 the game sizes the map's box and tiles by it, not by the picture's (vr/minimap_box.h Stretch;
         // a wide window with [openxr] runtime_fov's centred frustum: the box 0.66 of the picture wide, the map left in the picture at its top)

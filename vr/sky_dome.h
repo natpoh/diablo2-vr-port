@@ -29,10 +29,11 @@ struct ViewIn {
     bool enabled = false;         // our camera on (not F12)
     bool gameDrawnFlat = false;   // [render] game_drawn_flat
     bool tableFull = false;       // [table] full_width: the table (VR F3) with no edge and the game's dome round it
+    bool topSky = false;          // [top] sky: VR F1 through our camera (Real geometry) with the game's dome round the world
 };
 inline const char* ViewWhyNot(const ViewIn& v) {
     if (!v.enabled) return "the VR camera is off (F12)";
-    if (v.view == 1) return "the view from above (the world under the camera)";
+    if (v.view == 1 && !(v.vr && v.topSky)) return "the view from above (the world under the camera; VR F1 with Real geometry and [top] sky)";
     if (v.vr && v.view == 3 && !v.tableFull) return "the table view (the world a model in the room; [table] full_width=0)";
     if (!v.vr && !v.gameDrawnFlat) return "the flat game with [render] game_drawn_flat=0 (our effect draws its sky)";
     if (v.view < 1 || v.view > 4 || (!v.vr && v.view > 3)) return "not a view of ours";

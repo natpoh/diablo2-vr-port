@@ -32,6 +32,12 @@
 #include "direct_input.h"
 #include "view_gate.h"
 #include "wrist_status_wire.h"
+#include "armed_icon.h"        // [hud] skill_under_map: the right hand's skill as the mana medallion picks it (armedicon::Pick)
+#include "bow_quiver_wire.h"   // ... the bow's chosen skill
+#include "melee_arm_game.h"    // ... the armed melee skill
+#include "link.h"              // (BodyWalk's Game Link types, which skill_link_wire.h names)
+#include "skill_link_wire.h"   // ... a glyph's armed skill on either trigger
+#include "wheel_icons.h"       // ... its icon's revision (a decoded icon repaints)
 
 namespace allyportraits {
 namespace {
@@ -107,8 +113,8 @@ private:
             std::lock_guard<std::mutex> lock(m_);
             if (epoch != epoch_) continue;   // a reset came while painting: this picture belongs to the last session
             px_.swap(local);
-            w_ = (uint32_t)PicW(look.cols);
-            h_ = (uint32_t)PicH(look.n, look.cols);
+            w_ = (uint32_t)PicW(look);
+            h_ = (uint32_t)PicH(look);
             done_ = rev;
         }
     }
@@ -122,13 +128,33 @@ private:
     std::vector<uint32_t> px_;
 };
 
-Painter& P() {
-    static Painter* painter = new Painter;   // joined in Shutdown; no static destructor runs a thread's end at unload
-    return *painter;
+// Two pictures, each its own painter: under the map (kUnderMap: the skills' row and the allies when they are there) and on the right wrist (kOnWrist:
+// the allies) - both can be up at once (the skills under the map, the allies on the wrist).
+Painter& P(int where) {
+    static Painter* painter[2] = {new Painter, new Painter};   // joined in Shutdown; no static destructor runs a thread's end at unload
+    return *painter[where & 1];
 }
 
-bool g_wanted = false;   // the draw thread's: hung lately
-uint32_t g_needRev = 0;
+bool g_wanted[2] = {};   // the draw thread's: hung lately
+uint32_t g_needRev[2] = {};
+std::atomic<bool> g_skills{false};   // [hud] skill_under_map
+
+// [hud] skill_under_map: the armed skills, from where the mana and life medallions take theirs (vr/render/effects/effects.cpp's icon block): the right
+// hand's - the bow's chosen skill, else a glyph's on the right trigger, else the armed melee skill (armedicon::Pick); the left hand's - a glyph's on the
+// left trigger. With their names when the game side found them.
+void AddSkills(Look* look) {
+    bool meleeReady = false, bowReady = false;
+    int bowSkill = -1;
+    const int meleeSkill = meleearm::On() ? meleearm::Armed(&meleeReady) : -1;
+    bowquiverwire::ChosenIcon(&bowSkill, &bowReady);
+    const int glyphRight = skilllinkwire::SelectIcon() ? skilllinkwire::ArmedSkill(1) : -1;
+    const armedicon::Source right = bowSkill < 0 && glyphRight >= 0 ? armedicon::Source{glyphRight, true} : armedicon::Pick(meleeSkill, meleeReady, bowSkill, bowReady);
+    const int left = skilllinkwire::SelectIcon() ? skilllinkwire::ArmedSkill(0) : -1;
+    look->nSkills = SkillTiles(right.skill, right.enough, left, true, &look->skill);
+    game::WantSkillNames(right.skill, left);
+    for (int j = 0; j < look->nSkills; ++j) game::SkillName(look->skill[(size_t)j].skill, look->skill[(size_t)j].name);
+    if (look->nSkills) look->art = wheelicons::Revision();   // (an icon decoded later repaints)
+}
 
 // -- the right wrist's glance (place 2): direct_input's frames, the wrist status' reveal for the right wrist --------------------------------------
 
@@ -211,6 +237,8 @@ void Configure(const Config& config) {
     g_size.store(c.sizePct);
     g_mapCols.store(c.mapCols);
     g_wristCols.store(c.wristCols);
+    const bool skillsWas = g_skills.exchange(c.skills);
+    if (c.skills != skillsWas) Log(c.skills ? "vrcam: skill under the map on ([hud] skill_under_map: the armed skills over the allies, VR F4)" : "vrcam: skill under the map off");
     if (c.place != was) {
         static const char* const kName[] = {"the game's own row at the top", "under the map in the hand", "on the right wrist"};
         char b[220];
@@ -226,41 +254,47 @@ Config Settings() {
     c.sizePct = g_size.load(std::memory_order_relaxed);
     c.mapCols = g_mapCols.load(std::memory_order_relaxed);
     c.wristCols = g_wristCols.load(std::memory_order_relaxed);
+    c.skills = g_skills.load(std::memory_order_relaxed);
     return c;
 }
 bool Enabled() { return GameRowHidden(Settings()); }
 bool GridWanted() { return GridOn(Settings()); }
 bool WristWanted() { return WristOn(Settings()); }
+bool UnderMapWanted() { const Config c = Settings(); return GridOn(c) || c.skills; }
 
 // (the reads serve all three: our grid, our wrist tiles, and the width of the game's corner hidden while the allies are elsewhere)
-void Tick(bool inGame) { game::Tick(Enabled() && inGame && viewgate::F4()); }
+void Tick(bool inGame) { game::Tick((Enabled() || g_skills.load(std::memory_order_relaxed)) && inGame && viewgate::F4()); }
 
-bool Want(uint32_t* needRevision) {
+bool Want(int where, uint32_t* needRevision) {
+    where &= 1;
     Look look;
     double ageMs = 0.0;
     const Config c = Settings();
-    const bool show = GameRowHidden(c) && viewgate::F4() && game::Latest(&look, &ageMs) && Fresh(ageMs) && look.n > 0;
+    const bool allies = (where == kOnWrist ? WristOn(c) : GridOn(c)) && game::Latest(&look, &ageMs) && Fresh(ageMs);
+    if (!allies) look = Look{};
+    look.cols = (uint8_t)(where == kOnWrist ? c.wristCols : c.mapCols);
+    if (where == kUnderMap && c.skills) AddSkills(&look);   // [hud] skill_under_map: a row of its own over the allies
+    const bool show = viewgate::F4() && (look.n > 0 || look.nSkills > 0);
     if (!show) {
-        if (g_wanted) {
-            g_wanted = false;
-            P().Reset();   // gone: its picture is forgotten, the next time paints afresh
+        if (g_wanted[where]) {
+            g_wanted[where] = false;
+            P(where).Reset();   // gone: its picture is forgotten, the next time paints afresh
         }
         return false;
     }
-    look.cols = (uint8_t)ColsFor(c);
-    const uint32_t rev = P().Submit(look);
-    if (!g_wanted) {
-        g_wanted = true;
-        g_needRev = rev;   // it starts being wanted: not shown before a picture of this moment
+    const uint32_t rev = P(where).Submit(look);
+    if (!g_wanted[where]) {
+        g_wanted[where] = true;
+        g_needRev[where] = rev;   // it starts being wanted: not shown before a picture of this moment
         static int told = 0;
-        if (told++ < 3) {
-            char b[120];
-            snprintf(b, sizeof b, "vrcam: ally portraits - %s: %d tile%s, %d across", WristOn(c) ? "on the wrist" : "under the map", (int)look.n, look.n == 1 ? "" : "s",
-                     (int)look.cols);
+        if (told++ < 4) {
+            char b[160];
+            snprintf(b, sizeof b, "vrcam: ally portraits - %s: %d tile%s, %d across, %d skill%s over them", where == kOnWrist ? "on the wrist" : "under the map", (int)look.n,
+                     look.n == 1 ? "" : "s", AcrossOf(look), (int)look.nSkills, look.nSkills == 1 ? "" : "s");
             Log(b);
         }
     }
-    *needRevision = g_needRev;
+    *needRevision = g_needRev[where];
     return true;
 }
 
@@ -299,8 +333,8 @@ bool GameCornerToHide(float* units) {
     return *units > 0.0f;
 }
 
-bool Picture(std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height) {
-    if (!P().Fetch(px, revision, width, height)) return false;
+bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height) {
+    if (!P(where).Fetch(px, revision, width, height)) return false;
     static bool told = false;
     if (!told) {   // (the portraits are read with the first picture, on the painter's thread)
         told = true;
@@ -313,9 +347,11 @@ bool Picture(std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uin
 }
 
 void Teardown() {
-    g_wanted = false;
-    g_needRev = 0;
-    P().Reset();
+    for (int where = 0; where < 2; ++where) {
+        g_wanted[where] = false;
+        g_needRev[where] = 0;
+        P(where).Reset();
+    }
     g_glance = Glance{};
     std::lock_guard<std::mutex> lock(g_pubMutex);
     g_pub = Published{};
@@ -323,8 +359,9 @@ void Teardown() {
 
 void Shutdown() {
     directinput::Unlisten(&OnFrame, nullptr);
-    P().Stop();
-    g_wanted = false;
+    P(kUnderMap).Stop();
+    P(kOnWrist).Stop();
+    g_wanted[0] = g_wanted[1] = false;
 }
 
 }  // namespace allyportraits

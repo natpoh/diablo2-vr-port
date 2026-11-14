@@ -15,6 +15,7 @@
 
 #include "belt_glow.h"
 #include "log_async.h"
+#include "head_shadow.h"   // the draw hook's probe slot: the opacity the game draws a medallion with
 #include "potion_hide.h"
 #include "sigscan.h"
 
@@ -32,6 +33,12 @@ const uint8_t kSigHighlight[21] = {0x48, 0x89, 0x5C, 0x24, 0x20, 0x56, 0x57, 0x4
 const uint8_t kSigTransparent[21] = {0x48, 0x89, 0x5C, 0x24, 0x20, 0x56, 0x57, 0x41, 0x56, 0x48, 0x83, 0xEC, 0x40, 0x48, 0x8B, 0xF9, 0xE8, 0x7B, 0x07, 0x01, 0x00};
 constexpr size_t kHighlightSize = 4;      // one float
 constexpr size_t kTransparentSize = 0x2C; // opacity = min(+0, +4)
+// The component's fade (the game's own: UnitTranslationLayer fades a unit in and out with it - 0x785040 asks 0xEEA920(component, target, seconds)): from +8
+// {current, start, target, elapsed, seconds} - defaults 1, 0, 1, 0, 0. A value at +0 alone is not the fade's: with its target left at 1 the fade owes the
+// entity "back to solid" (0.216.1: 0.40 written on the liquid's entity every frame, 0 misses - and the game drew it solid). So an opacity of ours is written
+// as a fade that has arrived: +0, +4, the fade's current and its target, all the same value.
+constexpr int kFadeCurrent = 2, kFadeTarget = 4;   // (floats from the component's start: +8, +0x10)
+constexpr size_t kDrawOpacityAt = 0x138;           // ModelDrawCollect's per-instance constants: the opacity the draw has (EE9100: min(+0, +4))
 
 using UpdateFn = uintptr_t (*)(void* layer, void* a, void* b, void* c);   // (this; whatever else is passed goes on untouched, the result back)
 using StorageFn = uintptr_t (*)(uintptr_t registry);
@@ -58,6 +65,11 @@ std::atomic<float> g_orbH[kMaxOrbs] = {};
 std::atomic<int> g_orbCount{0};
 std::atomic<bool> g_orbsWanted{false};
 std::atomic<unsigned> g_orbWritten{0};
+// ... and their opacity as the game's draw has it (DrawProbe, the render workers): by role (0 the glass, 1 the liquid) the calls of the eyes' passes, the
+// ones with an opacity under 1 (the game's blended passes), the last value seen
+std::atomic<uint8_t> g_orbRole[kMaxOrbs] = {};
+std::atomic<unsigned> g_drawCalls[2] = {}, g_drawBlended[2] = {}, g_drawNoConstants{0};
+std::atomic<float> g_drawLast[2] = {};
 // the log's counts
 std::atomic<unsigned> g_hookRuns{0}, g_hookWritten{0};
 unsigned g_frames = 0, g_seenOurs = 0, g_seenZero = 0, g_seenOther = 0, g_noHighlight = 0, g_opacityWritten = 0, g_noOpacity = 0;   // the registry thread's
@@ -169,8 +181,11 @@ int WriteNow(const Entry* e, int n) noexcept {
             if (e[i].opacity >= 0.0f) {
                 uintptr_t t = 0;
                 if (ts && potionhide::StorageElement(&ReadAt, ts, e[i].entity, kTransparentSize, &t)) {
-                    reinterpret_cast<volatile float*>(t)[0] = e[i].opacity;
-                    reinterpret_cast<volatile float*>(t)[1] = e[i].opacity;
+                    volatile float* f = reinterpret_cast<volatile float*>(t);
+                    f[0] = e[i].opacity;
+                    f[1] = e[i].opacity;
+                    f[kFadeCurrent] = e[i].opacity;   // (the game's fade, arrived at this value: nothing left to fade back to)
+                    f[kFadeTarget] = e[i].opacity;
                     ++g_opacityWritten;
                 } else {
                     ++g_noOpacity;
@@ -230,7 +245,23 @@ void SetProps(const uint32_t* entities, int n, float h) {
     }
 }
 
-void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n) {
+// The render workers, inside the game's ModelDrawCollect (headshadow's hook): the opacity the game is about to draw a medallion's entity with.
+void DrawProbe(uint32_t entity, bool eyes, uintptr_t constants) {
+    if (!eyes) return;
+    const int n = std::min(g_orbCount.load(std::memory_order_acquire), kMaxOrbs);
+    for (int i = 0; i < n; ++i) {
+        if (g_orbEnt[i].load(std::memory_order_relaxed) != entity) continue;
+        const int role = g_orbRole[i].load(std::memory_order_relaxed) ? 1 : 0;
+        float op = 1.0f;
+        if (!constants || !ReadAt(constants + kDrawOpacityAt, &op, sizeof op)) { g_drawNoConstants.fetch_add(1, std::memory_order_relaxed); return; }
+        g_drawCalls[role].fetch_add(1, std::memory_order_relaxed);
+        if (op < 1.0f) g_drawBlended[role].fetch_add(1, std::memory_order_relaxed);
+        g_drawLast[role].store(op, std::memory_order_relaxed);
+        return;
+    }
+}
+
+void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n, const uint8_t* roles) {
     n = std::clamp(n, 0, kMaxOrbs);
     bool any = false;
     for (int i = 0; i < n; ++i) any = any || highlights[i] != 0.0f;
@@ -239,8 +270,15 @@ void SetOrbs(const uint32_t* entities, const float* highlights, const float* opa
     for (int i = 0; i < n; ++i) {
         g_orbEnt[i].store(entities[i], std::memory_order_relaxed);
         g_orbH[i].store(g_hook.load() == 1 ? highlights[i] : 0.0f, std::memory_order_relaxed);
+        g_orbRole[i].store(roles ? roles[i] : 0, std::memory_order_relaxed);
     }
     g_orbCount.store(g_faulted.load() ? 0 : n, std::memory_order_release);
+    {   // the draw's own opacity for them, while any is asked (headshadow's hook on ModelDrawCollect, when it is in)
+        static bool probing = false;
+        bool want = false;
+        for (int i = 0; i < n; ++i) want = want || (opacities && opacities[i] >= 0.0f);
+        if (want != probing) { probing = want; headshadow::SetDrawProbe(want ? &DrawProbe : nullptr); }
+    }
     if (!n || g_faulted.load() || !Storages()) return;
     // what the liquid's entities carry now, read back before ours is written (the game's per-tick reset leaves 0 between, so the hook's last write shows here)
     static unsigned rbOurs = 0, rbZero = 0, rbOther = 0, rbMissing = 0;
@@ -256,6 +294,27 @@ void SetOrbs(const uint32_t* entities, const float* highlights, const float* opa
             if (std::fabs(was - highlights[i]) < 0.02f) ++rbOurs;
             else if (was == 0.0f) ++rbZero;
             else { ++rbOther; rbOtherValue = was; }
+        }
+    }
+    // ... and their opacity: what each asked entity holds now, a frame after our last write - still ours, or made something else by the game since
+    static unsigned keptOurs = 0, keptOther = 0;
+    static float otherNow = 1.0f, otherOther = 1.0f, otherFade = 1.0f, otherTarget = 1.0f, otherAsked = 1.0f;
+    static float lastAsked[kMaxOrbs] = {};
+    static uint32_t lastEntity[kMaxOrbs] = {};
+    {
+        const uintptr_t ts = reinterpret_cast<StorageFn>(d2rsig::Addr(RVA_TRANSPARENT_STORAGE))(d2rsig::Addr(RVA_ECS_REGISTRY));
+        for (int i = 0; i < n; ++i) {
+            const float asked = opacities ? opacities[i] : -1.0f;
+            const bool same = lastEntity[i] == entities[i] && asked >= 0.0f && std::fabs(lastAsked[i] - asked) < 1e-4f;   // (the same ask as last frame)
+            lastEntity[i] = entities[i];
+            lastAsked[i] = asked;
+            if (!same) continue;
+            uintptr_t el = 0;
+            float f[5] = {};
+            if (!ts || !potionhide::StorageElement(&ReadAt, ts, entities[i], kTransparentSize, &el) || !ReadAt(el, f, sizeof f)) continue;
+            if (std::fabs(f[0] - asked) < 1e-3f && std::fabs(f[1] - asked) < 1e-3f) { ++keptOurs; continue; }
+            ++keptOther;
+            otherNow = f[0]; otherOther = f[1]; otherFade = f[kFadeCurrent]; otherTarget = f[kFadeTarget]; otherAsked = asked;
         }
     }
     // and now, on the registry's own thread (0 too: a pulse that ended is taken away at once)
@@ -275,11 +334,33 @@ void SetOrbs(const uint32_t* entities, const float* highlights, const float* opa
     const ULONGLONG now = GetTickCount64();
     if ((opWritten || opMissing) && now - opToldAt >= 30000) {   // the glass's see-through: does its entity have the game's transparency component
         opToldAt = now;
-        float op = -1.0f;
-        for (int i = 0; i < n; ++i) if (opacities && opacities[i] >= 0.0f) op = opacities[i];
-        LogF("belt glow: wrist medallions' glass - opacity %.2f written %u times in 30 s, %u times its entity had no transparency component (then it stays solid)",
-             op, opWritten, opMissing);
-        opWritten = opMissing = 0;
+        float glassOp = -1.0f, liquidOp = -1.0f;
+        int asked = 0;
+        for (int i = 0; i < n; ++i) {
+            if (!opacities || opacities[i] < 0.0f) continue;
+            ++asked;
+            ((roles && roles[i]) ? liquidOp : glassOp) = opacities[i];
+        }
+        LogF("belt glow: wrist medallions' see-through - the game's per-entity opacity asked on %d drawn entities now (the glass %.2f, the liquid %.2f; -1 = "
+             "left alone), written as an arrived fade (+0, +4, the fade's current and target): written %u times in 30 s, %u times the entity had no "
+             "transparency component (then that part stays solid)", asked, glassOp, liquidOp, opWritten, opMissing);
+        if (keptOther)
+            LogF("belt glow: wrist medallions' see-through - a frame after our write the entity held ours %u times, ANOTHER value %u times (last: asked %.2f, "
+                 "it held %.2f / %.2f, the fade at %.2f going to %.2f) - the game writes it between our frames", keptOurs, keptOther, otherAsked, otherNow,
+                 otherOther, otherFade, otherTarget);
+        else
+            LogF("belt glow: wrist medallions' see-through - a frame after our write the entity still held ours, %u times of %u: nothing of the game's "
+                 "writes it between our frames", keptOurs, keptOurs);
+        const unsigned gc = g_drawCalls[0].exchange(0), gb = g_drawBlended[0].exchange(0), lc = g_drawCalls[1].exchange(0), lb = g_drawBlended[1].exchange(0);
+        if (!headshadow::DrawHooked())
+            Log("belt glow: wrist medallions' see-through - the opacity at the game's draw is not known (the draw hook is not in: [arms] head_shadow and the "
+                "others that put it in are off)");
+        else
+            LogF("belt glow: wrist medallions' see-through - AT THE GAME'S DRAW (ModelDrawCollect, the eyes' passes, 30 s): the glass %u calls, %u with an "
+                 "opacity under 1 (last %.2f); the liquid %u calls, %u under 1 (last %.2f); %u calls gave no constants. Under 1 = the game takes its "
+                 "blended passes for that draw; 1.00 = it draws it solid", gc, gb, g_drawLast[0].load(), lc, lb, g_drawLast[1].load(),
+                 g_drawNoConstants.exchange(0));
+        opWritten = opMissing = keptOurs = keptOther = 0;
     }
     static ULONGLONG toldAt = 0;
     if (any && now - toldAt >= 10000) {

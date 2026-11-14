@@ -48,6 +48,7 @@ void SetProps(const uint32_t* entities, int n, float h);
 // opacity (the glass: see-through; < 0 = left alone). Called on the registry's own thread (engitem::WristOrbsFrame) every frame: written at once, the
 // highlight again after the game's reset each tick. The hook goes in once it is asked with a highlight (Install, once wanted). n 0: none.
 constexpr int kMaxOrbs = 16;
-void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n);
+// roles (may be null: all the glass): 0 the glass, 1 the liquid - for the log's "at the game's draw" line.
+void SetOrbs(const uint32_t* entities, const float* highlights, const float* opacities, int n, const uint8_t* roles = nullptr);
 
 }  // namespace beltglow

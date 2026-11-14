@@ -147,15 +147,42 @@ void DrawTile(Canvas& cv, Fonts& fonts, const Tile& t, float x, float y) {
     wheelpaint::kit::Text(cv, fonts, t.name, Rect{x + 8.0f, y + 130.0f, x + 152.0f, y + 154.0f}, 19, true, player ? kGold : kLightGray);
 }
 
+// An armed skill's tile: the game's own icon (the skill icon cache, vr/wheel_icons.h - the medallion's), faint when the hero cannot pay it now, a
+// blue rim (the mana medallion's), its hand in the corner when both hands have one, its name under it.
+void DrawSkill(Canvas& cv, Fonts& fonts, const SkillTile& s, bool showHand, float x, float y) {
+    constexpr Col kRimSkill{86.0f, 120.0f, 200.0f}, kSkillText{200.0f, 214.0f, 240.0f};
+    wheelpaint::kit::RoundRect(cv, Rect{x + 4.0f, y + 4.0f, x + 156.0f, y + 156.0f}, 14.0f, kBack, 0.86f, kRimSkill, 0.95f, 3.0f);
+    const Rect pic{x + 26.0f, y + 12.0f, x + 134.0f, y + 120.0f};
+    const auto icon = wheelicons::Get(s.skill);
+    if (icon && !icon->rgba.empty()) {
+        wheelpaint::kit::Icon(cv, icon, pic, s.enough ? IconTone::Normal : IconTone::Dim);
+    } else {
+        char ini[4] = {};
+        Initials(s.name[0] ? s.name : "?", ini);
+        wheelpaint::kit::RoundRect(cv, pic, 8.0f, Col{28.0f, 32.0f, 44.0f}, 0.95f, kRimSkill, 0.6f, 1.5f);
+        wheelpaint::kit::Text(cv, fonts, ini[0] ? ini : "?", pic, 44, true, kSkillText);
+    }
+    if (showHand) {   // R / L, top left of the picture
+        const Rect c{x + 22.0f, y + 12.0f, x + 54.0f, y + 40.0f};
+        wheelpaint::kit::RoundRect(cv, c, 8.0f, Col{10.0f, 8.0f, 8.0f}, 0.88f, kRimSkill, 0.9f, 1.5f);
+        wheelpaint::kit::Text(cv, fonts, s.hand ? "R" : "L", c, 20, true, kSkillText);
+    }
+    wheelpaint::kit::Text(cv, fonts, s.name[0] ? s.name : "", Rect{x + 8.0f, y + 122.0f, x + 152.0f, y + 154.0f}, 19, true, kSkillText);
+}
+
 }  // namespace
 
 void Render(const Look& look, std::vector<uint32_t>& px) {
-    const int w = PicW(look.cols), h = PicH(look.n, look.cols);
+    const int w = PicW(look), h = PicH(look);
     px.assign((size_t)w * h, 0u);
     Canvas cv{px, w, h};
     Fonts fonts;
+    for (int j = 0; j < (int)look.nSkills && j < kMaxSkills; ++j) {   // [hud] skill_under_map: the armed skills' row first, the allies under it
+        const Cell c = SkillCell(look, j);
+        DrawSkill(cv, fonts, look.skill[(size_t)j], look.nSkills > 1, (float)c.x, (float)c.y);
+    }
     for (int i = 0; i < (int)look.n && i < kMaxTiles; ++i) {
-        const Cell c = CellOf(i, look.n, look.cols);
+        const Cell c = AllyCell(look, i);
         DrawTile(cv, fonts, look.tile[(size_t)i], (float)c.x, (float)c.y);
     }
 }

@@ -192,8 +192,61 @@ static void TestDefs() {
     CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageVideo) == 7, "the Video page: its slider by hand, seven table rows under it (the Quality preset, the Draw distance, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 23 && PageCount() <= kMaxPages && kTabCount == 15,
-          "twenty-three pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F3 under View)");
+    CHECK(PageCount() == 24 && PageCount() <= kMaxPages && kTabCount == 15,
+          "twenty-four pages under fifteen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F1 and F3 under View)");
+    {   // F1 (Serg 2026-11-13): the View tab's second page in VR F1 - [top] perspective, tilt, distance as D2R VR Settings > UI: F1 above > "View from
+        // above" has them, live; VR F1 only (and Settings' own / a test); the bottom bar's F1 / View
+        CHECK(RowsOn(kPageF1) == 5 && !CloseRows(kPageF1) && TabOf(kPageF1) == TabOf(kPageView) && !StartsTab(kPageF1) && LeadOf(kPageF1) == kPageView,
+              "F1: five rows under the View tab (and [top] sky / fog since Serg's \"F1 also needs the fog and sky tick\")");
+        const int persp = KeyAt(kPageF1, 0), tilt = KeyAt(kPageF1, 1), dist = KeyAt(kPageF1, 2);
+        CHECK(persp >= 0 && !wcscmp(kDefs[persp].section, L"top") && !wcscmp(kDefs[persp].key, L"perspective") && IsToggle(kDefs[persp]) &&
+                  kDefs[persp].def == 0.0f && kDefs[persp].live,
+              "Real geometry: [top] perspective, a tick, off when the key is missing (the plugin's default), live");
+        CHECK(tilt >= 0 && !wcscmp(kDefs[tilt].section, L"top") && !wcscmp(kDefs[tilt].key, L"tilt") && !IsToggle(kDefs[tilt]) && kDefs[tilt].def == 0.0f &&
+                  kDefs[tilt].min == -40.0f && kDefs[tilt].max == 60.0f && kDefs[tilt].live && Normalize(tilt, -15.0f) == -15.0f,
+              "Camera tilt: [top] tilt, -40 - 60 degrees as the plugin clamps it, the shipped -15 a step, live");
+        CHECK(dist >= 0 && !wcscmp(kDefs[dist].section, L"top") && !wcscmp(kDefs[dist].key, L"distance") && !IsToggle(kDefs[dist]) &&
+                  kDefs[dist].def == 100.0f && kDefs[dist].min == 50.0f && kDefs[dist].max == 300.0f && kDefs[dist].live && Normalize(dist, 100.0f) == 100.0f,
+              "Camera distance: [top] distance, 50 - 300 % as the plugin clamps it, 100 = the game's own, live");
+        const int sky = KeyAt(kPageF1, 3), fog = KeyAt(kPageF1, 4);
+        CHECK(sky == kKeyTopSky && fog == kKeyTopFog && IsToggle(kDefs[sky]) && IsToggle(kDefs[fog]) && kDefs[sky].def == 0.0f && kDefs[fog].def == 0.0f &&
+                  kDefs[sky].live && kDefs[fog].live,
+              "Game's sky / Game's fog: [top] sky and fog, ticks, off as before, live");
+        for (int k : {persp, tilt, dist, sky, fog}) CHECK(std::strlen(kDefs[k].label) <= 30 && std::strlen(kDefs[k].detail) <= 60, "the texts fit the row");
+        CHECK(PageShown(kPageF1, 1) && PageShown(kPageF1, 0) && !PageShown(kPageF1, 2) && !PageShown(kPageF1, 3) && !PageShown(kPageF1, 4),
+              "VR F1 only (and Settings' own)");
+        float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
+        CHECK((HitTest(kPageView, u, v, 1) == Hit{Kind::Tab, kPageF1, 0}) && (HitTest(kPageF1, u, v, 1) == Hit{Kind::Tab, kPageView, 0}),
+              "View's F1 button in VR F1, F1's View button");
+        CHECK((HitTest(kPageView, u, v, 0) == Hit{Kind::Tab, kPageF3, 0}) && HitTest(kPageView, u, v, 2).kind == Kind::None,
+              "view 0 keeps the F3 button; none in VR F2");
+        CHECK(!std::strcmp(kPageNames[kPageF1], "F1"), "the page's name");
+        Snapshot s;
+        s.ready = true;
+        Model m;
+        m.Open(s);
+        m.Click({Kind::Tab, kPageF1, 0});
+        CHECK(m.page == kPageF1, "the page opens");
+        m.Click({Kind::Change, dist, 1});
+        CHECK(std::fabs(m.Get()[dist] - 110.0f) < 1e-3f && (kLiveMask & Bit(dist)) && (kLiveMask & Bit(tilt)) && (kLiveMask & Bit(persp)),
+              "+ zooms out 10 %; all three keys live");
+        for (int i = 0; i < 30; ++i) m.Click({Kind::Change, dist, -1});
+        CHECK(std::fabs(m.Get()[dist] - 50.0f) < 1e-3f, "- stops at 50 %");
+        m.Click({Kind::Change, tilt, -1});
+        CHECK(std::fabs(m.Get()[tilt] + 5.0f) < 1e-3f, "tilt steps by 5 degrees");
+        // what the camera rows need, under their names in amber: Real geometry, and for the sky / fog the game drawing it
+        m.Click({Kind::Change, persp, 1});
+        const float persp1 = m.Get()[persp], gameSky = m.Get()[kKeyGameSky], gameFog = m.Get()[kKeyGameFog];
+        CHECK(TopViewMissing(m, persp) == nullptr, "Real geometry's own line: no need");
+        if (persp1 < 0.5f) CHECK(TopViewMissing(m, dist) && std::strstr(TopViewMissing(m, dist), "Real geometry"), "off: tilt / distance say they need it");
+        else {
+            CHECK(TopViewMissing(m, dist) == nullptr && TopViewMissing(m, tilt) == nullptr, "on: the camera rows need nothing more");
+            CHECK((TopViewMissing(m, sky) != nullptr) == (gameSky < 0.5f) && (TopViewMissing(m, fog) != nullptr) == (gameFog < 0.5f),
+                  "the sky / fog say so while the game does not draw that sky / fog");
+        }
+        m.Click({Kind::Change, persp, 1});   // (a tick flips)
+        CHECK((m.Get()[persp] < 0.5f) != (persp1 < 0.5f) && (TopViewMissing(m, sky) != nullptr || persp1 < 0.5f), "the other way round");
+    }
     {   // F3 (Serg 2026-11-08, "Yes, add them"): the View tab's second page - [table] full_width and draw_distance as D2R VR Settings > Camera > "F3 The
         // game on your floor" has them, live; VR F3 only (and Settings' own / a test); the bottom bar's F3 / View
         CHECK(RowsOn(kPageF3) == 2 && !CloseRows(kPageF3) && TabOf(kPageF3) == TabOf(kPageView) && !StartsTab(kPageF3) && LeadOf(kPageF3) == kPageView,
@@ -213,7 +266,8 @@ static void TestDefs() {
         float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
         CHECK((HitTest(kPageView, u, v, 3) == Hit{Kind::Tab, kPageF3, 0}) && (HitTest(kPageF3, u, v, 3) == Hit{Kind::Tab, kPageView, 0}),
               "View's F3 button, F3's View button");
-        CHECK(HitTest(kPageView, u, v, 4).kind == Kind::None && HitTest(kPageView, u, v, 1).kind == Kind::None, "no F3 button in VR F1 or F4");
+        CHECK(HitTest(kPageView, u, v, 4).kind == Kind::None && (HitTest(kPageView, u, v, 1) == Hit{Kind::Tab, kPageF1, 0}),
+              "no F3 button in VR F1 (its F1 one) or F4");
         CHECK(!std::strcmp(kPageNames[kPageF3], "F3"), "the page's name");
         // a change on the page: written by itself (live), no Apply - as D2R VR Settings' slider
         Snapshot s;
@@ -2568,8 +2622,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 59 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F3 page's two and the Left page's Left-handed - not the others");
+    CHECK(live == 64 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F1 page's five, the F3 page's two and the Left page's Left-handed - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -3310,7 +3364,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 23, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 24, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");

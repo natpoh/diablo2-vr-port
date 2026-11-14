@@ -143,6 +143,18 @@ inline std::string WristLookDetail(const Model& m) {
     return DefDetail(kKeyWristLook);
 }
 
+// The F1 page's camera rows (tilt, distance, the game's sky and fog): what they need, said under their names in amber when it is missing -
+// Real geometry ticked (the game's own flat picture is its camera: no tilt, distance, dome or fog pass there), and for the sky / fog the game
+// drawing that sky / fog (the Video page's "Sky drawn by" / "Fog drawn by": [sky] game_sky, [fog] game_fog). nullptr: nothing missing.
+inline const char* TopViewMissing(const Model& m, int key) {
+    if (key != kKeyTopTilt && key != kKeyTopDistance && key != kKeyTopSky && key != kKeyTopFog) return nullptr;
+    const Values& v = m.Get();
+    if (v[kKeyTopPersp] < 0.5f) return uitext::Tr("vr.hset.top.needs_persp", "Needs Real geometry (the first row)");
+    if (key == kKeyTopSky && v[kKeyGameSky] < 0.5f) return uitext::Tr("vr.hset.top.needs_game_sky", "Needs Sky drawn by: the game (Video page)");
+    if (key == kKeyTopFog && v[kKeyGameFog] < 0.5f) return uitext::Tr("vr.hset.top.needs_game_fog", "Needs Fog drawn by: the game (Video page)");
+    return nullptr;
+}
+
 // The Options page's Players row: the line under its name - what it does, or why - / + do nothing now.
 inline std::string PlayersDetail(const Model& m) {
     if (!m.PlayersOn()) return uitext::Tr("vr.hset.players.off", "Off: D2R VR Authentic Settings, Players from the headset");
@@ -544,8 +556,9 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
             b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
                    : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
                    : key == kKeyWristLook ? WristLookDetail(m)
+                   : TopViewMissing(m, key) ? std::string(TopViewMissing(m, key))
                    : d.type == DefType::Choice ? ChoiceDetail(m, key) : d.type == DefType::Game ? PlayersDetail(m) : std::string(DefDetail(key)),
-                   RowDetailRect(r, pg), Face::Small, onePassWaits || (key == kKeyWristLook && WristLookNotMade(m)) ? Role::Warn : Role::Quiet);
+                   RowDetailRect(r, pg), Face::Small, onePassWaits || (key == kKeyWristLook && WristLookNotMade(m)) || TopViewMissing(m, key) ? Role::Warn : Role::Quiet);
         const float v = m.Get()[key];
         if (d.type == DefType::Game) {   // the game's players count: what the game says (amber: asked, not shown by the game yet), "-" not known
             const bool usable = m.PlayersUsable();
@@ -584,10 +597,14 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (m.page == kPageVideo && PageShown(kPageRender, m.View()))
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.go", "Render"), {Kind::Tab, kPageRender, 0}, false, true, Role::Accent);
     if (m.page == kPageRender) b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.back", "Video"), {Kind::Tab, kPageVideo, 0});
-    // the View tab's second page, F3 (the game on the floor's [table] keys): its button on the View page in VR F3, View back from it
-    if (m.page == kPageView && PageShown(kPageF3, m.View()))
+    // the View tab's second page, F3 (the game on the floor's [table] keys) in VR F3 or F1 (the view from above's [top] keys) in VR F1: its button
+    // on the View page (ViewSubPage), View back from it
+    if (m.page == kPageView && ViewSubPage(m.View()) == kPageF3)
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.go", "F3"), {Kind::Tab, kPageF3, 0}, false, true, Role::Accent);
+    if (m.page == kPageView && ViewSubPage(m.View()) == kPageF1)
+        b.Button(kPreviewBtn, uitext::Tr("vr.hset.f1.go", "F1"), {Kind::Tab, kPageF1, 0}, false, true, Role::Accent);
     if (m.page == kPageF3) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.back", "View"), {Kind::Tab, kPageView, 0});
+    if (m.page == kPageF1) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f1.back", "View"), {Kind::Tab, kPageView, 0});
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);
     const bool warn = m.page == kPageCoop ? !opt.status && m.Coop() && (!m.Coop()->installed || m.CoopResult() == Result::Failed)

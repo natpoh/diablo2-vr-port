@@ -1221,11 +1221,17 @@ tab.ui_f1_above = 界面：F1 俯视
 
 # --- View from above ---
 group.view_from_above = 俯视视角
-group.view_from_above.help = 俯视视角（F1）如何绘制。勾选“真实几何”，就能通过我们自己的摄像机以真实透视和真立体观看，而不是游戏的平面画面；倾斜滑块会让摄像机转得更接近地平线，以显示前方更多的世界。
+group.view_from_above.help = 俯视视角（F1）的绘制方式。勾选“真实几何”后，通过我们自己的摄像机以真实透视和真实立体观看，而不是游戏的平面画面；倾斜滑块让摄像机更靠近地平线，显示更多前方的世界；距离滑块把摄像机拉远，显示英雄周围更多的世界；还可以在周围绘制游戏自己的天空和雾。
 top.perspective.label = 真实几何
 top.perspective.tip = 通过我们自己的摄像机看到的俯视视角：同样的画面，但是真实透视 - FlatVR 屏幕的视野和真立体（立体标签页上的真立体），英雄位于屏幕平面上。关闭 = 游戏自己的平面画面。
 top.tilt.label = 真实几何：摄像机倾斜，°
 top.tilt.tip = 摄像机绕英雄转动：越大 = 越接近地平线，能看到前方更多的世界和其后的天空。
+top.distance.label = 真实几何：摄像机距离，%
+top.distance.tip = 摄像机离多远，为游戏自身距离的 %：越大 = 越远，英雄周围的世界越多（一切都更小），越小 = 越近。点击仍落在指针下。拉得很远时，超出绘制距离（Home）的房间会是空的：请在那里调高它。100 = 游戏自身的高度。实时生效。
+top.sky.label = 真实几何：游戏自己的天空
+top.sky.tip = 游戏自己围绕世界的天空穹顶，与 F4 相同——摄像机向地平线倾斜时可在地面之外看到。只有游戏的穹顶（Sky 选项卡中的“天空由谁绘制”必须是游戏），上面没有我们的任何东西。需要真实几何：游戏自己的平面画面是它向下看的摄像机，没有天空。实时生效。关闭 = 俯视时没有天空，与以前一样。
+top.fog.label = 真实几何：游戏自己的雾
+top.fog.tip = 游戏自己覆盖远处地面的雾，与 F4 相同，其距离以英雄为中心（而不是从英雄上方高处的摄像机量起）。只有游戏的雾渲染（World 选项卡中必须选择游戏的雾），没有我们的雾调整。需要真实几何：游戏自己的平面画面没有游戏的雾。实时生效。关闭 = 俯视时没有雾，与以前一样。
 
 # --- Toolbar and map, from above ---
 group.toolbar_and_map_from_above = 工具栏与地图，俯视
@@ -1840,6 +1846,11 @@ hud.ally_portraits_size.label = 地图下方的盟友：宽度，占地图的百
 hud.ally_portraits_size.tip = 四个磁贴有多宽，占地图宽度的百分比（手中的球：它的球体）；每行更多或更少时，磁贴保持这个大小。125：比球体稍宽。手中地图下方最多 40 cm，大地图下方最多 60 cm。即时生效。
 hud.allies_wrist_cols.label = 手腕上的盟友：每行磁贴数
 hud.allies_wrist_cols.tip = 右手腕上方并排放多少个磁贴（每个是手腕状态面板宽度的 2.5 分之一）；行数按你的盟友需要而定，最下面一行位于面板的位置。即时生效。
+hud.skill_under_map.label = 手中地图下方的已备技能（F4）
+hud.skill_under_map.tip = VR 第一人称（F4），原生 OpenXR。每只手已备好的技能——法力和生命徽章底部显示的内容：右边是弓选中的技能、符文手势备好的技能或已备的近战技能；左边是符文手势备好的技能——以游戏自己的图标加名称显示在手中地图下方的一行（大地图下方也有）。付不起消耗时显示为淡色。如果地图下方还有盟友，他们会下移一行。配合游戏的徽章（默认）：仅当徽章外观为游戏的模型或游戏的球体时显示，它们无法显示图标；模组的玻璃球会自己显示。实时生效。
+hud.skill_under_map.choice0 = 从不
+hud.skill_under_map.choice1 = 总是
+hud.skill_under_map.choice2 = 配合游戏的徽章
 hud.hide.label = 隐藏游戏界面
 hud.hide.tip = 游戏把它的整个界面绘制到一个独立的层中。“工具栏”只清空工具栏的条带（根据屏幕大小和游戏的界面大小找到）；怪物头顶的标签、提示和商店保留。“全部”：只剩世界。上方的“工具栏类型”会同时设置它和“位置”。
 hud.hide.choice1 = 工具栏
@@ -1879,9 +1890,7 @@ hud.wrist_globe_scale.tip = 每个球体周围裁出多大的圆盘（1 = 游戏
 hud.wrist_game_glow.label = 游戏绘制：在黑暗中发光
 hud.wrist_game_glow.tip = 液体有多亮：游戏自己对它的高亮（就是照亮你指针下单位的那种），其颜色乘以 1 + 此值 x 0.05——13 为 1.65 倍，40 为三倍，0 为游戏原本的绘制。低生命时的跳动叠加在其上。即时生效。
 hud.wrist_game_glass.label = 游戏绘制：玻璃
-hud.wrist_game_glass.tip = 液体上方的玻璃穹顶：0 为完全没有玻璃；大于 0 为低级法力药剂自己的玻璃，像游戏绘制的那样透明（游戏没有为这些模型提供可设置的不透明度，所以大于 0 的数值不会改变它的透明程度）。即时生效。
-hud.wrist_game_liquid_glass.label = 游戏绘制：透明液体
-hud.wrist_game_liquid_glass.tip = 液体放在游戏自己的透明玻璃中（治疗药剂的玻璃，透过它的颜色能看到后面的东西），染成低级治疗药剂和低级法力药剂的红色与蓝色，代替药剂原本不透明的液体。这是试验：透明程度由游戏决定。勾选后本程序会重新生成液体的文件；从下次启动游戏起生效。
+hud.wrist_game_glass.tip = 液体上方的玻璃罩：0 完全没有玻璃；大于 0 时为小型法力药剂自己的玻璃，不透明度等于此数值（游戏中模型自身的不透明度：1 完全不透明，0.1 几乎透明）。实时生效。
 hud.wrist_game_pulse.label = 游戏绘制：低时脉动
 hud.wrist_game_pulse.tip = 生命值低时，每次跳动液体变亮多少（需勾选“低生命时轻柔的心跳”；勾选“球随暗角一起跳动”时法力也会）：游戏自己的高亮，1 = 跳动顶点时亮一倍。0：不脉动。即时生效。
 hud.hand_vitals_orb_shape.label = 形状
@@ -3990,7 +3999,6 @@ group.d2r_rooms_bridge_create_game_through_a_relay.help = D2R Rooms 是 D2RLoade
 @rooms.mode.label = 通过中继
 @rooms.mode.tip = 自动：仅当 D2RLoader 报告你的端口无法从外部访问时（没有端口转发、路由器不支持 UPnP、运营商级 NAT）。始终：你托管的每个房间都通过中继。从不：房间会被列出，好友直接连接到你。d2r-rooms.ini 中的 [relay] mode。
 @rooms.mode.choice0 = 仅当我的端口无法访问时（自动）
-@rooms.mode.choice1 = 始终
 @rooms.mode.choice2 = 从不（好友需要我的端口开放）
 @rooms.edit.label = 添加或移除中继（用记事本打开 d2r-rooms.ini）
 @rooms.edit.tip = 打开 d2r-rooms.ini：在 [relays] 下每行一个中继，格式为  名称 = wss://address  ——私有中继的密钥写在空格之后。保存后这里的列表会随之更新。运行自己的中继：见 D2R Rooms 仓库的 docs/host_a_relay.md。
@@ -4089,6 +4097,8 @@ debug.game_sky_test.choice3 = 亚瑞特山顶的单位名称指向我们的洋�
 debug.game_sky_test.choice4 = 我们的洋红色模型放在亚瑞特山顶自己的路径上
 debug.own_labels_dump.label = 写出一次我们的标签和名称的图像（d2r_vr_own_labels.bmp）
 debug.own_labels_dump.tip = 开启我们自己的物品标签或怪物头顶名称后，它们显示出来时，绘制它们所用的图像（迄今画过的每个名称）会被写入 d2rloader\logs\d2r_vr_own_labels.bmp，用来与游戏自己的文字对照。它只写出文件；对游玩没有任何改变。
+debug.client_size_callers.label = 记录游戏中读取窗口大小的位置
+debug.client_size_callers.tip = 使用自定渲染尺寸时（Performance > 渲染尺寸），游戏画面可能比它在显示器上的窗口大得多（较小的主显示器：1080p 电视给出 1020 的正方形）。游戏的大部分已被告知画面尺寸；此项会把游戏中仍读取窗口自身大小的位置写入日志，每处一次——即按小窗口排布的界面部分。只写日志，不改变游戏中的任何东西。
 debug.frame_log.label = 记录每一帧
 debug.frame_log.tip = 每一对、视角、英雄姿态和显示，写入 ini 旁边的 d2r_vr_frames.csv，FlatVR 则写入它逐帧的姿态追踪。
 debug.frame_trace.label = 记录较长的帧以及插件在其中花费的时间
@@ -4380,6 +4390,7 @@ status.layer_warn.toolkit.how = 在 OpenXR Toolkit Companion 中勾选“Disable
 
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = 视角
+vr.hset.page.f1 = F1
 vr.hset.page.f3 = F3
 vr.hset.page.options = 选项
 vr.hset.page.video = 视频
@@ -4433,6 +4444,16 @@ vr.hset.turn.speed.label = 平滑转向速度
 vr.hset.turn.speed.detail = 每秒的度数，平滑转向开启时
 vr.hset.game.players.label = 玩家数（难度）
 vr.hset.game.players.detail = 如同 /players：怪物更强，经验和掉落更多
+vr.hset.top.perspective.label = 真实几何
+vr.hset.top.perspective.detail = 真实透视；关闭 = 游戏的平面画面
+vr.hset.top.tilt.label = 摄像机倾斜
+vr.hset.top.tilt.detail = 配合真实几何：+ 更靠近地平线，前方更多
+vr.hset.top.distance.label = 摄像机距离
+vr.hset.top.distance.detail = 配合真实几何：+ 拉远，英雄周围更多
+vr.hset.top.sky.label = 游戏的天空
+vr.hset.top.sky.detail = 配合真实几何：游戏围绕世界的天空穹顶
+vr.hset.top.fog.label = 游戏的雾
+vr.hset.top.fog.detail = 配合真实几何：游戏覆盖远处地面的雾
 vr.hset.table.full_width.label = 全宽
 vr.hset.table.full_width.detail = 四周是游戏的天空和雾，无边缘
 vr.hset.table.draw_distance.label = F3 距离
@@ -5658,6 +5679,9 @@ vr.hset.custom_empty = （列表中没有名称的一行）
 vr.hset.second_row_off = - 第二排（LT）已关闭
 vr.hset.wrist_look.needs_wrists = 工具栏类型为“手腕”时可见（上一行）
 vr.hset.wrist_look.not_made = 尚未生成：先启动 D2R VR Authentic Settings，再启动游戏
+vr.hset.top.needs_persp = 需要真实几何（第一行）
+vr.hset.top.needs_game_sky = 需要“天空绘制：游戏”（Video 页面）
+vr.hset.top.needs_game_fog = 需要“雾绘制：游戏”（Video 页面）
 vr.hset.players.off = 关闭：D2R VR Authentic Settings，从头显设置玩家数
 vr.hset.players.unknown = 你的英雄进入游戏后会读取游戏的数值
 vr.hset.players.not_here = 只在你自己的游戏中：单人游戏或 TCP/IP 主机
@@ -5719,7 +5743,9 @@ vr.party.back = 中继
 vr.hset.render.go = 渲染
 vr.hset.render.back = 视频
 vr.hset.f3.go = F3
+vr.hset.f1.go = F1
 vr.hset.f3.back = 视角
+vr.hset.f1.back = 视角
 vr.hset.recentre = 重新居中视角
 vr.hset.close = 关闭
 vr.hset.apply = 应用
@@ -5858,6 +5884,9 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+@rooms.mode.choice1 = 始终
+hud.wrist_game_liquid_glass.label = 游戏绘制：透明液体
+hud.wrist_game_liquid_glass.tip = 液体放在游戏自己的透明玻璃中（治疗药剂的玻璃，透过它的颜色能看到后面的东西），染成低级治疗药剂和低级法力药剂的红色与蓝色，代替药剂原本不透明的液体。这是试验：透明程度由游戏决定。勾选后本程序会重新生成液体的文件；从下次启动游戏起生效。
 weight.world_contact.label = 墙壁挡住你的武器（实验性）
 weight.world_contact.tip = 即时生效。仅限 VR 第一人称（F4）。勾选：你手中的武器会撞上关卡的墙壁、柱子、树木和大型物件，而不是穿过它们——它停在表面上，带有小小的反弹和手中的一次振动，劈砍会沿表面滑动，你的手柄继续进入墙内，而武器（以及握着它的手）留在外面；手柄回来时它会再次跟随。把手柄推到远超墙壁的位置，武器会穿过墙回到你手中。只影响你看到的：游戏的攻击、命中和你英雄的移动始终是游戏的。墙体在本程序勾选此项启动时由游戏自己的网格生成（约一分钟，每个游戏版本一次；状态栏会提示）：门洞保持敞开，树在树干处挡住武器而不是在树叶处，灌木、草和其他小植物从不阻挡它（调试：“世界接触：绘制墙体”会显示它们）。不勾选：武器穿过墙壁，与以前相同。实验性：默认关闭，可能仍有异常。
 vr.hset.weight.world_contact.label = 墙壁挡住你的武器（实验性）

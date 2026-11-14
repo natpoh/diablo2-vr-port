@@ -8,6 +8,7 @@
 
 #include "../../vr/ally_portraits.h"
 #include "../../vr/ally_portraits_paint.h"
+#include "../../vr/wheel_icons.h"   // the skill icon cache, for the pictures' skills' row
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -486,6 +487,64 @@ struct Sheet {
     }
 };
 
+void TestSkills() {
+    printf("the armed skills' row (skill_under_map)\n");
+    std::array<SkillTile, kMaxSkills> st{};
+    EXPECT(SkillTiles(-1, true, -1, true, &st) == 0);
+    EXPECT(SkillTiles(149, true, -1, true, &st) == 1 && st[0].skill == 149 && st[0].hand == 1);   // the right hand's alone
+    EXPECT(SkillTiles(149, false, 52, true, &st) == 2 && st[0].skill == 149 && !st[0].enough && st[1].skill == 52 && st[1].hand == 0);   // right first, then left
+    EXPECT(SkillTiles(-1, true, 52, true, &st) == 1 && st[0].hand == 0);   // the left hand's alone
+    EXPECT(SkillTiles(149, true, 149, true, &st) == 1);                     // the same skill on both hands: once
+    EXPECT(st[1].skill == -1);
+
+    // the picture: the skills' row over the allies' rows - the allies move down by exactly one row, nothing overlaps
+    for (int cols = 1; cols <= 8; ++cols)
+        for (int ns = 0; ns <= 2; ++ns)
+            for (int n = 0; n <= 12; ++n) {
+                Look l;
+                l.cols = (uint8_t)cols;
+                l.n = (uint8_t)n;
+                l.nSkills = (uint8_t)ns;
+                const int across = std::max(cols, ns);
+                EXPECT(AcrossOf(l) == across && PicW(l) == across * kTilePx);
+                EXPECT(PicH(l) == std::max(1, (ns ? 1 : 0) + RowsFor(n, across)) * kTilePx);
+                for (int i = 0; i < n; ++i) {
+                    const Cell c = AllyCell(l, i);
+                    EXPECT(c.y == (ns ? kTilePx : 0) + (i / across) * kTilePx && c.x >= 0 && c.x + kTilePx <= PicW(l) && c.y + kTilePx <= PicH(l));
+                }
+                for (int j = 0; j < ns; ++j) {
+                    const Cell c = SkillCell(l, j);
+                    EXPECT(c.y == 0 && c.x >= 0 && c.x + kTilePx <= PicW(l));
+                    for (int i = 0; i < n; ++i) EXPECT(!(AllyCell(l, i) == c));
+                }
+                if (ns == 2) EXPECT(SkillCell(l, 0).x + kTilePx == SkillCell(l, 1).x);
+                if (ns) EXPECT(SkillCell(l, 0).x + SkillCell(l, ns - 1).x + kTilePx == PicW(l));   // the row centred
+            }
+    Look none;
+    EXPECT(PicW(none) == PicW(4) && PicH(none) == kTilePx && AllyCell(none, 0) == Cell{} && SkillCell(none, 0) == Cell{});
+    // without skills the whole look is the grid of before
+    Look grid;
+    grid.n = 9;
+    EXPECT(PicW(grid) == PicW(4) && PicH(grid) == PicH(9, 4) && AllyCell(grid, 8) == CellOf(8, 9, 4));
+    // the width under the map follows the picture's tiles across (one across with two skills: two tiles wide)
+    Config cfg;
+    EXPECT(std::fabs(GridWidthM(0.16f, false, cfg, 2) - 0.10f) < 1e-5f && GridWidthM(0.16f, false, cfg, 0) == GridWidthM(0.16f, false, cfg));
+    // a look with another armed skill, or one that cannot be paid now, is a new picture
+    Look a, b;
+    a.nSkills = b.nSkills = SkillTiles(149, true, -1, true, &a.skill);
+    SkillTiles(149, true, -1, true, &b.skill);
+    EXPECT(a == b);
+    b.skill[0].enough = false;
+    EXPECT(!(a == b));
+    Config sc;
+    EXPECT(!sc.skills);   // (the plugin's Config: off until the ini says)
+    // the ini's choice: with the game's medallions by default (Serg, 2026-11-13) - wrist_look 2 the game's models, 1 its globes: on; 0 the glass balls: off
+    EXPECT(SkillsShown(kSkillsWithGameMedallions, 2) && SkillsShown(kSkillsWithGameMedallions, 1) && !SkillsShown(kSkillsWithGameMedallions, 0));
+    EXPECT(SkillsShown(kSkillsAlways, 0) && SkillsShown(kSkillsAlways, 2));
+    EXPECT(!SkillsShown(kSkillsNever, 2) && !SkillsShown(kSkillsNever, 0));
+    EXPECT(SkillsShown(7, 2) && !SkillsShown(7, 0) && !SkillsShown(kSkillsWithGameMedallions, 9));   // a value out of range: the default; a look out of range: the glass balls'
+}
+
 void TestPaint(const std::string& dir) {
     printf("the pictures\n");
     // single player: a necromancer with his merc, a golem, skeletons and mages
@@ -512,8 +571,15 @@ void TestPaint(const std::string& dir) {
     EXPECT(single.n == 5 && coop.n == 9 && coop.tile[8].kind == Kind::Summon && alone.n == 1);   // (nine: three rows, no "+N")
     Look wrist = coop;
     wrist.cols = 3;   // on the right wrist: three across
+    Look withSkills = single;   // [hud] skill_under_map: Bone Spear armed on the right, Teleport by a glyph on the left, over the allies
+    withSkills.nSkills = SkillTiles(84, true, 54, false, &withSkills.skill);
+    CopyName(withSkills.skill[0].name, "Bone Spear");
+    CopyName(withSkills.skill[1].name, "Teleport");
 
-    std::vector<uint32_t> p1, p2, p3, p4;
+    std::vector<uint32_t> p1, p2, p3, p4, p5;
+    for (int t = 0; t < 40 && wheelicons::Available() && (!wheelicons::Get(84) || !wheelicons::Get(54)); ++t) Sleep(50);   // (the cache decodes on a worker)
+    allyportraitspaint::Render(withSkills, p5);
+    EXPECT(p5.size() == (size_t)PicW(withSkills) * PicH(withSkills) && PicH(withSkills) == 3 * kTilePx);   // the skills' row + the allies' two
     allyportraitspaint::Render(single, p1);
     allyportraitspaint::Render(coop, p2);
     allyportraitspaint::Render(alone, p3);
@@ -551,11 +617,11 @@ void TestPaint(const std::string& dir) {
         Sheet s(1500, 1100);
         Config cfg;
         // the orb, left
-        const float ball = 0.16f, gw = GridWidthM(ball, false, cfg), gh = GridHeightM(gw, single.n, 4);
+        const float ball = 0.16f, gw = GridWidthM(ball, false, cfg, AcrossOf(withSkills)), gh = gw * (float)PicH(withSkills) / (float)PicW(withSkills);
         const int ocx = 260, ocy = 220, r = (int)(0.5f * ball * pxPerM);
         s.Orb(ocx, ocy, r);
-        const int gy = ocy + (int)(DropM(0.5f * ball, gw, single.n, 4) * pxPerM) - (int)(0.5f * gh * pxPerM);
-        s.Lay(p1, PicW(4), PicH(single.n, 4), ocx - (int)(0.5f * gw * pxPerM), gy, (int)(gw * pxPerM), (int)(gh * pxPerM));
+        const int gy = ocy + (int)((0.5f * ball + 0.05f * gw) * pxPerM);   // (DropM: the ball's radius, a gap; the picture's top there)
+        s.Lay(p5, PicW(withSkills), PicH(withSkills), ocx - (int)(0.5f * gw * pxPerM), gy, (int)(gw * pxPerM), (int)(gh * pxPerM));
         // the big map, right (drawn at a third of the scale: it is that much farther from the eyes)
         const float bw = 0.9f, bh = 0.5f, k = pxPerM / 3.0f, bgw = GridWidthM(bw, true, cfg), bgh = GridHeightM(bgw, coop.n, 4);
         const int bcx = 1080, bcy = 260;
@@ -620,6 +686,10 @@ int main(int argc, char** argv) {
         const std::string a = argv[2];
         allyportraitspaint::SetDir(std::wstring(a.begin(), a.end()));
     }
+    if (argc > 4) {   // the skill icon cache (d2r_vr_skill_icons), for the pictures' skills' row
+        const std::string a = argv[4];
+        wheelicons::SetDirectory(std::wstring(a.begin(), a.end()));
+    }
 #ifdef D2RVR_SOURCE_DIR
     const std::string snapshot = std::string(D2RVR_SOURCE_DIR) + "/dump_loader/D2R_image.bin";
 #else
@@ -630,6 +700,7 @@ int main(int argc, char** argv) {
     TestParty();
     TestLook();
     TestGrid();
+    TestSkills();
     TestPaint(dir);
     TestGameSource();
     printf("ally_portraits_test: %d checks, %d failed\n", g_checks, g_fails);

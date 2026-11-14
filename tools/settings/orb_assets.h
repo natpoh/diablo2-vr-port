@@ -20,7 +20,6 @@ struct Result {
 // game: the game's folder with its trailing backslash; modRoot: <game>\mods\D2R-VR\ with its trailing backslash (empty: not the mod - nothing made).
 // on: [hud] wrist_game_models; glow: [hud] wrist_game_glow (the liquid's EmissiveIntensity, baked into its file). Off: ours taken out again (by the
 // receipt; a file the player made or changed stays), nothing made.
-// glassLiquid: [hud] wrist_game_liquid_glass (test): the liquids in the game's see-through glass material, tinted by their potion's own picture.
-Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, float glow, bool glassLiquid = false);
+Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on, float glow);
 
 }  // namespace orbassets

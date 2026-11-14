@@ -25,7 +25,7 @@ static char g_case[256] = "";
 
 // ---- the made-up world (vrcam.cpp's names, as sky_choice.cpp reads them) ----
 static bool w_overhead = false, w_third = false, w_menuFlat = false, w_effectsPaused = false, w_gameView = true, w_gameFogBad = false,
-            w_gameFogActive = false, w_tableFull = false;
+            w_gameFogActive = false, w_tableFull = false, w_topSky = false, w_topFog = false;
 static const char* w_skyCannot = nullptr;
 static const drawdistance::Stop* w_stop = nullptr;   // VR F3's own Draw distance stop ([table] draw_distance), nullptr: the shared keys
 namespace autotunerun { bool Forced(const wchar_t*, const wchar_t*, float*) { return false; } }   // (vrc::IniF: no Auto run here)
@@ -48,6 +48,12 @@ bool EffectsPaused() { return w_effectsPaused; }
 std::atomic<bool> g_floorCamOk{false};
 std::atomic<float> g_floorEyeH{0.0f};
 bool TableFull() { return w_tableFull; }   // VR F3 with [table] full_width
+bool TopSky() { return w_topSky; }         // VR F1 Real geometry with [top] sky
+bool TopFog() { return w_topFog; }         // ... with [top] fog
+bool GameSkyOverhead() { return w_tableFull || w_topSky; }
+bool GameFogOverhead() { return w_tableFull || w_topFog; }
+std::atomic<float> g_topEyeDist{0.0f};
+std::atomic<bool> g_topEyeOk{false};
 const drawdistance::Stop* ViewDistanceStop() { return w_stop; }
 // (vrcam.cpp's log: not called by the choice)
 void Log(const char*) {}
@@ -81,6 +87,10 @@ int main() {
         w_third = b(17);
         w_effectsPaused = w_menuFlat = b(18);
         w_tableFull = b(19) && w_overhead && w_third;   // (VR F3 is from above and counts as third person)
+        // VR F1 with Real geometry is from above and third person too, never F3 at once: its sky / fog ticks on the same bit's other half
+        w_topSky = b(19) && w_overhead && w_third && b(0) && b(1);
+        w_topFog = w_topSky;
+        if (w_topSky) w_tableFull = false;
         g_enabled.store(true);
         g_inWorld.store(true);
         std::snprintf(g_case, sizeof g_case, "bits %05X", bits);
@@ -95,7 +105,7 @@ int main() {
         if (w_gameFogActive) CHECK(!fx::FogWanted());
         if (gameFogHolds && !g_arcaneSky.load()) CHECK(!fx::FogWanted());
         // 3. unable for good: ours instead
-        if (g_set.gameSky.load() && w_skyCannot && g_skyPalette.load() >= 0 && !w_tableFull) CHECK(fx::OurSkyWanted());
+        if (g_set.gameSky.load() && w_skyCannot && g_skyPalette.load() >= 0 && !w_tableFull && !w_topSky) CHECK(fx::OurSkyWanted());
         if (!g_set.gameSky.load() && !w_tableFull) CHECK(fx::OurSkyWanted() == (g_skyPalette.load() >= 0));
         CHECK((fogCannot != nullptr) == (!w_gameView || w_gameFogBad));
         if (fx::OurFogWanted() && !w_gameFogActive && (!g_set.gameFog.load() || fogCannot || g_arcaneSky.load())) CHECK(fx::FogWanted());
@@ -111,6 +121,13 @@ int main() {
             w_overhead = w_third = w_tableFull = false;
             CHECK(fx::GameFogWanted() == here);
             w_overhead = w_third = w_tableFull = true;
+        } else if (w_topFog || w_topSky) {   // 9. VR F1 with [top] sky / fog: the same - the game's dome and fog pass only, nothing of ours
+            CHECK(!fx::OurSkyWanted()); CHECK(!fx::FogWanted()); CHECK(!fx::OurFogWanted()); CHECK(!fx::GameSkyFixWanted());
+            CHECK(!fx::CeilWanted()); CHECK(!fx::GameCeilWanted());
+            const bool here = fx::GameFogWanted();
+            w_overhead = w_third = w_topSky = w_topFog = false;
+            CHECK(fx::GameFogWanted() == here);   // (as in F4: the same area, choice and menu)
+            w_overhead = w_third = w_topSky = w_topFog = true;
         } else if (w_overhead) CHECK(!fx::GameFogWanted());   // (from above, the board as before: no fog at all)
         // 5. the ceiling: from inside, on its biomes
         if (w_third) { CHECK(!fx::CeilWanted()); CHECK(!fx::GameCeilWanted()); }
@@ -173,6 +190,20 @@ int main() {
     CHECK(fx::GameFogCoverNow() == 200.0f);   // (no floor camera yet: as set)
     g_floorCamOk.store(true);
     w_tableFull = false;
+    // 9. VR F1 with [top] fog: the same rings round the hero, measured from our camera's distance to him (TopCamera); [top] sky alone not
+    std::snprintf(g_case, sizeof g_case, "F1 fog from the camera above");
+    w_stop = nullptr; g_underground.store(false);
+    const float setStart = fx::GameFogNumbersNow().start, setEnd = fx::GameFogNumbersNow().end;
+    w_topSky = true;
+    CHECK(fx::GameFogNumbersNow().start == setStart && fx::GameFogCoverNow() == 200.0f);
+    w_topSky = false; w_topFog = true;
+    CHECK(fx::GameFogNumbersNow().start == setStart);   // (no camera yet: as set)
+    g_topEyeOk.store(true); g_topEyeDist.store(80.0f);
+    CHECK(fx::GameFogNumbersNow().start == drawdistance::FromEyeAbove(80.0f, setStart));
+    CHECK(fx::GameFogNumbersNow().end == drawdistance::FromEyeAbove(80.0f, setEnd));
+    CHECK(fx::GameFogCoverNow() == drawdistance::FromEyeAbove(80.0f, 200.0f));
+    w_topFog = false;
+    CHECK(fx::GameFogNumbersNow().start == setStart && fx::GameFogCoverNow() == 200.0f);
     CHECK(fx::GameFogCoverNow() == 200.0f);   // (F4, the flat game, the board: as set)
     w_tableFull = true;
     g_set.gameFogCover.store(0.0f);

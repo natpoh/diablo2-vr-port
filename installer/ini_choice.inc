@@ -328,8 +328,8 @@ begin
   if not IniWasThere then Exit;   // a first install: the shipped defaults are these already
   if GetIniString('support', 'serg_settings_0216', '<none>', Ini) <> '<none>' then Exit;
   MoveKey0216('hud', 'swing_timer', '0', Ini);
-  MoveKey0216('hud', 'map_click_big', '0', Ini);
-  MoveKey0216('hud', 'map_stick_zoom', '0', Ini);
+  MoveKey0216('hud', 'map_click_big', '1', Ini);    // (0.217: on again - MoveToMapLaser0217)
+  MoveKey0216('hud', 'map_stick_zoom', '1', Ini);
   MoveKey0216('hud', 'labels_own', '1', Ini);
   MoveKey0216('hud', 'npc_names_own', '1', Ini);
   MoveKey0216('hud', 'own_labels_drop_game', '1', Ini);
@@ -369,6 +369,30 @@ begin
   MoveKey0216('fist', 'from_knuckle', '1', Ini);   // (new in 0.216: only a test build's 0 moves)
 end;
 
+// The map's laser back on (Serg 2026-11-14: "эти две должны быть включены"): 0.216 gave every kept ini map_click_big=0 and map_stick_zoom=0
+// with the 40 settings above - the laser no longer pointed at the map in the hand, no click made it big, no stick zoom. Once, at the first
+// update that has the mark [support] map_laser_0217 (one of the shipped defaults, in with the new keys right after this): both 1. Turned
+// off again after that, they stay off.
+procedure MoveToMapLaser0217(Ini: String);
+var
+  Was: String;
+begin
+  if not IniWasThere then Exit;   // a first install: the shipped defaults are 1 already
+  if GetIniString('support', 'map_laser_0217', '<none>', Ini) <> '<none>' then Exit;
+  Was := GetIniString('hud', 'map_click_big', '<none>', Ini);
+  if IniValue(Was) <> '1' then
+  begin
+    SetIniString('hud', 'map_click_big', '1', Ini);
+    Log('d2r_vr.ini: [hud] map_click_big=' + Was + ' -> 1 (0.217: the laser on the map in the hand, once)');
+  end;
+  Was := GetIniString('hud', 'map_stick_zoom', '<none>', Ini);
+  if IniValue(Was) <> '1' then
+  begin
+    SetIniString('hud', 'map_stick_zoom', '1', Ini);
+    Log('d2r_vr.ini: [hud] map_stick_zoom=' + Was + ' -> 1 (0.217: the laser on the map in the hand, once)');
+  end;
+end;
+
 procedure ApplyIni(Dir: String);
 var
   Ini, Def: String;
@@ -397,6 +421,7 @@ begin
     MoveToTwoPasses(Ini);   // (the same: its mark [support] two_passes_0214 is one of them)
     MoveToWallContactMode(Ini);   // (the same: wall_contact_mode itself is one of them)
     MoveToSergSettings0216(Ini);  // (the same: its mark [support] serg_settings_0216 is one of them)
+    MoveToMapLaser0217(Ini);      // (the same: its mark [support] map_laser_0217 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;
