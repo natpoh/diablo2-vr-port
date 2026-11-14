@@ -1,5 +1,14 @@
 # What's new in D2R VR
 
+## 0.217.1
+
+A hotfix: long games no longer flood the log with knock-down lines - less stutter late in a game.
+
+- **Less stutter late in a long game:** the knock-down's line about each monster model (can it be knocked down, and why) was meant
+  to be written once, but its list held 64 models; deep into a long game (Act 5) it filled up and every new model was written to the
+  log every frame - a player's log had 13331 such lines in a few minutes, about 1 ms each. Each model is written once again now,
+  without that limit.
+
 ## 0.217.0
 
 A crash fix, the view from above (F1) in the headset with the game's own sky and fog, and the armed skill under the map in the hand.

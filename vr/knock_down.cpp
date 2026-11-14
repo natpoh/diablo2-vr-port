@@ -13,6 +13,8 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <string>
+#include <unordered_set>
 
 #include "death_ragdoll.h"     // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell
 #include "fall_lib.h"
@@ -984,14 +986,18 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         if (r < 0 || static_cast<size_t>(r) >= nr) continue;
         const skel::MonsterRig& g = rigs[r];
         {   // each model once (and again when its verdict changes): can it be knocked down, and its joints' bones - or why not
-            static char told[64][56];
-            static int nTold = 0;
+            // (no fixed table: a 64-model one filled up late in a long game and then every new model was logged every tick - crash row 361)
+            static std::unordered_set<std::string> told;
+            static bool full = false;
+            constexpr size_t kToldMax = 4096;   // far beyond the game's models; past it, silence (said once), never a line a tick
             char key[56];
             snprintf(key, sizeof key, "%.40s|%d%d", g.model, g.doll > 0 ? 1 : 0, g.joints ? 1 : 0);
-            bool seen = false;
-            for (int i = 0; i < nTold && !seen; ++i) seen = !std::strcmp(told[i], key);
-            if (!seen && g.model[0] && g.n > 0) {
-                if (nTold < 64) std::memcpy(told[nTold++], key, sizeof key);
+            if (g.model[0] && g.n > 0 && !full && !told.count(key)) {
+                told.insert(key);
+                if (told.size() >= kToldMax) {
+                    full = true;
+                    LogF("knock down: %zu models told - no more model lines this run", told.size());
+                }
                 if (g.doll > 0 && g.joints) LogF("knock down: '%s' can be knocked down and held - its joints' bones %s", g.model, g.jointsSaid);
                 else LogF("knock down: '%s' cannot be knocked down - %s", g.model,
                           g.doll < 0 ? "not a humanoid by its bones" : g.doll == 0 ? (g.still ? "its pose held still (a corpse)" : "not seen standing yet")
