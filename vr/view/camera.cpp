@@ -866,6 +866,11 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
     if (g_set.platform.load() == 0) {   // [camera] flat_shift_x / _y: flat F2 / F3, the picture moved (vr/flat_shift.h); and where the hero is on it
         flatshift::Apply(M, g_set.flatShiftX.load(), g_set.flatShiftY.load());
         FlatShiftLog(in, M);
+        g_projOffX.store(-M[8]);   // (the view axis's place on the flat picture, NDC: clip.w = -z, so x_ndc = sx x / -z - M[8])
+        g_projOffY.store(-M[9]);
+    } else {
+        g_projOffX.store(0.0f);    // (VR: the eyes' own off-axis values stay out of the fog step, as before)
+        g_projOffY.store(0.0f);
     }
     }
     if ((g_eye.load() & 1) == 0) {

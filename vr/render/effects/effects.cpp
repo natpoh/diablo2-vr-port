@@ -1551,6 +1551,9 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
             fp.soft = g_set.fogSoft.load();
             fp.up[0] = g_viewRightY.load(); fp.up[1] = g_viewUpY.load(); fp.up[2] = g_viewFwdY.load();
         }
+        // [fog] game_fog_sky_off_axis: the view axis's place on the picture (the flat picture moved by [camera] flat_shift_x / _y is off-axis)
+        // for the dome's test and the pixels' rays - dastarto on 0.217.1, flat F2: one side of the sky fogged as far ground. VR: 0, as before
+        if (g_set.gameFogSkyOffAxis.load() && !fp.ours) { fp.offX = g_projOffX.load(); fp.offY = g_projOffY.load(); }   // (the old effect fog frozen)
         // ([sky] game_sky: the game's dome left as the void is - its depth band, as the post pass's SkyDomeDepth)
         fp.skyDepth = engitem::DomeShown() ? skydome::DomeDepth(engitem::DomeRadius(), g_lastNear.load()) : 0.0f;
         if (planesOn && !fp.ours) {   // the planes from the game's fog's start to its Full fog ([fog] game_fog_start / _end; underground the caves')
@@ -1602,7 +1605,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         const bool eyeLevel = viewgate::F4() || (g_set.platform.load() == 0 && g_enabled.load() && !ThirdPerson() && !Overhead());
         aovr::Frame(g_set.aoVr.load() && metres > 0.0f && g_inWorld.load() && eyeLevel, metres * upm, metres);
     }
-    vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
+    vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), g_set.vcacheHow.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
     // [render] fx_fence: the next frame's pass waits for these effects; by turns ([stereo] turn_fx_fence) for its overlays too - marked after them
     const bool markLater = scenedepth::MarkAfterOverlays();
     if (rt && !replay::g_capturing.load() && !markLater) scenedepth::MarkFx(rt);
@@ -3655,7 +3658,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                             LogF("vrcam: skill icon - skill %d (%s) is in the mana medallion (%ux%u from the icon cache)", io.skill, meleearm::IsMelee(io.skill) ? meleearm::Name(io.skill) : "the bow's chosen skill", img->width, img->height);
                         } else if (!wheelicons::Available()) {
                             static bool told = false;
-                            if (!told) { told = true; Log("vrcam: melee armed - no skill icons on this machine (d2r_vr_skill_icons, made by tools/skill_icons/prepare_skill_icons.py from the installed game): the mana medallion shows no icon"); }
+                            if (!told) { told = true; Log("vrcam: melee armed - no skill icons yet (the game's skill tables not read - the skill panel reads them - or no icon sheets beside the plugin: D2R VR Settings copies them from the installed game): the mana medallion shows no icon"); }
                         }
                     }
                     if (io.skill != g_iconUpSkill) io.show = false;   // its icon is not in the texture (yet): nothing rather than the last skill's

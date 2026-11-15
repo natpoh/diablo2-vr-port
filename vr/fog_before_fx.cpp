@@ -826,6 +826,7 @@ cbuffer K : register(b0) {
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
     float partX, partY, ownBehind, layersInOrder;
+    float offY, pad2, pad3, pad4;
 };
 // The share of the target the scene is drawn in (Params::part): 1 x 1, or an upscaler's part at the top left (DLSS at 0.667: the scene in
 // the top-left 2/3, the camera's whole view over it). A pixel's place in the view - its ray, so its distance and the dome test - from that
@@ -876,7 +877,7 @@ float Keep(float2 uv, float d) { return KeepZ(uv, nearPlane / d); }
 // ... of a point at the view depth z
 float KeepZ(float2 uv, float z) {
     const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-    const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
+    const float3 v = float3((ndc.x - offX) / sx * z, (ndc.y - offY) / sy * z, z);
     // (the game's: its view position's w is 1; our effect's fog, Params::ours: the view's depth, as D2R_DepthFog.fx FogAmount)
     const float dist = byDepth > 0.5 ? z : sqrt(dot(v, v) + 1.0);
     float t = planeN > 0.5 ? PlanesKeep(z)   // ([fog] game_fog_planes: the planes in front of the point's view depth)
@@ -895,7 +896,7 @@ bool SkyAt(uint2 p, float d) {
     const float g = max(skyDepth, 1e-7);
     if (skyDepth <= 0.0 || sx <= 0.0 || sy <= 0.0 || byDepth > 0.5) return d <= g;
     const float2 uv = UvOf(float2(p));
-    const float2 t = float2((uv.x * 2.0 - 1.0 - offX) / sx, (1.0 - uv.y * 2.0) / sy);
+    const float2 t = float2((uv.x * 2.0 - 1.0 - offX) / sx, (1.0 - uv.y * 2.0 - offY) / sy);
     return d <= g * sqrt(1.0 + dot(t, t));
 }
 // The depth a pixel is fogged by: its own. With Params::holes a pixel of none beside drawn ground - a hole the far trees' dithered edges
@@ -998,7 +999,7 @@ void ProbeAt(uint2 p, float3 c, float3 o) {
         const float2 uv = UvOf(float2(p));
         const float z = d > 1e-7 ? nearPlane / d : 0.0;
         const float2 ndc = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
-        const float3 v = float3((ndc.x - offX) / sx * z, ndc.y / sy * z, z);
+        const float3 v = float3((ndc.x - offX) / sx * z, (ndc.y - offY) / sy * z, z);
         const float dist = byDepth > 0.5 ? z : sqrt(dot(v, v) + 1.0);
         Probe.Store4(i * 64, asuint(float4(d, z, dist, KeepAt(p, uv, d))));
         Probe.Store4(i * 64 + 16, asuint(float4(c, SkyAt(p, d) ? 1.0 : 0.0)));
@@ -1139,8 +1140,9 @@ struct Consts {
     float planeN, pStart, pEnd, pStrength;
     float pSoft, accumBehind, revealOn, coverAt;
     float partX, partY, ownBehind, layersInOrder;
+    float offY, pad2, pad3, pad4;
 };
-static_assert(sizeof(Consts) == 40 * 4, "forty root constants");
+static_assert(sizeof(Consts) == 44 * 4, "forty-four root constants");
 
 constexpr int kSlots = 64;   // descriptor sets and timestamp pairs used in turn (the GPU is never that many steps behind)
 constexpr UINT kViews = 15;   // a step's views: t0 - t9, u0 - u4
@@ -2101,6 +2103,7 @@ void Insert(ID3D12GraphicsCommandList* cl, List& l) {
     c.sx = p.sx != 0.0f ? p.sx : 1.0f;
     c.sy = p.sy != 0.0f ? p.sy : 1.0f;
     c.offX = p.offX;
+    c.offY = p.offY;
     c.width = (uint32_t)sd.Width;
     c.height = sd.Height;
     c.curveOn = p.ourCurve ? 1.0f : 0.0f;

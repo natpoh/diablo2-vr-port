@@ -49,6 +49,7 @@ constexpr size_t kUnitPath = 0x38, kPathX = 0x2, kPathY = 0x6;   // a monster's 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_knockWanted{false}, g_leapWanted{false}, g_faulted{false};   // [weight] grab_moves_unit, knock_down_moves_unit, leap_landing_scatter
+std::atomic<bool> g_holdWanted{false};   // [weight] grab_holds_unit
 const char* SourceSaid(int source) { return source == kKnock ? " (knocked down by a blow)" : source == kLeap ? " (thrown by the leap's landing)" : ""; }
 std::atomic<int> g_where{0};   // what was said of where the server is: 0 nothing, 1 here, 2 not here (a joined game)
 
@@ -72,6 +73,16 @@ bool CallKnockback(uintptr_t eventFn, uintptr_t setFn, uintptr_t game, uintptr_t
         reinterpret_cast<ModeEventFn>(eventFn)(unit, kKnockbackMode, ev);
         memcpy(ev + kEventX, &x, 4);
         memcpy(ev + kEventY, &y, 4);
+        *result = reinterpret_cast<ModeSetFn>(setFn)(game, ev, 1);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// [weight] grab_holds_unit: the unit's hit recovery, as the server's damage result starts it (0x44ACDD: the event for mode 3, set with force 1) - no point,
+// no target (the event as MonModeEvent made it), and none of the damage code's own calls after it.
+bool CallHitRecovery(uintptr_t eventFn, uintptr_t setFn, uintptr_t game, uintptr_t unit, int* result) noexcept {
+    __try {
+        alignas(16) uint8_t ev[kEventSize] = {};
+        reinterpret_cast<ModeEventFn>(eventFn)(unit, kHitRecoveryMode, ev);
         *result = reinterpret_cast<ModeSetFn>(setFn)(game, ev, 1);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -184,9 +195,76 @@ void Act(const Ask& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
              result, head[3], after[3]);
 }
 
+// ---- [weight] grab_holds_unit: the timer notes a held unit out of hit recovery, the game's thread asks it ------------------------------------------------
+struct HoldAsk { uint32_t id = 0; bool hostile = false; uint64_t atMs = 0; };
+std::array<HoldAsk, 4> g_holdAsks;       // (under g_mutex) one per unit, the newest - two hands hold two at most
+std::array<Last, 4> g_holdLast;          // (under g_mutex) when hit recovery was last asked for each unit
+std::array<Last, 4> g_holdRefused;       // (under g_mutex) units the game refused, and when they were last held: not asked again while held
+std::array<Last, 4> g_holdTold;          // (the game's thread) the units whose hold was said, and when last asked - one line a hold
+struct HoldCounters { unsigned asked = 0, held = 0, already = 0, refused = 0, dead = 0, gone = 0; } g_h;   // (the game's thread)
+constexpr uint64_t kHoldToldGapMs = 2000;   // a unit not asked for this long is a new hold: said again
+
+void ActHold(const HoldAsk& a, uintptr_t game, uintptr_t lookup, uint64_t now) {
+    const uintptr_t eventFn = d2rsig::Addr(RVA_MODE_EVENT), setFn = d2rsig::Addr(RVA_MODE_SET);
+    uintptr_t unit = 0;
+    uint32_t head[4] = {};
+    if (!eventFn || !setFn) return;
+    if (!CallLookup(lookup, game, 1, a.id, &unit) || !unit || !Read(head, unit, sizeof head) || head[0] != 1 || head[2] != a.id) { ++g_h.gone; return; }
+    if (!HoldAsks(static_cast<int>(head[3]))) {   // in it already (or in our knockback, or dead): nothing to ask
+        ++g_h.already;
+        return;
+    }
+    ++g_h.asked;
+    int result = 0;
+    if (!CallHitRecovery(eventFn, setFn, game, unit, &result)) {
+        g_faulted.store(true);
+        Log("grab holds unit: the game's hit recovery faulted - OFF for this session, with the game's knockback (held, carried and thrown bodies are drawn only)");
+        return;
+    }
+    uint32_t after[4] = {};
+    Read(after, unit, sizeof after);
+    const HoldOutcome o = JudgeHold(static_cast<int>(after[3]));
+    Last* told = &g_holdTold[0];
+    bool isNew = true;
+    for (Last& t : g_holdTold) {
+        if (t.id == a.id) { told = &t; isNew = now < t.atMs || now - t.atMs > kHoldToldGapMs; break; }
+        if (t.atMs < told->atMs) told = &t;
+    }
+    *told = Last{a.id, now};
+    if (o == HoldOutcome::Held) {
+        ++g_h.held;
+    } else if (o == HoldOutcome::Dead) {
+        ++g_h.dead;
+    } else {
+        ++g_h.refused;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        Last* slot = &g_holdRefused[0];
+        for (Last& r : g_holdRefused) {
+            if (r.id == a.id) { slot = &r; break; }
+            if (r.atMs < slot->atMs) slot = &r;
+        }
+        *slot = Last{a.id, now};
+    }
+    if (isNew || o == HoldOutcome::Refused) {   // (one line a hold; a refusal is asked once a hold, so said once)
+        int ux = 0, uy = 0;
+        CellOf(unit, &ux, &uy);
+        LogF("grab holds unit: %s %u on cell %d,%d, held by the hand - the game's hit recovery asked: %s (returned %d, mode %u -> %u)", a.hostile ? "monster" : "NPC",
+             a.id, ux, uy,
+             o == HoldOutcome::Held ? "it is in it - it neither walks nor attacks; asked again each time it ends, until the hand lets go"
+             : o == HoldOutcome::Dead ? "dead or dying - nothing"
+             : "REFUSED by the game (its MonStats row has no hit-recovery mode - a town NPC, some bosses): it goes on as the game has it, the body is only "
+               "drawn in the hand; not asked again this hold",
+             result, head[3], after[3]);
+    }
+}
+
 void Report(uint64_t now) {
     if (now - g_reportAt < 10000) return;
     g_reportAt = now;
+    if (g_h.asked + g_h.already + g_h.gone)   // [weight] grab_holds_unit
+        LogF("grab holds unit (10 s): %u hit recoveries asked of held units - %u ran, %u refused by the game, %u dead; %u times the unit was in it already (or in "
+             "our knockback), %u gone", g_h.asked, g_h.held, g_h.refused, g_h.dead, g_h.already, g_h.gone);
+    g_h = {};
     if (!g_n.asked) return;
     LogF("grab moves unit (10 s): %u asked, %u knockbacks ran (%u landed on the cell asked, %u short; %u kept clear of the hero, %u not asked - only the hero's "
          "cells left), %u refused by the game, %u dead, %u gone, %u too old",
@@ -213,6 +291,19 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
         if (!WantedFor(a.source) || !viewgate::F4()) continue;
         if (now - a.atMs > kStaleMs) { ++g_n.stale; continue; }
         Act(a, game, lookup, now);
+    }
+    for (;;) {   // [weight] grab_holds_unit: the held units out of hit recovery
+        HoldAsk h;
+        {
+            std::lock_guard<std::mutex> lock(g_mutex);
+            for (HoldAsk& q : g_holdAsks)
+                if (q.id && (!h.id || q.atMs < h.atMs)) h = q;
+            if (!h.id) break;
+            for (HoldAsk& q : g_holdAsks)
+                if (q.id == h.id) q = HoldAsk{};
+        }
+        if (!g_holdWanted.load() || g_faulted.load() || !viewgate::F4() || now - h.atMs > kStaleMs) continue;
+        ActHold(h, game, lookup, now);
     }
     Report(now);
 }
@@ -244,28 +335,36 @@ void Init(const PluginContext* ctx) {
 
 void SetWanted(bool on) {
     if (g_wanted.exchange(on) == on) return;
-    meleetouch::SetMoveWanted(on || g_knockWanted.load() || g_leapWanted.load());   // (the server's unit lookup is observed for it too: the server's game is learned from it)
+    meleetouch::SetMoveWanted(on || g_knockWanted.load() || g_leapWanted.load() || g_holdWanted.load());   // (the server's unit lookup is observed for it too: the server's game is learned from it)
     Log(on ? "grab moves unit: on ([weight] grab_moves_unit) - a body the hands carry or throw is put on the cell under it by the game's own knockback (single player "
              "or host; F4)"
            : "grab moves unit: off");
-    if (!on && !g_knockWanted.load() && !g_leapWanted.load()) g_where.store(0);
+    if (!on && !g_knockWanted.load() && !g_leapWanted.load() && !g_holdWanted.load()) g_where.store(0);
 }
 bool Wanted() { return g_wanted.load() && !g_faulted.load(); }
 void SetKnockWanted(bool on) {
     if (g_knockWanted.exchange(on) == on) return;
-    meleetouch::SetMoveWanted(on || g_wanted.load() || g_leapWanted.load());
+    meleetouch::SetMoveWanted(on || g_wanted.load() || g_leapWanted.load() || g_holdWanted.load());
     Log(on ? "grab moves unit: knocked-down bodies on ([weight] knock_down_moves_unit) - a body a weapon's blow knocks down is put on the cell where it lies by the "
              "game's own knockback, so it fights and takes hits from there and gets up there (single player or host; F4)"
            : "grab moves unit: knocked-down bodies off - drawn only, the game keeps the unit on its cell");
-    if (!on && !g_wanted.load() && !g_leapWanted.load()) g_where.store(0);
+    if (!on && !g_wanted.load() && !g_leapWanted.load() && !g_holdWanted.load()) g_where.store(0);
 }
 void SetLeapWanted(bool on) {
     if (g_leapWanted.exchange(on) == on) return;
-    meleetouch::SetMoveWanted(on || g_wanted.load() || g_knockWanted.load());
+    meleetouch::SetMoveWanted(on || g_wanted.load() || g_knockWanted.load() || g_holdWanted.load());
     Log(on ? "grab moves unit: leap-thrown bodies on ([weight] leap_landing_scatter) - a body the hero's landing throws is put on the cell where it lies by the "
              "game's own knockback (single player or host; F4)"
            : "grab moves unit: leap-thrown bodies off");
-    if (!on && !g_wanted.load() && !g_knockWanted.load()) g_where.store(0);
+    if (!on && !g_wanted.load() && !g_knockWanted.load() && !g_holdWanted.load()) g_where.store(0);
+}
+void SetHoldWanted(bool on) {
+    if (g_holdWanted.exchange(on) == on) return;
+    meleetouch::SetMoveWanted(on || g_wanted.load() || g_knockWanted.load() || g_leapWanted.load());
+    Log(on ? "grab holds unit: on ([weight] grab_holds_unit) - the unit of a body a hand holds is kept in the game's own hit recovery: it neither walks off nor "
+             "attacks from under the hand (single player or host; F4); a unit the game gives no hit recovery (a town NPC, some bosses) goes on as the game has it"
+           : "grab holds unit: off - a held body's unit goes on as the game has it, as before");
+    if (!on && !g_wanted.load() && !g_knockWanted.load() && !g_leapWanted.load()) g_where.store(0);
 }
 bool WantedFor(int source) {
     const bool on = source == kGrab ? g_wanted.load() : source == kKnock ? g_knockWanted.load() : source == kLeap && g_leapWanted.load();
@@ -291,6 +390,33 @@ bool Note(uint32_t id, float dx, float dy, bool hostile, int source, float minCe
             if (!q.id || q.atMs < slot->atMs) slot = &q;
         }
         *slot = Ask{id, dx, dy, hostile, source, nowMs};
+    }
+    Queue(nowMs);
+    return true;
+}
+
+bool Hold(uint32_t id, bool hostile, int clientMode, uint64_t nowMs) {
+    if (!id || !g_holdWanted.load() || g_faulted.load() || !viewgate::F4() || !d2rsig::Addr(RVA_MODE_EVENT) || !d2rsig::Addr(RVA_MODE_SET) || !ServerHere()) return false;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        for (Last& r : g_holdRefused)
+            if (r.id == id && nowMs >= r.atMs && nowMs - r.atMs < kHoldRefusedMs) {
+                r.atMs = nowMs;   // (still held: not asked again until it has been let go of for a while)
+                return false;
+            }
+        Last* last = &g_holdLast[0];
+        for (Last& l : g_holdLast) {
+            if (l.id == id) { last = &l; break; }
+            if (l.atMs < last->atMs) last = &l;
+        }
+        if (!HoldWants(clientMode, nowMs, last->id == id ? last->atMs : 0)) return false;
+        *last = Last{id, nowMs};
+        HoldAsk* slot = &g_holdAsks[0];
+        for (HoldAsk& q : g_holdAsks) {
+            if (q.id == id) { slot = &q; break; }
+            if (!q.id || q.atMs < slot->atMs) slot = &q;
+        }
+        *slot = HoldAsk{id, hostile, nowMs};
     }
     Queue(nowMs);
     return true;

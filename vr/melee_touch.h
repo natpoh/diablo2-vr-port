@@ -156,6 +156,9 @@ bool MonsterPose(uintptr_t self, dollpose::Pose* out);
 // apart by their matrices, dollpose::NearestPose) - up to max; how many.
 int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);
 // ... how many turns monster id's drawn pose has now (its limbs and its lean; 0: none fresh), -1 when the pose is off. For [weight] grab_bodies' log.
+// [weight] knock_down: skinnings, since the last call, of a body drawn out of the game's pose that found its pose older than it may be (the timer's thread
+// stalled): those frames drew it as the game has it. For the knock-down's line.
+unsigned TakeStalePoses();
 int PosedTurns(uint32_t id);
 bool SwayView();
 // [weight] grab_bodies (vr/grab_bodies.h, vr/grab_wire.cpp; the grab is the weight library's, vr/grab_lib.h): an empty hand's grip holds a body. SetGrabWanted: the

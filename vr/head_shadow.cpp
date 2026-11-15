@@ -28,6 +28,7 @@
 #include <D2RLPlugin/api.h>
 
 #include "head_shadow.h"
+#include "main_cull.h"   // [weight] knock_down: the game's main cull (SetBeforeCull)
 #include "log_async.h"
 #include "potion_hide.h"   // EntitySet; the world-matrix hook's reader slot
 #include "sigscan.h"
@@ -334,6 +335,18 @@ uintptr_t OthersPose(uintptr_t pose) {
 }
 
 std::atomic<void (*)(uint32_t, bool)> g_beforeDraw{nullptr};   // [weight] knock_down (SetBeforeDraw)
+// [weight] knock_down (SetBeforeCull): the game's main cull of a pass (0xE37D20; its one caller the world draw, right after Renderer::UpdateSystems).
+// (the place, its fingerprint and what the cull reads: vr/main_cull.h, proven by main_cull_image_test)
+constexpr uint64_t RVA_MAIN_CULL = maincull::kCullRva;
+constexpr auto& kSigMainCull = maincull::kCullSig;
+using MainCullFn = uintptr_t (*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
+MainCullFn g_origMainCull = nullptr;
+std::atomic<void (*)()> g_beforeCull{nullptr};
+std::atomic<int> g_cullState{0};
+__declspec(noinline) uintptr_t HookMainCull(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+    if (const auto before = g_beforeCull.load(std::memory_order_relaxed)) before();
+    return g_origMainCull(a, b, c, d);
+}
 std::atomic<void (*)(uint32_t, bool, uintptr_t)> g_drawProbe{nullptr};   // [hud] wrist_game_models: the opacity the draw has (SetDrawProbe)
 std::atomic<ShadowFilterFn> g_shadowFilter{nullptr};            // [render] sun_shadow_radius_m / sun_shadow_every (SetShadowFilter)
 std::atomic<bool> g_filterWanted{false};                        // ... the hooks put in for it ([arms] head_shadow off too)
@@ -556,6 +569,8 @@ bool AttachmentOf(uint32_t entity, uintptr_t component, uintptr_t* skeletonInsta
 }
 void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t out)) { g_attachWriter.store(fn); }
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes)) { g_beforeDraw.store(fn); }
+void SetBeforeCull(void (*fn)()) { g_beforeCull.store(fn); }
+int CullHookState() { return g_cullState.load(std::memory_order_relaxed); }
 void SetDrawProbe(void (*fn)(uint32_t entity, bool eyes, uintptr_t constants)) { g_drawProbe.store(fn); }
 bool DrawHooked() { return g_origDraw != nullptr; }
 void SetShadowFilter(ShadowFilterFn fn) {
@@ -667,6 +682,30 @@ void Install() {
         potionhide::SetXformHeadObserver(&OnXform);
         potionhide::WantHooksForHead(true);
         potionhide::Install();
+    }
+    if (g_beforeCull.load() && g_ctx && g_cullState.load() == 0) {   // [weight] knock_down: the hook on the game's main cull (SetBeforeCull)
+        static ULONGLONG cullRetryAt = 0;
+        static unsigned cullTries = 0;
+        if (now >= cullRetryAt) {
+            cullRetryAt = now + (cullTries < 60 ? 1000 : 30000);
+            // (its page is decrypted the first time the game draws the world: looked at again until then)
+            if (d2rsig::Addr(RVA_MAIN_CULL) && d2rsig::Check(RVA_MAIN_CULL, kSigMainCull, sizeof kSigMainCull)) {
+                if (d2rsig::Hook(RVA_MAIN_CULL, kSigMainCull, sizeof kSigMainCull, reinterpret_cast<void*>(&HookMainCull), reinterpret_cast<void**>(&g_origMainCull)) &&
+                    g_origMainCull) {
+                    g_cullState.store(1);
+                    Log("knock down: the game's main cull (0xE37D20) is hooked - a body drawn away from its unit has its bounds grown just before each pass is "
+                        "culled, after the game made them again");
+                } else {
+                    g_cullState.store(2);
+                    Log("knock down: the hook on the game's main cull (0xE37D20) was refused by the loader - a body drawn away from its unit is left out of the "
+                        "eyes' passes whenever its unit's own box is out of view, as before");
+                }
+            } else if (++cullTries == 600) {   // (ten minutes of looks, in the world or not: another build)
+                g_cullState.store(2);
+                Log("knock down: the game's main cull (0xE37D20) is not as known in this build - not hooked; a body drawn away from its unit is left out of the "
+                    "eyes' passes whenever its unit's own box is out of view, as before");
+            }
+        }
     }
     if (const auto writer = g_attachWriter.load(); writer && g_ctx && g_state.load() == 1) {   // [weight] knock_down: a knocked-down body's weapon goes with its hand
         static bool put = false;

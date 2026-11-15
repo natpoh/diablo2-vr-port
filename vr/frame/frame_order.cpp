@@ -846,7 +846,7 @@ static DWORD UpdateThreadBody() {
             d2rsig::Resolve(g_ctx);   // what waits for its page to be decrypted
             GameCodeTick(iniChanged);
             if (!AllHooksIn()) InstallHooks();
-            InstallClientSize(IniB(L"render", L"vr_resolution_ui", true));   // [render] vr_resolution_ui (live; the hook goes in once)
+            InstallClientSize(IniB(L"render", L"vr_resolution_ui", true), IniB(L"render", L"vr_resolution_ui_pointer", true));   // [render] vr_resolution_ui (live; the hook goes in once)
             // [render] ui_band_16x9 (its own option since 0.214, default 0; live): 0 never, 1 always, 2 with the inventory open; [campfire]: always while the creation scene is round you -
             // its boards are shares of that band
             // (0.214: 1 - always - is no longer offered: the toolbar hung mid-view in the world; a 1 left in an ini is 2, with the inventory open)

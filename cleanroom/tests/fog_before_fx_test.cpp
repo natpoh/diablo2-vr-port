@@ -315,6 +315,7 @@ int main(int argc, char** argv) {
     bool holes = false;            // holes in the depth: one pixel (10, 10); a line of three at (20 - 22, 40)
     bool holeKey = false;          // [fog] game_fog_fx_depth on
     float skyDepth = 0.0f;         // [sky] game_sky: the game's dome's depth band (Params::skyDepth)
+    float axisX = 0.0f, axisY = 0.0f;   // the view axis's place on the picture, NDC (Params::offX / offY: the flat picture moved)
     bool depthUntold = false;      // no barrier of the depth this frame (its state from an earlier frame's: stale)
     bool depthElsewhere = false;   // the depth's barrier to its read state told on another list this frame
     int sceneElse = 0;             // the scene's barrier to a shader resource told on another list: 1 this frame; 2 then a later one to a
@@ -341,6 +342,8 @@ int main(int argc, char** argv) {
         p.start = cStart; p.end = cEnd; p.curve = cCurve; p.strength = cStrength;
         p.fxDepth = holeKey;   // (the holes go with the step now, not with this - holeKey off checks a hole with it off)
         p.skyDepth = skyDepth;
+        p.offX = axisX;
+        p.offY = axisY;
         p.cover = coverAt;
         p.planes = planesN;
         p.planesStart = 20.0f;
@@ -935,6 +938,26 @@ int main(int argc, char** argv) {
         expect(dome * ray(2, 2) * 1.05f, 2, 2, want);
         std::printf("  ... 5 %% nearer than the dome there: %.4f %.4f %.4f (the formula %.4f %.4f %.4f)\n", got[0], got[1], got[2], want[0], want[1], want[2]);
         CHECK(near3(got, want) && std::fabs(got[0] - grey) > 0.02f);
+        // [fog] game_fog_sky_off_axis: the picture moved (its axis at NDC 0.6, 0.3 - the flat game's [camera] flat_shift_x / _y). A dome pixel
+        // near the left edge has a steeper ray than a centred picture's, so its depth lies past the centred test's band there: told the
+        // axis, the sky (left as it is); told none (0, before the fix - dastarto on 0.217.1, flat F2: that side of the sky fogged as ground)
+        {
+            auto rayOff = [](float px, float py, float ax, float ay) {
+                const float x = (px + 0.5f) / 32.0f - 1.0f - ax, y = 1.0f - (py + 0.5f) / 32.0f - ay;
+                return std::sqrt(1.0f + x * x + y * y);
+            };
+            const float dOff = dome * rayOff(2, 40, 0.6f, 0.3f);
+            axisX = 0.6f; axisY = 0.3f;
+            frame(true, dOff, 2, 40, got, &word);
+            const bool skyWithAxis = std::fabs(got[0] - grey) < 0.01f && std::fabs(got[2] - grey) < 0.01f;
+            float gotNone[3];
+            axisX = 0.0f; axisY = 0.0f;
+            frame(true, dOff, 2, 40, gotNone, &word);
+            const bool groundWithout = std::fabs(gotNone[0] - grey) > 0.02f;
+            std::printf("  the dome on a picture moved off its centre (axis 0.6 0.3; its depth x%.3f), pixel 2 40: told the axis %.4f %.4f %.4f (the "
+                        "sky), told none %.4f %.4f %.4f (fogged as ground)\n", rayOff(2, 40, 0.6f, 0.3f), got[0], got[1], got[2], gotNone[0], gotNone[1], gotNone[2]);
+            CHECK(dOff > band * rayOff(2, 40, 0.0f, 0.0f) && skyWithAxis && groundWithout);
+        }
         skyDepth = 0.0f;
         frame(true, dome, 32, 32, got, &word);
         expect(dome, 32, 32, want);

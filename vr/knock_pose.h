@@ -384,6 +384,88 @@ inline void ToWorld(const float m3[9], const float root[3], float upm, const flo
     for (int j = 0; j < 3; ++j) out[j] = (p[0] * m3[j] + p[1] * m3[3 + j] + p[2] * m3[6 + j] + root[j]) / upm;
 }
 
+// [weight] grab_hold_steady: a model's place out of its world matrix (16 floats, row vectors: its axes in rows 0-2, where it stands in row 3) - the m3 / root
+// ToModel and ModelToWorld take.
+inline void PlaceOf(const float world[16], float m3[9], float root[3]) {
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j) m3[i * 3 + j] = world[i * 4 + j];
+    for (int j = 0; j < 3; ++j) root[j] = world[12 + j];
+}
+// ... the joints kept in the render world (metres) into the model's frame as the model stands NOW (m3, root: its place this frame). The pose's own `at` is
+// that for the place the model had when the timer made the pose; a unit the game moved or turned since is drawn with the newer place, so a body laid on
+// `at` goes with the unit by what it moved (vx dt, and its turn about its own root times the body's way from it). False: the place does not invert, or a
+// joint is not a number - the caller keeps `at`.
+inline bool JointsNow(const float m3[9], const float root[3], float upm, const float world[D2RF_JOINTS][3], float out[D2RF_JOINTS][3]) {
+    if (!(upm > 1e-3f) || !std::isfinite(upm)) return false;
+    for (int j = 0; j < D2RF_JOINTS; ++j)
+        if (!ToModel(m3, root, upm, world[j], out[j])) return false;
+    return true;
+}
+
+// ---- a leg drawn twisted (Serg, 0.217.4: «левая нога у нпс вывернута когда ими управляет регдол анимация») - the two measures the log's line is made of ----
+// The turn of a foot about its own leg's line (the hip to the ankle), from the body's own front (across its hips, up its trunk): 0 the toes ahead of the
+// body, radians, the sign the same for both legs. Of joints in any one frame; it does not change when the whole body is turned. False: the leg has no
+// length, the foot none across its leg, or the body's front runs along the leg (a leg raised straight ahead: no turn to speak of).
+inline bool FootTurn(const float j[D2RF_JOINTS][3], int hip, float* out) {
+    using namespace detail;
+    const V h = Get(j[hip]), a = Get(j[hip + 2]), t = Get(j[hip + 3]);
+    const V leg = Sub(a, h);
+    if (!(Len(leg) > 1e-5f)) return false;
+    const V ax = Mul(leg, 1.0f / Len(leg));
+    const V lat = Sub(Get(j[D2RF_R_HIP]), Get(j[D2RF_L_HIP])), up = Sub(Get(j[D2RF_NECK]), Get(j[D2RF_PELVIS]));
+    V fwd = Cross(lat, up), foot = Sub(t, a);
+    fwd = Sub(fwd, Mul(ax, Dot(fwd, ax)));
+    foot = Sub(foot, Mul(ax, Dot(foot, ax)));
+    if (!(Len(fwd) > 0.25f * Len(lat) * Len(up)) || !(Len(foot) > 0.2f * Len(Sub(t, a))) || !(Len(Sub(t, a)) > 1e-5f)) return false;
+    *out = std::atan2(Dot(Cross(fwd, foot), ax), Dot(fwd, foot));
+    return std::isfinite(*out);
+}
+// How far bone b was turned about the line `axis` (a unit vector in the frame of `from`, the model's) between two poses of the same skeleton, beyond the
+// turn of bone `ref` (the pelvis: a body turned whole is no twist): the rotation that takes `from`'s bone to `to`'s, less the same for ref, split into a
+// swing and a twist about the axis - the twist, radians. What the laying of a pose on joints adds about a limb's own line: its joints fix where a limb
+// points, never how it is rolled about itself.
+inline float TwistAbout(const float (*from)[16], const float (*to)[16], int b, int ref, const float axis[3]) {
+    // rows are a bone's axes: the rotation from -> to as a matrix for column vectors, R = sum_i to_i from_i^T
+    const auto rot = [&](int bone, float r[9]) {
+        for (int i = 0; i < 3; ++i)
+            for (int k = 0; k < 3; ++k) {
+                float s = 0.0f;
+                for (int a = 0; a < 3; ++a) s += to[bone][a * 4 + i] * from[bone][a * 4 + k];
+                r[i * 3 + k] = s;
+            }
+    };
+    float rb[9], rr[9], m[9];
+    rot(b, rb);
+    rot(ref, rr);
+    for (int i = 0; i < 3; ++i)   // m = rr^T rb: the bone's turn in the frame the body was turned from
+        for (int k = 0; k < 3; ++k) m[i * 3 + k] = rr[0 * 3 + i] * rb[0 * 3 + k] + rr[1 * 3 + i] * rb[1 * 3 + k] + rr[2 * 3 + i] * rb[2 * 3 + k];
+    // the quaternion of m (its vector part times 4w, and 4w: enough for the twist's angle; w near 0 - a half turn - by the largest diagonal)
+    const float tr = m[0] + m[4] + m[8];
+    float qx, qy, qz, qw;
+    if (tr > 0.0f) {
+        qw = 0.5f * std::sqrt(1.0f + tr);
+        const float s = 0.25f / qw;
+        qx = (m[7] - m[5]) * s; qy = (m[2] - m[6]) * s; qz = (m[3] - m[1]) * s;
+    } else if (m[0] >= m[4] && m[0] >= m[8]) {
+        qx = 0.5f * std::sqrt(std::max(0.0f, 1.0f + m[0] - m[4] - m[8]));
+        const float s = 0.25f / std::max(qx, 1e-9f);
+        qw = (m[7] - m[5]) * s; qy = (m[1] + m[3]) * s; qz = (m[2] + m[6]) * s;
+    } else if (m[4] >= m[8]) {
+        qy = 0.5f * std::sqrt(std::max(0.0f, 1.0f + m[4] - m[0] - m[8]));
+        const float s = 0.25f / std::max(qy, 1e-9f);
+        qw = (m[2] - m[6]) * s; qx = (m[1] + m[3]) * s; qz = (m[5] + m[7]) * s;
+    } else {
+        qz = 0.5f * std::sqrt(std::max(0.0f, 1.0f + m[8] - m[0] - m[4]));
+        const float s = 0.25f / std::max(qz, 1e-9f);
+        qw = (m[3] - m[1]) * s; qx = (m[2] + m[6]) * s; qy = (m[5] + m[7]) * s;
+    }
+    const float along = qx * axis[0] + qy * axis[1] + qz * axis[2];
+    float a = 2.0f * std::atan2(along, qw);
+    if (a > 3.14159265f) a -= 6.2831853f;
+    if (a < -3.14159265f) a += 6.2831853f;
+    return std::isfinite(a) ? a : 0.0f;
+}
+
 // [weight] knock_down: which way a body faces against the knock-down library's frame (the library's points: mirrored in x, knock_down.cpp Flip).
 // Do its toes (when its bones name them) point the way the library's frame calls forward? The log's check of the mirror, each knock-down: 1 yes, 0 no, -1 not known.
 inline int ToesForward(const float (*j)[3], uint32_t have) {

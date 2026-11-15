@@ -327,10 +327,10 @@ inline constexpr Def kDefs[] = {
     {L"direct", L"right_stick_hold", "Right stick, long press", "[direct] right_stick_hold", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     {L"direct", L"right_menu", "Right menu button", "[direct] right_menu", 0.0f, 0.0f, 0.0f, 1.0f, "", "", "", kPageKeysR, false, DefType::Choice},
     // [hands] left_handed (vr/hand_swap.h; Serg, 2026-11-09: "надо галочку внутрь оверлея игры"): the Controls tab's first page, its seventh row, under the
-    // twelve bindings (kept one after the other: kKeyBindFirst). Live: written a moment after the press, and the plugin trades the controllers at
-    // the next frame (xr.cpp Publish). Once on, the panel is pointed at with either trigger as ever; it opens with the long press of the LEFT
-    // stick click then (the layout's right stick is the left controller's). F4 only.
-    {L"hands", L"left_handed", "Left-handed", "Swap the controllers: the left one holds the weapon (F4)",
+    // twelve bindings (kept one after the other: kKeyBindFirst). Live: written a moment after the press, and the plugin trades the two sticks -
+    // push, click, long press - at the next frame (direct_input.cpp Feed); no other button, nothing of the hands. Once on, the panel opens with the
+    // long press of the LEFT stick click; it is pointed at and clicked as ever. F4 only.
+    {L"hands", L"left_handed", "Left-handed", "Swap the sticks: the left one turns, the right one walks (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageKeysL, true},
     //
     // Vibration (Serg, 2026-10-31: the vibration on a tab of its own, in D2R VR Settings and in the headset): [openxr] haptics, its strength and the

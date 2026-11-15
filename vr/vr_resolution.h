@@ -169,6 +169,30 @@ inline uint64_t CanvasAnswer(Asker asker, Size game, uint64_t native, bool on, b
     return NativeSize(asker == Asker::Ui ? UiCanvas(game, band) : game);   // (the cursor: always the whole picture)
 }
 
+// -- the game's cursor into its interface: the pointer's horizontal limit ([render] vr_resolution_ui_pointer) --------------------
+// 3.3.93787: the UI's pointer handling (0x14F356 the pointer's place, 0x845236 / 0x845262 the widget under it) turns the cursor's client point
+// (GetCursorPos + ScreenToClient 0x120A020 - mapped to the PICTURE's pixels by render_resolution.cpp) into the interface's point with
+// 0x7F350. That helper asks the client-size query for the client area (0x7F368, 0x7F37E, and 0x7F540's 0x7F546 / 0x7F55C) and, while the UI
+// system's flag [+0xB9] is set, clamps x to the middle (window height x 19/9) of it: x <= (w + h * 19/9) / 2. Answered the WINDOW, a window much
+// smaller than the picture cut the picture's right part off the mouse - and the laser: zeezour (0.216, Quest 3) a 1380 square window under a 3072
+// picture - x <= 2146, the right 30 % of the picture (the mercenary page's inventory columns) never clicked; his TV's 1020 window - 52 %
+// reachable. Its siblings 0x7F210 / 0x7F2D0 (interface -> client) and 0x7F540 ask the same query; all seven calls are answered alike - the
+// picture, the client area the hooked cursor calls work in - so the conversion stays the identity and only the clamp moves out of the way.
+// CursorReachX: the clamp's right edge in client pixels, as the game computes it (float, truncated) for a client area `client`.
+constexpr float kCursorAspectLimit = 19.0f / 9.0f;   // (2.1111111, the game's constant at 0x1CBA908)
+inline int32_t CursorReachX(Size client) {
+    if (!client.w || !client.h) return 0x7FFFFFFF;   // (the game skips the scale with a zero size; nothing clamped then that matters here)
+    const float span = (float)client.h * kCursorAspectLimit;
+    const float left = ((float)client.w - span) * 0.5f;
+    return (int32_t)(left + span);
+}
+// The share of the picture's width the pointer reaches when the clamp is made from `client` (1: all of it).
+inline float CursorReachShare(Size client, Size picture) {
+    if (!picture.w) return 1.0f;
+    const int32_t r = CursorReachX(client);
+    return r >= (int32_t)picture.w ? 1.0f : (float)std::max(r, 0) / (float)picture.w;
+}
+
 // -- the hover label over a world object (its name + the controller button's glyph) -----------------------------------------
 // The game's label panel (3.3.93787: 0x87FF00-0x881FD2) keeps a side margin made from the interface's size (0x881380, through the
 // UI caller ClientSizeUiRet4: the picture) and lays its parts out across GetWidth() 0x7F510. GetWidth tail-jumps to the query, so

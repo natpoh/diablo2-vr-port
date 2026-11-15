@@ -15,8 +15,8 @@
 #include <cwchar>
 
 #include "direct_feed.h"
+#include "hand_swap.h"   // [hands] left_handed: BodyWalk's copy of the sticks traded when its Mapping is the input
 #include "finite_hold.h"   // nothing non-finite into the head every view is built from
-#include "hand_swap.h"   // [hands] left_handed: BodyWalk's tracking traded under FlatVR
 #include "link.h"
 #include "rune_geom.h"
 #include "view_gate.h"
@@ -164,10 +164,6 @@ void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     o->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     o->userHeightMm = t.userHeightMm;
     o->flatVrStamped = (t.flags & BW_LINK_TRACK_FLATVR_STAMP) ? 1u : 0u;
-    // [hands] left_handed (vr/hand_swap.h), F4: under FlatVR the controllers traded here, as native OpenXR trades them where they come in
-    // (a native session's BodyWalk tracking is made from our traded XrInput already)
-    if (handswap::MirrorBodyWalk(handswap::Wanted(), viewgate::F4(), handswap::NativeFresh(handswap::NativeAtSlot().load(), GetTickCount64())))
-        handswap::MirrorShared(o);
     HoldFinite(o);
 }
 
@@ -413,6 +409,9 @@ void PublishXr(const D2RVR_XrInput& in, bool ended, const D2RVR_XrInput* raw) {
     // the controls (vr/walk_path.h ControlsForBodyWalk): recording -> as they were before the skill panel took them (its pen); direct otherwise -> none,
     // with the skill link the triggers' values as the game has them
     walkpath::ControlsForBodyWalk(x.hand, in.hand, raw ? raw->hand : in.hand, direct, skillPoses, skillRecording);
+    // [hands] left_handed (vr/hand_swap.h), F4: BodyWalk's Mapping is the input - the two sticks it maps traded (push and click), as direct input's
+    // layout trades them; its other buttons and the poses it walks by are each controller's own. Not while it records a gesture.
+    if (!direct && handswap::Decide(handswap::Wanted(), viewgate::F4())) handswap::SwapStickAxes(x.hand, BW_LINK_XRB_STICK);
     if (skillRecording && direct) {
         static ULONGLONG toldAt = 0;
         const ULONGLONG now = GetTickCount64();

@@ -350,11 +350,10 @@ and towns. Visual only, live.
 
 ![Controls](screenshots/settings_03_controls.png)
 
-- **Hands** (VR) - **Left-handed: swap the controllers** (off, `[hands] left_handed`;
-  first person F4 only): the left controller holds the main weapon and strikes with it,
-  the right one is the off hand; buttons, stick and trigger swap with them, and the
-  inventory and map in the hand, the wrist orbs, the belt, throws, the bow and vibration
-  follow. The menu button stays where it is. The game's weapons are not changed.
+- **Hands** (VR) - **Left-handed: swap the sticks** (off, `[hands] left_handed`; first
+  person F4 only): the two sticks trade jobs - the left stick turns and its click and long
+  press do the right stick's (the skill panel), the right stick walks. Triggers, grips,
+  X / Y, A / B and the menu stay as they are, and each controller stays its own hand.
   Also in the headset: the overlay's Controls tab, Left page, last row (F4).
 - **Walking (left stick)** - walk where you look, exact mode, reverse, turn
   strength, diagonal correction.
@@ -523,8 +522,11 @@ and towns. Visual only, live.
     installed game into `d2r_vr_game_ui` beside the plugin (never shipped).
     *Skill editor: categories* (on): EDIT SKILLS -> a slot gets a strip of tabs
     over the list - All, your class's three skill trees, General / Items - from
-    the game's own tables (run `tools/skill_icons/prepare_skill_icons.py` again
-    after an update; without the trees there is only the one list). *Skill panel
+    the running game's own tables (should they not read - another game
+    version - there is only the one list). The skills' names and icons are the
+    game's own too: names read from the running game, icons cut from the game's
+    skill pictures, which this program copies out of your installed game into
+    `d2r_vr_game_ui` beside the plugin while the panel is on (never shipped). *Skill panel
     opens ready to edit* (on; `[openxr] skill_panel_edit_first`): a tap on a slot
     brings up its list of skills - pick one and the game puts it there; the tap
     that made the trigger cast a slot is the trigger held half a second on it.

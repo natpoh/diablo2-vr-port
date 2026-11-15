@@ -331,6 +331,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "mob_bars.h"
 #include "durability_figure.h"   // the item-condition figure: found, moved, sized or hidden
 #include "plate_look.h"    // the monster's plate and the item labels kept apart in the interface layer's effect
+#include "label_key.h"     // which item label a paint is: by its name and box size (the game sorts its records between layout and paint)
 #include "plate_world.h"
 #include "notice_card.h"   // [hud] notice_card: the game's quest / level-up notice on a card in the room (NoticeCardTick)
 #include "hand_inventory.h"   // [openxr] hand_inventory: away from town the inventory on the left hand, the left stick walking on (HandInventoryTick)

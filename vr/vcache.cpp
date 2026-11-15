@@ -23,9 +23,11 @@ std::vector<L3> Detect() {
 }
 
 namespace {
-bool g_applied = false;
 bool g_told = false;
-char g_line[320];
+bool g_wantDone = false;
+int g_howDone = 0;
+Plan g_done;   // what the last Apply did (undone before the next)
+char g_line[400];
 
 // The CPU set ids of the processors in (group, mask).
 std::vector<ULONG> SetsOf(uint16_t group, uint64_t mask) {
@@ -44,21 +46,33 @@ std::vector<ULONG> SetsOf(uint16_t group, uint64_t mask) {
     }
     return ids;
 }
+
+const char* HowName(int how) {
+    switch (HowOf(how)) {
+        case kProcessSets: return "the process's default CPU sets alone (vcache_how 1, a test)";
+        case kPriority: return "the draw thread above normal alone (vcache_how 2, a test)";
+        case kAsBefore: return "the process's default CPU sets and the draw thread above normal, as 0.217 (vcache_how 3, a test)";
+        default: return "the draw thread's own CPU sets only";
+    }
+}
 }  // namespace
 
-void Apply(bool want, void (*log)(const char*)) {
-    if (want == g_applied && g_told) return;
+void Apply(bool want, int how, void (*log)(const char*)) {
+    how = HowOf(how);
+    if (g_told && want == g_wantDone && (!want || how == g_howDone)) return;
     g_told = true;
+    // what the last one did, undone first (a how changed live is a clean switch, never two at once)
+    if (g_done.processDefault) SetProcessDefaultCpuSets(GetCurrentProcess(), nullptr, 0);
+    if (g_done.drawThreadSets) SetThreadSelectedCpuSets(GetCurrentThread(), nullptr, 0);
+    if (g_done.raisePriority) SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+    const bool hadAny = g_done.processDefault || g_done.drawThreadSets || g_done.raisePriority;
+    g_done = Plan{};
+    g_wantDone = want;
+    g_howDone = how;
     if (!want) {
-        if (g_applied) {
-            SetProcessDefaultCpuSets(GetCurrentProcess(), nullptr, 0);
-            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
-            if (log) log("vrcam: big-L3 cores - off: the game's threads on any core again, the draw thread's priority normal ([render] vcache=0)");
-        }
-        g_applied = false;
+        if (hadAny && log) log("vrcam: big-L3 cores - off: every thread on any core again, no priority changed ([render] vcache=0)");
         return;
     }
-    g_applied = true;   // decided once per change, whatever comes of it
     const std::vector<L3> caches = Detect();
     const int big = Pick(caches);
     if (big < 0) {
@@ -68,19 +82,33 @@ void Apply(bool want, void (*log)(const char*)) {
         }
         return;
     }
+    // By default only the draw thread (vcache.h PlanFor): the game's job workers keep every processor, no priority is raised.
+    const Plan plan = PlanFor(true, big, how);
     const std::vector<ULONG> ids = SetsOf(caches[big].group, caches[big].mask);
-    const bool setsOk = !ids.empty() && SetProcessDefaultCpuSets(GetCurrentProcess(), ids.data(), (ULONG)ids.size());
-    const bool prioOk = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) != 0;
+    bool setsOk = true, prioOk = true;
+    if (plan.drawThreadSets) {
+        setsOk = !ids.empty() && SetThreadSelectedCpuSets(GetCurrentThread(), ids.data(), (ULONG)ids.size());
+        g_done.drawThreadSets = setsOk;
+    }
+    if (plan.processDefault) {
+        const bool ok = !ids.empty() && SetProcessDefaultCpuSets(GetCurrentProcess(), ids.data(), (ULONG)ids.size());
+        setsOk = setsOk && ok;
+        g_done.processDefault = ok;
+    }
+    if (plan.raisePriority) {
+        prioOk = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL) != 0;
+        g_done.raisePriority = prioOk;
+    }
     if (log) {
         uint64_t others = 0, otherBytes = 0;
         for (int i = 0; i < (int)caches.size(); ++i)
             if (i != big) { if (caches[i].group == caches[big].group) others |= caches[i].mask; otherBytes = caches[i].bytes; }
         snprintf(g_line, sizeof g_line,
-                 "vrcam: big-L3 cores - L3 %llu MB on processors %s (group %u) against %llu MB on %s: the game's threads prefer the big one "
-                 "(process default CPU sets, %zu processors: %s), the draw thread above normal (%s) - [render] vcache",
+                 "vrcam: big-L3 cores - L3 %llu MB on processors %s (group %u) against %llu MB on %s: %s (%zu processors; sets %s, priority %s) - [render] vcache",
                  (unsigned long long)(caches[big].bytes >> 20), Ranges(caches[big].mask).c_str(), caches[big].group,
-                 (unsigned long long)(otherBytes >> 20), others ? Ranges(others).c_str() : "?",
-                 ids.size(), setsOk ? "set" : "FAILED", prioOk ? "set" : "FAILED");
+                 (unsigned long long)(otherBytes >> 20), others ? Ranges(others).c_str() : "?", HowName(how), ids.size(),
+                 plan.drawThreadSets || plan.processDefault ? (setsOk ? "set" : "FAILED") : "untouched",
+                 plan.raisePriority ? (prioOk ? "above normal" : "FAILED") : "untouched");
         log(g_line);
     }
 }

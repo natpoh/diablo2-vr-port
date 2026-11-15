@@ -574,7 +574,7 @@ target_include_directories(world_anchor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_compile_options(world_anchor_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 
 
-add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/fence_gate.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/unleashed_game_patches.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/ao_vr.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
+add_library(d2rl-vrcam SHARED vr/vrcam.cpp vr/ui_lang.cpp vr/xr.cpp vr/link.cpp vr/dlss_mv.cpp vr/skeletons.cpp vr/weight.cpp vr/gamestate.cpp vr/gamecmd.cpp vr/players_cmd.cpp vr/patch_hunt.cpp vr/pipe_hunt.cpp vr/capture.cpp vr/party_cmd.cpp vr/direct_input.cpp vr/panel_input.cpp vr/throw_gesture_wire.cpp vr/throw_born.cpp vr/potion_hide.cpp vr/probe.cpp vr/uitrace.cpp vr/light_bounds.cpp vr/reflections_eye.cpp vr/fog_spare.cpp vr/fog_in_frame.cpp vr/hud.cpp vr/memdiff.cpp vr/writewatch.cpp vr/hset_paint.cpp vr/hset_store.cpp shared/ini_txn.cpp vr/render_resolution.cpp vr/melee_touch.cpp vr/melee_direct.cpp vr/melee_direct_client.cpp vr/flat_menu.cpp vr/skill_wheel.cpp vr/wheel_game.cpp vr/skill_tables_game.cpp vr/wheel_paint.cpp vr/tiles_paint.cpp vr/game_ui.cpp vr/wheel_icons.cpp vr/stand_still_wire.cpp vr/move_attack_wire.cpp vr/room_walk_wire.cpp vr/stray_walk_wire.cpp vr/shot_trace_wire.cpp vr/hset_view.cpp vr/gpu_fault.cpp vr/ecl_hook.cpp vr/fence_gate.cpp vr/native_d3d12.cpp vr/shadows_once.cpp vr/unleashed_game_patches.cpp vr/native_rsapi.cpp vr/foveation.cpp vr/lens_mask.cpp vr/fx_native.cpp vr/vrcam.rc vr/quiver_wire.cpp vr/vcache.cpp vr/fog_height.cpp vr/ao_vr.cpp vr/fog_before_fx.cpp vr/bench_lights.cpp vr/lit_flat.cpp)
 target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${FLATVR_SHARED_DIR} ${RESHADE_SDK_INCLUDE} ${BODYWALK_SRC} ${BODYWALK_SDK_INCLUDE})
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
@@ -901,6 +901,10 @@ target_compile_options(blade_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(direct_input_test cleanroom/tests/direct_input_test.cpp vr/direct_input.cpp)
 target_include_directories(direct_input_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${BODYWALK_SDK_INCLUDE})
 target_compile_options(direct_input_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Which item label a paint is (vr/label_key.h, pure): by its name and box size, the game sorting its records between layout and paint. Run: label_key_test.exe
+add_executable(label_key_test cleanroom/tests/label_key_test.cpp)
+target_include_directories(label_key_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(label_key_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # D2R VR Settings' list of controller buttons (vr/direct_remap.h, pure): what each row shows from the ini and what it writes back, against the
 # plugin's own parser (vr/direct_layout.h TableFromIni). Run: direct_remap_test.exe
 add_executable(direct_remap_test cleanroom/tests/direct_remap_test.cpp)
@@ -1128,7 +1132,7 @@ target_compile_options(bw_autorun_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_raw_test cleanroom/tests/flat_raw_test.cpp)
 target_include_directories(flat_raw_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_options(flat_raw_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
-# [hands] left_handed (vr/hand_swap.h): the controllers traded once where they come in - hands, buttons, touch, the menu button kept, the shared block, F4, FlatVR only for BodyWalk's tracking
+# [hands] left_handed (vr/hand_swap.h): the two sticks traded (axes, click, touch, lean, take) for the layout and BodyWalk's copy - every other button kept
 add_executable(hand_swap_test cleanroom/tests/hand_swap_test.cpp)
 target_include_directories(hand_swap_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared ${BODYWALK_SDK_INCLUDE})
 target_compile_options(hand_swap_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -1520,6 +1524,9 @@ target_include_directories(unleashed_effect_listener_guard_test PRIVATE ${CMAKE_
 target_compile_options(unleashed_effect_listener_guard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # ... and every check the six and the effect guard make before they write, against the game's image snapshot (dump_loader/D2R_image.bin; skipped without it).
 # Run: game_patches_image_test.exe [D2R_image.bin]
+add_executable(main_cull_image_test cleanroom/tests/main_cull_image_test.cpp)   # [weight] knock_down: the hook on the game's main cull, what it relies on (vr/main_cull.h; skipped without the image)
+target_include_directories(main_cull_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(main_cull_image_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(game_patches_image_test cleanroom/tests/game_patches_image_test.cpp)
 target_include_directories(game_patches_image_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(game_patches_image_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

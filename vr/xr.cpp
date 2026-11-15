@@ -135,7 +135,6 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "headset_shot.h"   // [headset_shot]: the frame's layers as submitted, read back to PNGs (ShotFrame, in CloseFrame)
 #include "headset_clip.h"   // [headset_shot] video: 10 s of the eyes as submitted, to an .mp4 (ClipFrame, in CloseFrame)
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
-#include "hand_swap.h"      // [hands] left_handed: the controllers traded once in Publish; Phys() names the controller a hand reads
 
 namespace gamestate { bool CinemaPlaying(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
@@ -2018,7 +2017,7 @@ void PanelGrabStep(D2RVR_XrInput& in, bool focused) {
         const D2RVR_XrHand& o = in.hand[h];
         panelgrab::Hand& k = z.hand[h];
         XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
-        k.tracked = o.active && g_aimSpace[handswap::Phys(h)] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[handswap::Phys(h)], g_space, g_fs.predictedDisplayTime, &aim)) &&
+        k.tracked = o.active && g_aimSpace[h] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[h], g_space, g_fs.predictedDisplayTime, &aim)) &&
                     (aim.locationFlags & need) == need;
         if (k.tracked) {
             k.at = PV(aim.pose.position);
@@ -2249,26 +2248,6 @@ void Publish(bool focused) {
     }
     g_keepAt = g_fs.predictedDisplayTime;
     if (g_cfg.gameFront && focused && !anyController) g_frontWantedAt.store(GetTickCount64());
-    // [hands] left_handed (vr/hand_swap.h), F4 only: the two controllers trade places here, once - everything below and after (direct input, the
-    // arms, the strikes, the bow, the HUD on the hands, BodyWalk) reads hand 1 as the LEFT controller. The menu button stays where it was pressed.
-    uint32_t touch[2] = {g_touch[0], g_touch[1]};
-    {
-        const bool swapped = handswap::Decide(handswap::Wanted(), viewgate::F4());
-        handswap::SetNow(swapped);
-        handswap::NoteNative(GetTickCount64());   // (BodyWalk's tracking is made from this frame: link.cpp does not trade it again)
-        if (swapped) {
-            handswap::MirrorHands(in.hand, touch, BW_LINK_XRB_MENU);
-            std::swap(located[0], located[1]);
-        }
-        static int told = -1;
-        if (told != (int)swapped) {
-            if (told >= 0 || swapped)
-                LogF("vrcam: openxr - left-handed: %s", swapped ? "on - the LEFT controller is the weapon hand (the game's right hand), the right one the off hand; the menu button stays put ([hands] left_handed)"
-                                                                 : handswap::Wanted() ? "waits - not in VR F4: the controllers as they are" : "off - the controllers as they are");
-            told = (int)swapped;
-            skillwheel::SetSwapped(swapped);   // (the skill panel's hints name the controller that presses each slot)
-        }
-    }
     HsStep(in, focused);      // the settings panel, when it is up, has both hands: nothing of them goes on
     FeedCalibration(in, located, focused);
     PanelGrabStep(in, focused);   // [openxr] panel_grab: a grip that starts on a game panel carries it (before the laser: its stick and trigger)
@@ -2279,7 +2258,7 @@ void Publish(bool focused) {
     PanelGrabPost(in);          // ... or without a grab ([openxr] panel_grab)
     static D2RVR_XrInput raw;   // the controls before the gestures' takes (BodyWalk recording a gesture is given these: link::PublishXr)
     raw = in;
-    directinput::Feed(&in, g_laserWanted.load(), touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
+    directinput::Feed(&in, g_laserWanted.load(), g_touch);   // the gestures' listeners, and [openxr] direct_input's pad, actions, commands and head (and the finger's touch)
     g_lastPublishTime = g_fs.predictedDisplayTime;
     in.stamp = D2RVRStampNow();
     in.counter++;
@@ -2291,7 +2270,6 @@ void Publish(bool focused) {
 // the actions are synced. xrApplyHapticFeedback replaces what the motor plays; a session without the input
 // focus (the headset off the head, the dashboard open) is not given any: haptics::Flush drops what waits.
 XrHapticActionInfo HapticInfo(int hand) {   // the hand's own action ([openxr] haptics_hand_actions), else the shared one filtered by hand
-    hand = handswap::Phys(hand);   // [hands] left_handed: the pulse of the weapon hand (1) buzzes the controller that is it - the left one then
     XrHapticActionInfo ai{XR_TYPE_HAPTIC_ACTION_INFO};
     if (g_aHapticHand[hand & 1]) ai.action = g_aHapticHand[hand & 1];
     else { ai.action = g_aHaptic; ai.subactionPath = g_handPath[hand & 1]; }
@@ -2313,7 +2291,7 @@ bool ApplyHaptic(int hand, float amplitude, int durationMs) {
     XrHapticVibration v{XR_TYPE_HAPTIC_VIBRATION};
     v.duration = (XrDuration)durationMs * 1000000;   // ns
     // [openxr] haptics_index_frequency_hz: an Index hand (the physical controller's profile) gets a real frequency - SteamVR plays 0 Hz as silence there
-    const int phys = handswap::Phys(hand) & 1;
+    const int phys = hand & 1;
     const float hz = xrprofiles::HapticFrequency(g_inNow.profile[phys], g_cfg.hapticsIndexHz);
     v.frequency = hz > 0.0f ? hz : XR_FREQUENCY_UNSPECIFIED;
     v.amplitude = amplitude;
@@ -3766,7 +3744,6 @@ XrQuaternionf Q4(const float* q) { return {q[0], q[1], q[2], q[3]}; }
 // the arm is where the palm faces. An adult's lengths: only the forearm's direction counts.
 bool ForearmFromHand(const D2RVR_XrPose& head, const D2RVR_XrPose& aim, int hand, XrVector3f* wrist, XrVector3f* axis, XrVector3f* inside) {
     if (!aim.valid || !head.valid) return false;
-    hand = handswap::Phys(hand);   // [hands] left_handed: the player's own shoulder and palm - the controller's side, not the hero's
     const float side = hand == 1 ? 1.0f : -1.0f;   // right +, left -
     *wrist = Plus(P3(aim.pos), Rot(Q4(aim.rot), {0.0f, -0.02f, 0.09f}));
     const XrVector3f f0 = Rot(Q4(head.rot), {0.0f, 0.0f, -1.0f});
@@ -3818,7 +3795,7 @@ bool HudPose(const D2RVR_XrInput& in, int anchor, bool map, bool orb, float widt
         const D2RVR_XrPose& aim = in.hand[anchor - 1].aim;
         if (!aim.valid) return false;
         if (orb) {
-            const float palm = handswap::Phys(anchor - 1) == 0 ? 1.0f : -1.0f;   // (the controller's own axes: its side, [hands] left_handed)
+            const float palm = anchor == 1 ? 1.0f : -1.0f;
             out->position = Plus(P3(aim.pos), Rot(Q4(aim.rot), {palm * 0.08f, -0.01f, 0.06f}));
         } else {
             XrVector3f wrist, axis, inside;
@@ -4372,7 +4349,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
     else if (!g_laserWanted.load()) why = 3;
     else if (!focused) why = 4;
     else if (!g_wnd || GetForegroundWindow() != GetAncestor(g_wnd, GA_ROOT)) why = 5;
-    else if (!in.hand[lh].active || !g_aimSpace[handswap::Phys(lh)] || XR_FAILED(xrLocateSpace(g_aimSpace[handswap::Phys(lh)], g_space, g_fs.predictedDisplayTime, &aim)) ||
+    else if (!in.hand[lh].active || !g_aimSpace[lh] || XR_FAILED(xrLocateSpace(g_aimSpace[lh], g_space, g_fs.predictedDisplayTime, &aim)) ||
              (aim.locationFlags & need) != need) why = 6;
     // the ray against the picture: u, v from its top left
     float u = 0.0f, v = 0.0f;
@@ -4861,7 +4838,7 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); return; }
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-    const bool aimOk = r.active && g_aimSpace[handswap::Phys(1)] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[handswap::Phys(1)], g_space, g_fs.predictedDisplayTime, &aim)) &&
+    const bool aimOk = r.active && g_aimSpace[1] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[1], g_space, g_fs.predictedDisplayTime, &aim)) &&
                        (aim.locationFlags & need) == need;
     const ULONGLONG now = GetTickCount64();
     const bool big = g_mapClick.Big();
@@ -5072,7 +5049,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
         // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame. [hud] map_two_sizes: never.
         XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
         const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-        if (g_gripSpace[handswap::Phys(0)] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[handswap::Phys(0)], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+        if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
             const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
             const XrVector3f& hp = grip.pose.position;
             const handinv::Place hand = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM,
@@ -6001,7 +5978,7 @@ bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     const double t = UsNow();
     handinv::Place pl;
-    if (g_gripSpace[handswap::Phys(0)] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[handswap::Phys(0)], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
+    if (g_gripSpace[0] && XR_SUCCEEDED(xrLocateSpace(g_gripSpace[0], g_space, g_fs.predictedDisplayTime, &grip)) && (grip.locationFlags & need) == need) {
         const XrVector3f& a = g_views[0].pose.position, &b = g_views[1].pose.position;
         const XrVector3f& hp = grip.pose.position;
         pl = handinv::OnHand({hp.x, hp.y, hp.z}, {0.5f * (a.x + b.x), 0.5f * (a.y + b.y), 0.5f * (a.z + b.z)}, g_cfg.handInvWidthM, (float)cut.h() / (float)cut.w());
@@ -7926,7 +7903,7 @@ bool CampfireAim(int hand, float o[3], float d[3], float* trigger, uint32_t* but
     // transform, the ray stood a floor's height off the hand (0.213.6: the pointer at the picture's top, the fire's clicks 50-1500 units off).
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
-    const XrSpace sp = g_aimSpace[handswap::Phys(hand)];
+    const XrSpace sp = g_aimSpace[hand];
     if (!sp || XR_FAILED(xrLocateSpace(sp, g_space, g_fs.predictedDisplayTime, &aim)) || (aim.locationFlags & need) != need) return false;
     const XrVector3f& ap = aim.pose.position;
     const XrQuaternionf& aq = aim.pose.orientation;

@@ -120,6 +120,19 @@ int main() {
     Check(!ModeAllows(0) && !ModeAllows(12) && !ModeAllows(13), "dead, dying, in a knockback already: not");
     Check(Judge(13) == Outcome::Runs && Judge(0) == Outcome::Dead && Judge(12) == Outcome::Dead && Judge(1) == Outcome::Refused, "after the call: runs, dead, refused");
 
+    // -- [weight] grab_holds_unit: the unit a hand holds, kept in the game's own hit recovery (mode 3)
+    Check(HoldAsks(1) && HoldAsks(2) && HoldAsks(4) && HoldAsks(5) && HoldAsks(7) && HoldAsks(15), "standing, walking, attacking, casting, running: hit recovery asked");
+    Check(!HoldAsks(kHitRecoveryMode), "in hit recovery already: not asked (its animation is not started again)");
+    Check(!HoldAsks(kKnockbackMode), "in a knockback (ours is moving it): not asked");
+    Check(!HoldAsks(0) && !HoldAsks(12), "dead or dying: never");
+    Check(HoldWants(2, 1000, 0) && HoldWants(-1, 1000, 0), "walking off, or its mode not known here: asked (the server's own mode decides)");
+    Check(!HoldWants(3, 1000, 0) && !HoldWants(13, 1000, 0) && !HoldWants(12, 1000, 0), "the client has it in hit recovery, in a knockback, dying: not asked");
+    Check(!HoldWants(2, 1000 + kHoldGapMs - 1, 1000) && HoldWants(2, 1000 + kHoldGapMs, 1000), "once a frame of the game at most");
+    Check(HoldWants(2, 500, 900), "a clock that went back: asked");
+    Check(JudgeHold(3) == HoldOutcome::Held && JudgeHold(1) == HoldOutcome::Refused && JudgeHold(2) == HoldOutcome::Refused, "after the call: in it, or refused (neutral, as it was)");
+    Check(JudgeHold(0) == HoldOutcome::Dead && JudgeHold(12) == HoldOutcome::Dead, "after the call: dead");
+    Check(kHitRecoveryMode == 3 && kHoldGapMs >= 40 && kHoldRefusedMs >= 1000, "the game's GH; a frame; a refused unit left alone while held");
+
     std::printf("grab_move_test: %d checks, %d failed\n", g_checks, g_fail);
     return g_fail ? 1 : 0;
 }

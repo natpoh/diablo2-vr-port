@@ -200,6 +200,8 @@ struct Settings {
     std::atomic<bool>  gameFogCaves{true};
     std::atomic<float> gameFogCaveStrength{1.0f};
     std::atomic<bool>  gameFogFlat{false};
+    // [fog] game_fog_vr_third_person (2026-11-15, GameFogDrawnView): the game's fog with our numbers in VR F2 too; off: none there, as before
+    std::atomic<bool>  gameFogVrThirdPerson{true};
     // [fog] game_fog_planes ("Fog drawn by: Fog planes before the player", Serg 2026-11-09): the game's fog as camera-facing planes from its
     // start to its Full fog, drawn by the step before the effects (vr/fog_before_fx.h Params::planes); their count and softness
     std::atomic<bool>  gameFogPlanes{false};
@@ -223,6 +225,8 @@ struct Settings {
     std::atomic<bool>  gameFogSceneByName{true};
     // [fog] game_fog_layers_in_order (2026-11-13, Params::layersInOrder): particles and hair / foliage near over far, not by the game's weight
     std::atomic<bool>  gameFogLayersInOrder{true};
+    // [fog] game_fog_sky_off_axis (2026-11-14, fogfx::Params::offX / offY): the fog step's sky test and rays with the flat picture's shift
+    std::atomic<bool>  gameFogSkyOffAxis{true};
     // [render] ao_vr / ao_vr_radius_m (2026-11-13, vr/ao_vr.h): the game's AO with a radius for our eyes (metres) in F4; off: the game's
     std::atomic<bool>  aoVr{true};
     std::atomic<float> aoVrRadiusM{0.3f};
@@ -258,7 +262,7 @@ struct Settings {
     std::atomic<bool>  summitBackdropHidden{true};   // [sky] summit_backdrop_hidden: the Summit's ground picture (skybox01) hidden in first person (vr/own_effects.h)
     std::atomic<int>   weatherFirstPerson{0};   // [sky] weather_first_person: the game's rain and snow in VR F4 / flat F3 - 0 the game's place, 1 hidden, 2 round the viewer (vr/weather_place.h)
     std::atomic<int>   gameSkyTest{0};         // [debug] game_sky_test: 1 the dome in magenta, 2 the game's own Summit sky model, 3 its unit naming our model, 4 our model under its path
-    std::atomic<float> gameSkyRadius{200.0f};   // [sky] game_sky_radius_m: the dome's radius in world units (50 m: a near horizon under the game's fog)
+    std::atomic<float> gameSkyRadius{6000.0f};   // [sky] game_sky_radius_m: the dome's radius in world units (1500 m shipped since 0.218; 50 m: a near horizon under the game's fog)
     std::atomic<bool>  gameDomeCaves{false};    // [sky] game_dome_caves: a black dome round the eye underground (engitem::CaveDomeFrame)
     std::atomic<float> gameDomeCavesRadius{800.0f}; // [sky] game_dome_caves_radius_m: its radius in world units (200 m)
     std::atomic<float> skyClouds{1.0f};     // times the biome's own cloud cover
@@ -678,6 +682,7 @@ struct Settings {
     std::atomic<bool>  stampPixels{true};
     std::atomic<bool>  stamps{true};
     std::atomic<bool>  pace{true};        // [stereo] pace: game frames held to the headset's rate (see pace::Tick)
+    std::atomic<int>   vcacheHow{0};      // [render] vcache_how: 0 the draw thread's own sets (vr/vcache.h); 1 - 3 the old parts alone, a live test
     std::atomic<bool>  vcache{false};     // [render] vcache: the game's threads on the big-L3 cores (vr/vcache.h)
     std::atomic<bool>  paceFlatVrOnly{true};   // [stereo] pace_flatvr_only: that only while FlatVR runs (nothing to pace to otherwise)
     std::atomic<bool>  flatvrFeed{true};   // [render] flatvr_feed: without ReShade FlatVR's picture and depth from the plugin (vr/flatvr_feed.h); live

@@ -41,6 +41,7 @@ struct Settings {
     bool deathFlatOn = false;   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, along the arc of the game's own swing (skel::WeaponTrail)
     bool deathOn = false;       // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell (vr/death_ragdoll.h; and the bodies)
     bool leapOn = false;        // [weight] leap_landing_scatter: the humanoids round a Leap's landing thrown apart (vr/leap_scatter.h; and the bodies)
+    bool steady = false;        // [weight] grab_hold_steady: a body a hand took is held to the world and laid on its bones as taken (docs/notes/grab_hold_flicker.md)
 };
 void Configure(const Settings& s);
 // [weight] leap_landing_scatter: the hero's model just landed from a Leap or a Leap Attack at `at` (world units; leapscatter::Landing on his matrix's lift over
@@ -50,6 +51,10 @@ void OnLeapLanded(const float at[3], float peakUnits, const float way[2]);
 // [shapeshift] wolf_strength_pct / bear_strength_pct (vr/form_strength.h): the hands' strength times this while the hero is a grafted werewolf / werebear (1 a person) -
 // the hold and the throw of a lifted body (the library's strength is Settings::strength x it). Any thread; cheap when it does not change.
 void SetFormStrength(float factor);
+// [weight] grab_hold_steady: the bones (the model's frame, n of them) of the body with skeleton `self` as the game had them when a hand took it, into mats -
+// the copy its joints are laid on while it is held, so the game's walk or attack animation of the moment turns nothing of it (the skinning, the render
+// workers: skel::SetHeldBaseSource; the capsules and what hangs on its bones here). False: none kept for it (or another bone count) - mats untouched.
+bool HeldBaseInto(uintptr_t self, float (*mats)[16], int n);
 bool Wanted();        // either of them on
 bool ThrowWanted();
 bool DeathWanted();   // [weight] death_ragdoll (F4) / death_ragdoll_flat (the other views): the touch's scan lists the dying and the dead (Tick's dead)
@@ -115,6 +120,13 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out);
 // grown again here - after whatever made them again this frame, before the pass decides on it (Serg, 0.192.39: «когда беру за руку нпс, он по-прежнему
 // мерцает»: the game made each entity's box again about every frame, and the hook's and the timer's growth came before that in about 40 % of them).
 void BeforeDraw(uint32_t entity, bool eyes);
+// The game's main cull, just before it (headshadow::SetBeforeCull; the draw thread, once a pass): every entity of the bodies drawn away from their units has
+// its bounds grown to hold the drawn body - after Renderer::UpdateSystems made them again from the unit's own pose and place, before the cull's jobs read
+// them. The one write the cull is sure to see (docs/notes/grab_hold_flicker.md, "The body vanishes"). It also counts, for each such body, the eyes' passes
+// that drew none of its entities while the eyes were on it (NoteEyes), and why.
+void BeforeCull();
+// The eyes, each round of the update thread: where they are (world units) and the way they look (a unit vector, its pitch too); ok false: not known.
+void NoteEyes(bool ok, const float eyeWorld[3], const float look[3]);
 // [weight] death_ragdoll (skel::SetFrozenPoseSource; the render workers): a kept corpse's bones as they came to rest - kept in the world, given in the model's
 // frame for the model standing at m3 / root now (n bones). False: none kept for that skeleton.
 bool FrozenBonesOf(uintptr_t self, const float m3[9], const float root[3], float (*mats)[16], int n);

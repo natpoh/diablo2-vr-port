@@ -811,8 +811,9 @@ void DrawStrip(Canvas& cv, Fonts& fonts, const View& v) {
 // this slot holds now.
 void DrawGrid(Canvas& cv, Fonts& fonts, const View& v) {
     if (v.catStrip) DrawStrip(cv, fonts, v);
-    else if (v.catWanted)   // the key is on but the game side does not know the trees: say so where the strip would be, instead of an empty band
-        Text(cv, fonts, uitext::Tr("vr.tiles.no_trees", "Skill categories need the icon cache's skill trees - run tools/skill_icons/prepare_skill_icons.py again"), Rect{tiles::kStripLeft, tiles::kStripTop, kW - tiles::kStripLeft, tiles::kStripBottom},
+    else if (v.catWanted)   // the key is on but the game side does not know the trees (its tables did not read: another game version): say so
+                            // where the strip would be, instead of an empty band
+        Text(cv, fonts, uitext::Tr("vr.tiles.no_trees_game", "The skill trees could not be read from this game version - every skill is in one list"), Rect{tiles::kStripLeft, tiles::kStripTop, kW - tiles::kStripLeft, tiles::kStripBottom},
              21, false, kSilverDim);
     if (!v.options) {
         CapsCentred(cv, fonts, uitext::Tr("vr.skills.none", "No skills to choose from"), 0.5f * kW, Rect{200, 380, 1400, 460}, 40, 3.0f, kSilverDim, false);

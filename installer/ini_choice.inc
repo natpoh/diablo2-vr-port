@@ -393,6 +393,23 @@ begin
   end;
 end;
 
+// The game's sky dome farther (Serg 2026-11-15: "1500"): it shipped at 1000 m from 0.200 to 0.217, 1500 m since 0.218. Once, at the first update
+// that has the mark [support] sky_dome_1500_0218 (one of the shipped defaults, in with the new keys right after this): a kept 1000 becomes 1500.
+// Any other radius is the player's own choice and stays; set back to 1000 after that, it stays.
+procedure MoveToSkyDome1500(Ini: String);
+var
+  Was: String;
+begin
+  if not IniWasThere then Exit;   // a first install: the shipped default is 1500 already
+  if GetIniString('support', 'sky_dome_1500_0218', '<none>', Ini) <> '<none>' then Exit;
+  Was := IniValue(GetIniString('sky', 'game_sky_radius_m', '<none>', Ini));
+  if (Was = '1000') or (Was = '1000.0') or (Was = '1000.00') then
+  begin
+    SetIniString('sky', 'game_sky_radius_m', '1500', Ini);
+    Log('d2r_vr.ini: [sky] game_sky_radius_m=' + Was + ' -> 1500 (0.218: the game''s sky dome farther, once)');
+  end;
+end;
+
 procedure ApplyIni(Dir: String);
 var
   Ini, Def: String;
@@ -422,6 +439,7 @@ begin
     MoveToWallContactMode(Ini);   // (the same: wall_contact_mode itself is one of them)
     MoveToSergSettings0216(Ini);  // (the same: its mark [support] serg_settings_0216 is one of them)
     MoveToMapLaser0217(Ini);      // (the same: its mark [support] map_laser_0217 is one of them)
+    MoveToSkyDome1500(Ini);       // (the same: its mark [support] sky_dome_1500_0218 is one of them)
     Secs := TStringList.Create;
     Keys := TStringList.Create;
     Vals := TStringList.Create;

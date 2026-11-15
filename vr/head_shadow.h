@@ -212,6 +212,15 @@ void SetAttachWriter(void (*fn)(uint32_t entity, uintptr_t component, uintptr_t 
 // ... and what runs at ModelDrawCollect for each entity, just before the game's own (vr/knock_down.cpp BeforeDraw: a drawn-away body's bounds grown again
 // there, after anything that made them again this frame; null: none). eyes: an eyes' pass (not the shadows'). The render workers.
 void SetBeforeDraw(void (*fn)(uint32_t entity, bool eyes));
+// ... and what runs on the draw thread just before the game culls a pass (vr/knock_down.cpp BeforeCull). The game's world draw (0x650300) calls
+// Renderer::UpdateSystems (0xE39390 - the transforms, and every entity's bounds made again from its own pose and place), then the main cull (0xE37D20: the
+// camera's matrix, and the kick of the jobs that test each entity's bounds - its world min / max at +0x40 / +0x50 - against it, 0xD9B4D0 / 0xE0E737). A
+// body drawn away from its unit has its bounds grown HERE, after the game made them and before the jobs read them: grown anywhere else they were the
+// game's own again by the cull, and the body was left out of the eyes' passes whenever its unit's own box was out of view (Serg, 0.217.4: «нпс по
+// прежнему пропадают когда их хватаешь»). The hook goes in when a function is set (its code proven first); null: passed through.
+void SetBeforeCull(void (*fn)());
+// ... 0 not in yet (its code not met, or not asked), 1 in, 2 refused (the game's code there is not as known, or the loader refused the hook).
+int CullHookState();
 // ... and a look at what the game is about to draw an entity with (vr/belt_glow.cpp DrawProbe: the wrist medallions' opacity as the draw has it): its
 // entity, whether it is an eyes' pass, and ModelDrawCollect's 7th argument - the per-instance constants (+0x138 the opacity; null: none given). Read only.
 void SetDrawProbe(void (*fn)(uint32_t entity, bool eyes, uintptr_t constants));

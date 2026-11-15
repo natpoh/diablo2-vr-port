@@ -412,7 +412,203 @@ void TestWorldBones() {
 	EXPECT(!kp::WorldToModel(w, flat, root, back), "a model that does not invert: none");
 }
 
+// [weight] grab_hold_steady (docs/notes/grab_hold_flicker.md): a body held in the hand while the game walks and turns its unit. The pose is made on the
+// timer's thread for the model's place of that tick; the frame is drawn with the place the unit has by then.
+void TestSteady() {
+	const mh::Verdict v = JudgeOf(kMan, kN);
+	const float upm = 3.5f;
+	// where the library holds him: lifted 0.4 m, 3 m from where the game has the unit (render metres) - his own standing joints moved there
+	float game[kN][16];
+	Mats(kMan, kN, game);
+	float jm[D2RF_JOINTS][3], world[D2RF_JOINTS][3];
+	EXPECT(kp::JointsOf(v.joint, game, kN, jm, nullptr, v.parent), "the joints do not read");
+	for (int i = 0; i < D2RF_JOINTS; ++i) {
+		world[i][0] = jm[i][0] + 3.0f + 20.0f;
+		world[i][1] = jm[i][1] + 0.4f;
+		world[i][2] = jm[i][2] + 40.0f;
+	}
+	// the model's place at the timer's tick, and 14 ms on, when the frame is drawn: the unit walked on at 1.7 m/s and is turning at 6 rad/s
+	const auto place = [&](float x, float z, float yaw, float m3[9], float root[3]) {
+		const float c = std::cos(yaw), s = std::sin(yaw);
+		const float r[9] = {c, 0, -s, 0, 1, 0, s, 0, c};
+		std::memcpy(m3, r, sizeof r);
+		root[0] = x * upm;
+		root[1] = 0.0f;
+		root[2] = z * upm;
+	};
+	float m3Tick[9], rootTick[3], m3Draw[9], rootDraw[3];
+	const float dt = 0.014f;
+	place(20.0f, 40.0f, 0.3f, m3Tick, rootTick);
+	place(20.0f + 1.7f * dt, 40.0f, 0.3f + 6.0f * dt, m3Draw, rootDraw);
+	float atTick[D2RF_JOINTS][3], atDraw[D2RF_JOINTS][3];
+	EXPECT(kp::JointsNow(m3Tick, rootTick, upm, world, atTick) && kp::JointsNow(m3Draw, rootDraw, upm, world, atDraw), "the joints into the model's frame");
+	// drawn = the copy laid on `at` (the model's frame), then through the place the frame is drawn with
+	const auto drawnPelvis = [&](const float (*at)[3], float (*base)[16], float out[3]) {
+		float m[kN][16];
+		std::memcpy(m, base, sizeof m);
+		EXPECT(kp::Apply(m, kN, v.parent, v.joint, at, 1.0f), "not applied");
+		float j[D2RF_JOINTS][3];
+		kp::JointsOf(v.joint, m, kN, j, nullptr, v.parent);
+		kp::ToWorld(m3Draw, rootDraw, upm, j[D2RF_PELVIS], out);
+	};
+	float old[3], steady[3];
+	drawnPelvis(atTick, game, old);
+	drawnPelvis(atDraw, game, steady);
+	const float offOld = Dist(old, world[D2RF_PELVIS]), offSteady = Dist(steady, world[D2RF_PELVIS]);
+	// the tick's place: the walk's 2.4 cm and the turn's 0.084 rad over 3 m (25 cm) - the game's move shows in the body held still
+	EXPECT(offOld > 0.2f && offOld < 0.35f, "laid by the tick's place: the unit's walk and turn carry the held body %.3f m", offOld);
+	EXPECT(offSteady < 1e-3f, "laid by the place of the frame drawn: where the library holds it (%.5f m off)", offSteady);
+	{   // PlaceOf: a world matrix's rows are that place
+		float w[16] = {}, m3[9], root[3];
+		for (int i = 0; i < 3; ++i)
+			for (int k = 0; k < 3; ++k) w[i * 4 + k] = m3Draw[i * 3 + k];
+		for (int k = 0; k < 3; ++k) w[12 + k] = rootDraw[k];
+		w[15] = 1.0f;
+		kp::PlaceOf(w, m3, root);
+		EXPECT(!std::memcmp(m3, m3Draw, sizeof m3) && !std::memcmp(root, rootDraw, sizeof root), "the place out of the matrix");
+	}
+	{   // not laid: a place that does not invert, no scale, a joint not a number - the caller keeps the tick's
+		float flat[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1}, out[D2RF_JOINTS][3], bad[D2RF_JOINTS][3];
+		flat[4] = game[0][3];   // (0, read at run time: a model flattened to nothing)
+		EXPECT(!kp::JointsNow(flat, rootDraw, upm, world, out), "a flattened model: none");
+		EXPECT(!kp::JointsNow(m3Draw, rootDraw, 0.0f, world, out), "no scale: none");
+		std::memcpy(bad, world, sizeof bad);
+		bad[5][1] = std::nanf("");
+		EXPECT(!kp::JointsNow(m3Draw, rootDraw, upm, bad, out), "a joint not a number: none");
+	}
+	// the copy the joints are laid on. The game's animation of the moment (its walk: an arm swung forward, the head turned) turns what the joints do not
+	// fix - a hand, the head about the neck; the bones kept when the hand took him do not
+	float walk[kN][16];
+	std::memcpy(walk, game, sizeof walk);
+	{
+		uint8_t in[kN];
+		kp::detail::Below(v.parent, kN, 12, in);   // the right arm, swung 40 deg about x at the shoulder
+		const float a = 0.7f, c = std::cos(a), s = std::sin(a);
+		kp::detail::R3 r;
+		r.m[1][1] = c; r.m[1][2] = -s; r.m[2][1] = s; r.m[2][2] = c;
+		kp::detail::Turn(walk, kN, in, r, kp::detail::At(walk, 12));
+		kp::detail::Below(v.parent, kN, 5, in);    // the head turned 30 deg about the neck's line
+		const float b = 0.52f, cb = std::cos(b), sb = std::sin(b);
+		kp::detail::R3 h;
+		h.m[0][0] = cb; h.m[0][2] = sb; h.m[2][0] = -sb; h.m[2][2] = cb;
+		kp::detail::Turn(walk, kN, in, h, kp::detail::At(walk, 4));
+	}
+	float onGame[kN][16], onWalk[kN][16], onBase[kN][16];
+	std::memcpy(onGame, game, sizeof game);
+	std::memcpy(onWalk, walk, sizeof walk);
+	std::memcpy(onBase, game, sizeof game);   // (the bones as taken: what the skinning is handed instead of the walk's)
+	EXPECT(kp::Apply(onGame, kN, v.parent, v.joint, atDraw, 1.0f) && kp::Apply(onWalk, kN, v.parent, v.joint, atDraw, 1.0f) &&
+	           kp::Apply(onBase, kN, v.parent, v.joint, atDraw, 1.0f), "not applied");
+	float jg[D2RF_JOINTS][3], jw[D2RF_JOINTS][3];
+	kp::JointsOf(v.joint, onGame, kN, jg, nullptr, v.parent);
+	kp::JointsOf(v.joint, onWalk, kN, jw, nullptr, v.parent);
+	float worstJoint = 0.0f;
+	for (int i = 0; i < D2RF_JOINTS; ++i) worstJoint = std::max(worstJoint, Dist(jg[i], jw[i]));
+	EXPECT(worstJoint < 2e-3f, "the joints lie the same whatever the game animates (%.4f m)", worstJoint);
+	const auto axesOff = [](const float* a, const float* b) {
+		float worst = 0.0f;
+		for (int i = 0; i < 12; ++i)
+			if (i % 4 != 3) worst = std::max(worst, std::fabs(a[i] - b[i]));
+		return worst;
+	};
+	EXPECT(axesOff(onWalk[14], onGame[14]) > 0.1f || axesOff(onWalk[5], onGame[5]) > 0.1f,
+	       "laid on the game's pose of the moment: its walk turns the hand (%.3f) or the head (%.3f) of the held body", axesOff(onWalk[14], onGame[14]),
+	       axesOff(onWalk[5], onGame[5]));
+	float worstBone = 0.0f;
+	for (int b = 0; b < kN; ++b) worstBone = std::max(worstBone, axesOff(onBase[b], onGame[b]));
+	EXPECT(worstBone < 1e-5f, "laid on the bones as taken: every bone as when the hand took him (%.6f)", worstBone);
+}
+
+// A leg drawn twisted (Serg, 0.217.4): the two measures knock_down.cpp's line is made of - where a foot is turned about its own leg's line (the joints),
+// and how far the laying rolled a leg bone about its own line beyond the pelvis.
+void TestLegTwist() {
+	const mh::Verdict v = JudgeOf(kMan, kN);
+	float m[kN][16];
+	Mats(kMan, kN, m);
+	float j[D2RF_JOINTS][3];
+	EXPECT(kp::JointsOf(v.joint, m, kN, j, nullptr, v.parent), "the joints do not read");
+	float own[2] = {};
+	EXPECT(kp::FootTurn(j, D2RF_L_HIP, &own[0]) && kp::FootTurn(j, D2RF_R_HIP, &own[1]), "a standing man's feet have a turn");
+	EXPECT(std::fabs(own[0]) < 0.2f && std::fabs(own[1]) < 0.2f, "his toes ahead of him: %.2f %.2f rad", own[0], own[1]);
+	{   // the left toe turned 70 deg out about the leg's line: read as 70 deg more, the right foot as it was
+		float t[D2RF_JOINTS][3];
+		std::memcpy(t, j, sizeof t);
+		const float a = 1.2217f, c = std::cos(a), s = std::sin(a);
+		const float fx = j[D2RF_L_TOE][0] - j[D2RF_L_ANKLE][0], fz = j[D2RF_L_TOE][2] - j[D2RF_L_ANKLE][2];
+		t[D2RF_L_TOE][0] = j[D2RF_L_ANKLE][0] + fx * c + fz * s;
+		t[D2RF_L_TOE][2] = j[D2RF_L_ANKLE][2] - fx * s + fz * c;
+		float l = 0.0f, r = 0.0f;
+		EXPECT(kp::FootTurn(t, D2RF_L_HIP, &l) && kp::FootTurn(t, D2RF_R_HIP, &r), "turned: read");
+		EXPECT(std::fabs(std::fabs(l - own[0]) - a) < 0.12f && std::fabs(r - own[1]) < 1e-4f, "the left foot 70 deg out: %.2f rad off its own, the right %.4f", l - own[0],
+		       r - own[1]);
+		// the whole body turned 100 deg about the up axis and moved: the same turns
+		float w[D2RF_JOINTS][3];
+		const float b = 1.745f, cb = std::cos(b), sb = std::sin(b);
+		for (int i = 0; i < D2RF_JOINTS; ++i) {
+			w[i][0] = t[i][0] * cb + t[i][2] * sb + 3.0f;
+			w[i][1] = t[i][1] + 0.4f;
+			w[i][2] = -t[i][0] * sb + t[i][2] * cb - 2.0f;
+		}
+		float l2 = 0.0f, r2 = 0.0f;
+		EXPECT(kp::FootTurn(w, D2RF_L_HIP, &l2) && kp::FootTurn(w, D2RF_R_HIP, &r2), "the body turned: read");
+		EXPECT(std::fabs(l2 - l) < 1e-3f && std::fabs(r2 - r) < 1e-3f, "the body turned whole: the feet's turns the same (%.4f, %.4f)", l2 - l, r2 - r);
+	}
+	{   // no leg to speak of: a foot on its hip, a toe on its ankle
+		float t[D2RF_JOINTS][3];
+		float out = 0.0f;
+		std::memcpy(t, j, sizeof t);
+		std::memcpy(t[D2RF_L_ANKLE], t[D2RF_L_HIP], sizeof t[0]);
+		EXPECT(!kp::FootTurn(t, D2RF_L_HIP, &out), "a leg of no length: none");
+		std::memcpy(t, j, sizeof t);
+		std::memcpy(t[D2RF_L_TOE], t[D2RF_L_ANKLE], sizeof t[0]);
+		EXPECT(!kp::FootTurn(t, D2RF_L_HIP, &out), "a foot of no length: none");
+	}
+	// the laying: the same joints - nothing rolled; lying on his back - nothing rolled about a leg's own line beyond the pelvis
+	const int pelvis = v.joint[D2RF_PELVIS], shin = v.joint[D2RF_L_KNEE], thigh = v.joint[D2RF_L_HIP];
+	float ax[3], len = 0.0f;
+	for (int k = 0; k < 3; ++k) { ax[k] = j[D2RF_L_ANKLE][k] - j[D2RF_L_KNEE][k]; len += ax[k] * ax[k]; }
+	len = std::sqrt(len);
+	for (float& a : ax) a /= len;
+	{
+		float d[kN][16];
+		std::memcpy(d, m, sizeof d);
+		EXPECT(kp::Apply(d, kN, v.parent, v.joint, j, 1.0f), "not applied");
+		EXPECT(std::fabs(kp::TwistAbout(m, d, shin, pelvis, ax)) < 1e-3f, "laid on its own joints: the shin not rolled (%.4f)", kp::TwistAbout(m, d, shin, pelvis, ax));
+		float t[D2RF_JOINTS][3];
+		for (int i = 0; i < D2RF_JOINTS; ++i) {
+			t[i][0] = j[i][0] + 0.3f;
+			t[i][1] = j[i][2] + 0.12f;
+			t[i][2] = -j[i][1] + 0.2f;
+		}
+		std::memcpy(d, m, sizeof d);
+		EXPECT(kp::Apply(d, kN, v.parent, v.joint, t, 1.0f), "not applied");
+		EXPECT(std::fabs(kp::TwistAbout(m, d, shin, pelvis, ax)) < 0.05f && std::fabs(kp::TwistAbout(m, d, thigh, pelvis, ax)) < 0.05f,
+		       "laid on his back: the leg not rolled about itself beyond the pelvis (shin %.3f, thigh %.3f)", kp::TwistAbout(m, d, shin, pelvis, ax),
+		       kp::TwistAbout(m, d, thigh, pelvis, ax));
+	}
+	{   // the shin and all below it rolled 70 deg about the shin's own line: read as 70 deg, the thigh as none; a quarter turn more reads on
+		for (const float a : {1.2217f, -2.6f}) {
+			float d[kN][16];
+			std::memcpy(d, m, sizeof d);
+			uint8_t in[kN];
+			kp::detail::Below(v.parent, kN, shin, in);
+			const float c = std::cos(a), s = std::sin(a), k = 1.0f - c, x = ax[0], y = ax[1], z = ax[2];
+			kp::detail::R3 r;
+			const float rc[9] = {c + x * x * k, x * y * k - z * s, x * z * k + y * s, y * x * k + z * s, c + y * y * k, y * z * k - x * s,
+			                     z * x * k - y * s, z * y * k + x * s, c + z * z * k};
+			for (int i = 0; i < 3; ++i)
+				for (int q = 0; q < 3; ++q) r.m[i][q] = rc[i * 3 + q];
+			kp::detail::Turn(d, kN, in, r, kp::detail::At(d, shin));
+			const float got = kp::TwistAbout(m, d, shin, pelvis, ax);
+			EXPECT(std::fabs(got - a) < 2e-3f, "the shin rolled %.2f rad about itself: read %.4f", a, got);
+			EXPECT(std::fabs(kp::TwistAbout(m, d, thigh, pelvis, ax)) < 1e-4f, "the thigh above it: not rolled");
+		}
+	}
+}
+
 int main() {
+	TestSteady();
+	TestLegTwist();
 	TestMap();
 	TestApply();
 	TestCarry();

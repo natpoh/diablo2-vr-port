@@ -1,6 +1,6 @@
 # Known issues
 
-What is broken or unfinished right now (D2R VR 0.217), what we already know
+What is broken or unfinished right now (D2R VR 0.218), what we already know
 about each problem and where in the code to start. Pick one, fork, fix it and
 send a pull request - or tell us on Discord what you found.
 
@@ -537,6 +537,20 @@ Notes: docs/notes/wrist_orbs_game_objects.md. That is why the mod's 3D glass bal
 **Where it stands:** `[weight] wall_contact_mode` - 0 off (the default), 1 ours (walls, pillars and trees from the game's own
 meshes), 2 the game's wall map (from D2R VR Unleashed, MPL 2.0: vr/unleashed_wall_cells.h). Neither has been tried in the
 headset by the author yet. Compare the two and tell us on Discord which one feels right.
+
+### 31. A held body steady, a held monster kept still: tests, off [repo]
+
+**Where it stands:** two Settings ticks marked "(a test)", both off - `[weight] grab_hold_steady` (a body in the hand laid by where
+its model stands in the frame drawn and on its bones as taken, so the game walking or turning its unit does not shake or twist it)
+and `[weight] grab_holds_unit` (the held monster's unit kept in the game's own hit recovery, so it neither walks off nor attacks;
+single player / host). An NPC's leg was once seen drawn twisted in the hand and not met again offline; the log says once which part
+turns it ("knock down: body N's LEFT leg is drawn TWISTED ..."). Notes: docs/notes/grab_hold_flicker.md.
+
+### 32. "Game on the cores with the big cache (Ryzen X3D)" is fixed but not tried [repo]
+
+**Where it stands:** `[render] vcache` (off). 0.217 moved all of the game's threads to the big-cache cores and the game stood for
+seconds on a 7950X3D; 0.218 asks only the draw thread. It has not been played with yet, so it ships off. If you have a Ryzen X3D
+with two core groups, try it and tell us on Discord whether the frame rate is better (the log says which cores were taken).
 
 ---
 

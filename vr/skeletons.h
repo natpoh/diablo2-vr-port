@@ -967,6 +967,17 @@ void SetFrozenPoseSource(FrozenPoseFn fn);
 // (vr/skin_anchor.h), before any matching of matrices. None: the old ways only.
 using EntityParentFn = bool (*)(uint32_t entity, uint32_t* parent);
 void SetEntityParentSource(EntityParentFn fn);
+// [weight] grab_hold_steady: a body held to the world (dollpose::Knock::steady) is laid on its bones as the game had them when the hand took it - fn copies
+// them (n bones, the model's frame) into mats for SkeletonInstance self; false: none kept (laid on the game's pose of the moment then). Null: none.
+using HeldBaseFn = bool (*)(uintptr_t self, float (*mats)[16], int n);
+void SetHeldBaseSource(HeldBaseFn fn);
+// ... and where a unit's model stands NOW: the matrix of root entity `entity` (its TransformComponent's local, +0x00 - what the game sets for the unit before
+// the frame's poses; a root's world is its local) - 16 floats, row vectors. The skinning lays a held body's joints through it, so the place is the one the
+// frame is drawn with, not the one the timer read a tick before. False: not a root, or it does not read. Any thread; guarded reads, no lock held on them.
+bool EntityPlaceNow(uint32_t entity, float m[16]);
+// ... and any entity's world matrix as the renderer has it (its TransformComponent +0x40) by the same storage - what knockprops::EntityWorld reads through
+// the props' scan, for when that scan has not found the storage ([weight] knock_props off). False: it does not read. Any thread; guarded reads.
+bool EntityWorldNow(uint32_t entity, float m[16]);
 // A SkeletonInstance's world poses: this frame's (+0x20) and the last's (+0x28). False when they do not read.
 bool WorldPoses(uintptr_t self, uintptr_t* cur, uintptr_t* prev, uintptr_t* skeleton = nullptr);
 // [weight] knock_down: a SkeletonInstance's world pose as the game made it (the model's frame) into m - its bone count, 0 when it does not read or has more

@@ -100,26 +100,17 @@ float LabelDistanceK(void* unit) {
     const float m = d / upm;
     return platelook::DistanceK(m, g_set.labelsFarBody.load());   // (the rule the monster plate has too: monster_far)
 }
-// Each label's own scale from its layout to its paint (the name's buffer and the box are the label's own;
-// both run on the game's interface thread), the newest first.
-struct LabelScale { const void* name; const void* box; float k; };
-LabelScale g_labelScale[128];
-uint32_t g_labelScaleNext = 0;
-void NoteLabelScale(const void* name, const void* box, float k) { g_labelScale[g_labelScaleNext++ % 128] = {name, box, k}; }
+// Each label's own scale and unit from its layout to its paint, the newest first (both on the game's interface thread). Told by the label's
+// name and its box's size (vr/label_key.h): the game sorts its label records between the layout and the paint, so a record's address holds
+// another label by then - kept by the addresses, the pointed item's size and look went to a neighbour (flat, 0.217: one name 2.5x in a
+// normal box, a large box round a normal name).
+labelkey::Ring<128> g_laidOut;
+void NoteLaidOut(const char* name, const int32_t* box, float k, uintptr_t unit) { g_laidOut.Note(labelkey::Of(name, box), k, unit); }
 // This label was laid out for a unit that is not an item (k -1): its paint is not the labels' settings' either.
-bool LabelIsOtherThanItem(const void* name, const void* box) {
-    for (uint32_t i = 1; i <= 128; ++i) {
-        const LabelScale& e = g_labelScale[(g_labelScaleNext - i) % 128];
-        if (e.name == name || e.box == box) return e.k < 0.0f;   // the newest record of this label says
-    }
-    return false;
-}
-float LabelScaleOf(const void* name, const void* box, float fallback) {
-    for (uint32_t i = 1; i <= 128; ++i) {
-        const LabelScale& e = g_labelScale[(g_labelScaleNext - i) % 128];
-        if (e.k > 0.0f && (e.name == name || e.box == box)) return e.k;
-    }
-    return fallback;
+bool LabelIsOtherThanItem(const char* name, const int32_t* box) { return g_laidOut.K(labelkey::Of(name, box), 0.0f) < 0.0f; }
+float LabelScaleOf(const char* name, const int32_t* box, float fallback) {
+    const float k = g_laidOut.K(labelkey::Of(name, box), fallback);
+    return k > 0.0f ? k : fallback;
 }
 
 // [hud] labels_depth_body, F4 in stereo: each item label at its item's depth - this frame's labels, their boxes
@@ -209,18 +200,10 @@ bool LabelUnitIsItem(void* unit) {
 // [input] point_pickup (vr/unleashed_loot_aim.h, MPL 2.0 from D2R VR Unleashed's loot pick): the item the pointing hand's ray is on
 // (pointpickup::Lit) gets its name always shown, a rim round its label in its rarity colour (red out of reach), a dark shade of that colour
 // behind it and the name larger; while Show items is held for it (pointpickup::OnlyLit) every other name is cut. Which unit a paint is:
-// the label owners, kept from the layouts (lootaim::LabelOwners has the rule and why). The game's UI thread, both hooks.
+// the label owners, kept from the layouts by what each label shows (g_laidOut, vr/label_key.h). The game's UI thread, both hooks.
 bool FlatItemLitWanted();   // (vr/input/flat_click.cpp: [input] flat_pickup_key_on / flat_item_hitbox - flat, Alt held, the crosshair's item lit)
 bool PointHighlightWanted() { return (g_set.pointPickup.load() && viewgate::F4()) || FlatItemLitWanted(); }
-unleashed::lootaim::LabelOwners<64> g_labelOwners;
-SRWLOCK g_labelOwnersLock = SRWLOCK_INIT;
-uintptr_t LabelOwner(const void* box, const void* name) {
-    AcquireSRWLockShared(&g_labelOwnersLock);
-    const uintptr_t unit = g_labelOwners.Unit(box, name);
-    ReleaseSRWLockShared(&g_labelOwnersLock);
-    return unit;
-}
-float LabelScaleOf(const void* name, const void* box, float fallback);
+uintptr_t LabelOwner(const int32_t* box, const char* name) { return g_laidOut.Unit(labelkey::Of(name, box)); }   // (by what it shows: g_laidOut)
 uintptr_t PaintPointed(const int32_t* box, const char* name, const float* colour) {
     namespace la = unleashed::lootaim;
     const la::NameLook& look = la::LookFor(pointpickup::LitInReach());
@@ -248,19 +231,16 @@ bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t
     } else if (shown && item && pointpickup::OnlyLit()) {
         return false;   // Show items is held for the pointed item alone: every other name cut
     }
-    if (shown && box && name && item && PointHighlightWanted()) {
-        AcquireSRWLockExclusive(&g_labelOwnersLock);
-        g_labelOwners.Remember(box, name, (uintptr_t)unit);
-        ReleaseSRWLockExclusive(&g_labelOwnersLock);
-    }
     float k = item ? (OwnLabelsNow() ? OwnLabelK(unit) : LabelSizeNow() * LabelDistanceK(unit)) : 1.0f;   // (labels_own: our curve, the game's box made that size too)
-    if (lit && (uintptr_t)unit == lit) {   // [input] point_pickup_label_pct (Serg, 0.199.1: "bigger"): its size, live - in place of Unleashed's 180% (130% out of reach)
+    // [input] point_pickup_label_pct (Serg, 0.199.1: "bigger"): its size, live - in place of Unleashed's 180% (130% out of reach). VR only: flat's lit
+    // item (flat_pickup_key_on / flat_item_hitbox) keeps the game's size - its name lights up (the rim), flat's labels are the game's
+    if (lit && (uintptr_t)unit == lit && g_set.platform.load() == 1) {
         namespace la = unleashed::lootaim;
         const float pct = g_set.pointPickupLabelPct.load() * 0.01f * (pointpickup::LitInReach() ? 1.0f : la::OutOfReachLook.nameScale / la::InReachLook.nameScale);
         k = std::min(4.0f, k * pct);
     }
-    if (shown && name) NoteLabelScale(name, box, item ? k : -1.0f);
     const bool resized = shown && box && name && item && (std::abs(k - 1.0f) < 0.005f || ResizeLabelBox(name, box, k));
+    if (shown && name) NoteLaidOut(name, box, item ? k : -1.0f, (uintptr_t)unit);   // (after the box is made again: its size is part of the key)
     if (shown && box && item) NoteLabelDepth(unit, box, name, lit && (uintptr_t)unit == lit, k, resized);
     return shown;
 }

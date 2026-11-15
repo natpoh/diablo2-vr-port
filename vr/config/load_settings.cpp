@@ -558,6 +558,7 @@ void LoadSettings() {
     g_set.paceFlatVrOnly.store(IniB(L"stereo", L"pace_flatvr_only", true));
     g_set.flatvrFeed.store(IniB(L"render", L"flatvr_feed", true));
     g_set.vcache.store(IniB(L"render", L"vcache", false));
+    g_set.vcacheHow.store((int)IniF(L"render", L"vcache_how", 0.0f));   // (vcache.h HowOf: anything but 1 - 3 is 0)
     {
         static const int kHz[5] = {72, 75, 80, 90, 120};
         g_set.headsetHz.store(kHz[std::clamp((int)IniF(L"stereo", L"headset_rate", 3.0f), 0, 4)]);
@@ -780,7 +781,8 @@ void LoadSettings() {
     g_set.fogKeepsColour.store(IniB(L"fog", L"fog_keeps_colour", false));
     g_set.gameFogColour.store(IniB(L"fog", L"game_fog_colour", false));
     g_set.gameDrawnFlat.store(IniB(L"render", L"game_drawn_flat", false));
-    g_set.gameFogFlat.store(IniB(L"fog", L"game_fog_flat", g_set.gameDrawnFlat.load()));   // (missing: as the sky's - the one key before)
+    g_set.gameFogFlat.store(IniB(L"fog", L"game_fog_flat", g_set.gameDrawnFlat.load()));
+    g_set.gameFogVrThirdPerson.store(IniB(L"fog", L"game_fog_vr_third_person", true));   // (missing: as the sky's - the one key before)
     // [fog] game_fog_planes: the planes (their hooks are the step's: on at the game's start - effects.cpp), their count and softness live
     g_set.gameFogPlanes.store(IniB(L"fog", L"game_fog_planes", false));
     g_set.gameFogPlanesCount.store(std::clamp((int)IniF(L"fog", L"game_fog_planes_count", 8.0f), 1, 64));
@@ -792,6 +794,7 @@ void LoadSettings() {
     g_set.gameFogMissKeeps.store(IniB(L"fog", L"game_fog_miss_keeps_fog", true));
     g_set.gameFogSceneByName.store(IniB(L"fog", L"game_fog_scene_by_name", true));
     g_set.gameFogLayersInOrder.store(IniB(L"fog", L"game_fog_layers_in_order", true));
+    g_set.gameFogSkyOffAxis.store(IniB(L"fog", L"game_fog_sky_off_axis", true));
     g_set.aoVr.store(IniB(L"render", L"ao_vr", true));
     g_set.aoVrRadiusM.store(std::clamp(IniF(L"render", L"ao_vr_radius_m", 0.3f), 0.05f, 5.0f));
     g_set.fogCaves.store(IniB(L"fog", L"caves", false));
@@ -974,7 +977,7 @@ void LoadSettings() {
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
     {   // the domes' radii in metres (shared/draw_distance.h: 4 world units a metre); an ini without them: the keys they took over from
         const float skyM = IniF(L"sky", L"game_sky_radius_m", NAN), caveM = IniF(L"sky", L"game_dome_caves_radius_m", NAN);
-        const float sky = std::isfinite(skyM) ? drawdistance::ToUnits(skyM) : IniF(L"sky", L"game_sky_radius", 200.0f);
+        const float sky = std::isfinite(skyM) ? drawdistance::ToUnits(skyM) : IniF(L"sky", L"game_sky_radius", drawdistance::ToUnits(1500.0f));   // (neither key: the shipped 1500 m, Serg 2026-11-15)
         const float caveShare = IniF(L"sky", L"game_dome_caves_size", NAN);   // (neither key: Serg's 200 m, 2026-10-31)
         const float cave = drawdistance::ToUnits(std::isfinite(caveM)       ? caveM
                                                  : std::isfinite(caveShare) ? drawdistance::CaveRadiusM(std::clamp(caveShare, 0.1f, 4.0f), g_set.modelRadius.load())
@@ -1912,8 +1915,10 @@ void LoadSettings() {
         ks.deathFlatOn = IniB(L"weight", L"death_ragdoll_flat", false);   // [weight] death_ragdoll_flat: the same in VR F1-F3 and the flat game, by the game's own swing (no bodies key needed)   // [weight] death_ragdoll: a kill falls as our ragdoll (vr/death_ragdoll.h)
         ks.leapOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"leap_landing_scatter", true);   // [weight] leap_landing_scatter: a Leap's landing throws them apart (vr/leap_scatter.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
+        ks.steady = IniB(L"weight", L"grab_hold_steady", false);   // [weight] grab_hold_steady: a body a hand took held to the world, on its bones as taken (docs/notes/grab_hold_flicker.md)
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
+        grabmove::SetHoldWanted(ks.throwOn && IniB(L"weight", L"grab_holds_unit", false));   // [weight] grab_holds_unit: the unit a hand holds kept in the game's own hit recovery (host / single player)
         grabmove::SetKnockWanted(ks.on && IniB(L"weight", L"knock_down_moves_unit", false));   // [weight] knock_down_moves_unit: what a blow knocks down, moved by the game too
         grabmove::SetLeapWanted(ks.leapOn);   // [weight] leap_landing_scatter: what a leap's landing throws, its unit after it by the game's knockback (host / single player)
         if (ks.throwOn) skel::SetHeldWanted(true);   // (what the monsters hold made capsules: a hand takes a monster by its spear - Serg: «я не могу схватить монстра за оружие»)
@@ -1923,6 +1928,7 @@ void LoadSettings() {
     headshadow::SetDollAnyView(knockdown::DeathFlatWanted());   // [weight] death_ragdoll_flat: the dead's poses in VR F1 / F3 too (Serg's exception to F4 only)
     headshadow::SetAttachWriter(knockdown::Wanted() ? &knockdown::OnXform : nullptr);   // [weight] knock_down: a knocked-down body's weapon stays in its hand
     headshadow::SetBeforeDraw(knockdown::Wanted() ? &knockdown::BeforeDraw : nullptr);  // ... its bounds grown again just before each draw collect of it
+    headshadow::SetBeforeCull(knockdown::Wanted() ? &knockdown::BeforeCull : nullptr);  // ... and just before the game culls each pass: the write that counts
     skel::SetRagdollAll(g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_all", false));   // [weight] monster_ragdoll_all
     bonecap::Set(std::lround(IniF(L"weight", L"skeleton_bones_max", static_cast<float>(bonecap::kDefault))));   // [weight] skeleton_bones_max (vr/bone_cap.h; live: the rigs read again)
     meleetouch::SetSwayTuning(std::clamp(IniF(L"weight", L"monster_weight_pct", 100.0f), 10.0f, 400.0f), std::clamp(IniF(L"weight", L"monster_push_pct", 100.0f), 0.0f, 400.0f));
@@ -1978,13 +1984,13 @@ void LoadSettings() {
     g_set.wristPitch.store(std::clamp(IniF(L"hands", L"pitch", 0.0f), -180.0f, 180.0f));
     g_set.wristYaw.store(std::clamp(IniF(L"hands", L"yaw", 0.0f), -180.0f, 180.0f));
     g_set.wristRoll.store(std::clamp(IniF(L"hands", L"roll", 0.0f), -180.0f, 180.0f));
-    {   // [hands] left_handed (vr/hand_swap.h): the two controllers traded where they come in, VR F4 only; 0 = as before. Live.
+    {   // [hands] left_handed (vr/hand_swap.h): the two sticks traded (push, click, long press: the left turns, the right walks), VR F4 only; 0 = as before. Live.
         const bool lefty = IniB(L"hands", L"left_handed", false);
         if (lefty != handswap::Wanted() || !g_toldLefty) {
             g_toldLefty = true;
             LogF("vrcam: [hands] left_handed=%d - %s", lefty ? 1 : 0,
-                 lefty ? "the LEFT controller carries the weapon (the game's right hand) and its buttons do the right one's, the right controller is the off hand; VR F4 only, the menu button stays put"
-                       : "the controllers as they are");
+                 lefty ? "the sticks traded: the LEFT stick turns and its click / long press are the right stick's, the RIGHT stick walks; triggers, grips, X Y A B, the menu and each hand as they are; VR F4 only"
+                       : "the controls as they are");
         }
         handswap::SetWanted(lefty);
     }

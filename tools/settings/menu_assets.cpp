@@ -14,6 +14,7 @@
 #include "CascLib.h"
 #include "ally_portrait_files.h"
 #include "game_ui_files.h"
+#include "skill_icon_files.h"
 
 namespace menuassets {
 namespace {
@@ -197,6 +198,54 @@ Result PreparePortraits(const std::wstring& game, const std::wstring& pluginDir,
     r.ok = got > 0;
     r.text = lang::TX(L"portrait_art.made", L"{n} of the game's {all} portraits copied from your game for the allies' tiles (d2r_vr_game_ui)",
                       {{L"n", std::to_wstring(got)}, {L"all", std::to_wstring(allyportraitfiles::kCount)}});
+    return r;
+}
+
+Result PrepareSkillIcons(const std::wstring& game, const std::wstring& pluginDir, bool on) {
+    Result r;
+    if (!on) {
+        r.ok = true;
+        r.text = lang::TX(L"skill_icon_art.off", L"off ([openxr] skill_wheel)");
+        return r;
+    }
+    if (pluginDir.empty() || !IsDir(pluginDir)) {
+        r.text = lang::TX(L"skill_icon_art.no_plugin_dir", L"the plugin's folder was not found: the skill panel shows names without icons");
+        return r;
+    }
+    const std::wstring dir = pluginDir + gameuifiles::kFolder + L"\\";
+    bool all = IsDir(dir);
+    for (int i = 0; all && i < skilliconfiles::kSheetCount; ++i) all = GetFileAttributesW((dir + skilliconfiles::kSheets[i].leaf).c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (all) {
+        r.ok = true;
+        r.text = lang::TX(L"skill_icon_art.ready", L"ready: the game's own skill icons beside the plugin (d2r_vr_game_ui)");
+        return r;
+    }
+    std::wstring root = game;
+    if (!root.empty() && root.back() == L'\\') root.pop_back();
+    HANDLE storage = nullptr;
+    if (!CascOpenStorage(root.c_str(), 0, &storage)) {
+        r.text = lang::TX(L"skill_icon_art.no_archives", L"the game's archives could not be opened (error {error}); it is tried again at the next start", {{L"error", std::to_wstring(GetLastError())}});
+        return r;
+    }
+    CreateDirectoryW(dir.c_str(), nullptr);
+    int got = 0;
+    for (int i = 0; i < skilliconfiles::kSheetCount; ++i) {
+        const std::wstring path = dir + skilliconfiles::kSheets[i].leaf;
+        std::string bytes, old;
+        if (!CascRead(storage, skilliconfiles::kSheets[i].archive, &bytes) || bytes.empty()) continue;   // (not in this game: names for its skills)
+        ++got;
+        if (ReadFile(path, &old) && old == bytes) continue;
+        if (!WriteFile(path, bytes.data(), bytes.size())) {
+            CascCloseStorage(storage);
+            r.text = lang::TX(L"skill_icon_art.not_written", L"could not write {file} (error {error})", {{L"file", std::wstring(skilliconfiles::kSheets[i].leaf)}, {L"error", std::to_wstring(GetLastError())}});
+            return r;
+        }
+        r.wrote = true;
+    }
+    CascCloseStorage(storage);
+    r.ok = got > 0;
+    r.text = lang::TX(L"skill_icon_art.made", L"{n} of the game's {all} skill icon sheets copied from your game for the skill panel (d2r_vr_game_ui)",
+                      {{L"n", std::to_wstring(got)}, {L"all", std::to_wstring(skilliconfiles::kSheetCount)}});
     return r;
 }
 

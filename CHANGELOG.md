@@ -1,5 +1,41 @@
 # What's new in D2R VR
 
+## 0.218.3
+
+The mouse and the laser reach the whole menu on a small window, sharp item labels in the flat game, the game's fog in VR third person,
+left-handed sticks, the skill panel with every class's names and icons, a farther sky dome.
+
+- **Fix: the mouse and the laser reach the menus' right edge with a small game window** (Settings, "The mouse reaches the picture's
+  right edge" under "Menus and the mouse follow the VR render size" - `[render] vr_resolution_ui_pointer`, on): with a game window
+  much smaller than the VR picture (a 1380 square under 3072, a TV's 1020 square) the game kept its pointer within a band sized by
+  the window, and the right part of the picture took no click - the inventory's right columns beside the mercenary or a trader.
+  The game's own pointer helpers are told the picture now; nothing else moves.
+- **Fix: item labels the right size** (the flat game, and VR's pointed item): with many names on the ground (Alt), a name could be drawn three times too
+  big in a normal box, or a normal name in a huge box - the game sorts its labels after laying them out, and the mod kept each label's
+  size by where it lay before the sort. Labels are told by their name and box now. The item under the crosshair keeps the game's
+  size in the flat game; its rim stays.
+- **Fix: no jagged fog edge down the sky in the flat game** (Settings > Fog, "Fog before smoke and fire: the sky by the picture's
+  real centre" - `[fog] game_fog_sky_off_axis`, on): with the picture moved sideways (`[camera] flat_shift_x` / `_y`) one side of
+  the sky was fogged as far ground, with a jagged line between.
+- **The game's fog in VR third person (F2)** (Settings > Fog, "The game's fog in VR third person (F2) too" -
+  `[fog] game_fog_vr_third_person`, on): F2 had no fog at all; now it has the game's fog as F4 does.
+- **Left-handed swaps the sticks, nothing else** (Settings, Controls > Hands, "Left-handed: swap the sticks" and the headset's Controls
+  tab - `[hands] left_handed`, off): the LEFT stick turns, and its click and long press do the right stick's (the long press opens the
+  skill panel); the RIGHT stick walks. The triggers, grips, X / Y, A / B and the menu stay where they are, and each controller stays
+  its own hand - before, the whole controllers swapped and the hero's arms crossed the body.
+- **The skill panel with every class's names, trees and icons, from your game:** the panel's names came from a list that ended
+  before the Warlock's skills ("skill 373"), and its icons and skill trees needed an extra only the developers had. Names and
+  trees are read from the running game now, in your language, and D2R VR Settings copies the game's own skill pictures out of your
+  installed game (read only, never shipped) while the skill panel is on - the icons are cut from them.
+- **A grabbed NPC no longer vanishes** in your hand or as it walks back: the game decided what to draw by its unit's own place, so a
+  body held away from its unit was left out of most frames. Its bounds are grown right before the game's own check now.
+- **Ryzen X3D option fixed, still off** (Settings, "Game on the cores with the big cache (Ryzen X3D)" - `[render] vcache`): it moved
+  all of the game's threads to half the cores, and on a 7950X3D the game stood still for 2 - 9 s again and again. Now only the game's
+  draw thread is asked to run on the big-cache cores; the rest keep every core, and no priority changes. Not tried in a game yet, so
+  it stays off.
+- **The game's sky dome farther: 1500 m** (`[sky] game_sky_radius_m`, 1000 m before): this update moves a kept 1000 to 1500 once
+  (`[support] sky_dome_1500_0218`); a radius of your own stays, and so does 1000 set again after it.
+
 ## 0.217.1
 
 A hotfix: long games no longer flood the log with knock-down lines - less stutter late in a game.

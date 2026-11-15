@@ -647,6 +647,12 @@ dollpose::Pose g_poses[16];
 int g_nPoses = 0;
 std::atomic<int> g_nPosesNow{0};   // (g_nPoses, read without the lock by the skinning's look)
 constexpr ULONGLONG kPoseFreshMs = 150;   // a pose older than this is not applied (the timer stopped: another view, no weapon)
+// [weight] grab_hold_steady: a body held to the world (dollpose::Knock::steady) is where the library has it whatever its unit does - a hitch of the timer's
+// thread only holds it still, where the 150 ms above showed the game's pose and place for those frames. Switched off or another view: no pose is made, the
+// last ones ease out (kPoseEaseMs) as any.
+constexpr ULONGLONG kSteadyFreshMs = 500;
+inline ULONGLONG FreshMs(const dollpose::Pose& p) { return p.knock.steady && !p.fadeFromMs ? kSteadyFreshMs : kPoseFreshMs; }
+std::atomic<unsigned> g_stalePoses{0};   // skinnings of a body drawn out of the game's pose that found its pose too old: drawn as the game has it (TakeStalePoses)
 constexpr ULONGLONG kPoseEaseMs = 300;    // a monster let go of (it died, it went out of reach, its doll came to rest) eases back to its animation over this
                                           // (bearstonem/d2r-pcvr's ease back, feat/monster-limb-push e865def, MIT)
 
@@ -2081,7 +2087,7 @@ bool MonsterPose(uintptr_t self, dollpose::Pose* out) {
         }
     ReleaseSRWLockShared(&g_posesLock);
     const ULONGLONG now = GetTickCount64();
-    if (!found || now - out->tickMs > kPoseFreshMs) return false;
+    if (!found || now - out->tickMs > FreshMs(*out)) return false;
     if (out->fadeFromMs) {   // let go of: eased back to the animation
         const float w = 1.0f - static_cast<float>(now - out->fadeFromMs) / static_cast<float>(kPoseEaseMs);
         if (!(w > 0.0f)) return false;
@@ -2137,7 +2143,10 @@ int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose*
     for (int i = 0; i < n; ++i) {
         dollpose::Pose p = out[i];
         if (p.knock.kept) { out[k++] = p; continue; }   // (the kept table's: its own freshness, knockdown::kKeptFreshMs)
-        if (now - p.tickMs > kPoseFreshMs) continue;
+        if (now - p.tickMs > FreshMs(p)) {
+            if (p.knock.weight > 0.0f && !p.fadeFromMs) g_stalePoses.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
         if (p.fadeFromMs) {
             const float w = 1.0f - static_cast<float>(now - p.fadeFromMs) / static_cast<float>(kPoseEaseMs);
             if (!(w > 0.0f)) continue;
@@ -2148,6 +2157,7 @@ int MonsterPosesForSkin(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose*
     if (!k && exact) *exact = false;
     return k;
 }
+unsigned TakeStalePoses() { return g_stalePoses.exchange(0, std::memory_order_relaxed); }
 int PosedTurns(uint32_t id) {
     if (!g_poseWanted.load()) return -1;
     int n = 0;

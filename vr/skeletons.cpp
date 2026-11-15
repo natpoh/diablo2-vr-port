@@ -10198,6 +10198,7 @@ ComputeFn g_orig = nullptr;
 std::atomic<MonsterPoseFn> g_monsterPose{nullptr};   // [weight] monster_ragdoll_pose: meleetouch::MonsterPose (vrcam)
 std::atomic<FrozenPoseFn> g_frozenPose{nullptr};   // [weight] death_ragdoll: a resting corpse's bones (SetFrozenPoseSource)
 std::atomic<EntityParentFn> g_entityParent{nullptr};   // ... an entity's parent (SetEntityParentSource): the skinning's anchor, vr/skin_anchor.h
+std::atomic<HeldBaseFn> g_heldBase{nullptr};   // [weight] grab_hold_steady: a held body's bones as taken (SetHeldBaseSource)
 std::atomic<MonsterPoseByWorldFn> g_monsterPoseByWorld{nullptr};   // ... and by the world pose the skinning is handed (meleetouch::MonsterPosesForSkin)
 // ... the game's own pose of each monster the hook turned, as the game made it this frame: the bodies are read from it (MonsterRigs), not from the turned
 // one - else the doll would push a limb its own turn has already moved, and again
@@ -10248,6 +10249,9 @@ std::atomic<unsigned> g_dollByEntity{0};   // [weight] death_ragdoll: skinnings 
 std::atomic<unsigned> g_dollByAnchor{0}, g_anchorOther{0}, g_anchorNoDraw{0}, g_anchorNoRoot{0}, g_anchorLooks{0};   // ... by the drawn entity's root (vr/skin_anchor.h)
 std::atomic<unsigned> g_keptSkinFrozen{0}, g_keptSkinJoints{0};   // [weight] death_ragdoll: skinnings of kept corpses (the kept table's) - frozen bones / joints
 std::atomic<unsigned> g_knockSkinned{0}, g_knockRefused{0};   // [weight] knock_down: skinnings handed a copy laid on a knocked-down body's joints / whose joints did not read
+// [weight] grab_hold_steady: of them, held to the world - laid through the model's place read at the skinning / by the tick's (its transform did not read);
+// laid on the bones kept when the hand took it / on the game's pose of the moment (none kept)
+std::atomic<unsigned> g_steadyNow{0}, g_steadyTick{0}, g_steadyBase{0}, g_steadyLive{0};
 bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
     const MonsterPoseByWorldFn src = g_monsterPoseByWorld.load(std::memory_order_relaxed);
     if (!src) return false;
@@ -10313,7 +10317,24 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
         g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
         if (cands[pick].knock.kept) g_keptSkinFrozen.fetch_add(1, std::memory_order_relaxed);
     } else if (cands[pick].knock.weight > 0.0f && cands[pick].bones == n) {   // [weight] knock_down: the copy laid on the knock-down's joints (vr/knock_pose.h)
-        if (knockpose::Apply(mats, n, cands[pick].knock.parent, cands[pick].knock.joint, cands[pick].knock.at, cands[pick].knock.weight)) {
+        const dollpose::Knock& kn = cands[pick].knock;
+        const float (*at)[3] = kn.at;
+        float atNow[dollpose::kKnockJoints][3];
+        if (kn.steady) {   // [weight] grab_hold_steady: held to the world - the model's place of THIS frame, its bones as taken (docs/notes/grab_hold_flicker.md)
+            float w[16], m3[9], root[3];
+            bool now = false;
+            if (EntityPlaceNow(cands[pick].entity, w)) {
+                knockpose::PlaceOf(w, m3, root);
+                now = knockpose::JointsNow(m3, root, kn.upm, kn.world, atNow);
+            }
+            if (now) at = atNow;
+            (now ? g_steadyNow : g_steadyTick).fetch_add(1, std::memory_order_relaxed);
+            if (kn.base && kn.weight >= 0.999f) {
+                const HeldBaseFn base = g_heldBase.load(std::memory_order_relaxed);
+                ((base && base(cands[pick].self, mats, n)) ? g_steadyBase : g_steadyLive).fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        if (knockpose::Apply(mats, n, kn.parent, kn.joint, at, kn.weight)) {
             done = true;
             g_knockSkinned.fetch_add(1, std::memory_order_relaxed);
             if (cands[pick].knock.kept) g_keptSkinJoints.fetch_add(1, std::memory_order_relaxed);
@@ -10338,9 +10359,15 @@ bool DollSkin(uintptr_t skeleton, uintptr_t pose, float (*mats)[16], int n) {
             NoteDoll("death ragdoll - the last 5 s, skinnings of kept corpses (all from the kept table, their one source): %u drawn from their frozen bones, %u laid "
                      "on their joints (no frozen bones for them)", keptFrozen, keptJoints);
         const unsigned knocked = g_knockSkinned.exchange(0), refused = g_knockRefused.exchange(0);
+        const unsigned steadyNow = g_steadyNow.exchange(0), steadyTick = g_steadyTick.exchange(0), steadyBase = g_steadyBase.exchange(0),
+                       steadyLive = g_steadyLive.exchange(0);
+        char steady[280] = "";
+        if (steadyNow + steadyTick)
+            snprintf(steady, sizeof steady, "; hold steady: %u of them held to the world by the model's place read at the skinning, %u by the tick's (its transform "
+                     "did not read); %u laid on the bones kept when the hand took it, %u on the game's pose of the moment", steadyNow, steadyTick, steadyBase, steadyLive);
         if (knocked + refused)
-            NoteDoll("knock down - the last 5 s: %u skinnings drew a knocked-down body from the copy laid on its joints%s", knocked,
-                     refused ? (", " + std::to_string(refused) + " copies whose joints did not read (drawn as the game has them)").c_str() : "");
+            NoteDoll("knock down - the last 5 s: %u skinnings drew a knocked-down body from the copy laid on its joints%s%s", knocked,
+                     refused ? (", " + std::to_string(refused) + " copies whose joints did not read (drawn as the game has them)").c_str() : "", steady);
     }
     return done;
 }
@@ -10720,6 +10747,7 @@ void SetPoseView(bool allowed) {
 }
 void SetFrozenPoseSource(FrozenPoseFn fn) { g_frozenPose.store(fn); }
 void SetEntityParentSource(EntityParentFn fn) { g_entityParent.store(fn); }
+void SetHeldBaseSource(HeldBaseFn fn) { g_heldBase.store(fn); }
 #if D2RVR_FIRST_PERSON
 void SetHeadLook(const HeadLookIn& in) {
     static bool skinSet = false;   // (the update thread only)
@@ -10916,6 +10944,36 @@ std::string WeaponEntityDiag() {
     return head + out;
 }
 #endif
+
+bool EntityPlaceNow(uint32_t entity, float m[16]) {
+    if (!entity || !m) return false;
+    AcquireSRWLockShared(&ecs::g_lock);   // (the storage as last found: MonsterRigs finds it for every body there is a pose for)
+    const uintptr_t xs = ecs::g_xs, vt = ecs::g_vtX;
+    ReleaseSRWLockShared(&ecs::g_lock);
+    uint32_t i = 0, parent = 0;
+    uintptr_t cb = 0;
+    if (!ecs::IsStorage(xs, vt) || !ecs::Dense(xs, entity, &i) || !Get(xs + 0x38, &cb) || !cb) return false;
+    const uintptr_t comp = cb + (uintptr_t)i * kTransformSize;
+    if (!Get(comp + 0xC0, &parent) || (parent & 0xFFFFF) != 0xFFFFF) return false;   // (a root: its local is its world)
+    if (!SafeCopy(m, (const void*)comp, sizeof(float) * 16)) return false;
+    for (int k = 0; k < 16; ++k)
+        if (!std::isfinite(m[k])) return false;
+    return true;
+}
+
+bool EntityWorldNow(uint32_t entity, float m[16]) {
+    if (!entity || !m) return false;
+    AcquireSRWLockShared(&ecs::g_lock);
+    const uintptr_t xs = ecs::g_xs, vt = ecs::g_vtX;
+    ReleaseSRWLockShared(&ecs::g_lock);
+    uint32_t i = 0;
+    uintptr_t cb = 0;
+    if (!ecs::IsStorage(xs, vt) || !ecs::Dense(xs, entity, &i) || !Get(xs + 0x38, &cb) || !cb) return false;
+    if (!SafeCopy(m, (const void*)(cb + (uintptr_t)i * kTransformSize + 0x40), sizeof(float) * 16)) return false;
+    for (int k = 0; k < 16; ++k)
+        if (!std::isfinite(m[k])) return false;
+    return true;
+}
 
 bool EntityTransform(uint32_t entity, uintptr_t* comp) {
     AcquireSRWLockExclusive(&ecs::g_lock);

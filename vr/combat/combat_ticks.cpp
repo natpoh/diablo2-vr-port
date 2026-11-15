@@ -437,6 +437,10 @@ void MeleeTouchTick() {
     {   // the weapon as drawn: the view the skeleton hook's bones are hung in (the red line's frame), and what each hand's slot holds
         AcquireSRWLockShared(&g_stickLock); const StickFrame sf = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
         f.headOk = sf.valid;
+        if (knockdown::Wanted()) {   // [weight] knock_down: the eyes, for "a body in front of them not drawn" (knockdown::BeforeCull)
+            const float eye[3] = {g_eyeWorld[0].load(), g_eyeWorld[1].load(), g_eyeWorld[2].load()};
+            knockdown::NoteEyes(sf.valid, eye, sf.camLook);
+        }
         for (int i = 0; i < 3; ++i) { f.camR[i] = sf.camR[i]; f.camF[i] = sf.camF[i]; f.eyeWorld[i] = g_eyeWorld[i].load(); }
         f.kind[0] = gamestate::HandKind(0);
         f.kind[1] = gamestate::HandKind(1);

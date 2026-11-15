@@ -62,7 +62,7 @@ inline int Nearest(float modelRadius) {
 // The Home slider's own stops (Serg 2026-11-09, the slider back after 0.208 hid it: "ползунок дравдистанс давай вернем", "по умолчанию
 // поставим как сейчас 2", "комнаты 200 дистанция" - the option to draw farther, the default as today). kStops above stay VR F3's ([table]
 // draw_distance, unchanged); this table is what D2R VR Settings' Draw distance slider (Home, its tab) and the headset's Video page row write.
-// Six keys, no dome: [sky] game_sky_radius_m ships at 1000 m (Serg 2026-11-03), past every stop, and the cave dome is its own slider - the
+// Six keys, no dome: [sky] game_sky_radius_m ships at 1500 m (Serg 2026-11-15; 1000 from 2026-11-03), past every stop, and the cave dome is its own slider - the
 // slider leaves both as they are. The near stops are the Quality presets' world (shared/quality_presets.h: 2 rings everywhere, the game's fog
 // 55 / 140, in caves 65 / 200 - "размер тумана одинаковый на всех"): stop 1 = Low and Potato (models 150), stop 2 = Medium (200), the
 // default and the shipped d2r_vr.ini's. Past it the fog opens with the distance, today's proportions kept (start 0.275 r, full 0.7 r; in

@@ -48,6 +48,14 @@ struct Knock {
     float root[3] = {};
     bool frozen = false;   // [weight] death_ragdoll: a corpse kept as it lies - drawn from its bones as they were when it came to rest (skel::SetFrozenPoseSource)
     bool kept = false;     // ... handed from the kept corpses' own table (knockdown::KeptPosesForSkin), their one source - not the moving bodies' list
+    // [weight] grab_hold_steady: a body a hand took, held to the WORLD. `at` is the model's frame as the model stood when the timer made the pose - a unit
+    // the game walks or turns before the frame is drawn carried the drawn body with it (docs/notes/grab_hold_flicker.md). world: the same joints in the
+    // render world (metres), upm its units a metre: whoever lays the copy puts them through the model's place as it is THEN (knockpose::JointsNow). base:
+    // the copy they are laid on is its bones as the game had them when the hand took it (knockdown::HeldBaseInto), not the game's animation of the moment.
+    bool steady = false;
+    bool base = false;
+    float upm = 0.0f;
+    float world[kKnockJoints][3] = {};
 };
 
 struct Pose {

@@ -34,7 +34,8 @@
 #include "sigscan.h"
 #include "ui_ticket.h"
 #include "melee_arm.h"     // [hud] skill_under_map: the melee list's names (when the game's text does not answer)
-#include "wheel_icons.h"   // ... the skill icon cache's string key of a skill's name
+#include "wheel_icons.h"   // ... the skill icon cache's string key of a skill's name, or the game's own string id of it
+#include "skill_tables_game.h"   // ... read from the running game's tables
 
 using namespace D2RL;
 
@@ -390,6 +391,7 @@ std::mutex g_skillMutex;
 SkillNamed g_skillNamed[16];
 
 void NameSkills() {
+    if (g_skillWanted[0].load() >= 0 || g_skillWanted[1].load() >= 0) skilltables::Refresh(g_ctx);   // (UI thread; cheap when nothing changed)
     for (int h = 0; h < kMaxSkills; ++h) {
         const int32_t id = g_skillWanted[h].load();
         if (id < 0) continue;
@@ -406,6 +408,12 @@ void NameSkills() {
             const std::string full = "d2r:" + key;
             uint32_t need = 0;
             if (g_strings->getStringByKey(g_ctx, full.c_str(), text, sizeof text, &need) != Localization::Result::Success) text[0] = 0;
+        }
+        // no icon cache (a player's PC): the running game's own string id of the name (vr/skill_tables_game.h)
+        if (!text[0] && g_strings && g_strings->getStringById) {
+            const uint32_t nameId = wheelicons::NameId(id);
+            uint32_t need = 0;
+            if (nameId && g_strings->getStringById(g_ctx, nameId, text, sizeof text, &need) != Localization::Result::Success) text[0] = 0;
         }
         if (!text[0] && meleearm::IsMelee(id)) snprintf(text, sizeof text, "%s", meleearm::Name(id));
         std::lock_guard<std::mutex> lock(g_skillMutex);

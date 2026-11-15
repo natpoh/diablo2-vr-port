@@ -24,4 +24,8 @@ bool PreparePlate(const std::wstring& game, const std::wstring& pluginDir);
 // portrait_<name>.sprite. Off: nothing is read or written. Each portrait on its own: one the game does not have is left out (the plugin draws initials).
 Result PreparePortraits(const std::wstring& game, const std::wstring& pluginDir, bool on);
 
+// [openxr] skill_wheel: the game's own skill-icon sheets (shared/skill_icon_files.h) into the same folder; the plugin cuts each skill's icon out of
+// them by the running game's own tables. Off: nothing is read or written. A sheet the game does not have is left out (its skills show names).
+Result PrepareSkillIcons(const std::wstring& game, const std::wstring& pluginDir, bool on);
+
 }  // namespace menuassets

@@ -3,6 +3,7 @@
 #include "vcache.h"
 
 #include <cstdio>
+#include <initializer_list>
 
 static int g_fail = 0;
 #define CHECK(c) do { if (!(c)) { std::printf("FAIL line %d: %s\n", __LINE__, #c); ++g_fail; } } while (0)
@@ -18,6 +19,31 @@ int main() {
     CHECK(vcache::Pick({{32 * MB, 0, 0x0000FFFFull}, {32 * MB, 0, 0xFFFF0000ull}}) == -1);
     CHECK(vcache::Pick({{96 * MB, 0, 0xFFFFull}}) == -1);
     CHECK(vcache::Pick({}) == -1);
+    // What Apply does (2026-11-15: the process's default sets crowded the game's spinning job workers onto the CCD - 2-9 s stalls):
+    // by default (vcache_how 0, or anything not 1 - 3) only the draw thread's own sets, never the process's, never a priority - on,
+    // off, with or without a big L3
+    for (int how : {0, -1, 4, 99})
+        for (bool want : {false, true})
+            for (int big : {-1, 0, 1}) {
+                const vcache::Plan p = vcache::PlanFor(want, big, how);
+                CHECK(!p.processDefault);
+                CHECK(!p.raisePriority);
+                CHECK(p.drawThreadSets == (want && big >= 0));
+            }
+    CHECK(!vcache::PlanFor(true, 0).processDefault && vcache::PlanFor(true, 0).drawThreadSets);   // (the default argument is 0)
+    // the live test's parts, each alone: 1 the process's sets, 2 the priority, 3 both (as 0.217) - never the draw thread's own sets
+    {
+        const vcache::Plan s = vcache::PlanFor(true, 0, 1), r = vcache::PlanFor(true, 0, 2), b = vcache::PlanFor(true, 0, 3);
+        CHECK(s.processDefault && !s.raisePriority && !s.drawThreadSets);
+        CHECK(!r.processDefault && r.raisePriority && !r.drawThreadSets);
+        CHECK(b.processDefault && b.raisePriority && !b.drawThreadSets);
+    }
+    // off, or no big L3: nothing at all, whatever the how
+    for (int how : {1, 2, 3}) {
+        const vcache::Plan off = vcache::PlanFor(false, 0, how), none = vcache::PlanFor(true, -1, how);
+        CHECK(!off.processDefault && !off.raisePriority && !off.drawThreadSets);
+        CHECK(!none.processDefault && !none.raisePriority && !none.drawThreadSets);
+    }
     // three caches, two big alike: no single big one
     CHECK(vcache::Pick({{96 * MB, 0, 0xFFull}, {96 * MB, 0, 0xFF00ull}, {32 * MB, 0, 0xFF0000ull}}) == -1);
     // an empty mask is no answer

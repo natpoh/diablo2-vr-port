@@ -256,6 +256,7 @@ std::atomic<float> g_topEyeDist{0.0f};   // VR F1 through our camera: the eye's 
 std::atomic<bool> g_topEyeOk{false};
 // ... and the projection it is drawn with (VrProj): M[0], M[5], the eyes apart and zero parallax, world units.
 std::atomic<float> g_projSx{0.0f}, g_projSy{0.0f}, g_stereoIpd{0.0f}, g_stereoConv{0.0f};
+std::atomic<float> g_projOffX{0.0f}, g_projOffY{0.0f};
 // The off-axis shift of the left eye's projection (M[8]; the right eye's is minus it), 0 without:
 // the replayed right eye has only the left pass's projection, moved by twice this.
 std::atomic<float> g_projShift{0.0f};
@@ -550,6 +551,10 @@ bool GameDrawnView() {
 bool GameFogDrawnView() {
     if (viewgate::F4()) return true;
     if (GameFogOverhead()) return true;   // (VR F3 full width; VR F1 Real geometry with [top] fog - our camera, the game's fog pass)
+    // [fog] game_fog_vr_third_person: VR F2 (our camera behind the hero, the world in 3D as in F4) - Serg 2026-11-15 on 0.217.1: no fog at all
+    // in F2 and the fog in F4. Not listed here, the game's pass got none of ours there, and its own plane fogs are set to nothing in every area
+    // ([render] game_depth_fog=0): nothing fogged the world, nor did the step before the effects run
+    if (g_set.gameFogVrThirdPerson.load() && g_set.platform.load() == 1 && viewgate::Number() == 2 && g_enabled.load() && !TopPersp()) return true;
     return g_set.gameFogFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
 }
 
@@ -779,10 +784,16 @@ constexpr uint64_t RVA_CURSOR_HEIGHT_RET = 0x7F4B2, RVA_CURSOR_WIDTH_RET = 0x14F
 // the window's width (and the SetMaxSize net below keeps it from hanging).
 constexpr uint64_t kLabelWidthRets[13] = {0x88008F, 0x88020E, 0x880275, 0x880372, 0x8803F2, 0x880DD8, 0x880EE9,
                                           0x880F9C, 0x881033, 0x8810DD, 0x881792, 0x88188A, 0x881F2B};
+// [render] vr_resolution_ui_pointer: the calls of the game's cursor <-> interface helpers (vr_resolution.h CursorReachX): 0x7F210 (0x7F21F, 0x7F235),
+// 0x7F2D0 (0x7F2EB), 0x7F350 (0x7F368, 0x7F37E) and their 0x7F540 (0x7F546, 0x7F55C) - return addresses. Answered the whole picture as the cursor
+// clamp is: the game's pointer reaches the picture's right edge on a window smaller than it (zeezour, 2026-11-14). All of them or none.
+constexpr uint64_t kClientSizeMapRets[7] = {0x7F224, 0x7F23A, 0x7F2F0, 0x7F36D, 0x7F383, 0x7F54B, 0x7F561};
 using ClientSizeFn = uint64_t (*)();
 ClientSizeFn OrigClientSize = nullptr;
 uintptr_t g_clientSizeUiRet[7] = {}, g_clientSizeCursorRet[2] = {}, g_labelWidthRet[13] = {};   // (filled before the hook goes in)
+uintptr_t g_clientSizeMapRet[7] = {};   // (filled before the hook goes in; all zero: left out)
 std::atomic<bool> g_clientSizeOn{true};
+std::atomic<bool> g_clientSizeMapOn{true};   // [render] vr_resolution_ui_pointer (live)
 
 // The game's other callers of the query - given the window's own size - said once each while a render size is in force and the window is
 // not the picture's size (2026-11-14, zeezour: a TV as the main display made the window 1020 under a 3072 picture; the corner map's box
@@ -811,16 +822,43 @@ void TellOtherCaller(uintptr_t from, uint64_t native) {
     full.store(1, std::memory_order_relaxed);
 }
 
+// The pointer's reach as the game's clamp makes it (vr_resolution.h CursorReachX) - told when it changes (the window or the picture changed, the key
+// flipped): on the game's UI thread, a few times a session at most.
+void TellPointerReach(uint64_t native) {
+    static std::atomic<uint64_t> told{0};
+    if (!g_gameWnd) return;
+    vrres::Size game;
+    if (!vrres::GameSize(g_gameWnd, &game) || !game) return;
+    const bool on = g_clientSizeMapOn.load(std::memory_order_relaxed) && g_clientSizeOn.load(std::memory_order_relaxed);
+    const vrres::Size win = vrres::FromNative(native);
+    const uint64_t key = native ^ ((uint64_t)game.w << 20) ^ ((uint64_t)game.h << 40) ^ (on ? 1ull << 63 : 0);
+    if (told.exchange(key) == key) return;
+    const float share = vrres::CursorReachShare(win, game);
+    if (on)
+        LogF("vrcam: render size - the game's pointer turned into its interface by the picture's %ux%u, not the window's %ux%u: it reaches all of the picture "
+             "(with the window's it would stop at %d px, %.0f %% of it) ([render] vr_resolution_ui_pointer)", game.w, game.h, win.w, win.h,
+             vrres::CursorReachX(win), share * 100.0f);
+    else if (share < 1.0f)
+        LogF("vrcam: render size - the game's pointer is limited by the window's %ux%u: it stops at %d px of the picture's %u - its right %.0f %% out of the "
+             "mouse's and the laser's reach ([render] vr_resolution_ui_pointer=0)", win.w, win.h, vrres::CursorReachX(win), game.w, (1.0f - share) * 100.0f);
+}
+
 uint64_t HookClientSize() {
     const uintptr_t from = reinterpret_cast<uintptr_t>(_ReturnAddress());
     const uint64_t native = OrigClientSize();
     vrres::Asker asker = vrres::Asker::Other;
+    bool map = false;   // one of the cursor <-> interface helpers' calls ([render] vr_resolution_ui_pointer)
     if (from == g_clientSizeCursorRet[0] || from == g_clientSizeCursorRet[1]) asker = vrres::Asker::Cursor;
     else {
         for (uintptr_t r : g_clientSizeUiRet) if (from == r) { asker = vrres::Asker::Ui; break; }
         if (asker == vrres::Asker::Other) for (uintptr_t r : g_labelWidthRet) if (r && from == r) { asker = vrres::Asker::Ui; break; }
+        if (asker == vrres::Asker::Other) for (uintptr_t r : g_clientSizeMapRet) if (r && from == r) { map = true; break; }
     }
-    if (asker == vrres::Asker::Other) TellOtherCaller(from, native);
+    if (map) {
+        TellPointerReach(native);
+        if (g_clientSizeMapOn.load(std::memory_order_relaxed)) asker = vrres::Asker::Cursor;
+    }
+    if (asker == vrres::Asker::Other && !map) TellOtherCaller(from, native);
     return asker == vrres::Asker::Other ? native : vrres::ClientSizeAnswer(asker, native, g_clientSizeOn.load());
 }
 // The target of a relative CALL (E8) or JMP (E9) at `site` when it is one (0 otherwise).
@@ -832,8 +870,9 @@ uintptr_t BranchTarget(uintptr_t site, uint8_t op) {
     return site + 5 + (intptr_t)rel;
 }
 // Live (`on`, the ini key); the hook goes in once, after every caller it answers has been checked to be a call of the query.
-void InstallClientSize(bool on) {
+void InstallClientSize(bool on, bool pointer) {
     g_clientSizeOn.store(on);
+    g_clientSizeMapOn.store(pointer);
     static bool in = false, failed = false;
     if (in || failed || !on) return;
     const uintptr_t fn = d2rsig::Addr(RVA_CLIENT_SIZE);
@@ -874,6 +913,23 @@ void InstallClientSize(bool on) {
         else Log("vrcam: render size - the hover label's width calls are not what 3.3.93787 has: hover labels keep the window's width "
                  "(a label too wide for it is laid out on one line instead)");
     }
+    // The cursor <-> interface helpers' calls (kClientSizeMapRets): all of them or none, each a call of the query. One still in an encrypted page:
+    // asked again; one not in this build or not such a call: the pointer keeps the window's limit, as before.
+    static int maps = 0;   // 0 not yet, 1 in, -1 left out
+    if (maps == 0) {
+        uintptr_t got[7] = {};
+        int state = 1;
+        for (int i = 0; i < 7 && state == 1; ++i) {
+            got[i] = d2rsig::Addr(kClientSizeMapRets[i]);
+            if (!got[i]) state = d2rsig::NotInBuild(kClientSizeMapRets[i]) ? -1 : 0;
+            else if (BranchTarget(got[i] - 5, 0xE8) != fn) state = -1;
+        }
+        if (state == 0) return;   // (its code may still be encrypted: asked again)
+        maps = state;
+        if (maps == 1) memcpy(g_clientSizeMapRet, got, sizeof g_clientSizeMapRet);
+        else Log("vrcam: render size - the game's cursor-to-interface calls are not what 3.3.93787 has: the pointer keeps the window's limit "
+                 "([render] vr_resolution_ui_pointer does nothing)");
+    }
     in = d2rsig::Hook(RVA_CLIENT_SIZE, kSigClientSize, sizeof kSigClientSize, (void*)&HookClientSize, (void**)&OrigClientSize);
     if (!in) {
         failed = true;
@@ -881,7 +937,7 @@ void InstallClientSize(bool on) {
         return;
     }
     LogF("vrcam: render size - the game's client-size query is in: with a render size its interface and mouse follow the picture "
-        "([render] vr_resolution_ui; hover labels %s)", labels == 1 ? "too" : "not");
+        "([render] vr_resolution_ui; hover labels %s, the pointer's reach %s)", labels == 1 ? "too" : "not", maps == 1 ? "too" : "not");
     vrres::ClientSizeReflow();   // a size already in force: laid out once more
 }
 
@@ -1037,7 +1093,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.217.1";
+static const char g_info_version[] = "0.218.3";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1279,6 +1335,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     skel::SetMonsterPoseByWorldSource(&HealthMonsterPosesForSkin);   // [weight] monster_ragdoll_pose: the skinning draws a struck monster from a turned copy (meleetouch::MonsterPosesForSkin, counted)
     skel::SetEntityParentSource(&knockprops::EntityParent);   // [weight] death_ragdoll: the skinning finds a body by its entity's root (vr/skin_anchor.h)
     skel::SetFrozenPoseSource(&knockdown::FrozenBonesOf);   // [weight] death_ragdoll: a resting corpse drawn from its bones as they came to rest
+    skel::SetHeldBaseSource(&knockdown::HeldBaseInto);      // [weight] grab_hold_steady: a held body laid on its bones as the hand took it
     skel::SetMonsterPoseSource(&HealthMonsterPose);   // (meleetouch::MonsterPose, counted) [weight] monster_ragdoll_pose: the hook turns a struck monster's bones   // [weight] monster_ragdoll: ... and the weapon's pushes back to them
     skel::SetGripHandStep(&griplib::HandStep, &griplib::Abi);
     dolllib::SetLog(&Log);

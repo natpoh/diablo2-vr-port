@@ -64,6 +64,10 @@ struct Params {
     float colour[3] = {0, 0, 0};           // the game's scene units
     float nearPlane = 0.05f;               // the projection's (reverse-Z, no far plane)
     float sx = 1.0f, sy = 1.0f, offX = 0.0f;   // its x and y scale and the eye's off-axis shift
+    // ... and its vertical one. Both the view axis's place on the picture in NDC (-M[8], -M[9] of our projection): the flat game's picture moved
+    // by [camera] flat_shift_x / _y is an off-axis projection - with 0 here the dome's test (SkyAt) took one side of the dome for far ground,
+    // and game_fog_cover laid the fog's colour over that part of the sky (dastarto on 0.217.1, flat F2, Act 2 town, flat_shift_x -7)
+    float offY = 0.0f;
     bool height = false;                   // thinned with height: none above `top`, fading in over `soft` below it (world units above the eye)
     float top = 60.0f, soft = 50.0f;
     float up[3] = {0, 1, 0};               // the world's up in the view's axes (right, up, ahead)

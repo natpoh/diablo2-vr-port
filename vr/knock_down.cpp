@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <vector>
 #include <string>
 #include <unordered_set>
 
@@ -241,13 +242,14 @@ struct Laid {
     uint32_t id = 0;
     uintptr_t self = 0;
     int bones = 0;
+    int phase = 0;   // (the library's, for the log: a leg drawn twisted)
     dollpose::Knock knock;
     uint32_t entity[1 + skel::MonsterRig::kMaxParts] = {};   // its root and its parts (their bounds grown while it is drawn away: GrowBounds)
     int nEntity = 0;
 };
 // Each entity of a body drawn out of the game's pose, and the world box (world units) where it is drawn: LayBodies (the timer) sets them, the world-matrix
 // hook (OnXform, the renderer's threads) grows each one's bounds to hold that box - and puts back the bounds it grew once its body is the game's again.
-struct Grow { uint32_t entity = 0; float lo[3] = {}, hi[3] = {}; };
+struct Grow { uint32_t entity = 0; float lo[3] = {}, hi[3] = {}; int slot = -1; };   // (slot: its body's place in g_down - the cull's watch, BeforeCull)
 SRWLOCK g_growLock = SRWLOCK_INIT;
 Grow g_grow[64];
 int g_nGrow = 0;
@@ -261,12 +263,97 @@ std::atomic<unsigned> g_boundsGrew{0}, g_boundsHeld{0}, g_boundsRebuilt{0}, g_bo
 std::atomic<unsigned> g_boundsGrewTimer{0}, g_boundsHookMet{0}, g_boundsNoWorld{0};
 std::atomic<unsigned> g_boundsGrewDraw{0}, g_drawEyes{0}, g_drawShadow{0}, g_drawHeld{0}, g_drawRebuilt{0};   // (BeforeDraw: grown; collected for the eyes' / the shadows'; the box then)   // (the timer's grows; the hook meeting one of them; no matrix read)
 constexpr float kBoundsMarginM = 0.3f;   // the drawn box grown by this all round (a hand, a swinging arm between two ticks)
+// The game's main cull (BeforeCull, the draw thread): the bounds grown there, and each body's eyes' passes watched - drawn or not, and why not.
+std::atomic<unsigned> g_cullGrew{0}, g_cullHeld{0}, g_cullRebuilt{0}, g_cullPasses{0};   // (the 1 s line's)
+enum CullWhy : int { kCullGrown = 0, kCullNoMatrix, kCullNoBounds, kCullNoWrite, kCullNoEntities, kCullWhys };
+const char* const kCullWhySaid[kCullWhys] = {
+    "its bounds held the drawn body when the game culled the pass (grown just before it) and the game still left it out - not its bounds: another gate "
+    "of the game's, the next thing to look at",
+    "its entities' world matrices did not read (the transform storage) - its bounds were not grown before the cull",
+    "no bounds component read for its entities (the bounds storage not found yet) - its bounds were not grown before the cull",
+    "the write of its bounds did not take - they were the game's own at the cull",
+    "none of its entities was known that pass (its skeleton not read, or its capsules not laid) - its bounds were not grown before the cull",
+};
+struct CullWatch {   // by the body's slot in g_down
+    std::atomic<uint32_t> id{0};               // the body watched (0: none)
+    std::atomic<unsigned> collected{0};        // its entities collected for the eyes' passes since the last cull (BeforeDraw, the render workers)
+    std::atomic<bool> gaze{false};             // the eyes are on it as drawn (Tick, the timer)
+    std::atomic<unsigned> passes{0}, missed[kCullWhys];   // the eyes on it: passes culled / passes that drew none of it, by why (taken by Tick's line)
+    int why = kCullNoEntities;                 // (the draw thread) what the last cull's growing of it came to
+    uint32_t was = 0;                          // (the draw thread) the body the last cull was for
+    bool wasGaze = false;
+};
+CullWatch g_cullWatch[D2RF_MAX_DOWN];
+// (the timer) what was said of a body not drawn, once a cause a hold: by slot, the body it was said of
+uint32_t g_cullToldId[D2RF_MAX_DOWN] = {};
+unsigned g_cullToldMask[D2RF_MAX_DOWN] = {};
+bool g_cullHookTold = false;
+// A leg drawn twisted (Serg, 0.217.4: an NPC's left leg turned out while the ragdoll drives it; not met again offline on her own bones and animations with
+// the library itself - docs/notes/grab_hold_flicker.md). LayBodies looks at each body it lays, each tick, on its feet or in the hand: where the library has
+// each foot turned about its own leg's line against where the game has it now (the joints), and how far the laying rolled the thigh, the shin and the foot
+// about their own lines beyond the pelvis (knockpose::FootTurn, TwistAbout). Past kLegTwistRad for kLegTwistTicks ticks running: said once a leg and a
+// cause while the body is ours - which of the two it is.
+constexpr float kLegTwistRad = 1.0f;   // 57 degrees: past any stride's or stance's turn of a foot (the walk's is 25), and the hip's own 30 in the library
+constexpr int kLegTwistTicks = 12;
+struct LegWatch { uint32_t id = 0; int run[2][2] = {}; unsigned told = 0; };   // (the timer's thread) by slot; run[leg][cause]; told: bit leg * 2 + cause
+LegWatch g_legWatch[D2RF_MAX_DOWN];
+// The eyes (NoteEyes, the update thread; read by Tick on the same thread's timer)
+std::atomic<bool> g_eyesOk{false};
+std::atomic<float> g_eyesAt[3], g_eyesLook[3];
+constexpr float kGazeCos = 0.866f;   // within 30 degrees of the way the eyes look: inside any headset's picture
 D2rfPose g_posesNow[D2RF_MAX_DOWN];   // (under g_lib) the library's bodies as Tick last drew them, render world - the wrist that holds a weapon taken
 int g_nPosesNow = 0;
 std::mutex g_laidMutex;
 Laid g_laid[D2RF_MAX_DOWN];
 int g_nLaid = 0;
 std::atomic<unsigned> g_laidBodies{0}, g_laidMissed{0};   // capsules laid on a drawn body / bodies whose pose did not read (since the last line)
+
+// [weight] grab_hold_steady (docs/notes/grab_hold_flicker.md; Serg, 2026-11-14: a held monster or NPC flickers when the game moves it). A body a hand took:
+// its joints go to the skinning in the world (dollpose::Knock::world - laid through the model's place of the frame drawn, not the tick's), the copy they are
+// laid on is its bones as the game had them when it was taken (g_base - the game's walk or attack of the moment turns nothing of it), and a tick that did
+// not read its skeleton hands the last pose on with the library's joints of now (g_lastSteady - never a tick eased toward the game's pose).
+std::atomic<bool> g_steadyOn{false};
+struct HeldBase { uint32_t id = 0; uintptr_t self = 0; int n = 0; std::vector<float> m; };   // (under g_baseLock) by the body's slot in g_down
+SRWLOCK g_baseLock = SRWLOCK_INIT;
+HeldBase g_base[D2RF_MAX_DOWN];
+std::atomic<int> g_nBaseNow{0};
+struct LastSteady { bool ok = false; dollpose::Pose pose; Laid laid; };   // (the timer's thread) the pose last made for the slot's body, with its rig read
+LastSteady g_lastSteady[D2RF_MAX_DOWN];
+std::atomic<unsigned> g_steadyCarried{0};   // ticks a held body's skeleton did not read and its last pose went on (the 1 s line's)
+// (the timer's thread) the slot's kept bones let go of - its body is the game's again
+void DropBase(int slot) {
+    if (slot < 0 || slot >= D2RF_MAX_DOWN) return;
+    g_lastSteady[slot].ok = false;
+    if (!g_base[slot].id) return;   // (written by this thread only: read without the lock)
+    AcquireSRWLockExclusive(&g_baseLock);
+    g_base[slot].id = 0;
+    g_base[slot].self = 0;
+    g_base[slot].n = 0;
+    int left = 0;
+    for (const HeldBase& b : g_base) left += b.id ? 1 : 0;
+    g_nBaseNow.store(left);
+    ReleaseSRWLockExclusive(&g_baseLock);
+}
+// (the timer's thread) the slot's body as the game poses it now, kept as the copy its joints are laid on - once a take. False: its pose did not read.
+bool KeepBase(int slot, uint32_t id, uintptr_t self, int bones) {
+    if (slot < 0 || slot >= D2RF_MAX_DOWN || bones <= 0 || bones > knockpose::kMaxBones) return false;
+    if (g_base[slot].id == id && g_base[slot].self == self && g_base[slot].n == bones) return true;
+    static float now[knockpose::kMaxBones][16];
+    if (skel::PoseNow(self, now, knockpose::kMaxBones) != bones) return false;
+    for (int i = 0; i < bones * 16; ++i)
+        if (!std::isfinite(now[0][i])) return false;
+    AcquireSRWLockExclusive(&g_baseLock);
+    HeldBase& b = g_base[slot];
+    b.m.assign(now[0], now[0] + static_cast<size_t>(bones) * 16);
+    b.id = id;
+    b.self = self;
+    b.n = bones;
+    int have = 0;
+    for (const HeldBase& x : g_base) have += x.id ? 1 : 0;
+    g_nBaseNow.store(have);
+    ReleaseSRWLockExclusive(&g_baseLock);
+    return true;
+}
 
 // The library's world is left-handed - its clips' and its "forward = left to right across up" (Unity's) - and the game's render world is its mirror (Serg on
 // the first build: «у нпс в анимации регдол перепутан перед и зад» - a body on its back got up as from its face, the legs walked with the knees bent back).
@@ -320,6 +407,7 @@ void ResetLocked() {
     falllib::Reset();
     for (auto& d : g_down) d = DownBody{};
     for (auto& d : g_downIds) d.store(0);
+    for (int s = 0; s < D2RF_MAX_DOWN; ++s) DropBase(s);   // [weight] grab_hold_steady
     for (auto& h : g_hold) h = HandHold{};
     for (auto& r : g_remote) r = RemoteHold{};
     for (auto& b : g_blade) b = OnBlade{};
@@ -378,6 +466,11 @@ void Configure(const Settings& s) {
                         "drawn (and any the game's own knockback hits within %.1f m); heavier than %.0f kg only stagger (F4)" : "leap scatter: off",
              leapscatter::kRadiusM, leapscatter::kGameRadiusM, leapscatter::kBigKg);
     }
+    if (g_steadyOn.exchange(s.steady) != s.steady)
+        LogF(s.steady ? "knock down: hold steady on ([weight] grab_hold_steady) - a body a hand took is held to the world: its joints laid through the model's place "
+                        "of the frame drawn and on its bones as they were when it was taken, so the game walking, turning or animating its unit moves nothing of "
+                        "the drawing (F4; only the drawing)"
+                      : "knock down: hold steady off - a held body is laid by the model's place of the timer's tick and on the game's pose of the moment, as before");
     skel::SetWeaponTrail(s.deathFlatOn);   // (the game's swing kept for it, in every view)
     {
         std::lock_guard<std::mutex> lock(g_mutex);
@@ -1497,8 +1590,8 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         std::memcpy(pose.knock.root, g->root, sizeof pose.knock.root);
         std::memcpy(pose.knock.at, atModel, sizeof pose.knock.at);
     };
-    const auto emit = [&](const skel::MonsterRig* g, uint32_t id, float weight, const float (*atModel)[3], bool lay) {
-        if (n >= cap) return;
+    const auto emit = [&](const skel::MonsterRig* g, uint32_t id, float weight, const float (*atModel)[3], bool lay) -> dollpose::Pose* {
+        if (n >= cap) return nullptr;
         dollpose::Pose pose;
         build(g, id, weight, atModel, pose);
         if (nSelves < kMaxSelves) selves[nSelves++] = g->self;
@@ -1513,11 +1606,15 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             l.id = pose.id;
             l.self = pose.self;
             l.bones = pose.bones;
+            for (int s = 0; s < D2RF_MAX_DOWN; ++s)
+                if (g_down[s].id == pose.id) l.phase = g_downPhase[s].load(std::memory_order_relaxed);
             l.knock = pose.knock;
             l.entity[l.nEntity++] = g->entity;
             for (int k = 0; k < g->nParts && l.nEntity < (int)std::size(l.entity); ++k) l.entity[l.nEntity++] = g->parts[k];
         }
+        return &made[slot];
     };
+    const bool steadyOn = f4 && g_steadyOn.load(std::memory_order_relaxed);   // [weight] grab_hold_steady
     const auto markFrozen = [&](uintptr_t self) {   // [weight] death_ragdoll: the pose made for a kept corpse is drawn from its frozen bones (FrozenBonesOf)
         for (int s = 0; s < n; ++s)
             if (made[s].self == self) made[s].knock.frozen = true;
@@ -1631,6 +1728,22 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             if (nowMs - d->seenMs > kGoneMs) {
                 falllib::LetGo(p.id, 0);
                 LogF("knock down: %u let go of - not seen for %.1f s", p.id, (nowMs - d->seenMs) / 1000.0f);
+            } else if (LastSteady& ls = g_lastSteady[d - g_down]; steadyOn && (d->grabbed || d->remote) && ls.ok && ls.pose.id == p.id && n < cap) {
+                // [weight] grab_hold_steady: its last pose handed on, on the library's joints of now (the skinning lays them through the model's place of the
+                // frame it draws) - a tick with no pose made eased it toward the game's pose and place (dollpose::Carry), back the next
+                dollpose::Pose pose = ls.pose;
+                pose.tickMs = nowMs;
+                pose.fadeFromMs = 0;
+                pose.knock.weight = std::clamp(p.weight, 0.0f, 1.0f);
+                std::memcpy(pose.knock.world, p.joint, sizeof pose.knock.world);
+                if (nSelves < kMaxSelves) selves[nSelves++] = pose.self;
+                int slot = n;
+                for (int s = 0; s < n; ++s)
+                    if (made[s].self == pose.self) slot = s;
+                made[slot] = pose;
+                if (slot == n) ++n;
+                if (nLaid < D2RF_MAX_DOWN) laid[nLaid++] = ls.laid;   // (its bodies where they were last laid)
+                g_steadyCarried.fetch_add(1, std::memory_order_relaxed);
             }
             continue;
         }
@@ -1642,6 +1755,10 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             LogF("knock down: %u died %s - the game's own death from here", p.id, PhaseName(p.phase));
             continue;
         }
+        // [weight] grab_holds_unit: while a hand of ours holds it, its unit is kept in the game's own hit recovery (vr/grab_move.h) - it neither walks off
+        // nor attacks from under the hand; asked again each time the mode ends, not once the hand lets go
+        if (d->grabbed && !d->remote && p.phase == D2RF_HELD && (g_hold[0].id == p.id || g_hold[1].id == p.id))
+            grabmove::Hold(p.id, hostile, mode, nowMs);
         // [weight] grab_moves_unit / knock_down_moves_unit: the unit put by the game's knockback on the cell under the drawn body (its pelvis) - a body a hand took,
         // or one a weapon's blow knocked down (never a stagger's step back)
         // (a blow's: kKnockMoves knockbacks at most - where it lands and where it settles; past them the game's own walk is its walk, not ours to undo)
@@ -1683,7 +1800,40 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         bool ok = true;
         for (int j = 0; j < D2RF_JOINTS && ok; ++j) ok = knockpose::ToModel(g->m3, g->root, upm, p.joint[j], atModel[j]);
         if (!ok) continue;
-        emit(g, p.id, p.weight, atModel, true);
+        dollpose::Pose* mp = emit(g, p.id, p.weight, atModel, true);
+        if (const int si = static_cast<int>(d - g_down); mp && steadyOn && (d->grabbed || d->remote)) {   // [weight] grab_hold_steady: a body a hand took (ours, another player's), held to the world
+            static_assert(sizeof mp->knock.world == sizeof p.joint, "the knock-down's joints");
+            mp->knock.steady = true;
+            mp->knock.upm = upm;
+            std::memcpy(mp->knock.world, p.joint, sizeof mp->knock.world);
+            mp->knock.base = KeepBase(si, p.id, g->self, g->bones);   // (its bones as the game has them the first tick it is ours: the copy its joints are laid on)
+            LastSteady& ls = g_lastSteady[si];
+            ls.ok = true;
+            ls.pose = *mp;
+            if (nLaid > 0 && laid[nLaid - 1].self == mp->self) {
+                laid[nLaid - 1].knock = mp->knock;
+                ls.laid = laid[nLaid - 1];
+            } else {
+                ls.laid = Laid{};
+            }
+        } else if (mp) {
+            DropBase(si);   // (switched off, or not a hand's: as before)
+        }
+        if (const int si = static_cast<int>(d - g_down); si >= 0 && si < D2RF_MAX_DOWN) {   // the cull's watch: are the eyes on it as drawn?
+            bool gaze = false;
+            if (g_eyesOk.load(std::memory_order_relaxed)) {
+                const float eye[3] = {g_eyesAt[0].load() / upm, g_eyesAt[1].load() / upm, g_eyesAt[2].load() / upm};
+                const float look[3] = {g_eyesLook[0].load(), g_eyesLook[1].load(), g_eyesLook[2].load()};
+                const float ll = std::sqrt(look[0] * look[0] + look[1] * look[1] + look[2] * look[2]);
+                for (const int j : {D2RF_PELVIS, D2RF_CHEST, D2RF_HEAD}) {
+                    const float v[3] = {p.joint[j][0] - eye[0], p.joint[j][1] - eye[1], p.joint[j][2] - eye[2]};
+                    const float dist = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                    if (dist > 0.3f && ll > 0.5f && (v[0] * look[0] + v[1] * look[1] + v[2] * look[2]) / (dist * ll) >= kGazeCos) gaze = true;
+                }
+            }
+            g_cullWatch[si].gaze.store(gaze, std::memory_order_relaxed);
+            g_cullWatch[si].id.store(p.id, std::memory_order_relaxed);
+        }
         if (tell && at < (int)sizeof said - 140)
             at += snprintf(said + at, sizeof said - at, "%s%u %s %.1f s%s (hips %.2f m over its floor, %.2f m from home, weight %.2f)", at ? "; " : "", p.id,
                            PhaseName(p.phase), p.t, p.phase == D2RF_GETTING_UP ? (p.fromBack ? " from the back" : " from the face") : "",
@@ -1809,6 +1959,11 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
             g_down[s] = DownBody{};
             g_downIds[s].store(0);
             g_downPhase[s].store(D2RF_NONE);
+            DropBase(s);   // [weight] grab_hold_steady: its kept bones with it
+            g_cullWatch[s].id.store(0, std::memory_order_relaxed);   // (the cull's watch: none; what was said of it forgotten)
+            g_cullWatch[s].gaze.store(false, std::memory_order_relaxed);
+            g_cullToldId[s] = 0;
+            g_cullToldMask[s] = 0;
         }
     }
     g_any = nPoses > 0;
@@ -1843,15 +1998,58 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
              "%u (no matrix read %u) - %s; before each: the game's box held the drawn body %u times, made again without it %u; no bounds read %u; put back %u",
              entities, grew, hookMet, grewTimer, noWorld, from == 1 ? "the props' bounds storage" : from == 2 ? "the bounds storage found by a unit's box" : "NO bounds storage found yet",
              held, rebuilt, bmissed, putBack);
+        const unsigned cullGrew = g_cullGrew.exchange(0), cullHeld = g_cullHeld.exchange(0), cullRebuilt = g_cullRebuilt.exchange(0),
+                       cullPasses = g_cullPasses.exchange(0), stale = meleetouch::TakeStalePoses();
+        const int cullHook = headshadow::CullHookState();
         LogF("knock down: kept in view at the draw collect - the bodies' entities collected for the eyes' passes %u times, the shadows' %u (a pass that "
              "leaves one out before its collect is not counted); their bounds grown there %u times, just before the game's - the box then held the drawn body "
-             "%u times, made again without it %u", drawEyes, drawShadow, grewDraw, drawHeld, drawRebuilt);
+             "%u times, made again without it %u; at the game's cull (%s): %u passes, their bounds grown %u times just before it - the box then held the drawn "
+             "body %u times, made again without it %u%s", drawEyes, drawShadow, grewDraw, drawHeld, drawRebuilt,
+             cullHook == 1 ? "hooked" : cullHook == 2 ? "NOT hooked: refused" : "not hooked yet", cullPasses, cullGrew, cullHeld, cullRebuilt,
+             stale ? ("; " + std::to_string(stale) + " skinnings found a pose too old (the timer's thread stalled) - those drew the game's pose").c_str() : "");
+        // a held body in front of the eyes that the eyes' passes did not draw: said once a cause a hold (the vanish Serg saw, 0.217.4)
+        for (int s = 0; s < D2RF_MAX_DOWN; ++s) {
+            CullWatch& w = g_cullWatch[s];
+            const unsigned passes = w.passes.exchange(0, std::memory_order_relaxed);
+            unsigned missed[kCullWhys];
+            for (int k = 0; k < kCullWhys; ++k) missed[k] = w.missed[k].exchange(0, std::memory_order_relaxed);
+            const uint32_t id = g_downIds[s].load(std::memory_order_relaxed);
+            if (!id || !passes) continue;
+            if (g_cullToldId[s] != id) { g_cullToldId[s] = id; g_cullToldMask[s] = 0; }
+            for (int k = 0; k < kCullWhys; ++k) {
+                if (missed[k] < 3 || (g_cullToldMask[s] >> k & 1u)) continue;   // (a pass or two: the eyes turning onto it)
+                g_cullToldMask[s] |= 1u << k;
+                LogF("knock down: body %u in front of the eyes was NOT DRAWN - none of its entities collected in %u of the last second's %u eyes' passes with the "
+                     "eyes on it: %s (said once a cause while it is ours)", id, missed[k], passes, kCullWhySaid[k]);
+            }
+        }
+        if (cullHook != 1 && !g_cullHookTold && cullHook == 2) {
+            g_cullHookTold = true;
+            LogF("knock down: a body drawn away from its unit may NOT BE DRAWN - the game's main cull is not hooked, so its bounds are the game's own (its unit's "
+                 "box) when a pass is culled: it shows only while the unit's own box is in view (said once)");
+        }
+        const unsigned steadyCarried = g_steadyCarried.exchange(0);   // [weight] grab_hold_steady
         LogF("knock down: %d out of the game's pose - %s; what hangs on their bones (weapons, shields) carried %u times since the last line%s; their bodies (the "
-             "weapon's, the grab's) laid on them as drawn: %u capsules%s", nPoses, said, carried,
+             "weapon's, the grab's) laid on them as drawn: %u capsules%s%s", nPoses, said, carried,
              missed ? (", " + std::to_string(missed) + " not (the pose not found)").c_str() : "", laidN,
-             laidMissed ? (", " + std::to_string(laidMissed) + " times a pose did not read (left where the game has them)").c_str() : "");
+             laidMissed ? (", " + std::to_string(laidMissed) + " times a pose did not read (left where the game has them)").c_str() : "",
+             steadyCarried ? ("; " + std::to_string(steadyCarried) + " ticks a held body's skeleton did not read - its last pose handed on (hold steady)").c_str() : "");
     }
     return n;
+}
+
+bool HeldBaseInto(uintptr_t self, float (*mats)[16], int n) {
+    if (!self || !mats || n <= 0 || g_nBaseNow.load(std::memory_order_relaxed) == 0) return false;
+    bool ok = false;
+    AcquireSRWLockShared(&g_baseLock);
+    for (const HeldBase& b : g_base)
+        if (b.id && b.self == self && b.n == n && b.m.size() == static_cast<size_t>(n) * 16) {
+            std::memcpy(mats, b.m.data(), sizeof(float) * 16 * static_cast<size_t>(n));
+            ok = true;
+            break;
+        }
+    ReleaseSRWLockShared(&g_baseLock);
+    return ok;
 }
 
 void LayBodies(monsterbodies::Snapshot* s, float upm) {
@@ -1884,8 +2082,60 @@ void LayBodies(monsterbodies::Snapshot* s, float upm) {
         if (!any) continue;
         const int n = skel::PoseNow(L.self, game, knockpose::kMaxBones);
         if (n != L.bones || n <= 0) { g_laidMissed.fetch_add(1, std::memory_order_relaxed); continue; }
-        std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
+        // ([weight] grab_hold_steady: laid on its bones as taken, as the skinning lays it - by the tick's own place here, as its capsules were read)
+        if (!(L.knock.steady && L.knock.base && L.knock.weight >= 0.999f && HeldBaseInto(L.self, drawn, n)))
+            std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
+        static float copy[knockpose::kMaxBones][16];   // (what it is laid from: its bones as taken, or the game's pose of the moment)
+        std::memcpy(copy, drawn, sizeof(float) * 16 * static_cast<size_t>(n));
         if (!knockpose::Apply(drawn, n, L.knock.parent, L.knock.joint, L.knock.at, L.knock.weight)) { g_laidMissed.fetch_add(1, std::memory_order_relaxed); continue; }
+        {   // a leg drawn twisted: the library's joints, or the laying?
+            int slot = -1;
+            for (int k = 0; k < D2RF_MAX_DOWN && slot < 0; ++k)
+                if (g_downIds[k].load(std::memory_order_relaxed) == L.id) slot = k;
+            const bool up = L.phase == D2RF_HELD || L.phase == D2RF_WALKING || L.phase == D2RF_STAGGERING || L.phase == D2RF_BACK;   // (falling, lying, getting up: any way)
+            float gj[D2RF_JOINTS][3], cj[D2RF_JOINTS][3];
+            if (slot >= 0 && up && L.knock.weight >= 0.999f && knockpose::JointsOf(L.knock.joint, game, n, gj, nullptr, L.knock.parent) &&
+                knockpose::JointsOf(L.knock.joint, copy, n, cj, nullptr, L.knock.parent)) {
+                LegWatch& w = g_legWatch[slot];
+                if (w.id != L.id) w = LegWatch{L.id};
+                const int pelvis = L.knock.joint[D2RF_PELVIS];
+                for (int sd = 0; sd < 2; ++sd) {
+                    const int hp = sd ? D2RF_R_HIP : D2RF_L_HIP;
+                    float lib = 0.0f, gm = 0.0f, off = 0.0f, roll[3] = {};
+                    const bool turned = knockpose::FootTurn(L.knock.at, hp, &lib) && knockpose::FootTurn(gj, hp, &gm);
+                    if (turned) {
+                        off = lib - gm;
+                        off -= 6.2831853f * std::floor((off + 3.14159265f) / 6.2831853f);
+                    }
+                    bool rolled = false;
+                    for (int b = 0; b < 3 && pelvis >= 0 && pelvis < n; ++b) {   // the thigh, the shin, the foot: each about its own line in the copy
+                        const int bone = L.knock.joint[hp + b];
+                        if (bone < 0 || bone >= n) continue;
+                        float ax[3], len = 0.0f;
+                        for (int k = 0; k < 3; ++k) { ax[k] = cj[hp + b + 1][k] - cj[hp + b][k]; len += ax[k] * ax[k]; }
+                        len = std::sqrt(len);
+                        if (!(len > 1e-5f)) continue;
+                        for (float& a : ax) a /= len;
+                        roll[b] = knockpose::TwistAbout(copy, drawn, bone, pelvis, ax);
+                        rolled = rolled || std::fabs(roll[b]) > kLegTwistRad;
+                    }
+                    const bool causes[2] = {turned && std::fabs(off) > kLegTwistRad, rolled};
+                    for (int c = 0; c < 2; ++c) {
+                        w.run[sd][c] = causes[c] ? w.run[sd][c] + 1 : 0;
+                        const unsigned bit = 1u << (sd * 2 + c);
+                        if (w.run[sd][c] < kLegTwistTicks || (w.told & bit)) continue;
+                        w.told |= bit;
+                        LogF("knock down: body %u's %s leg is drawn TWISTED (%s, laid on %s) - %s: the library has its foot turned %+.0f deg about the leg's own "
+                             "line (%+.0f deg from where the game has it now, %+.0f); the laying rolled its thigh %+.0f, its shin %+.0f, its foot %+.0f deg about "
+                             "their own lines beyond the pelvis (said once a leg and a cause while it is ours)", L.id, sd ? "RIGHT" : "LEFT", PhaseName(L.phase),
+                             L.knock.steady && L.knock.base ? "its bones as taken" : "the game's pose of the moment",
+                             c == 0 ? "the library's JOINTS have the foot turned so (the ragdoll's own: its hip, its steps)"
+                                    : "the LAYING rolled the leg about itself (the joints are where the library has them)",
+                             lib * 57.29578f, off * 57.29578f, gm * 57.29578f, roll[0] * 57.29578f, roll[1] * 57.29578f, roll[2] * 57.29578f);
+                    }
+                }
+            }
+        }
         // a bone's place in the world (world units): its matrix's origin through the model's
         const auto placeOf = [&](const float m[16], float out[3]) {
             for (int j = 0; j < 3; ++j) out[j] = m[12] * L.knock.m3[j] + m[13] * L.knock.m3[3 + j] + m[14] * L.knock.m3[6 + j] + L.knock.root[j];
@@ -1929,10 +2179,14 @@ void LayBodies(monsterbodies::Snapshot* s, float upm) {
             }
         }
         if (!(lo[0] <= hi[0])) continue;
+        int slot = -1;   // (its place in g_down: the ids are atomics beside the table)
+        for (int k = 0; k < D2RF_MAX_DOWN && slot < 0; ++k)
+            if (g_downIds[k].load(std::memory_order_relaxed) == L.id) slot = k;
         for (int e = 0; e < L.nEntity && grow.n < (int)std::size(grow.g); ++e) {
             if (!L.entity[e]) continue;
             Grow& g = grow.g[grow.n++];
             g.entity = L.entity[e];
+            g.slot = slot;
             std::memcpy(g.lo, lo, sizeof lo);
             std::memcpy(g.hi, hi, sizeof hi);
         }
@@ -2046,10 +2300,78 @@ void BeforeDraw(uint32_t entity, bool eyes) {
     ReleaseSRWLockShared(&g_growLock);
     if (!wanted) return;
     (eyes ? g_drawEyes : g_drawShadow).fetch_add(1, std::memory_order_relaxed);
+    if (eyes && want.slot >= 0 && want.slot < D2RF_MAX_DOWN) g_cullWatch[want.slot].collected.fetch_add(1, std::memory_order_relaxed);
     float m[16];
     if (!knockprops::EntityWorld(want.entity, m)) return;
     std::lock_guard<std::mutex> lock(g_grownMutex);
     GrowOneLocked(want.entity, m, &want, g_boundsGrewDraw, &g_drawHeld, &g_drawRebuilt);
+}
+
+// The game's main cull is about to run for a pass (the draw thread; headshadow's hook on 0xE37D20). UpdateSystems has just made every entity's bounds
+// again; the cull's jobs read them next. First the pass before: each watched body the eyes were on - did the eyes' passes collect any of its entities?
+void BeforeCull() {
+    if (g_nGrowNow.load(std::memory_order_relaxed) == 0) {
+        for (CullWatch& w : g_cullWatch)
+            if (w.was) { w.was = 0; w.id.store(0, std::memory_order_relaxed); }
+        return;
+    }
+    if (!viewgate::F4()) return;
+    g_cullPasses.fetch_add(1, std::memory_order_relaxed);
+    for (int s = 0; s < D2RF_MAX_DOWN; ++s) {   // the pass before
+        CullWatch& w = g_cullWatch[s];
+        const unsigned collected = w.collected.exchange(0, std::memory_order_relaxed);
+        if (!w.was || w.was != g_downIds[s].load(std::memory_order_relaxed) || !w.wasGaze) continue;
+        w.passes.fetch_add(1, std::memory_order_relaxed);
+        if (!collected) w.missed[std::clamp(w.why, 0, kCullWhys - 1)].fetch_add(1, std::memory_order_relaxed);
+    }
+    Grow want[64];
+    int n = 0;
+    AcquireSRWLockShared(&g_growLock);
+    n = std::min(g_nGrow, static_cast<int>(std::size(want)));
+    for (int i = 0; i < n; ++i) want[i] = g_grow[i];
+    ReleaseSRWLockShared(&g_growLock);
+    int why[D2RF_MAX_DOWN];
+    bool any[D2RF_MAX_DOWN] = {};
+    for (int& x : why) x = kCullNoEntities;
+    {
+        std::lock_guard<std::mutex> lock(g_grownMutex);
+        for (int i = 0; i < n; ++i) {
+            const Grow& g = want[i];
+            int got = kCullGrown;
+            float m[16], box[24];
+            if (!knockprops::EntityWorld(g.entity, m) && !skel::EntityWorldNow(g.entity, m)) {
+                got = kCullNoMatrix;
+            } else if (!knockprops::EntityBounds(g.entity, m, box)) {
+                got = kCullNoBounds;   // (an entity with no bounds of its own - a root with no model - is not what the cull tests: the others decide)
+            } else {
+                GrowOneLocked(g.entity, m, &g, g_cullGrew, &g_cullHeld, &g_cullRebuilt);
+                float after[24];
+                const bool holds = knockprops::EntityBounds(g.entity, m, after) && heldbounds::Holds(after, g.lo, g.hi);
+                if (!holds) got = kCullNoWrite;
+            }
+            if (g.slot < 0 || g.slot >= D2RF_MAX_DOWN) continue;
+            // a body's verdict: grown when any of its entities' bounds hold it (the ones with a model); else the worst said of the rest
+            if (got == kCullGrown) { why[g.slot] = kCullGrown; any[g.slot] = true; }
+            else if (!any[g.slot] && (why[g.slot] == kCullNoEntities || got > why[g.slot])) why[g.slot] = got;
+        }
+    }
+    for (int s = 0; s < D2RF_MAX_DOWN; ++s) {
+        CullWatch& w = g_cullWatch[s];
+        const uint32_t id = g_downIds[s].load(std::memory_order_relaxed);
+        w.was = w.id.load(std::memory_order_relaxed) == id ? id : 0;   // (watched by the timer: a body drawn away from its unit)
+        w.wasGaze = w.gaze.load(std::memory_order_relaxed);
+        w.why = why[s];
+    }
+}
+
+void NoteEyes(bool ok, const float eyeWorld[3], const float look[3]) {
+    const bool good = ok && eyeWorld && look && std::isfinite(eyeWorld[0] + eyeWorld[1] + eyeWorld[2] + look[0] + look[1] + look[2]);
+    if (good)
+        for (int k = 0; k < 3; ++k) {
+            g_eyesAt[k].store(eyeWorld[k], std::memory_order_relaxed);
+            g_eyesLook[k].store(look[k], std::memory_order_relaxed);
+        }
+    g_eyesOk.store(good, std::memory_order_relaxed);
 }
 
 namespace {
@@ -2064,10 +2386,28 @@ bool DeadKnown(uintptr_t self) { return In(g_deadKnown, self); }    // ... a dea
 bool DownSelf(uintptr_t self) { return In(g_downSelves, self); }    // any body drawn out of the game's pose (its parts noted before it dies)
 
 // A body's bones as drawn: a kept corpse's frozen ones (FrozenBonesOf), else the game's pose laid on the pose's joints.
-bool DrawnBones(uintptr_t self, const dollpose::Pose& pose, float (*game)[16], float (*drawn)[16], int n) {
+// [weight] grab_hold_steady: a body held to the world is laid through the model's place as it is now (m3 / root: handed back for what is carried with its
+// bones) and on its bones as taken - as the skinning lays it (skel::DollSkin); any other by the tick's place, as before.
+bool DrawnBones(uintptr_t self, const dollpose::Pose& pose, float (*game)[16], float (*drawn)[16], int n, float m3[9] = nullptr, float root[3] = nullptr) {
+    if (m3) std::memcpy(m3, pose.knock.m3, sizeof pose.knock.m3);
+    if (root) std::memcpy(root, pose.knock.root, sizeof pose.knock.root);
     if (pose.knock.frozen && pose.knock.weight >= 0.999f && FrozenBonesOf(self, pose.knock.m3, pose.knock.root, drawn, n)) return true;
-    std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
-    return knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, pose.knock.at, pose.knock.weight);
+    const float (*at)[3] = pose.knock.at;
+    float atNow[D2RF_JOINTS][3], w[16], m3Now[9], rootNow[3];
+    bool based = false;
+    if (pose.knock.steady) {
+        if (skel::EntityPlaceNow(pose.entity, w)) {
+            knockpose::PlaceOf(w, m3Now, rootNow);
+            if (knockpose::JointsNow(m3Now, rootNow, pose.knock.upm, pose.knock.world, atNow)) {
+                at = atNow;
+                if (m3) std::memcpy(m3, m3Now, sizeof m3Now);
+                if (root) std::memcpy(root, rootNow, sizeof rootNow);
+            }
+        }
+        based = pose.knock.base && pose.knock.weight >= 0.999f && HeldBaseInto(self, drawn, n);
+    }
+    if (!based) std::memcpy(drawn, game, sizeof(float) * 16 * static_cast<size_t>(n));
+    return knockpose::Apply(drawn, n, pose.knock.parent, pose.knock.joint, at, pose.knock.weight);
 }
 
 int ReadU32(uintptr_t at, uint32_t* v) noexcept {
@@ -2216,8 +2556,9 @@ void OnXform(uint32_t entity, uintptr_t component, uintptr_t out) {
         ReleaseSRWLockExclusive(&g_hangLock);
     };
     if (!meleetouch::MonsterPose(self, &pose) || !(pose.knock.weight > 0.0f) || n != pose.bones) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
-    if (!DrawnBones(self, pose, game, drawn, n)) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
-    if (!knockpose::Carry(m, game[bone], drawn[bone], pose.knock.m3, pose.knock.root, o) || WriteM(out, o) <= 0) { note(false); return; }
+    float m3[9], root[3];   // (the model's place the bones were laid by: a body held to the world, its place now)
+    if (!DrawnBones(self, pose, game, drawn, n, m3, root)) { note(false); g_carryMissed.fetch_add(1, std::memory_order_relaxed); return; }
+    if (!knockpose::Carry(m, game[bone], drawn[bone], m3, root, o) || WriteM(out, o) <= 0) { note(false); return; }
     WriteM(component + 0x40, o);   // (the transform's own world matrix, as potion_hide's writes do)
     note(true);
     g_carried.fetch_add(1, std::memory_order_relaxed);

@@ -22,6 +22,7 @@
 #include "../../vr/wheel_controller.h"
 #include "../../vr/wheel_geom.h"
 #include "../../vr/wheel_model.h"
+#include "../../vr/game_ui_sprite.h"
 #include "../../vr/wheel_icons.h"
 #include "../../vr/wheel_paint.h"
 #include "../../vr/wheel_ray.h"
@@ -1897,6 +1898,196 @@ static void TestPainterStop() {
     g_selfStop = nullptr;
 }
 
+// -- the running game's tables and its icon sheets (a player's PC: no icon cache) ----------------------------------------------
+// Made-up compiled rows at the offsets vr/wheel_icons.h names; with SKILL_TABLES_BIN = a folder holding the game's skills.bin, skilldesc.bin,
+// charstats.bin and PlayerClass.bin (the tester's own game, never committed) the same reading is checked against the real tables.
+struct Rows {
+    uint32_t size;
+    std::vector<uint8_t> bytes;
+    Rows(uint32_t rowSize, uint32_t n) : size(rowSize), bytes((size_t)rowSize * n, 0) {}
+    template <class T> void Put(uint32_t row, uint32_t at, T v) { std::memcpy(&bytes[(size_t)row * size + at], &v, sizeof v); }
+    wheelicons::RawTable Raw() const {
+        wheelicons::RawTable r;
+        r.rows = bytes.data();
+        r.size = size;
+        r.count = (uint32_t)(bytes.size() / size);
+        return r;
+    }
+};
+
+struct FakeTables {
+    Rows skills{0x2EC, 5}, desc{0x12C, 3}, stats{0xD4, 2}, classes{0x34, 2};
+    FakeTables() {
+        classes.Put<uint32_t>(0, 0x30, 0x20616D61);   // "ama "
+        classes.Put<uint32_t>(1, 0x30, 0x20726177);   // "war "
+        for (int k = 0; k < 3; ++k) { stats.Put<uint16_t>(0, 0x56 + 2 * k, (uint16_t)(10056 + k)); stats.Put<uint16_t>(1, 0x56 + 2 * k, (uint16_t)(27888 + k)); }
+        desc.Put<uint8_t>(0, 0x02, 2); desc.Put<uint8_t>(0, 0x06, 5); desc.Put<uint16_t>(0, 0x08, 1000);
+        desc.Put<uint8_t>(1, 0x02, 3); desc.Put<uint8_t>(1, 0x06, 7); desc.Put<uint16_t>(1, 0x08, 27480);
+        desc.Put<uint8_t>(2, 0x02, 0); desc.Put<uint8_t>(2, 0x06, 1); desc.Put<uint16_t>(2, 0x08, 2000);
+        const int8_t cls[5] = {-1, 0, -1, 1, -1};
+        const int16_t d[5] = {-1, 0, 0, 1, 2};
+        for (uint32_t i = 0; i < 5; ++i) {
+            skills.Put<uint16_t>(i, 0x00, (uint16_t)i);
+            skills.Put<int8_t>(i, 0x2C, cls[i]);
+            skills.Put<int16_t>(i, 0x23C, d[i]);
+        }
+    }
+    bool Parse(wheelicons::GameTables* t, const char** why = nullptr) const {
+        const char* w = nullptr;
+        return wheelicons::ParseGameTables(skills.Raw(), desc.Raw(), stats.Raw(), classes.Raw(), t, why ? why : &w);
+    }
+};
+
+// A sheet as the game's: 'SpA1' version 31, 4 components, `frames` frames of w x h side by side; pixel (f, x, y) = {f, x, y, 255}.
+static std::string MakeSheet(int frames, int w, int h) {
+    std::string d(40 + (size_t)frames * w * h * 4, '\0');
+    auto u16 = [&](size_t at, uint16_t v) { std::memcpy(&d[at], &v, 2); };
+    auto u32 = [&](size_t at, uint32_t v) { std::memcpy(&d[at], &v, 4); };
+    std::memcpy(&d[0], "SpA1", 4);
+    u16(4, 31); u16(6, (uint16_t)w); u32(8, (uint32_t)(frames * w)); u32(12, (uint32_t)h); u32(20, (uint32_t)frames);
+    u32(32, (uint32_t)(frames * w * h * 4)); u32(36, 4);
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < frames * w; ++x) {
+            uint8_t* p = (uint8_t*)&d[40 + ((size_t)y * frames * w + x) * 4];
+            p[0] = (uint8_t)(x / w); p[1] = (uint8_t)(x % w); p[2] = (uint8_t)y; p[3] = 255;
+        }
+    return d;
+}
+
+static bool ReadBin(const std::string& dir, const char* name, std::vector<uint8_t>* rows, wheelicons::RawTable* raw) {
+    FILE* f = nullptr;
+    if (fopen_s(&f, (dir + "\\" + name).c_str(), "rb") || !f) return false;
+    std::vector<uint8_t> all;
+    uint8_t buf[65536];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) all.insert(all.end(), buf, buf + n);
+    fclose(f);
+    if (all.size() < 4) return false;
+    uint32_t count = 0;
+    std::memcpy(&count, all.data(), 4);
+    if (!count || (all.size() - 4) % count) return false;
+    rows->assign(all.begin() + 4, all.end());
+    raw->rows = rows->data();
+    raw->count = count;
+    raw->size = (uint32_t)((all.size() - 4) / count);
+    return true;
+}
+
+static void TestGameTables() {
+    // the reading
+    FakeTables f;
+    wheelicons::GameTables t;
+    CHECK(f.Parse(&t) && t.classes == 2 && t.skill.size() == 5);
+    CHECK(std::strncmp(t.code[0], "ama", 3) == 0 && std::strncmp(t.code[1], "war", 3) == 0);
+    CHECK(t.treeName[1][0] == 27888 && t.treeName[1][2] == 27890 && t.treeName[0][1] == 10057);
+    CHECK(t.skill[0].cls == -1 && t.skill[0].page == 0 && t.skill[0].iconCel == -1 && t.skill[0].nameId == 0);   // a command: no description
+    CHECK(t.skill[1].cls == 0 && t.skill[1].page == 2 && t.skill[1].iconCel == 5 && t.skill[1].nameId == 1000);
+    CHECK(t.skill[2].cls == 0 && t.skill[2].page == 2 && t.skill[2].iconCel == 5);   // no class of its own: its description's owner's (as the dev cache)
+    CHECK(t.skill[3].cls == 1 && t.skill[3].page == 3 && t.skill[3].iconCel == 7 && t.skill[3].nameId == 27480);
+    CHECK(t.skill[4].cls == -1 && t.skill[4].page == 0 && t.skill[4].iconCel == 1 && t.skill[4].nameId == 2000);   // the shared sheet, on no tree
+    // another layout is refused, never half read
+    { FakeTables g; g.skills.Put<uint16_t>(3, 0x00, 9); wheelicons::GameTables o; const char* why = nullptr; CHECK(!g.Parse(&o, &why) && why && o.skill.empty()); }
+    { FakeTables g; g.skills.Put<int8_t>(1, 0x2C, 2); wheelicons::GameTables o; CHECK(!g.Parse(&o)); }        // a class past the classes
+    { FakeTables g; g.skills.Put<int16_t>(1, 0x23C, 3); wheelicons::GameTables o; CHECK(!g.Parse(&o)); }      // a description past the descriptions
+    { FakeTables g; g.desc.Put<uint8_t>(2, 0x02, 4); wheelicons::GameTables o; CHECK(!g.Parse(&o)); }         // a tree page past 3
+    { FakeTables g; g.classes.Put<uint32_t>(1, 0x30, 0x20524157); wheelicons::GameTables o; CHECK(!g.Parse(&o)); }   // "WAR ": not a code
+    { FakeTables g; g.desc.Put<uint8_t>(0, 0x02, 0); g.desc.Put<uint8_t>(1, 0x02, 0); wheelicons::GameTables o; CHECK(!g.Parse(&o)); }   // nothing on a tree
+    { FakeTables g; wheelicons::RawTable small = g.skills.Raw(); small.size = 0x100; wheelicons::GameTables o; const char* w = nullptr;
+      CHECK(!wheelicons::ParseGameTables(small, g.desc.Raw(), g.stats.Raw(), g.classes.Raw(), &o, &w)); }   // rows too short for what is read
+    { FakeTables g; wheelicons::RawTable one = g.classes.Raw(); one.count = 1; wheelicons::GameTables o; const char* w = nullptr;
+      CHECK(!wheelicons::ParseGameTables(g.skills.Raw(), g.desc.Raw(), g.stats.Raw(), one, &o, &w)); }      // the class tables disagree
+
+    // a sheet's frame
+    const std::string bytes = MakeSheet(8, 3, 2);
+    gameui::Sheet sheet;
+    CHECK(gameui::Decode(bytes, &sheet));
+    wheelicons::Image img;
+    CHECK(wheelicons::CutFrame(sheet, 5, &img) && img.width == 3 && img.height == 2 && img.rgba.size() == 24);
+    CHECK(img.rgba[0] == 5 && img.rgba[1] == 0 && img.rgba[4] == 5 && img.rgba[5] == 1 && img.rgba[12 + 2] == 1 && img.rgba[12 + 0] == 5);
+    CHECK(!wheelicons::CutFrame(sheet, 8, &img) && !wheelicons::CutFrame(sheet, -1, &img));
+
+    // the icons, names and trees on a PC with no cache: from the tables, the pictures cut from the sheet beside the plugin
+    char tmp[MAX_PATH] = {};
+    GetTempPathA(MAX_PATH, tmp);
+    const std::string dir = std::string(tmp) + "skill_wheel_test_sheets_" + std::to_string(GetCurrentProcessId());
+    CreateDirectoryA(dir.c_str(), nullptr);
+    const std::string sheetFile = dir + "\\skill_icons_ama.sprite";
+    { FILE* out = nullptr; if (!fopen_s(&out, sheetFile.c_str(), "wb") && out) { fwrite(bytes.data(), 1, bytes.size(), out); fclose(out); } }
+    wheelicons::Shutdown();
+    wheelicons::SetDirectory(L"C:\\no such folder\\d2r_vr_skill_icons");
+    const std::wstring wdir(dir.begin(), dir.end());
+    wheelicons::SetSheetDirectory(wdir);
+    CHECK(!wheelicons::Available() && !wheelicons::HasTrees() && wheelicons::NameId(3) == 0);   // nothing yet: names as numbers' fallback, the one list
+    wheelicons::SetGameTables(std::make_shared<wheelicons::GameTables>(t));
+    CHECK(wheelicons::HasGameTables() && wheelicons::HasTrees() && wheelicons::Available());
+    CHECK(wheelicons::NameKey(3).empty() && wheelicons::NameId(3) == 27480 && wheelicons::NameId(99) == 0 && wheelicons::TreeNameId(1, 1) == 27888);
+    CHECK(wheelicons::TreeNameId(1, 4) == 0 && wheelicons::TreeNameId(5, 1) == 0);
+    int cls = -9, page = -9;
+    CHECK(wheelicons::SkillTree(2, &cls, &page) && cls == 0 && page == 2);
+    CHECK(wheelicons::SkillTree(0, &cls, &page) && cls == -1 && page == 0);
+    CHECK(!wheelicons::SkillTree(77, &cls, &page));
+    CHECK(wheelicons::Get(1) == nullptr);   // asked: the worker cuts it
+    std::shared_ptr<const wheelicons::Image> got;
+    for (int i = 0; i < 200 && !got; ++i) { Sleep(10); got = wheelicons::Get(1); }
+    CHECK(got && got->width == 3 && got->height == 2 && got->rgba[0] == 5);
+    std::shared_ptr<const wheelicons::Image> war = wheelicons::Get(3);   // the Warlock's sheet is not there: a plain plate, no other sheet's picture
+    for (int i = 0; i < 20 && !war; ++i) { Sleep(10); war = wheelicons::Get(3); }
+    CHECK(!war);
+    CHECK(!wheelicons::Get(0));   // no frame at all
+    // the tables go (another load, an ini reload): back to nothing
+    wheelicons::SetGameTables(nullptr);
+    CHECK(!wheelicons::HasGameTables() && !wheelicons::HasTrees() && wheelicons::NameId(3) == 0 && !wheelicons::Available());
+    wheelicons::Shutdown();
+    DeleteFileA(sheetFile.c_str());
+    RemoveDirectoryA(dir.c_str());
+
+    // the real tables (SKILL_TABLES_BIN): the offsets read what the game's .txt says of these skills
+    char bin[400] = {};
+    if (GetEnvironmentVariableA("SKILL_TABLES_BIN", bin, sizeof bin)) {
+        std::vector<uint8_t> a, b, c, d;
+        wheelicons::RawTable rs, rd, rc, rp;
+        const bool read = ReadBin(bin, "skills.bin", &a, &rs) && ReadBin(bin, "skilldesc.bin", &b, &rd) && ReadBin(bin, "charstats.bin", &c, &rc) &&
+                          ReadBin(bin, "PlayerClass.bin", &d, &rp);
+        CHECK(read);
+        wheelicons::GameTables g;
+        const char* why = "";
+        const bool ok = read && wheelicons::ParseGameTables(rs, rd, rc, rp, &g, &why);
+        if (!ok) std::printf("  real tables refused: %s\n", why);
+        CHECK(ok);
+        if (ok) {
+            int trees = 0;
+            for (const auto& s : g.skill) trees += s.page ? 1 : 0;
+            std::printf("  real tables: %u skills, %d classes, %d on a tree\n", (unsigned)g.skill.size(), g.classes, trees);
+            CHECK(g.skill.size() > 402 && g.classes == 8 && std::strncmp(g.code[7], "war", 3) == 0);
+            CHECK(g.skill[0].cls == -1 && g.skill[0].page == 0);                                   // Attack
+            CHECK(g.skill[36].cls == 1 && g.skill[36].page >= 1);                                  // Fire Bolt: the Sorceress's
+            CHECK(g.skill[373].cls == 7 && g.skill[373].page == 1 && g.skill[373].nameId == 27480 && g.skill[373].iconCel == 2);   // Summon Goatman
+            CHECK(g.skill[402].cls == 7 && g.skill[402].page == 3 && g.skill[402].iconCel == 58);  // Abyss
+            CHECK(g.treeName[7][0] == 27888 && g.treeName[0][0] == 10056);                        // StrSklTabItem24 / StrSklTabItem3
+            char sheets[400] = {};   // SKILL_ICON_SHEETS: Settings' copies (d2r_vr_game_ui) - the Warlock's Summon Goatman cut from its sheet
+            if (GetEnvironmentVariableA("SKILL_ICON_SHEETS", sheets, sizeof sheets)) {
+                std::vector<uint8_t> sb;
+                FILE* sf = nullptr;
+                std::string sbytes;
+                if (!fopen_s(&sf, (std::string(sheets) + "\\skill_icons_war.sprite").c_str(), "rb") && sf) {
+                    char buf[65536];
+                    size_t n;
+                    while ((n = fread(buf, 1, sizeof buf, sf)) > 0) sbytes.append(buf, n);
+                    fclose(sf);
+                }
+                gameui::Sheet ws;
+                wheelicons::Image icon;
+                CHECK(gameui::Decode(sbytes, &ws) && wheelicons::CutFrame(ws, g.skill[373].iconCel, &icon) && icon.width > 32 && icon.height > 32);
+                int opaque = 0;
+                for (size_t i = 3; i < icon.rgba.size(); i += 4) opaque += icon.rgba[i] > 128 ? 1 : 0;
+                std::printf("  the Warlock's sheet: %d frames of %dx%d; Summon Goatman's icon %ux%u, %d opaque pixels\n", ws.frames, ws.frameWidth, ws.height,
+                            icon.width, icon.height, opaque);
+                CHECK(opaque > (int)(icon.width * icon.height / 4));
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     TestPainterStop();
     TestPaint(argc > 2 && std::strcmp(argv[1], "--dump") == 0 ? argv[2] : nullptr);
@@ -1923,6 +2114,7 @@ int main(int argc, char** argv) {
     TestModelCategories();
     TestModelRunWalk();
     TestControllerRunWalk();
+    TestGameTables();
     TestFuzz();
     std::printf("%d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

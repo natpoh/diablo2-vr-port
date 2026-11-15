@@ -19,6 +19,7 @@
 #include "game_ui_files.h"
 #include "game_ui_sprite.h"
 #include "menu_assets.h"
+#include "skill_icon_files.h"
 
 static int g_fail = 0;
 static void Expect(bool ok, const char* what) {
@@ -95,6 +96,30 @@ int wmain(int argc, wchar_t** argv) {
     DeleteFileW((dir + gameuifiles::kFiles[5].leaf).c_str());
     r = menuassets::Prepare(game, scratch, true);
     Expect(r.ok && r.wrote && CountFiles(scratch) == gameuifiles::kFileCount + gameuifiles::kPlateFileCount, "a piece gone: made again");
+
+    // [openxr] skill_wheel: the game's own skill-icon sheets (shared/skill_icon_files.h) - off nothing, on every sheet a sheet the plugin cuts
+    const int before = CountFiles(scratch);
+    r = menuassets::PrepareSkillIcons(game, scratch, false);
+    Expect(r.ok && !r.wrote && CountFiles(scratch) == before, "skill icons off: nothing written");
+    r = menuassets::PrepareSkillIcons(game, scratch + L"no such folder\\", true);
+    Expect(!r.ok && !r.wrote && !r.text.empty() && CountFiles(scratch) == before, "skill icons, no plugin folder: nothing made, and said so");
+    const ULONGLONG t1 = GetTickCount64();
+    r = menuassets::PrepareSkillIcons(game, scratch, true);
+    printf("skill icons: %ls (%llu ms)\n", r.text.c_str(), GetTickCount64() - t1);
+    Expect(r.ok && r.wrote && CountFiles(scratch) == before + skilliconfiles::kSheetCount, "skill icons on: every sheet and nothing else");
+    size_t sheetBytes = 0;
+    for (int i = 0; i < skilliconfiles::kSheetCount; ++i) {
+        const std::string data = ReadAll(dir + skilliconfiles::kSheets[i].leaf);
+        sheetBytes += data.size();
+        gameui::Sheet s;
+        const char* why = "";
+        const bool ok = gameui::Decode(data, &s, &why);
+        printf("  %-28ls %s %d x %d, %d frame(s)%s%s\n", skilliconfiles::kSheets[i].leaf, ok ? "a sheet" : "NOT a sheet", s.frameWidth, s.height, s.frames, ok ? "" : ": ", ok ? "" : why);
+        Expect(ok && s.frames >= 30, "a skill-icon sheet the plugin decodes");
+    }
+    printf("  %d sheets, %.1f MB\n", skilliconfiles::kSheetCount, sheetBytes / 1048576.0);
+    r = menuassets::PrepareSkillIcons(game, scratch, true);
+    Expect(r.ok && !r.wrote, "skill icons again: nothing to do");
 
     printf(g_fail ? "%d failed\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;

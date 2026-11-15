@@ -837,6 +837,11 @@ std::vector<Item> g_items = {
            L"could not reach the bottom (the main menu's Play and Create Character buttons). On: the game's interface is laid out over the "
            L"whole picture (its toolbar at the picture's bottom, as with a window of the picture's shape) and the mouse reaches all of it. Live. Off: the window's size, as before. "
            L"(Found by bearstonem/d2r-pcvr.)")),
+    Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, Toggle(L"render", L"vr_resolution_ui_pointer", L"The mouse reaches the picture's right edge", 1,
+           L"The game keeps its mouse inside a part of the window's width when it turns the pointer into a place on its menus. With a game "
+           L"window much smaller than the VR picture (a small monitor or a TV as the main display) that part ended well before the picture's "
+           L"right edge: the inventory's right columns beside the mercenary or a trader could not be clicked with the laser or the mouse. On: "
+           L"the game is told the picture's size there too, and the pointer reaches all of it. Live. Off: the window's size, as before."))),
     // 0.214 (Serg, after his test: "Yes, remove Always" - the toolbar hung mid-view in the world): Off / With the inventory open, 0 / 2;
     // a 1 left in an ini reads as 2 in the plugin (vr/frame/frame_order.cpp) and as none chosen here
     Only(kVr, Needs(L"render", L"vr_resolution_ui", 1, ChoiceValues(L"render", L"ui_band_16x9", L"Menus laid out 16:9", 0,
@@ -1212,11 +1217,12 @@ std::vector<Item> g_items = {
            L"switch stop at once - the game shows its own sky and fog. The headset, the head and the hands, and the controls stay. The room "
            L"rings and the models' distance stay as at the start (they need a restart). The log says what stopped, and its 10 s frame line "
            L"goes on. Live. Unticked: everything back as set."),
-    Group(L"Processor", L"For Ryzen processors with 3D V-Cache (X3D): the game runs on the cores with the big cache and its drawing thread gets a higher priority. On other processors nothing changes."),
+    Group(L"Processor", L"For Ryzen processors with 3D V-Cache (X3D): the game's drawing thread runs on the cores with the big cache. On other processors nothing changes."),
     Toggle(L"render", L"vcache", L"Game on the cores with the big cache (Ryzen X3D)", 0,
-           L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's threads "
-           L"are asked to run on the cores with the big L3 cache, and its drawing thread gets a higher priority - D2R's frame is "
-           L"bound by that one thread. Other processors: nothing changes. The log says which cores were taken. Live."),
+           L"On a Ryzen with 3D V-Cache on one of its two core groups (7900X3D, 7950X3D, 9900X3D, 9950X3D) the game's drawing "
+           L"thread - D2R's frame is bound by that one thread - is asked to run on the cores with the big L3 cache. Only that "
+           L"thread: the game's other threads keep every core and no priority is changed (asking all of them to move made the "
+           L"game freeze for seconds at a time). Other processors: nothing changes. The log says which cores were taken. Live."),
     // Render cost (Serg 2026-11-08: "из World надо перенести это в Performance"): foveated rendering, the grass lighting's rate, the lens mask and the
     // shadows once a pair, moved from the World and Stereo tabs - the same keys; the main ticks are on Home too (twins, kRenderCost* words)
     Group(L"Render cost", L"Graphics card time saved where you do not look closely: foveated rendering (less detail at each eye's edges), the grass lit at a lower rate, the pixels the lenses never show skipped, and the shadows drawn once for both eyes; and processor time: the game's sun shadow map filled for less (or not at all). First person (F4), native OpenXR."),
@@ -1454,7 +1460,7 @@ std::vector<Item> g_items = {
            L"radius. Needs room rings 3 or more (past the rooms the game builds there is nothing to draw), and the full fog and the sky dome "
            L"past it to be seen. Costs frames in forests and towns. From D2R VR Unleashed (bearstonem). Visual only. Live. 0 = off, as before."),
     Needs(L"sky", L"game_sky", 1, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
-           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
+           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 1500,
            L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
            L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
            L"use with each change."))),
@@ -1856,11 +1862,11 @@ std::vector<Item> g_items = {
     Tab(L"Controls"),
     // [hands] left_handed (vr/hand_swap.h; Serg, 2026-11-05: "галочка поменять контроллеры местами для левшей"): the controllers traded once where they come in
     Only(kVr, Group(L"Hands", L"Which VR controller is the weapon hand.")),
-    Only(kVr, Toggle(L"hands", L"left_handed", L"Left-handed: swap the controllers", 0,
-           L"The LEFT controller holds the main weapon and strikes with it, the right one is the off hand (shield, second weapon, the hand that holds "
-           L"the bow). The buttons, stick and trigger swap too: what the right controller did, the left one does. The inventory and the map in the "
-           L"hand, the wrist orbs, the belt, throws, the bow and vibration follow. The menu button stays where it is. First person (F4) only; the "
-           L"game's own weapons are not changed. Unticked = as before. Live.")),
+    Only(kVr, Toggle(L"hands", L"left_handed", L"Left-handed: swap the sticks", 0,
+           L"The two sticks trade jobs: the LEFT stick turns and its click and long press do the right stick's (the long press opens the skill "
+           L"panel), the RIGHT stick walks with the left stick's click. Nothing else changes: the triggers, grips, X / Y, A / B and the menu stay "
+           L"as they are, and each controller stays its own hand, the weapon in the hand that holds it. First person (F4) only. Unticked = as "
+           L"before. Live.")),
     Group(L"Walking (left stick)", L"How the left stick walks the hero: walk where you look, and fixes for when walking goes the wrong way or diagonals drift after a turn."),
     Toggle(L"stick", L"rotate", L"Walk where I look", 1, L"The left stick is turned by the camera's yaw, so forward is forward in the view."),
     Toggle(L"stick", L"exact", L"Exact mode", 0,
@@ -2406,9 +2412,10 @@ std::vector<Item> g_items = {
            L"the right laser hand) and click the pointing hand's thumbstick. Point a wedge with the laser and pull the trigger: "
            L"from then on that hand's trigger casts the slot - the game's own gamepad button, with its own animation, mana and "
            L"cooldown. The centre is the basic attack again. EDIT SKILLS -> a slot -> a skill assigns a learned skill to the "
-           L"slot, through the game's own setter and checked back. Names are the game's own text; for icons run "
-           L"tools/skill_icons/prepare_skill_icons.py once (it reads YOUR installed game; nothing of it ships), "
-           L"without them the wheel shows names. Off: nothing of it exists."),
+           L"slot, through the game's own setter and checked back. Names, icons and skill trees are the game's own: read from the "
+           L"running game, in your language; the icons are cut from the game's own skill pictures, which this program copies out of YOUR "
+           L"installed game (read only) beside the plugin while the panel is on - nothing of it ships. A skill without a picture shows "
+           L"its name. Off: nothing of it exists."),
     Needs(L"openxr", L"skill_wheel", 1, Choice(L"openxr", L"skill_wheel_open", L"Skill panel opens by", 1, {L"Left grip + right stick click", L"Long press of the right stick"},
            L"How you open (and close) the skill panel. Long press of the right stick: hold the right thumbstick's click for about half a "
            L"second (a short click is still the weapon swap) - needs \"Controls without BodyWalk\"; the same long press closes it. "
@@ -2434,9 +2441,8 @@ std::vector<Item> g_items = {
     Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_categories", L"Skill editor: categories (All, the class's skill trees, General / Items)", 1,
            L"EDIT SKILLS -> a slot: a strip over the list of skills with the tabs All, your class's three skill trees (named as the game "
            L"names them, in your language) and General / Items (the town portal, the basic attack, a skill an item gives), each with its "
-           L"count. Which tree a skill is on comes from the game's own tables, read once by tools/skill_icons/prepare_skill_icons.py "
-           L"(run it again after updating the mod, an older icon cache has no trees: then there is only the one list). Off: the one "
-           L"list of every skill, as before. Live. Idea after bearstonem/d2r-pcvr (MIT).")),
+           L"count. Which tree a skill is on comes from the running game's own tables (should they not read - another game "
+           L"version - there is only the one list). Off: the one list of every skill, as before. Live. Idea after bearstonem/d2r-pcvr (MIT).")),
     Needs(L"openxr", L"skill_wheel", 1, Toggle(L"openxr", L"skill_panel_edit_first", L"Skill panel opens ready to edit: tap a slot to change its skill", 1,
            L"The skill panel's first page edits: point at a slot and pull the trigger, and the list of your skills comes up - pick one and the game puts "
            L"it on that slot (as EDIT SKILLS -> a slot does; the button is still there). Before, a tap on a slot picked it for the trigger - from then on "
@@ -4129,7 +4135,7 @@ std::vector<Item> g_items = {
     Toggle(L"sky", L"enabled", L"Sky outdoors", 0,
            L"A sky in the black void beyond the world. Only in the open air; hidden while a menu or side panel is open."),
     Needs(L"sky", L"game_sky", 1, StartsFromConverted(L"game_sky_radius", &SkyRadiusMFromUnits,
-           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 50,
+           Slider(L"sky", L"game_sky_radius_m", L"The game's sky: dome radius, m", 10, 7500, 0.5f, 1500,
            L"How far round you the game's sky dome is laid, in metres (4 of the game's units a metre; live). 50 m: a near horizon - the dome "
            L"cuts the far world off in a clean circle, the game's fog over it. Farther the sky comes out of the fog. The log says the radius in "
            L"use with each change."))),
@@ -4290,6 +4296,10 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_flat", L"The game's fog in the flat game too", 0,
            L"The game draws its fog also when you play on the monitor without a headset (the flat first and third person views). Off: only in "
            L"VR first person (F4). Empty: as \"The game draws the sky in the flat game too\" (the one switch before). Live.")),
+    // (Serg 2026-11-15 on 0.217.1: no fog at all in VR F2, the fog in F4)
+    Only(kVr, Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_vr_third_person", L"The game's fog in VR third person (F2) too", 1,
+           L"The game draws its fog in the headset's third person view (F2) as in first person (F4), with the fog before smoke and fire. "
+           L"Off: no fog in F2, as before. Live."))),
     // (Serg 2026-11-09, "туман до эффектов": a torch's flame and smoke were wiped by the fog of the far ground behind them)
     Needs(L"fog", L"game_fog", 1, Toggle(L"fog", L"game_fog_before_fx", L"The fog before smoke and fire", 1,
            L"The fog is laid on the world before the game adds its smoke, fire, mist and spells, so they stay bright over the fogged world. "
@@ -4316,6 +4326,11 @@ std::vector<Item> g_items = {
     Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_miss_keeps_fog", L"No frame without fog", 1,
            L"With the fog before smoke and fire: a frame it could not draw keeps the game's own fog (over smoke and fire too, as without it) "
            L"instead of no fog at all - no flicker. Off: as 0.215. Live."))),
+    // (2026-11-14, dastarto on 0.217.1, flat F2 with the picture moved: one side of the sky fogged as far ground, a jagged edge down it)
+    Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_sky_off_axis", L"Fog before smoke and fire: the sky by the picture's real centre", 1,
+           L"With the fog before smoke and fire in the flat game: the sky is told from the ground by the picture's real centre. The picture "
+           L"moved left or right (or up and down) is off-centre, and one side of the sky was taken for far ground and fogged - a jagged edge "
+           L"down the sky. Off: as before. Live."))),
     // (2026-11-13, Serg on 0.215.8: "the game's haze whitens the objects behind" - far bushes as pale silhouettes behind the rain's haze)
     Needs(L"fog", L"game_fog", 1, Needs(L"fog", L"game_fog_before_fx", 1, Toggle(L"fog", L"game_fog_layers_in_order", L"Fog before smoke and fire: haze and leaves in depth order", 1,
            L"With the fog before smoke and fire: smoke, rain haze and the see-through leaves and hair are laid nearer over farther, each by "
@@ -5841,6 +5856,12 @@ std::vector<Item> g_items = {
            L"lands - so it fights from there and does not walk back to its old place, and everyone in the game sees it. Whatever the game's knockback refuses "
            L"(bosses, big monsters) stays where it is. Only in single player or when you host the game; a joined player's stays drawn only. F4. "
            L"Unticked: only the drawing moves, the game keeps it where it was, as before."))),
+    // [weight] grab_holds_unit: the unit of a body a hand holds kept in the game's own hit recovery (vr/grab_move.h; single player / host)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_holds_unit", L"A monster in your hand cannot walk off or attack (a test)", 0,
+           L"Needs Weapon Weight > Grab bodies > \"Lift and throw a humanoid you grab\". Live. Ticked: while your hand holds a monster, the game keeps it in its own "
+           L"hit recovery - the state of a monster that was just struck - so it neither walks away nor attacks from under your hand; it is free again the moment "
+           L"you let go. Nothing is moved and no damage is dealt. A town NPC or a boss the game gives no hit recovery goes on as the game has it. Only in single "
+           L"player or when you host the game. F4. Unticked: the game moves and uses the monster as it likes while you hold it, as before."))),
     Sub(L"Monsters you knock down (Weapon Weight > Monsters' bodies)"),
     // [weight] knock_down_moves_unit: what a weapon's blow knocks down ([weight] knock_down) is moved by the game's own knockback too (vr/grab_move.h; single player / host)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_down", 1, Toggle(L"weight", L"knock_down_moves_unit", L"The game moves what you knock down (a test)", 0,
@@ -6279,6 +6300,11 @@ std::vector<Item> g_items = {
            L"Ticked, with Lift and throw: take a humanoid by the hand or the arm and pull, and it steps after you to keep its feet - as fast as its legs can step; "
            L"only a pull faster than that takes it off its feet. Let go and it walks back to where the game has it. Only the drawing: where it stands and what it "
            L"does stay the game's. F4. Unticked: pulled 30 cm out of its place it falls, as before."))),
+    // [weight] grab_hold_steady: a body a hand took is held to the world, laid on its bones as taken (vr/knock_down.cpp, docs/notes/grab_hold_flicker.md)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"grab_throw", 1, Toggle(L"weight", L"grab_hold_steady", L"A held body stays steady while the game moves it (a test)", 0,
+           L"Ticked, with Lift and throw: a monster or a town NPC in your hand is drawn only by your hold. The game may walk it away, turn it or play its walk or "
+           L"attack animation - the body in your hand does not shake, jump or twist with it. Only the drawing; it works in a game you joined too. F4. "
+           L"Unticked: the held body follows its game unit's moves and animation a little, as before."))),
     // [weight] impale_drag: a charge with a spear impales a humanoid and carries it on the blade (vr/knock_down.h)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"stab_in", 1, Toggle(L"weight", L"impale_drag", L"Impale and drag a humanoid on your spear (a test)", 0,
            L"Ticked, with the stab: run into a humanoid monster or a town NPC with a spear (or any weapon point first) and the point goes in at 2 m/s or more "
@@ -12897,6 +12923,26 @@ void StartPortraits() {
     }
 }
 
+// [openxr] skill_wheel: the game's own skill-icon sheets beside the plugin (menu_assets.cpp PrepareSkillIcons) - the skill panel cuts each skill's icon
+// out of them by the running game's own tables (a player has no icon cache). On a thread of its own, at the start and when the tick is set.
+menuassets::Result PrepareSkillIconsNow() {
+    std::wstring dir = g_ini;
+    const size_t slash = dir.find_last_of(L"\\/");
+    dir = slash == std::wstring::npos ? std::wstring() : dir.substr(0, slash + 1);
+    return menuassets::PrepareSkillIcons(GameFolder(), dir, GetPrivateProfileIntW(L"openxr", L"skill_wheel", 0, g_ini) != 0);
+}
+
+void StartSkillIcons() {
+    try {
+        std::thread([] {
+            const menuassets::Result r = PrepareSkillIconsNow();
+            LogLine(L"skill icons: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"skill icons: could not be started");
+    }
+}
+
 void StartKurastBoat() {
     if (g_boatBusy.exchange(true)) {
         g_boatAgain.store(true);
@@ -13479,6 +13525,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
+                if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_wheel") == 0) StartSkillIcons();
                 if ((wcscmp(it.section, L"sky") == 0 && (wcscmp(it.key, L"game_sky") == 0 || wcscmp(it.key, L"game_dome_caves") == 0 ||
                                                          wcscmp(it.key, L"game_sky_closed") == 0)) ||
                     (wcscmp(it.section, L"debug") == 0 && wcscmp(it.key, L"game_sky_test") == 0))
@@ -13539,6 +13586,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartCampfireScene();
         StartMenuArt();
         StartPortraits();
+        StartSkillIcons();
         StartDataMods();
         PostMessageW(wnd, WM_APP_ASK_CRASH, 0, 0);   // [support] crash_reports: the one-time question, once the window is up
         return 0;
@@ -13862,6 +13910,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });     // [campfire] enabled: character creation's scene round the fire
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
+            timed(L"skill icons", [] { return PrepareSkillIconsNow().text; });          // [openxr] skill_wheel: the game's skill-icon sheets beside the plugin
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) == 0) return 0;   // unticked: nothing made
             const arcane::Result r = PrepareArcane();
             LogLine(L"arcane sky: " + r.text);

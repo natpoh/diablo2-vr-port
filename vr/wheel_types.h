@@ -18,8 +18,8 @@ constexpr int kOptionsMax = 24;   // the most skills the editor shows on one pag
 
 // The editor's skill categories (idea after bearstonem/d2r-pcvr, MIT): All, the class's three skill trees, and General / Items (everything
 // that is no tree's: the game's own commands, the town portal, the skills an item grants). Which tree a skill is on, and the trees' names,
-// come from the player's own game (the icon cache: tools/skill_icons reads SkillPage from skilldesc.txt and the names' keys from
-// charstats.txt), not from a table in the plugin; without the cache the editor has the one list, All.
+// come from the running game's own tables (skilldesc SkillPage, charstats StrSkillTab1..3; vr/skill_tables_game.h - or a developer's icon
+// cache), not from a table in the plugin; when neither is known the editor has the one list, All.
 constexpr int kCategories = 5;
 enum Category : int { kCatAll = 0, kCatTree1 = 1, kCatTree2 = 2, kCatTree3 = 3, kCatGeneral = 4 };
 // What a skill's `tree` says: -1 not known (no cache), 0 General / Items, 1..3 the class's tree.

@@ -129,7 +129,7 @@ void ApplyPools();
 void ApplyBackgroundSleep();
 void HookGameWindow();
 void InstallBiomeHook();
-void InstallClientSize(bool on);
+void InstallClientSize(bool on, bool pointer);   // [render] vr_resolution_ui, vr_resolution_ui_pointer
 void InstallLabelWidthGuard();
 void InstallRoomHeightHook();
 void InstallTerrainHeightHook();   // [render] terrain_heights (vr/render/render_switches.cpp)
@@ -325,6 +325,7 @@ extern std::atomic<float> g_topEyeDist;   // VR F1 through our camera: the eye's
 extern std::atomic<bool> g_topEyeOk;
 extern std::atomic<float> g_viewFwdY;
 extern std::atomic<float> g_projSx, g_projSy, g_stereoIpd, g_stereoConv;
+extern std::atomic<float> g_projOffX, g_projOffY;   // the view axis on the picture, NDC (-M[8], -M[9]): the flat picture's shift ([fog] game_fog_sky_off_axis)
 extern std::atomic<bool> g_handWalk;
 extern std::atomic<uint32_t> g_handWalkReads;
 extern bool g_lookOk;

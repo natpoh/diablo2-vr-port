@@ -123,4 +123,33 @@ inline Outcome Judge(int modeAfter) {
 // May a knockback be asked of a unit in this mode: not dead or dying (0, 12), not in one already (13: the last one still runs - asked again after it).
 inline bool ModeAllows(int mode) { return mode != 0 && mode != 12 && mode != kKnockbackMode; }
 
+// ---- [weight] grab_holds_unit: the unit a hand holds is kept where it is by the game's own hit recovery -----------------------------------------------
+// Serg, 2026-11-14: a held monster's unit walks off, flees or attacks under the hand (docs/notes/grab_hold_flicker.md). The knockback above only puts the unit
+// back once it is two cells off, and between two knockbacks its AI has it. What holds a monster in the game itself is hit recovery: the server's damage
+// result (0x44A9B0, flag 4, at 0x44ACDD) makes the mode event for mode 3 - GH - and sets it (MonModeEvent 0x4471E0, MonModeSet 0x4475C0, force 1). The
+// mode's start (0x445E60) refuses a monster its MonStats row gives no hit-recovery mode (row +0xF0 bit 3: a town NPC, some bosses) and plays it for the
+// rest; MonModeSet itself clears the path of a unit in GH (it stands) and its AI thinks again only when the mode's animation has ended. Asked the same
+// way - the same two calls, with nothing of the damage code's own after them (0x498EE0, the unique monsters' "when hit" answers: no hit was dealt) - each
+// time the unit is found out of it while the hand holds it. No place is written and nothing of the game's movement is bypassed: the monster stands in
+// its own hit-recovery animation, as one struck again and again does. Only where the server runs in this process (single player, the host).
+// A unit the game refuses falls to its neutral mode for that call (MonModeSet's own answer, as a refused knockback's) and goes on as its AI has it: it
+// is asked once a hold, not again.
+constexpr int kHitRecoveryMode = 3;        // the monster's mode GH
+constexpr uint64_t kHoldGapMs = 40;        // not asked again for the same unit sooner (a frame of the game's 25)
+constexpr uint64_t kHoldRefusedMs = 5000;  // a unit the game refused: not asked again until it has not been held for this long
+// May hit recovery be asked of a unit in this mode: not dead or dying, not in it already, not in a knockback (ours is moving it).
+inline bool HoldAsks(int mode) { return mode != 0 && mode != 12 && mode != kHitRecoveryMode && mode != kKnockbackMode; }
+// Ask now: the unit's mode as this client has it (clientMode; -1 not known - asked, the server's own mode decides), the last ask for it lastAtMs ago.
+inline bool HoldWants(int clientMode, uint64_t nowMs, uint64_t lastAtMs) {
+    if (clientMode >= 0 && !HoldAsks(clientMode)) return false;
+    return lastAtMs == 0 || nowMs < lastAtMs || nowMs - lastAtMs >= kHoldGapMs;
+}
+// What the game did with it, from the unit's mode right after the call: 3 - it is in hit recovery; dead; anything else - refused.
+enum class HoldOutcome { Held, Refused, Dead };
+inline HoldOutcome JudgeHold(int modeAfter) {
+    if (modeAfter == kHitRecoveryMode) return HoldOutcome::Held;
+    if (modeAfter == 0 || modeAfter == 12) return HoldOutcome::Dead;
+    return HoldOutcome::Refused;
+}
+
 }  // namespace grabmove

@@ -27,5 +27,10 @@ bool WantedFor(int source);   // that source's switch on, and no fault this sess
 bool Note(uint32_t id, float dx, float dy, bool hostile, int source, float minCells, uint64_t nowMs);
 // The same timer, every tick: a knockback asked is looked at once it has run (where the unit stands - the log).
 void Tick(uint64_t nowMs);
+// [weight] grab_holds_unit, from the ini (every read): the unit a hand holds is kept in the game's own hit recovery (vr/grab_move.h).
+void SetHoldWanted(bool on);
+// The same timer, each tick a hand of ours holds body id (the knock-down library's held phase): its unit's mode as this client has it (-1 not known). Asks
+// the game's hit recovery when the unit is out of it (grabmove::HoldWants) - only with the server in this process and the switch on, F4. True: asked.
+bool Hold(uint32_t id, bool hostile, int clientMode, uint64_t nowMs);
 
 }  // namespace grabmove
