@@ -81,6 +81,7 @@
 #include "frame_trace.h"   // [debug] frame_trace: what the pose hook costs a pair
 #include "body_calibration.h"
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
+#include "shoulder_pads.h"  // [body] flat_hide_shoulder_right / _left: which bones carry the shoulder pads
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
 #include "attack_lean.h"    // [body] attack_lean (flat F2 / F3, VR F2): the swing leans toward where the crosshair looks
 #include "aim_tilt.h"       // [body] flat_aim_tilt (flat F3): the arms tilt with the crosshair, and onto the body under it through a swing
@@ -333,6 +334,7 @@ struct Hero {
     std::vector<int> parent;
     std::vector<char> inHead;   // head_bind_jnt and everything under it (hair, helmet)
     std::vector<char> inNeck;   // the neck's lowest bone and everything under it (neck, head)
+    std::vector<char> pads;     // [body] flat_hide_shoulder_*: shoulderpads::Side of each bone (a shoulder pad's, or none)
     int neck = -1;              // that bone: the neck's base on the chest
     // R_weapon_attach / L_weapon_attach, under each wrist: where the game hangs
     // what the hand holds (the sorceress's staff hangs on the left one).
@@ -969,6 +971,16 @@ bool Learn(uintptr_t self, Hero* h, bool* player = nullptr) {
     }
 
     h->boneNames = names;
+    {   // [body] flat_hide_shoulder_right / _left: the bones that carry the shoulder pads (vr/shoulder_pads.h), told once a rig
+        h->pads = shoulderpads::Marks(names, h->parent);
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8) {
+            const std::string r = shoulderpads::List(names, h->pads, shoulderpads::kRight), l = shoulderpads::List(names, h->pads, shoulderpads::kLeft),
+                              e = shoulderpads::List(names, h->pads, shoulderpads::kEither);
+            weight::Say(("skeleton: shoulder pad bones of this rig (" + std::to_string(count) + " bones) - right: " + (r.empty() ? "none" : r) +
+                         "; left: " + (l.empty() ? "none" : l) + (e.empty() ? "" : "; no side in the name: " + e)).c_str());
+        }
+    }
     // Fingers: each child of a wrist except the weapon attach and the _END
     // marker, followed out while a bone has exactly one child. Thumbs are
     // tmb (paladin rig) or thumb (the other two).
@@ -6278,6 +6290,19 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     // base, so a camera at the eyes sees out instead of the inside of the skull,
     // and looking down sees the chest, not a neck. [arms] head_shadow (vr/head_shadow.h): while the renderer's hooks hand the eyes'
     // passes a copy of this pose with the head shrunk, the pose itself keeps the head - the shadow passes draw it.
+    // [body] flat_hide_shoulder_right / _left (flat F3): the bones that carry the shoulder pads shrunk to a point in place - a swing no longer lifts
+    // the pads up in front of the camera. Before the head, so whatever pose is handed on to the skinning has them shrunk.
+    if ((in.hidePad[0] || in.hidePad[1]) && !in.along && (int)h.pads.size() == n) {
+        const int k = shoulderpads::Shrink(reinterpret_cast<float(*)[16]>(newW.data()), n, h.pads, in.hidePad[0], in.hidePad[1]);
+        static std::atomic<int> said{-1};
+        const int code = (in.hidePad[0] ? 1 : 0) | (in.hidePad[1] ? 2 : 0) | (k > 0 ? 4 : 0);
+        if (said.exchange(code) != code) {
+            char line[200];
+            snprintf(line, sizeof line, "skeleton: [body] flat_hide_shoulder - right %s, left %s: %d pad bones shrunk%s", in.hidePad[0] ? "on" : "off",
+                     in.hidePad[1] ? "on" : "off", k, k ? "" : " (this rig has none by name: its pads stay)");
+            weight::Say(line);
+        }
+    }
     if (in.hideHead && h.head >= 0) {
         const int pivot = h.neck >= 0 ? h.neck : h.head;
         static_assert(sizeof(Mat) == sizeof(float) * 16, "a bone matrix is 16 floats");

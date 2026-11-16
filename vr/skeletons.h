@@ -34,6 +34,8 @@ struct Input {
     // [body] flat_hold_trunk_twist (with holdTrunk): the arms and what they hold turned by the animation's own turn of the chest about the vertical, which
     // the held chest drops - a side swing (the barbarian's attack 2) crosses in front of the camera again, not out past it. Drawn bones only.
     bool holdTrunkTwist = false;
+    // [body] flat_hide_shoulder_right / _left (flat F3; vr/shoulder_pads.h): the bones that carry that shoulder pad shrunk to a point - the pad not seen. Drawn bones only.
+    bool hidePad[2] = {false, false};
     // [body] attack_lean (flat F2 / F3, VR F2; vr/attack_lean.h): while the hero's attack mode plays, the spine from spine_01 up to the chest bends
     // toward where the crosshair looks - the point its ray meets (the floor, or the hero's reach about his chest) seen from the chest - so the swing
     // comes down onto a small monster or up at a tall one; at most attackLeanMaxDeg, eased in and out. Drawn bones only (handed to the skinning).

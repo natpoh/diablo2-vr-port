@@ -1256,6 +1256,11 @@ add_executable(patch_hunt_test tools/patch_hunt_test.cpp)
 target_include_directories(patch_hunt_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_definitions(patch_hunt_test PRIVATE D2RVR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(patch_hunt_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# The game's graphics card's kind (vr/adapter_class.h, from its own D3D12 device) and the Quality preset's weak-card rule for the game's own
+# Video options (shared/quality_presets.h GameOptionTo, [render] preset_game_options_weak_gpu): never raise them there. Pure, no GPU.
+add_executable(adapter_class_test tools/adapter_class_test.cpp)
+target_include_directories(adapter_class_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(adapter_class_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The headset's Party page: the game's party roster and its Party panel's own buttons (vr/party_cmd.cpp; its pure part vr/party_cmd_core.h), checked
 # against the game's image snapshot when there is one (dump_loader/D2R_image.bin). Run: party_cmd_test.exe [<snapshot>]
 add_executable(party_cmd_test tools/party_cmd_test.cpp)
@@ -2765,6 +2770,10 @@ target_compile_options(map_turn_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(flat_weapon_test cleanroom/tests/flat_weapon_test.cpp)
 target_include_directories(flat_weapon_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(flat_weapon_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [body] flat_hide_shoulder_right / _left: flat F3, the hero's shoulder pads not drawn (vr/shoulder_pads.h, skeletons.cpp PoseBody): shoulder_pads_test
+add_executable(shoulder_pads_test cleanroom/tests/shoulder_pads_test.cpp)
+target_include_directories(shoulder_pads_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(shoulder_pads_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hud] map_click_big: the laser on the map in the hand, the click that makes it big and the button that turns it (vr/map_laser.h, xr.cpp): map_laser_test
 add_executable(map_laser_test cleanroom/tests/map_laser_test.cpp)
 target_include_directories(map_laser_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

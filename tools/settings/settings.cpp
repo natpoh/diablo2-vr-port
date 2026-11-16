@@ -424,6 +424,20 @@ constexpr const wchar_t* kFogColour = L"The fog colour of this act, its caves in
            L"medium; Medium - Ambient Occlusion high, Shadow Quality high, Light Quality high. They are set once, when the preset changes (or when "  \
            L"you tick this): a change you make later in the game's menu stays. Anti aliasing, DLSS and the resolution scale are never touched. "  \
            L"The log says the old and new values. Live, in every view. Unticked: the game's options are never touched, as before."),  \
+    /* [render] preset_game_options_weak_gpu (crash batch 2026-11-16: Intel UHD hung in the flat game after Medium raised its AO and shadows) */  \
+    Needs(L"render", L"preset_game_options", 1, Toggle(L"render", L"preset_game_options_weak_gpu",  \
+           L"... never raise the game's options on integrated graphics", 1,  \
+           L"Ticked: on integrated graphics (the graphics card shares the PC's memory, like Intel UHD or Iris and AMD's processor graphics), a "  \
+           L"card with under 1 GB of its own memory, or no graphics card at all, the preset puts at most Low's values into the game's options "  \
+           L"and never more than the game has now - it may lower them, it never raises them. The heavier Ambient Occlusion and Shadow Quality "  \
+           L"made such graphics hang. The kind of graphics card is read from the game's own graphics device; the log says what was found. A "  \
+           L"graphics card of its own gets the preset's own values. Unticked: the preset's own values on every graphics card, as before.")),  \
+    /* [render] preset_game_options_flat_alone: the flat game keeps the game's own Video options as the player set them */  \
+    Needs(L"render", L"preset_game_options", 1, Toggle(L"render", L"preset_game_options_flat_alone",  \
+           L"... leave the game's options alone in the flat game", 0,  \
+           L"Ticked: in the flat game (on the monitor) the preset never changes the game's own Options > Video - there the game is played as "  \
+           L"it is, and its own menu decides. The preset's values go in at the first start in VR. Unticked: the preset sets them in every "  \
+           L"view, as before.")),  \
     Only(kVr, Beside(ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"run", L"Auto",  \
            L"Auto graphics tuning, in the running game: stand still (in town is best) with the headset on. The game measures its frames a "  \
            L"second with your settings. Fine at the headset's rate: nothing changes, on any graphics card. Short of it, it steps down in this "  \
@@ -2979,6 +2993,11 @@ std::vector<Item> g_items = {
            L"With the body kept under the camera: the arms and the weapon keep the turn the game's swing gives the chest, while the chest itself "
            L"stays put - a side swing (the barbarian's second attack) crosses in front of you instead of going out past the camera. Only the "
            L"drawn arms. Off = the arms hung on the still chest as before. Live.")),
+    // [body] flat_hide_shoulder_right / _left (vr/shoulder_pads.h): the pads a swing lifts in front of the camera
+    Toggle(L"body", L"flat_hide_shoulder_right", L"Hide the right shoulder pad", 1,
+           L"First person: the right shoulder pad of the hero's armour is not drawn - a swing lifts the collarbones and the pads come up in front of the camera. Only the drawn body changes; the pad's shadow goes with it. A few light pads (the Amazon's left one, the Assassin's light ones) are skinned to the arm or the chest and stay. Off = as the game draws him. Live."),
+    Toggle(L"body", L"flat_hide_shoulder_left", L"Hide the left shoulder pad", 1,
+           L"First person: the left shoulder pad of the hero's armour is not drawn - a swing lifts the collarbones and the pads come up in front of the camera. Only the drawn body changes; the pad's shadow goes with it. A few light pads (the Amazon's left one, the Assassin's light ones) are skinned to the arm or the chest and stay. Off = as the game draws him. Live."),
     Toggle(L"body", L"attack_lean", L"F2 and F3: the swing leans where you aim", 0, kAttackLeanTip),
     Needs(L"body", L"attack_lean", 1, Slider(L"body", L"attack_lean_max_deg", L"Swing lean: at most, °", 5, 80, 1, 40, kAttackLeanMaxTip)),
     Toggle(L"body", L"flat_aim_tilt", L"F3: the arms and weapon tilt with the crosshair", 0, kFlatAimTiltTip),

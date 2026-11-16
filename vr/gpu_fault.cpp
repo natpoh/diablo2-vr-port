@@ -295,6 +295,65 @@ std::atomic<bool> g_haveLuid{false};
 ID3D12Fence* g_fence = nullptr;
 HANDLE g_evt = nullptr, g_wait = nullptr;
 
+// -- the adapter (vr/adapter_class.h): read once per watched device, read by any thread after g_adapterKnown -----------------------------------
+adapterclass::Facts g_adapter{};
+char g_adapterName[128] = "";
+std::atomic<bool> g_adapterKnown{false};
+
+// SEH, so no object with a destructor in these: the device or the adapter may be a wrapper (an OpenXR runtime's, an API layer's DXGI hook).
+bool AskArchitecture(ID3D12Device* d, D3D12_FEATURE_DATA_ARCHITECTURE* a) {
+    __try {
+        return SUCCEEDED(d->CheckFeatureSupport(D3D12_FEATURE_ARCHITECTURE, a, sizeof *a));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+bool AskAdapterDesc(IDXGIAdapter1* a, DXGI_ADAPTER_DESC1* d) {
+    __try {
+        return SUCCEEDED(a->GetDesc1(d));
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+void ReleaseQuietly(IUnknown* u);
+
+// What the game's device and its DXGI adapter say of the graphics card: UMA (the device's architecture, node 0), its own memory and the
+// software flag (DXGI_ADAPTER_DESC1, the adapter taken by the device's LUID). Nothing kept but the numbers.
+void ReadAdapter(ID3D12Device* dev, LUID luid) {
+    adapterclass::Facts f{};
+    char name[sizeof g_adapterName] = "";
+    D3D12_FEATURE_DATA_ARCHITECTURE arch{};
+    arch.NodeIndex = 0;
+    if (AskArchitecture(dev, &arch)) {
+        f.archKnown = true;
+        f.uma = arch.UMA != FALSE;
+    }
+    typedef HRESULT(WINAPI * Fn)(REFIID, void**);
+    HMODULE m = GetModuleHandleW(L"dxgi.dll");   // (the game has it loaded; no import of ours)
+    Fn fn = m ? (Fn)GetProcAddress(m, "CreateDXGIFactory1") : nullptr;
+    IDXGIFactory4* fac = nullptr;
+    if (fn && SUCCEEDED(fn(__uuidof(IDXGIFactory4), (void**)&fac)) && fac) {
+        IDXGIAdapter1* a = nullptr;
+        if (FAILED(fac->EnumAdapterByLuid(luid, __uuidof(IDXGIAdapter1), (void**)&a))) a = nullptr;
+        DXGI_ADAPTER_DESC1 d{};
+        if (a && AskAdapterDesc(a, &d)) {
+            f.known = true;   // (the memory and the software flag come from here: without them nothing is told)
+            f.software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+            f.dedicatedBytes = d.DedicatedVideoMemory;
+            f.sharedBytes = d.SharedSystemMemory;
+            d.Description[127] = 0;
+            WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, name, (int)sizeof name, nullptr, nullptr);
+            name[sizeof name - 1] = 0;
+        }
+        if (a) ReleaseQuietly(a);
+        ReleaseQuietly(fac);
+    }
+    g_adapterKnown.store(false, std::memory_order_release);
+    g_adapter = f;
+    memcpy(g_adapterName, name, sizeof name);
+    g_adapterKnown.store(f.known, std::memory_order_release);
+}
+
 VOID CALLBACK OnSignal(PVOID, BOOLEAN) {
     ID3D12Device* d = g_dev;
     if (d && d->GetDeviceRemovedReason() != S_OK) Dump(d, "the device's own fence went to its end: the runtime signals every fence when it removes the device");
@@ -471,9 +530,17 @@ void Watch(ID3D12Device* dev) {
         f->Release();
         return;
     }
+    ReadAdapter(dev, g_luid);   // (vr/adapter_class.h: [render] preset_game_options_weak_gpu reads it)
     if (g_log) {
-        char b[160];
-        snprintf(b, sizeof b, "vrcam: gpu fault - watching the game's D3D12 device %p: its removal is told the moment it happens", (void*)dev);
+        char b[480];
+        const adapterclass::Facts& ad = g_adapter;
+        if (ad.known)
+            snprintf(b, sizeof b, "vrcam: gpu fault - watching the game's D3D12 device %p: its removal is told the moment it happens; its adapter \"%s\": "
+                     "%llu MB of its own memory, %llu MB shared, UMA %s - %s", (void*)dev, g_adapterName, (unsigned long long)(ad.dedicatedBytes >> 20),
+                     (unsigned long long)(ad.sharedBytes >> 20), ad.archKnown ? (ad.uma ? "yes" : "no") : "not known", adapterclass::Name(adapterclass::Classify(ad)));
+        else
+            snprintf(b, sizeof b, "vrcam: gpu fault - watching the game's D3D12 device %p: its removal is told the moment it happens; its adapter could "
+                     "not be asked (DXGI by the device's LUID)", (void*)dev);
         g_log(b);
     }
     if (g_validation > 0) {   // the debug layer's messages for this device
@@ -589,6 +656,13 @@ bool VideoMemory(uint64_t* usage, uint64_t* budget) {
     if (a3) ReleaseQuietly(a3);
     ReleaseQuietly(f);
     return ok;
+}
+
+bool Adapter(adapterclass::Facts* facts, char* name, size_t nameLen) {
+    if (!g_adapterKnown.load(std::memory_order_acquire)) return false;
+    if (facts) *facts = g_adapter;
+    if (name && nameLen) strncpy_s(name, nameLen, g_adapterName, _TRUNCATE);
+    return true;
 }
 
 bool Removed() { return g_removed.load(std::memory_order_relaxed); }

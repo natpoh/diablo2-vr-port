@@ -20,7 +20,9 @@
 #include <mutex>
 #include <string>
 
+#include "adapter_class.h"   // the weak-adapter rule ([render] preset_game_options_weak_gpu)
 #include "banner.h"   // a message that must be seen (the capture key's), big in the middle
+#include "gpu_fault.h"   // gpufault::Adapter: the game's device's graphics card
 #include "log_async.h"
 #include "patch_hunt.h"
 #include "patch_hunt_wire.h"
@@ -201,6 +203,7 @@ std::atomic<int> g_presetWant{-1};       // the preset to put (-1 none)
 std::atomic<bool> g_presetDue{false};
 std::atomic<ULONGLONG> g_presetRetryAt{0};
 std::atomic<int> g_presetTries{0};
+std::atomic<bool> g_presetWeakGuard{false};   // [render] preset_game_options_weak_gpu as read (vr/adapter_class.h, quality_presets.h GameOptionTo)
 int g_presetServed = -2;                 // -2: not read yet (LoadSettings' thread and the UI run: under g_presetLock)
 std::mutex g_presetLock;
 uiticket::Ticket g_presetQueued;
@@ -245,9 +248,16 @@ void __cdecl RunPreset(const PluginContext*, void* user) noexcept {
         const int g = GfxByName(o.name);
         missing = missing || g < 0 || !g_set[g].object;
     }
-    if (missing) {
+    // [render] preset_game_options_weak_gpu: the game's device's graphics card (gpu_fault.cpp reads it when the device is first watched). Not
+    // known yet: waited for as the setter is (2 s, kPresetTries); still not known then - put by the weak rule all the same (never raise).
+    const bool weakRule = g_presetWeakGuard.load();
+    adapterclass::Facts facts{};
+    char adapterName[128] = "";
+    const bool adapterKnown = weakRule && gpufault::Adapter(&facts, adapterName, sizeof adapterName);
+    const bool adapterWait = weakRule && !adapterKnown && g_presetTries.load() < kPresetTries;
+    if (missing || adapterWait) {
         const int tries = g_presetTries.fetch_add(1) + 1;
-        if (tries >= kPresetTries) {
+        if (missing && tries >= kPresetTries) {
             g_presetDue.store(false);
             Say("vrcam: preset_game_options - the game's setter or one of its options (AO, shadows, lights) NOT found after %d looks (another game "
                 "build?): the %s preset left the game's own Video options alone - set them in the game's Options > Video", tries, qualitypreset::Name(preset));
@@ -256,7 +266,9 @@ void __cdecl RunPreset(const PluginContext*, void* user) noexcept {
         }
         return;
     }
-    char changes[400] = "";
+    const adapterclass::Class cls = adapterKnown ? adapterclass::Classify(facts) : adapterclass::Class::Unknown;
+    const bool guard = weakRule && (adapterclass::Weak(cls) || cls == adapterclass::Class::Unknown);
+    char changes[640] = "";
     for (const qualitypreset::GameOption& o : qualitypreset::kGameOptions) {
         const int g = GfxByName(o.name);
         Setting& s = g_set[g];
@@ -273,10 +285,14 @@ void __cdecl RunPreset(const PluginContext*, void* user) noexcept {
             continue;
         }
         s.called = true;
-        const int was = ValueOf(s, g), to = std::clamp(o.v[preset], kGfx[g].lo, kGfx[g].hi);
-        char one[110];
+        const int was = ValueOf(s, g), to = std::clamp(qualitypreset::GameOptionTo(o, preset, was, guard), kGfx[g].lo, kGfx[g].hi);
+        char one[150];
         if (was == to) {
-            snprintf(one, sizeof one, "%s\"%s\" %d (kept)", changes[0] ? ", " : "", o.name, was);
+            if (guard && o.v[preset] > to)
+                snprintf(one, sizeof one, "%s\"%s\" %d (kept: %s's %d not put on this graphics card)", changes[0] ? ", " : "", o.name, was,
+                         qualitypreset::Name(preset), o.v[preset]);
+            else
+                snprintf(one, sizeof one, "%s\"%s\" %d (kept)", changes[0] ? ", " : "", o.name, was);
         } else {
             if (!CallSetter(g_setter, obj, to)) {
                 g_gameFault.store(true);
@@ -296,8 +312,19 @@ void __cdecl RunPreset(const PluginContext*, void* user) noexcept {
     }
     g_presetTries.store(0);
     if (g_presetWant.load() == preset) g_presetDue.store(false);   // (another preset picked meanwhile: its own run follows)
-    Say("vrcam: preset_game_options - the %s preset put into the game's own Video options through its setter: %s; the game keeps them in its "
-        "Settings.json, a change in its menu stays until the preset changes", qualitypreset::Name(preset), changes);
+    char how[300] = "";
+    if (weakRule) {
+        if (adapterKnown)
+            snprintf(how, sizeof how, " (the graphics card \"%s\": %s, %llu MB of its own memory - %s)", adapterName, adapterclass::Name(cls),
+                     (unsigned long long)(facts.dedicatedBytes >> 20),
+                     guard ? "a weak one: at most Low's values and never above the game's own ([render] preset_game_options_weak_gpu)"
+                           : "not a weak one: the preset's own values");
+        else
+            snprintf(how, sizeof how, " (the graphics card not known after %d looks: put as on a weak one - at most Low's values and never above "
+                     "the game's own, [render] preset_game_options_weak_gpu)", kPresetTries);
+    }
+    Say("vrcam: preset_game_options - the %s preset put into the game's own Video options through its setter%s: %s; the game keeps them in its "
+        "Settings.json, a change in its menu stays until the preset changes", qualitypreset::Name(preset), how, changes);
 }
 
 // ---- the overlay line ------------------------------------------------------------------------------------------------------------------------
@@ -487,14 +514,29 @@ void KeyTick(bool focus) {
     Say("vrcam: patch_hunt - Ctrl%s+F8: %d (d2r_vr.ini)", shift ? "+Shift" : "", to);
 }
 
-void PresetGameOptions(bool on, int preset) {
+void PresetGameOptions(bool on, int preset, bool weakGpuRule, bool flatAlone, bool flat) {
     std::lock_guard<std::mutex> pl(g_presetLock);
+    g_presetWeakGuard.store(weakGpuRule);
     if (!on) {   // unticked: nothing put, and nothing remembered - ticking it again puts the preset then in force
         g_presetDue.store(false);
         g_presetWant.store(-1);
         if (ServedLocked() != -1) WriteServedLocked(-1);
         return;
     }
+    // [render] preset_game_options_flat_alone: the flat game is the game on a monitor - its own Options > Video are the player's there, so the
+    // preset (made for two eyes in the headset) puts nothing; `served` is not written, so the preset goes in at the first headset start
+    static int toldFlat = -1;
+    if (flatAlone && flat) {
+        g_presetDue.store(false);
+        g_presetWant.store(-1);   // (a run already queued puts nothing)
+        if (toldFlat != preset && qualitypreset::GameOptionsDue(preset, ServedLocked())) {
+            toldFlat = preset;
+            Say("vrcam: preset_game_options - the flat game ([mode] platform=0): the %s preset leaves the game's own Video options as they are "
+                "([render] preset_game_options_flat_alone); they go in at the first start in VR ([mode] platform=1)", qualitypreset::Name(preset));
+        }
+        return;
+    }
+    toldFlat = -1;
     const int want = g_presetDue.load() ? g_presetWant.load() : ServedLocked();
     if (!qualitypreset::GameOptionsDue(preset, want)) return;
     bool held = false;   // a [debug] patch_hunt step holding one of these options: the step's own, left alone (put when the step is left)

@@ -1,5 +1,20 @@
 # What's new in D2R VR
 
+## 0.219.0
+
+A hotfix: no more hangs on integrated graphics after the Quality preset, and no shoulder pads in your face in the flat first person.
+
+- **Fix: integrated graphics no longer hang after the Quality preset** (Settings, under "... the preset also sets the game's own graphics options":
+  "... never raise the game's options on integrated graphics" - `[render] preset_game_options_weak_gpu`, on): on integrated graphics
+  (Intel UHD / Iris, AMD's processor graphics), a card with under 1 GB of its own memory or no graphics card at all, the preset put
+  Medium's heavier Ambient Occlusion and Shadow Quality into the game's own options, and such graphics hung in the flat game
+  (several crash reports). There the preset now puts at most Low's values and never raises what the game has - it may only lower
+  them. A graphics card of its own gets the preset's values as before. The log names the card it found.
+- **No shoulder pads in your face in the flat first person (F3)** (Settings, "Hide the right shoulder pad" / "Hide the left shoulder
+  pad" - `[body] flat_hide_shoulder_right`, `flat_hide_shoulder_left`, on): a swing lifts the hero's collarbones and his armour's
+  shoulder pads came up in front of the camera. The pads are not drawn now (their shadow goes too); a few light pads that the game
+  skins to the arm or the chest stay. Only the drawing changes.
+
 ## 0.218.3
 
 The mouse and the laser reach the whole menu on a small window, sharp item labels in the flat game, the game's fog in VR third person,

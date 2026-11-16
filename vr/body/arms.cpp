@@ -793,6 +793,8 @@ void PushArms() {
     in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();
     // [body] flat_hold_trunk_twist: and the arms keep the chest's turn the hold drops (a side swing crosses in front, not past the camera)
     in.holdTrunkTwist = in.holdTrunk && g_set.flatHoldTrunkTwist.load();
+    // [body] flat_hide_shoulder_right / _left: flat first person (F3), the shoulder pads a swing lifts in front of the camera not drawn (vr/shoulder_pads.h)
+    for (int s = 0; s < 2; ++s) in.hidePad[s] = own && g_set.platform.load() == 0 && g_set.flatHideShoulder[s].load();
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
     in.dollFeet = g_set.dollFeet.load() && !vrVanilla;   // (in every other view; VR F1 / F3 the game's)

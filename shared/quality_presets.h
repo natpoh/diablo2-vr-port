@@ -122,6 +122,19 @@ inline constexpr int kGameOptionCount = (int)(sizeof kGameOptions / sizeof kGame
 // `served` in d2r_vr_game_options.txt beside the ini, so a game start puts nothing unless the preset changed meanwhile.
 constexpr bool GameOptionsDue(int preset, int served) { return preset >= 0 && preset < kCount && preset != served; }
 
+// [render] preset_game_options_weak_gpu (crash batch 2026-11-16: Intel UHD, 128 MB, the flat game - Medium raised the game's AO 2 -> 3 and its
+// shadows 2 -> 3, and every game hung the GPU in the game's post processing ~100 s in). On a weak adapter (vr/adapter_class.h Weak) a preset
+// puts at most Low's game options, and never more than the game has now: lowering stays, raising never happens. kWeakCap: the preset whose
+// values are the most a weak adapter gets.
+constexpr int kWeakCap = 1;   // Low
+// The preset whose values are put: Medium on a guarded adapter is Low.
+constexpr int GuardedPreset(int preset, bool guard) { return guard && preset > kWeakCap ? kWeakCap : preset; }
+// The value one game option gets. now: the game's value now (-1 not known); guard: the weak-adapter rule. Unguarded: the preset's own, as before.
+constexpr int GameOptionTo(const GameOption& o, int preset, int now, bool guard) {
+    const int to = o.v[GuardedPreset(preset, guard)];
+    return guard && now >= 0 && now < to ? now : to;
+}
+
 // A press of < (-1) or > (+1) on the preset row: Potato .. Medium, stopping at the ends; from Custom > is Potato, < Medium.
 inline int Step(int now, int delta) {
     if (now < 0 || now >= kCount) return delta > 0 ? 0 : kCount - 1;

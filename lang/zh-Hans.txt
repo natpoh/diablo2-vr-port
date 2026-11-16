@@ -101,6 +101,10 @@ group.quality_preset.help = 游戏绘制多少与运行多快之间的权衡，�
 @preset.preset.choice3 = 自定义
 render.preset_game_options.label = ……预设同时更改游戏自身的图形选项
 render.preset_game_options.tip = 勾选：选择画质预设时，也会更改游戏自身 Options > Video 中的三项设置，就像你在游戏菜单里设置一样（游戏把它们保存在自己的 Settings.json 中）：Potato - Ambient Occlusion 关闭，Shadow Quality 低，Light Quality 低；Low - 三项均为中；Medium - Ambient Occlusion 高，Shadow Quality 高，Light Quality 高。只在预设改变时（或勾选此项时）设置一次：之后你在游戏菜单里的改动会保留。抗锯齿、DLSS 和分辨率缩放从不更改。日志会写出旧值和新值。即时生效，适用于所有视图。不勾选：从不更改游戏的选项，与以前相同。
+render.preset_game_options_weak_gpu.label = ... 集成显卡上绝不提高游戏的画面选项
+render.preset_game_options_weak_gpu.tip = 勾选：在集成显卡上（显卡与电脑共用内存，如 Intel UHD 或 Iris 以及 AMD 处理器的核显）、自身显存不足 1 GB 的显卡，或根本没有显卡时，预设写入游戏选项的值最多为 Low 的值，且绝不超过游戏当前的值——它可以降低，但绝不提高。较重的 Ambient Occlusion 和 Shadow Quality 曾让这类显卡卡死。显卡类型从游戏自己的图形设备读取；日志会写明找到的是什么。独立显卡仍使用预设自己的值。不勾选：任何显卡都使用预设自己的值，与以前相同。
+render.preset_game_options_flat_alone.label = ... 在平面游戏中不动游戏的选项
+render.preset_game_options_flat_alone.tip = 勾选：在平面游戏（显示器上）中，预设绝不更改游戏自己的 Options > Video——那里按游戏原样游玩，由它自己的菜单决定。预设的值在第一次以 VR 启动时写入。不勾选：预设在任何视角下都写入，与以前相同。
 autotune.run.label = Auto
 autotune.run.tip = 在运行中的游戏里进行自动图形调节：戴上头显站定（最好在城镇里）。游戏会用你当前的设置测量每秒帧数。如果达到头显的刷新率：不做任何更改，任何显卡都一样。如果达不到，它会按以下顺序逐步降低，每一步都测量，并在第一个达标的步骤停下：渲染尺寸降到 1600 x 1600，然后预设 中 -> 低 -> 土豆，然后尺寸降到 1300，然后注视点渲染（先 中，再 最高），然后尺寸降到 1200，然后双眼交替。到这里仍然不够：它会说明这台电脑低于最低要求，以及是处理器还是显卡拖了后腿。需要一两分钟；双通道、FlatVR 和头显的刷新率从不会被选用。步骤和结果显示在头显面板的视频页（长按右摇杆点击），那里或下方有“保留”和“撤销”。保留之后，这里的预设会显示与新设置相符的那一个，否则显示“自定义”。
 render.potato_light_brightness.label = ... 土豆光：亮度
@@ -1452,6 +1456,10 @@ body.flat_hold_trunk.label = 攻击时让身体保持在摄像机下方
 body.flat_hold_trunk.tip = 第一人称：挥击过程中英雄的胸部、臀部和头部都保持在摄像机下方，和 VR 第一人称一样；他的手臂和武器仍按游戏的动画挥动。只改变绘制的身体 - 攻击仍是游戏的。关闭 = 和以前一样（躯干会从摄像机下方甩出去）。
 body.flat_hold_trunk_twist.label = 侧向挥砍时手臂保持胸部的转动
 body.flat_hold_trunk_twist.tip = 身体保持在摄像机下方时：手臂和武器保持游戏挥砍给予胸部的转动，而胸部本身保持不动 - 侧向挥砍（野蛮人的第二招）会在你面前横扫，而不是甩到摄像机之外。只影响绘制的手臂。关闭 = 手臂挂在静止的胸部上，和以前一样。即时生效。
+body.flat_hide_shoulder_right.label = 隐藏右肩甲
+body.flat_hide_shoulder_right.tip = 第一人称：不绘制英雄盔甲的右肩甲——挥击会抬起锁骨，肩甲会升到镜头前。只改变绘制的身体；肩甲的影子也一起消失。少数轻型肩甲（亚马逊的左肩甲、刺客的轻型肩甲）绑定在手臂或胸部上，会保留。关闭 = 按游戏原样绘制。实时生效。
+body.flat_hide_shoulder_left.label = 隐藏左肩甲
+body.flat_hide_shoulder_left.tip = 第一人称：不绘制英雄盔甲的左肩甲——挥击会抬起锁骨，肩甲会升到镜头前。只改变绘制的身体；肩甲的影子也一起消失。少数轻型肩甲（亚马逊的左肩甲、刺客的轻型肩甲）绑定在手臂或胸部上，会保留。关闭 = 按游戏原样绘制。实时生效。
 body.attack_lean.label#2 = F2 和 F3：挥击倾向瞄准方向
 body.flat_aim_tilt.label = F3：手臂和武器随准星倾斜
 body.flat_aim_tilt.tip = 第一人称：游戏按它自己的高度挥砍，所以面对矮小的怪物时刀刃会从它上方掠过。勾选：你的英雄的手臂和武器随准星上下倾斜，就像射击游戏一样 - 向下看挥砍就向下，向上看就向上。只影响绘制的手臂：游戏的攻击、命中、范围和方向仍由游戏自己决定。在 F3 中，它取代“挥砍朝向你瞄准的地方”。取消勾选：和以前一样。即时生效。

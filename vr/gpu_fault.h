@@ -16,7 +16,10 @@
 // The report goes to the log and to d2rloader\logs\d2r_vr_gpu_fault.txt. vr/gpu_fault.cpp.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+
+#include "adapter_class.h"
 
 struct ID3D12Device;
 struct D3D12_AUTO_BREADCRUMB_NODE;
@@ -62,6 +65,11 @@ void Note(const char* what, uint64_t a = 0, uint64_t b = 0);
 // The watched device's video memory, this process: usage and budget of the local (video) segment, bytes. False before a device is watched. Any thread.
 // A stall that came with a live render-size change and a world teardown (2026-10-18) may be the video memory's paging; this puts the numbers in the log.
 bool VideoMemory(uint64_t* usage, uint64_t* budget);
+
+// The watched device's graphics card (vr/adapter_class.h): UMA from the device, its own memory and the software flag from its DXGI adapter -
+// read once per device in Watch and told in Watch's line. False before (no device yet, or DXGI could not be asked). name: the adapter's own
+// description, UTF-8 (may be null). Any thread.
+bool Adapter(adapterclass::Facts* facts, char* name, size_t nameLen);
 
 // The breadcrumb list as a report tells it, to the log (tools/gpu_fault_test.cpp builds a list by hand: a hand-made device loss has none).
 void DescribeBreadcrumbs(const D3D12_AUTO_BREADCRUMB_NODE* head);

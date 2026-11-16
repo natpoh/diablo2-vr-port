@@ -626,7 +626,8 @@ struct Settings {
     std::atomic<bool>  lockUpper{true};     // nothing above the pelvis from the game's animation
     std::atomic<bool>  legsUnder{true};     // with it: pelvis and legs kept under that body (no lunge, no hip turn)
     std::atomic<bool>  flatHoldTrunk{false};   // [body] flat_hold_trunk: flat F3, the trunk and hips held under the camera through a swing (drawn only)
-    std::atomic<bool>  flatHoldTrunkTwist{false};   // [body] flat_hold_trunk_twist: with it, the arms keep the chest's turn about the vertical (a side swing in view)
+    std::atomic<bool>  flatHoldTrunkTwist{false};
+    std::atomic<bool>  flatHideShoulder[2] = {false, false};   // [body] flat_hide_shoulder_right / _left: flat F3, that shoulder pad not drawn (vr/shoulder_pads.h)   // [body] flat_hold_trunk_twist: with it, the arms keep the chest's turn about the vertical (a side swing in view)
     std::atomic<bool>  attackLean{false};      // [body] attack_lean: flat F2 / F3 and VR F2, the swing leans toward where the crosshair looks (drawn only; vr/attack_lean.h)
     std::atomic<float> attackLeanMaxDeg{40.0f};   // [body] attack_lean_max_deg: the most it leans, up or down
     std::atomic<bool>  flatAimTilt{false};     // [body] flat_aim_tilt: flat F3, the arms and the weapon tilt with the crosshair (drawn only; vr/aim_tilt.h); attack_lean steps aside there

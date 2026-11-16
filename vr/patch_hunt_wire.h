@@ -25,7 +25,10 @@ void Configure(int step, int pipeK, const Suspects& s);
 // From LoadSettings, every read of the ini: [render] preset_game_options and the Quality preset the keys match (shared/quality_presets.h Match;
 // kCount = Custom). Ticked and the preset not the one put last (d2r_vr_game_options.txt): its game options (kGameOptions) go through the game's
 // own setter once, on the UI thread, one log line with the old and new values. Unticked: nothing, and the file removed.
-void PresetGameOptions(bool on, int preset);
+// weakGpuRule ([render] preset_game_options_weak_gpu): on a weak graphics card (vr/adapter_class.h Weak, from the game's own device - not
+// known: the same) at most Low's values and never above the game's own now (shared/quality_presets.h GameOptionTo). flatAlone ([render]
+// preset_game_options_flat_alone) with flat ([mode] platform=0): nothing put, `served` not written - the preset goes in at the first VR start.
+void PresetGameOptions(bool on, int preset, bool weakGpuRule, bool flatAlone, bool flat);
 // The step in force (the update thread, the draw thread: one atomic load).
 int Step();
 // vrcam's update thread, every 1 ms: Ctrl+F8 next step, Ctrl+Shift+F8 back, Ctrl+Alt+F8 / Ctrl+Alt+Shift+F8 the next / last pipeline of step 8 -

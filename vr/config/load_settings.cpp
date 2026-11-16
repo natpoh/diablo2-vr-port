@@ -1176,6 +1176,8 @@ void LoadSettings() {
     g_set.legsUnder.store(IniB(L"body", L"legs_under_body", true));
     g_set.flatHoldTrunk.store(IniB(L"body", L"flat_hold_trunk", false));
     g_set.flatHoldTrunkTwist.store(IniB(L"body", L"flat_hold_trunk_twist", false));
+    g_set.flatHideShoulder[0].store(IniB(L"body", L"flat_hide_shoulder_right", true));
+    g_set.flatHideShoulder[1].store(IniB(L"body", L"flat_hide_shoulder_left", true));
     g_set.attackLean.store(IniB(L"body", L"attack_lean", false));
     g_set.attackLeanMaxDeg.store(std::clamp(IniF(L"body", L"attack_lean_max_deg", 40.0f), 0.0f, 90.0f));
     g_set.flatAimTilt.store(IniB(L"body", L"flat_aim_tilt", false));
@@ -2044,7 +2046,13 @@ void LoadSettings() {
                 return IniF(k.section, k.key, i >= 0 ? hset::kDefs[i].def : 0.0f);
             });
         }
-        patchhunt::PresetGameOptions(on, preset);
+        // [render] preset_game_options_weak_gpu (crash batch 2026-11-16, Intel UHD hanging in the flat game after Medium raised its AO and
+        // shadows): on integrated / small / software graphics (vr/adapter_class.h, from the game's own device) at most Low's values and never
+        // above the game's own. 0 = the preset's own values on every card, as before.
+        // [render] preset_game_options_flat_alone: in the flat game ([mode] platform=0) the game's own Video options are left as the player set
+        // them - put at the first VR start instead. 0 = put in every view, as before.
+        patchhunt::PresetGameOptions(on, preset, IniB(L"render", L"preset_game_options_weak_gpu", true),
+                                     IniB(L"render", L"preset_game_options_flat_alone", false), g_set.platform.load() == 0);
     }
     {   // [debug] capture_key (not in Settings: told by hand): the capture's key, empty = Ctrl+Alt+F10, none = off (vr/capture.h)
         wchar_t k[64];
