@@ -839,7 +839,8 @@ target_sources(d2rl-vrcam PRIVATE vr/melee_arm_game.cpp)
 add_executable(melee_arm_test cleanroom/tests/melee_arm_test.cpp)
 target_compile_options(melee_arm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_touch_empty_attack: the touch's press with no skill on the attack slot (A) is read by the game as its plain Attack (vr/touch_empty_slot.h decides,
-# vrcam's slot-skill hook answers - vr/input/spell_aim.cpp SlotSkillFor): touch_empty_slot_test
+# vrcam's slot-skill hook answers - vr/input/spell_aim.cpp SlotSkillFor); [gameplay] melee_touch_interact_attack the same for a command (Interact 357, Loot ...) on A,
+# and Stand Still's view of that press (vr/stand_still_wire.cpp): touch_empty_slot_test
 add_executable(touch_empty_slot_test cleanroom/tests/touch_empty_slot_test.cpp)
 target_compile_options(touch_empty_slot_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] melee_skill_armed_icon: the armed skill's icon on the bottom of the mana medallion (vr/armed_icon.h decides what is drawn and how strong, the circle it is cut to and the

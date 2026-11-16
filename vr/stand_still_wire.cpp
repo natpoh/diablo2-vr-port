@@ -20,6 +20,7 @@
 #include "shot_trace_wire.h"
 #include "stand_still.h"
 #include "stand_still_wire.h"
+#include "touch_empty_slot.h"   // [gameplay] melee_touch_interact_attack: a command on A read as the plain Attack for the touch's press
 #include "view_gate.h"
 #include "wheel_game.h"
 #include "wheel_types.h"
@@ -39,6 +40,7 @@ void (*g_log)(const char*) = nullptr;
 std::atomic<bool> g_on{true};
 std::atomic<bool> g_busy{false};             // the machine waits for / delivers / is in the tail of an attack press (mirror of g_m.Busy())
 std::atomic<bool> g_throwStill{true};        // [hands] throw_stand_still
+std::atomic<bool> g_touchCommand{true};      // [gameplay] melee_touch_interact_attack (with melee_touch)
 bool (*g_isThrowPress)() = nullptr;
 SRWLOCK g_lock = SRWLOCK_INIT;
 Machine g_m;
@@ -124,6 +126,7 @@ void SetThrowStill(bool on) {
                  : "vrcam: stand still - [hands] throw_stand_still=0: a throw by gesture is pressed WITHOUT Stand Still");
 }
 void SetThrowPressFn(bool (*isThrowPress)()) { g_isThrowPress = isThrowPress; }
+void SetTouchCommandAttack(bool on) { g_touchCommand.store(on); }
 
 void SetWanted(bool on) {
     if (g_on.exchange(on) != on) {
@@ -167,6 +170,7 @@ Gate Poll(bool attackA, bool touch, bool menu, uint16_t padButtons, uint8_t lt) 
     Why attackWhy = Why::Held;
     if (attackA) {
         int32_t id = SlotSkill(kPadA, alt);
+        id = touchemptyslot::StillSkill(id, touch, g_touchCommand.load());   // [gameplay] melee_touch_interact_attack: Interact on A is the plain Attack for the touch's press
         if (touch) {   // [gameplay] melee_skill_armed: the game reads this press as the armed skill - a Whirlwind, a Leap Attack, a Charge, a Dragon Flight must move the hero, not stand still
             if (const int armed = meleearm::PressSkill(); armed > 0) id = armed;
         }

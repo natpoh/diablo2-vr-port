@@ -392,6 +392,12 @@ struct Input {
     // [hands] xbow_aim_barrel: the shot along the crossbow's barrel as drawn (from bearstonem/d2r-pcvr), the hand-set line only when that
     // is not fresh (100 ms) - vrcam: F4 only
     bool xbowAimBarrel = false;
+    // [bow] xbow_bolt_origin: the crossbow's release bone (bolt_helper) on the drawn barrel published for vrcam's shot line (XbowReleasePoint) -
+    // the line and our drawn bolt start there, not at the controller - vrcam: F4 only
+    bool xbowBoltOrigin = false;
+    // [bow] xbow_bolt_fwd_cm / xbow_bolt_up_cm / xbow_bolt_side_cm: the player's shift of that exit point on top of the model's, along the drawn
+    // barrel (forward, its up, the shooter's right), metres - 0 0 0 = the model's point (xbowgrip::ExitShift)
+    float xbowBoltShiftM[3] = {0.0f, 0.0f, 0.0f};
     // [hands] xbow_hold_grip: the crossbow's grip (where the game's own palm sits on it) in the right palm, not its attach bone's origin
     bool xbowHoldGrip = false;
     // [hands] xbow_support_game: the left hand on the game's own fore-grip of the crossbow (where the game's other hand holds it in its own
@@ -676,6 +682,11 @@ const char* XbowBarrelWhy();
 // the drawn barrel ([hands] xbow_aim_barrel and read) or the hand-set shot line, to where it meets the floor (floor true) or 8 m out; same
 // frame as XbowBarrelDebug. barrel: the drawn barrel's direction is the one used. The game's own aim takes only its heading on the ground.
 bool XbowShotRay(float a[3], float b[3], bool* barrel = nullptr, bool* floor = nullptr);
+// [bow] xbow_bolt_origin: where the crossbow's missile leaves it as drawn - its release bone (bolt_helper, the bone the game's crossbow
+// names as its MissileReleasePoint) on the drawn barrel, from the eye in metres, the head's turn-only frame (x right, y up, z back), as
+// DRAWN ([arms] offsets included - not the hands' frame of XbowShotRay). False when not posed within maxAgeMs (the key off, no crossbow
+// held the gun's way in F4, its barrel not read or not seen placed by the renderer yet).
+bool XbowReleasePoint(float p[3], unsigned maxAgeMs = 150);
 // [debug] xbow_barrel_line: the crossbow's left palm's middle (wrist to middle knuckle, halfway) as the pose leaves it, same frame; cm: how
 // far from the place it was put on (0 = on it). False when none lately.
 bool XbowPalmDebug(float p[3], float* cm = nullptr);

@@ -22,6 +22,10 @@ void NoteClick(int type);
 void SetThrowStill(bool on);
 void SetThrowPressFn(bool (*isThrowPress)());
 
+// [gameplay] melee_touch_interact_attack (with melee_touch), live (vrcam's LoadSettings): the touch's press with a command (Interact, Loot ...) on A is the game's
+// plain Attack (the slot-skill hook answers it so, vr/touch_empty_slot.h) - Stand Still is held for it like any attack, not left off as for a pick-up.
+void SetTouchCommandAttack(bool on);
+
 // What to do with this pad poll's attack presses.
 struct Gate {
     bool holdBackA = false;    // do not press A for the attack this poll (Stand Still is not down yet)

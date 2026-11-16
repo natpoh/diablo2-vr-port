@@ -1,5 +1,20 @@
 # What's new in D2R VR
 
+## 0.219.2
+
+A hotfix: hit by touch strikes again when the game put a command on your attack button, and the crossbow's bolt leaves from the crossbow.
+
+- **Fix: hit by touch strikes when the attack slot (A) holds a command** (Settings > Strikes > Hit by touch: "Interact on the touch slot:
+  strike with the normal Attack" - `[gameplay] melee_touch_interact_attack`, on): when the game had put Interact (or Loot and the like)
+  on A - a Warlock player had it there - every touch ran that command on the monster and not one blow landed. A touch now strikes with
+  the game's own plain Attack, through the game's own attack (checks, animation, reach, rolls). Your own press of A is still the
+  command, so picking things up works as before.
+- **Fix: the crossbow's bolt leaves from the crossbow, not your hand** (Settings, Bow: "Crossbow: the bolt leaves from the crossbow,
+  not the hand" - `[bow] xbow_bolt_origin`, on; F4): the shot's line and the drawn bolt started at the controller - the hand on the grip
+  under the stock - so the bolts flew out lower than the crossbow. They start now at the crossbow's own release point, where the
+  game's model lets its bolt go. Three sliders shift that point forward, up or sideways if you want (0 by default). The game's own
+  missile and hit are unchanged.
+
 ## 0.219.0
 
 A hotfix: no more hangs on integrated graphics after the Quality preset, and no shoulder pads in your face in the flat first person.

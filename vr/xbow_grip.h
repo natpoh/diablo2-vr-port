@@ -11,8 +11,11 @@
 //   xbow_support_model   BarrelInCog / FromBolt / Support: the left palm under the barrel of the crossbow AS DRAWN (its bolt_helper
 //                        bone), a few cm below it and never past the bow's limbs - not on the line set by eye.
 //
-// Matrices are row-vector 4x4 like the skeletons' (a point p goes p * M; rows 0..2 the axes, row 3 the place). The shot is not
-// here: the bolt still flies along the old line (vrcam HandRay), whatever the hand does.
+//   xbow_bolt_origin     ReleasePoint ([bow] key): where the shot's line - and our drawn bolt ([bow] arrow_flight) - starts: the crossbow's
+//                        own release bone (bolt_helper) as drawn, not the controller in the hand under the stock.
+//
+// Matrices are row-vector 4x4 like the skeletons' (a point p goes p * M; rows 0..2 the axes, row 3 the place). The shot's direction is
+// vrcam HandRay's (the drawn barrel with [hands] xbow_aim_barrel); the game's own missile, hit and damage are never touched here.
 #pragma once
 
 #include <algorithm>
@@ -161,14 +164,21 @@ inline bool FromBolt(const M& bolt, Line* out) {
     *out = {c, dir, up, scale};
     return true;
 }
+// releaseAlong ([bow] xbow_bolt_origin, optional): where the crossbow's missile leaves it - its bolt_helper bone, the bone the game's own
+// crossbow names as its MissileReleasePoint (data/hd/items/weapon/bow/crossbow.json) - in the barrel's own frame: the point (0, 0, along),
+// i.e. ReleasePoint(barrel posed, along). In the bind pose the bolt_helper sits where the game's shot animation holds it from the string's
+// release on (xbw_attack1_crossbow: the bolt bone 0.28 - 0.55 s at z 1.03 - 1.04 against the bind's 1.038; before it, cocked, 0.65; only
+// its z moves - x and y stay on the barrel), on the barrel's line, a little behind the front of the stock.
 inline bool BarrelInCog(const M& inverseCog, const M& inverseBolt, const M& inverseLeft, const M& inverseRight, M* out,
-                        const M* inverseTrigger = nullptr) {
+                        const M* inverseTrigger = nullptr, float* releaseAlong = nullptr) {
     M bolt, left, right, check;
     if (!Inverse(inverseCog, &check) || !Inverse(inverseBolt, &bolt) || !Inverse(inverseLeft, &left) || !Inverse(inverseRight, &right)) return false;
     Line line;
     if (!FromBolt(bolt, &line)) return false;
     const V front = Mul(Add(Place(left), Place(right)), 0.5f);
     const V center = Add(line.center, Mul(line.dir, Dot(Sub(front, line.center), line.dir)));
+    // the bolt_helper's own place along the barrel (its line runs through it), in the barrel's units (its rows are scaled as the helper)
+    if (releaseAlong) *releaseAlong = Dot(Sub(line.center, center), line.dir) / line.scale;
     // up: square to the barrel and to the limbs' line; a limbs' line along the barrel (not a crossbow's) keeps the helper's
     const V side = Sub(Place(right), Place(left));
     const V across = Sub(side, Mul(line.dir, Dot(side, line.dir)));
@@ -193,6 +203,32 @@ inline bool BarrelInCog(const M& inverseCog, const M& inverseBolt, const M& inve
     barrel.m[15] = 1.0f;
     SetPlace(barrel, center);
     *out = Mul(barrel, inverseCog);
+    return true;
+}
+// [bow] xbow_bolt_origin: the release point (BarrelInCog's releaseAlong) on a barrel as it is posed now (the barrel matrix carried by the
+// cog, the item and the attach bone as drawn): the point (0, 0, along) of its frame - it rides every turn, move and scale the barrel does.
+// False when the barrel or `along` is not a sane one (along: within 4 of the barrel's units either way of the front of the stock).
+// [bow] xbow_bolt_fwd_cm / xbow_bolt_up_cm / xbow_bolt_side_cm: the player's own shift of the bolt's exit ON TOP of the model's release point
+// (the fallback for what the model does not say right; 0 0 0 = the model's point as it is), in the barrel's own axes as SEEN - in the head's
+// turn-only frame (x right, y up, z back, right-handed): fwdM along the barrel (dir, its forward), upM along its up made square to it, sideM
+// to the shooter's right of the barrel (dir x up). Metres. A barrel that is no direction, or an up along it: the point unmoved.
+inline V ExitShift(V point, V dir, V up, float fwdM, float upM, float sideM) {
+    if (!std::isfinite(fwdM + upM + sideM) || (fwdM == 0.0f && upM == 0.0f && sideM == 0.0f)) return point;
+    const float dl = std::sqrt(Dot(dir, dir));
+    if (!(dl > 1e-6f) || !std::isfinite(dl)) return point;
+    const V f = Mul(dir, 1.0f / dl);
+    V u = Sub(up, Mul(f, Dot(up, f)));
+    const float ul = std::sqrt(Dot(u, u));
+    if (!(ul > 1e-6f) || !std::isfinite(ul)) return point;
+    u = Mul(u, 1.0f / ul);
+    const V r = Cross(f, u);
+    return Add(point, Add(Mul(f, fwdM), Add(Mul(u, upM), Mul(r, sideM))));
+}
+inline bool ReleasePoint(const M& barrel, float along, V* out) {
+    if (!std::isfinite(along) || std::fabs(along) > 4.0f) return false;
+    const V p = Add(Place(barrel), Mul(Row(barrel, 2), along));
+    if (!Finite(p)) return false;
+    *out = p;
     return true;
 }
 // ---- the hand by its palm, not its wrist ----

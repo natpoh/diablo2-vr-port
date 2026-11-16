@@ -1,10 +1,12 @@
 // Offline checks of the crossbow's support hand (vr/xbow_grip.h): the grip latch, the wide grip capture and the barrel taken from
-// the model's bolt_helper. No game, no headset. Run: build/Release/xbow_grip_test.exe   (exit code 0 = all passed)
+// the model's bolt_helper, and where the shot leaves the crossbow ([bow] xbow_bolt_origin). No game, no headset.
+// Run: build/Release/xbow_grip_test.exe   (exit code 0 = all passed)
 
 #include "../../vr/xbow_grip.h"
 
 #include <cmath>
 #include <cstdio>
+#include <initializer_list>
 
 using namespace xbowgrip;
 
@@ -164,6 +166,95 @@ static void BarrelTests() {
     Inverse(triggerAbove, &invTrigger);
     Expect(BarrelInCog(invCog, invBolt, invL, invR, &barrel, &invTrigger) && FromBolt(Mul(barrel, cogBind), &line) && Near(line.up, {0, -1, 0}),
            "barrel with a trigger above: up turned over");
+}
+
+// [bow] xbow_bolt_origin: the shot starts at the crossbow's own release bone (bolt_helper - the bone data/hd/items/weapon/bow/crossbow.json
+// names in its MissileReleasePointComponent), on the barrel as drawn - not at the hand on the grip below the stock (Serg, 0.219.0: the bolts
+// flew out of the hand, lower than the crossbow). Numbers: the game's own crossbow.skeleton (InverseWorldTransform of each bone, row-vector,
+// as the skeleton stores them at +0x50), read offline with gr2dump.
+static M Rows(std::initializer_list<float> v) { M r; int i = 0; for (float f : v) r.m[i++] = f; return r; }
+static void ReleaseTests() {
+    const M invCog = Identity();
+    const M invBolt = Rows({1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 2.04143e-16f, -0.128579f, -1.0384f, 1});   // bolt_helper (= the bolt bone's place)
+    const M invR = Rows({0.929529f, 0.368691f, 0.00653296f, 0, -0.091802f, 0.214216f, 0.972463f, 0, 0.357139f, -0.904532f, 0.232967f, 0,
+                         -0.210637f, 1.29559f, -0.329592f, 1});   // R_bowBend
+    const M invL = Rows({0.929529f, 0.368691f, 0.00653301f, 0, 0.091802f, -0.214216f, -0.972463f, 0, -0.357139f, 0.904532f, -0.232966f, 0,
+                         0.210636f, -1.29558f, 0.329591f, 1});    // L_bowBend
+    const M invTrigger = Rows({1.14306e-07f, -2.09231e-07f, -1, 0, -0.877578f, -0.479433f, 2.09231e-07f, 0, -0.479433f, 0.877578f, 1.14306e-07f, 0,
+                               0.117514f, -0.484326f, -2.80176e-08f, 1});
+    const V boltBind = {0.0f, 0.128579f, 1.0384f};
+    M barrel;
+    float along = NAN;
+    Expect(BarrelInCog(invCog, invBolt, invL, invR, &barrel, &invTrigger, &along), "release: the game's crossbow reads, with its release point");
+    Line line;
+    Expect(FromBolt(barrel, &line), "release: the barrel reads");
+    Expect(Near(line.dir, {0, 0, 1}, 1e-4f) && Near(line.up, {0, 1, 0}, 1e-4f), "release: the barrel along the stock (+Z), up away from the trigger");
+    Expect(Near(line.center, {0.0f, 0.128579f, 1.32391f}, 1e-3f), "release: the front of the stock on the bolt's line, level with the limbs");
+    Expect(Near(along, 1.0384f - 1.32391f, 1e-3f), "release: the bolt_helper 0.286 units behind the front of the stock");
+    V p;
+    Expect(ReleasePoint(barrel, along, &p) && Near(p, boltBind, 1e-4f), "release: unposed, the point IS the bolt_helper's bind place");
+    // on the barrel's line, and well above the hand's grip (the trigger, where the game's palm sits on the crossbow)
+    const V trigger = {0.0f, -0.129074f, 0.481374f};
+    const V rel = Sub(p, line.center);
+    const V off = Sub(rel, Mul(line.dir, Dot(rel, line.dir)));
+    Expect(std::sqrt(Dot(off, off)) < 1e-4f, "release: on the barrel's line (where the bolt lies), not beside it");
+    Expect(Dot(Sub(p, trigger), line.up) > 0.25f, "release: 0.26 units above the trigger grip - not the hand under the stock");
+
+    // the game's shot animation (xbw_attack1_crossbow, the Amazon's weapon/combined.animations, decoded offline): the bolt bone - the bolt_helper's
+    // parent, the helper on it with no offset - moves only along the stock: cocked at z 0.646, forward with the string at 0.28 s, at its bind
+    // place (1.03 - 1.04) to 0.55 s, back to 0.646 by 0.65 s; x 0, y 0.128579 throughout. Every one of its places is on the bind pose's barrel.
+    for (float z : {0.6463f, 0.5509f, 1.1102f, 1.0436f, 1.0392f, 0.9659f, 0.7040f}) {
+        const V q = {0.0f, 0.128579f, z};
+        const V r = Sub(q, line.center);
+        const V o = Sub(r, Mul(line.dir, Dot(r, line.dir)));
+        Expect(std::sqrt(Dot(o, o)) < 1e-4f, "release: the shot animation keeps the bolt on the bind pose's barrel");
+    }
+    Expect(std::fabs(boltBind.z - 1.0392f) < 0.01f, "release: the bind place is where the animation holds the bolt as it is shot (0.28 - 0.55 s)");
+
+    // posed: the cog turned and moved by the game's animation, the item and the attach bone scaled and turned as drawn - the point rides along
+    const M cogNow = Mul(Turn({0, 1, 0}, 25.0f), Translate({0.3f, -0.1f, 0.5f}));
+    const M attach = Mul(Mul(Scaled(3.4f), Turn({1, 0, 0}, -35.0f)), Translate({2500.0f, 40.0f, -1800.0f}));
+    const M posed = Mul(Mul(barrel, cogNow), attach);
+    Expect(ReleasePoint(posed, along, &p), "release posed: reads");
+    Expect(Near(p, Through(Mul(cogNow, attach), boltBind), 2e-3f), "release posed: the bolt_helper as drawn, wherever the crossbow is");
+    Line posedLine;
+    Expect(FromBolt(posed, &posedLine), "release posed: the barrel reads");
+    const V pr = Sub(p, posedLine.center);
+    const V po = Sub(pr, Mul(posedLine.dir, Dot(pr, posedLine.dir)));
+    Expect(std::sqrt(Dot(po, po)) < 2e-3f && Dot(pr, posedLine.dir) < 0.0f, "release posed: on the drawn barrel, behind its front");
+
+    // [bow] xbow_bolt_fwd/up/side_cm: the player's shift on top of the model's point, in the drawn barrel's axes as seen (head frame: x right,
+    // y up, z back). 0 0 0: the model's point exactly.
+    {
+        const V at = {0.1f, -0.3f, -0.5f}, fwd = {0, 0, -2.0f}, up = {0, 1, 0};   // a barrel pointing straight ahead, level (dir not unit)
+        Expect(Near(ExitShift(at, fwd, up, 0, 0, 0), at), "exit shift: 0 0 0 = the model's point");
+        Expect(Near(ExitShift(at, fwd, up, 0.10f, 0, 0), {0.1f, -0.3f, -0.6f}), "exit shift: forward goes along the barrel, away from the shooter");
+        Expect(Near(ExitShift(at, fwd, up, 0, 0.05f, 0), {0.1f, -0.25f, -0.5f}), "exit shift: up goes up off a level barrel");
+        Expect(Near(ExitShift(at, fwd, up, 0, 0, 0.02f), {0.12f, -0.3f, -0.5f}), "exit shift: + side is the shooter's right");
+        // a crossbow rolled 90 deg to the left (its up now the shooter's left) and tilted: the shift rides the crossbow's own axes
+        const V rolledUp = {-1, 0, 0};
+        Expect(Near(ExitShift(at, fwd, rolledUp, 0, 0.05f, 0), {0.05f, -0.3f, -0.5f}), "exit shift: up follows the crossbow's roll");
+        Expect(Near(ExitShift(at, fwd, rolledUp, 0, 0, 0.02f), {0.1f, -0.28f, -0.5f}), "exit shift: side follows the roll too (right of a left-rolled barrel is up)");
+        const float k = 0.70710678f;
+        const V tilted = ExitShift(at, {0, k, -k}, {0, 1, 0}, 0.10f, 0.0f, 0.0f);   // up given not square to the barrel: made square
+        Expect(Near(tilted, {0.1f, -0.3f + 0.1f * k, -0.5f - 0.1f * k}), "exit shift: forward along a barrel aimed up");
+        const V tiltUp = ExitShift(at, {0, k, -k}, {0, 1, 0}, 0.0f, 0.10f, 0.0f);
+        Expect(Near(tiltUp, {0.1f, -0.3f + 0.1f * k, -0.5f + 0.1f * k}), "exit shift: up is square to a barrel aimed up");
+        Expect(Near(ExitShift(at, {0, 0, 0}, up, 0.1f, 0.1f, 0.1f), at) && Near(ExitShift(at, fwd, {0, 0, 1}, 0.1f, 0.1f, 0.1f), at) &&
+               Near(ExitShift(at, fwd, up, NAN, 0, 0), at), "exit shift: no barrel, an up along it, or NaN: the point unmoved");
+    }
+
+    // refusals: not a number, or far off the crossbow
+    Expect(!ReleasePoint(barrel, NAN, &p), "release: NaN along is refused");
+    Expect(!ReleasePoint(barrel, 9.0f, &p), "release: a point 9 units off the stock is refused");
+    M bad = barrel; bad.m[12] = NAN;
+    Expect(!ReleasePoint(bad, along, &p), "release: a NaN barrel is refused");
+    // the old call (no release asked for) is unchanged
+    M again;
+    Expect(BarrelInCog(invCog, invBolt, invL, invR, &again, &invTrigger), "release: BarrelInCog without the release still reads");
+    bool same = true;
+    for (int i = 0; i < 16; ++i) same = same && again.m[i] == barrel.m[i];
+    Expect(same, "release: the barrel is the same with or without the release asked for");
 }
 
 static void RenderedTests() {
@@ -357,6 +448,7 @@ int main() {
     LatchTests();
     WideTests();
     BarrelTests();
+    ReleaseTests();
     RenderedTests();
     PalmTests();
     HoldGripTests();

@@ -5202,6 +5202,20 @@ std::vector<Item> g_items = {
            L"aims) - no correction by hand, raised or rolled alike. The game's own bolt, damage, ammunition and rate of fire are unchanged: only the "
            L"direction of the game's attack is steered, as the shot line does. While the barrel is not read (an unknown model, a moment after a swap) "
            L"the shot line below is used. Unticked: the shot line. F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Toggle(L"bow", L"xbow_bolt_origin", L"Crossbow: the bolt leaves from the crossbow, not the hand", 1,
+           L"The shot's line - and the bolt drawn along it (\"our own arrow\") - starts where the crossbow's own model releases its bolt: its "
+           L"release bone on the barrel, as the crossbow is drawn - not at the controller, the hand on the grip under the stock (the bolts flew "
+           L"out of the hand, lower than the crossbow). The game's own bolt, its hit and damage are unchanged. While the crossbow's model is not "
+           L"read yet (a moment after a swap), from the hand as before. Unticked: from the hand. F4 only.")),
+    Needs(L"bow", L"xbow_two_hands", 1, Needs(L"bow", L"xbow_bolt_origin", 1, Slider(L"bow", L"xbow_bolt_fwd_cm", L"Crossbow: bolt exit, forward, cm", -30, 30, 0.5f, 0,
+           L"Moves the point the bolt leaves from along the crossbow's barrel as you see it: + toward the front, - back toward you. On top of "
+           L"the point the crossbow's own model gives (0 = that point as it is) - only a fallback if it looks off. Live. F4 only."))),
+    Needs(L"bow", L"xbow_two_hands", 1, Needs(L"bow", L"xbow_bolt_origin", 1, Slider(L"bow", L"xbow_bolt_up_cm", L"Crossbow: bolt exit, up, cm", -15, 15, 0.5f, 0,
+           L"Moves the point the bolt leaves from up (+) or down (-), square to the barrel - the crossbow's own up, rolled with it. On top of "
+           L"the model's point (0 = as it is). Live. F4 only."))),
+    Needs(L"bow", L"xbow_two_hands", 1, Needs(L"bow", L"xbow_bolt_origin", 1, Slider(L"bow", L"xbow_bolt_side_cm", L"Crossbow: bolt exit, side, cm", -15, 15, 0.5f, 0,
+           L"Moves the point the bolt leaves from to the right (+) or left (-) of the barrel, as you hold it. On top of the model's point "
+           L"(0 = as it is). Live. F4 only."))),
     Needs(L"bow", L"xbow_two_hands", 1, Needs(L"hands", L"xbow_aim_barrel", 0, Slider(L"hands", L"xbow_line_pitch", L"Crossbow: shot line, tilt up/down, °", -180, 180, 1, 34,
            L"Turns the line the bolt flies along and the left hand takes - the red line ([debug] phantom_ray) - not the model. Lay it on the crossbow. "
            L"With \"shoot along the drawn barrel\" ticked it is only the stand-in while the barrel is not read."))),
@@ -5559,6 +5573,15 @@ std::vector<Item> g_items = {
            L"decides as ever). A skill on A is still cast as before, and nothing else about the button changes: put a skill or Attack on A in the "
            L"game's skill menu to choose for yourself. The log says once when it happens (\"the attack slot (A) holds no skill\"). Unticked: a touch "
            L"with nothing on A does nothing, as before. Live. F4 only.")),
+    // [gameplay] melee_touch_interact_attack (vr/touch_empty_slot.h; a Warlock player's A held Interact - his touches ran Interact on the monsters, no damage)
+    Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_interact_attack", L"Interact on the touch slot: strike with the normal Attack", 1,
+           L"The attack button (A) can hold a command instead of a skill - Interact (pick up, open, talk), Loot, Swap Weapons, the map... - for "
+           L"example when Interact was chosen for A in the skill wheel. A touch then pressed that command on the monster: no attack, no damage, "
+           L"while the monsters still fell over from the weapon's weight. Ticked: a touch with a command on A is the game's plain Attack, exactly "
+           L"as if Attack were on A - its own animation, reach, hit rolls and speed (in co-op the host decides as ever), and the hero attacks "
+           L"standing still like with any attack. Your own press of A is still the command (picking up works as before); put a skill or Attack "
+           L"on A in the skill wheel to choose for yourself. The log says once when it happens (\"the attack slot (A) holds the command\"). "
+           L"Unticked: as before. Live. F4 only.")),
     Needs(L"gameplay", L"melee_touch", 1, Slider(L"gameplay", L"melee_min_speed", L"Hit by touch: the least blade speed that hits, m/s", 0.3f, 20, 0.1f, 0.8f,
            L"How fast the blade must be moving for a contact to count. A blade moving slower than this does nothing, however it touches "
            L"a monster - so a gentle poke hits only if this is low. The same number for every weapon (the weapon's own blade is its only "

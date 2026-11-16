@@ -26,6 +26,7 @@ namespace vrc {
 FILETIME g_iniTime{};
 static bool g_toldLefty = false;   // [hands] left_handed told once at the start, then on each change
 static bool g_toldTouchEmpty = false;   // [gameplay] melee_touch_empty_attack told once at the start, then on each change
+static bool g_toldTouchInteract = false;   // [gameplay] melee_touch_interact_attack, the same
 
 void LoadSettings() {
     campfire::Load();   // [campfire] character creation in 3D (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed)
@@ -1479,6 +1480,16 @@ void LoadSettings() {
                    : "melee touch: an empty attack slot (A) casts nothing, as before ([gameplay] melee_touch_empty_attack=0)");
         }
     }
+    {   // F4, hit by touch: the touch's press with a command (Interact, Loot ...) on the attack slot (A) is read by the game as its plain Attack - ON by default (a fix:
+        // a Warlock's touches ran Interact on the monster, no hit roll, no damage); 0 = as before (vr/touch_empty_slot.h)
+        const bool on = IniB(L"gameplay", L"melee_touch_interact_attack", true);
+        standstill::SetTouchCommandAttack(on && g_set.meleeTouch.load());   // (Stand Still's view of the touch's press: held as for an attack)
+        if (g_set.touchInteractAttack.exchange(on) != on || !g_toldTouchInteract) {
+            g_toldTouchInteract = true;
+            Log(on ? "melee touch: a command on the attack slot (A) - Interact, Loot ... - strikes with the game's plain Attack for a touch ([gameplay] melee_touch_interact_attack)"
+                   : "melee touch: a command on the attack slot (A) - Interact, Loot ... - is pressed for a touch as it is, as before ([gameplay] melee_touch_interact_attack=0)");
+        }
+    }
     meleetrigger::Configure(IniB(L"gameplay", L"melee_touch_only", true));   // F4, hit by touch swinging a weapon (anything but a bow or a crossbow): the trigger's attack is not passed to the game - part of hit by touch, ON by default; 0 = the old way (the plugin's own controls only; vr/melee_trigger.h)
     doubleswing::Configure(IniB(L"hands", L"double_swing_by_hands", false), IniF(L"hands", L"double_swing_window_ms", 700.0f), (int)IniF(L"hands", L"double_swing_skill", 0.0f),
                            IniB(L"hands", L"double_swing_combo", false));   // F4, hit by touch with a weapon in each hand: the second hand's touch casts the game's own Double Swing / Frenzy (vr/double_swing.h)
@@ -1742,6 +1753,10 @@ void LoadSettings() {
     g_set.xbowSupportDropCm.store(std::clamp(IniF(L"hands", L"xbow_support_drop_adj_cm", 0.0f), -10.0f, 10.0f));
     g_set.xbowSupportBackCm.store(std::clamp(IniF(L"hands", L"xbow_support_back_adj_cm", 0.0f), -10.0f, 20.0f));
     g_set.xbowAimBarrel.store(IniB(L"hands", L"xbow_aim_barrel", false));
+    g_set.xbowBoltOrigin.store(IniB(L"bow", L"xbow_bolt_origin", true));   // (on as shipped, Serg 2026-11-16)
+    g_set.xbowBoltFwdCm.store(std::clamp(IniF(L"bow", L"xbow_bolt_fwd_cm", 0.0f), -30.0f, 30.0f));
+    g_set.xbowBoltUpCm.store(std::clamp(IniF(L"bow", L"xbow_bolt_up_cm", 0.0f), -15.0f, 15.0f));
+    g_set.xbowBoltSideCm.store(std::clamp(IniF(L"bow", L"xbow_bolt_side_cm", 0.0f), -15.0f, 15.0f));
     g_set.xbowHoldGrip.store(IniB(L"hands", L"xbow_hold_grip", false));
     g_set.xbowSupportGame.store(IniB(L"hands", L"xbow_support_game", false));
     g_set.xbowSupportClose.store(IniB(L"hands", L"xbow_support_close", false));

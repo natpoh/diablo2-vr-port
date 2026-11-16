@@ -630,7 +630,32 @@ bool HandWorldTheta(float* theta) {
         // not the tip toward the ground HandRay adds) to the cell of what it meets
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
         const float hd = sqrtf(d[0] * d[0] + d[2] * d[2]), hr = sqrtf(dRaw[0] * dRaw[0] + dRaw[2] * dRaw[2]);
-        const float ro[3] = {o[0] / upm, o[1] / upm, o[2] / upm}, rw[3] = {d[0] / hd * hr, dRaw[1], d[2] / hd * hr};
+        float ro[3] = {o[0] / upm, o[1] / upm, o[2] / upm};
+        const float rw[3] = {d[0] / hd * hr, dRaw[1], d[2] / hd * hr};
+#if D2RVR_FIRST_PERSON
+        // [bow] xbow_bolt_origin: a crossbow's line starts where its bolt leaves it - the crossbow's own release bone (bolt_helper, the game's
+        // MissileReleasePoint) on the barrel as drawn (skel::XbowReleasePoint) - not at the controller (the right palm on the grip under the
+        // stock: Serg's 0.219.0 picture, the bolts flew out of the hand). The heading pitch_aim finds and our drawn bolt follow it; the game's own
+        // missile and hit are the game's. Off, not F4, or not posed lately: the controller's point, as before.
+        if (wc == D2RVR_WEAPON_CROSSBOW && g_set.xbowBoltOrigin.load() && viewgate::F4()) {
+            float p[3];
+            AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+            if (f.valid && g_eyeOk.load() && skel::XbowReleasePoint(p)) {
+                float w[3];
+                for (int i = 0; i < 3; ++i) w[i] = g_eyeWorld[i].load() + upm * (p[0] * f.camR[i] - p[2] * f.camF[i]);
+                w[1] += upm * p[1];
+                if (std::isfinite(w[0] + w[1] + w[2])) {
+                    static std::atomic<bool> told{false};
+                    if (!told.exchange(true)) {
+                        const float dx = w[0] - o[0], dy = w[1] - o[1], dz = w[2] - o[2];
+                        LogF("crossbow shot line (xbow_bolt_origin): from the crossbow's release bone as drawn, %.1f cm from the controller (%.1f cm above it)",
+                             sqrtf(dx * dx + dy * dy + dz * dz) / upm * 100.0f, dy / upm * 100.0f);
+                    }
+                    for (int i = 0; i < 3; ++i) ro[i] = w[i] / upm;
+                }
+            }
+        }
+#endif
         float t;
         bowpitch::Result met;
         const bool turned = bowpitchwire::On() && bowpitchwire::Theta(ro, rw, 0, &t, &met);

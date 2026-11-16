@@ -465,6 +465,7 @@ struct Settings {
     std::atomic<float> bowAnchorCm[3] = {0.0f, 0.0f, 0.8f};   // [bow] string_anchor_along_cm / across_cm / palm_cm: that point moved along the fingers, toward the thumb side, out of the palm (-15..15; live)
     std::atomic<bool>  meleeTouch{false};   // [gameplay] melee_touch: the blade touching a monster picks the target and the moment of the game's own attack
     std::atomic<bool>  touchEmptyAttack{true};   // [gameplay] melee_touch_empty_attack: the touch's press with no skill on the attack slot (A) is read as the plain Attack (vr/touch_empty_slot.h)
+    std::atomic<bool>  touchInteractAttack{true};   // [gameplay] melee_touch_interact_attack: the touch's press with a command (Interact, Loot ...) on the attack slot (A) is read as the plain Attack (vr/touch_empty_slot.h)
     std::atomic<bool>  meleeTouchUnchecked{false};   // [debug] melee_touch_unchecked: no hostility / wall check from the server (to see whether it is what stops a touch)
     std::atomic<bool>  meleeTouchClientVerdict{false};   // [debug] melee_touch_client_verdict: the client's units answer it even offline (what a TCP/IP client gets)
     // [autotarget] s<skill>=1: that skill keeps the game's auto-target whatever spell_aim, bow_aim, throw_aim say - one
@@ -501,6 +502,9 @@ struct Settings {
     std::atomic<bool>  xbowGripLatch{false}, xbowGripWide{false}, xbowWristTracked{false}, xbowSupportModel{false}, xbowBarrelLine{false};
     std::atomic<float> xbowSupportDropCm{0.0f}, xbowSupportBackCm{0.0f};   // adjustments around d2r-pcvr's 7 / 6 cm
     std::atomic<bool>  xbowAimBarrel{false};   // [hands] xbow_aim_barrel
+    std::atomic<bool>  xbowBoltOrigin{true};   // [bow] xbow_bolt_origin: the crossbow's shot line (and our drawn bolt) starts at its release bone as drawn, not the controller
+    // [bow] xbow_bolt_fwd_cm / xbow_bolt_up_cm / xbow_bolt_side_cm: the player's shift of that exit on top of the model's, along the drawn barrel, cm (0 = the model's)
+    std::atomic<float> xbowBoltFwdCm{0.0f}, xbowBoltUpCm{0.0f}, xbowBoltSideCm{0.0f};
     std::atomic<bool>  xbowHoldGrip{false};    // [hands] xbow_hold_grip
     std::atomic<bool>  xbowSupportGame{false}; // [hands] xbow_support_game
     std::atomic<bool>  xbowSupportClose{false}; // [hands] xbow_support_close

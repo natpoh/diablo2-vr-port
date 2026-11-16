@@ -605,13 +605,22 @@ int SlotSkillFor(int slot, uintptr_t ret, int* boundOut) {
     // [gameplay] melee_touch_empty_attack (vr/touch_empty_slot.h): the touch's press with nothing on the attack slot (the game left A empty after a skill point:
     // a player's touches cast nothing, no damage) - the cast's two reads answer the plain Attack, and everything below treats the slot as one that holds it
     // (the armed melee skill, a thrown weapon's Throw). Only while the touch's own press is young (F4); any other read, slot or press as the game has it.
+    // [gameplay] melee_touch_interact_attack: the same for a command on A (Interact 357, Loot ...: a Warlock's touches ran Interact on the monster - 0 hit rolls).
     if (slot == 0 && (ret == g_slotSelectRet || ret == g_slotSetRet)) {
         const int was = bound;
-        bound = touchemptyslot::Answer(bound, slot, true, g_set.meleeTouch.load() && g_set.touchEmptyAttack.load(), bound < 0 && meleetouch::TargetPending());
+        const bool touchOn = g_set.meleeTouch.load(), emptyOn = touchOn && g_set.touchEmptyAttack.load(), commandOn = touchOn && g_set.touchInteractAttack.load();
+        const bool young = (bound < 0 ? emptyOn : (commandOn && touchemptyslot::IsCommand(bound))) && meleetouch::TargetPending();
+        bound = touchemptyslot::AnswerTouch(bound, slot, true, emptyOn, commandOn, young);
         static touchemptyslot::Teller teller;   // (the game's thread only: the hook runs there)
-        if (teller.Read(was, bound != was))
-            LogF("melee touch: the attack slot (A) holds no skill (%d) - the touch's press is read by the game as its plain Attack ([gameplay] melee_touch_empty_attack; "
-                 "put a skill or Attack on A in the game's skill menu to choose another)", was);
+        if (teller.Read(was, bound != was)) {
+            if (was < 0)
+                LogF("melee touch: the attack slot (A) holds no skill (%d) - the touch's press is read by the game as its plain Attack ([gameplay] melee_touch_empty_attack; "
+                     "put a skill or Attack on A in the game's skill menu to choose another)", was);
+            else
+                LogF("melee touch: the attack slot (A) holds the command %d (%s), not an attack - the touch's press is read by the game as its plain Attack "
+                     "([gameplay] melee_touch_interact_attack; the player's own A press stays the command; put a skill or Attack on A in the skill wheel to choose another)",
+                     was, was == 357 ? "Interact" : was == 358 ? "Loot" : was == 370 ? "Cube Loot" : "a controller command");
+        }
     }
     if (bound != 0) {   // (the common case first: any other binding is the game's)
         // a bow skill on the attack's slot with no bow or crossbow in hand: the old bow quiver (to 0.174) loaded its arrow skills there and the game
@@ -712,7 +721,7 @@ bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHo
 
 void InstallSlotSkillHook() {
     if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::WantsHook() || meleearm::On() ||
-                                                    g_set.bowDrawArrow.load() || (g_set.meleeTouch.load() && g_set.touchEmptyAttack.load()))) return;
+                                                    g_set.bowDrawArrow.load() || (g_set.meleeTouch.load() && (g_set.touchEmptyAttack.load() || g_set.touchInteractAttack.load())))) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);

@@ -710,6 +710,10 @@ void PushArms() {
         in.xbowBackM = g_set.xbowSupportBackCm.load() * 0.01f;
         in.xbowBarrelDebug = f4 && g_set.xbowBarrelLine.load();
         in.xbowAimBarrel = f4 && g_set.xbowAimBarrel.load();
+        in.xbowBoltOrigin = f4 && g_set.xbowBoltOrigin.load();
+        in.xbowBoltShiftM[0] = g_set.xbowBoltFwdCm.load() * 0.01f;
+        in.xbowBoltShiftM[1] = g_set.xbowBoltUpCm.load() * 0.01f;
+        in.xbowBoltShiftM[2] = g_set.xbowBoltSideCm.load() * 0.01f;
         in.xbowHoldGrip = f4 && g_set.xbowHoldGrip.load();
         in.xbowSupportGame = f4 && g_set.xbowSupportGame.load();
         in.xbowSupportClose = f4 && g_set.xbowSupportClose.load();
@@ -717,8 +721,8 @@ void PushArms() {
         in.xbowBarrelForward = f4 && g_set.xbowBarrelForward.load();
         static std::string toldBarrel;   // what the barrel's reading says, on change
         // the barrel as drawn needs the renderer's world-matrix function hooked (potion_hide's hook, shared; it only reads for us)
-        potionhide::WantHooks(in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel);
-        if (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel) {
+        potionhide::WantHooks(in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel || in.xbowBoltOrigin);
+        if (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel || in.xbowBoltOrigin) {
             const std::string why = skel::XbowBarrelWhy();
             if (why != toldBarrel) { toldBarrel = why; Log(("vrcam: crossbow barrel (xbow_support_model): " + why).c_str()); }
         } else {

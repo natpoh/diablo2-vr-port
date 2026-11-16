@@ -455,8 +455,13 @@ DrawnAttachOut g_drawnAttach;
 //   g_xbowRendered  from the item's world matrix as the renderer makes it (0xE3A8C0, potion_hide's hook -> XbowRendered) against our
 //                   attach bone in the world at the pose (g_xbowAttach) - bearstonem/d2r-pcvr's way (skeletons.cpp CrossbowRendered,
 //                   crossbow_pose.h RenderedGeometry): it holds whatever the renderer puts between the item and the wrist. The hand uses this.
-struct XbowBarrelOut { xbowgrip::M inAttach; uint32_t gen = 0; ULONGLONG at = 0; };
+// release: [bow] xbow_bolt_origin - the crossbow's release bone (bolt_helper) along the barrel, in its frame (xbowgrip::BarrelInCog's releaseAlong)
+struct XbowBarrelOut { xbowgrip::M inAttach; uint32_t gen = 0; ULONGLONG at = 0; float release = NAN; };
 XbowBarrelOut g_xbowBarrel{}, g_xbowRendered{};
+// [bow] xbow_bolt_origin: that release point as the pose draws it - from the eye, metres, the head's turn-only frame (x right, y up, z back),
+// as DRAWN (the [arms] offsets included: the hands' frame plus them) - for vrcam's crossbow shot line (skel::XbowReleasePoint). Under g_gunBoneLock.
+struct XbowReleaseOut { float p[3]; ULONGLONG at; };
+XbowReleaseOut g_xbowRelease{};
 // the renderer's barrel kept per weapon and hero model (rigid: the crossbow's own), and whose ((HeroGen << 32) | weapon key) - the pose thread's
 XbowBarrelOut g_xbowHeldBarrel{};
 uint64_t g_xbowHeldKey = 0;
@@ -465,7 +470,7 @@ bool g_xbowSupportHeld = false;
 uint64_t g_xbowSupportHeldKey = 0;
 // what XbowRendered needs of the crossbow's skeleton (NoteCrossbowBarrel) and of our pose (PoseBody): its cog's place in its world
 // array, the barrel in the cog's frame; our attach bone in the world, and the model units per metre
-struct XbowSource { uintptr_t self = 0; int cog = -1, count = 0; xbowgrip::M barrelInCog; uint32_t gen = 0; ULONGLONG at = 0; };
+struct XbowSource { uintptr_t self = 0; int cog = -1, count = 0; xbowgrip::M barrelInCog; uint32_t gen = 0; ULONGLONG at = 0; float release = NAN; };
 XbowSource g_xbowSource{};
 struct XbowAttach { xbowgrip::M world; float upm = 0.0f; uint32_t gen = 0; ULONGLONG at = 0; };
 XbowAttach g_xbowAttach{};
@@ -4818,7 +4823,7 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         V3 aimDir{};
         V3 muzzle{};            // the front of the stock on the drawn barrel (the debug ray's start)
         bool haveMuzzle = false;
-        if (gun && (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel)) {
+        if (gun && (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel || in.xbowBoltOrigin)) {
             const V3 head = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
             const float upm = std::clamp(head.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;   // model units per metre
             const ULONGLONG now = GetTickCount64();
@@ -4880,6 +4885,18 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
                 }
                 muzzle = {line.center.x, line.center.y, line.center.z};
                 haveMuzzle = fromRenderer;
+                // [bow] xbow_bolt_origin: the crossbow's own release bone (bolt_helper, the game's MissileReleasePoint) on the barrel as drawn - where
+                // vrcam's crossbow shot line (and our drawn bolt) starts, not the controller under the stock. Only from the renderer's placing (as drawn).
+                xbowgrip::V release;
+                if (in.xbowBoltOrigin && fromRenderer && xbowgrip::ReleasePoint(xbowgrip::Mul(b.inAttach, placed), b.release, &release)) {
+                    auto toHead = [&](V3 v) { const V3 m = {v.x * c - v.z * s, v.y, v.x * s + v.z * c}; return xbowgrip::V{-m.x, m.y, -m.z}; };
+                    const xbowgrip::V at = toHead(Scale(Sub(V3{release.x, release.y, release.z}, head), 1.0f / upm));   // from the eye, metres, head turn only: as drawn
+                    // [bow] xbow_bolt_fwd/up/side_cm: the player's shift on top of the model's point, along the drawn barrel's own axes as seen
+                    const xbowgrip::V p = xbowgrip::ExitShift(at, toHead({line.dir.x, line.dir.y, line.dir.z}), toHead({line.up.x, line.up.y, line.up.z}),
+                                                              in.xbowBoltShiftM[0], in.xbowBoltShiftM[1], in.xbowBoltShiftM[2]);
+                    const XbowReleaseOut r{{p.x, p.y, p.z}, now};
+                    if (std::isfinite(r.p[0] + r.p[1] + r.p[2])) { AcquireSRWLockExclusive(&g_gunBoneLock); g_xbowRelease = r; ReleaseSRWLockExclusive(&g_gunBoneLock); }
+                }
                 if (in.xbowAimBarrel && fromRenderer && std::isfinite(barrelDir.x + barrelDir.y + barrelDir.z) && Len(barrelDir) > 0.5f) {
                     aimBarrel = true;
                     aimDir = Norm(barrelDir);
@@ -7432,6 +7449,7 @@ struct XbowRigEntry {
     bool ok = false;                 // a crossbow whose barrel was read
     int cog = -1, count = 0;
     xbowgrip::M barrelInCog;
+    float release = NAN;             // [bow] xbow_bolt_origin: the bolt_helper along the barrel (BarrelInCog's releaseAlong)
     std::string model;
     uint32_t entity = 0;
     bool entityKnown = false, hero = false;
@@ -7476,7 +7494,7 @@ void LearnCrossbow(uintptr_t self, uintptr_t bones, int count, XbowRigEntry* e) 
     }
     xbowgrip::M it;
     const bool haveTrigger = inverse(trigger, &it);
-    if (!xbowgrip::BarrelInCog(ic, ib, il, ir, &e->barrelInCog, haveTrigger ? &it : nullptr)) {
+    if (!xbowgrip::BarrelInCog(ic, ib, il, ir, &e->barrelInCog, haveTrigger ? &it : nullptr, &e->release)) {
         NoteBow("crossbow barrel: " + e->model + "'s bolt_helper / limbs did not make a line - the left hand stays on the line set by eye");
         return;
     }
@@ -7578,9 +7596,9 @@ void NoteCrossbowBarrel(uintptr_t self) {
     xbowgrip::Line check;
     if (!xbowgrip::FromBolt(inAttach, &check)) { g_xbowBarrelWhy.store("the crossbow's barrel did not come out as a line"); return; }
     AcquireSRWLockExclusive(&g_gunBoneLock);
-    g_xbowBarrel = {inAttach, HeroGen(), now};
+    g_xbowBarrel = {inAttach, HeroGen(), now, held.release};
     g_xbowSource.self = self; g_xbowSource.cog = held.cog; g_xbowSource.count = held.count;
-    g_xbowSource.barrelInCog = held.barrelInCog; g_xbowSource.gen = HeroGen(); g_xbowSource.at = now;
+    g_xbowSource.barrelInCog = held.barrelInCog; g_xbowSource.gen = HeroGen(); g_xbowSource.at = now; g_xbowSource.release = held.release;
     ReleaseSRWLockExclusive(&g_gunBoneLock);
     g_xbowEntity.store(held.entity);
     g_xbowBarrelWhy.store(now - g_xbowRendered.at < 500 ? "read off the hero's crossbow, placed as the renderer draws it"
@@ -7612,7 +7630,7 @@ void XbowRenderedIn(uint32_t entity, uintptr_t component, uintptr_t out) {
     xbowgrip::Line line;
     if (!xbowgrip::FromBolt(inAttach, &line)) return;
     AcquireSRWLockExclusive(&g_gunBoneLock);
-    g_xbowRendered = {inAttach, gen, now};
+    g_xbowRendered = {inAttach, gen, now, src.release};
     ReleaseSRWLockExclusive(&g_gunBoneLock);
     static std::atomic<uint32_t> told{0xFFFFFFFFu};
     if (told.exchange(gen) != gen && att.upm > 1e-3f) {   // once a hero model: how far off the item's own transform was
@@ -9754,6 +9772,12 @@ bool XbowPalmDebug(float p[3], float* cm) {
     if (cm) *cm = g.cm;
     return true;
 }
+bool XbowReleasePoint(float p[3], unsigned maxAgeMs) {
+    AcquireSRWLockShared(&g_gunBoneLock); const XbowReleaseOut r = g_xbowRelease; ReleaseSRWLockShared(&g_gunBoneLock);
+    if (!r.at || GetTickCount64() - r.at > maxAgeMs) return false;
+    memcpy(p, r.p, sizeof r.p);
+    return true;
+}
 bool XbowShotRay(float a[3], float b[3], bool* barrel, bool* floor) {
     AcquireSRWLockShared(&g_gunBoneLock); const XbowRayOut g = g_xbowRay; ReleaseSRWLockShared(&g_gunBoneLock);
     if (!g.at || GetTickCount64() - g.at > 300) return false;
@@ -10203,7 +10227,7 @@ void Set(const Input& in) {
 #endif
 #if D2RVR_FIRST_PERSON
     g_bowRigOn.store(in.bowRig && in.mode == 2);
-    const bool barrel = (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel) && in.gunStock && in.mode == 2;
+    const bool barrel = (in.xbowModel || in.xbowBarrelDebug || in.xbowAimBarrel || in.xbowBoltOrigin) && in.gunStock && in.mode == 2;
     if (g_xbowBarrelOn.exchange(barrel) && !barrel) g_xbowBarrelWhy.store("not asked for");
     g_xbowBoltDiag.store(in.xbowBarrelDebug && in.gunStock && in.mode == 2);
     g_bowStringOn.store(in.bowString && in.mode == 2);
