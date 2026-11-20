@@ -123,6 +123,29 @@ it is still as we left it.
 
 `tools/data_mods_test.cpp` runs the merge on a made-up game folder; `tools/start_helper_test.py` case 12 runs `--start` with a D2RMM mod.
 
+### D2RMM's output named D2R-VR (barti4033, 0.218.3, 2026-11-17)
+
+A player who names D2RMM's output mod `D2R-VR` (to get his D2RMM mods into the one mod the game loads) has D2RMM delete `mods\D2R-VR\D2R-VR.mpq`
+whole at every build and write its own files and its own `modinfo.json` (`savepath "D2R-VR/"`). Everything of ours in that folder goes with it: the
+act skies Setup put there and everything Settings made from the player's game (the sky domes, the cave ceilings, the canoe, the world's patches). The game
+then shows no game-drawn dome - the bare void behind the trees, white tree outlines, the fog unable to tint it - until Settings is opened again. Signs in
+the logs: D2RLoader's `modinfo.savepath D2R-VR/` (ours is `../`), `Compiled 188 tables from TXT ... N mod` (ours has no TXT), the plugin's
+"game sky ... the dome's unit NOT given to the game: ... the file is not there".
+
+What survives such a wipe is everything in `mods\D2R-VR` beside the `.mpq` folder: the plugin, its ini, the makers' receipts (`sky_dome.json`,
+`cave_ceiling.json`, ...). So (`shared/mod_data_check.h`):
+
+- Setup keeps a copy of its own `.mpq` files beside it, the same tree under `mods\D2R-VR\shipped_data` (the act skies); Settings' sky dome maker puts a
+  missing one back before it builds the atlas (a file there is never replaced).
+- The plugin looks at the game's start (`vr/diag/mod_data_watch.cpp`): one log line, "mod data ([mods] restore_mod_data): ... all there" or "... GONE",
+  naming D2RMM when `modinfo.json` is not Setup's. With `[mods] restore_mod_data=1` it runs `D2R_VR_Settings.exe --restore-mod-data` (no window, below
+  normal priority, about 30 s): Setup's files back, the makers that write into the `.mpq` again; the dome is drawn as soon as its files are there.
+- Settings' Other mods row warns when `modinfo.json` is not Setup's. `modinfo.json` itself is never rewritten: its save folder is where the player's
+  characters are now.
+- The real way out for the player: D2RMM's output named `D2RMM` again and Home > "Load my other mods with D2R VR" ticked.
+
+`tools/mod_data_check_test.cpp` tests the look and the copy on a made-up mod folder; `installer/tests/mod_layout_test.py` case 1 checks the kept copy.
+
 ## Upgrading from 0.169 or earlier
 
 Setup moves what is ours once, before the new files go in (`MoveEarlierInstall`, `MoveLibsIntoMod`, `MovePortableIntoMod` in `installer\mod_layout.inc`), and

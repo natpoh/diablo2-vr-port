@@ -17,6 +17,7 @@
 #include "haptics.h"  // a select taken: a pulse in the right hand
 #include "link.h"
 #include "log_async.h"
+#include "point_cast_wire.h"   // [gameplay] teleport_circle: our presses are casts, not holds for its arc (SkipPress)
 #include "skill_link.h"
 #include "skill_link_wire.h"
 #include "rune_flash.h"   // a gesture recognised: the trail's flash
@@ -87,6 +88,8 @@ const char* SlotName(int slot) { return slot >= 0 && slot < wheel::kSlotCount ? 
 
 void Press(int slot, uint32_t ms) {
     const skilllink::Press p = skilllink::SlotPress(slot);
+    // the cast itself: point cast lets it through to the game as it is (taken for its arc, it came out late, as its own second press - himbrat, 2026-11-19)
+    pointwire::SkipPress(slot, ms ? ms : p.ms);
     directinput::PadPulse({p.buttons, p.lt, p.rt}, ms ? ms : p.ms);
 }
 

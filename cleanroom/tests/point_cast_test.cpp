@@ -395,6 +395,114 @@ void Rings() {
     EXPECT(Ring(0, 0, 0, 0.0f, 20, a, b, 20) == 0 && Ring(0, 0, 0, 0.5f, 2, a, b, 20) == 0, "no radius / too few: none");
 }
 
+// The skill link's presses (a glyph's or BodyWalk's cast: [gestures] skill_link) are casts of their own: marked (Skips), they go to the game untouched - no
+// hold, nothing stripped, no release press of ours. himbrat, 2026-11-19 15:37:38: the glyph's LT + RB press of Summon Defiler was taken for the arc and
+// pressed again ~200 ms later. The player's own presses are taken as ever.
+void LinkPresses() {
+    // the glyph's cast: Meteor (listed) on LT + RB, the skill link pulses LT + RB for 180 ms (skill_link.h kAltRowMs) from t = 1000
+    Skips k;
+    k.MarkSlot(7, 180, 1000);
+    EXPECT(k.Mask(1000) == kPadRB && k.Mask(1239) == kPadRB && k.Mask(1240) == 0u, "the window: the pulse + %llu ms (%X %X %X)", (unsigned long long)kSkipMarginMs,
+           k.Mask(1000), k.Mask(1239), k.Mask(1240));
+    Hold h;
+    h.Poll(0, 0, 0, true, SkillOf, IsListed, 990, k.Mask(990));
+    Step s = h.Poll(kPadRB, 255, 0, true, SkillOf, IsListed, 1005, k.Mask(1005));
+    EXPECT(!s.started && !s.strip && !h.Active(), "the skill link's LT + RB: not taken, the game sees it (%d %X)", s.started, s.strip);
+    s = h.Poll(kPadRB, 255, 0, true, SkillOf, IsListed, 1150, k.Mask(1150));
+    EXPECT(!s.started && !s.strip && !s.circle, "still held by the pulse: the game's");
+    s = h.Poll(0, 0, 0, true, SkillOf, IsListed, 1185, k.Mask(1185));
+    EXPECT(!s.released && !s.started, "the pulse over: no release, nothing of ours pressed");
+    // the player's own LT + RB after the window: the arc as ever
+    h.Poll(0, 0, 0, true, SkillOf, IsListed, 1300, k.Mask(1300));
+    s = h.Poll(kPadRB, 255, 0, true, SkillOf, IsListed, 1310, k.Mask(1310));
+    EXPECT(s.started && s.slot == 7 && s.skill == 56 && s.strip == kPadRB, "the player's LT + RB: taken (%d %d %d %X)", s.started, s.slot, s.skill, s.strip);
+    s = h.Poll(0, 0, 0, true, SkillOf, IsListed, 1400, k.Mask(1400));
+    EXPECT(s.released && s.tap && s.slot == 7, "and its tap cast where one looks");
+
+    // inside the window the player's other buttons are theirs: X (Teleport) taken while the skill link pulses LT + RB
+    Skips k2;
+    k2.MarkSlot(7, 180, 2000);
+    Hold h2;
+    h2.Poll(0, 0, 0, true, SkillOf, IsListed, 1990, k2.Mask(1990));
+    s = h2.Poll(kPadX, 0, 0, true, SkillOf, IsListed, 2010, k2.Mask(2010));
+    EXPECT(s.started && s.slot == 1 && s.skill == kTeleport && s.strip == kPadX, "the player's X during the pulse: taken (%d %d)", s.started, s.slot);
+
+    // the skill link pressing the RT slot (Blizzard): the trigger stays the game's
+    Skips k3;
+    k3.MarkSlot(9, 65, 3000);
+    EXPECT(k3.Mask(3001) == kRt, "RT's control is kRt (%X)", k3.Mask(3001));
+    Hold h3;
+    h3.Poll(0, 0, 0, true, SkillOf, IsListed, 2990, k3.Mask(2990));
+    s = h3.Poll(0, 0, 255, true, SkillOf, IsListed, 3005, k3.Mask(3005));
+    EXPECT(!s.started && !s.strip, "the skill link's RT: not taken (%d %X)", s.started, s.strip);
+
+    // BodyWalk's held cast renews its pulse every 20 ms: one window that keeps going, and one press for the game the whole time
+    Skips k4;
+    Hold h4;
+    h4.Poll(0, 0, 0, true, SkillOf, IsListed, 3990, k4.Mask(3990));
+    bool taken = false;
+    for (uint64_t t = 4000; t <= 4600; t += 20) {
+        k4.MarkSlot(1, 120, t);
+        s = h4.Poll(kPadX, 0, 0, true, SkillOf, IsListed, t + 5, k4.Mask(t + 5));
+        taken = taken || s.started || s.strip;
+    }
+    EXPECT(!taken && k4.Mask(4600 + 120 + kSkipMarginMs - 1) == kPadX, "a held cast's renewed pulses: never taken");
+    // a renewal never shortens it
+    k4.Mark(kPadX, 10, 4610);
+    EXPECT(k4.Mask(4700) == kPadX, "a shorter mark does not cut the window short");
+
+    // more controls than windows: the newest are kept (the one ending first gives way)
+    Skips k5;
+    k5.MarkSlot(0, 65, 5000);    // B
+    k5.MarkSlot(1, 65, 5001);    // X
+    k5.MarkSlot(2, 65, 5002);    // Y
+    k5.MarkSlot(3, 65, 5003);    // RB
+    k5.MarkSlot(8, 65, 5004);    // A: B's gives way
+    EXPECT(k5.Mask(5010) == (kPadX | kPadY | kPadRB | kPadA), "the four newest (%X)", k5.Mask(5010));
+    k5.MarkSlot(0, 65, 6000);    // all expired: any free one
+    EXPECT(k5.Mask(6010) == kPadB, "after they expired: B alone (%X)", k5.Mask(6010));
+    Skips none;
+    none.MarkSlot(-1, 65, 7000);
+    none.MarkSlot(12, 65, 7000);
+    EXPECT(none.Mask(7001) == 0u, "no slot, no mark");
+}
+
+// The slots' skills from the skill panel's snapshot, read again after the game's setter applied an assignment: the press right after names the new skill.
+void SlotsAfterAssign() {
+    wheel::Snapshot snap;
+    snap.ready = true;
+    auto put = [&](int slot, int id, bool available = true) {
+        snap.slot[slot] = wheel::Skill{};
+        snap.slot[slot].id = id;
+        snap.slot[slot].known = true;
+        snap.slot[slot].available = available;
+    };
+    put(7, kTeleport);              // LT + RB: Teleport (the "old" skill, as 376 was)
+    put(1, 36);                     // X: Fire Bolt
+    put(8, wheel::kSkillAttack);    // A: the plain attack - no skill
+    put(0, 56, false);              // B: Meteor, but the player has it no more
+    static int table[kSlotCount];
+    SlotsOf(snap, table);
+    EXPECT(table[7] == kTeleport && table[1] == 36 && table[8] == -1 && table[0] == -1 && table[2] == -1, "read: %d %d %d %d %d", table[7], table[1], table[8],
+           table[0], table[2]);
+    // the setter put Meteor on LT + RB (and the game took it off another slot): read again, the press there names Meteor
+    put(7, 56);
+    put(1, -1);
+    SlotsOf(snap, table);
+    EXPECT(table[7] == 56 && table[1] == -1, "after the assignment: %d %d", table[7], table[1]);
+    Hold h;
+    auto of = [](int slot) { return slot >= 0 && slot < kSlotCount ? table[slot] : -1; };
+    h.Poll(0, 0, 0, true, of, IsListed, 0);
+    Step s = h.Poll(kPadRB, 255, 0, true, of, IsListed, 10);
+    EXPECT(s.started && s.skill == 56, "the press names the new skill (%d)", s.skill);
+    // a snapshot not ready: nothing on any slot (the skill buttons cast as ever)
+    snap.ready = false;
+    SlotsOf(snap, table);
+    bool any = false;
+    for (int i = 0; i < kSlotCount; ++i) any = any || table[i] >= 0;
+    EXPECT(!any, "not ready: no slot holds a skill");
+}
+
 }  // namespace
 
 int main() {
@@ -402,6 +510,8 @@ int main() {
     HoldIt();
     Banks();
     Triggers();
+    LinkPresses();
+    SlotsAfterAssign();
     NotAllowed();
     Arcs();
     Caps();

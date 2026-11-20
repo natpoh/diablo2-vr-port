@@ -142,7 +142,14 @@ DXGI_FORMAT ColourTypeless(DXGI_FORMAT f) {
 }
 
 // Shared: a default heap marked shared, simultaneous access (read by FlatVR's device while the game's queue writes), in COMMON; an NT handle
-bool MakeShare(Share& s, ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT f, const wchar_t* name) {
+D3D12_RESOURCE_FLAGS ShareFlags(bool renderTarget) {
+    return (renderTarget ? D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET : D3D12_RESOURCE_FLAG_NONE) | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+}
+// renderTarget: the colour only. The depth's copy is the game's depth format, typeless (R24G8_TYPELESS, format 44): no render target can be
+// made of that family, and asking for one failed the texture outright (E_INVALIDARG) - FlatVR got the picture and never the depth from the
+// plugin since 0.203 (2026-11-19, Serg's F5 on "FlatVR depth": "addon connected, no depth buffer"). Only copied into, it needs no flag but the
+// simultaneous access FlatVR's device reads it under (tools/flatvr_feed_test.cpp makes both on WARP).
+bool MakeShare(Share& s, ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT f, const wchar_t* name, bool renderTarget) {
     D3D12_RESOURCE_DESC d{};
     d.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     d.Width = w;
@@ -150,7 +157,7 @@ bool MakeShare(Share& s, ID3D12Device* dev, uint32_t w, uint32_t h, DXGI_FORMAT 
     d.DepthOrArraySize = d.MipLevels = 1;
     d.Format = f;
     d.SampleDesc.Count = 1;
-    d.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+    d.Flags = ShareFlags(renderTarget);
     D3D12_HEAP_PROPERTIES hp{};
     hp.Type = D3D12_HEAP_TYPE_DEFAULT;
     ID3D12Resource* t = nullptr;
@@ -265,7 +272,7 @@ void Present(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb, const
     if (!g_colourTex.tex || g_colourTex.w != sw || g_colourTex.h != h || g_colourTex.f != tl) {
         col->nt_handle = 0;
         Retire(g_colourTex);
-        if (!MakeShare(g_colourTex, dev, sw, h, tl, L"d2rvr flatvr feed picture")) {
+        if (!MakeShare(g_colourTex, dev, sw, h, tl, L"d2rvr flatvr feed picture", true)) {
             if (!g_failColour) { g_failColour = true; Say("vrcam: flatvr feed - no picture for FlatVR (the shared texture)"); }
             return;
         }
@@ -306,7 +313,7 @@ void Present(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb, const
         if (!g_depthTex.tex || g_depthTex.w != dd.Width || g_depthTex.h != dd.Height || g_depthTex.f != dd.Format) {
             dep->nt_handle = 0;
             Retire(g_depthTex);
-            if (MakeShare(g_depthTex, dev, (uint32_t)dd.Width, dd.Height, dd.Format, L"d2rvr flatvr feed depth")) {
+            if (MakeShare(g_depthTex, dev, (uint32_t)dd.Width, dd.Height, dd.Format, L"d2rvr flatvr feed depth", false)) {
                 Name(dep, g_depthTex, (uint32_t)dd.Format);
                 g_stats.depthOk = true;
                 Say("vrcam: flatvr feed - FlatVR's depth from the plugin: %llux%u, format %u", (unsigned long long)dd.Width, dd.Height, (unsigned)dd.Format);

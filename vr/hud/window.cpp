@@ -451,7 +451,7 @@ void MouseTick() {
     // front) the pointer went wherever the mouse took it - that travel is no turn. The first look after it only puts the pointer back
     // in the middle; it was taken as one, and leaving a dialogue threw the view at the sky (from sajmonsoft's flat fork, 2026-10).
     static bool lookWasOn = false;
-    const bool flat = g_set.platform.load() == 0;
+    const bool flat = FlatRules();   // (flat, VR F5)
     if (!g_enabled.load() || !GameFocused()) { g_dragging = false; lookWasOn = false; return; }
     POINT p{};
     if (!GetCursorPos(&p)) return;

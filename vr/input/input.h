@@ -29,6 +29,8 @@ bool KeyMoveMode();
 bool ShooterActive();
 bool ChatOpen();
 bool StickHookIn();
+float GameRunThreshold();   // the game's stickRunToggleThreshold (0 = not readable): [direct] walk_by_lean, [walk_in_place]
+bool GameRunSwitchOn();     // the game's Run / walk switch is on run
 extern std::atomic<bool> g_mouseLookOn;   // [input] mouse_look, F9
 bool ChatFlagFound();
 bool ChatFlag();

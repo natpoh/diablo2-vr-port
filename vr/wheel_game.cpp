@@ -25,6 +25,7 @@
 
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "direct_input.h"
+#include "point_cast_wire.h"   // [gameplay] teleport_circle: its copy of the slots read again after an assignment (SlotsChanged)
 #include "sigscan.h"
 #include "skill_tables_game.h"   // the running game's skill tables (names' string ids, trees, icon frames) into wheel_icons
 #include "ui_ticket.h"
@@ -460,6 +461,7 @@ void __cdecl RequestJob(const PluginContext*, void* user) noexcept {
     Log(b);
     SetReply(r.sequence, result);
     CaptureNow();   // the wheel shows what the game has now
+    if (result == wheel::Result::Applied) pointwire::SlotsChanged();   // (the same UI thread; nothing when teleport_circle is off)
 }
 
 }  // namespace

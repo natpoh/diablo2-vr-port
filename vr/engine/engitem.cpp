@@ -1524,8 +1524,8 @@ const char* DomeWhyNot() {
     // every view of our camera round the world (skydome::ViewWhyNot: not from above, the table, F12, flat without game_drawn_flat) - VR's
     // third person too (Serg: "почему в 103 уровне старое небо", VR F2)
     skydome::ViewIn v;
-    v.vr = g_set.platform.load() == 1;
-    v.view = ViewNow();
+    v.vr = !FlatRules();                          // (VR F5: the flat game's F3 - vr/ar_view.h)
+    v.view = FlatRules() ? FlatRulesView() : ViewNow();
     v.enabled = g_enabled.load();
     v.gameDrawnFlat = g_set.gameDrawnFlat.load();
     v.tableFull = g_set.tableFull.load();
@@ -2953,7 +2953,7 @@ void Work() {
 // wall in first person (Serg's 40.webp, flat); hidden in VR F4 and flat F3, our sky and fog in its place. The views from above and F2 keep it.
 bool SummitBackdropOff() {
     if (!g_set.summitBackdropHidden.load() || !g_gameSkyboxHere.load() || !g_enabled.load() || !g_inWorld.load()) return false;
-    return g_set.platform.load() == 1 ? FullBody() : g_set.flatView.load() == 3;
+    return FlatRules() ? FlatRulesView() == 3 : FullBody();   // (VR F5: flat F3)
 }
 
 // [sky] weather_first_person (vr/weather_place.h): the game's weather box - rain, snow - laid at its own camera every update (0x5F2330 in the

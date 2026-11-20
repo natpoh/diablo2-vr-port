@@ -1,5 +1,34 @@
 # What's new in D2R VR
 
+## 0.221.0
+
+A map mode selector, your strike statistics against everyone's, D2R VR's files made again after D2RMM wipes them, and fixes.
+
+- **Map mode selector** (the headset's settings panel, HUD > Map, and Settings, "Map mode"): one choice switches the map between its
+  modes - the orb in the hand, the flat map in the hand, the big map on the left hand, the whole map on the left hand, or the map in
+  the game's picture - so you no longer look for the separate keys. Two new choices behind it, both off by default: the big map stays
+  up while you attack (`[hud] map_big_keep`), and the game's whole map held on the left hand all the time (`[hud] map_hand_full`).
+- **Your strike statistics against everyone's** (D2R VR Settings > Stats): per hero and weapon - how fast your blows land, the speeds
+  of the swings that missed, how hard you hit and how it changes over a session. "Share anonymously" first shows you exactly what is
+  sent (no names, no items, a random install number), and only after you agree does it send the numbers and compare them with other
+  players' (the median, the 10 - 90 % range, "faster than N %"). Off until you agree; Remove deletes them from the server.
+- **Fix: D2R VR's game files made again when D2RMM deletes them** (Settings, "Make D2R VR's game files again when they are gone", on -
+  `[mods] restore_mod_data`): D2RMM with its output mod named D2R-VR deletes D2R VR's mod data at every build - the game-drawn sky's
+  domes, the cave ceilings, the canoe, the world's patches - so the sky was a void until Settings ran again. At the game's start the
+  mod now notices what is gone and makes it again in the background.
+- **Fix: a skill cast by a gesture or BodyWalk is no longer swallowed by the point-skill circle**: the circle took the skill link's
+  own press for your hold and pressed it again later with the slot's old skill.
+- **Fix: FlatVR's 3D from the depth gets the depth again** ("FlatVR depth"): the mod's shared depth picture was never made since 0.203,
+  so FlatVR said "no depth buffer".
+- **New, off by default: the fifth view, F5 - first person without hands** (D2R VR Settings > F5 tab, "F5: first person with the
+  mouse, no hands" - `[mode] f5_ar_view`): first person as in the flat game's F3, played with the mouse and keyboard or a pad - no VR
+  arms or held weapon, the interface in the picture, the camera on your head as in F4. In the headset through Native OpenXR, or through
+  FlatVR to a headset or AR glasses (XREAL and others, side by side). Shift + F5 (or F12) switches to it; the F5 tab also puts its
+  toolbar low in front under the body, moves its corner map and the allies. Not tried widely yet - tell us how it plays.
+- The view keys are **Shift + F1 ... F5** (Settings > Home > View keys), so a plain F1 - F8 stays the game's skill keys;
+  F12 goes round all the views.
+- Not in this version: walk in place by the headset (`[walk_in_place] on`; its library is not in this installer).
+
 ## 0.219.2
 
 A hotfix: hit by touch strikes again when the game put a command on your attack button, and the crossbow's bolt leaves from the crossbow.

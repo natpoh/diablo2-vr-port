@@ -30,6 +30,22 @@ struct Settings {
     std::atomic<int>   platform{1};
     std::atomic<int>   flatView{3};
     std::atomic<int>   vrView{3};
+    // [mode] f5_ar_view (vr/ar_view.h): 1 = VR has a fifth view, F5 - flat F3's first person on FlatVR's screen, for AR glasses (no
+    // hands, mouse and keyboard, the head does not turn the camera); 0 as before (F1 - F4)
+    std::atomic<bool>  f5ArView{false};
+    // [mode] f5_head_look (vr/ar_view.h NativeF5Mode): F5's camera follows the head as F4's (native: the headset's eyes; FlatVR: the head's
+    // turn, Head Lock on), the controls flat F3's; 0 = the head turns nothing (native: the flat picture; FlatVR: its screen put)
+    std::atomic<bool>  f5Head{true};
+    // [hud] f5_toolbar (vr/f5_toolbar.h): in F5 the toolbar's strip cut out of the picture and hung low in front, f5_toolbar_below_cm under the
+    // eyes and f5_toolbar_ahead_cm ahead of them, as wide as F4's on the body (f5BarWidth, metres); 0 = F5's toolbar in the picture, as before
+    std::atomic<bool>  f5Toolbar{false};
+    // [hud] f5_map / f5_allies (vr/f5_hud.h): in F5 the map kept in a corner, moved toward the middle (f5MapIn %), down (f5MapDown %) and nearer
+    // (f5MapNear, [hud_floor] map_near's units); the allies' portraits moved right / down (%) - 0 = as before
+    std::atomic<bool>  f5Map{false}, f5Allies{false};
+    std::atomic<float> f5AimTiltPct{60.0f};   // [body] f5_aim_tilt_pct: VR F5's arms follow this % of the camera's pitch (flat F3's flat_aim_tilt_pct elsewhere)
+    std::atomic<float> f5MapSize{100.0f};   // [hud] f5_map_size: % of the corner map's size now ([hud_inside] map_zoom)
+    std::atomic<float> f5MapIn{12.0f}, f5MapDown{10.0f}, f5MapNear{2.0f}, f5AlliesRight{12.0f}, f5AlliesDown{10.0f};
+    std::atomic<float> f5BarBelow{33.0f}, f5BarAhead{32.0f}, f5BarWidth{0.0f};   // (f5bar::kDefaultBelowCm / kDefaultAheadCm)
     // [view] keys (vr/view_keys.h): 0 F1 - F4 pick the view (the game does not get them), 1 Shift + F1 - F4 (a plain F1 - F8 is the
     // game's), 2 no F key (F12, Settings, the controller). -1 until read, so the first read logs.
     std::atomic<int>   viewKeys{-1};

@@ -114,7 +114,9 @@ void PushArms() {
     // animates him, head included (on the floor he stood headless, 2026-10-05)
     // VR F1 (from above) and F3 (the floor): the game's own hero, nothing of ours on him - whether or not the view is drawn in 3D (Overhead). Drawn as a flat
     // window F1 counted as first person: the whole hero turned to the look, his head hidden (Serg on 0.192.39: "in F1 the doll is still taken over")
-    const int view = ViewNow(), platform = g_set.platform.load();
+    // (VR F5, [mode] f5_ar_view: as flat F3 - vr/ar_view.h RulesFor)
+    const arview::Rules rules = arview::RulesFor(g_set.platform.load(), ViewNow(), g_set.vrView.load(), g_set.f5ArView.load());
+    const int view = rules.view, platform = rules.platform;
     const bool vrVanilla = poseviews::Vanilla(platform, view);
     skel::SetPoseView(poseviews::AnyAllowed(platform, view));   // (the pose thread and the skinning: every writer, vr/body/pose_views.h)
     const bool own = on && !ThirdPerson() && !Overhead() && !vrVanilla;
@@ -794,11 +796,11 @@ void PushArms() {
     in.formHeight[1] = g_set.formHeight[1].load();
     // [body] flat_hold_trunk: flat first person (F3), the game's own animation - a swing took the torso out from under the camera. As F4
     // holds the body under the head: the trunk's axis in the bind pose, the hips under it, the arms still the game's (skeletons.cpp PoseBody)
-    in.holdTrunk = own && g_set.platform.load() == 0 && g_set.flatHoldTrunk.load();
+    in.holdTrunk = own && FlatRules() && g_set.flatHoldTrunk.load();   // (flat F3, VR F5)
     // [body] flat_hold_trunk_twist: and the arms keep the chest's turn the hold drops (a side swing crosses in front, not past the camera)
     in.holdTrunkTwist = in.holdTrunk && g_set.flatHoldTrunkTwist.load();
     // [body] flat_hide_shoulder_right / _left: flat first person (F3), the shoulder pads a swing lifts in front of the camera not drawn (vr/shoulder_pads.h)
-    for (int s = 0; s < 2; ++s) in.hidePad[s] = own && g_set.platform.load() == 0 && g_set.flatHideShoulder[s].load();
+    for (int s = 0; s < 2; ++s) in.hidePad[s] = own && FlatRules() && g_set.flatHideShoulder[s].load();
     in.walkBack = g_set.walkBack.load();
     in.walkBackReverse = g_set.walkBackReverse.load();
     in.dollFeet = g_set.dollFeet.load() && !vrVanilla;   // (in every other view; VR F1 / F3 the game's)
@@ -857,7 +859,7 @@ void PushArms() {
         // the attack plays; attack_lean steps aside there (both would turn the arms). The camera's forward in the hero's model, read here when the body's turn did not.
         const bool tiltView = on && platform == 0 && view == 3 && !Overhead();
         in.aimTilt = tiltView && g_set.flatAimTilt.load();
-        in.aimTiltPct = g_set.flatAimTiltPct.load();
+        in.aimTiltPct = ArView() ? g_set.f5AimTiltPct.load() : g_set.flatAimTiltPct.load();   // ([body] f5_aim_tilt_pct: VR F5's own share)
         in.aimTiltMaxDeg = g_set.flatAimTiltMaxDeg.load();
         in.aimTiltTarget = g_set.flatAimTiltTarget.load();
         if (in.aimTilt) {

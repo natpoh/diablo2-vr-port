@@ -326,6 +326,7 @@ extern std::atomic<bool> g_topEyeOk;
 extern std::atomic<float> g_viewFwdY;
 extern std::atomic<float> g_projSx, g_projSy, g_stereoIpd, g_stereoConv;
 extern std::atomic<float> g_projOffX, g_projOffY;   // the view axis on the picture, NDC (-M[8], -M[9]): the flat picture's shift ([fog] game_fog_sky_off_axis)
+extern std::atomic<bool> g_projOffNative;   // g_projOffX / Y are native OpenXR's eyes' shared axis (eyefov::SharedAxis), not the flat picture's shift
 extern std::atomic<bool> g_handWalk;
 extern std::atomic<uint32_t> g_handWalkReads;
 extern bool g_lookOk;

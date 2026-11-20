@@ -17,8 +17,9 @@ bool On();      // the tick, as the writer's thread last read it
 
 // The touch (vrcam's timer thread). Cheap: a lock and a few additions, no log line, no file.
 void SetHero(const char* name, int cls);   // the hero the next blows are his (a name not valid: the unnamed hero)
-void Blow(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, float speed, float force);
-void Refused(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, bool slow, uint64_t nowMs);
+// speed m/s, force N s (<= 0 none), the weapon's steel kg (0: not measured); the speed of a refused touch (the missed swing's bucket)
+void Blow(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, float speed, float force, float kg, uint64_t nowMs);
+void Refused(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, bool slow, float speed, uint64_t nowMs);
 void Tick(uint64_t nowMs);   // the missed swings that have settled
 
 // The pages: a copy of the numbers and the session's start (seconds since 1970). False: off or nothing yet.

@@ -707,7 +707,7 @@ bool GestureCanAim() {
 // 2026-10-15 had "attack vector 0.62 0.79 -> the hand -0.79 -0.62" and 53 "TURNED to the hand" in F1 and F3). VR F2 and F4 look where the player looks, as
 // they did; the flat game is as it was.
 bool AimByVector() {
-    return attackview::HandMayAim(g_set.platform.load(), g_set.vrView.load()) && g_enabled.load() &&
+    return attackview::HandMayAim(FlatRules() ? 0 : g_set.platform.load(), g_set.vrView.load()) && g_enabled.load() &&   // (VR F5: the flat game's)
            ((g_set.bowMode.load() == 4 && (g_aHeld.load() || g_skillHeld.load() || GestureAimLive())) || bowdrawwire::AimLive());
 }
 

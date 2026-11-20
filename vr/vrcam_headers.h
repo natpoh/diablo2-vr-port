@@ -167,7 +167,7 @@ namespace uitrace { void Register(bool trace, bool skip, bool depthViaReShade); 
 namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void (*log)(const char*)); void Reset(void (*log)(const char*)); }
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
-                void SetClassicView(bool on); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready); bool PictureReady();
+                void SetClassicView(bool on); void SetViewBar(bool on, float sideCm, float liftCm, float widthM); void SetPictureMapInward(bool inward); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready); bool PictureReady();
                 bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(int style); bool PictureCompass(float box[4], float* crop, int* style, float* bearing); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
@@ -239,6 +239,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "config/settings.h"  // M2: the settings (struct Settings, g_set)
 #include "world/area.h"       // M4: the area (the biome the game set, [sky] outdoor)
 #include "view/view_state.h"  // M5: which view (FullBody, ThirdPerson, Overhead, MenuFlat, ...)
+#include "ar_view.h"          // VR F5 for AR glasses ([mode] f5_ar_view): flat F3 on FlatVR's screen
 #include "sky/sky_config.h"   // the sky's and the ceiling's configuration
 #include "sky/sky_choice.h"   // M6: who draws the sky, the fog, the ceiling (FogWanted, OurSkyWanted, CeilWanted, ...)
 #include "engine/engitem.h"   // M7: units the game draws as its own (the belt, the domes, the ceiling, the weather)
@@ -260,6 +261,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "under_camera.h"  // [body] under_camera: the drawn body under the camera while the game's camera trails the hero
 #include "skill_link.h"        // [gestures] skill_link: kDefaultSpareSlot
 #include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll)
+#include "walk_in_place_wire.h"   // [walk_in_place]: walk in place with the headset, BodyWalk's walk library in the game (d2r_vr_walk.dll)
 #include "skill_link_wire.h"   // [gestures] skill_link: the hero's skills to BodyWalk, a button or a recorded gesture per skill cast back
 #include "point_cast_wire.h"   // [gameplay] teleport_circle: the skills cast onto a point aimed with an arc and a circle (vr/point_cast.h)
 #include "trigger_roles_wire.h"   // [gestures] trigger_<hand>: a glyph trigger's aim (the cast's hand, the aim line)

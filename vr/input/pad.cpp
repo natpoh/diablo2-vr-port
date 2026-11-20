@@ -66,6 +66,18 @@ bool ViewStickToGame(float* px, float* py) {
 
 bool DirectWalkNow();
 bool StickHookIn();
+// VR F5 (Serg 2026-11-19: "почему то повороты стиком на ф5 не работают"): F5 is played as flat F3 - the keyboard move (FlatKeyMode), and XDetour
+// takes no pad report of ours then (the plugin's controller walks through the keyboard move's PadMirrorRead, its buttons come as actions) - so the
+// controller's right stick never reached the turn. It is taken here from the plugin's own controller (directinput::FlatPadRead: VR F1 - F3 and F5
+// with the head look, no BodyWalk running), the stronger of it and the pad the game polled, and turns the camera as a pad's right stick does in
+// flat F3: [turn] right_stick / speed / snap, the up / down by [camera] stick_pitch_flat (TurnTick).
+void F5ControllerStick(float* rx, float* ry) {
+    if (!ArView() || !FlatKeyMode()) return;
+    directinput::FlatPad p{};
+    if (!directinput::FlatPadRead(&p)) return;
+    const float x = p.rx / 32767.0f, y = p.ry / 32767.0f;
+    if (x * x + y * y > *rx * *rx + *ry * *ry) { *rx = x; *ry = y; }
+}
 std::atomic<ULONGLONG> g_pad0At{0};   // pad 0 last answered the game's poll (XDetour): another pad's report is not kept meanwhile (padpresence::KeepsReport)
 void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     if (!s || !g_enabled.load()) return;
@@ -118,7 +130,11 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     } } out{in, s->Gamepad, s, aimed};
     if (g_set.rightTurn.load()) {
         // The right stick is ours while on: it turns the body, the game never sees it.
-        if (own) { g_rightX.store(s->Gamepad.sThumbRX / 32767.0f); g_rightY.store(s->Gamepad.sThumbRY / 32767.0f); }
+        if (own) {
+            float rx = s->Gamepad.sThumbRX / 32767.0f, ry = s->Gamepad.sThumbRY / 32767.0f;
+            F5ControllerStick(&rx, &ry);   // VR F5: the controller's right stick too (no pad report of ours there)
+            g_rightX.store(rx); g_rightY.store(ry);
+        }
         s->Gamepad.sThumbRX = 0; s->Gamepad.sThumbRY = 0;
     }
     // Walking straight from BodyWalk (HookStickGet / HookKeyMove): the pad's left
@@ -134,7 +150,7 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     }
     // Flat with a real pad (a player, 2026-10-24: "the left stick seems to work absolute rather than relative to what direction I'm facing"): what the
     // stick was and what the game got, every 2 s while it is pushed - turned or not, by which way, in which view, and the game's UI mode then.
-    if (g_set.platform.load() == 0 && !fromBodyWalk && walkpath::PushedRaw(inX, inY)) {
+    if (FlatRules() && !fromBodyWalk && walkpath::PushedRaw(inX, inY)) {   // (flat, VR F5)
         static ULONGLONG lastAt = 0;
         if (const ULONGLONG now = GetTickCount64(); now - lastAt >= 2000) {
             lastAt = now;
@@ -320,7 +336,7 @@ void BeltFlickSink(uint32_t column, int stick, int dir) {
         return;
     }
     gamecmd::Tap(0x17u + column);
-    LogF("vrcam: belt flick - the left trigger held, the %s stick flicked %s: belt %u (VR F1-F3, the game's own belt key command 0x%X)", stick ? "right" : "left",
+    LogF("vrcam: belt flick - the hold held, the %s stick flicked %s: belt %u (VR F1-F3 / F5, the game's own belt key command 0x%X)", stick ? "right" : "left",
          beltflick::DirName((beltflick::Dir)dir), column + 1, 0x17u + column);
 }
 
@@ -403,6 +419,24 @@ void BodyWalkStickLift(BWPadMirror* bw, bool live) {
     g_bwStickLifted.store(lifted, std::memory_order_relaxed);
 }
 
+// [walk_in_place] (vr/walk_in_place_wire.h): the headset's walk-in-place stick into the pad the game's walk reads, only where the stick there rests
+// (wip::Merge: a push of the controller's wins), never with a panel open or no game; and while the internal library walks, BodyWalk's own walking
+// stick is left out (Serg 2026-11-19: ticked = the internal library is used, not the BodyWalk app). Said once a change.
+void WalkInPlaceStick(int16_t* lx, int16_t* ly) {
+    wip::Stick s;
+    if (!wipwire::Stick(&s.lx, &s.ly) || !g_inWorld.load() || gamestate::MenuOpen()) return;
+    wip::Merge(lx, ly, s);
+}
+void WalkInPlaceDropsBodyWalk(BWPadMirror* bw) {
+    static std::atomic<int> told{-1};
+    const bool drop = wipwire::Walks();
+    const int was = told.exchange(drop ? 1 : 0);
+    if (was != (drop ? 1 : 0) && (drop || was == 1))
+        Log(drop ? "vrcam: walk in place - the internal walk library walks the hero: BodyWalk's own walking stick is not mixed in"
+                 : "vrcam: walk in place - not walking by the library (off, not F4, or the library missing): BodyWalk's walking stick is mixed in as before");
+    if (drop) { bw->thumb_lx = 0; bw->thumb_ly = 0; }
+}
+
 bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr, bool* pluginPad = nullptr) {
     if (walkOnly) *walkOnly = false;
     if (pluginPad) *pluginPad = false;
@@ -430,8 +464,10 @@ bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr, bool* pluginPad =
     } else
         in.reportLive = (direct ? walks : in.bodywalkPadOn) && BodyWalkReport(&bw, walks);
     BodyWalkStickLift(&bw, in.reportLive);   // [input] bodywalk_walk_lift / [debug] walk_start_log
+    if (direct) WalkInPlaceDropsBodyWalk(&bw);   // [walk_in_place]: the internal walk library walks - BodyWalk's own walking stick is not mixed in
     in.ownLX = d.lx; in.ownLY = d.ly;
     if (direct) RoomStick(&in.ownLX, &in.ownLY);   // [openxr] roomscale_walk: the room walk's stick where the controller's rests
+    if (direct) WalkInPlaceStick(&in.ownLX, &in.ownLY);   // [walk_in_place]: the headset's walk where the controller's (and the room walk's) rests
     in.bwLX = bw.thumb_lx; in.bwLY = bw.thumb_ly;
     const walkpath::Out r = walkpath::Resolve(in);
     if (direct) {
@@ -449,6 +485,7 @@ bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr, bool* pluginPad =
     if (r.source != walkpath::Source::BodyWalkPad || GameLinkDirect()) return false;   // (Game Link direct: BodyWalk's gamepad is never the game's)
     *out = bw;
     RoomStick(&out->thumb_lx, &out->thumb_ly);   // (BodyWalk's pad is the pad: the room walk's stick where its stick rests)
+    WalkInPlaceStick(&out->thumb_lx, &out->thumb_ly);   // ([walk_in_place]: the headset's walk too, where its stick rests)
     return true;
 }
 

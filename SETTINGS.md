@@ -1391,6 +1391,12 @@ VR only. The strike statistics the game counts in F4 with Hit by touch (*Count m
 weapon of every hero you played in it; **All time: each hero**; **All time: each weapon** (every hero together). A row: blows, the speed where the blade
 touched (m/s, average and best), the strike's force (N s, average and best; a weapon with weight) and the swings that touched a monster but missed. The
 headset's settings panel has the same numbers on its Stats tab, one hero at a time.
+**Compare with other players (anonymous):** *Share anonymously...* first shows exactly what would be sent - per weapon class (every hero together) the blows,
+missed swings, the speed and force sums and their distributions, the conditions (weight on, seated, height, the touch's least speed) and a random id made on the
+PC; no hero names, no email - and sends it only on *Send*. Then the table shows per class how many players shared, your average speed against the median and
+the 10-90 % range, your force against the median, and the share of players you are faster than (from 100 blows in a class). After that first *Send*,
+*Share automatically when a game starts* is ticked (`[stats] share_anonymously`): the numbers go again by themselves when a game starts and while Settings is
+open, whenever they changed (at most every 20 minutes), until you untick it. *Remove my shared numbers* stops it and deletes them from the server.
 
 ## Status
 

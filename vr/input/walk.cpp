@@ -74,10 +74,11 @@ std::atomic<uint32_t> g_keyMoveCalls{0};     // how often the game asked: still 
 std::atomic<bool> g_keyMoveGateOk{true};     // the game's last answer with our vector: its own gates passed (flatkeys::Facts::gateOk)
 
 // Flat play through the keyboard move: on while the hook is in or may still go in.
-bool FlatKeyMode() { return g_set.platform.load() == 0 && g_set.flatKeyMove.load() && g_keyMove.load() != 2; }
+bool FlatKeyMode() { return FlatRules() && g_set.flatKeyMove.load() && g_keyMove.load() != 2; }   // (flat, VR F5)
 // ... and the game sees no pad at all.
 std::atomic<bool> g_flatPadTouched{false};   // [input] flat_pad_on_touch: the real pad was touched in flat mode - the pads go through from then on
-bool FlatNoPad() { return FlatKeyMode() && g_set.flatNoPad.load() && !g_flatPadTouched.load(); }
+// (not VR F5 with the head look: the controllers - or a real pad - are the game's pad there, as in VR F1 - F3)
+bool FlatNoPad() { return FlatKeyMode() && g_set.flatNoPad.load() && !g_flatPadTouched.load() && !ArHead(); }
 // VR third person (F2) played with the mouse and keyboard ([input] vr_keys_walk):
 // W A S D walk through the same keyboard move, ahead = where our camera looks.
 // With mouse look (F2 starts with it, F9 frees the pointer) it is flat's F2:
@@ -119,8 +120,8 @@ bool KeyMoveMode() { return FlatKeyMode() || VrKeyWalk(); }
 // Our camera's views only (F2-F4: the stick turned like any other), no menu, no chat.
 std::atomic<int> g_stickHook{0};   // HookStickGet: 0 not in yet, 1 in, 2 not possible
 bool DirectWalkNow() {
-    return g_set.platform.load() == 1 && g_set.directWalk.load() && g_enabled.load() && g_inWorld.load() &&
-           (!gamestate::MenuOpen() || g_handWalk.load()) && !ChatOpen();   // ([openxr] hand_inventory: the inventory on the hand walks on)
+    return g_set.platform.load() == 1 && !(ArView() && !ArHead()) && g_set.directWalk.load() && g_enabled.load() && g_inWorld.load() &&
+           (!gamestate::MenuOpen() || g_handWalk.load()) && !ChatOpen();   // (VR F5 without the head look: flat F3's walk, a real pad's stick the game's)   // ([openxr] hand_inventory: the inventory on the hand walks on)
 }
 // BodyWalk's stick as the game takes a walking vector (x right, y up on its screen,
 // length <= 1, its dead zone 10349 of 32767 with no rescale), turned by our camera.
@@ -130,7 +131,7 @@ bool BodyWalkWalk(float* px, float* py, bool* own = nullptr) {
     BWPadMirror m;
     if (!PadMirrorRead(&m)) return false;
     const float lx = (float)m.thumb_lx, ly = (float)m.thumb_ly;
-    const bool room = roomwalkwire::IsRoomStick(m.thumb_lx, m.thumb_ly);
+    const bool room = roomwalkwire::IsRoomStick(m.thumb_lx, m.thumb_ly) || wipwire::IsOurStick(m.thumb_lx, m.thumb_ly);   // ([walk_in_place]'s stick: not the controller's own either)
     // (the room walk's own stick passes under the pad's dead zone: its slow steady walk, the game's walk code and server strength as for any tilt)
     if (lx * lx + ly * ly <= 10349.0f * 10349.0f && !room) return false;
     if (own) {
@@ -229,7 +230,7 @@ uint64_t HookKeyMove() {
 void InstallKeyMoveHook() {
     static int misses = 0;
     // Flat with flat_keyboard_move, or VR with vr_keys_walk (third person, VrKeyWalk).
-    const bool flat = g_set.platform.load() == 0;
+    const bool flat = FlatRules();   // (VR F5: flat F3's W A S D)
     if (!g_ctx || g_keyMove.load() != 0 || !(flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load() || g_set.directWalk.load())) return;
     if (!Matches(RVA_KEY_MOVE, kSigKeyMove, sizeof kSigKeyMove)) {
         // In VR the game may stay on the pad for a long time, its keyboard move never

@@ -318,7 +318,9 @@ void OnFrame(const directinput::Frame& f, void*) {
     // F4 has all of it; VR F1 - F3 the window alone (vr/wheel_controller.h, vr/view_gate.h Number); in another view the controller stands down. The
     // long press's request is taken (and, outside the long-press mode or those views, dropped) every frame so that it cannot open the panel late.
     const bool f4 = viewgate::F4();
-    const int viewNo = f4 ? 4 : viewgate::Flat() ? viewgate::Number() : 0;
+    // VR F5 (Serg 2026-11-19: its own tab "во внутреннем оврелее"): viewgate::Flat() with no view number (vr/view/view_state.cpp FlatViews, VrViewNow)
+    // - the window alone as in F1 - F3, its pages hset::FlatView's (F5's tab, no F4 body)
+    const int viewNo = f4 ? 4 : viewgate::Flat() ? (viewgate::Number() > 0 ? viewgate::Number() : hset::kViewF5) : 0;
     g_ctl.SetView(viewNo);
     const bool request = directinput::TakeSkillPanelToggle();
     // a bow wielded in F4 with the draw on shoots by a draw only: the pointing hand's trigger is the bow draw's (kept from the layout), so

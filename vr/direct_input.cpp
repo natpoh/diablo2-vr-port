@@ -80,6 +80,9 @@ std::atomic<bool> g_bwWalk{true};   // [openxr] direct_bodywalk_walk: BodyWalk's
 std::atomic<bool> g_flatVrCtl{true};   // [direct] flatvr_controls: in FlatVR the layout runs on BodyWalk's raw controllers (flat_raw.h)
 std::atomic<bool> g_fedByLink{false};  // the frames come from Game Link (FlatVR), not from a native session
 std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
+// [direct] belt_flick_grip (Serg 2026-11-20 for F5: "прием зелий ... грип + стик"): the LEFT GRIP held + a flick instead of the left trigger - the trigger
+// is the game's Shift in controller mode (a belt key with it is Shift + belt), the grip is bound to nothing in these views. 0 = the left trigger, as before.
+std::atomic<bool> g_beltGrip{false};
 std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
 // [direct] stick_deadzone_*_pct / stick_outer_*_pct: each thumbstick's dead zone and outer edge (vr/stick_shape.h), 0 left, 1 right - in force whatever
 // direct_input says (native OpenXR with BodyWalk's input too: BodyWalk is given the shaped stick)
@@ -214,7 +217,8 @@ void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
     const beltflick::Stick left = stickOf(h), right = stickOf(in.hand[1]);
     // The belt: the left trigger held and a flick of a stick (vr/belt_flick.h). Its own key; the sink (vrcam) has the last word. While the
     // trigger is held the left stick does not walk - and is masked after it until it has been let go (the gate's context moves with the trigger).
-    const float trigger = focused && h.active && std::isfinite(h.trigger) ? h.trigger : 0.0f;
+    const float hold = g_beltGrip.load() ? h.squeeze : h.trigger;   // ([direct] belt_flick_grip: the left grip)
+    const float trigger = focused && h.active && std::isfinite(hold) ? hold : 0.0f;
     const beltflick::Machine::Out b = s.belt.Step(trigger, left, right, live && g_beltFlat.load());
     if (b.column >= 0) {
         if (const BeltSink sink = g_beltSink.load()) sink((uint32_t)b.column, b.stick, (int)b.dir);
@@ -632,6 +636,12 @@ void LoadSettings(const wchar_t* ini) {
                     : "vrcam: direct input - [direct] flat_controller=0: VR F1, F2, F3 without BodyWalk have no controller buttons (the walk and the belt potions only)");
     }
     const bool beltFlat = GetPrivateProfileIntW(L"direct", L"belt_flick_flat_views", 1, ini) != 0;
+    {
+        const bool grip = GetPrivateProfileIntW(L"direct", L"belt_flick_grip", 0, ini) != 0;
+        if (grip != g_beltGrip.exchange(grip) && on)
+            Log(grip ? "vrcam: direct input - [direct] belt_flick_grip=1: the belt's potions in VR F1, F2, F3 and F5 with the LEFT GRIP held + a flick of a stick"
+                     : "vrcam: direct input - [direct] belt_flick_grip=0: the belt's potions with the left trigger held + a flick, as before");
+    }
     g_beltFlat.store(beltFlat);
     static int toldBelt = -1;
     if (on && (int)beltFlat != toldBelt) {

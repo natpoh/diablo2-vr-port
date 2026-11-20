@@ -171,6 +171,26 @@ inline Proj Projection(const Tan& t) {
 // what a frustum edge must give (the test's check that Projection is the frustum).
 inline float Ndc(float tanX, float scale, float off) { return scale * tanX - off; }
 
+// The view axis's place on the picture (NDC, + right / up) that both eyes share - what the fog step before the effects needs for its
+// dome test and its rays (fogfx::Params::offX / offY: -M[8], -M[9]). Native OpenXR's eyes are off-axis: a headset a little (each eye
+// wider outwards, often more below than above), F5's window of the room ([openxr] f5_stereo, vr/views3d.h ThroughWindow) by as much as the
+// head stands off the window's middle. Never told, the step took the axis for the picture's middle, and away from the real axis the dome
+// came out nearer than its own depth - "far ground", fogged whole in the fog's flat colour, its facets a sawtooth along the line (Serg on
+// 0.219.6, F5 looking up: half the sky flat grey). The step's constants are set once a present, not per eye (and the replayed right eye
+// reuses the left's), so the eyes' average: exact for what they share (the head off the window, a headset's up / down), and only the
+// half gap between the eyes left out (mirrored headsets: 0 across, as before). False (0, 0) for a frustum not known yet.
+inline bool SharedAxis(const Tan& left, const Tan& right, float* x, float* y) {
+    *x = 0.0f;
+    *y = 0.0f;
+    if (!(left.r > left.l) || !(left.u > left.d) || !(right.r > right.l) || !(right.u > right.d)) return false;
+    const Proj a = Projection(left), b = Projection(right);
+    const float ax = -0.5f * (a.offX + b.offX), ay = -0.5f * (a.offY + b.offY);
+    if (!std::isfinite(ax) || !std::isfinite(ay) || std::fabs(ax) > 10.0f || std::fabs(ay) > 10.0f) return false;
+    *x = ax;
+    *y = ay;
+    return true;
+}
+
 // Both eyes from one game frame: the right eye's pass is the left's replayed, so the game's interface layer is laid out for the left eye's
 // projection. How far (uv, + right) the right eye's layer must move for a label to be in the same direction in both eyes: half the off-axis
 // terms apart - vrcam's projection shift, the D2R_DepthFog.fx LabelAxisR. 0 for centred (or identical) eyes.

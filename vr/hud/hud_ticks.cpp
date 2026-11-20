@@ -1,6 +1,7 @@
 // vr/hud/hud_ticks.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "ini_txn.h"   // [hud] flat_map_zoom: its level written back
+#include "../f5_hud.h"   // [hud] f5_map / f5_allies: VR F5's map and allies' portraits
 
 #include <climits>
 #include <thread>
@@ -64,14 +65,17 @@ void MapDirectionTick() {
 // the effect not running, no corner map in the interface, or drawn) - a second after it changes, so a map opened or a view passed through is
 // not a line each.
 void MapRotateFlatTick() {
-    const int platform = g_set.platform.load(), view = ViewNow();
+    const arview::Rules rules = arview::RulesFor(g_set.platform.load(), ViewNow(), g_set.vrView.load(), g_set.f5ArView.load());   // (VR F5: flat F3)
+    const int platform = rules.platform, view = rules.view;
     const mapturn::FlatWhy why = mapturn::FlatGate(g_set.mapRotateFlat.load(), g_inWorld.load(), platform, view, g_enabled.load(), ClassicNow());
     hud::SetMapRotateFlat(mapturn::FlatTurns(why));
     hud::SetMapCompassFlat(mapturn::FlatTurns(why) ? g_set.mapCompassFlat.load() : 0);   // [hud] map_compass_flat: its look over it (0 none)
     // [hud] flat_map_place: the flat game's map kept left, in the middle or right, turned or not (minimapside::PlaceKeeper; in the middle the
     // game's whole-screen map, as before - nothing to turn there); 0 the game's own: only a corner map has a box to turn, the game's
     // whole-screen overlay put in the corner while it turns, back after (minimapside::FlatLease)
-    const int place = platform == 0 && g_inWorld.load() ? minimapside::PlaceMode(g_set.mapPlaceFlat.load()) : -1;
+    // ([hud] f5_map, vr/f5_hud.h: VR F5's map kept in a corner - "as in the game's options" reads as flat_map_corner's)
+    const int placeSet = ArView() ? f5hud::MapPlace(g_set.mapPlaceFlat.load(), g_set.flatMapCorner.load(), g_set.f5Map.load()) : g_set.mapPlaceFlat.load();
+    const int place = platform == 0 && g_inWorld.load() ? minimapside::PlaceMode(placeSet) : -1;
     gamestate::SetMapPlaceFlat(place);
     gamestate::SetMapSideFlat(place < 0 && mapturn::FlatTurns(why) ? g_set.mapCorner.load() : -1);
     const char* where = platform == 1 ? "VR" : "flat";
@@ -127,7 +131,7 @@ bool FlatMapZoomKey(UINT msg, WPARAM w, LPARAM l) {
     if (msg == WM_KEYDOWN) dir = flatzoom::KeyDir((unsigned)w, g_set.flatMapZoomInKey.load(), g_set.flatMapZoomOutKey.load());
     else if (msg == WM_MOUSEWHEEL) dir = flatzoom::WheelDir(GET_WHEEL_DELTA_WPARAM(w), (GET_KEYSTATE_WPARAM(w) & MK_CONTROL) != 0);
     if (dir == 0) return false;
-    if (!flatzoom::Takes(g_set.flatMapZoom.load(), g_set.platform.load() == 0, g_inWorld.load(), gamestate::AutoMapOpen(), ChatOpen(), gamestate::MenuOpen()))
+    if (!flatzoom::Takes(g_set.flatMapZoom.load(), FlatRules(), g_inWorld.load(), gamestate::AutoMapOpen(), ChatOpen(), gamestate::MenuOpen()))
         return false;
     static ULONGLONG lastAt = 0;   // a held key repeats ~30 times a second: a step at most every 150 ms of it
     const ULONGLONG now = GetTickCount64();
@@ -164,7 +168,7 @@ bool FlatMapKey(UINT msg, WPARAM w, LPARAM l) {
     if (msg != WM_KEYDOWN) return false;
     const flatmapkeys::Act act = flatmapkeys::Of((unsigned)w, g_set.flatMapTurnKey.load(), g_set.flatMapPlaceKey.load());
     if (act == flatmapkeys::Act::None) return false;
-    if (!flatmapkeys::Takes(g_set.platform.load() == 0, g_inWorld.load(), ChatOpen(), gamestate::MenuOpen())) return false;
+    if (!flatmapkeys::Takes(FlatRules(), g_inWorld.load(), ChatOpen(), gamestate::MenuOpen())) return false;
     if (l & (1 << 30)) return true;   // a held key's repeats: nothing more
     if (act == flatmapkeys::Act::Turn) {
         const bool on = !g_set.mapRotateFlat.load();
@@ -187,7 +191,7 @@ bool FlatMapKey(UINT msg, WPARAM w, LPARAM l) {
 void FlatMapZoomTick() {
     if (g_flatZoom.Ini(g_set.flatMapZoomLevel.load()) && g_flatZoom.Live() != 0)   // the start, or Settings changed it (not our own write)
         LogF("vrcam: flat map zoom - level %d from the ini", g_flatZoom.Live());
-    const bool on = g_set.flatMapZoom.load() && g_set.platform.load() == 0 && g_inWorld.load();
+    const bool on = g_set.flatMapZoom.load() && FlatRules() && g_inWorld.load();
     const int level = g_flatZoom.Live();
     gamestate::SetFlatMapZoom(on ? level : 0);
     hud::SetMapTurnWhole(on && !flatzoom::InCircle(level));   // (only seen while the map turns: [hud] map_rotate_flat)

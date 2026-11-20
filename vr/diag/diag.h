@@ -6,6 +6,7 @@
 //   crash       the start's steps and the log's first minutes to a file, an exception the game dies of to d2r_vr_crash.txt (vr/diag/crash.cpp)
 //   sessionlogs [support] session_logs: each game's logs in logs\sessions\<its start>, kept session_logs_days (vr/diag/session_logs.cpp)
 //   rtsswatch   [support] rtss_warning: RivaTuner Statistics Server found with the game - one log line, the reports too (vr/diag/rtss_watch.cpp)
+//   moddatawatch [mods] restore_mod_data: D2R VR's files in mods\D2R-VR\D2R-VR.mpq gone (D2RMM's wipe) - one line; on: made again (vr/diag/mod_data_watch.cpp)
 #pragma once
 
 #define WIN32_LEAN_AND_MEAN
@@ -97,6 +98,11 @@ void Stop();
 bool On();          // the key was on at the start
 unsigned Found();   // what it found so far (shared/rtss_detect.h rtss::k* bits); the hang / crash files add their own module list's
 }  // namespace rtsswatch
+
+namespace moddatawatch {
+void Start();   // [mods] restore_mod_data (vr/diag/mod_data_watch.cpp): D2R VR's files in its .mpq looked at once; gone and on: Settings makes them again
+void Stop();
+}  // namespace moddatawatch
 
 namespace sessionlogs {
 void Start();   // after crash::Install (g_iniPath set): the folder's thread, the old folders tidied

@@ -326,6 +326,9 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
     // the Video tab's two pages: Render from the Video page (shown in F4 only, as the page is), Video back from the Render page
     if (((page == kPageVideo && PageShown(kPageRender, view)) || page == kPageRender) && kPreviewBtn.Contains(x, y))
         return {Kind::Tab, page == kPageVideo ? kPageRender : kPageVideo, 0};
+    // the HUD tab's two pages: Map from the HUD page (F4 only, as the page is), HUD back from the Map page
+    if (((page == kPageHud && PageShown(kPageMap, view)) || page == kPageMap) && kPreviewBtn.Contains(x, y))
+        return {Kind::Tab, page == kPageHud ? kPageMap : kPageHud, 0};
     // the View tab's second page: F1 (VR F1) or F3 (VR F3) from the View page (ViewSubPage, as the pages are shown), View back from either
     if (((page == kPageView && ViewSubPage(view) >= 0) || page == kPageF1 || page == kPageF3) && kPreviewBtn.Contains(x, y))
         return {Kind::Tab, page == kPageView ? ViewSubPage(view) : kPageView, 0};
@@ -505,7 +508,7 @@ public:
     // (hset_defs.h PageShown, KeyShown: VR F1 - F3 not F4's body). A page the view does not show gives way to the first one.
     int View() const { return view_; }
     void SetView(int v) {
-        v = v >= 1 && v <= kViews ? v : 0;
+        v = (v >= 1 && v <= kViews) || v == kViewF5 ? v : 0;   // (VR F5: no button of its own lit; its pages as F1 - F3's, hset_defs.h FlatView)
         if (v == view_) return;
         view_ = v;
         if (!PageShown(page, view_)) page = kPageView;
@@ -840,6 +843,16 @@ public:
                         const int i = IndexOf(k.section, k.key);
                         if (i >= 0) draft_[i] = Normalize(i, k.v[to]);
                     }
+                    if (Changed(was, draft_)) { result = Result::None; ++revision; }
+                    return a;
+                }
+                if (hit.index == kKeyMapMode) {   // the Map page's Map mode: the next mode's map keys into the draft (shared/map_mode.h), live
+                    mapmode::Keys k = MapModeKeys(draft_);
+                    mapmode::ToKeys(mapmode::Step(mapmode::FromKeys(k), hit.delta == 0 ? 1 : hit.delta), &k);
+                    const Values was = draft_;
+                    PutMapModeKeys(k, &draft_);
+                    for (const int i : {kKeyMapOn, kKeyMapOrb, kKeyMapPlace, kKeyMapClickBig, kKeyMapTwoSizes, kKeyMapBigOnHand, kKeyMapBigKeep, kKeyMapHandFull})
+                        draft_[i] = Normalize(i, draft_[i]);
                     if (Changed(was, draft_)) { result = Result::None; ++revision; }
                     return a;
                 }

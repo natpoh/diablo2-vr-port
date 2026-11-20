@@ -25,7 +25,7 @@ std::atomic<HCURSOR> g_cross[std::size(crosshair::kSizes)] = {};
 std::atomic<bool> g_crossHooked{false};
 
 bool CrosshairNow() {
-    return g_set.flatCrosshair.load() && KeyMoveMode() && ShooterActive() && (g_set.platform.load() == 0 || g_set.crosshairOn.load());
+    return g_set.flatCrosshair.load() && KeyMoveMode() && ShooterActive() && (FlatRules() || g_set.crosshairOn.load());   // (FlatRules: flat, VR F5)
 }
 // VR F2 with mouse look and [hud_third] crosshair=0: no pointer in the headset at all.
 bool CrosshairHidden() { return g_set.platform.load() == 1 && ViewNow() == 2 && KeyMoveMode() && ShooterActive() && !g_set.crosshairOn.load(); }
@@ -149,9 +149,9 @@ void CrosshairTick() {
     static uint32_t built = 0;
     static int builtVrSide = 0;
     const uint32_t gen = g_crossGen.load();
-    if (g_set.platform.load() != 0 && !g_set.vrKeyWalk.load()) return;   // flat, or VR F2's mouse look
-    // VR: the window's size times [hud_third] crosshair_size
-    const int vrSide = g_set.platform.load() == 1
+    if (!FlatRules() && !g_set.vrKeyWalk.load()) return;   // flat (and VR F5), or VR F2's mouse look
+    // VR: the window's size times [hud_third] crosshair_size (VR F5: the flat sizes, as flat F3)
+    const int vrSide = !FlatRules()
         ? std::clamp((int)lroundf(crosshair::kSizes[CrosshairSizeIndex()].side * g_set.crosshairSize.load() * 0.01f), 8, 256) : 0;
     if (gen == built && vrSide == builtVrSide) return;
     const bool all = gen != built;
@@ -187,7 +187,7 @@ void CrosshairTick() {
 
 // The size for the game window's height (CrosshairSizeIndex); in VR the one at [hud_third] crosshair_size.
 HCURSOR Crosshair() {
-    if (g_set.platform.load() == 1)
+    if (!FlatRules())
         if (HCURSOR c = g_crossVr.load()) return c;
     return g_cross[CrosshairSizeIndex()].load();
 }
@@ -200,7 +200,7 @@ HCURSOR WINAPI HookSetCursor(HCURSOR c) {
 
 // Only in flat mode; once (user32 is there from the start).
 void HookCursor() {
-    if (g_crossHooked.load() || (g_set.platform.load() != 0 && !g_set.vrKeyWalk.load())) return;   // flat, or VR F2's mouse look
+    if (g_crossHooked.load() || (!FlatRules() && !g_set.vrKeyWalk.load())) return;   // flat (and VR F5), or VR F2's mouse look
     g_crossHooked.store(true);
     void* fn = (void*)GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetCursor");
     const bool ok = fn && MH_CreateHook(fn, (void*)&HookSetCursor, (void**)&OrigSetCursor) == MH_OK && MH_EnableHook(fn) == MH_OK;

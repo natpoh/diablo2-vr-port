@@ -4,6 +4,8 @@
 // cut whole from vr/vrcam.cpp. The present's order is vr/render/effects/effects.cpp's PresentCommon. What it gives: vr/frame/frame_order.h.
 #include "../vrcam_headers.h"
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
+#include "../f5_toolbar.h"  // [hud] f5_toolbar: F5's toolbar low in front
+#include "../f5_hud.h"      // [hud] f5_map: F5's map toward the middle
 namespace gamestate { bool InventoryOpen(); }   // [render] ui_band_16x9 2 (vr/gamestate.cpp: the inventory among the open panels)
 
 using namespace D2RL;
@@ -166,7 +168,7 @@ bool NativePairBegin() {
     {   // [hud] low_hp_vignette: its beat moves on once a pair, so both eyes get the same opacity (F4 on native only: vr/low_hp.h InView)
         lowhp::Where where;
         where.cameraOn = g_enabled.load();
-        where.fullBody = FullBody();
+        where.fullBody = VignetteAsF4();   // (F4, and VR F5 - the same vignette)
         where.thirdPerson = ThirdPerson();
         where.native = native;
         where.inWorld = g_inWorld.load();
@@ -637,6 +639,10 @@ static DWORD UpdateThreadBody() {
         // From above (vrcam off) and from behind the toolbar and the map stay in
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
+        {   // [hud] f5_toolbar (vr/f5_toolbar.h): in VR F5 the toolbar's strip out of the picture, low in front at F5's own height and distance
+            const f5bar::Offset o = f5bar::OffsetFor(g_set.f5BarBelow.load(), g_set.f5BarAhead.load());
+            hud::SetViewBar(f5bar::Wanted(g_set.f5Toolbar.load(), ArView()), o.sideCm, o.liftCm, g_set.f5BarWidth.load());
+        }
         MapDirectionTick();   // [hud] map_direction
         MapRotateFlatTick();  // [hud] map_rotate_flat
         FlatMapZoomTick();    // [hud] flat_map_zoom
@@ -656,11 +662,17 @@ static DWORD UpdateThreadBody() {
         hud::SetMapProjection(FullBody() && projY > 0.0f ? g_projSx.load() / projY : 0.0f);
         // first person without the body: the map at a size of its own, from its corner
         // ... and on the floor (F3) its own size, depth and place, as the toolbar's
-        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? g_set.mapZoomInside.load() : TableView() ? g_set.mapSizeFloor.load() : 1.0f);
+        // ([hud] f5_map_size, vr/f5_hud.h: VR F5's map with f5_map - % of that corner map size)
+        const float insideMap = F5MapNow() ? f5hud::MapZoom(g_set.mapZoomInside.load(), g_set.f5MapSize.load()) : g_set.mapZoomInside.load();
+        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? insideMap : TableView() ? g_set.mapSizeFloor.load() : 1.0f);
         hud::SetPictureBarMoved(BarNearWanted());
         hud::SetPictureMapMoved(MapNearWanted());
         if (ClassicNow() && TableView()) hud::SetPictureMapOffset(g_set.mapXFloor.load(), g_set.mapYFloor.load());
-        else hud::SetPictureMapOffset(0.0f, 0.0f);
+        else if (ClassicNow() && F5MapNow()) {   // [hud] f5_map (vr/f5_hud.h): VR F5's corner map toward the middle and down (x turned round for a left corner)
+            const f5hud::Uv u = f5hud::MapShiftUv(g_set.f5MapIn.load(), g_set.f5MapDown.load());
+            hud::SetPictureMapOffset(u.x, u.y);
+        } else hud::SetPictureMapOffset(0.0f, 0.0f);
+        hud::SetPictureMapInward(ClassicNow() && !TableView() && F5MapNow());
         {   // [hud_*] bar_x / bar_y: the toolbar somewhere else on the screen
             float bx = 0.0f, by = 0.0f;
             if (ClassicNow()) BarOffsetNow(&bx, &by);
@@ -694,10 +706,10 @@ static DWORD UpdateThreadBody() {
         // the fog leaves the interface alone; the floor's key never takes its text for the void. Flat: the sky and the cave ceiling
         // too, and through a menu, whose panel stays over the world there (EffectsPaused; from sajmonsoft's flat fork)
         // (in a menu the labels are not taken out: flat's panel gets the mask whatever they want - [hud] monster_alpha < 1 wants them in flat)
-        const bool flatFx = g_set.platform.load() == 0 && (fx::OurSkyWanted() || g_arcaneSky.load() || fx::CeilWanted());
+        const bool flatFx = FlatRules() && (fx::OurSkyWanted() || g_arcaneSky.load() || fx::CeilWanted());
         const bool maskWanted = fx::FogWanted() || fx::TableKeyWanted() || flatFx;
         hud::SetUiMask(maskWanted && !LabelsWanted() && !replay::OverlaysWanted());
-        hud::SetUiMaskInMenu(g_set.platform.load() == 0 && maskWanted);
+        hud::SetUiMaskInMenu(FlatRules() && maskWanted);   // (flat, VR F5: its menus are the flat game's)
         SkyTick();
         flog::Tick(g_set.frameLog.load() || GetTickCount64() < flog::g_diagUntil.load());
         directinput::SetMenuNow(gamestate::MenuOpen() || !g_inWorld.load());   // [openxr] direct_input: the layer in force against the game's
@@ -752,7 +764,7 @@ static DWORD UpdateThreadBody() {
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
         skillwheel::Tick();   // [openxr] skill_wheel: the controller's skill slots read on the UI thread (a no-op when off)
-        lowhp::Tick((lowhp::Enabled() || lowhp::ManaEnabled() || haptics::ManaWanted()) && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] low_hp_vignette, [openxr] haptics_low_mana: the hero's stats, 5 a second (a no-op when off)
+        lowhp::Tick((lowhp::Enabled() || lowhp::ManaEnabled() || haptics::ManaWanted()) && g_enabled.load() && VignetteAsF4() && g_inWorld.load());   // [hud] low_hp_vignette, [openxr] haptics_low_mana: the hero's stats, 5 a second (a no-op when off)
         merctint::Tick(merctint::Enabled() && g_enabled.load() && FullBody() && g_inWorld.load());   // [hud] merc_tint: the merc and its life, 5 a second (a no-op when off)
         handvitals::Tick(g_enabled.load() && g_inWorld.load());   // [hud] hand_vitals: the hero's life and mana, 5 a second (a no-op when off or outside F4)
         wriststatus::Tick(g_enabled.load() && g_inWorld.load());   // [hud] wrist_status: the hero's companions and effects, 5 a second (a no-op when off or outside F4)

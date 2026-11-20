@@ -24,6 +24,8 @@ Source: "{#PayloadDir}\plugins\d2r_vr_grip.dll"; DestDir: "{app}\{#ModDir}\d2rlo
 Source: "{#PayloadDir}\plugins\d2r_vr_gait.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; BodyWalk's gesture engine in the game ([gestures] engine_in_game; vr\gesture_engine_lib.cpp looks in d2r_vr_libs, then beside the plugin): optional
 Source: "{#PayloadDir}\plugins\d2r_vr_gestures.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+; BodyWalk's walk in place in the game ([walk_in_place]; vr\walk_engine_lib.cpp looks in d2r_vr_libs, then beside the plugin): optional
+Source: "{#PayloadDir}\plugins\d2r_vr_walk.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; D2R VR Crash Reporter ([support] crash_reports / send_logs, shared\d2r_vr_crash_watch.h; built in the private vjoy repository, a binary only).
 ; Beside the libraries; nothing runs it unless the player ticks one of the two (both off as shipped). Without it the two ticks are greyed out.
 Source: "{#PayloadDir}\plugins\D2R_VR_Crash_Reporter.exe"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
@@ -39,6 +41,9 @@ Source: "{#PayloadDir}\shaders\D2R_Campfire_Unleashed.fxh"; DestDir: "{app}\{#Mo
 Source: "{#PayloadDir}\sky\*.png"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Textures\D2R_Sky_ours"; Flags: ignoreversion
 ; The game sky dome's painted act skies ([sky] game_sky), where its units (made by D2R VR Settings, tools\settings\dome_assets.cpp) name them
 Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\D2R-VR.mpq\data\hd\env\texture\d2r_vr\sky"; Flags: ignoreversion skipifsourcedoesntexist
+; ... and the same pictures beside the .mpq, its tree under shipped_data: D2RMM with its output mod named D2R-VR deletes D2R-VR.mpq whole at
+; every build (barti4033, 0.218.3: no dome at any start). D2R VR Settings puts a missing one back from here (shared/mod_data_check.h)
+Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\shipped_data\data\hd\env\texture\d2r_vr\sky"; Flags: ignoreversion skipifsourcedoesntexist
 ; The shared VR mod launcher's descriptor of this mod and the picture it names (tools\make_vrmod_manifest.py, from installer\launcher):
 ; the launcher finds the mod by <game>\mods\*\vrmod-manifest.json. It is not needed to play, and nothing else reads it.
 Source: "{#PayloadDir}\launcher\vrmod-manifest.json"; DestDir: "{app}\{#ModDir}"; Flags: ignoreversion

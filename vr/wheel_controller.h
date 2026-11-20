@@ -201,7 +201,7 @@ class Controller {
     bool triggerTaken_ = false, aTaken_ = false;   // SetControlsTaken
     bool triggerSkill_ = false;        // TriggerCastsSkill
     bool secondRow_ = true;            // SetSecondRow
-    int view_ = 4;                     // SetView: 4 F4, 1 - 3 VR F1 - F3 (the window alone), 0 another view
+    int view_ = 4;                     // SetView: 4 F4, 1 - 3 VR F1 - F3 and 5 VR F5 (the window alone), 0 another view
     int mode_ = -1;                    // the frame before's: 4 F4, 1 the window alone (VR F1 - F3), 0 stood down; -1 none yet
     bool closeArmed_ = false;          // the right stick click was let go since the panel opened: a long press of it closes the panel
     double closeHoldAt_ = -1.0;        // when that long press began (< 0: not pressed)
@@ -310,7 +310,7 @@ public:
     void SetGripsTaken(bool left, bool right) { gripTaken_[0] = left; gripTaken_[1] = right; }
     // The game's VR view, 1 = F1 ... 4 = F4, 0 not a VR view (vr/view_gate.h Number): with `f4` false, 1 - 3 is the window alone (see the top). Set before
     // every Frame; 4 = as before (not F4: stood down).
-    void SetView(int view) { view_ = view >= 0 && view <= 4 ? view : 0; }
+    void SetView(int view) { view_ = (view >= 0 && view <= 4) || view == hset::kViewF5 ? view : 0; }
     const Settings& Config() const { return cfg_; }
     // This frame the right trigger is the game's RT slot (or LT + RT with the left trigger held) and that slot holds a skill: a pull of it casts that skill,
     // and the layout's attack does not see it (the melee rule asks - vr/melee_trigger.h). False where the slot controls are off, in another view, with a

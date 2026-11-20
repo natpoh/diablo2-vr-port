@@ -221,6 +221,8 @@ struct Cfg {
     bool mapBesideInv = false;  // [hud] map_beside_inventory: while the inventory hangs on the left hand, the map in that hand beside it (not under it); live
     bool mapBigFollow = false;  // [hud] map_big_follow: the big map in front kept in the room, coming round after the gaze lazily, its height fixed (vr/map_laser.h Follow); live
     bool mapBigGrab = false;    // [hud] map_big_grab: the right laser + grip drags the big map in front, the stick nearer / farther; kept in map_big_dist_m / side_deg / up_m; live
+    bool mapBigKeep = false;    // [hud] map_big_keep: the big map stays up while you fight - the trigger the laser's only on it, else the attack (vr/map_laser.h Keeps); live
+    bool mapHandFull = false;   // [hud] map_hand_full: the whole map (the big map) on the left hand all the time, kept (vr/map_laser.h AutoOpen; shared/map_mode.h mode 3); live
     float bigDistM = 1.3f, bigSideDeg = 0.0f, bigUpM = -0.1f;   // [hud] map_big_dist_m, map_big_side_deg, map_big_up_m: where it was let go, relative to the gaze
     bool mapStickZoom = false;  // [hud] map_stick_zoom: the right stick zooms the map the right laser is on (vr/map_zoom.h); live
     bool mapClickBig = false; // [hud] map_click_big: the right laser on the map in the hand, a click makes it the game's big map in front (vr/map_laser.h); live
@@ -528,6 +530,7 @@ bool g_mapQuadInG = false;      // [hud] map_beside_inventory: the hand map was 
 struct InvHung { XrPosef pose{}; XrExtent2Df size{}; double atUs = 0.0; };
 InvHung g_invHung;
 maplaser::Clicker g_mapClick;
+ULONGLONG g_fullWaitFrom = 0;   // [hud] map_hand_full: since when the small map has stood in the hand (its return waits half a second: AutoOpen)
 // [hud] map_stick_zoom (vr/map_zoom.h): who has the right stick, the map in the hand's magnify (1 - 4, not kept), the big map's zoom wanted
 // in the game's units (0 = the game's own; each opening starts there)
 mapzoom::Stick g_zoomStick;
@@ -4832,7 +4835,8 @@ void PlaceSaveRun() {
 void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     MapBeam& B = g_mapBeam;
     B.drawn = B.hit = false;
-    const bool want = g_cfg.mapClickBig || g_mapClick.Big();
+    const bool full = g_cfg.mapHandFull;   // [hud] map_hand_full: the whole map on the left hand all the time (vr/map_laser.h AutoOpen)
+    const bool want = g_cfg.mapClickBig || full || g_mapClick.Big();
     D2RVR_XrHand& r = in.hand[1];
     const bool trig = (r.buttons & BW_LINK_XRB_TRIGGER) != 0;
     if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); return; }
@@ -4842,8 +4846,11 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
                        (aim.locationFlags & need) == need;
     const ULONGLONG now = GetTickCount64();
     const bool big = g_mapClick.Big();
-    const bool allowed = g_cfg.mapClickBig && viewgate::F4() && g_kind == kPair && focused && aimOk && !g_hsOpen.load() && !g_laser.drawn &&
-                         !g_panelOpen.load() && (big || (g_mapQuadRoom.ok && g_mapQuadAt && now - g_mapQuadAt < 300)) &&
+    const bool keepKey = g_cfg.mapBigKeep || full;
+    const bool keep = maplaser::Keeps(keepKey, big);   // [hud] map_big_keep (map_hand_full too): the big map up while the trigger attacks elsewhere
+    const bool base = (g_cfg.mapClickBig || full) && viewgate::F4() && g_kind == kPair && focused && !g_hsOpen.load() && !g_laser.drawn && !g_panelOpen.load();
+    const bool handMap = g_mapQuadRoom.ok && g_mapQuadAt && now - g_mapQuadAt < 300;   // the small map is in the hand (HangHud hung it just now)
+    const bool allowed = base && (aimOk || !maplaser::NeedsAim(keepKey, big)) && (big || handMap) &&
                          (!big || gamestate::AutoMapOpen());   // the game's map closed while big (its key, the stick's click): the whole big map down with it
     auto v3 = [](XrVector3f v) { return maplaser::V3{v.x, v.y, v.z}; };
     maplaser::Hit onMap, onBig, onButton, onFront;
@@ -4862,13 +4869,13 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         const XrVector3f x{q.right.x, q.right.y, q.right.z}, y{q.up.x, q.up.y, q.up.z}, z{q.front.x, q.front.y, q.front.z};
         mapTurn = FromAxes(x, y, z);
     }
-    if (allowed && big) {
+    if (allowed && big && aimOk) {   // (a kept big map with the hand's aim lost a moment: pointing at nothing)
         onButton = maplaser::RayQuad(v3(from), v3(dir), g_bigButton, 4.0f);
         onFront = maplaser::RayQuad(v3(from), v3(dir), g_bigFrontBtn, 4.0f);
         onBig = maplaser::RayQuad(v3(from), v3(dir), g_bigQuad, 4.0f);
     }
-    if (!maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes)) onFront = maplaser::Hit{};   // ([hud] map_two_sizes: no button to the hand counts)
-    const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig);
+    if (!maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, full)) onFront = maplaser::Hit{};   // ([hud] map_two_sizes / map_hand_full: no button to the hand counts)
+    const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig, keep, full);
     if (f.claim) { r.trigger = 0.0f; r.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
     {   // [hud] map_big_grab: the right grip on the big map in front takes it; the laser drags it, the stick nearer / farther (as menu_zoom: forward nearer)
         BigGrab& G = g_bigGrab;
@@ -4935,18 +4942,21 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     B.len = h.hit ? h.t : kBeamM;
     B.at = {h.at.x, h.at.y, h.at.z};
     B.surface = big ? g_bigLayer[0].pose.orientation : mapTurn;   // (the big map's turn as hung: in front or on the hand)
+    auto openBig = [&]() {   // the big map up: by a click on the small map, or by itself ([hud] map_hand_full)
+        g_bigEyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : from;
+        g_bigYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : YawOf(aim.pose.orientation);
+        g_bigQuad = g_bigButton = g_bigFrontBtn = maplaser::Quad{};   // (hung by HangBigMap once the game draws its big map)
+        g_bigFront = false;   // ([hud] map_big_on_hand: on the hand at each opening)
+        g_bigSpot = maplaser::Spot{};   // ([hud] map_big_follow / map_big_grab: placed afresh at its first frame in front)
+        g_bigGrab = BigGrab{};
+        g_bigZoomWant = 0.0f;   // ([hud] map_stick_zoom: the game's own zoom at each opening)
+        gamestate::SetBigMapZoom(0.0f);
+        hud::SetMapBig(true);
+        gamestate::SetMapBig(true);
+    };
     switch (f.event) {
         case maplaser::Event::Open: {
-            g_bigEyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : from;
-            g_bigYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : YawOf(aim.pose.orientation);
-            g_bigQuad = g_bigButton = g_bigFrontBtn = maplaser::Quad{};   // (hung by HangBigMap once the game draws its big map)
-            g_bigFront = false;   // ([hud] map_big_on_hand: on the hand at each opening)
-            g_bigSpot = maplaser::Spot{};   // ([hud] map_big_follow / map_big_grab: placed afresh at its first frame in front)
-            g_bigGrab = BigGrab{};
-            g_bigZoomWant = 0.0f;   // ([hud] map_stick_zoom: the game's own zoom at each opening)
-            gamestate::SetBigMapZoom(0.0f);
-            hud::SetMapBig(true);
-            gamestate::SetMapBig(true);
+            openBig();
             haptics::Play(haptics::Event::MenuClick, 1);
             Log("vrcam: openxr - the map in the hand clicked: the game's big map in front ([hud] map_click_big; a click on it or away puts it back)");
             break;
@@ -4979,6 +4989,16 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
             break;
         default:
             break;
+    }
+    // [hud] map_hand_full: the whole map back on the left hand by itself once the small map has been in the hand half a second (a menu, the settings
+    // panel, another view took it down) - not while the game's own map is closed (its key: the player's choice)
+    const bool canOpen = base && handMap;
+    if (!canOpen || g_mapClick.Big()) g_fullWaitFrom = now;
+    if (maplaser::AutoOpen(full, g_mapClick.Big(), canOpen, gamestate::AutoMapOpen(), (double)(now - g_fullWaitFrom)) && g_mapClick.Open()) {
+        openBig();
+        static uint32_t told = 0;
+        if (++told <= 3 || told % 100 == 0)
+            LogF("vrcam: openxr - the whole map on the left hand: up by itself ([hud] map_hand_full; %u times)", told);
     }
 }
 
@@ -5044,7 +5064,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
     maplaser::Place pl = maplaser::PlaceAt(g_bigSpot, aspect);
     XrQuaternionf q = Yaw(g_bigSpot.yaw);
     bool onHand = false;
-    if (maplaser::BigOnHand(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, g_bigFront) && g_viewsOk) {
+    if (maplaser::BigOnHand(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, g_bigFront, g_cfg.mapHandFull) && g_viewsOk) {
         // [hud] map_big_on_hand: held over the left controller like the inventory ([openxr] hand_inventory's place, hand_inventory_width_m wide),
         // turned to the eyes; the Rotate button over its top edge. The controller not located: in front this frame. [hud] map_two_sizes: never.
         XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
@@ -5110,7 +5130,7 @@ uint32_t HangBigMap(const XrCompositionLayerBaseHeader** layers, uint32_t nl, ui
         keep(g_bigButton, pl.button, pl.bw, pl.bh);
     }
     g_bigFrontBtn = maplaser::Quad{};
-    if (maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes) && nl < max) {   // the inventory's own button beside its top right corner: to the front, or back on the hand
+    if (maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, g_cfg.mapHandFull) && nl < max) {   // the inventory's own button beside its top right corner: to the front, or back on the hand
         nl = HangHandButton(layers, nl, max, g_bigLayer[0], onHand);
         if (g_btnShown.ok) {
             keep(g_bigFrontBtn, {g_btnShown.pose.position.x, g_btnShown.pose.position.y, g_btnShown.pose.position.z}, g_btnShown.side, g_btnShown.side);
@@ -7394,6 +7414,20 @@ void LoadSettings(const wchar_t* ini) {
             g_cfg.mapBesideInv = GetPrivateProfileIntW(L"hud", L"map_beside_inventory", 0, ini) != 0;
             g_cfg.mapBigFollow = GetPrivateProfileIntW(L"hud", L"map_big_follow", 0, ini) != 0;
             g_cfg.mapBigGrab = GetPrivateProfileIntW(L"hud", L"map_big_grab", 0, ini) != 0;
+            g_cfg.mapBigKeep = GetPrivateProfileIntW(L"hud", L"map_big_keep", 0, ini) != 0;
+            static int saidKeep = 0;
+            if ((int)g_cfg.mapBigKeep + 1 != saidKeep) {
+                saidKeep = (int)g_cfg.mapBigKeep + 1;
+                Log(g_cfg.mapBigKeep ? "vrcam: openxr - the big map (F4): stays up while you fight - the right trigger is the laser's only on it, pointed away it attacks; a click on it closes it ([hud] map_big_keep=1)"
+                                     : "vrcam: openxr - the big map (F4): any trigger press but its Rotate button puts it back in the hand ([hud] map_big_keep=0)");
+            }
+            g_cfg.mapHandFull = GetPrivateProfileIntW(L"hud", L"map_hand_full", 0, ini) != 0;
+            static int saidFull = 0;
+            if ((int)g_cfg.mapHandFull + 1 != saidFull) {
+                saidFull = (int)g_cfg.mapHandFull + 1;
+                Log(g_cfg.mapHandFull ? "vrcam: openxr - the map (F4): the whole map on the left hand all the time, kept while you fight; a menu takes it down, it comes back ([hud] map_hand_full=1)"
+                                      : "vrcam: openxr - the map (F4): the small map in the hand ([hud] map_hand_full=0)");
+            }
             auto hf = [&](const wchar_t* key, float def) {
                 wchar_t b[64], d[64];
                 swprintf_s(d, L"%g", def);
@@ -7418,7 +7452,7 @@ void LoadSettings(const wchar_t* ini) {
             const int handNow = (g_cfg.mapBigOnHand ? 1 : 0) | (g_cfg.mapBesideInv ? 2 : 0) | (g_cfg.mapTwoSizes ? 4 : 0) | 8;
             if (handNow != saidHand) {
                 saidHand = handNow;
-                const bool held = maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes);
+                const bool held = maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, g_cfg.mapHandFull);
                 LogF("vrcam: openxr - the map and the left hand (F4): the big map %s; with the inventory on the hand the map %s ([hud] map_big_on_hand %d, "
                      "map_two_sizes %d, map_beside_inventory %d)",
                      held ? "held on the left hand, a button to the front" : g_cfg.mapTwoSizes ? "in front at the orb's click, a click on it back to the orb (two sizes)" : "in front",

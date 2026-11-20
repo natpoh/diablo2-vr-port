@@ -72,6 +72,9 @@ const char* SourceName(int s) {
 // The release's own press of the slot (directinput::PadPulse), until it is over: the pulses are in the pad this filter sees, and that press is not a new hold.
 uint32_t g_ownControl = 0;
 uint64_t g_ownUntil = 0;
+// ... and the skill link's presses (a glyph's / BodyWalk's cast: SkipPress, its timer thread): the cast itself, not a hold (pointcast::Skips).
+SRWLOCK g_skipLock = SRWLOCK_INIT;
+pointcast::Skips g_skips;
 
 }  // namespace
 
@@ -129,7 +132,9 @@ void UiRead() {
     wheelgame::Latest(&kept, &rev);
     const bool fresh = kept.ready && GetTickCount64() - kept.at < 3000;
     if (fresh) {
-        for (int i = 0; i < kSlots; ++i) g_slot[i].store(wheel::CastsSkill(kept.slot[i]) ? kept.slot[i].id : -1);
+        int slots[kSlots];
+        pointcast::SlotsOf(kept, slots);
+        for (int i = 0; i < kSlots; ++i) g_slot[i].store(slots[i]);
         toldWhy = false;
     } else if (doubleswing::ReadPadSlots(skills, owners, &why)) {
         // no snapshot (yet): the controller tables as double swing reads them - B X Y RB, LT + those, A, LT + A (its order) - and RT not known
@@ -164,12 +169,36 @@ void UiRead() {
 
 bool WantsSlots() { return g_on.load(); }
 
+void SlotsChanged() { UiRead(); }
+
+void SkipPress(int slot, uint32_t pulseMs) {
+    if (!g_on.load()) return;
+    AcquireSRWLockExclusive(&g_skipLock);
+    g_skips.MarkSlot(slot, pulseMs, GetTickCount64());
+    ReleaseSRWLockExclusive(&g_skipLock);
+}
+
 void FilterPad(uint16_t* buttons, uint8_t lt, uint8_t* rt, const PollIn& in, ArcFn arcFor) {
     if (!buttons || !rt) return;
     if (!g_on.load() && !g_hold.Active()) return;
     const bool live = g_on.load() && in.allowed && viewgate::F4();
     const uint64_t nowMs = GetTickCount64();
-    const uint32_t ignore = nowMs < g_ownUntil ? g_ownControl : 0u;
+    AcquireSRWLockShared(&g_skipLock);
+    const uint32_t linkSkip = g_skips.Mask(nowMs);
+    ReleaseSRWLockShared(&g_skipLock);
+    const uint32_t ignore = (nowMs < g_ownUntil ? g_ownControl : 0u) | linkSkip;
+    {   // a skill link press of a point skill's slot let through to the game: logged once per press (its edge; a held cast's renewals are one press)
+        static uint32_t prevSkipDown = 0;   // (the pad poll's thread only)
+        const uint32_t down = (*buttons | (*rt > pointcast::kRtDown ? pointcast::kRt : 0u)) & linkSkip;
+        const uint32_t fresh = down & ~prevSkipDown;
+        prevSkipDown = down;
+        if (fresh && live && !g_hold.Active()) {
+            const int slot = pointcast::SlotOf(fresh & (0u - fresh), lt > pointcast::kLtDown);
+            const int skill = slot >= 0 ? g_slot[slot].load() : -1;
+            if (IsPoint(skill))
+                LogF("point cast: %s (skill %d) pressed by the skill link (a glyph's or BodyWalk's cast) - passed to the game as it is, no arc", SlotName(slot), skill);
+        }
+    }
     const pointcast::Step s = g_hold.Poll(*buttons, lt, *rt, live, [](int slot) { return slot >= 0 && slot < kSlots ? g_slot[slot].load() : -1; },
                                           [](int skill) { return IsPoint(skill); }, nowMs, ignore);
     *buttons = (uint16_t)(*buttons & ~(s.strip & 0xFFFFu));

@@ -41,7 +41,7 @@ struct D2RVR_State {
     char lastUi[64];         // the last UI message, "target:command", for tuning
     uint32_t weaponSet;      // 1 or 2: the active weapon set (I / II), 0 not known yet
     uint32_t weaponType;     // D2RVR_WeaponType of what is held, whichever set; 0 not known
-    uint32_t viewMode;       // 0 the game's own camera, 1 first person, 2 third person, 3 F1 in perspective (our camera from above), 4 the game on the floor (F4)
+    uint32_t viewMode;       // 0 the game's own camera, 1 first person, 2 third person, 3 F1 in perspective (our camera from above), 4 the game on the floor (F4), 5 / 6 VR F5 (flat F3's controls, no hands; 6: the head turns the camera - vr/ar_view.h)
     // Was `reserved` (always 0) until 2026-10-06. Bit 0: the weapon is two-handed (Weapons.txt
     // "2handed", gamestate.cpp); bit 1: held in both hands - two-handed and the other hand's slot
     // empty (a barbarian holds a two-handed sword in one hand beside another weapon); bit 2: the

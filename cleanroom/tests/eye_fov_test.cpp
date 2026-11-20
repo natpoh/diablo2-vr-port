@@ -281,7 +281,85 @@ void TestNotMirrored() {
 }
 }  // namespace
 
+// The fog step's dome test (vr/fog_before_fx.cpp SkyAt), on the CPU: a pixel is the sky when its depth is at or past the dome's band at its
+// ray, t taken from the axis the step is told. The dome's true depth there: near / view depth, the view depth R / |ray| along the eye's
+// OWN frustum. The share of an eye's picture (every 8th pixel of 2048 x 2048) the step takes for the sky with the dome everywhere.
+float SkyShare(const Tan& eye, float axisX, float axisY) {
+    constexpr float kNear = 0.05f, kR = 5602.0f, kBand = 0.98f;   // (Serg's 0.219.6 log: near 0.050, the dome 5602 units)
+    const Proj p = Projection(eye);
+    const float g = kNear / (kR * kBand);
+    int sky = 0, all = 0;
+    for (int py = 4; py < 2048; py += 8)
+        for (int px = 4; px < 2048; px += 8) {
+            const float nx = (px + 0.5f) / 2048.0f * 2.0f - 1.0f, ny = 1.0f - (py + 0.5f) / 2048.0f * 2.0f;
+            const float tx = (nx + p.offX) / p.sx, ty = (ny + p.offY) / p.sy;   // (the eye's own: Ndc = s t - off)
+            const float d = kNear * std::sqrt(1.0f + tx * tx + ty * ty) / kR;
+            const float sx = (nx - axisX) / p.sx, sy = (ny - axisY) / p.sy;      // (the step's, from the axis it is told)
+            sky += d <= g * std::sqrt(1.0f + sx * sx + sy * sy) ? 1 : 0;
+            ++all;
+        }
+    return (float)sky / (float)all;
+}
+// F5's window of the room (vr/views3d.h ThroughWindow): each eye's frustum through the window's edges, the head `mx`, `my` off its middle
+// (metres, window frame), `z` from it, half the eyes' gap `half`
+Tan WindowEye(float w, float h, float mx, float my, float z, float half, int e) {
+    const float x = mx + (e == 0 ? -half : half);
+    return {(-0.5f * w - x) / z, (0.5f * w - x) / z, (0.5f * h - my) / z, (-0.5f * h - my) / z};
+}
+
+void TestSharedAxis() {
+    float x = 9.0f, y = 9.0f;
+    // a mirrored headset (the Vision Pro's numbers): nothing across - as before - and its up / down asymmetry, the same in both eyes
+    CHECK(SharedAxis(kLeft, kRight, &x, &y));
+    const Proj pl = Projection(kLeft);
+    CHECK(Near(x, 0.0f) && Near(y, -pl.offY) && y < -0.05f);   // (50.1 up, 45.1 down: the axis 0.087 below the middle)
+    // a frustum not known yet: (0, 0), false
+    CHECK(!SharedAxis({0, 0, 0, 0}, kRight, &x, &y) && x == 0.0f && y == 0.0f);
+    CHECK(!SharedAxis({1.0f, -1.0f, 1.0f, -1.0f}, kRight, &x, &y) && x == 0.0f && y == 0.0f);
+    // F5's window (Serg's log: 2.30 x 2.30 m, 1.10 m ahead): the head 0.10 m right of its middle and 0.30 m under it - the axis lands where
+    // the head stands on the window, 2 m / w across
+    const float w = 2.3f, h = 2.3f, z = 1.1f, half = 0.032f;
+    const Tan l = WindowEye(w, h, 0.10f, -0.30f, z, half, 0), r = WindowEye(w, h, 0.10f, -0.30f, z, half, 1);
+    CHECK(SharedAxis(l, r, &x, &y));
+    CHECK(Near(x, 2.0f * 0.10f / w) && Near(y, 2.0f * -0.30f / h));
+    // Serg on 0.219.6: the step told (0, 0) - part of the dome taken for ground (fogged whole, the flat grey half); told the shared axis,
+    // all of it the sky in each eye (only the eyes' half gap left out: within the step's 2 % band)
+    for (int e = 0; e < 2; ++e) {
+        const Tan eye = e == 0 ? l : r;
+        const float before = SkyShare(eye, 0.0f, 0.0f), after = SkyShare(eye, x, y);
+        std::printf("  F5 window, eye %d: the dome taken for the sky %.1f%% told (0, 0), %.1f%% told the shared axis\n", e, 100.0f * before,
+                    100.0f * after);
+        CHECK(after == 1.0f);
+        CHECK(before < 0.9f);
+    }
+    // the head farther off (0.5 m under, 0.3 m aside: a player leaning back in a chair) - still all of it
+    {
+        const Tan l2 = WindowEye(w, h, -0.30f, -0.50f, 0.9f, half, 0), r2 = WindowEye(w, h, -0.30f, -0.50f, 0.9f, half, 1);
+        CHECK(SharedAxis(l2, r2, &x, &y));
+        CHECK(SkyShare(l2, x, y) == 1.0f && SkyShare(r2, x, y) == 1.0f);
+    }
+    // the head at the window's middle: (0, 0) - as before, all the sky
+    CHECK(SharedAxis(WindowEye(w, h, 0, 0, z, half, 0), WindowEye(w, h, 0, 0, z, half, 1), &x, &y) && Near(x, 0.0f) && Near(y, 0.0f));
+    CHECK(SkyShare(WindowEye(w, h, 0, 0, z, half, 0), x, y) == 1.0f);
+    // a headset drawn centred across (runtime_fov / symmetric_projection: Serg's log "off-axis 0.0000 / 0.0000") but taller below than
+    // above: (0, 0) lost the dome's top or bottom band, the shared axis keeps all of it
+    {
+        const Tan e = Deg(-50.0f, 50.0f, 40.0f, -55.0f);
+        CHECK(SharedAxis(e, e, &x, &y) && Near(x, 0.0f) && y > 0.1f);
+        std::printf("  headset centred across, 40 up / 55 down: the sky %.1f%% told (0, 0), %.1f%% told the shared axis\n",
+                    100.0f * SkyShare(e, 0, 0), 100.0f * SkyShare(e, x, y));
+        CHECK(SkyShare(e, 0, 0) < 1.0f && SkyShare(e, x, y) == 1.0f);
+    }
+    // a headset drawn off-axis per eye (the Vision Pro's 60.1 / 45.1 with symmetric projection off): the eyes' own across terms (+-0.27)
+    // are not shared - the step's one set of constants cannot hold both (not this fix); the shared axis never does worse than (0, 0)
+    CHECK(SharedAxis(kLeft, kRight, &x, &y));
+    std::printf("  headset drawn off-axis (60.1 / 45.1 / 50.1 / 45.1): the sky %.1f%% / %.1f%% told (0, 0), %.1f%% / %.1f%% told the shared axis\n",
+                100.0f * SkyShare(kLeft, 0, 0), 100.0f * SkyShare(kRight, 0, 0), 100.0f * SkyShare(kLeft, x, y), 100.0f * SkyShare(kRight, x, y));
+    CHECK(SkyShare(kLeft, x, y) >= SkyShare(kLeft, 0, 0) && SkyShare(kRight, x, y) >= SkyShare(kRight, 0, 0));
+}
+
 int main() {
+    TestSharedAxis();
     TestRuntime();
     TestAsBefore();
     TestCompositor();

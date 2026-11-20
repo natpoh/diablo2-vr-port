@@ -15,6 +15,7 @@
 #include <cwchar>
 
 #include "direct_feed.h"
+#include "ar_view.h"   // VR F5: FlatVR's Head Lock off, the Mapping's "main"
 #include "hand_swap.h"   // [hands] left_handed: BodyWalk's copy of the sticks traded when its Mapping is the input
 #include "finite_hold.h"   // nothing non-finite into the head every view is built from
 #include "link.h"
@@ -338,7 +339,8 @@ void PublishState(const D2RVR_State& s) {
     // [openxr] menu_3d (SetMenuPanel): a menu in a game goes to FlatVR as a panel of its own - the
     // screen and Head Lock as with none, the world in stereo round it (the Mapping's "D2R Menu" stays)
     const bool flatMenu = (s.menuOpen && !g_menuPanel.load()) || s.weaponClass == D2RVR_WEAPON_UNKNOWN;
-    g.headLock = !flatMenu && (s.viewMode == 1 || s.viewMode == 3 || s.viewMode == 4) ? 1 : 0;
+    // VR F5 ([mode] f5_ar_view): viewMode 6 with [mode] f5_head_look (the head turns the camera), never with 5 (vr/ar_view.h)
+    g.headLock = arview::LinkHeadLock(s.viewMode, flatMenu) ? 1 : 0;
 #if D2RVR_FIRST_PERSON
     // FlatVR's screen pushed back while a panel is open in first person (view 1, VR F4), so the
     // whole inventory or trade window is in view: from above, behind and on the floor the panel
@@ -353,6 +355,7 @@ void PublishState(const D2RVR_State& s) {
     // the same buttons want different things from up there.
     else if (s.viewMode == 0 || s.viewMode == 3) strcpy_s(g.categories, "main, D2R Top Down");
     else if (s.viewMode == 4) strcpy_s(g.categories, "main, D2R Floor");
+    else if (arview::IsLinkF5(s.viewMode)) strcpy_s(g.categories, "main");   // VR F5: mouse, keyboard or pad - no body actions of a view
 #if D2RVR_FIRST_PERSON
     else if (s.weaponType > D2RVR_TYPE_UNKNOWN && s.weaponType < D2RVR_TYPE_COUNT)
         snprintf(g.categories, sizeof g.categories, "main, D2R First Person, D2R %s%s", kD2RVRWeaponTypeNames[s.weaponType],

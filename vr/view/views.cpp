@@ -16,6 +16,7 @@ bool ApplyView(const char** said) {
     // camera where the head is in the room (TableCamera), the hero whole as from
     // behind; the void black, the headset shows the room there (docs/plan_tabletop_mr.md).
     const bool table = vr && v == 3;   // the game on the floor is F3 since vr_mode_order 2 (as TableView)
+    const bool ar = ArView();          // VR F5 ([mode] f5_ar_view): flat F3's first person, the picture to FlatVR (vr/ar_view.h)
     const bool on = v != 1 || (vr && (g_set.topPersp.load() || xr::Views3dOn()));   // (F1 through our camera: [top] perspective, or native OpenXR's 3D F1)
     if (on && !AllHooksIn()) InstallHooks();
     if (on && !g_h.camera) { *said = "vrcam: no camera yet - its hooks are not in (see the log)"; return false; }
@@ -27,14 +28,18 @@ bool ApplyView(const char** said) {
     // F1 in true perspective is sent as the game's own view (0): its camera is the game's,
     // not the head's, and with Head Lock on (vr/link.cpp locks 1, 3 and 4) the picture
     // stuck to the head ("the camera sticks to my head, it must not", 2026-10-05).
-    gamestate::SetViewMode(!on ? 0u : table ? 4u : vr && v == 1 ? 0u : (uint32_t)g_view.load());
+    // F5: its own number - FlatVR's Head Lock off (the head does not turn this camera) and the Mapping's "main" (vr/link.cpp).
+    gamestate::SetViewMode(!on ? 0u : ar ? arview::LinkViewMode(g_set.f5Head.load()) : table ? 4u : vr && v == 1 ? 0u : (uint32_t)g_view.load());
     g_gen.fetch_add(1);
     static const char* const kFlat[] = {"", "flat: the game's own camera (F1)", "flat: third person (F2)",
                                         "flat: first person (F3) - mouse look, W A S D"};
     static const char* const kVr[] = {"", "VR: from above (F1)", "VR: third person (F2)",
                                       "VR: the game on the floor (F3) - walk round it; F11 puts it in front of you again",
-                                      "VR: first person, the body is yours (F4)"};
-    *said = vr ? kVr[v] : kFlat[v];
+                                      "VR: first person, the body is yours (F4)",
+                                      "VR: first person without hands (F5) - flat F3's controls: mouse, W A S D, a pad's sticks"};
+    *said = vr ? kVr[std::clamp(v, 0, 5)] : kFlat[std::clamp(v, 0, 3)];
+    if (ar) LogF("vrcam: F5 - the camera %s", ArHead() ? "follows the head as F4's ([mode] f5_head_look; native: the headset's eyes, FlatVR: Head Lock on)"
+                                                        : "turned by the mouse only ([mode] f5_head_look=0)");
     return true;
 }
 
@@ -44,7 +49,7 @@ bool ApplyView(const char** said) {
 void FollowMode() {
     static int applied = -1;
     static bool toldWait = false;
-    const int want = g_set.platform.load() * 10 + ViewNow() + (TopPersp() ? 100 : 0);
+    const int want = g_set.platform.load() * 10 + ViewNow() + (TopPersp() ? 100 : 0) + (ArHead() ? 1000 : 0);   // (F5's head look: FlatVR's Head Lock)
     if (want == applied) return;
     const char* said = "";
     if (ApplyView(&said)) { applied = want; toldWait = false; Say(said); }
@@ -153,7 +158,7 @@ void TurnTick() {
     }
     // [camera] stick_pitch_flat (flat F2 / F3, a player with an Xbox pad: "the right stick pitch doesn't change the camera angle up and down"): the
     // right stick's up / down is the mouse's up / down - the same look, the same limits; the stick's shaping as the VR tilt's (vr/stick_pitch.h).
-    if (g_set.stickPitchFlat.load() && g_set.platform.load() == 0 && ViewNow() != 1) {
+    if (g_set.stickPitchFlat.load() && FlatRules() && FlatRulesView() != 1) {   // (flat F2 / F3, VR F5)
         const float step = stickpitch::Step(g_rightX.load(), g_rightY.load(), dt, g_set.stickPitchSpeed.load(), g_set.stickPitchSign.load());
         if (step != 0.0f) {
             g_mousePitch.store(std::clamp(g_mousePitch.load() + step, -90.0f, 90.0f));   // (+ looks lower, as the mouse's dy)

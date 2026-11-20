@@ -433,6 +433,7 @@ struct World {
         if (hset::HasSubRow(page) && page != hset::SubFirst(page)) s = ClickSheet(hset::kSubBtn(page - hset::SubFirst(page), hset::SubCount(page)));   // (World's, Controls' buttons)
         if (page == hset::kPageParty) s = ClickSheet(hset::kPreviewBtn);   // the Co-op page's Party button (Party is that tab's second page)
         if (page == hset::kPageRender) s = ClickSheet(hset::kPreviewBtn);  // the Video page's Render button (Render is that tab's second page)
+        if (page == hset::kPageMap) s = ClickSheet(hset::kPreviewBtn);     // the HUD page's Map button (Map is that tab's second page)
         if (page == hset::kPageF3) s = ClickSheet(hset::kPreviewBtn);      // the View page's F3 button (F3 is that tab's second page; VR F3 and view 0)
         if (page == hset::kPageF1) s = ClickSheet(hset::kPreviewBtn);      // the View page's F1 button (F1 is that tab's second page in VR F1)
         return s;
@@ -1207,7 +1208,7 @@ static void TestPaint(const char* dumpDir) {
     bool belowSame = true;
     for (int y = (int)tiles::kPanel.t + 14; y < tiles::kH && belowSame; ++y)
         for (int x = 0; x < tiles::kW; ++x) {
-            const bool hint = (y > 1020 && x > 440 && x < 1160) ||                                                                    // the dots at the foot
+            const bool hint = (y > 1020 && x > 380 && x < 1220) ||                                                                    // the dots at the foot (28 places since the Map, Walk and F5 pages)
                               (y >= 470 && y <= 690 && (x < 110 || x > 1490));                                                       // the arrows at the edges
             if (!hint && skills[(size_t)y * tiles::kW + x] != plain[(size_t)y * tiles::kW + x]) { belowSame = false; break; }
         }
@@ -1387,8 +1388,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 25 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(24, 1) == 24 && FlipTo(24, -1) == 23 && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 28 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(27, 1) == 27 && FlipTo(27, -1) == 26 && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1915,6 +1916,8 @@ static void TestFlipController() {
         CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().page == hset::kPageView && w.c.FlipPlace() == 1 + hset::kPageView && w.c.ViewNow().flipPlace == 1);
         Flick(w, 1.0f);
         // (places 2 and 3, the View tab's second pages F1 and F3, are VR F1's / F3's only: this F4 walk passes over them)
+        CHECK(w.c.SettingsModel().page == hset::kPageF5 && w.c.FlipPlace() == 1 + hset::kPageF5);   // place 4: F5's own tab (every view)
+        Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageOptions && w.c.FlipPlace() == 1 + hset::kPageOptions);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageVideo && w.c.FlipPlace() == 1 + hset::kPageVideo);
@@ -1928,6 +1931,8 @@ static void TestFlipController() {
         CHECK(w.c.SettingsModel().page == hset::kPageVibration && w.c.FlipPlace() == 1 + hset::kPageVibration);
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageHud && w.c.FlipPlace() == 1 + hset::kPageHud);
+        Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageMap && w.c.FlipPlace() == 1 + hset::kPageMap);   // the HUD tab's second page (Map): a flick passes it too
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageLife && w.c.FlipPlace() == 1 + hset::kPageLife);
         Flick(w, 1.0f);
@@ -1951,9 +1956,12 @@ static void TestFlipController() {
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);   // the strike statistics' tab
         Flick(w, 1.0f);
+        CHECK(w.c.SettingsModel().page == hset::kPageWalk && w.c.FlipPlace() == 1 + hset::kPageWalk);   // walking in place ([walk_in_place])
+        Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.SettingsModel().GuideShown());
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.Open());   // the end: a stop
+        Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         for (int i = 0; i < hset::kWorldPages; ++i) Flick(w, -1.0f);
@@ -1967,6 +1975,7 @@ static void TestFlipController() {
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
+        Flick(w, -1.0f);   // (the Map page, the HUD tab's second)
         CHECK(w.c.FlipPlace() == 1 + hset::kPageKeysR && w.c.SettingsModel().page == hset::kPageKeysR);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
@@ -1975,6 +1984,7 @@ static void TestFlipController() {
         CHECK(w.c.FlipPlace() == 1 + hset::kPageVideo && w.c.SettingsModel().page == hset::kPageVideo);
         Flick(w, -1.0f);
         Flick(w, -1.0f);
+        Flick(w, -1.0f);   // (Options, F5, View)
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().tab == Tab::Settings);
         Flick(w, -1.0f);
         CHECK(w.c.FlipPlace() == 0 && w.c.ViewNow().tab == Tab::Skills);
@@ -2008,7 +2018,7 @@ static void TestFlipController() {
         w.Next();
         Stick(w, 1, 1.0f, 0.0f);
         w.Next();
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageF5);
         Stick(w, 1, 0.0f, 0.0f);
         w.Next();
         // not far enough, and up / down: nothing
@@ -2018,13 +2028,13 @@ static void TestFlipController() {
         w.Run(5);
         Stick(w, 1, 0.7f, 0.9f);
         w.Run(5);
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageF5);
         // the flip's tick
         Stick(w, 1, 0.0f, 0.0f);
         w.Next();
         Stick(w, 1, 1.0f, 0.0f);
         const Step s = w.Next();
-        CHECK(s.feedback == Feedback::Hover && w.c.FlipPlace() == 1 + hset::kPageVideo);
+        CHECK(s.feedback == Feedback::Hover && w.c.FlipPlace() == 1 + hset::kPageOptions);
     }
     {   // a stick pushed as the window opens (the player was turning) is not a flick
         World w;
@@ -2080,7 +2090,7 @@ static void TestFlipController() {
         Tap(w, 1);
         CHECK(w.c.FlipPlace() == 1);
         Tap(w, 1);
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageOptions);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageF5);
         Tap(w, 0);
         CHECK(w.c.FlipPlace() == 1);
         Tap(w, 0);
@@ -2130,9 +2140,9 @@ static void TestFlipController() {
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageStats && w.c.SettingsModel().page == hset::kPageStats);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageWalk && w.c.SettingsModel().page == hset::kPageWalk);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageParty && w.c.SettingsModel().page == hset::kPageParty);
+        CHECK(w.c.FlipPlace() == 1 + hset::kPageStats && w.c.SettingsModel().page == hset::kPageStats);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
         CHECK(w.c.FlipPlace() == 1 && w.c.ViewNow().flipPlace == 1);
@@ -2211,7 +2221,7 @@ static void TestFlipPaint() {
         for (int y = 0; y < tiles::kH && onlyHints; ++y)
             for (int x = 0; x < tiles::kW; ++x)
                 if (a[(size_t)y * tiles::kW + x] != b[(size_t)y * tiles::kW + x]) {
-                    const bool dot = y > 1020 && x > 440 && x < 1160, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
+                    const bool dot = y > 1020 && x > 380 && x < 1220, arrow = y >= 470 && y <= 690 && (x < 110 || x > 1490);
                     if (!dot && !arrow) { onlyHints = false; break; }
                 }
         CHECK(onlyHints);
@@ -2308,17 +2318,18 @@ static void TestHands() {
 static void TestViews() {
     using namespace hset;
     // the pages: F4 (and 0, not known) every one; F1 - F3 not F4's body
-    const int bodyPages[] = {kPageVibration, kPageLife, kPageLook, kPageBody, kPageBelt, kPageMelee, kPageWorld, kPageWorldReact, kPageWorldGrab, kPageWorldMore, kPageStats};
-    const int allPages[] = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
-    for (int view = 0; view <= 4; ++view) {
-        const bool flat = view >= 1 && view <= 3;
-        for (int p : bodyPages) CHECK(PageShown(p, view) == !flat);
+    const int bodyPages[] = {kPageVibration, kPageLife, kPageLook, kPageBody, kPageBelt, kPageMelee, kPageWorld, kPageWorldReact, kPageWorldGrab, kPageWorldMore, kPageStats, kPageWalk};
+    const int allPages[] = {kPageView, kPageF5, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
+    for (int view = 0; view <= kViewF5; ++view) {   // (5: VR F5 - the overlay's view there, as F1 - F3)
+        const bool flat = (view >= 1 && view <= 3) || view == kViewF5;
+        const bool f5 = view == kViewF5;   // VR F5 shares F4's low-life vignette: its Life and Look pages show there (F5SharesPage)
+        for (int p : bodyPages) CHECK(PageShown(p, view) == (!flat || (f5 && IsLifePage(p))));
         for (int p : allPages) CHECK(PageShown(p, view));
         CHECK(PageShown(kPageF3, view) == (view == 0 || view == 3));   // F3's page ([table] full_width, draw_distance): VR F3 only (0: Settings' own)
         CHECK(PageShown(kPageF1, view) == (view == 0 || view == 1));   // F1's page ([top] perspective, tilt, distance): VR F1 only (0: Settings' own)
         int tabs = 0;
         for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
-        CHECK(tabs == (flat ? 7 : 15));   // View, Options, Video, Controls, HUD, Co-op, Guide - or all fifteen (Stats is F4's: the touch counts there)
+        CHECK(tabs == (flat ? (f5 ? 10 : 8) : 17));   // View, F5, Options, Video, Controls, HUD, Co-op, Guide (VR F5: + Life, Look) - or all seventeen
         // the strip: the shown tabs inside it and apart, in order; one not shown has no place
         int lastEnd = 0;
         for (int t = 0; t < kTabCount; ++t) {
@@ -2336,7 +2347,8 @@ static void TestViews() {
         for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
         // the flips: Skills and the pages shown (Party with it, while it is on)
         const int f3Page = (view == 0 || view == 3 ? 1 : 0) + (view == 0 || view == 1 ? 1 : 0);   // (F3's page: VR F3 only, and 0; F1's: VR F1 only, and 0)
-        CHECK(FlipCount(view) == (flat ? 10 : kFlipPlaces - 2) + f3Page && FlipCount(view, false) == (flat ? 9 : kFlipPlaces - 3) + f3Page);
+        const int lifePages = f5 ? 2 : 0;   // (VR F5: Life and Look)
+        CHECK(FlipCount(view) == (flat ? 11 : kFlipPlaces - 2) + f3Page + lifePages && FlipCount(view, false) == (flat ? 10 : kFlipPlaces - 3) + f3Page + lifePages);
     }
     // Controls: one tab, two pages, a button each on top
     CHECK(TabOf(kPageKeysL) == TabOf(kPageKeysR) && TabPage(kTabControls) == kPageKeysL && !std::strcmp(kTabNames[kTabControls], "Controls") && HasSubRow(kPageKeysR));
@@ -2366,7 +2378,7 @@ static void TestViews() {
     }
 
     // the window in VR F1, F2, F3: the frame as the input layer makes it there (another view: kInMenu with kOtherView; no direct mode)
-    for (int view = 1; view <= 3; ++view) {
+    for (int view : {1, 2, 3, kViewF5}) {   // (VR F5 since Serg's "и так же во внутреннем оврелее" "для ф5": the window alone, as F1 - F3)
         World w;
         w.f4 = false;
         w.c.SetView(view);
@@ -2388,11 +2400,13 @@ static void TestViews() {
         CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().View() == view && w.c.SettingsModel().page == kPageView);
         const bool f3 = view == 3;   // VR F3: the View tab's second page, F3 ([table] full_width, draw_distance), comes next
         const bool f1 = view == 1;   // VR F1: the View tab's second page, F1 ([top] perspective, tilt, distance), comes next
-        CHECK(w.c.ViewNow().flipCount == (f3 || f1 ? 11 : 10) && w.c.ViewNow().flipAt == 1);
+        const bool f5 = view == kViewF5;   // VR F5: Life and Look after HUD (F4's vignette, shared)
+        CHECK(w.c.ViewNow().flipCount == (f3 || f1 ? 12 : 11) + (f5 ? 2 : 0) && w.c.ViewNow().flipAt == 1);
         const std::vector<uint32_t> viewPic = Paint(w.c.ViewNow());
-        std::vector<int> along = {kPageView, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
+        std::vector<int> along = {kPageView, kPageF5, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
         if (f3) along.insert(along.begin() + 1, kPageF3);
         if (f1) along.insert(along.begin() + 1, kPageF1);
+        if (f5) along.insert(std::find(along.begin(), along.end(), kPageHud) + 1, {kPageLife, kPageLook});
         for (size_t i = 1; i < along.size(); ++i) {
             Flick(w, 1.0f);
             CHECK(w.c.SettingsModel().page == along[i] && w.c.ViewNow().flipAt == (int)i + 1);

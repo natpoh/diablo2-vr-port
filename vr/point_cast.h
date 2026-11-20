@@ -204,6 +204,58 @@ private:
     uint64_t start_ = 0;
 };
 
+// ---- presses that are not the player's ------------------------------------------------------------------------------------------------
+// Another part of the plugin pressing a slot for a cast of its own (the skill link: a glyph's or BodyWalk's cast presses the skill's slot, or the spare one
+// [gestures] skill_link_slot after the game's setter put the skill there) - that press is the cast itself, on its way to the game, and starts no hold:
+// taken for the arc it came out ~200 ms late, as a second press, with the skill point cast last read on the slot (himbrat, 2026-11-19 15:37:38). Each such
+// pulse marks its control until the pulse is over plus kSkipMarginMs; Mask is what Hold::Poll's `ignore` takes (beside the release's own press). A control is
+// a button bit or kRt - the left trigger's row shares its button with the plain one, so the plain slot's press is the game's own for that moment too (cast
+// as ever, without the arc).
+constexpr uint64_t kSkipMarginMs = 60;
+class Skips {
+public:
+    // A pulse of `control` held `pulseMs` from `nowMs`. The same control again: the later end (BodyWalk's held casts renew their pulse every 20 ms).
+    void Mark(uint32_t control, uint32_t pulseMs, uint64_t nowMs) {
+        if (!control) return;
+        const uint64_t until = nowMs + pulseMs + kSkipMarginMs;
+        int at = -1;
+        for (int i = 0; i < kN; ++i)
+            if (w_[i].control == control) { at = i; break; }
+        if (at < 0) {   // an expired one, else the one ending first
+            at = 0;
+            for (int i = 0; i < kN; ++i) {
+                if (w_[i].until <= nowMs) { at = i; break; }
+                if (w_[i].until < w_[at].until) at = i;
+            }
+        }
+        if (w_[at].control != control || w_[at].until < until) w_[at] = {control, until};
+    }
+    // A slot's press (pointcast::ControlOf): what the skill link pulses.
+    void MarkSlot(int slot, uint32_t pulseMs, uint64_t nowMs) { Mark(ControlOf(slot), pulseMs, nowMs); }
+    uint32_t Mask(uint64_t nowMs) const {
+        uint32_t m = 0;
+        for (const W& w : w_)
+            if (nowMs < w.until) m |= w.control;
+        return m;
+    }
+
+private:
+    struct W {
+        uint32_t control = 0;
+        uint64_t until = 0;
+    };
+    static constexpr int kN = 4;
+    W w_[kN];
+};
+
+// ---- the slots' skills ------------------------------------------------------------------------------------------------------------------
+// The skill each of the twelve slots casts, from the skill panel's snapshot of the game's table (-1: none, the plain action, not read). Read again right after
+// every assignment the game's setter applied (the skill panel's editor, the skill link's spare slot, a glyph's select) - not only on the next 5-a-second read:
+// pressed in between, the slot's new skill is the one named and judged (himbrat, 2026-11-19: 376 logged for a press of the 377 just put there).
+inline void SlotsOf(const wheel::Snapshot& s, int out[kSlotCount]) {
+    for (int i = 0; i < kSlotCount; ++i) out[i] = s.ready && wheel::CastsSkill(s.slot[i]) ? s.slot[i].id : -1;
+}
+
 // ---- the circle on the ground ----------------------------------------------------------------------------------------------------------
 // Its place against the hero's, across the ground in the world's x and z (world units).
 struct Offset {

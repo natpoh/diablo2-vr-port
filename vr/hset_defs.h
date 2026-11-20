@@ -31,7 +31,7 @@
 
 namespace hset {
 
-constexpr int kMaxPages = 24;
+constexpr int kMaxPages = 27;
 constexpr int kRowsPerPage = 6;
 constexpr int kRowsMax = 7;   // a page with a row more than kRowsPerPage stands its rows closer (the Melee page; hset_model.h RowStep)
 constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (the HUD page since its "Medallions: look"; hset_model.h TightRows)
@@ -46,6 +46,8 @@ constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (
 // Party (Serg, 2026-11-01: invite to a party from the headset, vr/hset_party.h) has no tab either: it is the Co-op tab's second page, reached by
 // the Co-op page's Party button (the bottom bar) and back by its Relay button; a flick passes it between World's pages and the Guide.
 // Stats (Serg, 2026-11-06: the strike statistics, [stats] strike_stats; vr/hset_stats.h) is a tab of its own before the Guide: it only shows.
+// Walk (Serg, 2026-11-19: "вкладку перемещаться с помощью ходьбы и галочку ... с несколькими простыми настройками интенсивности") is a tab of its own
+// before the Guide: [walk_in_place] - walk in place with the headset, BodyWalk's walk library in the game (vr/walk_in_place.h); F4 only.
 // Render (Serg, 2026-11-08: foveated rendering and the other render-cost switches in the headset) has no tab either: it is the Video tab's second page,
 // reached by the Video page's Render button (the bottom bar) and back by its Video button, as Party is Co-op's; F4 only (its features are).
 // F3 (Serg 2026-11-08: "Yes, add them" - the Draw distance slider looked for in the headset and not found) has no tab either: it is the View tab's
@@ -53,12 +55,18 @@ constexpr int kRowsTight = 8; // a page with an eighth row stands them closest (
 // [table]'s: the game on the floor) - D2R VR Settings > Camera > "F3 The game on your floor" has the same two.
 // F1 (Serg 2026-11-13: the view from above's controls in the headset too) is F3's twin for VR F1: the View tab's second page there, reached by the
 // View page's F1 button and back by its View button; VR F1 only (its keys are [top]'s) - D2R VR Settings > UI: F1 above > "View from above".
+// Map (Serg 2026-11-18: a selector in the game that switches the map between its modes, so people do not look for them) has no tab either:
+// it is the HUD tab's second page, reached by the HUD page's Map button (the bottom bar) and back by its HUD button, as Render is Video's; F4 only
+// (the map in the hand is). Its "Map mode" row (shared/map_mode.h) writes the map keys at the end of the table (no rows), live.
+// F5 (Serg 2026-11-19: "это надо убрать с хоме и в отдельную вкладку сделать" - "и так же во внутреннем оврелее" - "для ф5") is a tab of its own
+// after View: VR F5's keys (vr/ar_view.h, vr/f5_toolbar.h) - D2R VR Settings > F5 has the same five. Shown in every view (F5 is switched on there).
 enum Page : int {
-    kPageView = 0, kPageF1 = 1, kPageF3 = 2, kPageOptions = 3, kPageVideo = 4, kPageRender = 5, kPageKeysL = 6, kPageKeysR = 7, kPageVibration = 8,
-    kPageHud = 9, kPageLife = 10, kPageLook = 11, kPageBody = 12, kPageBelt = 13, kPageMelee = 14, kPageMeleeAttack = 15,
-    kPageWorld = 16, kPageWorldReact = 17, kPageWorldGrab = 18, kPageWorldMore = 19, kPageCoop = 20, kPageParty = 21, kPageStats = 22, kPageGuide = 23
+    kPageView = 0, kPageF1 = 1, kPageF3 = 2, kPageF5 = 3, kPageOptions = 4, kPageVideo = 5, kPageRender = 6, kPageKeysL = 7, kPageKeysR = 8,
+    kPageVibration = 9, kPageHud = 10, kPageMap = 11, kPageLife = 12, kPageLook = 13, kPageBody = 14, kPageBelt = 15, kPageMelee = 16,
+    kPageMeleeAttack = 17, kPageWorld = 18, kPageWorldReact = 19, kPageWorldGrab = 20, kPageWorldMore = 21, kPageCoop = 22, kPageParty = 23,
+    kPageStats = 24, kPageWalk = 25, kPageGuide = 26
 };
-constexpr int kPageCount = 24;
+constexpr int kPageCount = 27;
 constexpr int kWorldPages = 4;   // kPageWorld .. kPageWorldMore
 constexpr bool IsWorldPage(int page) { return page >= kPageWorld && page < kPageWorld + kWorldPages; }
 // Controls (Serg, 2026-11-02: "лефт райт объединить в контролс") is one TAB of the two key-binding pages, Left and Right, picked by a row of two
@@ -75,7 +83,7 @@ constexpr int SubFirst(int page) { return IsWorldPage(page) ? kPageWorld : IsKey
 constexpr int SubCount(int page) { return IsWorldPage(page) ? kWorldPages : IsKeysPage(page) ? kKeysPages : IsMeleePage(page) ? kMeleePages : 1; }
 // The page whose tab a page stands under: a tab of several pages' first one, Party's Co-op, Render's Video, F1's and F3's View, else the page itself.
 constexpr int LeadOf(int page) {
-    return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page == kPageF1 || page == kPageF3 ? kPageView : page;
+    return HasSubRow(page) ? SubFirst(page) : page == kPageParty ? kPageCoop : page == kPageRender ? kPageVideo : page == kPageMap ? kPageHud : page == kPageF1 || page == kPageF3 ? kPageView : page;
 }
 constexpr bool StartsTab(int page) { return LeadOf(page) == page; }
 // The tab a page is under, and the page a tab opens.
@@ -90,10 +98,12 @@ constexpr int TabPage(int tab) {
     return kPageGuide;
 }
 constexpr int kTabControls = TabOf(kPageKeysL), kTabWorld = TabOf(kPageWorld), kTabGuide = TabOf(kPageGuide), kTabCount = kTabGuide + 1;
-static_assert(kTabCount == 15 && TabPage(kTabWorld) == kPageWorld && TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
+static_assert(kTabCount == 17 && TabPage(TabOf(kPageF5)) == kPageF5 && TabOf(kPageF5) == TabOf(kPageView) + 1 && TabPage(kTabWorld) == kPageWorld &&
+                  TabPage(kTabControls) == kPageKeysL && TabOf(kPageParty) == TabOf(kPageCoop) &&
                   TabOf(kPageMeleeAttack) == TabOf(kPageMelee) && TabOf(kPageRender) == TabOf(kPageVideo) && TabPage(TabOf(kPageVideo)) == kPageVideo &&
-                  TabOf(kPageF3) == TabOf(kPageView) && TabPage(TabOf(kPageF3)) == kPageView && TabOf(kPageF1) == TabOf(kPageView),
-              "fifteen tabs over the twenty-four pages");
+                  TabOf(kPageF3) == TabOf(kPageView) && TabPage(TabOf(kPageF3)) == kPageView && TabOf(kPageF1) == TabOf(kPageView) &&
+                  TabOf(kPageMap) == TabOf(kPageHud) && TabPage(TabOf(kPageMap)) == kPageHud,
+              "seventeen tabs over the twenty-seven pages");
 constexpr int kNoPage = -1;   // a key with no row of its own: a hand-drawn page reads and writes it
 
 // A set of keys, one bit a key of the table below (what an Apply writes, what a draft has changed). 256 bits: the Vibration page took the
@@ -207,6 +217,26 @@ inline constexpr Def kDefs[] = {
      1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF3, true},
     {L"table", L"draw_distance", "F3 draw distance", "Near (1) - far (8); 0 = as the other views",
      0.0f, 0.0f, 8.0f, 1.0f, "%.0f", "", "", kPageF3, true},
+    // F5 (its own tab): VR F5's keys of D2R VR Settings > F5, in its words. [mode] f5_ar_view: the fifth view itself (vr/ar_view.h); [hud] f5_toolbar
+    // and its height / distance: the toolbar low in front, under the body (vr/f5_toolbar.h; 1 cm steps as Settings', the defaults Serg's 33 / 32). All
+    // live, as there. [mode] f5_head_look is Settings' only (Serg 2026-11-20, test 0.220.3: "эту галочку убери из оверлея игры").
+    {L"mode", L"f5_ar_view", "F5 view", "First person with the mouse or the sticks, no hands",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF5, true},
+    {L"hud", L"f5_toolbar", "F5: toolbar low in front", "Under the body; off = in the picture",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF5, true},
+    {L"hud", L"f5_toolbar_below_cm", "F5 toolbar: height", "How far under the eyes",
+     33.0f, 5.0f, 90.0f, 1.0f, "%.0f cm", "", "", kPageF5, true},
+    {L"hud", L"f5_toolbar_ahead_cm", "F5 toolbar: distance", "How far ahead of the eyes",
+     32.0f, 15.0f, 120.0f, 1.0f, "%.0f cm", "", "", kPageF5, true},
+    // [hud] f5_map and its size (Serg 2026-11-20: "ползунок размер карты на ф5"; vr/f5_hud.h): the corner map moved into view, and its size - % of
+    // the corner map's size now ([hud_inside] map_zoom), 100 as it is; its shift and depth stay Settings' (the page has room for two rows more).
+    {L"hud", L"f5_map", "F5: map into view", "In a corner, toward the middle and nearer",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageF5, true},
+    {L"hud", L"f5_map_size", "F5 map: size", "With the map into view; 100% = as now",
+     100.0f, 30.0f, 300.0f, 5.0f, "%.0f%%", "", "", kPageF5, true},
+    // [body] f5_aim_tilt_pct (Serg 2026-11-20, vr/aim_tilt.h): how much of the camera's pitch the arms follow in F5 - the eighth row (stood closest)
+    {L"body", L"f5_aim_tilt_pct", "F5: arms tilt", "Share of the camera's up / down; less = higher",
+     60.0f, 0.0f, 150.0f, 5.0f, "%.0f%%", "", "", kPageF5, true},
     // ADD NEW TICK BOXES HERE, one line each (page 0 is full: its sixth row is the game view's F1 - F4 buttons; page 1 is full too (seven rows): the
     // next key needs a page of its own - kMaxPages and the tabs' places in the tile window and the panel).
     //
@@ -552,9 +582,44 @@ inline constexpr Def kDefs[] = {
      60.0f, 10.0f, 150.0f, 5.0f, "%.0f%%", "", "", kPageHud, true},
     {L"hud", L"names_own_alpha", "Our names: backdrop", "A dark box behind them: 0 none, 1 solid",
      0.0f, 0.0f, 1.0f, 0.05f, "%.2f", "", "", kPageHud, true},
+    // Map (the HUD tab's second page; Serg 2026-11-18): the map's mode, one of five (shared/map_mode.h) - shown by the mode the map keys match
+    // (Custom: none); < / > write the next mode's keys into the draft, written by themselves a moment later (they are live). D2R VR Settings >
+    // UI: F4 body > "Map mode" writes the same keys. Under it the big map's keep (vr/map_laser.h Keeps), its own key.
+    {L"@mapmode", L"mode", "Map mode", "Orb, flat, big / whole map on the left hand, in view",
+     0.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kPageMap, false, DefType::Derived},
+    {L"hud", L"map_big_keep", "Big map stays while you attack", "Attacks keep it up; point at it and click to close",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageMap, true},
+    // -- no row: the map mode's keys (shared/map_mode.h Keys; the defaults the plugin's for a key missing from the file). Live.
+    {L"hud", L"map", "Corner map out of the picture", "0 in the picture, 1 in the hand",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
+    {L"hud", L"map_orb", "A magic orb", "0 a flat panel, 1 a glass ball",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
+    {L"hud", L"map_place", "Map: where", "0 not shown, 1 left hand, 2 right hand, 3 low in front, 4 chest",
+     1.0f, 0.0f, 4.0f, 1.0f, "%.0f", "", "", kNoPage, true},
+    {L"hud", L"map_click_big", "Laser click makes it big", "0 / 1",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
+    {L"hud", L"map_two_sizes", "Two sizes only", "0 / 1",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
+    {L"hud", L"map_big_on_hand", "Big map on the left hand", "0 / 1",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
+    {L"hud", L"map_hand_full", "Whole map on the left hand", "0 / 1",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kNoPage, true},
     // -- no row: the toolbar type's other key. 0 the toolbar stays in the picture, 1 it is cut out, 2 the whole interface is.
     {L"hud", L"hide", "Interface out of the picture", "0 nothing, 1 the toolbar, 2 all of it",
      0.0f, 0.0f, 2.0f, 1.0f, "%.0f", "", "", kNoPage},
+    // Walk (Serg, 2026-11-19): [walk_in_place] (vr/walk_in_place.h, docs/notes/walk_in_place.md) - walk in place with the headset: BodyWalk's walk library
+    // in the game finds the steps, the hero walks where you look through the game's own walking stick. The tick, then three trims of BodyWalk's walk
+    // profile (50 % = as BodyWalk has it; the profile itself is set up in BodyWalk) and the run point (the game's own run threshold and Run key). Live, F4.
+    {L"walk_in_place", L"on", "Move by walking", "Step in place: the hero walks where you look (F4)",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWalk, true},
+    {L"walk_in_place", L"sensitivity", "Step sensitivity", "Higher: lighter steps count",
+     50.0f, 0.0f, 100.0f, 5.0f, "%.0f%%", "", "", kPageWalk, true},
+    {L"walk_in_place", L"speed", "Speed from steps", "Higher: full speed with gentler steps",
+     50.0f, 0.0f, 100.0f, 5.0f, "%.0f%%", "", "", kPageWalk, true},
+    {L"walk_in_place", L"smoothing", "Smoothing", "Higher: steadier, slower to start and stop",
+     50.0f, 0.0f, 100.0f, 5.0f, "%.0f%%", "", "", kPageWalk, true},
+    {L"walk_in_place", L"run_at", "Run from", "Step this hard and the hero runs; 100% never",
+     80.0f, 20.0f, 100.0f, 5.0f, "%.0f%%", "", "", kPageWalk, true},
 };
 constexpr int kCount = (int)(sizeof kDefs / sizeof kDefs[0]);
 static_assert(kCount <= 64 * Mask::kWords, "a change mask is 256 bits (hset::Mask)");
@@ -630,6 +695,13 @@ constexpr int kKeyAlliesPlace = IndexOf(L"hud", L"allies_place");   // [hud] all
 constexpr int kKeyTopPersp = IndexOf(L"top", L"perspective"), kKeyTopTilt = IndexOf(L"top", L"tilt"), kKeyTopDistance = IndexOf(L"top", L"distance"),
               kKeyTopSky = IndexOf(L"top", L"sky"), kKeyTopFog = IndexOf(L"top", L"fog");   // the F1 page's (hset_scene.h TopViewDetail)
 static_assert(kKeyTopPersp >= 0 && kKeyTopTilt >= 0 && kKeyTopDistance >= 0 && kKeyTopSky >= 0 && kKeyTopFog >= 0, "the F1 page's keys are in the table");
+// the Map page's Map mode (shared/map_mode.h) and the keys it writes
+constexpr int kKeyMapMode = IndexOf(L"@mapmode", L"mode"), kKeyMapOn = IndexOf(L"hud", L"map"), kKeyMapOrb = IndexOf(L"hud", L"map_orb"),
+              kKeyMapPlace = IndexOf(L"hud", L"map_place"), kKeyMapClickBig = IndexOf(L"hud", L"map_click_big"), kKeyMapTwoSizes = IndexOf(L"hud", L"map_two_sizes"),
+              kKeyMapBigOnHand = IndexOf(L"hud", L"map_big_on_hand"), kKeyMapBigKeep = IndexOf(L"hud", L"map_big_keep"), kKeyMapHandFull = IndexOf(L"hud", L"map_hand_full");
+static_assert(kKeyMapMode >= 0 && kKeyMapOn >= 0 && kKeyMapOrb >= 0 && kKeyMapPlace >= 0 && kKeyMapClickBig >= 0 && kKeyMapTwoSizes >= 0 && kKeyMapBigOnHand >= 0 &&
+                  kKeyMapBigKeep >= 0 && kKeyMapHandFull >= 0,
+              "the Map page's mode and every key it writes are in the table");
 constexpr int kKeyWristLook = IndexOf(L"hud", L"wrist_look");       // [hud] wrist_look: a stepper with names (vr/hset_names.h WristLookName)
 static_assert(kKeyWristLook >= 0, "Medallions: look is in the table");
 static_assert(kKeyMeleeDirect >= 0 && kKeyMeleeDirectClient >= 0, "Direct hit's keys are in the table");
@@ -672,16 +744,17 @@ constexpr bool IsToggle(const Def& d) { return d.min == 0.0f && d.max == 1.0f &&
 
 constexpr int PageCount() { return kPageCount; }
 // The pages' names: a tab's for its page, the World pages' their own (the buttons of the row on top of them, hset_scene.h).
-constexpr const char* kPageNames[kMaxPages] = {"View", "F1", "F3", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Touch",
-                                               "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Guide"};
-constexpr const char* kTabNames[kTabCount] = {"View", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
-                                              "World", "Co-op", "Stats", "Guide"};
+constexpr const char* kPageNames[kMaxPages] = {"View", "F1", "F3", "F5", "Options", "Video", "Render", "Left", "Right", "Vibration", "HUD", "Map", "Life", "Look", "Body", "Belt", "Touch",
+                                               "Attack", "Contact", "Monsters react", "Grab", "More", "Co-op", "Party", "Stats", "Walk", "Guide"};
+constexpr const char* kTabNames[kTabCount] = {"View", "F5", "Options", "Video", "Controls", "Vibration", "HUD", "Life", "Look", "Body", "Belt", "Melee",
+                                              "World", "Co-op", "Stats", "Walk", "Guide"};
 // The tabs' font (vr/hset_paint.cpp: Segoe UI, semibold, GDI) and the English names' widths in it, pixels: the strip is shared by them (hset_model.h kTab).
 // Fourteen names by their letters did not leave "Options" and "HUD" room, nor did 30 pixels letters by their widths; 26 by their widths did for
 // fourteen (939 of 960); fifteen (World) take 24, and so do fourteen again (Controls in place of Left and Right); fifteen with Stats take 22 (925 of 960:
-// at 24 they need 978). tools/hset_test.cpp measures them again.
-constexpr int kTabFontPx = 22;
-constexpr int kTabNameW[kTabCount] = {38, 62, 45, 67, 73, 36, 29, 38, 39, 30, 47, 48, 48, 39, 46};
+// at 24 they need 978); sixteen with Walk (2026-11-19) take 20 (952 of 960:
+// at 22 and 21 they need 980); seventeen with F5 (2026-11-19) take 19 (935 of 960; at 20 they need 986). tools/hset_test.cpp measures them again.
+constexpr int kTabFontPx = 19;
+constexpr int kTabNameW[kTabCount] = {33, 17, 56, 40, 60, 65, 33, 25, 34, 35, 27, 42, 42, 44, 35, 34, 41};
 // The panel's words in the player's language (vr/ui_text.h; the keys are made from this table, vr/ui_text_tables.h lists them for lang\en.txt):
 // a row's name and the line under it "vr.hset.<section>.<key>.label / .detail" (a Choice row's line is its ini text: not a word), a switch's two
 // faces by their English "vr.hset.value.<word>" (one "On" for every row), a tab "vr.hset.page.<name>". The tabs' widths stay the English names'.
@@ -709,10 +782,12 @@ constexpr bool IsLifePage(int page) { return page == kPageLife || page == kPageL
 // (vr/haptics.cpp), the low-life vignette (vr/low_hp.h), the T-pose measurement, the belt's potions, hit by touch and World's weapon, hands and
 // bodies; and on the pages that stay, a menu as a panel in front ([openxr] menu_3d: F4's pair) and the monsters' plates (vr/mob_bars.cpp: hooked
 // in F4 only). View 4 (F4) and 0 (not known: D2R VR Settings' own panel, a test) show everything, as before.
-constexpr bool FlatView(int view) { return view >= 1 && view <= 3; }
+// VR F5 (kViewF5: the overlay's view there, vr/skill_wheel.cpp) is one of them too: no body, no hands.
+constexpr int kViewF5 = 5;
+constexpr bool FlatView(int view) { return (view >= 1 && view <= 3) || view == kViewF5; }
 constexpr bool F4OnlyPage(int page) {
     return page == kPageVibration || page == kPageLife || page == kPageLook || page == kPageBody || page == kPageBelt || IsMeleePage(page) || IsWorldPage(page) ||
-           page == kPageStats || page == kPageRender;   // (Render: foveated rendering, the lens mask, the shadows once - F4 only)   // (the strike statistics: the touch counts in F4 only)
+           page == kPageStats || page == kPageRender || page == kPageMap || page == kPageWalk;   // (Map: the map in the hand - F4 only)   // (Walk: walking in place, F4 only)   // (Render: foveated rendering, the lens mask, the shadows once - F4 only)   // (the strike statistics: the touch counts in F4 only)
 }
 constexpr bool F4OnlyKey(int key) {
     return key >= 0 && key < kCount && (F4OnlyPage(kDefs[key].page) || key == IndexOf(L"openxr", L"menu_3d") || key == IndexOf(L"hud", L"monster_height") ||
@@ -724,13 +799,15 @@ constexpr bool F4OnlyKey(int key) {
 // F1's page (the view from above's keys) the same way: VR F1 only, and view 0.
 constexpr bool F3OnlyPage(int page) { return page == kPageF3; }
 constexpr bool F1OnlyPage(int page) { return page == kPageF1; }
+// VR F5 shares F4's low-life vignette (Serg 2026-11-20: "мигание экрана при слабой мане и слабом хп тоже как на ф4"): its Life and Look pages show there.
+constexpr bool F5SharesPage(int view, int page) { return view == kViewF5 && IsLifePage(page); }
 constexpr bool PageShown(int page, int view) {
-    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page)) && !(F3OnlyPage(page) && view != 0 && view != 3) &&
+    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page) && !F5SharesPage(view, page)) && !(F3OnlyPage(page) && view != 0 && view != 3) &&
            !(F1OnlyPage(page) && view != 0 && view != 1);
 }
 // The View page's bottom button: the view's own page - F1's in VR F1, F3's in VR F3 and view 0 (as before) - or none (-1).
 constexpr int ViewSubPage(int view) { return view == 1 ? kPageF1 : PageShown(kPageF3, view) ? kPageF3 : -1; }
-constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key)); }
+constexpr bool KeyShown(int key, int view) { return !(FlatView(view) && F4OnlyKey(key) && !(key >= 0 && key < kCount && F5SharesPage(view, kDefs[key].page))); }
 constexpr bool TabShown(int tab, int view) { return tab >= 0 && tab < kTabCount && PageShown(TabPage(tab), view); }
 static_assert(IndexOf(L"openxr", L"menu_3d") >= 0 && IndexOf(L"hud", L"monster_height") >= 0 && IndexOf(L"hud", L"ordinary_mob_bars") >= 0,
               "the rows F1 - F3 do not show are in the table");

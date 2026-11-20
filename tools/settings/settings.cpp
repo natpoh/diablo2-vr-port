@@ -33,6 +33,7 @@
 #include "orb_assets.h"      // [hud] wrist_game_models: the wrist medallions' game models from the player's own game (CascLib)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
+#include "mod_data_check.h"  // [mods] restore_mod_data: D2R VR's files in its .mpq gone (D2RMM's wipe) - Setup's put back, the makers run again
 #include <tlhelp32.h>
 #pragma comment(lib, "version.lib")   // GetFileVersionInfo: which BodyWalk is new enough
 #include <winhttp.h>    // the update check, D2RLoader's download
@@ -84,10 +85,12 @@
 #include "wall_contact_mode.h"   // [weight] wall_contact_mode: Weapon against the walls - Off / Ours / Bear's (one key; an old world_contact=1 reads as Ours)
 #include "direct_hit_mode.h"   // the Strikes tab's "Direct hit": one choice over [gameplay] melee_direct and melee_direct_client (tested)
 #include "toolbar_type.h"   // the toolbar's type: one choice over [hud] hide and bar_place (the headset panel has it too)
+#include "map_mode.h"   // the map's mode: one choice over the map keys (the headset panel's Map page has it too)
 #include "ceiling_levels.h"   // the Ceiling tab's rooms in the game's order, with the levels each covers (checked by dome_assets_test)
 #include "../../vr/direct_remap.h"   // [direct]: the list of controller buttons ("@remap" rows), read and written by the plugin's own parser (tested)
 #include "../../vr/strike_stats.h"   // [stats] strike_stats: the Stats tab reads the plugin's strike_stats.txt (its parser, tested)
-#include "../../vr/weapon_names.h"   // ... and names the weapons by their item codes
+#include "../../vr/weapon_names.h"
+#include "../../vr/strike_share.h"   // ... and shares them anonymously: the text sent, the answer read (tested)   // ... and names the weapons by their item codes
 #include "../../vr/xr_stick_check.h" // is the thumbstick bound by SteamVR? the plugin's verdict (state block bits 13 - 15) in words
 #include "../../vr/low_hp_eq.h"      // [hud] low_hp_cover_eq / low_mp_cover_eq: the vignettes' equalizer - its points and range (tested: low_hp_eq_test)
 #include "../../vr/low_mp.h"         // [hud] low_mp_vignette: the low-mana blue's band keys and defaults (low_mp_cover_eq_<percent>; tested: low_mp_test)
@@ -120,7 +123,11 @@ constexpr const wchar_t* kAppName = L"D2R VR Authentic Settings";
 enum class Kind { Tab, Group, Slider, Toggle, Invert, Choice, File, Color, Radio, Status, Button };
 
 // Which of the two ways to play an item is shown in (the Home page's [mode] platform).
-constexpr int kFlat = 1, kVr = 2, kBoth = 3;
+constexpr int kFlat = 1, kVr = 2;
+// kF5: also shown in VR while [mode] f5_ar_view is ticked - flat F3's own controls, which VR F5 plays by (Serg 2026-11-19: "для вида ф5 должны быть
+// актуальны все ползунки для вида ф3 в режиме флат"): the same keys, so F5 and flat F3 share them. Only(kFlat | kF5, ...).
+constexpr int kF5 = 4;
+constexpr int kBoth = kFlat | kVr | kF5;   // (every mode: Build ANDs a tab's and a group's modes into its items - a kFlat | kF5 tab keeps its items' kF5)
 
 struct Item {
     Kind kind = Kind::Slider;
@@ -481,6 +488,90 @@ constexpr const wchar_t* kOwnHotkeysTip =
     L"- with the game's default keys each F11 / F12 also switched its map's \"Show Party\" / \"Show Party Names\" off and on, and with "
     L"them off your allies vanish from every map (Options > Automap: turn them on again there). Off: the game gets them too, as before. Live.";
 Item OwnHotkeys() { return Toggle(L"view", L"own_hotkeys", L"F9 - F12 only for the mod (not the game's map keys)", 0, kOwnHotkeysTip); }
+// [mode] f5_ar_view (vr/ar_view.h, docs/notes/f5_ar_view.md): VR's fifth view for AR glasses - flat F3 on FlatVR's screen (Serg 2026-11-18).
+// 0 = VR has F1 - F4, as before.
+constexpr const wchar_t* kF5ArViewTip =
+    L"A fifth view, F5 - first person as in the flat game's F3, played with the mouse and keyboard or a pad: the mouse turns the camera, "
+    L"W A S D walk, the interface is in the picture, no VR hands, arms or held weapon; the camera follows your head as in F4 (the box "
+    L"below). It goes out as \"3D in the headset\" says, like F1 - F3: Native OpenXR - in the headset with its own eyes; FlatVR stereo or FlatVR depth - through FlatVR, whose own Output picks the headset or AR glasses "
+    L"(XREAL and others as a display, side by side). Switch to it with F5 (Shift + F5 or F12 alone, as View keys say); F12 goes round all "
+    L"five views. Live. Off: F1 - F4, F5 stays the game's skill key, as before.";
+Item F5ArView() { return Toggle(L"mode", L"f5_ar_view", L"F5: first person with the mouse, no hands (headset or AR glasses)", 0, kF5ArViewTip); }
+// [mode] f5_head_look (vr/ar_view.h NativeF5Mode): F5's camera on the head as F4's, the controls F3's (Serg 2026-11-19). 0 = the mouse only.
+constexpr const wchar_t* kF5HeadLookTip =
+    L"F5's camera follows your head as in F4 - you look round the world in first person - while you move and fight as in F3: the mouse "
+    L"or a pad's right stick turns you, W A S D or the left stick walk, no VR hands. Native OpenXR draws it with the headset's own eyes; "
+    L"FlatVR gets your head's turn and locks its screen to the head. Live. Off: the head turns nothing - the mouse alone turns the camera "
+    L"(Native OpenXR: one flat picture in both eyes; FlatVR: its screen stays where it is put).";
+Item F5HeadLook() { return Needs(L"mode", L"f5_ar_view", 1, Toggle(L"mode", L"f5_head_look", L"F5: the camera follows the head (as F4)", 1, kF5HeadLookTip)); }
+// [hud] f5_toolbar (vr/f5_toolbar.h): F5's toolbar cut out of the picture and hung low in front, under the body, at its own height and distance
+// (Serg 2026-11-19: "лучше под телом спереди с ползунками по высоте и расстоянию"). 0 = in the picture, as before. On the F5 tab.
+constexpr const wchar_t* kF5ToolbarTip =
+    L"In F5 the game's toolbar - life, mana, the belt and the skills - is taken out of the picture and hangs low in front of you, under the "
+    L"body, as \"Low in front\" does in F4: look down to read it. Only the toolbar: the map and the rest stay in the picture. The two sliders "
+    L"below set how far under your eyes and how far ahead it hangs; it turns with your head's left and right, not its up and down. Native "
+    L"OpenXR hangs it itself, FlatVR hangs it with the same height and distance. A menu (inventory, trader...) puts it back in the picture "
+    L"as in every view. Live. Off: the toolbar stays in the picture, at the bottom, as before.";
+Item F5Toolbar() { return Needs(L"mode", L"f5_ar_view", 1, Toggle(L"hud", L"f5_toolbar", L"F5: the toolbar low in front, under the body", 0, kF5ToolbarTip)); }
+Item F5ToolbarBelow() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_toolbar", 1, Slider(L"hud", L"f5_toolbar_below_cm", L"F5 toolbar: height, cm under the eyes", 5, 90, 1, 33,
+           L"How far under your eyes F5's toolbar hangs, in cm: more and it hangs lower (by the belt at 60 - 70), less and it comes up into the view. "
+           L"33 by default; 32 is where F4's \"Low in front\" hangs it. Live.")));
+}
+Item F5ToolbarAhead() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_toolbar", 1, Slider(L"hud", L"f5_toolbar_ahead_cm", L"F5 toolbar: distance ahead, cm", 15, 120, 1, 32,
+           L"How far ahead of your eyes F5's toolbar hangs, in cm: less brings it nearer (bigger), more pushes it away (smaller). 32 by default; 55 is where F4's "
+           L"\"Low in front\" hangs it. Live.")));
+}
+// [hud] f5_map / f5_allies (vr/f5_hud.h; Serg 2026-11-19: "сдвиг карты для ф5 ... чтобы она в углу была", "тоже её пододвинуть к экрану", "и сдвиг союзников
+// как в ф4 в верхнем левом углу"): F5's map and allies' portraits off the picture's corners. 0 = as before. On the F5 tab.
+Item F5Map() {
+    return Needs(L"mode", L"f5_ar_view", 1, Toggle(L"hud", L"f5_map", L"F5: the map in a corner, moved into view and nearer", 0,
+           L"F5's picture follows your head, so the game's corner map sits at the edge of the headset's view. Ticked: the map is kept in a corner "
+           L"(UI: F3 eyes > Map on the screen \"As in the game's options\" reads as the corner chosen there; Left / Centre / Right stay as chosen), "
+           L"moved toward the middle and down by the two sliders below and brought nearer in stereo by the third. It is the game's own map, taken out "
+           L"of its interface and drawn back there (it turns with the camera as Map turns with the camera says). Live. Off: as before."));
+}
+Item F5MapIn() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_map", 1, Slider(L"hud", L"f5_map_x", L"F5 map: toward the middle, %", -20, 60, 1, 12,
+           L"How far F5's map moves from its corner toward the middle of the picture, % of its width (a right-corner map goes left, a left-corner "
+           L"one right). 0 = in the corner where the game draws it. Live.")));
+}
+Item F5MapDown() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_map", 1, Slider(L"hud", L"f5_map_y", L"F5 map: down, %", -20, 60, 1, 10,
+           L"How far F5's map moves down from the top, % of the picture's height. 0 = at the top where the game draws it. Live.")));
+}
+Item F5MapNear() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_map", 1, Slider(L"hud", L"f5_map_near", L"F5 map: nearer / farther", -10, 10, 0.5f, 2,
+           L"In stereo the map is brought nearer to your eyes (+) or pushed behind the picture (-), the same steps as F3's map on the floor. 0 = at "
+           L"the picture's own depth, as the rest of the interface. Live.")));
+}
+Item F5MapSize() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_map", 1, Slider(L"hud", L"f5_map_size", L"F5 map: size, %", 30, 300, 5, 100,
+           L"F5's map smaller or larger, % of its size now (UI: F3 eyes > Corner map size, which F5 shares with flat F3): 100 leaves it as it is. It grows "
+           L"from its corner. Live.")));
+}
+// [body] f5_aim_tilt_pct (vr/aim_tilt.h): VR F5's arms follow this share of the camera's pitch (Serg 2026-11-20: they went too far down)
+Item F5AimTilt() {
+    return Needs(L"mode", L"f5_ar_view", 1, Slider(L"body", L"f5_aim_tilt_pct", L"F5: arms tilt with the camera, %", 0, 150, 1, 60,
+           L"How much of the camera's up / down the hero's arms and weapon follow in F5 (UI: F3 eyes > \"F3: the arms and weapon tilt with the crosshair\" "
+           L"must be ticked; its own share is flat F3's). F5's camera tilts with your head too, so at 100 the arms dropped with every look at the "
+           L"ground; less keeps them higher. 0 = they do not tilt, 100 = all the way. Drawn only. Live."));
+}
+Item F5Allies() {
+    return Needs(L"mode", L"f5_ar_view", 1, Toggle(L"hud", L"f5_allies", L"F5: allies' portraits moved into view", 0,
+           L"The portraits of your mercenary and your party sit at the picture's top left corner, at the edge of the headset's view in F5. Ticked: in "
+           L"F5 they are moved right and down by the sliders below, in place of UI: F4 body > Allies' portraits' left / right and up / down (those "
+           L"stay for the other views). Live. Off: as before."));
+}
+Item F5AlliesRight() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_allies", 1, Slider(L"hud", L"f5_allies_x", L"F5 allies: right, %", -20, 60, 1, 12,
+           L"How far F5's allies' portraits move right from the top left corner, % of the picture's width. Live.")));
+}
+Item F5AlliesDown() {
+    return Needs(L"mode", L"f5_ar_view", 1, Needs(L"hud", L"f5_allies", 1, Slider(L"hud", L"f5_allies_y", L"F5 allies: down, %", -20, 60, 1, 10,
+           L"How far they move down from the top, % of the picture's height. Live.")));
+}
 // [openxr] fov_override and its sliders: on the Stereo tab and on Home (under the views) both
 constexpr const wchar_t* kFovOverrideTip =
     L"For headsets or streamers whose picture stays distorted (e.g. an Apple Vision Pro via ALVR: the world cross-eyed or stretched "
@@ -652,6 +743,25 @@ constexpr const wchar_t* kMapBigGrabTip =
     L"The big map in front of you, VR F4: point the right laser at it and hold the right grip to take it - move your hand to carry it, "
     L"the right stick forward / back brings it nearer / farther. Let go and it stays there, and opens there from then on (kept in the "
     L"ini); a kept place out of view (behind you, far to the side) opens in front instead. Unticked: not moved by hand, as before. Live.";
+constexpr const wchar_t* kMapBigKeepTip =
+    L"The big map (Map in the hand: laser click makes it big), VR F4: it stays up while you fight. The right trigger works the big map only "
+    L"while the laser points at it or at its buttons; pointed anywhere else the trigger attacks, casts or shoots as always, and the big map "
+    L"stays - in front of you, or on your left hand with \"Big map held on the left hand\" (and \"Map: two sizes only\" unticked). To close "
+    L"it, point at it and click. A menu or another view still closes it. The attack is the game's own; only the map is kept. Unticked: any "
+    L"click but its Rotate map button - an attack too - puts it back in your hand, as before. Live.";
+constexpr const wchar_t* kMapHandFullTip =
+    L"VR F4: the game's whole map (the big map) held on your LEFT hand all the time, instead of the small map - nothing to click. It stays "
+    L"while you attack: the right trigger works it only while the laser points at it (its Rotate map button, the zoom). A menu or another "
+    L"view takes it down and it comes back half a second later; the game's own map key (a tap of the left stick) still hides it. While it is "
+    L"up, what the game draws over the picture above the toolbar (item names on the ground, the game's plates) is on the map, not in the world. "
+    L"Unticked: the small map in the hand, as before. Live.";
+constexpr const wchar_t* kMapModeTip =
+    L"VR F4: how the map is shown, in one choice - it sets the map settings below for you (the headset's settings panel has the same list: HUD > "
+    L"Map). Orb in the hand: the small map on a glass ball; a laser click on it shows the big map in front, a click on that puts it back. Flat map "
+    L"in the hand: the same on a flat panel. Big map on the left hand: a laser click on the small map opens the game's big map held on your left "
+    L"hand; it stays while you attack, a click on it closes it. Whole map on the left hand: the game's big map on your left hand all the time. Map in "
+    L"the picture: nothing in the hand; the game's own corner map in your view, and its whole map with the game's map key (a tap of the left "
+    L"stick). Custom: the settings below match none of these. Live.";
 constexpr const wchar_t* kOrdinaryBarsTip = L"The name plate and health bar the game hangs over the monster you target are taken off the screen for an "
                                             L"ordinary monster; a champion's, a unique's, a boss's, their minions' and the NPCs' stay. F4 only; the other views draw every plate. Only what is "
                                             L"drawn changes: the target, the attack and everything else about the monster are the game's own. Works on the "
@@ -1032,6 +1142,15 @@ std::vector<Item> g_items = {
            L"D2RMM's is taken. D2R VR's own files keep their VR changes on top of yours. Your characters stay in D2R VR's save folder. "
            L"Everything that was done is in d2r_vr_data_mods.txt (mods\\D2R-VR\\d2rloader\\logs). Off: the other mods' files are taken out "
            L"again at the next START, D2R VR alone as before."),
+    // [mods] restore_mod_data: D2R VR's files in mods\D2R-VR\D2R-VR.mpq gone at the game's start (D2RMM with its output named D2R-VR deletes
+    // that folder whole at every build - barti4033, 2026-11-17): the plugin runs this program's makers again (shared/mod_data_check.h)
+    Toggle(L"mods", L"restore_mod_data", L"Make D2R VR's game files again when they are gone", 1,
+           L"D2R VR makes some of its files from your game (the game-drawn sky's domes, the cave ceilings, the canoe on the water, the "
+           L"world's patches) into its mod's folder, mods\\D2R-VR\\D2R-VR.mpq. Another program can delete that folder: D2RMM with its "
+           L"output mod named D2R-VR does it at every build, and then the sky shows the bare void behind the trees until this program "
+           L"is opened again. On: when the game starts and finds them gone, it runs this program without its window to make them again "
+           L"(about half a minute in the background; the sky comes back in that game, the rest at the next start). Off: the game only "
+           L"says so in its log. Better still: name D2RMM's output D2RMM and tick \"Load my other mods with D2R VR\" above."),
     Status(L"data_mods", L"Other mods: not looked at yet"),
     Only(kVr, InColumn(2, Group(L"Status", L"What is installed and running: BodyWalk, FlatVR, Game Link, head tracking, the game with the mod. Here you also start BodyWalk and FlatVR, check for updates, and collect logs into a zip for support."))),   // the right column, under "The game and ReShade" (2026-10-14, the user's wish)
     Status(L"game_video", L"The game's video settings"),
@@ -1940,36 +2059,36 @@ std::vector<Item> g_items = {
            L"With the box above: the pad is hidden only until you use it - a button, a trigger or a stick pushed (not a stick's drift); from then on "
            L"the game sees it. Unticked: hidden for good, the gamepad does nothing in flat mode."))),
     // [camera] stick_pitch_flat (a player with an Xbox pad, 2026-10-24): the right stick's up / down is the mouse's look up / down in flat F2 / F3
-    Only(kFlat, Toggle(L"camera", L"stick_pitch_flat", L"Flat: the gamepad's right stick looks up and down", 1,
+    Only(kFlat | kF5, Toggle(L"camera", L"stick_pitch_flat", L"Flat: the gamepad's right stick looks up and down", 1,
            L"In first and third person (F3, F2) the right stick's up / down looks up and down as the mouse does; left / right turns, as ever. A push more "
            L"sideways than up / down only turns. Needs \"Turn with the right stick\". Unticked: the right stick only turns.")),
-    Only(kFlat, Toggle(L"input", L"flat_aim_ground", L"Flat: aim on raised ground (stairs, ledges) where you look", 1,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_aim_ground", L"Flat: aim on raised ground (stairs, ledges) where you look", 1,
            L"With our camera (first or third person) a click, the hover and a skill's point go to the ground drawn under the crosshair, raised floors "
            L"too. Unticked: the game's own point, made for its view from above - from first person it lands cells off on stairs and ledges.")),
-    Only(kFlat, Toggle(L"input", L"flat_body_pick", L"Flat: click a monster, an NPC or a chest by its body", 1,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_body_pick", L"Flat: click a monster, an NPC or a chest by its body", 1,
            L"Third and first person: monsters, NPCs, doors, shrines, chests and portals near you are clicked by their body, not only by "
            L"their feet (from sajmonsoft's flat fork). Unticked: by the feet, as the game's own view from above has it.")),
-    Only(kFlat, Toggle(L"input", L"flat_shot_at_crosshair", L"Flat: a bow or throw goes exactly into the crosshair (no auto-aim)", 0,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_shot_at_crosshair", L"Flat: a bow or throw goes exactly into the crosshair (no auto-aim)", 0,
            L"With a bow, a crossbow, a javelin or a throwing weapon in hand, in first and third person: a click on a monster goes where the "
            L"crosshair is, as a shot in place - not at the monster the game finds near the crosshair, the hero does not walk to it, and a held "
            L"button does not keep shooting it when you look away. Items, NPCs, hirelings, chests, doors and portals are clicked as ever. "
            L"Unticked: the game's own attack at the monster under the pointer.")),
     // [input] flat_pickup_key_on / flat_pickup_key / flat_pickup_reach_cells, flat_item_hitbox (vr/flat_pickup.h; a player's ask, 2026-11-09)
-    Only(kFlat, Toggle(L"input", L"flat_pickup_key_on", L"Flat: a key picks up items (first and third person)", 0,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_pickup_key_on", L"Flat: a key picks up items (first and third person)", 0,
            L"In first and third person (F3, F2) with mouse look, the key below picks up an item from the ground: the one whose name is under the "
            L"crosshair (Alt), else the one the crosshair is on, else the nearest one in front of you within the reach below. It is the game's own "
            L"click on that item - the hero walks up and picks it up as with the mouse. The game does not get the key. Unticked: no pick-up key, the key "
            L"is the game's.")),
-    Only(kFlat, Needs(L"input", L"flat_pickup_key_on", 1, ChoiceValues(L"input", L"flat_pickup_key", L"Flat: the pick-up key", 69,
+    Only(kFlat | kF5, Needs(L"input", L"flat_pickup_key_on", 1, ChoiceValues(L"input", L"flat_pickup_key", L"Flat: the pick-up key", 69,
            {L"E", L"F", L"G", L"V", L"X", L"Z", L"R", L"Q", L"C", L"T"}, {69, 70, 71, 86, 88, 90, 82, 81, 67, 84},
            L"The key that picks up an item. Any other key: in the game's own D2R VR settings panel (F10), click the key and press the one you want. "
            L"The game does not get it while you play in first or third person with mouse look (the game's own command on that key, if any, then "
            L"does nothing there; in menus, the chat line and F1 it is the game's). Empty here: a key set in the game's panel."))),
-    Only(kFlat, Needs(L"input", L"flat_pickup_key_on", 1, Slider(L"input", L"flat_pickup_reach_cells", L"Flat: pick-up key reach for the nearest item, cells",
+    Only(kFlat | kF5, Needs(L"input", L"flat_pickup_key_on", 1, Slider(L"input", L"flat_pickup_reach_cells", L"Flat: pick-up key reach for the nearest item, cells",
            0.0f, 20.0f, 0.5f, 5.0f,
            L"With no item under the crosshair the key takes the nearest item in front of you (within 50 degrees of where you look) up to this far. "
            L"0: only the item under the crosshair."))),
-    Only(kFlat, Toggle(L"input", L"flat_item_hitbox", L"Flat: with Alt held, click an item by its body, not only by its name", 0,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_item_hitbox", L"Flat: with Alt held, click an item by its body, not only by its name", 0,
            L"In first and third person with mouse look, while Alt is held (the item names shown) an item on the ground is also picked up by "
            L"clicking the item itself, not only its name - the crosshair on it is enough. A name under the crosshair, or a monster in front of the "
            L"item, still goes first. The item's name lights up while the crosshair is on it. Unticked: only the name, as the game has it.")),
@@ -1981,7 +2100,7 @@ std::vector<Item> g_items = {
            L"First person with the controllers: point the aiming hand at a monster's body and the attack goes to it; at a chest, a door, a shrine, "
            L"a portal or an NPC and interact goes to it. Only when nothing else aims the press (a spell along the hand, hit by touch, leap by gaze); "
            L"the game still decides reach and hit. Unticked: the game's own auto-target.")),
-    Only(kFlat, Toggle(L"input", L"flat_portal_no_oval", L"Flat: no black oval in the town portal", 1,
+    Only(kFlat | kF5, Toggle(L"input", L"flat_portal_no_oval", L"Flat: no black oval in the town portal", 1,
            L"Third and first person: the portal's black oval, which stands still while the blue ring turns to the camera, is not drawn; "
            L"the ring is (from sajmonsoft's flat fork). For portals seen from then on. Unticked: drawn as the game has it.")),
     // [gameplay] flat_move_while_attacking (Serg 2026-11-03: «на 2д режиме изнутри или от 3 лица ... при ударе можно было стрейфится», vr/move_attack.h):
@@ -2411,6 +2530,10 @@ std::vector<Item> g_items = {
            L"While the trigger is held the left stick does not walk (the hero stops, so a flick never walks him). The trigger alone does nothing. "
            L"Works only without BodyWalk (BodyWalk running: its own buttons, nothing changes). First person (F4) is not touched: there the trigger "
            L"and the sticks are the layout's. Off: no potions from the sticks in F1-F3. The log says \"belt flick - ...\" for each potion and why a flick was not taken. Live.")),
+    Needs(L"openxr", L"direct_input", 1, Needs(L"direct", L"belt_flick_flat_views", 1, Toggle(L"direct", L"belt_flick_grip", L"... with the left GRIP instead of the trigger (and F5)", 0,
+           L"The potions above (F1, F2, F3 and F5) with the LEFT GRIP held + a flick of a stick, in place of the left trigger. The grip does nothing else "
+           L"in these views; the left trigger is the game's Shift there (a belt key with it held is Shift + belt) and stays the second row of skills. "
+           L"Live. Off: the left trigger, as before."))),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"openxr", L"direct_bodywalk_walk", L"BodyWalk's walking still walks the hero (with the controllers' stick)", 1,
            L"With the controls above: BodyWalk walks by the motion of your body - steps in place, an arm swing, a lean - and turns it into a "
            L"walking stick. On: BodyWalk is still given your head and hands (never a button or a stick of the controllers: it presses nothing "
@@ -2919,7 +3042,7 @@ std::vector<Item> g_items = {
            L"other screen still go to the flat picture. F1, F2, F3; F4 keeps its own way (Menus as a panel). Live. Off: the flat picture, as before."),
 
 #if D2RVR_FIRST_PERSON
-    Only(kFlat, Tab(L"UI: F3 eyes")),
+    Only(kFlat | kF5, Tab(L"UI: F3 eyes")),   // (VR with F5 too: F5 plays as flat F3 - kF5)
     // [body] flat_weapon_adjust (vr/flat_weapon.h): VR's Weapon Adjust is on a VR-only tab; first person on the monitor gets its own, along the view
     // (a Warlock's axe stood upright in the middle of the picture, a player on 0.200.0). Per kind of weapon, in its own [flat_weapon_<kind>] ("@flatweapon") and its own
     // picked kind (@ui flat_weapon_follow / flat_weapon) - nothing of VR's Weapon Adjust (Serg 2026-11-04: "the 2D view has other coefficients"); all 0 by default.
@@ -3563,6 +3686,10 @@ std::vector<Item> g_items = {
            L"it moves with your head, at the bottom of your view, in front of your eyes. With a panel open (inventory, stash, trader, the game's menu) "
            L"the game's whole interface is back in every view, the toolbar with it: in the picture, or at the bottom of the menu panel. Live."),
     Group(L"In the game's picture", L"What is taken out of the game's picture so it can hang elsewhere: the corner map, the toolbar's strip or the whole interface. Fine-tune how high and low the toolbar cut reaches (Show the cut strip helps), and flip the colours if the toolbar and map look too dark or washed out."),
+    // "@mapmode" (shared/map_mode.h; Serg 2026-11-18): the map's five modes in one list, over the map keys below - the headset panel's Map page
+    // (HUD > Map) has the same list. Custom: the keys below match none of the five (picking it changes nothing).
+    Choice(L"@mapmode", L"mode", L"Map mode", 0, {L"Orb in the hand", L"Flat map in the hand", L"Big map on the left hand", L"Whole map on the left hand",
+                                                 L"Map in the picture", L"Custom (the settings below)"}, kMapModeTip),
     Choice(L"hud", L"map", L"Corner map", 0, {L"In the picture", L"Out of the picture (its own texture)"},
            L"The game draws the corner map under a scissor of its own: its draws go to a texture of their own, the labels "
            L"over monsters stay in the picture - those over the map too."),
@@ -3581,6 +3708,8 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_beside_inventory", L"Map beside the inventory on the hand", 0, kMapBesideInventoryTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_follow", L"Big map in front: stays in the room, follows slowly", 0, kMapBigFollowTip)),
     Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_grab", L"Big map in front: grab and move it (laser + grip)", 0, kMapBigGrabTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_big_keep", L"Big map stays up while you attack (click on it to close)", 0, kMapBigKeepTip)),
+    Needs(L"hud", L"map", 1, Toggle(L"hud", L"map_hand_full", L"Whole map on the left hand all the time", 0, kMapHandFullTip)),
     // [hud] allies_place (shared/allies_place.h): where the allies are shown in VR F4 - one place of three (Serg, test 0.205.6: "a selector, not ticks")
     Needs(L"openxr", L"on", 1, Choice(L"hud", L"allies_place", L"Allies shown (F4)", 0, {L"The game's row at the top", L"Under the map in the hand", L"On the right wrist"},
            L"VR first person (F4), native OpenXR. Where your mercenary, your summons and your party are shown - in one place only. The game's row at "
@@ -3982,6 +4111,33 @@ std::vector<Item> g_items = {
     Needs(L"hud", L"map_orb", 1, Color(L"hud", L"orb_color", L"Orb colour", L"magic blue", L"The halo, the rim and the mist inside.")),
     Needs(L"hud", L"map_orb", 0, Slider(L"hud", L"map_width", L"Map width, m", 0.1f, 1.0f, 0.01f, 0.22f)),
 
+    // F5 (Serg 2026-11-19: "это надо убрать с хоме и в отдельную вкладку сделать" - "и так же во внутреннем оврелее" - "для ф5"): every F5 key on
+    // its own tab, the same ini keys as before. The in-headset panel has the same five on its F5 tab (vr/hset_defs.h kPageF5).
+    Only(kVr, Tab(L"F5")),
+    Group(L"F5: first person with the mouse, no hands",
+          L"A fifth VR view for the headset or AR glasses: first person played as the flat game's F3 - the mouse or a pad's sticks turn and walk you, "
+          L"no VR hands. Tick it here, then F5 in the game (as View keys on Home say). The camera can follow your head as in F4. F5 plays by the flat "
+          L"game's F3 settings - the same ones: with this ticked they show in VR too, on the UI: F3 eyes tab (the body, the map, the portals) and on "
+          L"Controls (the \"Flat:\" boxes: aim, pick-up, the right stick's up / down) - and by Controls' turn speed, snap and mouse speed. Item labels and "
+          L"monster plates are F4's, the same keys (UI: F4 body > Item labels on the ground, Monster plates), and so is the low life / low mana "
+          L"vignette (UI: F4 body > Low life): what you set there is F5's too."),
+    F5ArView(),
+    F5HeadLook(),
+    Group(L"F5: the toolbar", L"Where F5's toolbar is: in the picture as in the flat game, or low in front of you under the body, at a height and distance of its own."),
+    F5Toolbar(),
+    F5ToolbarBelow(),
+    F5ToolbarAhead(),
+    Group(L"F5: the map and allies' portraits", L"F5's picture follows your head: the game's corner map and the allies' portraits sit at the edge of the headset's view. Move them into view, and the map nearer."),
+    F5Map(),
+    F5MapIn(),
+    F5MapDown(),
+    F5MapNear(),
+    F5MapSize(),
+    F5AimTilt(),
+    F5Allies(),
+    F5AlliesRight(),
+    F5AlliesDown(),
+
 #endif
     Tab(L"World"),
     Status(L"fog_moved_world", L"The fog - who draws it, its distances, caves and colours - is on the Fog tab."),
@@ -4130,8 +4286,8 @@ std::vector<Item> g_items = {
            L"shadowed as the deck. Every view: flat F1, F2, F3 and VR. Takes effect at the next start of the game. Off: the files are taken out again, the bridge as "
            L"the game has it."),
     // [weight] death_ragdoll_flat in flat mode: its own tick lives on the VR-only Weapon Weight tab, hidden here (Serg 2026-11-03: «это все скрыто на 2д режиме»)
-    Only(kFlat, Group(L"Monsters (flat play)", L"How the monsters you fight are drawn when you play on the monitor.")),
-    Only(kFlat, Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll (a test)", 0,
+    Only(kFlat | kF5, Group(L"Monsters (flat play)", L"How the monsters you fight are drawn when you play on the monitor.")),
+    Only(kFlat | kF5, Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll (a test)", 0,
            L"Ticked: a humanoid monster the game kills falls as a ragdoll instead of playing its own death animation, pushed along the arc of your "
            L"weapon as the game swings it in your hero's attack (a spell, an arrow, a hireling's kill: a little away from you), and stays lying as it "
            L"fell for as long as the game keeps the corpse. Bosses and monsters that burst when they die keep the game's own death. Only the drawing: "
@@ -4857,7 +5013,7 @@ std::vector<Item> g_items = {
            L"with \"aim up and down\" on, up or down to what the line met: a monster's body, or the ground (where it stays stuck when something stands near). It "
            L"arrives when the game's own arrow does. It is the game's own arrow model, put where we draw it; the game's missile - its flight, its hit, its damage - "
            L"is the game's. Multiple Shot's side arrows, Strafe's and Guided Arrow leave the bow and join their own path. Off: the game draws its arrows. Live.")),
-    Only(kFlat, Toggle(L"bow", L"arrow_flight_flat", L"Flat: the arrow flies into the crosshair", 1,
+    Only(kFlat | kF5, Toggle(L"bow", L"arrow_flight_flat", L"Flat: the arrow flies into the crosshair", 1,
            L"First and third person, with a bow or crossbow: the arrow (or bolt) you shoot is drawn leaving from just below your eye (first "
            L"person) or the hero's chest (third person) and flying to what the crosshair is on - a monster's body, or the ground, where it "
            L"stays stuck. It arrives when the game's own arrow does; the game's missile - its flight, its hit, its damage - is the game's. "
@@ -7423,7 +7579,18 @@ int g_tab = 0, g_tabCount = 0;   // g_tab: the tab shown, by its place in g_item
 // The tab strip holds only the tabs of the current platform; this is which tab each of its items is.
 std::vector<int> g_tabIds;
 int g_platform = 1;   // [mode] platform: 0 flat, 1 VR
-int PlatformBit() { return g_platform == 1 ? kVr : kFlat; }
+bool g_f5View = false;   // [mode] f5_ar_view ticked: VR shows the kF5 items too (F5Changed)
+int PlatformBit() { return g_platform == 1 ? (kVr | (g_f5View ? kF5 : 0)) : kFlat; }
+void RebuildTabs();
+void LayoutPage();
+// [mode] f5_ar_view read again (the start, its box clicked): flat F3's tab and controls shown in VR with it (kF5), the strip and the page laid out anew.
+void F5Changed() {
+    const bool f5 = GetPrivateProfileIntW(L"mode", L"f5_ar_view", 0, g_ini) != 0;
+    if (f5 == g_f5View) return;
+    g_f5View = f5;
+    RebuildTabs();
+    LayoutPage();
+}
 bool ShownNow(const struct Item& it);
 int g_contentH = 0, g_viewH = 0, g_scrollY = 0;
 // Each item's controls by its place in g_items, every range kMaxItems wide and none overlapping: an item's own control (kFirstId + item), its
@@ -7997,6 +8164,8 @@ void RefreshControls();
 // "@toolbar" type: the toolbar's type over [hud] hide and [hud] bar_place (shared/toolbar_type.h).
 float ReadToolbarType();
 void WriteToolbarType(float v);
+float ReadMapMode();
+void WriteMapMode(float v);
 
 // "@remap" items: a button of the controllers, [direct] <key> of d2r_vr.ini, through vr/direct_remap.h (the plugin's own table parser). The whole
 // section is read once per call (GetPrivateProfileSection: one read of the file, not forty) into a map the parser asks; keys are not case-sensitive in an ini.
@@ -8062,6 +8231,7 @@ float ReadValue(const Item& it) {
     if (wcscmp(it.section, L"@lang") == 0) return ReadLanguage();
 
     if (wcscmp(it.section, L"@toolbar") == 0) return ReadToolbarType();
+    if (wcscmp(it.section, L"@mapmode") == 0) return ReadMapMode();
     if (wcscmp(it.section, L"@remap") == 0) return ReadRemapValue(it);
     if (wcscmp(it.section, L"@griplib") == 0) return GripLibFound() ? 1.0f : 0.0f;
     if (wcscmp(it.section, L"@dolllib") == 0) return DollLibFound() ? 1.0f : 0.0f;
@@ -8122,6 +8292,7 @@ void RefreshStrikeCm();
 void RefreshControls();
 void WriteValue(const Item& it, float v) {
     if (wcscmp(it.section, L"@toolbar") == 0) { WriteToolbarType(v); return; }
+    if (wcscmp(it.section, L"@mapmode") == 0) { WriteMapMode(v); return; }
     if (wcscmp(it.section, L"@rooms") == 0) { WriteRoomsValue(it, v); return; }
     if (wcscmp(it.section, L"@lang") == 0) { WriteLanguage(v); return; }
     if (wcscmp(it.section, L"@remap") == 0) { WriteRemapValue(it, v); return; }
@@ -8188,6 +8359,40 @@ void WriteValue(const Item& it, float v) {
     ShowPreset();   // a key of a preset changed by hand: Custom (or the preset it now matches)
     SyncTwins(it);   // the same key shown on another tab (the Strikes tab's debug ticks are the Debug tab's)
     if (wcscmp(it.section, L"gameplay") == 0 && wcsncmp(it.key, L"melee_amp", 9) == 0) RefreshStrikeCm();   // the swing amplitudes in cm
+    if (wcscmp(it.section, L"hud") == 0)   // a map key by hand: the Map mode list shows the mode it now makes (or Custom)
+        for (const wchar_t* k : {L"map", L"map_orb", L"map_place", L"map_click_big", L"map_two_sizes", L"map_big_on_hand", L"map_big_keep", L"map_hand_full"})
+            if (wcscmp(it.key, k) == 0) { RefreshControls(); break; }
+}
+
+// "@mapmode":the map's mode over the map keys (shared/map_mode.h); 5 = Custom (the keys match none). Each key written alone, live.
+mapmode::Keys ReadMapKeys() {
+    auto i = [](const wchar_t* key, int def) { return (int)GetPrivateProfileIntW(L"hud", key, def, g_ini); };
+    mapmode::Keys k;
+    k.map = i(L"map", k.map); k.orb = i(L"map_orb", k.orb); k.place = i(L"map_place", k.place); k.clickBig = i(L"map_click_big", k.clickBig);
+    k.twoSizes = i(L"map_two_sizes", k.twoSizes); k.onHand = i(L"map_big_on_hand", k.onHand); k.keep = i(L"map_big_keep", k.keep);
+    k.handFull = i(L"map_hand_full", k.handFull);
+    return k;
+}
+float ReadMapMode() {
+    const int m = mapmode::FromKeys(ReadMapKeys());
+    return m < 0 ? (float)mapmode::kCount : (float)m;
+}
+void WriteMapMode(float v) {
+    const int mode = (int)std::lround(v);
+    if (mode < 0 || mode >= mapmode::kCount) return;   // (Custom: nothing to write)
+    const mapmode::Keys was = ReadMapKeys();
+    mapmode::Keys k = was;
+    mapmode::ToKeys(mode, &k);
+    auto put = [](const wchar_t* key, int a, int b) {
+        if (a == b) return;
+        wchar_t t[16];
+        swprintf_s(t, L"%d", b);
+        WritePrivateProfileStringW(L"hud", key, t, g_ini);
+    };
+    put(L"map", was.map, k.map); put(L"map_orb", was.orb, k.orb); put(L"map_place", was.place, k.place); put(L"map_click_big", was.clickBig, k.clickBig);
+    put(L"map_two_sizes", was.twoSizes, k.twoSizes); put(L"map_big_on_hand", was.onHand, k.onHand); put(L"map_big_keep", was.keep, k.keep);
+    put(L"map_hand_full", was.handFull, k.handFull);
+    RefreshControls();   // the map settings below show what the mode made of them
 }
 
 float ReadToolbarType() {
@@ -10481,6 +10686,7 @@ void AutoRun(bwauto::When when) {
     f.vr = g_platform == 1;
     f.native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     f.directInput = GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;
+    f.walkInPlace = GetPrivateProfileIntW(L"walk_in_place", L"on", 0, g_ini) != 0;   // (Serg 2026-11-19: BodyWalk not started for it)
     f.startOn = GetPrivateProfileIntW(L"mode", L"flatvr_autostart", 1, g_ini) != 0;
     f.closeOn = GetPrivateProfileIntW(L"mode", L"native_close_flatvr", 1, g_ini) != 0;
     f.bodyWalkFound = !BodyWalkExe().empty();
@@ -11046,6 +11252,42 @@ void AddStatsTab() {
                 add.push_back(i);
             }
     }
+    // shared anonymously (vr/strike_share.h): the line, Share / Remove, everyone's numbers per weapon class against yours
+    add.push_back(Group(L"Compare with other players (anonymous)",
+                        L"Share your strike statistics without your name and see your speed and force against every player who shared theirs. Nothing is sent "
+                        L"until you press Share and then Send in the window that shows exactly what goes: your weapon classes' numbers (every hero together), the "
+                        L"conditions you play under (weight, seated or standing, height, the touch's least speed) and a random id made on this PC."));
+    add.push_back(Status(L"ss_share_line", L""));
+    add.push_back(Button(L"@run", L"stats_share", L"Share anonymously...",
+                         L"Shows exactly what would be sent first; Send gives it to bodywalkvr.com, Cancel sends nothing. Sending again replaces what you sent before."));
+    add.push_back(Hide(Toggle(L"stats", L"share_anonymously", L"Share automatically when a game starts (anonymous)", 0,
+                              L"On after you agreed with Share anonymously (it showed you the text first): your numbers go again by themselves when a game "
+                              L"starts and while this window is open, whenever they changed (at most every 20 minutes) - the same kind of text, no names. "
+                              L"Untick to stop; what you sent last stays on the server until Remove.")));
+    add.push_back(Hide(Button(L"@run", L"stats_unshare", L"Remove my shared numbers",
+                              L"Deletes what you shared from the server and forgets the random id (a later Share starts as someone new). Your numbers on this PC stay.")));
+    const wchar_t* const chead[7] = {L"Weapon class", L"Players", L"You", L"Median", L"10-90 %", L"Force", L"Faster"};   // (Faster: than this share of the players - the tip says it; a cell has room for one word)
+    const wchar_t* const ctip[7] = {
+        L"The weapon class (the game's kind of weapon).",
+        L"How many players who shared have at least 100 blows with this class.",
+        L"Your average touch speed with this class, m/s.",
+        L"The middle player's average touch speed, m/s: half of the players are faster.",
+        L"The range of the players' average speeds, m/s: a tenth of them are slower than the first number, a tenth faster than the second.",
+        L"Your average force / the middle player's, N s (a weapon with weight).",
+        L"The share of players with this class whose average speed is lower than yours."};
+    for (int c = 0; c < 7; ++c) {
+        Item h = Status(Keep(L"ss_c_h" + std::to_wstring(c)), chead[c]);
+        h.tip = ctip[c];
+        h.cell = c;
+        add.push_back(h);
+    }
+    for (int r = 0; r < kStatsRows; ++r)
+        for (int c = 0; c < 7; ++c) {
+            Item i = cell(c, Status(Keep(L"ss_c_" + std::to_wstring(r) + L"_" + std::to_wstring(c)), L""));
+            i.tr = true;
+            i.hidden = true;
+            add.push_back(i);
+        }
     g_items.insert(g_items.end(), add.begin(), add.end());
 }
 
@@ -11084,9 +11326,7 @@ std::wstring StatsHeroName(const strikestats::Hero& h) {
 }
 
 // The tab's tables from the file, while the tab is shown: read again when the file changed (the plugin writes it every minute while the game runs).
-void RefreshStats() {
-    const Item* head = FindItem(L"@status", L"ss_file");
-    if (!head || g_tab != head->tab) return;
+void RefreshStatsFile() {
     static std::wstring path;
     if (path.empty()) {
         PWSTR dir = nullptr;
@@ -11094,6 +11334,7 @@ void RefreshStats() {
         if (dir) CoTaskMemFree(dir);
         wchar_t test[MAX_PATH] = {};   // (a check of this tab by script reads a sample file instead of the player's: tools only, nothing sets it in play)
         if (GetEnvironmentVariableW(L"D2RVR_STATS_FILE", test, MAX_PATH)) path = test;
+        else if (GetEnvironmentVariableW(L"D2RVR_STATS_DIR", test, MAX_PATH)) path = std::wstring(test) + L"\\strike_stats.txt";   // (as StatsDir below)
     }
     static FILETIME seen{};
     static bool shown = false;
@@ -11194,6 +11435,380 @@ void RefreshStats() {
         }
     }
     if (relayout) LayoutPage();
+}
+
+// ---- [stats] strike_stats, shared anonymously (vr/strike_share.h; the server: bodywalk_site python-backend routes/strike_stats.py) ----------------------
+// Serg 2026-11-17: "кнопку поделиться анонимно, и тогда после нажатия они будут видеть не только свою но и других". Nothing leaves the PC until the player
+// presses Share and then Send in the window that shows the exact text. D2R VR Stats\share.txt keeps the random install id (made at the first share) and
+// when it was sent; compare.txt the server's last answer, shown on the tab. Remove asks the server to delete the install's row, then forgets the id.
+// The network work runs on a thread of its own (the window never waits for it); the 500 ms timer shows what it brought.
+const std::wstring& StatsDir() {
+    static std::wstring dir;
+    if (dir.empty()) {
+        PWSTR sg = nullptr;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_SavedGames, 0, nullptr, &sg))) dir = std::wstring(sg) + L"\\Diablo II Resurrected\\D2R VR Stats\\";
+        if (sg) CoTaskMemFree(sg);
+        wchar_t test[MAX_PATH] = {};   // (a check by script: a scratch folder instead of the player's - tools only, nothing sets it in play)
+        if (GetEnvironmentVariableW(L"D2RVR_STATS_DIR", test, MAX_PATH)) dir = std::wstring(test) + L"\\";
+    }
+    return dir;
+}
+std::mutex g_shareMutex;
+std::string g_shareNote;          // the thread's last word for the tab (UTF-8), under g_shareMutex
+int g_shareNoteState = kUnknown;
+uint64_t g_shareRev = 1;          // grows with every answer: the tab is filled again
+std::atomic<bool> g_shareBusy{false};
+ULONGLONG g_compareAskedAt = 0;   // the UI thread's: the last time the tab asked for the comparison
+
+std::string StatsInstall() {   // the install id of share.txt, "" none (never shared, or removed)
+    const std::string t = ReadSmallFile(StatsDir() + L"share.txt");
+    const size_t at = t.find("install ");
+    if (at == std::string::npos) return "";
+    const std::string id = t.substr(at + 8, 32);
+    return strikeshare::ValidInstall(id) ? id : "";
+}
+bool StatsWriteFile(const std::wstring& name, const std::string& text) {   // a temp file, then renamed over (as the plugin writes its own)
+    CreateDirectoryW(StatsDir().c_str(), nullptr);
+    const std::wstring path = StatsDir() + name, tmp = path + L".tmp";
+    FILE* f = _wfopen(tmp.c_str(), L"wb");
+    if (!f) return false;
+    const bool ok = fwrite(text.data(), 1, text.size(), f) == text.size();
+    fclose(f);
+    return ok && MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// One request to bodywalkvr.com (D2R_VR_REPORT_HOST=http://127.0.0.1:<port>: a local server, tests only). False: no HTTP answer.
+bool g_statsQuick = false;   // --start: short timeouts (the game is starting; [stats] share_anonymously below)
+bool StatsHttp(const wchar_t* verb, const std::wstring& path, const std::string& body, int* status, std::string* answer) {
+    std::wstring host = L"bodywalkvr.com";
+    INTERNET_PORT port = INTERNET_DEFAULT_HTTPS_PORT;
+    DWORD flags = WINHTTP_FLAG_SECURE;
+    wchar_t test[128];
+    const DWORD tn = GetEnvironmentVariableW(L"D2R_VR_REPORT_HOST", test, 128);
+    if (tn > 0 && tn < 128 && wcsncmp(test, L"http://127.0.0.1:", 17) == 0) {
+        host = L"127.0.0.1";
+        port = (INTERNET_PORT)_wtoi(test + 17);
+        flags = 0;
+    }
+    *status = 0;
+    answer->clear();
+    HINTERNET session = WinHttpOpen(L"D2RVR-Settings/1.0", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return false;
+    if (g_statsQuick) WinHttpSetTimeouts(session, 3000, 3000, 4000, 4000);   // --start: the game is starting
+    else WinHttpSetTimeouts(session, 8000, 8000, 15000, 15000);
+    HINTERNET connect = WinHttpConnect(session, host.c_str(), port, 0);
+    HINTERNET request = connect ? WinHttpOpenRequest(connect, verb, path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags) : nullptr;
+    const wchar_t* headers = L"Content-Type: text/plain; charset=utf-8\r\n";
+    bool ok = request && WinHttpSendRequest(request, body.empty() ? WINHTTP_NO_ADDITIONAL_HEADERS : headers, body.empty() ? 0 : (DWORD)-1L,
+                                            body.empty() ? WINHTTP_NO_REQUEST_DATA : (LPVOID)body.data(), (DWORD)body.size(), (DWORD)body.size(), 0) &&
+              WinHttpReceiveResponse(request, nullptr);
+    if (ok) {
+        DWORD code = 0, len = sizeof code;
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &code, &len, WINHTTP_NO_HEADER_INDEX);
+        *status = (int)code;
+        for (DWORD avail = 0; WinHttpQueryDataAvailable(request, &avail) && avail > 0 && answer->size() < 65536;) {
+            std::string chunk(avail, '\0');
+            DWORD got = 0;
+            if (!WinHttpReadData(request, chunk.data(), avail, &got) || !got) break;
+            answer->append(chunk.data(), got);
+        }
+    }
+    if (request) WinHttpCloseHandle(request);
+    if (connect) WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    return ok;
+}
+void StatsNote(int state, const std::string& text) {
+    std::lock_guard<std::mutex> lock(g_shareMutex);
+    g_shareNote = text;
+    g_shareNoteState = state;
+    ++g_shareRev;
+}
+// The comparison for this install, on the network thread: compare.txt written, the tab told.
+void StatsFetchCompare(const std::string& install) {
+    int status = 0;
+    std::string answer;
+    if (!StatsHttp(L"GET", L"/api/stats/compare?install=" + Widen(install), "", &status, &answer)) { StatsNote(kWarn, "The server did not answer: the comparison is the last one."); return; }
+    if (status == 200 && strikeshare::ParseCompare(answer).ok) {
+        StatsWriteFile(L"compare.txt", answer);
+        StatsNote(kOk, "");
+    } else if (status == 404) {
+        StatsNote(kWarn, "The server has no numbers of yours (removed?): press Share to send them again.");
+    } else {
+        StatsNote(kWarn, "The server could not give the comparison now (" + std::to_string(status) + "): later again.");
+    }
+}
+
+// The preview: the exact text in a read-only box, Send and Cancel. True: Send pressed.
+int g_previewAnswer = 0;   // 1 Send, 2 Cancel / closed (kept outside the window: it is gone by the time the loop looks)
+LRESULT CALLBACK SharePreviewProc(HWND w, UINT m, WPARAM wp, LPARAM lp) {
+    if ((m == WM_COMMAND && (LOWORD(wp) == IDOK || LOWORD(wp) == IDCANCEL)) || m == WM_CLOSE) {
+        g_previewAnswer = m == WM_COMMAND && LOWORD(wp) == IDOK ? 1 : 2;
+        EnableWindow(g_main, TRUE);   // (the owner first: the focus goes back to it, not to another program)
+        DestroyWindow(w);
+        return 0;
+    }
+    return DefWindowProcW(w, m, wp, lp);
+}
+bool ShowSharePreview(const std::wstring& intro, const std::string& text) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = SharePreviewProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+        wc.lpszClassName = L"D2RVRSharePreview";
+        RegisterClassW(&wc);
+        registered = true;
+    }
+    const int W = S(720), H = S(620);
+    RECT pr{};
+    GetWindowRect(g_main, &pr);
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"D2RVRSharePreview", TR(L"stats.share.title", L"Share my strike statistics anonymously"),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, pr.left + (pr.right - pr.left - W) / 2, pr.top + S(40), W, H, g_main, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!dlg) return false;
+    RECT cr{};
+    GetClientRect(dlg, &cr);
+    const int m = S(12);
+    HWND head = CreateWindowExW(0, L"STATIC", intro.c_str(), WS_CHILD | WS_VISIBLE, m, m, cr.right - 2 * m, S(70), dlg, nullptr, nullptr, nullptr);
+    std::wstring shown = Widen(text);
+    std::wstring crlf;
+    for (wchar_t c : shown) { if (c == L'\n') crlf += L'\r'; crlf += c; }
+    HWND box = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", crlf.c_str(), WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
+                               m, m + S(76), cr.right - 2 * m, cr.bottom - S(76) - S(60) - m, dlg, nullptr, nullptr, nullptr);
+    HWND send = CreateWindowExW(0, L"BUTTON", TR(L"stats.share.send", L"Send"), WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, cr.right - m - S(250), cr.bottom - S(48), S(120), S(34), dlg, (HMENU)IDOK, nullptr, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", TR(L"stats.share.cancel", L"Cancel"), WS_CHILD | WS_VISIBLE, cr.right - m - S(120), cr.bottom - S(48), S(120), S(34), dlg, (HMENU)IDCANCEL, nullptr, nullptr);
+    static HFONT mono = nullptr;
+    if (!mono) mono = CreateFontW(-S(14), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, FIXED_PITCH, L"Consolas");
+    for (HWND h : {head, send, cancel}) SendMessageW(h, WM_SETFONT, (WPARAM)g_font, TRUE);
+    SendMessageW(box, WM_SETFONT, (WPARAM)mono, TRUE);
+    EnableWindow(g_main, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(cancel);
+    MSG msg;
+    g_previewAnswer = 0;
+    while (IsWindow(dlg) && GetMessageW(&msg, nullptr, 0, 0) > 0)
+        if (!IsDialogMessageW(dlg, &msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); }
+    EnableWindow(g_main, TRUE);
+    SetForegroundWindow(g_main);
+    return g_previewAnswer == 1;
+}
+
+// [stats] share_anonymously (Serg 2026-11-18): once the player agreed - the first Send, after the window that shows the text - his numbers go again
+// by themselves: when a game starts (--start) and while this window is open, whenever strike_stats.txt was written since the last share, at most every
+// 20 minutes; until he unticks "Share automatically" (or presses Remove). share.txt keeps the id, the last share's time and the consent.
+long long StatsSharedAt() {
+    const std::string t = ReadSmallFile(StatsDir() + L"share.txt");
+    const size_t at = t.find("\nshared ");
+    return at == std::string::npos ? 0 : atoll(t.c_str() + at + 8);
+}
+bool StatsConsented() { return ReadSmallFile(StatsDir() + L"share.txt").find("\nconsent 1") != std::string::npos; }
+bool StatsAutoOn() { return GetPrivateProfileIntW(L"stats", L"share_anonymously", 0, g_ini) != 0 && StatsConsented() && !StatsInstall().empty(); }
+void StatsSetAuto(bool on) {   // the ini key and its tick on the tab
+    WritePrivateProfileStringW(L"stats", L"share_anonymously", on ? L"1" : L"0", g_ini);
+    if (Item* t = FindItem(L"stats", L"share_anonymously"); t && t->ctl) SendMessageW(t->ctl, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+// The text to send now, from strike_stats.txt and d2r_vr.ini ("" nothing to share).
+std::string StatsShareText(const std::string& install) {
+    strikestats::Store store;
+    const std::string file = ReadSmallFile(StatsDir() + L"strike_stats.txt");
+    if (file.empty() || !store.Parse(file)) return "";
+    const auto num = [](const wchar_t* sec, const wchar_t* key, float def) {
+        wchar_t b[64];
+        GetPrivateProfileStringW(sec, key, L"", b, 64, g_ini);
+        return b[0] ? (float)_wtof(b) : def;
+    };
+    strikeshare::Conditions c;
+    c.weightOn = num(L"weight", L"on", 1) != 0 ? 1 : 0;
+    c.forceOn = num(L"weight", L"strike_by_force", 1) != 0 ? 1 : 0;
+    c.seated = num(L"calibration", L"seated", 0) != 0 ? 1 : 0;
+    c.heightM = num(L"stereo", L"user_height_m", 0);
+    c.minSpeed = num(L"gameplay", L"melee_min_speed", 0.8f);
+    c.strokeCm = num(L"gameplay", L"melee_stroke_start_cm", 8);
+    c.quickBlow = num(L"gameplay", L"quick_blow", 1) != 0 ? 1 : 0;
+    return strikeshare::Build(store, install, D2RVR_VERSION, c);
+}
+// One share, blocking (the network thread, or --start): share.txt written (the consent kept), then the comparison asked. True: the server took it.
+bool StatsSendNow(const std::string& install, const std::string& text) {
+    int status = 0;
+    std::string answer;
+    if (!StatsHttp(L"POST", L"/api/stats/share", text, &status, &answer)) { StatsNote(kWarn, "The server did not answer: nothing was sent. It is tried again later."); return false; }
+    if (status != 200) { StatsNote(kWarn, "The server did not take it (" + std::to_string(status) + "): " + answer.substr(0, 120)); return false; }
+    StatsWriteFile(L"share.txt", "; D2R VR Authentic: the random id your strike statistics are shared under (delete it to stop and share as someone new)\ninstall " + install +
+                                 "\nshared " + std::to_string((long long)time(nullptr)) + "\nconsent 1\n");
+    StatsFetchCompare(install);
+    return true;
+}
+// Due for an automatic share: on, agreed, the numbers written since the last share, and that share at least 20 minutes ago.
+bool StatsAutoDue() {
+    if (!StatsAutoOn()) return false;
+    WIN32_FILE_ATTRIBUTE_DATA fa{};
+    if (!GetFileAttributesExW((StatsDir() + L"strike_stats.txt").c_str(), GetFileExInfoStandard, &fa)) return false;
+    ULARGE_INTEGER u{};
+    u.LowPart = fa.ftLastWriteTime.dwLowDateTime;
+    u.HighPart = fa.ftLastWriteTime.dwHighDateTime;
+    const long long written = (long long)(u.QuadPart / 10000000ull) - 11644473600ll;   // FILETIME -> seconds since 1970
+    const long long shared = StatsSharedAt(), now = (long long)time(nullptr);
+    return written > shared && now - shared >= 20 * 60;
+}
+void StatsAutoShareBackground() {   // this window: on its own thread
+    if (!StatsAutoDue() || g_shareBusy.exchange(true)) return;
+    const std::string install = StatsInstall();
+    std::thread([install]() {
+        const std::string text = StatsShareText(install);
+        if (!text.empty()) StatsSendNow(install, text);
+        g_shareBusy.store(false);
+    }).detach();
+}
+// --start (the game starting): the last game's numbers go now, if sharing is on (short timeouts: the start never waits long).
+void StatsAutoShareOnStart() {
+    if (!StatsAutoDue()) return;
+    const std::string install = StatsInstall(), text = StatsShareText(install);
+    if (text.empty()) return;
+    g_statsQuick = true;
+    const bool sent = StatsSendNow(install, text);
+    g_statsQuick = false;
+    StartSay(sent ? L"start: strike statistics shared (anonymous, [stats] share_anonymously)" : L"start: strike statistics not shared now (the server did not take them) - next time again");
+}
+
+// Share: the numbers of strike_stats.txt as strikeshare::Build makes them, shown first; Send hands them to the network thread and turns the
+// automatic sharing on (the consent).
+void StatsShareClicked() {
+    if (g_shareBusy.load()) return;
+    std::string install = StatsInstall();
+    if (install.empty()) {   // the first share: a random id, made here and kept in share.txt (no account, nothing of the PC in it)
+        uint8_t bytes[16] = {};
+        if (BCryptGenRandom(nullptr, bytes, sizeof bytes, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) return;
+        install = strikeshare::InstallFromBytes(bytes);
+    }
+    const std::string text = StatsShareText(install);
+    if (text.empty()) {
+        MessageBoxW(g_main, TR(L"stats.share.nothing", L"There are no strike statistics to share yet: swing at monsters in VR first person (F4) with Hit by touch on."), L"D2R VR", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const std::wstring intro = TR(L"stats.share.intro",
+        L"This is exactly what Send gives bodywalkvr.com - nothing else: your weapon classes' numbers (every hero together), the conditions you play under, and a random "
+        L"id made on this PC (no name, no email, no account). After Send the same kind of text goes again by itself when a game starts, until you untick "
+        L"\"Share automatically\" on this tab; Remove deletes it from the server.");
+    if (!ShowSharePreview(intro, text)) return;
+    g_shareBusy.store(true);
+    StatsNote(kUnknown, "Sending...");
+    StatsSetAuto(true);   // (the consent: from now on by itself)
+    std::thread([install, text]() {
+        StatsSendNow(install, text);
+        g_shareBusy.store(false);
+    }).detach();
+}
+void StatsUnshareClicked() {
+    const std::string install = StatsInstall();
+    if (install.empty() || g_shareBusy.load()) return;
+    if (MessageBoxW(g_main, TR(L"stats.unshare.ask", L"Delete your shared strike statistics from the server and stop sharing? Your own numbers on this PC stay."), L"D2R VR", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    g_shareBusy.store(true);
+    StatsSetAuto(false);
+    StatsNote(kUnknown, "Removing...");
+    std::thread([install]() {
+        int status = 0;
+        std::string answer;
+        if (!StatsHttp(L"DELETE", L"/api/stats/share?install=" + Widen(install), "", &status, &answer)) StatsNote(kWarn, "The server did not answer: nothing was removed (sharing is off). Try Remove again later.");
+        else if (status != 200 && status != 404) StatsNote(kWarn, "The server could not remove it now (" + std::to_string(status) + "); sharing is off.");
+        else {
+            DeleteFileW((StatsDir() + L"share.txt").c_str());
+            DeleteFileW((StatsDir() + L"compare.txt").c_str());
+            StatsNote(kOk, "Removed from the server. Your numbers here stay.");
+        }
+        g_shareBusy.store(false);
+    }).detach();
+}
+
+// One cell of a stats table: its text, and whether its row is on the page. True: the page must be laid out again.
+bool StatsCell(const std::wstring& key, int c, const std::wstring& text, bool use) {
+    bool relayout = false;
+    for (Item& it : g_items) {
+        if (it.kind != Kind::Status || it.cell != c || wcscmp(it.key, key.c_str()) != 0) continue;
+        if (it.hidden != !use) { it.hidden = !use; relayout = true; }
+        if (it.ctl) {
+            wchar_t now[128];
+            GetWindowTextW(it.ctl, now, 128);
+            if (text != now) SetWindowTextW(it.ctl, text.c_str());
+        }
+    }
+    return relayout;
+}
+// The comparison on the tab: the line, the buttons, the table (compare.txt), when something changed.
+void RefreshStatsCompare() {
+    const std::string install = StatsInstall();
+    if (!install.empty() && !g_shareBusy.load() && (!g_compareAskedAt || GetTickCount64() - g_compareAskedAt > 60 * 1000ull)) {   // once a minute: due for a share?
+        g_compareAskedAt = GetTickCount64();
+        static ULONGLONG comparedAt = 0;
+        if (StatsAutoDue()) StatsAutoShareBackground();   // (the share asks the comparison after it)
+        else if (!comparedAt || GetTickCount64() - comparedAt > 3600 * 1000ull) {   // shared: the comparison asked again hourly
+            comparedAt = GetTickCount64();
+            g_shareBusy.store(true);
+            std::thread([install]() { StatsFetchCompare(install); g_shareBusy.store(false); }).detach();
+        }
+    }
+    static uint64_t shownRev = 0;
+    static std::string shownInstall = "?";
+    uint64_t rev;
+    std::string note;
+    int state;
+    {
+        std::lock_guard<std::mutex> lock(g_shareMutex);
+        rev = g_shareRev;
+        note = g_shareNote;
+        state = g_shareNoteState;
+    }
+    if (rev == shownRev && install == shownInstall) return;
+    shownRev = rev;
+    shownInstall = install;
+    const strikeshare::Compare cmp = install.empty() ? strikeshare::Compare{} : strikeshare::ParseCompare(ReadSmallFile(StatsDir() + L"compare.txt"));
+    std::wstring line;
+    const bool autoOn = StatsAutoOn();
+    if (install.empty()) line = TR(L"stats.compare.not_shared", L"Sharing: off. Share anonymously shows you first exactly what would be sent; then you see your speed and force against everyone's.");
+    else {
+        line = autoOn ? TR(L"stats.compare.auto_on", L"Sharing: on - your numbers go again by themselves when a game starts.")
+                      : TR(L"stats.compare.auto_off", L"Sharing: off - the server keeps what you sent last (Share sends again, Remove deletes it).");
+        if (cmp.ok) line += L" " + TRF(L"stats.compare.line", L"{n} players have shared; your place per weapon class (speed m/s, force N s; percentiles from 100 blows in a class).",
+                                         {{L"n", std::to_wstring(cmp.players)}});
+        else line += L" " + std::wstring(TR(L"stats.compare.waiting", L"Waiting for the server's comparison..."));
+    }
+    if (!note.empty()) line += L" " + Widen(note);
+    SetStatus(L"ss_share_line", note.empty() ? (install.empty() ? kUnknown : kOk) : state, line.c_str());
+    bool relayout = false;
+    if (Item* b = FindItem(L"@run", L"stats_unshare"); b && b->hidden != install.empty()) { b->hidden = install.empty(); relayout = true; }
+    const bool consented = !install.empty() && StatsConsented();   // the automatic tick only once he agreed (the first Send showed the text)
+    if (Item* t = FindItem(L"stats", L"share_anonymously"); t && t->hidden != !consented) { t->hidden = !consented; relayout = true; }
+    for (int r = 0; r < kStatsRows; ++r) {
+        const bool use = cmp.ok && r < (int)cmp.rows.size();
+        std::wstring t[7];
+        if (use) {
+            const strikeshare::ClassRow& c = cmp.rows[(size_t)r];
+            wchar_t b[48];
+            t[0] = Widen(c.kind);
+            if (!t[0].empty()) t[0][0] = (wchar_t)towupper(t[0][0]);   // (sword -> Sword)
+            t[1] = std::to_wstring(c.players);
+            if (c.you && c.yourSpeed > 0) { swprintf_s(b, L"%.1f", c.yourSpeed); t[2] = b; } else t[2] = L"-";
+            if (c.p50 > 0) { swprintf_s(b, L"%.1f", c.p50); t[3] = b; swprintf_s(b, L"%.1f-%.1f", c.p10, c.p90); t[4] = b; } else t[3] = t[4] = L"-";
+            if (c.forceP50 > 0 || c.yourForce > 0) {   // "yours / the median's"
+                wchar_t mine[16] = L"-", mid[16] = L"-";
+                if (c.you && c.yourForce > 0) swprintf_s(mine, L"%.1f", c.yourForce);
+                if (c.forceP50 > 0) swprintf_s(mid, L"%.1f", c.forceP50);
+                swprintf_s(b, L"%s / %s", mine, mid);
+                t[5] = b;
+            } else t[5] = L"-";
+            t[6] = c.you && c.speedPct >= 0 ? TRF(L"stats.compare.pct", L"{p} %", {{L"p", std::to_wstring(c.speedPct)}}) : std::wstring(L"-");
+        }
+        for (int c = 0; c < 7; ++c) relayout |= StatsCell(L"ss_c_" + std::to_wstring(r) + L"_" + std::to_wstring(c), c, t[c], use);
+    }
+    if (relayout) LayoutPage();
+}
+
+void RefreshStats() {
+    const Item* head = FindItem(L"@status", L"ss_file");
+    if (!head || g_tab != head->tab) return;
+    RefreshStatsFile();
+    RefreshStatsCompare();
 }
 
 void AddGameCodeTab() {
@@ -12799,7 +13414,14 @@ domeassets::Result PrepareSkyDomeNow() {
     const bool on = true;
     const bool summitPath = sky && GetPrivateProfileIntW(L"debug", L"game_sky_test", 0, g_ini) == 4;
     const bool closed = GetPrivateProfileIntW(L"sky", L"game_sky_closed", 0, g_ini) != 0;   // ([sky] game_sky_closed: a whole sphere)
-    return domeassets::Prepare(game, modRoot, on, summitPath, closed);
+    // Setup's act skies in the .mpq gone (D2RMM with its output named D2R-VR deletes the folder whole: barti4033, 2026-11-17): put back from
+    // Setup's copy beside it before the atlas reads them (shared/mod_data_check.h; a file there is never replaced)
+    int back = 0, failed = 0;
+    if (!modRoot.empty()) back = moddata::RestoreShipped(modRoot, nullptr, &failed);
+    domeassets::Result r = domeassets::Prepare(game, modRoot, on, summitPath, closed);
+    if (back) r.text += L" - " + std::to_wstring(back) + L" of Setup's files put back into mods\\D2R-VR\\D2R-VR.mpq (they were gone)";
+    if (failed) r.text += L" - " + std::to_wstring(failed) + L" of Setup's files could not be put back";
+    return r;
 }
 
 void StartSkyDome() {
@@ -13014,6 +13636,21 @@ constexpr UINT WM_APP_MODS = WM_APP + 47;   // (46 is frame generation's)
 std::atomic<bool> g_modsBusy{false};
 std::atomic<bool> g_modsAgain{false};
 
+// D2R VR's own mod folder rebuilt by another program: its modinfo.json is not Setup's (savepath "../") - D2RMM with its output mod named
+// D2R-VR deletes mods\D2R-VR\D2R-VR.mpq whole at every build and writes its own (barti4033, 2026-11-17: the sky dome, the ceilings, the
+// canoe gone at every start). Said on the Other mods row; the modinfo.json itself is left as it is (its save folder holds characters now).
+std::atomic<bool> g_modRebuilt{false};
+std::wstring ModRebuiltWarning(const std::wstring& modRoot) {
+    g_modRebuilt = false;
+    if (modRoot.empty()) return L"";
+    const moddata::Check c = moddata::Look(modRoot);
+    if (!c.mod || !c.modinfo || c.modinfoOurs) return L"";
+    g_modRebuilt = true;
+    return L" - " + TRF(L"data_mods.rebuilt", L"D2R VR's mod folder was rebuilt by another program (its modinfo.json savepath \"{save}\"; Setup's is \"../\"): "
+                         L"D2RMM with its output mod named D2R-VR deletes D2R VR's files there at every build - name D2RMM's output D2RMM and tick "
+                         L"\"Load my other mods\" here instead", {{L"save", moddata::detail::Wide(c.savepath)}});
+}
+
 datamods::Result SyncDataMods() {
     const std::wstring game = GameFolder();
     const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
@@ -13030,6 +13667,7 @@ datamods::Result SyncDataMods() {
         r.text = names.empty() ? TR(L"data_mods.running_none", L"none to merge")
                  : on ? TRF(L"data_mods.running", L"the game is running - merged at the next START: {mods}", {{L"mods", names}})
                       : TRF(L"data_mods.running_off", L"off; found: {mods}", {{L"mods", names}});
+        r.text += ModRebuiltWarning(modRoot);
         return r;
     }
     r = datamods::Sync(game, modRoot, on, skip, datamods::OurChange);
@@ -13045,6 +13683,7 @@ datamods::Result SyncDataMods() {
         CreateDirectoryW((modRoot + L"d2rloader\\logs").c_str(), nullptr);
         datamods::detail::Write(modRoot + L"d2rloader\\logs\\d2r_vr_data_mods.txt", datamods::detail::Utf8(text));
     }
+    r.text += ModRebuiltWarning(modRoot);
     LogLine(L"other mods: " + r.text);
     return r;
 }
@@ -13056,7 +13695,7 @@ int DataModsState(const datamods::Result& r) {
 void DataModsThread(HWND wnd) {
     for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load()); ++i) Sleep(50);   // they write D2R VR's own files into the same folder
     const datamods::Result r = SyncDataMods();
-    auto* p = new D2RLProgress{DataModsState(r), TRF(L"status.data_mods.result", L"Other mods: {text}", {{L"text", r.text}}), true};
+    auto* p = new D2RLProgress{g_modRebuilt ? kWarn : DataModsState(r), TRF(L"status.data_mods.result", L"Other mods: {text}", {{L"text", r.text}}), true};
     if (!PostMessageW(wnd, WM_APP_MODS, 0, (LPARAM)p)) delete p;
 }
 
@@ -13539,6 +14178,8 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
                 else if (wcscmp(it.key, L"send_logs") == 0) StartCollectLogs(true);
                 else if (wcscmp(it.key, L"crash_offer") == 0) OfferCrashReport();
+                else if (wcscmp(it.key, L"stats_share") == 0) StatsShareClicked();     // [stats] strike_stats: shared anonymously (shown first)
+                else if (wcscmp(it.key, L"stats_unshare") == 0) StatsUnshareClicked();
                 else if (wcscmp(it.key, L"crash_reply_dismiss") == 0) DismissReply();
                 else if (wcscmp(it.key, L"crash_reply_update") == 0) OpenDownload();
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
@@ -13554,6 +14195,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"headset_shot") == 0) AskHeadsetShot(wcscmp(it.key, L"video_take") == 0);
             } else if (HIWORD(w) == BN_CLICKED && (it.kind == Kind::Toggle || it.kind == Kind::Invert)) {
                 WriteValue(it, TickValue(it, SendMessageW(it.ctl, BM_GETCHECK, 0, 0) == BST_CHECKED));
+                if (wcscmp(it.section, L"mode") == 0 && wcscmp(it.key, L"f5_ar_view") == 0) F5Changed();   // (flat F3's tab and controls with F5: kF5)
                 if (wcscmp(it.section, L"@ui") == 0) FollowWeapon();
                 if (wcscmp(it.section, L"direct") == 0) RefreshControls();   // left_stick_map, pause_button: what the button list calls "the standard" moved
                 UpdateEnabled();
@@ -13610,6 +14252,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         UpdateEnabled();
         RefreshStrikeCm();
         g_platform =GetPrivateProfileIntW(L"mode", L"platform", 1, g_ini) != 0 ? 1 : 0;
+        g_f5View = GetPrivateProfileIntW(L"mode", L"f5_ar_view", 0, g_ini) != 0;   // (kF5: flat F3's tab and controls in VR with F5)
         g_tab = std::clamp(g_tab, 0, std::max(0, g_tabCount - 1));
         RebuildTabs();
         ApplyScale();
@@ -13633,7 +14276,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         PostMessageW(wnd, WM_APP_ASK_CRASH, 0, 0);   // [support] crash_reports: the one-time question, once the window is up
         return 0;
     }
-    case WM_APP_ASK_CRASH: AskCrashReportsOnce(); StartReplyPoll(); return 0;
+    case WM_APP_ASK_CRASH: AskCrashReportsOnce(); StartReplyPoll(); StatsAutoShareBackground(); return 0;   // ([stats] share_anonymously: due? on its own thread)
     case WM_APP_REPLIES: UpdateReplyNotice(); return 0;
     case WM_APP_UPDATE: OnUpdateResult((UpdateResult*)l); return 0;
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
@@ -13897,6 +14540,7 @@ int StartHeadless() {
     }
     while (g_autoClosing) Sleep(100);   // native: BodyWalk / FlatVR being closed (bw_autorun.h: at most ~40 s, as a rule a second)
     ReplyPollOnStart();   // [support] crash_reports / send_logs: our reply to a sent report, asked at most once an hour
+    StatsAutoShareOnStart();   // [stats] share_anonymously: the last game's strike statistics, shared if the player agreed (short timeouts)
     StartSay(L"start: done");
     return 0;
 }
@@ -13957,6 +14601,46 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             const arcane::Result r = PrepareArcane();
             LogLine(L"arcane sky: " + r.text);
             return r.state == arcane::kMade ? 0 : r.state == arcane::kNotHere ? 2 : 1;
+        }
+        if (argv && argc >= 2 && wcscmp(argv[1], L"--restore-mod-data") == 0) {
+            // [mods] restore_mod_data: the plugin, at the game's start, found D2R VR's own files in mods\D2R-VR\D2R-VR.mpq gone
+            // (shared/mod_data_check.h: D2RMM with its output named D2R-VR deletes that folder whole at every build - barti4033,
+            // 2026-11-17). Setup's files put back from its copy beside the .mpq, then the makers that write into the .mpq run again, each
+            // by its own ticks, as --prepare-assets has them - no window, nothing else (the ini is only read: the game runs meanwhile).
+            // The game takes the dome's files when it asks for them (the plugin looks again every 3 s); the rest at the next area / start.
+            // 0 = nothing gone any more, 1 = some still gone, 2 = not the mod, 3 = one already busy.
+            LocalFree(argv);
+            HANDLE one = CreateMutexW(nullptr, TRUE, L"Local\\D2RVR_RestoreModData");
+            if (one && GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(one); return 3; }
+            FindIni();
+            const std::wstring game = GameFolder();
+            if (!ModInstall()) { if (one) CloseHandle(one); return 2; }
+            const std::wstring modRoot = modlayout::ModRoot(game);
+            const moddata::Check before = moddata::Look(modRoot);
+            LogLine(L"restore mod data: asked at the game's start - " + moddata::detail::Wide(moddata::Line(before)));
+            auto timed = [](const wchar_t* what, auto make) {
+                const ULONGLONG t0 = GetTickCount64();
+                const std::wstring text = make();
+                LogLine(std::wstring(what) + L": " + text + L" (" + std::to_wstring(GetTickCount64() - t0) + L" ms, game start)");
+            };
+            {
+                std::vector<std::string> back;
+                int failed = 0;
+                const int n = moddata::RestoreShipped(modRoot, &back, &failed);
+                LogLine(L"restore mod data: " + std::to_wstring(n) + L" of Setup's files put back" +
+                        (failed ? L", " + std::to_wstring(failed) + L" could not be" : std::wstring()));
+            }
+            timed(L"kurast boat", [] { return PrepareBoat().text; });
+            timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });
+            timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });
+            timed(L"world holes", [] { return PrepareHolesNow().text; });
+            timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });
+            timed(L"campfire scene", [] { return PrepareCampfireNow().text; });
+            if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) != 0) timed(L"arcane sky", [] { return PrepareArcane().text; });
+            const moddata::Check after = moddata::Look(modRoot);
+            LogLine(L"restore mod data: done - " + moddata::detail::Wide(moddata::Line(after)));
+            if (one) CloseHandle(one);
+            return after.Gone() ? 1 : 0;
         }
         if (argv && argc >= 3 && wcscmp(argv[1], L"--reshade-paths") == 0) {
             // D2R VR Setup and its uninstaller (remove): D2R VR's two folders out of the search paths of the ReShade the player has as dxgi.dll (shared/reshade_paths.h;

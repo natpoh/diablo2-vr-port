@@ -6,6 +6,7 @@
 #include "../config/settings.h"
 #include "../replay_pause.h"
 #include "../sky_dome.h"
+#include "../view/view_state.h"   // FlatRules: flat, or VR F5 ([mode] f5_ar_view)
 
 #include <cctype>
 #include <cstring>
@@ -83,7 +84,7 @@ uintptr_t HookSetBiome(const char* name) {
     ReleaseSRWLockExclusive(&g_biomeLock);
     g_biomeGen.fetch_add(1);
     g_areaSetGen.fetch_add(1);
-    if (g_set.portalAuto.load() && g_set.platform.load() == 0) g_keysReset.store(true);   // the new area starts from no move key; one still held sets it again
+    if (g_set.portalAuto.load() && FlatRules()) g_keysReset.store(true);   // the new area starts from no move key; one still held sets it again
     // the replay pauses for another area, its last pair finished on the GPU first; the same biome set again (every few seconds in one
     // area) is no new area - it kept the replay off most of the time (vr/replay_pause.h)
     if (isNew) replay::AreaChanged();

@@ -1,5 +1,6 @@
 // vr/hud/looks.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../f5_hud.h"   // [hud] f5_map / f5_allies: VR F5's map and allies' portraits
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -30,7 +31,11 @@ void BarOffsetNow(float* x, float* y) {
 // From above and behind: the toolbar moved nearer or farther - only real stereo has a depth to move it in.
 bool BarNearWanted() { return AfrOn() && ClassicNow() && std::abs(BarNearNow()) > 0.01f; }
 // The map on the floor (F3) nearer or farther in stereo ([hud_floor] map_near), as the toolbar.
-bool MapNearWanted() { return AfrOn() && ClassicNow() && TableView() && std::abs(g_set.mapNearFloor.load()) > 0.01f; }
+// ... and VR F5's map with [hud] f5_map (vr/f5_hud.h): f5_map_near
+bool F5MapNow() { return f5hud::Wanted(g_set.f5Map.load(), ArView()); }
+bool F5AlliesNow() { return f5hud::Wanted(g_set.f5Allies.load(), ArView()); }
+float MapNearNow() { return F5MapNow() ? g_set.f5MapNear.load() : TableView() ? g_set.mapNearFloor.load() : 0.0f; }
+bool MapNearWanted() { return AfrOn() && ClassicNow() && (TableView() || F5MapNow()) && std::abs(MapNearNow()) > 0.01f; }
 // VR F3, the game on the floor, with our camera on (ClassicNow's order: off is F1 whatever the view).
 bool FloorView() { return g_enabled.load() && TableView(); }
 // The item labels' box opacity and size for the view now - each VR view's Interface tab has
@@ -42,7 +47,7 @@ void LabelLookNow(float* alpha, float* size) {
     if (FloorView()) { *alpha = g_set.labelsAlphaFloor.load(); *size = g_set.labelsSizeFloor.load(); }
     else if (!g_enabled.load() || TopPersp()) { *alpha = g_set.labelsAlphaTop.load(); *size = g_set.labelsSizeTop.load(); }
     else if (ThirdPerson()) { *alpha = g_set.labelsAlphaThird.load(); *size = g_set.labelsSizeThird.load(); }
-    else if (FullBody()) { *alpha = g_set.labelsAlphaBody.load(); *size = g_set.labelsSizeBody.load(); }
+    else if (LabelsAsF4()) { *alpha = g_set.labelsAlphaBody.load(); *size = g_set.labelsSizeBody.load(); }   // (F4's, VR F5 too)
 }
 // The game's item-label code hooked (LabelHooks, further down): the box's alpha and the size set per label.
 std::atomic<bool> g_labelPaintIn{false}, g_labelSizeIn{false};
@@ -60,15 +65,15 @@ bool LabelsTilted() {
     if (!AfrOn()) return false;
     if (!g_enabled.load())
         return g_set.classicTop.load() == 0 && (std::abs(g_set.labelsNear.load()) > 0.01f || std::abs(g_set.labelsTilt.load()) > 0.01f);
-    return FullBody() && (std::abs(g_set.labelsNearBody.load()) > 0.01f || g_set.labelsDepthBody.load() > 0.005f);
+    return LabelsAsF4() && (std::abs(g_set.labelsNearBody.load()) > 0.01f || g_set.labelsDepthBody.load() > 0.005f);
 }
 // [hud] monster_alpha, monster_size: the plate over the target monster faded or sized - the interface
 // comes out for that too, drawn back where the game puts it.
 // In first person (F4) the plate has its own depth, apart from the item labels' (labels_near_body): then the effect needs its box to tell it from the labels (vr/plate_look.h).
-bool PlateOwnDepth() { return g_enabled.load() && FullBody(); }
+bool PlateOwnDepth() { return g_enabled.load() && LabelsAsF4(); }   // (VR F5 as F4)
 // The other VR views with a stereo pair of our camera (F1 in perspective, F2, F3): the plate may stand apart there too (vr/plate_look.h OtherView) -
 // our own plate over the head ([hud] monster_names_own_all_views), or the game's at its monster's depth (F2 / F3 monster_depth).
-bool PlateOtherStereo() { return g_set.platform.load() == 1 && !FullBody() && g_enabled.load() && AfrOn(); }
+bool PlateOtherStereo() { return g_set.platform.load() == 1 && !LabelsAsF4() && g_enabled.load() && AfrOn(); }
 // [hud_third] monster_depth in F2, [hud_floor] monster_depth in F3 (by the view's key: VR F1 in perspective runs as g_view 2 too); 0 elsewhere.
 float PlateDepthOtherView() {
     if (g_set.platform.load() != 1) return 0.0f;
@@ -113,7 +118,20 @@ bool PlateFaded() {
 }
 // [hud] allies_x, allies_y: the allies' portraits elsewhere - the interface comes out for that too, the
 // portraits' corner drawn back moved (AlliesBoxUv). The target's plate is kept out of that corner: read too.
-bool AlliesMoved() { return std::abs(g_set.alliesX.load()) > 0.0005f || std::abs(g_set.alliesY.load()) > 0.0005f; }
+// [hud] f5_allies (vr/f5_hud.h): VR F5's own shift in place of allies_x / allies_y
+void AlliesOffNow(float off[2]) {
+    if (F5AlliesNow()) {
+        const f5hud::Uv u = f5hud::AlliesOff(g_set.f5AlliesRight.load(), g_set.f5AlliesDown.load());
+        off[0] = u.x; off[1] = u.y;
+        return;
+    }
+    off[0] = g_set.alliesX.load(); off[1] = g_set.alliesY.load();
+}
+bool AlliesMoved() {
+    float off[2];
+    AlliesOffNow(off);
+    return std::abs(off[0]) > 0.0005f || std::abs(off[1]) > 0.0005f;
+}
 // [hud] allies_game_hide: the game's own portraits hidden in VR F4 (a key of its own): the same corner moved off the picture, as wide as what the game
 // draws now (allyportraits::GameCornerToHide).
 bool AlliesHidden(float* units) {

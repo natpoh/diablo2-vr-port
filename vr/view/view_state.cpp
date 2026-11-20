@@ -8,6 +8,7 @@
 #include "d2rcam.h"
 #include "../../shared/draw_distance.h"
 #include "../npc_dialog_view.h"
+#include "../ar_view.h"
 
 namespace hud { bool LayerFound(); bool FlatVrTakesMenu(); }   // (vr/hud.cpp)
 namespace gamestate { bool MenuOpen(); bool NpcTalkOnly(); }                        // (vr/gamestate.cpp)
@@ -22,7 +23,7 @@ bool ThirdPerson() { return g_view.load() == 2; }
 // [mode]: the view the Home page, F1..F4 or F12 picked (Settings::platform).
 int ViewNow() { return g_set.platform.load() == 1 ? g_set.vrView.load() : g_set.flatView.load(); }
 #if D2RVR_FIRST_PERSON
-int ViewCount() { return g_set.platform.load() == 1 ? 4 : 3; }
+int ViewCount() { return arview::ViewCount(g_set.platform.load(), g_set.f5ArView.load()); }   // (VR: 5 with [mode] f5_ar_view)
 #else
 int ViewCount() { return g_set.platform.load() == 1 ? 3 : 2; }   // F4 and flat F3 are first person: coming soon
 #endif
@@ -35,25 +36,47 @@ bool FullBody() { return false; }
 #endif
 // VR F1, F2, F3 - the views BodyWalk's input belongs to (viewgate::Flat): the only place outside F4 where direct input acts, and only
 // for the left stick's walk ([direct] walk_flat_views).
-bool FlatViews() { return g_set.platform.load() == 1 && !FullBody(); }
+// F5 with [mode] f5_head_look counts here too (Serg 2026-11-19: "управление джойстиками как на ф3"): in the headset the controllers are the
+// game's pad there as in VR F1 - F3 (their left stick walks, [direct] flat_controller); the mouse and keyboard keep flat F3's rules beside them.
+// F5 without it: none of the controller's (the mouse alone turns that camera).
+bool FlatViews() { return g_set.platform.load() == 1 && !FullBody() && (!ArView() || ArHead()); }
+// VR F5 ([mode] f5_ar_view, vr/ar_view.h): flat F3's first person - our camera at the hero's eyes on the mouse, W A S D, the interface in the
+// picture, no hands - with the picture going to FlatVR as in every VR view; for AR glasses (Serg 2026-11-18). Every flat-F3 rule asks
+// FlatRules() / FlatRulesView() instead of [mode] platform=0 / flat_view; everything of VR's output (FlatVR's feed, its stereo by turns,
+// the window) stays VR's.
+bool ArView() { return arview::IsArView(g_set.platform.load(), g_set.vrView.load(), g_set.f5ArView.load()); }
+bool ArHead() { return ArView() && arview::NativeF5Mode(g_set.f5Head.load()) == arview::NativeF5::HeadCamera; }
+// F4's item labels and monster plates - our own sharp labels, their size by distance, their depth, our plate over the head - in VR F4 and F5 alike, the
+// same keys (Serg 2026-11-20: "обьекты надо уменьшать таблички вдалеке как на ф4", "и таблички над монстрами", "тут все идентично как на ф4", "пусть
+// они будут общие"). What F4 hangs in the room itself (the plate over the monster's head as a quad, the notice card) stays F4's.
+bool LabelsAsF4() { return FullBody() || ArView(); }
+// F4's low-life / low-mana vignette ([hud] low_hp_vignette, low_mp_vignette, vr/low_hp.h) in VR F5 too, the same keys (Serg 2026-11-20: "и мигание экрана при
+// слабой мане и слабом хп тоже как на ф4"): on native OpenXR's pair, as in F4 (lowhp::InView).
+bool VignetteAsF4() { return FullBody() || ArView(); }
+bool FlatRules() { return arview::FlatRules(g_set.platform.load(), g_set.vrView.load(), g_set.f5ArView.load()); }
+int FlatRulesView() { return arview::FlatRulesView(g_set.platform.load(), g_set.flatView.load(), g_set.vrView.load(), g_set.f5ArView.load()); }
 // The VR view's number, F1 = 1 ... F4 = 4 (vrView: 3 is the table, F3), 0 in the flat game: the overlay's Settings pages are the view's (viewgate::Number).
-int VrViewNow() { return g_set.platform.load() == 1 ? g_set.vrView.load() : 0; }
+// F5 counts as the flat game there (0): no VR module - the overlay, direct input, the VR plates' and auras' rules - acts in it.
+int VrViewNow() { return g_set.platform.load() == 1 && !ArView() ? g_set.vrView.load() : 0; }
 // First person whose hero the game animates (flat, or VR view 3): turned only
 // about the vertical, mouse and W A S D, the interface in the picture.
 #if D2RVR_FIRST_PERSON
-bool InsideFree() { return g_enabled.load() && !ThirdPerson() && !FullBody(); }   // flat F3 only: VR has no such view since 2026-10-05
+bool InsideFree() { return g_enabled.load() && !ThirdPerson() && !FullBody(); }   // flat F3 (and VR F5, [mode] f5_ar_view): VR had no such view 2026-10-05 - 11-18
 #else
 bool InsideFree() { return false; }
 #endif
 // Native OpenXR ([openxr] on, vr/xr.cpp) draws these views as the headset's own eyes with the head as the camera: first
 // person (F4) and third person (F2).
-bool NativeHeadView() { return g_set.platform.load() == 1 && (FullBody() || (ThirdPerson() && g_set.vrView.load() == 2)); }
+// ... and F5 with [mode] f5_head_look (vr/ar_view.h): F4's head camera, flat F3's controls, no hands
+bool NativeHeadView() { return g_set.platform.load() == 1 && (FullBody() || (ThirdPerson() && g_set.vrView.load() == 2) || ArHead()); }
 // ... and, with [openxr] views_3d (docs/plan_native_f1_f3.md), F1 from above in perspective ([top] perspective: through our
 // camera, TopCamera) and F3, the game on your floor (TableCamera), with the eyes too - F1 as a window of the room, F3 as the
 // diorama in it. Without views_3d, or with the game's own orthographic F1, they go to the headset as a flat picture, as ever.
 bool TableView();
 bool TopPersp();
 int NativeMode() {
+    // VR F5: the head's camera with [mode] f5_head_look (NativeHeadView), else the flat picture - never F1 / F3's window or room
+    if (g_set.platform.load() == 1 && ArView()) return xr::kViewsHead;
     if (g_set.platform.load() != 1 || !xr::Views3dOn()) return xr::kViewsHead;
     if (TableView()) return xr::kViewsRoom;
     if (TopPersp()) return xr::kViewsWindow;
@@ -99,7 +122,7 @@ bool NpcDialogKeepsView() {
 bool MenuFlat() { return gamestate::MenuOpen() && !g_menu3dNow.load() && !NpcDialogKeepsView(); }
 // The sky, the fog and the cave ceiling stop for a menu in VR, where the flat menu fills the picture; on a monitor the world stays behind
 // the panel, and they stay with it (from sajmonsoft's flat fork: opening a chest, a dialogue or the inventory turned them off).
-bool EffectsPaused() { return MenuFlat() && g_set.platform.load() != 0; }
+bool EffectsPaused() { return MenuFlat() && !FlatRules(); }   // (VR F5: the monitor's rule - its menus are the flat game's)
 
 // VR view 5: the game laid on the room's floor and looked at from above - our
 // own camera where the head is in the room ([table] hero_cm, TableCamera), the
@@ -138,6 +161,7 @@ int ArmsMode() { return 0; }
 // Mouse look: the flat views and VR view 3 are played with the mouse; the rest as the ini says.
 bool MouseLookForView() {
     if (g_set.platform.load() == 0) return ViewNow() != 1;
+    if (ArView()) return true;      // VR F5: flat F3's mouse look
     if (Overhead()) return false;   // from above and the floor: the head and the pad
     // VR F2 with vr_keys_walk is flat's F2: it starts with mouse look (F9 frees the pointer).
     if (ViewNow() == 2 && g_set.vrKeyWalk.load()) return true;
@@ -146,6 +170,7 @@ bool MouseLookForView() {
 // The interface in the picture (not taken out for FlatVR), per view.
 bool ClassicNow() {
     if (g_set.platform.load() == 0) return true;   // no FlatVR to take it
+    if (ArView()) return true;                     // VR F5: flat F3's picture, the interface in it
     if (!g_enabled.load() || TopPersp()) return g_set.classicTop.load() == 0;
     if (TableView()) return g_set.classicFloor.load() == 0;   // before ThirdPerson: ApplyView runs the floor as view 2
     if (ThirdPerson()) return g_set.classicThird.load() == 0;

@@ -18,6 +18,7 @@
 #include "first_start_pages.h"   // the Guide page's words
 #include "hset_model.h"
 #include "hset_names.h"
+#include "walk_line.h"   // the Walk page's line from the plugin ([walk_in_place])
 
 namespace hset {
 
@@ -92,6 +93,10 @@ inline const char* StatusText(const Model& m, bool window = false) {
     if (m.page == kPageVideo && m.Auto().on)   // [autotune]: the Auto button beside the presets
         return uitext::Tr("vr.hset.status.video_idle_auto", "Pick a size, then Apply - or Auto: stand still, the game tunes itself to the headset's rate.");
     if (m.page == kPageVideo) return uitext::Tr("vr.hset.status.video_idle", "Pick a size, then Apply. It takes effect once your hero is in the world.");
+    if (m.page == kPageWalk) {   // [walk_in_place]: the plugin's own line (the library's state, the walk now), else a fixed one
+        if (const char* line = walkline::Text()) return line;
+        return uitext::Tr("vr.hset.status.walk_idle", "Each change applies by itself. The walk profile itself is set up in BodyWalk (F4).");
+    }
     if (m.page == kPageBody) return uitext::Tr("vr.hset.status.body_idle", "Calibrate body hides this panel; it comes back when the measurement is done.");
     if (m.page == kPageKeysL || m.page == kPageKeysR)
         return m.Get()[kKeyDirectOn] > 0.5f ? uitext::Tr("vr.hset.status.keys_idle", "Pick what a button does, then Apply. Chords and the other long presses: D2R VR Authentic Settings.")
@@ -597,6 +602,10 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
     if (m.page == kPageVideo && PageShown(kPageRender, m.View()))
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.go", "Render"), {Kind::Tab, kPageRender, 0}, false, true, Role::Accent);
     if (m.page == kPageRender) b.Button(kPreviewBtn, uitext::Tr("vr.hset.render.back", "Video"), {Kind::Tab, kPageVideo, 0});
+    // the HUD tab's two pages: Map (the map's mode, shared/map_mode.h; F4 only, as the map in the hand is) from the HUD page, HUD back
+    if (m.page == kPageHud && PageShown(kPageMap, m.View()))
+        b.Button(kPreviewBtn, uitext::Tr("vr.hset.map.go", "Map"), {Kind::Tab, kPageMap, 0}, false, true, Role::Accent);
+    if (m.page == kPageMap) b.Button(kPreviewBtn, uitext::Tr("vr.hset.map.back", "HUD"), {Kind::Tab, kPageHud, 0});
     // the View tab's second page, F3 (the game on the floor's [table] keys) in VR F3 or F1 (the view from above's [top] keys) in VR F1: its button
     // on the View page (ViewSubPage), View back from it
     if (m.page == kPageView && ViewSubPage(m.View()) == kPageF3)

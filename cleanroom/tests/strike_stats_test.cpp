@@ -1,4 +1,4 @@
-// Offline checks of vr/strike_stats.h ([stats] strike_stats): the blows, speeds and forces per hero and weapon, this session's and all
+// Offline checks of vr/strike_stats.h and vr/strike_share.h ([stats] strike_stats): the blows, speeds and forces per hero and weapon, this session's and all
 // time's, the missed swings, and the file's text (written, read back, a broken or foreign file). No game, no clock, no file.
 // Run: build/Release/strike_stats_test.exe (exit code 0 = passed)
 
@@ -9,6 +9,7 @@
 #include <string>
 
 #include "../../vr/strike_stats.h"
+#include "../../vr/strike_share.h"
 #include "../../vr/weapon_names.h"
 
 using namespace strikestats;
@@ -119,7 +120,7 @@ static void TestFile() {
     s.SetHero("Bar", 4);
     s.Blow(kAxe, 2, 1.5f, 0.75f);
     const std::string text = s.Serialize(1762400000, 1762403600);
-    CHECK(text.find("version 1") != std::string::npos);
+    CHECK(text.find("version 2") != std::string::npos);
     CHECK(text.find("hero Bar 4") != std::string::npos && text.find("weapon lsd 3") != std::string::npos && text.find("weapon *paw 12") != std::string::npos);
 
     Store r;
@@ -210,6 +211,102 @@ static void TestMisses() {
     CHECK(!t.Flush(20000, &m));
 }
 
+// ---- version 2: the distributions, the fatigue curve, the weapon's steel ---------------------------------------------------------------
+static void TestBuckets() {
+    CHECK(kSpeedBuckets == 14 && kForceBuckets == 10);
+    CHECK(SpeedBucket(0.0f) == 0 && SpeedBucket(0.49f) == 0 && SpeedBucket(0.5f) == 1 && SpeedBucket(0.99f) == 1);   // [edge i-1, edge i)
+    CHECK(SpeedBucket(3.0f) == 6 && SpeedBucket(4.99f) == 8 && SpeedBucket(9.99f) == 12 && SpeedBucket(10.0f) == 13 && SpeedBucket(55.0f) == 13);
+    CHECK(ForceBucket(0.1f) == 0 && ForceBucket(0.25f) == 1 && ForceBucket(1.2f) == 4 && ForceBucket(6.0f) == 9 && ForceBucket(100.0f) == 9);
+    Store s;
+    s.SetHero("Bar", 4);
+    s.Blow(kLsd, 4, 2.2f, 1.2f, 0, 3.5f);
+    s.Blow(kLsd, 4, 2.4f, -1.0f, 0);
+    s.Blow(kLsd, 4, 7.5f, 4.5f, 3);
+    s.Blow(kAxe, 5, 0.0f, 0.0f, 200);   // no speed, no force: counted, in no bucket; minute 200 goes into the last
+    s.Miss(kLsd, 4, true, 0.7f);
+    s.Miss(kLsd, 4, false, 2.9f);
+    s.Miss(kAxe, 5, false);             // no speed: counted, in no bucket
+    const Hero* h = s.Current();
+    CHECK(h && h->kinds.size() == 2 && h->kinds[0].kind == 4 && h->kinds[1].kind == 5);
+    const Hist& sw = h->kinds[0].total;
+    CHECK(sw.hit[SpeedBucket(2.2f)] == 2 && sw.hit[SpeedBucket(7.5f)] == 1 && sw.force[ForceBucket(1.2f)] == 1 && sw.force[ForceBucket(4.5f)] == 1);
+    CHECK(sw.miss[SpeedBucket(0.7f)] == 1 && sw.miss[SpeedBucket(2.9f)] == 1);
+    CHECK(h->kinds[1].total.Empty() && W(h, kAxe)->total.blows == 1 && W(h, kAxe)->total.Misses() == 1);
+    CHECK(h->curveTotal.size() == (size_t)kCurveMinutes && h->curveTotal[0].blows == 2 && h->curveTotal[0].speedN == 2 && Near(h->curveTotal[0].speedSum, 4.6));
+    CHECK(h->curveTotal[3].blows == 1 && h->curveTotal[kCurveMinutes - 1].blows == 1 && h->curveTotal[kCurveMinutes - 1].speedN == 0);
+    CHECK(Near(W(h, kLsd)->kg, 3.5));
+    // a new session: its distributions and curve from nothing, all time's stay
+    s.StartSession();
+    CHECK(s.Heroes()[0].kinds[0].session.Empty() && !s.Heroes()[0].kinds[0].total.Empty() && s.Heroes()[0].curveSession.empty() && s.Heroes()[0].curveTotal[0].blows == 2);
+    s.SetHero("Bar", 4);
+    s.Blow(kLsd, 4, 3.1f, 1.0f, 1);
+    CHECK(s.Current()->kinds[0].session.hit[SpeedBucket(3.1f)] == 1 && s.Current()->kinds[0].total.hit[SpeedBucket(3.1f)] == 1 && s.Current()->curveSession[1].blows == 1);
+    // the file keeps all of it, word for word
+    const std::string text = s.Serialize(10, 20);
+    CHECK(text.find("version 2") != std::string::npos && text.find("hist 4 all hit") != std::string::npos && text.find("hist 4 now hit") != std::string::npos);
+    CHECK(text.find("curve all 0 2 2 4.600") != std::string::npos && text.find("weapon lsd 4") != std::string::npos && text.find(" 3.50\n") != std::string::npos);
+    Store r;
+    CHECK(r.Parse(text) && r.Serialize(10, 20) == text);
+    CHECK(r.Heroes()[0].kinds.size() == 1 && r.Heroes()[0].kinds[0].total.miss[SpeedBucket(0.7f)] == 1 && Near(r.Heroes()[0].curveTotal[3].speedSum, 7.5));
+    // a version 1 file reads into version 2 (no distributions yet), a broken hist line is skipped, not the file
+    Store o;
+    CHECK(o.Parse("version 1\nhero Bar 4 1\nall 2 4.0 2 3.0 0 0 0 0 0\nweapon lsd 4 1\nall 2 4.0 2 3.0 0 0 0 0 0\n") && o.Heroes()[0].kinds.empty());
+    CHECK(o.Parse("version 2\nhero Bar 4 1\nhist 4 all hit 1 2 3\nhist 4 all miss 0 0 0 0 0 0 1 0 0 0 0 0 0 0\ncurve all 999 1 1 1.0\n"));
+    CHECK(o.Heroes()[0].kinds.size() == 1 && o.Heroes()[0].kinds[0].total.hit[0] == 0 && o.Heroes()[0].kinds[0].total.miss[6] == 1 && o.Heroes()[0].curveTotal.empty());
+    // the missed swing keeps the speed of its first refused touch
+    MissTracker t;
+    MissTracker::Miss m;
+    CHECK(!t.Refused(9, kLsd, 4, true, 0, &m, 0.6f));
+    CHECK(!t.Refused(9, kLsd, 4, false, 10, &m, 2.0f));
+    CHECK(t.Flush(MissTracker::kMissMs, &m) && Near(m.speed, 0.6) && m.slow);
+}
+
+static void TestShare() {
+    Store s;
+    s.SetHero("Bar", 4);
+    s.Blow(kLsd, 4, 2.0f, 1.0f, 0, 3.0f);
+    s.Blow(kLsd, 4, 4.0f, 3.0f, 1, 3.0f);
+    s.Blow(CodeOf("7gd"), 4, 3.0f, -1.0f, 1);   // a second sword, no steel measured: not in the kg average
+    s.Miss(kLsd, 4, true, 0.4f);
+    s.SetHero("Secret_Name", 1);
+    s.Blow(kBareHands, 1, 1.5f, -1.0f, 0);
+    const std::string id = "0123456789abcdef0123456789abcdef";
+    strikeshare::Conditions c;
+    c.weightOn = 1;
+    c.forceOn = 1;
+    c.seated = 0;
+    c.heightM = 1.82f;
+    c.minSpeed = 0.8f;
+    c.strokeCm = 8.0f;
+    c.quickBlow = 1;
+    const std::string text = strikeshare::Build(s, id, "0.219.2 <b>", c);
+    // no hero names, no item codes: only classes
+    CHECK(!text.empty() && text.rfind("d2rvr-stats 1\n", 0) == 0);
+    CHECK(text.find("Bar") == std::string::npos && text.find("Secret") == std::string::npos && text.find("lsd") == std::string::npos && text.find("7gd") == std::string::npos);
+    CHECK(text.find("hero") == std::string::npos && text.find("<b>") == std::string::npos && text.find("version 0.219.2\n") != std::string::npos);
+    CHECK(text.find("install " + id + "\n") != std::string::npos);
+    CHECK(text.find("cond weight=1 force=1 seated=0 height=1.82 min_speed=0.80 stroke_cm=8.0 quick_blow=1\n") != std::string::npos);
+    CHECK(text.find("kind sword blows=3 slow=1 off=0 speed_n=3 speed_sum=9.0 force_n=2 force_sum=4.0 kg=3.00\n") != std::string::npos);
+    CHECK(text.find("kind unarmed blows=1 ") != std::string::npos);
+    CHECK(text.find("hit sword 0 0 0 0 1 0 1 0 1 0 0 0 0 0\n") != std::string::npos);   // 2.0, 3.0, 4.0
+    CHECK(text.find("miss sword 1 0 0 0 0 0 0 0 0 0 0 0 0 0\n") != std::string::npos);  // 0.4 m/s: [0, 0.5)
+    CHECK(text.find("curve 0:2:2:3.5 1:2:2:7.0\n") != std::string::npos);   // minute 0: sword 2.0 + fists 1.5; minute 1: 4.0 + 3.0
+    // not a valid id, or nothing to share: nothing
+    CHECK(strikeshare::Build(s, "not-an-id", "1", c).empty() && strikeshare::Build(Store{}, id, "1", c).empty());
+    CHECK(strikeshare::ValidInstall(id) && !strikeshare::ValidInstall("0123456789ABCDEF0123456789abcdef"));
+    const uint8_t bytes[16] = {0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0, 0, 0, 0, 0, 0, 0xff, 0x10};
+    CHECK(strikeshare::InstallFromBytes(bytes) == "0123456789abcdef000000000000ff10");
+    // the answer read back
+    const strikeshare::Compare cmp = strikeshare::ParseCompare(
+        "d2rvr-compare 1\r\nplayers 154\nclass sword players 120 blows 54000 p10 2.10 p25 2.70 p50 3.30 p75 4.00 p90 4.80 force_p50 2.10 landed 86\n"
+        "you sword speed 3.60 speed_pct 72 force 2.40 force_pct 55 blows 812 blows_pct 90\nclass bogus players 3\nclass axe players 7 p50 nan\n");
+    CHECK(cmp.ok && cmp.players == 154 && cmp.rows.size() == 2);
+    CHECK(cmp.rows[0].kind == "sword" && cmp.rows[0].players == 120 && cmp.rows[0].blows == 54000 && Near(cmp.rows[0].p50, 3.3) && Near(cmp.rows[0].p90, 4.8));
+    CHECK(cmp.rows[0].you && cmp.rows[0].speedPct == 72 && cmp.rows[0].forcePct == 55 && cmp.rows[0].blowsPct == 90 && Near(cmp.rows[0].yourSpeed, 3.6) && Near(cmp.rows[0].landed, 86));
+    CHECK(cmp.rows[1].kind == "axe" && !cmp.rows[1].you && cmp.rows[1].players == 7 && cmp.rows[1].p50 == 0.0f);
+    CHECK(!strikeshare::ParseCompare("<html>502 Bad Gateway</html>").ok && !strikeshare::ParseCompare("").ok);
+}
+
 int main() {
     TestCodes();
     TestNames();
@@ -219,6 +316,8 @@ int main() {
     TestBrokenFiles();
     TestLimits();
     TestMisses();
+    TestBuckets();
+    TestShare();
     std::printf("strike_stats_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

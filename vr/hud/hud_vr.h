@@ -23,6 +23,9 @@ float BarSizeNow();
 void BarOffsetNow(float* x, float* y);
 bool BarNearWanted();
 bool MapNearWanted();
+float MapNearNow();     // the map's depth for the effect ([hud_floor] map_near on the floor, [hud] f5_map_near in VR F5)
+bool F5MapNow();        // [hud] f5_map in VR F5 (vr/f5_hud.h)
+bool F5AlliesNow();     // [hud] f5_allies in VR F5
 bool FloorView();
 void LabelLookNow(float* alpha, float* size);
 extern std::atomic<bool> g_labelPaintIn, g_labelSizeIn;   // the game's item-label code hooked
@@ -38,6 +41,7 @@ bool LayerOwnEye();
 bool PlateTurnsWanted();
 bool PlateFaded();
 bool AlliesMoved();
+void AlliesOffNow(float off[2]);   // the allies' shift for the effect (allies_x / allies_y, or VR F5's f5_allies_x / _y)
 bool AlliesHidden(float* units);   // [hud] allies_game_hide: the game's own portraits hidden (VR F4); units: their corner's width (layout units)
 durab::Look DurabilityLook();
 bool DurabilityMoved();

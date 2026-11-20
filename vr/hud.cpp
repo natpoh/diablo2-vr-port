@@ -77,6 +77,7 @@
 #include "game_device_only.h"
 
 #include "game_hud_shared.h"
+#include "f5_toolbar.h"   // [hud] f5_toolbar: VR F5's toolbar low in front (the anchor)
 #include "finite_hold.h"  // nothing non-finite to FlatVR (the pointer's depth, the forearm)
 #include "hud_globes.h"   // where the game's own life and mana globes are in its interface layer (the wrists' medallions)
 #include "hud_rects.h"    // the toolbar's strip in that layer (the box taken out of the picture), with the cut sliders
@@ -118,6 +119,10 @@ std::atomic<int> g_mapMode{0};     // [hud] map: 0 in the picture, 1 in its own 
 std::atomic<int> g_mapCorner{0};   // [hud] map_corner: 0 either top corner, 1 the left one, 2 the right one
 std::atomic<bool> g_panelNoBar{false};   // [hud] npc_dialog_no_bar: an NPC's dialogue box is the only menu - its panel without the toolbar
 std::atomic<bool> g_classic{false};   // the view is from above or behind and the pieces stay in the picture
+// [hud] f5_toolbar (vr/f5_toolbar.h): VR F5 with the box ticked - the toolbar's strip alone cut out of the picture and hung low in front at F5's own
+// height and distance (the look's bar_side_cm / bar_lift_cm, f5bar::OffsetFor); the rest of the interface (the map...) as g_classic says. SetViewBar.
+std::atomic<bool> g_viewBar{false};
+std::atomic<float> g_viewBarSide{0.0f}, g_viewBarLift{0.0f}, g_viewBarWidth{0.0f};
 std::atomic<float> g_barZoom{1.0f}, g_mapZoom{1.0f};   // [hud] bar_zoom, map_zoom: their size in the picture then
 std::atomic<bool> g_picReady{false};  // the effect that draws them back runs (vrcam's fx)
 std::atomic<bool> g_barMoved{false};   // [hud] bar_near: the toolbar nearer or farther in stereo (the shader shifts it per eye)
@@ -126,6 +131,7 @@ bool BarOffset() { return std::abs(g_barOffX.load()) > 0.0005f || std::abs(g_bar
 bool BarZoomed() { return std::abs(g_barZoom.load() - 1.0f) > 0.005f || g_barMoved.load() || BarOffset(); }
 std::atomic<bool> g_mapMoved{false};   // [hud_floor] map_near: the map nearer or farther in stereo (the shader shifts it per eye)
 std::atomic<float> g_mapOffX{0.0f}, g_mapOffY{0.0f};   // [hud_floor] map_x / map_y: the map elsewhere on the screen, uv (+y down)
+std::atomic<bool> g_mapInward{false};   // [hud] f5_map: the x above is for a map in the right corner - turned round for one in the left (SetPictureMapInward)
 bool MapOffset() { return std::abs(g_mapOffX.load()) > 0.0005f || std::abs(g_mapOffY.load()) > 0.0005f; }
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map in the picture turned so the camera's way is up - taken out and drawn
 // back round by the effect, as for a size of its own. vrcam says when (MapRotateFlatTick: flat F2 / F3, VR F2 with the map in the picture);
@@ -138,7 +144,12 @@ std::atomic<bool> g_mapTurnWhole{false};
 std::atomic<int> g_compassFlat{0};    // [hud] map_compass_flat: the compass over the turned map, its look (mapturn::CompassStyle; SetMapCompassFlat)   // [hud] flat_map_zoom past level 0: not held to the circle, the whole box turned (SetMapTurnWhole)
 bool MapZoomed() { return std::abs(g_mapZoom.load() - 1.0f) > 0.005f || g_mapMoved.load() || MapOffset() || g_mapTurnFlat.load(); }
 // What is taken out of the picture now: for FlatVR in first person, to be drawn back at another size otherwise.
-int HideNow() { return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load(); }
+int HideNow() {
+    if (g_viewBar.load()) return 1;   // F5's toolbar low in front: the strip alone, whatever [hud] hide says
+    return g_classic.load() ? (g_picReady.load() && BarZoomed() ? 1 : 0) : g_hide.load();
+}
+// The toolbar goes to the room (FlatVR / native), not back into the picture: first person, or F5's toolbar low in front.
+bool BarToRoom() { return !g_classic.load() || g_viewBar.load(); }
 int MapNow() { return g_classic.load() ? (g_picReady.load() && MapZoomed() ? 1 : 0) : g_mapMode.load(); }
 // MapNow at this frame's layer clear: the map goes to our target, or not, for the whole frame.
 std::atomic<int> g_frameMap{0};
@@ -450,6 +461,20 @@ FlatVRGameHudMenu g_menuPlace{2.3f, 1.9f, 0.0f, 0, 0, {}};   // SetMenuPlace; un
 std::atomic<const FlatVRGameHudReader*> g_reader{nullptr};
 // How FlatVR is to show them: [hud] in d2r_vr.ini (D2R VR Settings > Interface), via SetLook.
 FlatVRGameHudLook g_look = FlatVRGameHudDefaultLook();
+// The look sent out (FlatVR's block, native OpenXR's NativeHud, Anchor): the settings', or with F5's toolbar low in front "low in front" at F5's own
+// height and distance, not turned (F4's own roll / tip / spin / split belong to its place), as wide as F4's on the body.
+FlatVRGameHudLook LookOut() {
+    FlatVRGameHudLook l = g_look;
+    if (g_viewBar.load()) {
+        l.bar_anchor = f5bar::kAnchor;
+        l.bar_side_cm = g_viewBarSide.load();
+        l.bar_lift_cm = g_viewBarLift.load();
+        l.bar_roll_deg = l.bar_tip_deg = l.bar_spin_deg = 0.0f;
+        l.bar_split = 0;
+        if (g_viewBarWidth.load() > 0.0f) l.bar_width_m = g_viewBarWidth.load();
+    }
+    return l;
+}
 // The hero's forearm each panel lies on (SetForearm, from the skeleton), copied into the block with every Publish.
 FlatVRGameHudPose g_pose[FLATVR_GAME_HUD_PANELS] = {};
 
@@ -466,7 +491,7 @@ FlatVRGameHud* Block() {
     g_block->panel[kMap].kind = FLATVR_HUD_KIND_MAP;
     g_block->panel_count = kMenuSlot + 1;   // (a FlatVR before the menu reads two)
     g_block->panel[kMenuSlot].kind = FLATVR_HUD_KIND_MENU;
-    g_block->look = g_look;
+    g_block->look = LookOut();
     g_block->version = 3u;   // 4 only for a FlatVR that reads it (Publish): an older one drops a newer block
     Log("hud: publishing the toolbar and the map for FlatVR (BodyWalkVR_GameHud)");
     return g_block;
@@ -781,6 +806,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     device* dev = cl->get_device();
     DrainRetired(dev);
     const bool menu = g_menu.load() || g_panelOut.load(), classic = g_classic.load();   // a menu's panel takes the toolbar with it (the big map does not: it stays where it hangs)
+    const bool barRoom = BarToRoom();   // (F5's toolbar low in front: to the room though the view keeps the rest in the picture)
     bool bar = false, map = false;
     const rect barBox = ToolbarRect(w, h);
     rect mapBox{};
@@ -815,7 +841,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     }
     // From above and behind: back into the picture, grown from the toolbar's
     // bottom middle and from the map's own corner (left or right, by its middle).
-    g_pic.on[kBar] = classic && bar && g_share[kBar].srv.handle;
+    g_pic.on[kBar] = !barRoom && bar && g_share[kBar].srv.handle;
     // the map not with a menu up (trade, inventory, the game's menu...): drawn back after the game's interface it lay over the panels; taken
     // out of the picture it is not there at all then - only in the game itself (Serg, 2026-11-05: "Карта должна быть активна только там,
     // где она используется - в игре")
@@ -830,7 +856,7 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     if (g_pic.on[kMap]) {
         const bool left = mapBox.left + mapBox.right < (int32_t)w;
         ZoomedUv(mapBox, (float)(left ? mapBox.left : mapBox.right), (float)mapBox.top, g_mapZoom.load(), w, h, g_pic.box[kMap]);
-        const float dx = g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole
+        const float dx = g_mapInward.load() && left ? -g_mapOffX.load() : g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole (F5: toward the middle)
         g_pic.box[kMap][0] += dx; g_pic.box[kMap][2] += dx;
         g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
     }
@@ -855,14 +881,14 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
             Log(line);
         }
     }
-    g_outNow[kBar].store(bar && !classic);
+    g_outNow[kBar].store(bar && barRoom);
     g_outNow[kMap].store(map && !classic && g_mapShown.load());
     g_outAt.store(GetTickCount64());
     if (FlatVRGameHud* b = (bar || map || g_block) ? Block() : nullptr) {
         // in the picture from above and behind: nothing in the room
-        b->panel[kBar].visible = bar && !classic ? 1u : 0u;
+        b->panel[kBar].visible = bar && barRoom ? 1u : 0u;
         b->panel[kMap].visible = map && !classic && g_mapShown.load() ? 1u : 0u;
-        b->look = g_look;
+        b->look = LookOut();
         for (int i = 0; i < kShares; ++i) b->pose[i] = g_pose[i];
         b->version = g_flatVrMenu.load() ? kHudVersionMenu : 3u;
         MenuOf(b) = g_menuPlace;
@@ -961,7 +987,7 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
             // its panel as a bar in front of the hero at waist height (Serg, 2026-10-28). Its strip is emptied first, as [hud] hide 1
             // does with no menu up (the wrists / FlatVR have their copy already: Publish above). A real menu (the trader's screen
             // after Trade) keeps it.
-            if (g_panelNoBar.load() && HideNow() >= 1 && !g_classic.load()) {
+            if (g_panelNoBar.load() && HideNow() >= 1 && BarToRoom()) {
                 const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
                 const rect bar = ToolbarRect(d.texture.width, d.texture.height);
                 cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
@@ -981,7 +1007,7 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
                 }
                 cl->clear_render_target_view(layerRtv, kEmpty, 1, &above);
                 if (hideNow == 2) cl->clear_render_target_view(layerRtv, kEmpty);
-                else if (hideNow == 1 && (!g_classic.load() || g_pic.on[kBar])) cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
+                else if (hideNow == 1 && (BarToRoom() || g_pic.on[kBar])) cl->clear_render_target_view(layerRtv, kEmpty, 1, &bar);
             } else if (out) {
                 cl->clear_render_target_view(layerRtv, kEmpty);
             }
@@ -998,7 +1024,7 @@ void OnBind(command_list* cl, uint32_t count, const resource_view* rtvs, resourc
             }
         } else if (const int hide = g_menu.load() ? 0 : hideNow; hide == 2) {
             cl->clear_render_target_view(layerRtv, kEmpty);
-        } else if (hide == 1 && (!g_classic.load() || g_pic.on[kBar])) {   // drawn back from a copy: only if there is one
+        } else if (hide == 1 && (BarToRoom() || g_pic.on[kBar])) {   // drawn back from a copy: only if there is one
             const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(layerRtv));
             const rect bar = ToolbarRect(d.texture.width, d.texture.height);   // the map stays (MapRect: kept for FlatVR)
             // (premultiplied, alpha the picture's transmittance: kTint lets 70 % of the world through under a magenta veil - the strip's edges, to tune the two cut sliders by)
@@ -1111,6 +1137,16 @@ bool MapTurnHeading(float* x, float* y) {
 
 // From above and from behind, with [hud] classic 0: the pieces in the picture at their own size.
 void SetClassicView(bool on) { g_classic.store(on); }
+// [hud] f5_toolbar (vr/f5_toolbar.h): VR F5's toolbar low in front, at the look's side / lift (f5bar::OffsetFor), as wide as widthM (0: the settings').
+// Sent with the next interface pass (Publish) and read by native OpenXR (NativeHud) through LookOut.
+void SetViewBar(bool on, float sideCm, float liftCm, float widthM) {
+    g_viewBarSide.store(sideCm);
+    g_viewBarLift.store(liftCm);
+    g_viewBarWidth.store(widthM);
+    if (g_viewBar.exchange(on) != on)
+        LogF("vrcam: hud - F5's toolbar %s ([hud] f5_toolbar)", on ? "cut out of the picture and hung low in front (its own height and distance)"
+                                                                   : "back where the view has it");
+}
 // The toolbar is to stand nearer or farther than the game puts it (AFR stereo): taken out for that too.
 void SetPictureBarMoved(bool moved) { g_barMoved.store(moved); }
 void SetPictureZoom(float bar, float map) { g_barZoom.store(std::clamp(bar, 0.2f, 3.0f)); g_mapZoom.store(std::clamp(map, 0.3f, 3.0f)); }
@@ -1119,8 +1155,10 @@ void SetPictureBarOffset(float x, float y) { g_barOffX.store(std::clamp(x, -1.0f
 // The same for the map (F3, the game on the floor): nearer or farther, and moved.
 void SetPictureMapMoved(bool moved) { g_mapMoved.store(moved); }
 void SetPictureMapOffset(float x, float y) { g_mapOffX.store(std::clamp(x, -1.0f, 1.0f)); g_mapOffY.store(std::clamp(y, -1.0f, 1.0f)); }
+// [hud] f5_map (vr/f5_hud.h): the offset's x is "toward the middle" for a map in the right corner - turned round when the map is in the left one.
+void SetPictureMapInward(bool inward) { g_mapInward.store(inward); }
 // Some piece is to be drawn back at another size: vrcam keeps the effect on for it.
-bool PictureWanted() { return (g_classic.load() && (BarZoomed() || MapZoomed())) || g_labels.load(); }
+bool PictureWanted() { return (g_classic.load() && ((BarZoomed() && !g_viewBar.load()) || MapZoomed())) || g_labels.load(); }
 // From above in stereo, with a tilt or a depth for them: the labels on their plane (vrcam decides when).
 void SetLabels(bool on) { g_labels.store(on); }
 // The interface copied as the fog's mask (left in the picture) while the labels are not out.
@@ -1235,7 +1273,8 @@ void SetPointerDepth(float base, float tilt, float curve, float topScale) {
 // Where FlatVR is told to hang panel 0 (toolbar) / 1 (map): FlatVRGameHudLook's anchors.
 int Anchor(int panel) {
     std::lock_guard<std::mutex> g(g_lock);
-    return (int)(panel == 0 ? g_look.bar_anchor : g_look.map_anchor);
+    const FlatVRGameHudLook l = LookOut();
+    return (int)(panel == 0 ? l.bar_anchor : l.map_anchor);
 }
 
 void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]) {
@@ -1263,7 +1302,7 @@ void SetLook(const FlatVRGameHudLook& look) {
     const uint32_t pointer = g_look.pointer;
     g_look = look;
     g_look.pointer = pointer;
-    if (g_block) g_block->look = g_look;
+    if (g_block) g_block->look = LookOut();
 }
 
 bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGameHudPose* barPose) {
@@ -1285,7 +1324,7 @@ bool NativeHud(NativePiece out[kNativePieces], FlatVRGameHudLook* look, FlatVRGa
     p.visible = p.tex && !g_panel.fresh && (g_panelOut.load() || g_mapBig.load()) && g_panelNow.load() && GetTickCount64() - g_panelAt.load() < 500;
     p.mapRows = g_mapBig.load() && !g_panelOut.load() ? std::min(g_mapBigRows.load(), p.h) : 0u;
     if (p.mapRows) { p.heroU = g_mapBigHeroU.load(); p.heroV = g_mapBigHeroV.load(); p.stretch = g_mapBigStretch.load(); }
-    *look = g_look;
+    *look = LookOut();
     *barPose = g_pose[kBar];
     return true;
 }

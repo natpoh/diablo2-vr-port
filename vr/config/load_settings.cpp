@@ -10,6 +10,9 @@
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: the defaults and the range of [weapon_<kind>] flat_*
 #include "../aim_tilt.h"      // [body] flat_aim_tilt: the defaults and the range of its share and its cap
 #include "../view_keys.h"
+#include "../ar_view.h"   // [mode] f5_ar_view: VR F5 for AR glasses
+#include "../f5_toolbar.h"   // [hud] f5_toolbar: F5's toolbar low in front
+#include "../f5_hud.h"       // [hud] f5_map / f5_allies: F5's map and allies' portraits off the picture's corners
 #include "../quick_blow.h"   // [gameplay] quick_blow_min_ms: its default
 #include "../render_bench.h"   // [render] bench_skip_*: the keys, one per game stage
 #include "../trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right
@@ -70,10 +73,38 @@ void LoadSettings() {
     // keyboard first person as 3 - an ini with only that is carried over. 3 and 4 were
     // the other way round until vr_mode_order=2 (2026-10-05: the body, not ready for
     // everyone, went last); an older ini's is swapped once. Nothing set: from above.
+    // [mode] f5_ar_view (vr/ar_view.h): VR's fifth view, F5 - flat F3 on FlatVR's screen for AR glasses. Off: a vr_mode=5 is read as F4.
+    if (const bool f5 = IniB(L"mode", L"f5_ar_view", false); f5 != g_set.f5ArView.exchange(f5))
+        LogF("vrcam: F5 for AR glasses %s ([mode] f5_ar_view)", f5 ? "on - VR has F1 - F5; F5 is flat F3's first person on FlatVR's screen "
+                                                                     "(mouse and keyboard, no hands, the head does not turn the camera)"
+                                                                   : "off - VR has F1 - F4");
+    // [mode] f5_head_look (vr/ar_view.h): F5's camera on the head, as F4's; the controls stay flat F3's
+    if (const bool hl = IniB(L"mode", L"f5_head_look", true); hl != g_set.f5Head.exchange(hl))
+        LogF("vrcam: F5's camera %s ([mode] f5_head_look)", hl ? "follows the head as F4's (native: the headset's own eyes; FlatVR: Head Lock on) - "
+                                                                 "the mouse, keyboard and a pad's sticks as in F3, no hands"
+                                                               : "turned by the mouse only (native: the flat picture; FlatVR: its screen put)");
+    // [hud] f5_toolbar (vr/f5_toolbar.h): F5's toolbar low in front, under the body, at its own height and distance
+    g_set.f5BarBelow.store(f5bar::Clamp(IniF(L"hud", L"f5_toolbar_below_cm", f5bar::kDefaultBelowCm), f5bar::kBelowMin, f5bar::kBelowMax));
+    g_set.f5BarAhead.store(f5bar::Clamp(IniF(L"hud", L"f5_toolbar_ahead_cm", f5bar::kDefaultAheadCm), f5bar::kAheadMin, f5bar::kAheadMax));
+    // [hud] f5_map / f5_allies (vr/f5_hud.h): F5's map in a corner, toward the middle, down and nearer; the allies' portraits right and down
+    g_set.f5MapIn.store(f5hud::Clamp(IniF(L"hud", L"f5_map_x", f5hud::kMapInDefault), f5hud::kShiftMin, f5hud::kShiftMax));
+    g_set.f5MapDown.store(f5hud::Clamp(IniF(L"hud", L"f5_map_y", f5hud::kMapDownDefault), f5hud::kShiftMin, f5hud::kShiftMax));
+    g_set.f5MapNear.store(f5hud::Clamp(IniF(L"hud", L"f5_map_near", f5hud::kMapNearDefault), f5hud::kNearMin, f5hud::kNearMax));
+    g_set.f5MapSize.store(f5hud::Clamp(IniF(L"hud", L"f5_map_size", f5hud::kMapSizeDefault), f5hud::kMapSizeMin, f5hud::kMapSizeMax));
+    g_set.f5AlliesRight.store(f5hud::Clamp(IniF(L"hud", L"f5_allies_x", f5hud::kAlliesRightDefault), f5hud::kShiftMin, f5hud::kShiftMax));
+    g_set.f5AlliesDown.store(f5hud::Clamp(IniF(L"hud", L"f5_allies_y", f5hud::kAlliesDownDefault), f5hud::kShiftMin, f5hud::kShiftMax));
+    if (const bool m = IniB(L"hud", L"f5_map", false); m != g_set.f5Map.exchange(m))
+        LogF("vrcam: F5's map %s ([hud] f5_map)", m ? "in a corner, moved toward the middle, down and nearer (f5_map_x / _y / _near)" : "as flat F3's");
+    if (const bool a = IniB(L"hud", L"f5_allies", false); a != g_set.f5Allies.exchange(a))
+        LogF("vrcam: F5's allies' portraits %s ([hud] f5_allies)", a ? "moved right and down from the top left (f5_allies_x / _y)" : "as every view's (allies_x / allies_y)");
+    if (const bool tb = IniB(L"hud", L"f5_toolbar", false); tb != g_set.f5Toolbar.exchange(tb))
+        LogF("vrcam: F5's toolbar %s ([hud] f5_toolbar)", tb ? "low in front, under the body (its own height and distance)" : "in the picture, as flat F3's");
     {
         int v = (int)IniF(L"mode", L"vr_mode", 0.0f);
         bool write = false;
-        if (v < 1 || v > 4) {
+        if (v == arview::kView) {
+            v = arview::ClampVrMode(v, g_set.f5ArView.load());   // F5 kept while on; off: F4, the ini left as it is (ticked again: F5 again)
+        } else if (v < 1 || v > 4) {
             static const int kFromOld[6] = {1, 1, 2, 4, 4, 3};
             v = kFromOld[std::clamp((int)IniF(L"mode", L"vr_view", 0.0f), 0, 5)];
             write = true;
@@ -313,7 +344,9 @@ void LoadSettings() {
     g_set.mapCorner.store(std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2));
     g_set.mapPlaceFlat.store(std::clamp((int)IniF(L"hud", L"flat_map_place", 0.0f), 0, 3));   // left / middle / right in the flat game: MapRotateFlatTick
     // (the flat game's map put left or right by flat_map_place: its box looked for in either corner, whatever map_corner says)
-    hud::SetMapCorner(g_set.platform.load() == 0 && g_set.mapPlaceFlat.load() != 0 ? 0 : g_set.mapCorner.load());
+    // (FlatRules: flat, VR F5; F5 with [hud] f5_map keeps the map in a corner: f5hud::MapPlace)
+    const int placeNow = ArView() ? f5hud::MapPlace(g_set.mapPlaceFlat.load(), g_set.flatMapCorner.load(), g_set.f5Map.load()) : g_set.mapPlaceFlat.load();
+    hud::SetMapCorner(FlatRules() && placeNow != 0 ? 0 : g_set.mapCorner.load());
     g_set.mapDirection.store(IniB(L"hud", L"map_direction", true));   // the arrow on the game's map in our camera's views: MapDirectionTick
     g_set.mapTurn.store(IniB(L"hud", L"map_rotate", false) || IniB(L"hud", L"map_compass", false));   // the head's way for the map in the hand (xr.cpp reads the keys itself)
     g_set.mapRotateFlat.store(IniB(L"hud", L"map_rotate_flat", false));
@@ -328,7 +361,7 @@ void LoadSettings() {
     g_set.flatMapZoomLevel.store(flatzoom::Clamped((int)std::lround(IniF(L"hud", L"flat_map_zoom_level", 0.0f))));   // the corner map on the screen turned with the camera: MapRotateFlatTick
     // The same while the game runs: the game's map put back in the middle (its options) is put in a corner again, by the game's own
     // setter (vr/minimap_side.h) - the start's Settings.json rewrite (MiniMapForHand) holds only when the plugin runs before the game reads it.
-    gamestate::SetMapSide(g_set.platform.load() == 1 && g_set.hudMap.load() == 1 ? std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2) : -1);
+    gamestate::SetMapSide(!FlatRules() && g_set.hudMap.load() == 1 ? std::clamp((int)IniF(L"hud", L"map_corner", 0.0f), 0, 2) : -1);
     g_set.hudClassic.store(std::clamp((int)IniF(L"hud", L"classic", 0.0f), 0, 1));
     g_set.barNear.store(std::clamp(IniF(L"hud", L"bar_near", 0.0f), -20.0f, 20.0f));
     g_set.classicTop.store(std::clamp((int)IniF(L"hud_top", L"classic", (float)g_set.hudClassic.load()), 0, 1));
@@ -448,6 +481,8 @@ void LoadSettings() {
         look.bar_width_m = std::clamp(bar(L"width", look.bar_width_m), 0.05f, 1.5f);
         look.bar_along_cm = std::clamp(bar(L"along", look.bar_along_cm), -30.0f, 40.0f);
         look.bar_split = (uint32_t)std::clamp((int)bar(L"split", 0.0f), 0, 2);   // two halves side by side, both orbs at one end
+        // [hud] f5_toolbar: F5's toolbar low in front is as wide as F4's on the body (bar_width_body, else the one key of before)
+        g_set.f5BarWidth.store(std::clamp(IniF(L"hud", L"bar_width_body", IniF(L"hud", L"bar_width", FlatVRGameHudDefaultLook().bar_width_m)), 0.05f, 1.5f));
         look.map_anchor = (uint32_t)std::clamp((int)IniF(L"hud", L"map_place", (float)look.map_anchor), 0, 4);
         look.map_orb = IniB(L"hud", L"map_orb", look.map_orb != 0) ? 1u : 0u;
         look.map_width_m = std::clamp(IniF(L"hud", L"map_width", look.map_width_m), 0.05f, 1.5f);
@@ -1183,6 +1218,9 @@ void LoadSettings() {
     g_set.attackLeanMaxDeg.store(std::clamp(IniF(L"body", L"attack_lean_max_deg", 40.0f), 0.0f, 90.0f));
     g_set.flatAimTilt.store(IniB(L"body", L"flat_aim_tilt", false));
     g_set.flatAimTiltPct.store(aimtilt::Pct(IniF(L"body", L"flat_aim_tilt_pct", aimtilt::kPctDefault)));
+    // [body] f5_aim_tilt_pct (Serg 2026-11-20: "на сколько наклонять руки от вида камеры, сейчас они слишком вниз наклоняются"): VR F5's own share - its
+    // camera's pitch is the head's too, so the arms went down with every look at the ground
+    g_set.f5AimTiltPct.store(aimtilt::Pct(IniF(L"body", L"f5_aim_tilt_pct", aimtilt::kF5PctDefault)));
     g_set.flatAimTiltMaxDeg.store(aimtilt::MaxDeg(IniF(L"body", L"flat_aim_tilt_max_deg", aimtilt::kMaxDegDefault)));
     g_set.flatAimTiltTarget.store(IniB(L"body", L"flat_aim_tilt_target", true));
     g_set.flatWeaponAdjust.store(IniB(L"body", L"flat_weapon_adjust", true));
@@ -1201,7 +1239,7 @@ void LoadSettings() {
     // ... the hero drawn from a copy of the pose as we finished it (the skinning met the game's own legs); [body] attack_lean's bend and
     // flat_weapon_adjust's arms go the same way, and flat_aim_tilt's
     headshadow::WantForPose(g_set.legsRear.load() || g_set.attackLean.load() ||
-                            ((g_set.flatWeaponAdjust.load() || g_set.flatAimTilt.load()) && g_set.platform.load() == 0));
+                            ((g_set.flatWeaponAdjust.load() || g_set.flatAimTilt.load()) && FlatRules()));
     g_set.underCamera.store(IniB(L"body", L"under_camera", true));
     g_set.leapCameraUp.store(IniB(L"body", L"leap_camera_up", false));
     {   // [body] leap_camera_up_pct: an ini with no _pct key keeps what leap_camera_up said (on = the whole arc)
@@ -1260,7 +1298,7 @@ void LoadSettings() {
     bowpitchwire::Configure(IniB(L"bow", L"pitch_aim", false), IniB(L"debug", L"bow_pitch_trace", false));   // [bow] pitch_aim: the shot to what its line meets; its log line a shot
     // [bow] arrow_flight: the shot arrow drawn by us from the bow along the shot's line (visual only); its trace, and its test switch for the arrow's effects
     // ... flat: [bow] arrow_flight_flat, the arrow drawn into the crosshair (vr/flat_arrow.h); VR: [bow] arrow_flight
-    const bool arrowOn = g_set.platform.load() == 0 ? IniB(L"bow", L"arrow_flight_flat", true) : IniB(L"bow", L"arrow_flight", false);
+    const bool arrowOn = FlatRules() ? IniB(L"bow", L"arrow_flight_flat", true) : IniB(L"bow", L"arrow_flight", false);   // (VR F5: flat's)
     arrowflightwire::Configure(arrowOn, IniB(L"debug", L"arrow_flight_trace", false), IniB(L"debug", L"arrow_flight_fx_off", false),
                                IniB(L"bow", L"arrow_flight_straight", false), IniB(L"bow", L"arrow_flight_elemental", false));
     {   // [bow] quiver: a button of the string hand, while the string is drawn, loads the next / previous bow skill (the controls: [direct] quiver_next / quiver_prev)
@@ -1447,6 +1485,15 @@ void LoadSettings() {
     animcut::Configure(animcut::Kind::Throw, IniB(L"hands", L"quick_throw", false), (int)std::lround(IniF(L"hands", L"quick_throw_frame", 1.0f)));   // the thrown missile made earlier inside the throw animation   // the arrow made earlier inside the same attack (a change of the game's timing)
     shieldsmite::Configure(IniB(L"gameplay", L"shield_smite", false));
     // the hero's skills to BodyWalk and a button or a recorded gesture per skill cast back (F4); the spare slot a skill on none is put on first
+    {   // [walk_in_place] (vr/walk_in_place.h): walk in place with the headset, BodyWalk's walk library in the game; the headset panel's Walk tab. Live, F4
+        wip::Config w;
+        w.on = IniB(L"walk_in_place", L"on", false);
+        w.sensitivity = IniF(L"walk_in_place", L"sensitivity", 50.0f);
+        w.speed = IniF(L"walk_in_place", L"speed", 50.0f);
+        w.smoothing = IniF(L"walk_in_place", L"smoothing", 50.0f);
+        w.runAt = IniF(L"walk_in_place", L"run_at", 80.0f);
+        wipwire::Configure(w);
+    }
     gengine::Configure(IniB(L"gestures", L"engine_in_game", false), (int)std::lround(IniF(L"gestures", L"engine_pen", 3.0f)));   // (before the skill link: SetEngine)
     {   // [gestures] trigger_left / trigger_right (vr/trigger_roles.h): each trigger's role - as before, glyphs, Shift, an action; F4
         wchar_t a[2][64] = {};
@@ -1559,7 +1606,7 @@ void LoadSettings() {
     {   // [hud] game_menu_settings (vr/flat_menu.h): the flat game's settings from the pause menu, the host's rules' list ([hud] host_rules_key) -
         // and our own values of the host's rules (vr/host_rules.h: what we answer a joined player's mod as the host, what our own game shows)
         flatmenu::Configure(IniB(L"hud", L"game_menu_settings", false), (int)IniF(L"hud", L"game_menu_key", 1.0f), (int)IniF(L"hud", L"host_rules_key", 1.0f),
-                            g_set.platform.load() == 0);
+                            FlatRules());   // (VR F5 too: drawn in the picture, as flat F3's)
         hostrules::Values own;
         for (int i = 0; i < hostrules::kCount; ++i) {
             wchar_t t[32] = L"";

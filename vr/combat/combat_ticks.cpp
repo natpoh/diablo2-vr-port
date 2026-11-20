@@ -42,7 +42,7 @@ bool PortalClick(bool down) {
 
 // Once a frame (VrFrame, the frame's thread): [input] portal_look_horizon and [input] portal_auto, flat only (from sajmonsoft's flat fork).
 void FlatPortalFrame() {
-    const bool flat = g_set.platform.load() == 0;
+    const bool flat = FlatRules();   // (flat, VR F5)
     const bool lookWanted = flat && g_set.portalLookHorizon.load();
     const bool autoOn = flat && g_set.portalAuto.load();
     static portalauto::Arrival arrival;
@@ -64,7 +64,7 @@ void FlatPortalFrame() {
     }
     portalauto::In in;
     in.now = GetTickCount64();
-    const int view = ViewNow();
+    const int view = ArView() ? FlatRulesView() : ViewNow();   // (VR F5: flat F3's - its ViewNow() is 5)
     in.wanted = autoOn && g_enabled.load() && (view == 2 || view == 3) && have && !gamestate::MenuOpen() && ShooterActive() && KeyMoveMode();
     auto held = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
     in.moving = in.wanted && GameFocused() && !ChatOpen() && (held('W') || held('A') || held('S') || held('D'));

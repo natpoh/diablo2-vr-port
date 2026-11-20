@@ -604,7 +604,7 @@ target_sources(d2rl-vrcam PRIVATE vr/grip_lib.cpp)      # [weight] grip_model 1:
 target_sources(d2rl-vrcam PRIVATE vr/app_thread.cpp)   # the network SDK's client calls on the game's app thread (vr/app_thread_pump.h; app_thread_pump_test)
 target_sources(d2rl-vrcam PRIVATE vr/pose_share_wire.cpp)
 # vr/vrcam.cpp in modules (docs/plan_modules.md): M1 the observers
-target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp vr/diag/rtss_watch.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/diag/flog.cpp vr/diag/budget_asks.cpp vr/diag/pair_probes.cpp vr/diag/crash.cpp vr/diag/session_logs.cpp vr/diag/crash_watch.cpp vr/diag/rtss_watch.cpp vr/diag/mod_data_watch.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/config/settings.cpp vr/config/load_settings.cpp vr/config/reconcile.cpp)   # M2 the settings, the game's Settings.json
 target_sources(d2rl-vrcam PRIVATE vr/plugin/reshade_load.cpp)   # M3 ReShade's loading
 target_sources(d2rl-vrcam PRIVATE vr/strike_stats_wire.cpp)   # [stats] strike_stats: the touch's blows per hero and weapon, Saved Games\...\D2R VR Stats\strike_stats.txt
@@ -1176,6 +1176,14 @@ target_compile_options(automap_party_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(view_keys_test cleanroom/tests/view_keys_test.cpp)
 target_include_directories(view_keys_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(view_keys_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# VR F5 for AR glasses ([mode] f5_ar_view, vr/ar_view.h): the views there are, a vr_mode=5 read, the flat game's rules, FlatVR's Head Lock, the F5 key.
+add_executable(ar_view_test cleanroom/tests/ar_view_test.cpp)
+target_include_directories(ar_view_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(ar_view_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# VR F5's toolbar low in front (vr/f5_toolbar.h, [hud] f5_toolbar): the height / distance sliders as FlatVR's bar_side_cm / bar_lift_cm.
+add_executable(f5_toolbar_test cleanroom/tests/f5_toolbar_test.cpp)
+target_include_directories(f5_toolbar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(f5_toolbar_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Why W A S D do not walk in flat F2 / F3 (vr/flat_keys_why.h): the verdict's order (the plugin's reasons before the game's) and its log line.
 add_executable(flat_keys_why_test cleanroom/tests/flat_keys_why_test.cpp)
 target_include_directories(flat_keys_why_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1196,6 +1204,20 @@ target_compile_options(stick_shape_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(lean_gait_test cleanroom/tests/lean_gait_test.cpp)
 target_include_directories(lean_gait_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(lean_gait_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# Walk in place by the headset ([walk_in_place], vr/walk_in_place.h; docs/notes/walk_in_place.md): the trims, the speed -> stick shaping against the game's run
+# threshold (walk up to the run point, run past it, every length past the dead zone), the Run key, the merge with the controller's stick, the gate; and, against
+# a stand-in library with the same interface (never shipped), the loader (vr/walk_engine_lib.cpp) on synthetic headset tracks: standing, stepping, faster
+# stepping, stopping, the trims. Run: walk_in_place_test.exe
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/walk_in_place_test.cpp")   # (not in the public tree's allow-list)
+    add_library(walk_engine_stub SHARED cleanroom/tests/walk_engine_stub.cpp)
+    target_include_directories(walk_engine_stub PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(walk_engine_stub PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    add_executable(walk_in_place_test cleanroom/tests/walk_in_place_test.cpp vr/walk_engine_lib.cpp)
+    add_dependencies(walk_in_place_test walk_engine_stub)
+    target_compile_definitions(walk_in_place_test PRIVATE WALK_ENGINE_STUB="$<TARGET_FILE:walk_engine_stub>")
+    target_include_directories(walk_in_place_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(walk_in_place_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # The right stick's up / down tilt in VR F2 ([camera] stick_pitch_f2, vr/stick_pitch.h): nothing at rest or inside the dead zone, a turn never tilts,
 # the speed and its square past the dead zone, the sign, the limits (a [camera] pitch outside them never pulled in), the ini's ranges.
 add_executable(stick_pitch_test cleanroom/tests/stick_pitch_test.cpp)
@@ -2124,6 +2146,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/data_mods_test.cpp")
     target_compile_definitions(data_mods_test PRIVATE UNICODE _UNICODE)
     target_compile_options(data_mods_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+# [mods] restore_mod_data (shared/mod_data_check.h): D2R VR's files in its .mpq found gone (D2RMM's wipe), Setup's copied back - real files in %TEMP%.
+add_executable(mod_data_check_test tools/mod_data_check_test.cpp)
+target_include_directories(mod_data_check_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_definitions(mod_data_check_test PRIVATE UNICODE _UNICODE)
+target_compile_options(mod_data_check_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/reshade_as_test.cpp")
     # Home > "Keep ReShade as dxgi.dll" / "ReShade for D2R VR only" (shared/reshade_as.h): the files they move, in the mod layout and before it, on real files in %TEMP%.
     add_executable(reshade_as_test tools/reshade_as_test.cpp)
@@ -2642,6 +2669,7 @@ target_sources(d2rl-vrcam PRIVATE vr/bow_draw_wire.cpp)   # [hands] bow_draw (wi
 target_sources(d2rl-vrcam PRIVATE vr/point_cast_wire.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/skill_link_wire.cpp)   # [gestures] skill_link: the skills to BodyWalk, its casts back (vr/skill_link.h)   # [gameplay] teleport_circle: a point skill's press held for an arc and a circle (vr/point_cast.h)
 target_sources(d2rl-vrcam PRIVATE vr/bodywalk_start.cpp)   # [openxr] gesture_overlay: the Gestures tab's Start BodyWalk (the copy D2R VR Setup put in, never a second one)
+target_sources(d2rl-vrcam PRIVATE vr/walk_engine_lib.cpp vr/walk_in_place_wire.cpp)   # [walk_in_place]: walk in place with the headset (d2r_vr_walk.dll, shared/walk_engine_abi.h)
 target_sources(d2rl-vrcam PRIVATE vr/gesture_engine_lib.cpp vr/gesture_engine_wire.cpp vr/gesture_play_wire.cpp vr/trigger_roles_wire.cpp)   # [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll, shared/gesture_engine_abi.h)
 target_sources(d2rl-vrcam PRIVATE vr/near_overlay.cpp)   # [openxr] hands_over_panels: the hands and the weapon over the skill panel (one pass of the eyes' near pixels)
 target_sources(d2rl-vrcam PRIVATE vr/bow_pitch_wire.cpp)   # [bow] pitch_aim: the scene a bow's shot is decided in (vr/bow_pitch.h), the heading the aim hooks give it
@@ -2779,6 +2807,10 @@ target_compile_options(shoulder_pads_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(map_laser_test cleanroom/tests/map_laser_test.cpp)
 target_include_directories(map_laser_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(map_laser_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# the map's five modes over the map keys (shared/map_mode.h: the headset's Map page and D2R VR Settings' "Map mode"): map_mode_test
+add_executable(map_mode_test cleanroom/tests/map_mode_test.cpp)
+target_include_directories(map_mode_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+target_compile_options(map_mode_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hud] map_stick_zoom: the right stick zooms the map the laser is on (vr/map_zoom.h, xr.cpp, gamestate.cpp): map_zoom_test
 add_executable(map_zoom_test cleanroom/tests/map_zoom_test.cpp)
 target_include_directories(map_zoom_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)

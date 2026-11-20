@@ -10,7 +10,8 @@
 //
 // The trigger is the laser's only while it points at the map (or while the map is big: then it is all the laser's), and that is decided
 // while the trigger is let go - a press that began as an attack stays the game's to its end, one that began on the map never reaches it.
-// Visual only: the game's own map in its own two modes; nothing is clicked in the game.
+// Visual only: the game's own map in its own two modes; nothing is clicked in the game. [hud] map_big_keep (below): while big the trigger
+// is the laser's only on the big map and its buttons - pointed away it attacks, and the big map stays.
 
 #include <cmath>
 
@@ -65,12 +66,16 @@ class Clicker {
 public:
     bool Big() const { return big_; }
     Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool trigger) { return Step(allowed, onMap, onBig, onButton, false, trigger); }
-    Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger) {
+    Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger) { return Step(allowed, onMap, onBig, onButton, onFront, trigger, false); }
+    // keep: [hud] map_big_keep (below, Keeps) - while big the trigger is the laser's only while it points at the big map or its buttons.
+    // pinned: [hud] map_hand_full (below, AutoOpen) - a click on the big map does not put it back (there is no small map to go back to).
+    Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger, bool keep, bool pinned = false) {
         Frame f;
         if (!allowed && big_) { big_ = false; f.event = Event::Close; }   // the map goes back to the hand when the laser cannot act
-        if (!trigger) claimed_ = allowed && (big_ || onMap);              // who has the trigger: decided while it is let go
+        const bool aimed = big_ ? (!keep || onBig || onButton || onFront) : onMap;   // where the laser takes the trigger
+        if (!trigger) claimed_ = allowed && aimed;                        // who has the trigger: decided while it is let go
         f.claim = claimed_;
-        f.beam = allowed && (big_ || onMap);
+        f.beam = allowed && aimed;
         if (allowed && claimed_ && trigger && !was_ && f.event == Event::None) {   // a fresh press, the laser's
             if (!big_) {
                 if (onMap) { big_ = true; f.event = Event::Open; }
@@ -78,13 +83,18 @@ public:
                 f.event = Event::Rotate;
             } else if (onFront) {
                 f.event = Event::Front;
-            } else {
-                big_ = false; f.event = Event::Close;
-                (void)onBig;   // (on the big map or away from it: back to the hand)
+            } else if (!pinned) {
+                big_ = false; f.event = Event::Close;   // (on the big map - or, not keep, away from it: back to the hand)
             }
         }
         was_ = trigger;
         return f;
+    }
+    // [hud] map_hand_full: opened without a click (AutoOpen said so). False if it is big already.
+    bool Open() {
+        if (big_) return false;
+        big_ = true;
+        return true;
     }
     void Reset() { *this = Clicker{}; }
 };
@@ -184,8 +194,33 @@ inline V3 ButtonAbove(V3 at, V3 up, float panelH, float bh, float gap = 0.02f) {
 // and the big map in front; the click on the orb opens it in front, no button to the hand is hung (and none counts), a click on the big
 // map puts it back in the orb (as before: Clicker's Close - anywhere but its Rotate button). 0: the three steps as before.
 // The big map held on the hand this frame: map_big_on_hand ticked, not two sizes, and its button has not brought it to the front.
-inline bool BigOnHand(bool bigOnHandKey, bool twoSizes, bool frontPressed) { return bigOnHandKey && !twoSizes && !frontPressed; }
-// The button that takes the big map to the front and back on the hand is hung (and its press counts).
-inline bool FrontButton(bool bigOnHandKey, bool twoSizes) { return bigOnHandKey && !twoSizes; }
+// [hud] map_hand_full (`full`, below): always on the hand, whatever the other keys say.
+inline bool BigOnHand(bool bigOnHandKey, bool twoSizes, bool frontPressed, bool full = false) { return full || (bigOnHandKey && !twoSizes && !frontPressed); }
+// The button that takes the big map to the front and back on the hand is hung (and its press counts). Not with map_hand_full: it stays on the hand.
+inline bool FrontButton(bool bigOnHandKey, bool twoSizes, bool full = false) { return !full && bigOnHandKey && !twoSizes; }
+
+// -- [hud] map_big_keep: the big map stays up while you fight (Urzhya / Serg, 2026-11-17) ------------------------------------------------
+// "I want to see the large map ... it disappears when I attack." The right trigger is the attack (F4's layout: right_trigger =
+// action:attack), and while the map was big the trigger was all the laser's: a press anywhere but its Rotate button put the map back in
+// the hand - the attack closed it, and never reached the game. Kept (Clicker::Step's `keep`): while big the trigger is the laser's only
+// while the laser points at the big map or one of its buttons (decided while let go, as on the hand's map); pointed anywhere else it is
+// the game's - attack, cast, shoot - and the big map stays up, in front or on the left hand ([hud] map_big_on_hand). It goes back to the
+// hand only by a click ON it (or as before: a menu, another view, the game's own map closed). The beam shows only while it points at it.
+// A moment's loss of the right hand's tracking does not close it either (NeedsAim). 0: as before. The map is only drawn and kept: the
+// attack, the skill and the target are the game's own.
+inline bool Keeps(bool keepKey, bool big) { return keepKey && big; }
+// The right hand's aim must be tracked for the laser to act (else the big map goes back to the hand): not while a kept big map is up.
+inline bool NeedsAim(bool keepKey, bool big) { return !Keeps(keepKey, big); }
+
+// -- [hud] map_hand_full: the whole map on the left hand all the time (Serg, 2026-11-18; shared/map_mode.h mode 3) ----------------------
+// The big map above (the game's whole-screen automap, mode 0 by its own setter, the interface's layer above the toolbar's strip) held on the
+// left hand as map_big_on_hand holds it, opened by itself - no small map, nothing to click. Kept as map_big_keep keeps it (the right trigger
+// the laser's only on it: its Rotate button, the zoom), and a click on it does not put it back (Clicker's `pinned`). What takes it down
+// still does (a menu, the settings panel, another view, the game's map closed by its key); it comes back by itself once the small map is in
+// the hand again and has been for `waitMs` - not at once, so a menu's frame or two never flickers it. Not while the game's map is closed
+// (its key: the player's choice). The interface above the toolbar's strip is on the hand then, not in the world (labels, the game's plates).
+inline bool AutoOpen(bool fullKey, bool big, bool canOpen, bool gameMapOpen, double msSinceDown, double waitMs = 500.0) {
+    return fullKey && !big && canOpen && gameMapOpen && msSinceDown >= waitMs;
+}
 
 }  // namespace maplaser

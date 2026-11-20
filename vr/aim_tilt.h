@@ -28,6 +28,7 @@ namespace aimtilt {
 using attacklean::V3;
 
 inline constexpr float kPctDefault = 100.0f;    // the arms follow the look all the way (the weapon stays where it is on the screen)
+inline constexpr float kF5PctDefault = 60.0f;   // VR F5 ([body] f5_aim_tilt_pct): the head looks down too - the arms follow 60 % of it (Serg 2026-11-20: raised)
 inline constexpr float kMaxDegDefault = 60.0f;  // past this the arms would come up into the camera (down) or out of the picture (up)
 inline constexpr float kFreshMs = 250.0f;       // a body met by the crosshair this long ago still counts as under it
 

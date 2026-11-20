@@ -698,9 +698,13 @@ def main():
     check(not (game / "d2rloader/plugins").exists(), "...none of them in the global d2rloader\\plugins")
     check((game / "D2R_VR_Settings.exe").read_bytes().startswith(b"MZ SETTINGS v1"), "D2R VR Settings is beside D2R.exe")
     check(not (game / "mods/D2R-PCVR").exists(), "no other mod's folder is made")
+    sky_rel = "data/hd/env/texture/d2r_vr/sky/d2r_vr_skydome_test.dds"
+    check((game / MOD / "D2R-VR.mpq" / sky_rel).exists() and (game / MOD / "shipped_data" / sky_rel).read_bytes() == (game / MOD / "D2R-VR.mpq" / sky_rel).read_bytes(),
+          "the sky dome's act pictures are in the mod's .mpq AND, byte for byte, beside it in shipped_data (D2RMM's wipe of the .mpq: Settings puts them back, shared/mod_data_check.h)")
     r = subprocess.run([sys.executable, "-I", str(repo / "tools/make_vrmod_manifest.py"), "--verify", str(game / MOD)], capture_output=True, text=True)
     check(r.returncode == 0 and "files listed in x-mod-files are as shipped" in r.stdout, "every file the manifest's x-mod-files lists is there with the shipped hash (make_vrmod_manifest.py --verify)")
     mx = json.loads(rd(game / MOD / "vrmod-manifest.json"))
+    check("shipped_data/" + sky_rel in {e["path"] for e in mx["x-mod-files"]}, "...the kept copy in shipped_data among them")
     listed = {e["path"]: e for e in mx["x-mod-files"]}
     installed = {k[len(MOD) + 1:] for k in snap(game) if k.startswith(MOD + "/")}
     unlisted = sorted(installed - set(listed) - {"vrmod-manifest.json", "launcher_icon.png", "D2R-VR.mpq/modinfo.json"})

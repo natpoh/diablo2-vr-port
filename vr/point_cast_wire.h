@@ -29,6 +29,12 @@ bool IsPoint(int skill);
 // the controller tables as double swing reads them (all but RT and LT + RT).
 void UiRead();
 bool WantsSlots();
+// The UI thread, right after the game's setter applied an assignment (wheel_game.cpp: the skill panel's editor, the skill link's spare slot, a glyph's
+// select): the slots read again from the snapshot just taken - a press in the next 200 ms names and judges the slot's new skill (pointcast::SlotsOf).
+void SlotsChanged();
+// The skill link (vr/skill_link_wire.cpp, its timer thread) is about to pulse this slot (wheel numbering) for `pulseMs`: that press is a cast of its own
+// and goes to the game untouched - no hold, no arc, no second press of ours (pointcast::Skips). Nothing when off.
+void SkipPress(int slot, uint32_t pulseMs);
 
 // What vrcam knows at the game's pad poll.
 struct PollIn {

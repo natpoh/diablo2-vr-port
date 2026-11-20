@@ -161,8 +161,34 @@ int main() {
         f.flatVrRunning = false;
         CHECK(Idle(Decide(f)));
     }
+    {   // walk in place (Serg 2026-11-19: "бодивалк при этом не запусткается", "так же как мы сделали с маппингом"): native with Controls without BodyWalk
+        // never starts BodyWalk for it - the plugin walks by itself, the log says so; without Controls without BodyWalk, BodyWalk is the controls and is
+        // started as before; FlatVR (BodyWalk's) starts it as ever
+        Facts f = Native(When::GameStart);
+        f.walkInPlace = true;
+        f.bodyWalkRunning = 0;
+        f.flatVrRunning = false;
+        f.linkUp = f.linkStopsFlatVr = false;
+        Plan p = Decide(f);
+        CHECK(Idle(p) && p.why == Why::NativeWalkInPlace);
+        f.bodyWalkFound = false;
+        CHECK(Idle(Decide(f)) && Decide(f).why == Why::NativeWalkInPlace);
+        f.bodyWalkFound = true;
+        f.when = When::ModeSwitch;
+        CHECK(Idle(Decide(f)));
+        f = Native(When::GameStart);
+        f.walkInPlace = true;
+        f.directInput = false;
+        f.bodyWalkRunning = 0;
+        f.flatVrRunning = false;
+        f.linkUp = f.linkStopsFlatVr = false;
+        CHECK(Decide(f).startBodyWalk && Decide(f).why == Why::NativeStartBodyWalk);
+        f = FlatVr(When::GameStart);
+        f.walkInPlace = true;
+        CHECK(Decide(f).startBodyWalk);
+    }
     {   // every combination: the rules that always hold
-        for (int bits = 0; bits < (1 << 12); ++bits) {
+        for (int bits = 0; bits < (1 << 13); ++bits) {
             Facts f;
             f.when = bits & 1 ? When::GameStart : When::ModeSwitch;
             f.vr = (bits & 2) != 0;
@@ -176,6 +202,7 @@ int main() {
             f.linkStopsFlatVr = f.linkUp && (bits & 512) != 0;
             f.flatVrRunning = (bits & 1024) != 0;
             f.flatVrAppRunning = bits & 2048 ? 1 : 0;
+            f.walkInPlace = (bits & 4096) != 0;
             const Plan p = Decide(f);
             CHECK(!(p.startFlatVr && p.stopFlatVr));
             CHECK(!(p.startBodyWalk && f.bodyWalkRunning));   // never a second BodyWalk
@@ -187,6 +214,8 @@ int main() {
             CHECK(!p.stopFlatVr || f.linkStopsFlatVr);                         // asked only of a BodyWalk that takes it
             CHECK(!p.closeFlatVrApp || f.flatVrAppRunning);
             CHECK(!(f.native && f.directInput && p.startBodyWalk));            // native with its own controls starts no BodyWalk
+            CHECK(!(f.native && f.directInput && f.walkInPlace && p.startBodyWalk));   // ... nor for walking in place (Serg 2026-11-19)
+            CHECK(p.why != Why::NativeWalkInPlace || (f.walkInPlace && f.directInput && f.native && !p.startBodyWalk));
             CHECK(f.native || f.when != When::ModeSwitch || f.startOn || Idle(p));
             CHECK(std::wcslen(Text(p.why)) > 0);
         }

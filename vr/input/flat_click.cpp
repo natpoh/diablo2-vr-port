@@ -288,7 +288,7 @@ uintptr_t VrHandTarget(vrbody::Ask ask) {
 // before the hero's floor as drawn. One pick every 30 ms at most (the click and its lookup ask in the same moment).
 uintptr_t FlatClickTarget(uintptr_t game) {
     vrbody::FlatAsk a;
-    a.flat = g_set.platform.load() == 0;
+    a.flat = FlatRules();
     a.key = g_set.flatBodyTarget.load() && g_set.flatBodyPick.load();
     a.on = g_enabled.load() && g_inWorld.load();
     a.menu = a.flat && a.key && gamestate::MenuOpen();
@@ -514,8 +514,8 @@ std::atomic<float> g_itemAimX{0.0f}, g_itemAimZ{0.0f};
 std::atomic<bool> g_itemAimHover{false}, g_itemAimGone{false};   // the game's own hover came to it; it left the floor
 
 bool FlatItemsWanted() {
-    if (g_set.platform.load() != 0 || !g_enabled.load() || !(g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load())) return false;
-    const int view = ViewNow();
+    if (!FlatRules() || !g_enabled.load() || !(g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load())) return false;
+    const int view = FlatRulesView();   // (flat_view; VR F5: 3)
     return (view == 2 || view == 3) && ShooterActive() && KeyMoveMode();
 }
 bool AltHeld() { return (GetAsyncKeyState(VK_MENU) & 0x8000) != 0; }
@@ -585,10 +585,10 @@ FlatItemSeen FlatItemSeenNow() {
     ReleaseSRWLockShared(&g_flatItemSeenLock);
     return s;
 }
-bool FlatItemLitWanted() { return g_set.platform.load() == 0 && (g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load()); }
+bool FlatItemLitWanted() { return FlatRules() && (g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load()); }
 
 uintptr_t FlatItemClickAnswer(uintptr_t game) {
-    if (g_set.platform.load() != 0 || !g_enabled.load()) return 0;
+    if (!FlatRules() || !g_enabled.load()) return 0;
     if (const uint32_t aim = g_itemAimId.load(std::memory_order_acquire)) return meleetouch::GroundItemUnit(aim);   // the key's press (taken since: the game's own)
     if (!g_set.flatItemHitbox.load() || !FlatItemsWanted()) return 0;
     const FlatItemSeen s = FlatItemSeenNow();
@@ -609,8 +609,8 @@ uintptr_t FlatItemClickAnswer(uintptr_t game) {
 
 // The key (vr/hud/window.cpp, the window's thread): ours in flat F2 / F3 mouse look with the box on, never while the chat line is open.
 bool FlatPickupKeyWanted(unsigned vk) {
-    if (g_set.platform.load() != 0 || !g_set.flatPickupKeyOn.load() || vk != (unsigned)g_set.flatPickupKey.load() || ChatOpen()) return false;
-    const int view = ViewNow();
+    if (!FlatRules() || !g_set.flatPickupKeyOn.load() || vk != (unsigned)g_set.flatPickupKey.load() || ChatOpen()) return false;
+    const int view = FlatRulesView();   // (flat_view; VR F5: 3)
     return (view == 2 || view == 3) && ShooterActive() && KeyMoveMode();
 }
 bool FlatPickupKeyDown(unsigned vk, bool repeat) {
@@ -624,7 +624,7 @@ bool FlatPickupKeyDown(unsigned vk, bool repeat) {
 void FlatPickupFrame() {
     namespace fp = flatpickup;
     static fp::Machine m;
-    const bool on = g_set.platform.load() == 0 && g_set.flatPickupKeyOn.load();
+    const bool on = FlatRules() && g_set.flatPickupKeyOn.load();
     if (!on && m.stage() == fp::Machine::Stage::Idle) {
         g_pickupKeyAt.store(0);
         return;
@@ -720,7 +720,7 @@ constexpr float kSkyCells = 20.0f;
 
 bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool gameOk = OrigMouseGround(mgr, x, y, pixel);
-    if (g_portalForce.load(std::memory_order_acquire) && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
+    if (g_portalForce.load(std::memory_order_acquire) && x && y && FlatRules() && g_enabled.load()) {
         if (PortalUnderPointer()) g_portalHover.store(true, std::memory_order_release);
         *x = g_portalForceX.load() / flatground::kRenderPerCell;
         *y = g_portalForceZ.load() / flatground::kRenderPerCell;
@@ -728,7 +728,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     }
     // [input] flat_pickup_key_on: the key's press under way - the game's mouse point is the item's place (the middle of its cell), as portal_auto's;
     // the game's own hover found there said, and whether the item is still on the floor
-    if (const uint32_t aim = g_itemAimId.load(std::memory_order_acquire); aim && x && y && g_set.platform.load() == 0 && g_enabled.load()) {
+    if (const uint32_t aim = g_itemAimId.load(std::memory_order_acquire); aim && x && y && FlatRules() && g_enabled.load()) {
         uint32_t type = 0, id = 0;
         if (UnitTypeId(GameHoverNow(), &type, &id) && type == 4 && id == aim) g_itemAimHover.store(true);
         if (!meleetouch::GroundItemUnit(aim)) g_itemAimGone.store(true);
@@ -736,7 +736,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
         *y = g_itemAimZ.load() / flatground::kRenderPerCell;
         return true;
     }
-    if (g_set.platform.load() == 1) return VrMouseGround(mgr, x, y, pixel, gameOk);   // [input] vr_body_pick
+    if (!FlatRules()) return VrMouseGround(mgr, x, y, pixel, gameOk);   // [input] vr_body_pick (VR F5: flat F3's aim, below)
     // (unticked, [debug] flat_pick still works it out for its lines; only the tick hands it to the game)
     const bool apply = g_set.flatAimGround.load();
     const bool bodyPick = g_set.flatBodyPick.load() && !gamestate::MenuOpen();
@@ -745,7 +745,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
     const bool shotAim = g_set.flatShotAtCrosshair.load() && KeyMoveMode() && ShooterActive() && !gamestate::MenuOpen() && RangedInHand();
     const bool keep = arrow || shotAim;
     const bool items = FlatItemsWanted();   // [input] flat_pickup_key_on / flat_item_hitbox: the items the crosshair and the key would take
-    if (!x || !y || !mgr || !(apply || bodyPick || keep || items || g_set.flatPickLog.load()) || g_set.platform.load() != 0 || !g_enabled.load()) return gameOk;
+    if (!x || !y || !mgr || !(apply || bodyPick || keep || items || g_set.flatPickLog.load()) || !FlatRules() || !g_enabled.load()) return gameOk;
     uint64_t filter = 0;
     float floor[3] = {NAN, NAN, NAN};
     const bool floorOk = FloorFilter(&filter) && MouseRayHit(mgr, &filter, pixel, 0, floor);
@@ -836,7 +836,7 @@ bool HookMouseGround(void* mgr, float* x, float* y, uint64_t pixel) {
 void InstallMouseGroundHook() {
     static int misses = 0;
     // flat: [input] flat_aim_ground; VR: [input] vr_body_pick, once it is ticked
-    if (!g_ctx || g_mouseGround.load() != 0 || g_set.platform.load() > 1 || (g_set.platform.load() == 1 && !g_set.vrBodyPick.load())) return;
+    if (!g_ctx || g_mouseGround.load() != 0 || g_set.platform.load() > 1 || (!FlatRules() && !g_set.vrBodyPick.load())) return;   // (VR F5: flat's)
     if (!Matches(RVA_MOUSE_GROUND, kSigMouseGround, sizeof kSigMouseGround) || !Matches(RVA_RAYCAST_MOUSE, kSigRaycastMouse, sizeof kSigRaycastMouse) ||
         !Matches(RVA_SCENE, kSigScene, sizeof kSigScene)) {
         if (g_inWorld.load() && ++misses >= 20) {
@@ -848,7 +848,7 @@ void InstallMouseGroundHook() {
     }
     const bool in = d2rsig::Hook(RVA_MOUSE_GROUND, kSigMouseGround, sizeof kSigMouseGround, (void*)&HookMouseGround, (void**)&OrigMouseGround);
     g_mouseGround.store(in ? 1 : 2);
-    if (g_set.platform.load() == 1)
+    if (!FlatRules())
         Log(in ? "vrcam: VR: mouse ground hook in - the pointer, the crosshair and the hand's shift + click aim pick a monster, an NPC or an object by its body ([input] vr_body_pick)"
                : "vrcam: VR: mouse ground hook FAILED - units are picked by their feet, as the game has it");
     else
@@ -911,13 +911,13 @@ void HookMeshMaterials(void* rm, const char* model, void* file, void* mesh, uint
     static int told = 0;
     if (told++ < 6) LogF("vrcam: the town portal's oval %s (%u triangles) %s (%s)", path, e.own.tri,
                          g_ovalHidden.load() ? "not drawn" : "seen, drawn while it is not wanted hidden",
-                         g_set.platform.load() == 0 ? "[input] flat_portal_no_oval" : "[render] portal_no_oval");
+                         FlatRules() ? "[input] flat_portal_no_oval" : "[render] portal_no_oval");
 }
 
 // The update thread: the hook in (once this platform's tick is on), and the remembered ovals hidden or shown as the view asks - F2 and up
 // with the tick hide them (flat F2 / F3, VR F2 / F3 / F4); F1, the tick off show them.
 void PortalOvalTick() {
-    const bool wanted = g_set.platform.load() == 0 ? g_set.flatPortalNoOval.load() : g_set.portalNoOval.load();
+    const bool wanted = FlatRules() ? g_set.flatPortalNoOval.load() : g_set.portalNoOval.load();
     if (g_ctx && wanted && g_meshMaterials.load() == 0) {
         static int misses = 0;
         if (Matches(RVA_MESH_MATERIALS, kSigMeshMaterials, sizeof kSigMeshMaterials)) {
@@ -1064,7 +1064,7 @@ bool FlatReleaseAim(const throwborn::AimAsk& a, int* tx, int* ty) {
     if (!g_enabled.load() || !g_set.shotAtRelease.load()) return false;   // [gameplay] shot_at_release (who hosts decides: the create is the host's)
     uint32_t hero = 0;
     if (!GestureHeroId(&hero) || hero != a.ownerId) return RemoteReleaseAim(a, tx, ty);   // another player's, in a game we host: by his line (vr/shot_share.h)
-    if (g_set.platform.load() != 0 || !shotrelease::Turns(a.cls)) return false;
+    if (!FlatRules() || !shotrelease::Turns(a.cls)) return false;
     const ULONGLONG at = g_pressAt.load(), now = GetTickCount64();
     if (!at || now - at > kPressToCreateMs || !KeyMoveMode() || !ShooterActive() || gamestate::MenuOpen()) return false;   // no flat shot click of ours lately
     flatarrow::Line line;
@@ -1155,7 +1155,7 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     // [input] flat_shot_at_crosshair: a hostile monster hovered with a ranged weapon in hand - the click as on bare ground, Stand Still, the hover hidden from it
     bool noHover = false;
     // (not on the click of an item of ours: [input] flat_pickup_key_on / flat_item_hitbox answer its lookup with the item - it stays a pick-up)
-    if (unit && mouseType && g_set.platform.load() == 0 && g_set.flatShotAtCrosshair.load() && g_enabled.load() &&
+    if (unit && mouseType && FlatRules() && g_set.flatShotAtCrosshair.load() && g_enabled.load() &&
         !(ClickLookupHooked() && FlatItemClickAnswer(0))) {
         flatshot::ClickIn in;
         in.flat = true;
@@ -1209,7 +1209,7 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
     }
     if (g_set.flatPickLog.load() && unit && (type == 0 || type == 3) && KeyMoveMode() && ShooterActive()) FlatPickClick(unit, type, x, y, flags);
     // a ranged weapon's shot click in flat mouse look (nothing hovered, or a hostile monster's hover hidden from it): its line from what the crosshair met
-    const bool rangedShot = unit && mouseType && g_set.platform.load() == 0 && g_enabled.load() && KeyMoveMode() && ShooterActive() && !g_portalForce.load() &&
+    const bool rangedShot = unit && mouseType && FlatRules() && g_enabled.load() && KeyMoveMode() && ShooterActive() && !g_portalForce.load() &&
                             !gamestate::MenuOpen() && RangedInHand() && (noHover || bare());
     flatarrow::Line line;
     flatarrow::LineIn lineIn;
@@ -1280,7 +1280,7 @@ uint64_t HookMapClick(void* unit, int type, int x, int y, uint64_t flags) {
 void InstallMapClickHook() {
     static int misses = 0;
     // Flat with flat_keyboard_move, or VR with vr_keys_walk (F2's mouse look shoots the same way).
-    const bool flat = g_set.platform.load() == 0;
+    const bool flat = FlatRules();
     // ... or VR with [gameplay] attack_in_place (F4: a click on bare ground never walks; the hook asks the view where it decides)
     const bool forShooter = flat ? g_set.flatKeyMove.load() : g_set.vrKeyWalk.load();
     const bool forF4 = !flat && (standstill::Wanted() || straywalk::WalkWanted() || shottrace::Wanted());

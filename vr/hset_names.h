@@ -12,6 +12,7 @@
 #include "render_type.h"   // the Video page's Render type (shared/render_type.h)
 #include "toolbar_type.h"
 #include "ui_text.h"
+#include "map_mode.h"   // the Map page's Map mode (shared/map_mode.h)
 
 namespace hset {
 
@@ -160,10 +161,37 @@ inline const char* DistanceName(int stop) {
 }
 static_assert(drawdistance::kReachCount == 7 && drawdistance::kReachDefault == 1, "DistanceName names each stop (2: the default)");
 
+// The Map page's "Map mode" (shared/map_mode.h): the map keys as the draft has them, the mode they match (-1 Custom), its name, and the keys
+// a mode writes back into the draft.
+inline mapmode::Keys MapModeKeys(const Values& v) {
+    auto i = [&](int key) { return (int)std::lround(v[key]); };
+    mapmode::Keys k;
+    k.map = i(kKeyMapOn); k.orb = i(kKeyMapOrb); k.place = i(kKeyMapPlace); k.clickBig = i(kKeyMapClickBig); k.twoSizes = i(kKeyMapTwoSizes);
+    k.onHand = i(kKeyMapBigOnHand); k.keep = i(kKeyMapBigKeep); k.handFull = i(kKeyMapHandFull);
+    return k;
+}
+inline void PutMapModeKeys(const mapmode::Keys& k, Values* v) {
+    (*v)[kKeyMapOn] = (float)k.map; (*v)[kKeyMapOrb] = (float)k.orb; (*v)[kKeyMapPlace] = (float)k.place; (*v)[kKeyMapClickBig] = (float)k.clickBig;
+    (*v)[kKeyMapTwoSizes] = (float)k.twoSizes; (*v)[kKeyMapBigOnHand] = (float)k.onHand; (*v)[kKeyMapBigKeep] = (float)k.keep; (*v)[kKeyMapHandFull] = (float)k.handFull;
+}
+inline int MapModeOf(const Values& v) { return mapmode::FromKeys(MapModeKeys(v)); }
+inline const char* MapModeName(int mode) {
+    switch (mode) {
+        case mapmode::kOrb: return uitext::Tr("vr.mapmode.orb", "Orb in the hand");
+        case mapmode::kFlat: return uitext::Tr("vr.mapmode.flat", "Flat map in the hand");
+        case mapmode::kBigOnHand: return uitext::Tr("vr.mapmode.big", "Big map on the left hand");
+        case mapmode::kWholeOnHand: return uitext::Tr("vr.mapmode.whole", "Whole map on the left hand");
+        case mapmode::kInPicture: return uitext::Tr("vr.mapmode.picture", "Map in the picture");
+        default: return uitext::Tr("vr.preset.custom", "Custom");
+    }
+}
+static_assert(mapmode::kCount == 5, "MapModeName names each mode");
+
 // The name to show for a row's value, nullptr for a row that shows a number.
 inline const char* ValueName(const Values& v, int key) {
     if (key == kKeyPreset) return PresetName(PresetOf(v));
     if (key == kKeyDistance) return DistanceName(DistanceOf(v));
+    if (key == kKeyMapMode) return MapModeName(MapModeOf(v));
     if (key == kKeyPairPerTick) return RenderTypeName(rendertype::FromKeys(RenderTypeKeys(v)));
     if (key == kKeyFoveatedStrength) return FoveatedStrengthName((int)std::lround(v[key]));
     if (key == kKeyFoveatedPasses) return FoveatedPassesName((int)std::lround(v[key]));

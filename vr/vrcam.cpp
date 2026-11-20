@@ -257,6 +257,7 @@ std::atomic<bool> g_topEyeOk{false};
 // ... and the projection it is drawn with (VrProj): M[0], M[5], the eyes apart and zero parallax, world units.
 std::atomic<float> g_projSx{0.0f}, g_projSy{0.0f}, g_stereoIpd{0.0f}, g_stereoConv{0.0f};
 std::atomic<float> g_projOffX{0.0f}, g_projOffY{0.0f};
+std::atomic<bool> g_projOffNative{false};
 // The off-axis shift of the left eye's projection (M[8]; the right eye's is minus it), 0 without:
 // the replayed right eye has only the left pass's projection, moved by twice this.
 std::atomic<float> g_projShift{0.0f};
@@ -545,7 +546,7 @@ bool TopPersp();
 bool GameDrawnView() {
     if (viewgate::F4()) return true;
     if (TableFull()) return true;   // VR F3 with [table] full_width: the diorama with the game's dome and fog round it (no ceiling - not first person)
-    return g_set.gameDrawnFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
+    return g_set.gameDrawnFlat.load() && FlatRules() && g_enabled.load() && FlatRulesView() != 1 && !TopPersp();   // (flat F2 / F3, VR F5)
 }
 // The game's fog's own (Serg: "у каждого свои ползунки и свой блок"): the flat game by [fog] game_fog_flat - missing: game_drawn_flat
 bool GameFogDrawnView() {
@@ -555,7 +556,7 @@ bool GameFogDrawnView() {
     // in F2 and the fog in F4. Not listed here, the game's pass got none of ours there, and its own plane fogs are set to nothing in every area
     // ([render] game_depth_fog=0): nothing fogged the world, nor did the step before the effects run
     if (g_set.gameFogVrThirdPerson.load() && g_set.platform.load() == 1 && viewgate::Number() == 2 && g_enabled.load() && !TopPersp()) return true;
-    return g_set.gameFogFlat.load() && g_set.platform.load() == 0 && g_enabled.load() && g_set.flatView.load() != 1 && !TopPersp();
+    return g_set.gameFogFlat.load() && FlatRules() && g_enabled.load() && FlatRulesView() != 1 && !TopPersp();   // (flat F2 / F3, VR F5)
 }
 
 // FlatVR's 3D source as [stereo] has it - real stereo: the game's pair; else the
@@ -1093,7 +1094,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.219.2";
+static const char g_info_version[] = "0.221.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1234,6 +1235,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     crash::Install(g_info_version);   // first: a start that dies leaves its last step in d2r_vr_start.txt
     sessionlogs::Start();   // [support] session_logs: this game's logs into logs\sessions\<its start>, kept 30 days
     crashwatch::Start(g_info_version);   // [support] crash_reports: D2R VR Crash Reporter watches this game from outside (off: nothing, as before)
+    moddatawatch::Start();   // [mods] restore_mod_data: D2R VR's files in its .mpq gone (D2RMM's wipe, barti4033 0.218.3) - said; on: Settings makes them again
     rtsswatch::Start();   // [support] rtss_warning: RivaTuner Statistics Server's hook found with the game - one log line with the advice (only reads)
     CheckGameVersion();   // the game data older than 3.x (a broken install): said loudly before the game dies on it (shared/game_version.h)
     gpufault::Init(&Log, g_iniPath);   // the D3D12 device lost (2026-10-17: three games in a day): DRED has to be asked for before the game makes its device, so here
@@ -1269,8 +1271,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     attackpath::SetLogger(&Log);
     attackpath::SetForwardFn([](float* sx, float* sy) { *sx = 0.0f; *sy = 1.0f; return ViewStickToGame(sx, sy); });   // [gameplay] flat_attack_path: "ahead" in our view, on the game's screen
     // [gameplay] flat_move_while_attacking's views: the monitor's F2 / F3 (our camera), and VR F1 / F2 / F3 (the left stick's walk, walk_flat_views)
-    moveattack::SetFlatCameraFn([] { return (g_set.platform.load() == 0 && g_enabled.load()) || FlatViews(); });
-    moveattack::SetFlatViewFn([] { return g_set.platform.load() == 0 ? (int)g_set.flatView.load() : 0; });   // the per-attack log's view
+    moveattack::SetFlatCameraFn([] { return (FlatRules() && g_enabled.load()) || FlatViews(); });   // (VR F5: flat F3's)
+    moveattack::SetFlatViewFn([] { return FlatRulesView(); });   // (flat_view; VR F5: 3)   // the per-attack log's view
     straywalk::SetLogger(&Log);
     shottrace::SetLogger(&Log);
     hitoutcome::SetLogger(&Log);
@@ -1464,10 +1466,18 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     pointwire::Init(ctx);   // [gameplay] teleport_circle
     skilllinkwire::Init(ctx);   // [gestures] skill_link: the skills to BodyWalk, its casts back
     gengine::Init(ctx);         // [gestures] engine_in_game: the gesture engine in the game
+    {   // [walk_in_place]: walk in place with the headset (BodyWalk's walk library in the game); listens to direct_input's frames, F4 only
+        wipwire::Readers r;
+        r.inWorld = +[]() { return g_inWorld.load(); };
+        r.chatOpen = &ChatOpen;
+        r.runThreshold = &GameRunThreshold;
+        r.runSwitchOn = &GameRunSwitchOn;
+        wipwire::Init(ctx, r);
+    }
     arrowflightwire::Init(ctx);   // [bow] arrow_flight: on the potion hide's two renderer hooks
     arrowflightwire::SetHeroIdSource(&GestureHeroId);   // ... whose arrows are the hero's
     // ... where: VR F4, and the flat 3D views ([bow] arrow_flight_flat, vr/flat_arrow.h: our camera on - first or third person, not the game's F1)
-    arrowflightwire::SetViewGate(+[]() { return viewgate::F4() || (g_set.platform.load() == 0 && g_enabled.load() && g_inWorld.load() && !Overhead()); });
+    arrowflightwire::SetViewGate(+[]() { return viewgate::F4() || (FlatRules() && g_enabled.load() && g_inWorld.load() && !Overhead()); });   // (VR F5: flat's)
     bowquiverwire::Init(ctx, &AimHand);            // [bow] quiver rides on the draw's frames (after its listener)
     bowdrawwire::SetReleaseHook(&bowquiverwire::OnRelease);   // [bow] quiver: the quiver decides, before the release's button goes down, whether it is the armed skill or the plain arrow
     // [bow] quiver_orbs: the free hand at an orb does not take the string; a bow put away takes none; [bow] swap_by_grab: the free hand at the bow's grip takes the bow, not the string
@@ -1502,6 +1512,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     crashwatch::Quiet();   // [support] crash_reports: this is a clean end (the watcher reads it after the game)
     animcut::Shutdown();   // [bow] quick_release, [hands] quick_throw: a moved action-frame flag goes back before the plugin does
     gengine::Shutdown();      // [gestures] engine_in_game: its listener out, the engine closed
+    wipwire::Shutdown();      // [walk_in_place]: its listener out, the Run key let go, the walk library closed
     skillwheel::Shutdown();   // [openxr] skill_wheel: its listener out, its threads joined
     handvitals::Shutdown();   // [hud] hand_vitals: its listener out, its painter joined
     thrustdebugwire::Shutdown();   // [debug] thrust_debug: its listener out, its painter joined
@@ -1513,6 +1524,7 @@ D2RL_PLUGIN_EXPORT void D2RLoaderUnloadPlugin() noexcept {
     d2rcam::SetEnabled(false);
     if (g_gameWnd && g_gameWndProc) SetWindowLongPtrW(g_gameWnd, GWLP_WNDPROC, (LONG_PTR)g_gameWndProc);
     if (g_updateThreadId) PostThreadMessageW(g_updateThreadId, WM_QUIT, 0, 0);
+    moddatawatch::Stop();   // [mods] restore_mod_data: its thread (Settings, if still busy, finishes on its own)
     rtsswatch::Stop();     // [support] rtss_warning: its thread (it ends by itself after the first minute), before the log goes)
     crash::Uninstall();
     strikestatswire::Stop();   // [stats] strike_stats: the last numbers written, the thread joined

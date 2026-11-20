@@ -16,8 +16,14 @@ int ViewNow();            // [mode]: the view the Home page, F1..F4 or F12 picke
 int ViewCount();
 bool FullBody();          // VR first person with the body on the player's (F4)
 bool FlatViews();         // VR F1, F2, F3
-int VrViewNow();          // the VR view, 1 = F1 ... 4 = F4; 0 not VR (viewgate::Number)
-bool InsideFree();        // flat F3
+int VrViewNow();          // the VR view, 1 = F1 ... 4 = F4, 5 = F5 ([mode] f5_ar_view); 0 not VR (viewgate::Number)
+bool InsideFree();        // flat F3 (and VR F5)
+bool ArHead();            // VR F5 with [mode] f5_head_look: its camera follows the head as F4's (vr/ar_view.h)
+bool ArView();
+bool LabelsAsF4();
+bool VignetteAsF4();      // F4's low-life / low-mana vignette: VR F4, and VR F5 (the same keys)        // F4's item labels and monster plates: VR F4, and VR F5 (the same keys)            // VR F5: flat F3's first person on FlatVR's screen, for AR glasses ([mode] f5_ar_view, vr/ar_view.h)
+bool FlatRules();         // the flat game's rules (mouse look, W A S D, crosshair, flat F3's body, pick-up, interface): flat mode, or VR F5
+int FlatRulesView();      // ... the flat view they stand for: flat_view, 3 in VR F5; 0 elsewhere
 bool NativeHeadView();    // native OpenXR draws it with the head as the camera (F4, F2)
 int NativeMode();         // xr::kViewsHead / kViewsWindow / kViewsRoom
 bool NativeView();

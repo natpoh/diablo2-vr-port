@@ -169,22 +169,26 @@ void SetHero(const char* name, int cls) {
     if (!g_store.Current() || g_store.Current()->name != wasName || g_store.Current()->cls != wasCls) ++g_revision;
 }
 
-void Blow(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, float speed, float force) {
+void Blow(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, float speed, float force, float kg, uint64_t nowMs) {
     if (!On()) return;
     strikestats::MissTracker::Miss m;
     const bool settled = g_miss[side & 1].Landed(strokeKey, &m);
+    // the fatigue curve: the minute since this session's first blow (vrcam's timer thread only)
+    static uint64_t firstMs = 0;
+    if (!firstMs) firstMs = nowMs ? nowMs : 1;
+    const int minute = nowMs >= firstMs ? static_cast<int>((nowMs - firstMs) / 60000) : 0;
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (settled) g_store.Miss(m.code, m.kind, m.slow);
-    g_store.Blow(code, kind, speed, force);
+    if (settled) g_store.Miss(m.code, m.kind, m.slow, m.speed);
+    g_store.Blow(code, kind, speed, force, minute, kg);
     ++g_revision;
 }
 
-void Refused(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, bool slow, uint64_t nowMs) {
+void Refused(int side, uint64_t strokeKey, uint32_t code, uint32_t kind, bool slow, float speed, uint64_t nowMs) {
     if (!On()) return;
     strikestats::MissTracker::Miss m;
-    if (!g_miss[side & 1].Refused(strokeKey, code, kind, slow, nowMs, &m)) return;
+    if (!g_miss[side & 1].Refused(strokeKey, code, kind, slow, nowMs, &m, speed)) return;
     std::lock_guard<std::mutex> lock(g_mutex);
-    g_store.Miss(m.code, m.kind, m.slow);
+    g_store.Miss(m.code, m.kind, m.slow, m.speed);
     ++g_revision;
 }
 
@@ -194,7 +198,7 @@ void Tick(uint64_t nowMs) {
         strikestats::MissTracker::Miss m;
         if (!t.Flush(nowMs, &m)) continue;
         std::lock_guard<std::mutex> lock(g_mutex);
-        g_store.Miss(m.code, m.kind, m.slow);
+        g_store.Miss(m.code, m.kind, m.slow, m.speed);
         ++g_revision;
     }
 }

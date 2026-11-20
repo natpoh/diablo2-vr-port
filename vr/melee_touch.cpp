@@ -2385,10 +2385,10 @@ void StatsHero(ULONGLONG now) {
     g_statsHeroNamed = read && strikestats::ValidName(name, sizeof name);
     strikestatswire::SetHero(g_statsHeroNamed ? name : nullptr, cls < 8 ? static_cast<int>(cls) : -1);
 }
-void StatsRefused(int side, uint64_t key, const SideBlade& sb, bool slow, ULONGLONG now) {
+void StatsRefused(int side, uint64_t key, const SideBlade& sb, bool slow, float speed, ULONGLONG now) {
     if (!strikestatswire::On()) return;
     StatsHero(now);
-    strikestatswire::Refused(side, key, StatsCode(sb), sb.kind, slow, now);
+    strikestatswire::Refused(side, key, StatsCode(sb), sb.kind, slow, speed, now);
 }
 }  // namespace
 
@@ -2854,6 +2854,7 @@ void Tick(const Frame& f) {
         const char* forceWhat = "";
         int slot = -1;            // the game's slot of the weapon that touched (0 the right hand's, 1 the left's): [gameplay] melee_direct_by_hand
         uint32_t statsCode = 0, statsKind = 0;   // [stats] strike_stats: the weapon that touched (its item code; StatsCode) and its kind
+        float statsKg = 0.0f;                    // ... and its steel, kg (a strike by force: the weight model's; 0 not known)
     };
     Pending pend[2];
     int npend = 0;
@@ -3014,7 +3015,7 @@ void Tick(const Frame& f) {
                     static unsigned told = 0;
                     const bool tell = told < 12 || meleeboxes::Wanted() || g_forceDebug.load();
                     if (!due) {
-                        if (!was && dur[k] >= strikemeasure::kWindowS) StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: too weak, its window over
+                        if (!was && dur[k] >= strikemeasure::kWindowS) StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, appr[k], now);   // [stats] strike_stats: too weak, its window over (its arrival's speed)
                         if (!was && dur[k] >= strikemeasure::kWindowS) ShowRefusal(ks[k].id, swingreason::FromForce(v[k], false, false), now);   // [hud] swing_timer_reasons: "weak"
                         if (!was && dur[k] >= strikemeasure::kWindowS && tell && ForceToldOnce(ks[k].serial)) {
                             ++told;
@@ -3029,7 +3030,7 @@ void Tick(const Frame& f) {
                     const bool shaft = rule.metalHead && sb.headAlong > 0.0f && ks[k].along >= 0.0f && ks[k].along < sb.headAlong;
                     const bool butt = rule.notButt && front > 0.0f && ks[k].along >= 0.0f && ks[k].along < front;
                     if (shaft || butt) {
-                        StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, now);   // [stats] strike_stats: a push with the shaft or the butt
+                        StatsRefused(side, StatsKey(true, false, ks[k].serial), sb, false, appr[k], now);   // [stats] strike_stats: a push with the shaft or the butt
                         ShowRefusal(ks[k].id, swingreason::FromForce(v[k], shaft, butt), now);      // [hud] swing_timer_reasons: "shaft" / "handle"
                         if (tell && ForceToldOnce(ks[k].serial ^ 0x80000000u)) {
                             ++told;
@@ -3049,6 +3050,7 @@ void Tick(const Frame& f) {
                         p.slot = sb.slot;
                         p.statsCode = StatsCode(sb);
                         p.statsKind = sb.kind;
+                        p.statsKg = steel;
                         p.force = true;
                         p.need = v[k].need;
                         p.approach = appr[k];
@@ -3194,7 +3196,7 @@ void Tick(const Frame& f) {
             if (at < least) {
                 ++g_n.slowPart;
                 ShowRefusal(c.id, swingreason::FromSwing(at, least, jd), now);   // [hud] swing_timer_reasons: "slow 3.1/5.0"
-                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, true, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
+                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, true, at, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - too slow: %.1f m/s where it touched, the least is %.1f", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, at, least);
                 // [debug] melee_boxes: an amber ball (and the arrow, the line, the tint) where the blade met the monster too slowly, and a line (kind, speed, the way)
@@ -3210,7 +3212,7 @@ void Tick(const Frame& f) {
                 const int reason = jd.why == strikedir::Why::Away || jd.why == strikedir::Why::Backward ? 0 : jd.why == strikedir::Why::NotHead || jd.why == strikedir::Why::Butt || jd.why == strikedir::Why::Shaft ? 1 : 2;
                 (reason == 0 ? g_n.away : reason == 1 ? g_n.notHead : g_n.small)++;
                 ShowRefusal(c.id, swingreason::FromRule(jd), now);   // [hud] swing_timer_reasons: shaft, handle, not the tip, wrong way, short
-                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, false, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
+                StatsRefused(side, StatsKey(false, false, sweep.stroke), sb, false, at, now);   // [stats] strike_stats: a missed swing, if the stroke lands nothing
                 if (sb.paw && ClawTellOnce(side, sweep.stroke, c.id, clawstrike::Why::Slow))
                     LogF("claw: %c paw, stroke %llu on monster %u refused - %s (%.1f m/s where it touched)", side ? 'L' : 'R', static_cast<unsigned long long>(sweep.stroke), c.id, strikedir::WhyText(jd.why), at);
                 const int colour = reason == 0 ? meleeboxes::kCBlue : reason == 1 ? meleeboxes::kCGrey : meleeboxes::kCAmber;
@@ -3320,7 +3322,8 @@ void Tick(const Frame& f) {
         ++g_sessionPressed;
         if (strikestatswire::On()) {   // [stats] strike_stats: the blow, its speed where it touched (a strike by force: its arrival) and force (N s) - counting only
             StatsHero(now);
-            strikestatswire::Blow(p.side, StatsKey(p.force, p.thrust, p.stroke), p.statsCode, p.statsKind, p.force ? p.approach : p.speed, p.force ? p.speed : ForceNow(p.c->id));
+            strikestatswire::Blow(p.side, StatsKey(p.force, p.thrust, p.stroke), p.statsCode, p.statsKind, p.force ? p.approach : p.speed, p.force ? p.speed : ForceNow(p.c->id),
+                                  p.statsKg, now);
         }
         if (p.thrust) ++g_n.thrusts;
         approvedId = p.c->id;

@@ -58,6 +58,75 @@ int main() {
         f = c.Step(true, false, false, false, true);
         Check(f.event == Event::Close && !c.Big(), "a press pointing away: back to the hand");
     }
+    {   // [hud] map_big_keep: the big map stays up while the trigger attacks elsewhere; only a click ON it closes it
+        Clicker c;
+        c.Step(true, true, false, false, false, false, false);
+        Frame f = c.Step(true, true, false, false, false, true, false);
+        Check(f.event == Event::Open && c.Big(), "keep: opened by a click on the hand's map as before");
+        c.Step(true, false, false, false, false, true, Keeps(true, c.Big()));   // (held after the opening press)
+        f = c.Step(true, false, false, false, false, false, Keeps(true, c.Big()));
+        Check(!f.claim && !f.beam, "keep, big, pointing away, let go: the trigger is the game's, no beam");
+        f = c.Step(true, false, false, false, false, true, Keeps(true, c.Big()));
+        Check(!f.claim && f.event == Event::None && c.Big(), "keep: an attack pointing away - the game's, the big map stays");
+        f = c.Step(true, false, true, false, false, true, Keeps(true, c.Big()));
+        Check(!f.claim && f.event == Event::None && c.Big(), "keep: the held attack swept over the big map - still the game's, nothing closes");
+        for (int i = 0; i < 5; ++i) f = c.Step(true, false, false, false, false, (i & 1) != 0, Keeps(true, c.Big()));
+        Check(c.Big(), "keep: attack after attack - the big map stays up");
+        f = c.Step(true, false, true, true, false, false, Keeps(true, c.Big()));
+        Check(f.claim && f.beam, "keep: let go on its Rotate button - the laser's, the beam shows");
+        f = c.Step(true, false, true, true, false, true, Keeps(true, c.Big()));
+        Check(f.event == Event::Rotate && c.Big(), "keep: the Rotate button still flips the turn");
+        f = c.Step(true, false, false, false, true, false, Keeps(true, c.Big()));
+        f = c.Step(true, false, false, false, true, true, Keeps(true, c.Big()));
+        Check(f.event == Event::Front && c.Big() && f.claim, "keep: the to-front button still works");
+        c.Step(true, false, true, false, false, false, Keeps(true, c.Big()));
+        f = c.Step(true, false, true, false, false, true, Keeps(true, c.Big()));
+        Check(f.claim && f.event == Event::Close && !c.Big(), "keep: a click on the big map closes it");
+        f = c.Step(true, false, false, false, false, false, Keeps(true, c.Big()));
+        f = c.Step(true, false, false, false, false, true, Keeps(true, c.Big()));
+        Check(!f.claim && f.event == Event::None && !c.Big(), "keep, closed: a press pointing away is an attack, nothing opens");
+
+        Clicker m;   // a menu / another view still closes a kept big map
+        m.Step(true, true, false, false, false, false, false);
+        m.Step(true, true, false, false, false, true, false);
+        m.Step(true, false, false, false, false, false, true);
+        f = m.Step(false, false, false, false, false, false, true);
+        Check(f.event == Event::Close && !m.Big(), "keep: not allowed (a menu, another view) - closed as before");
+
+        Clicker o;   // unticked: an attack pointing away closes it, and is the laser's (as before)
+        o.Step(true, true, false, false, false, false, false);
+        o.Step(true, true, false, false, false, true, false);
+        o.Step(true, false, false, false, false, false, Keeps(false, o.Big()));
+        f = o.Step(true, false, false, false, false, true, Keeps(false, o.Big()));
+        Check(f.claim && f.event == Event::Close && !o.Big(), "map_big_keep=0: a press pointing away puts it back, taken from the game");
+
+        Check(!Keeps(true, false) && !Keeps(false, true) && Keeps(true, true), "Keeps: the key ticked and the map big");
+        Check(NeedsAim(true, false) && NeedsAim(false, true) && !NeedsAim(true, true), "NeedsAim: a lost aim closes only an unkept big map");
+    }
+    {   // [hud] map_hand_full: up by itself, on the hand, kept, a click on it does not close it; a menu does, and it comes back
+        Check(AutoOpen(true, false, true, true, 600.0), "the small map in the hand half a second: the whole map up");
+        Check(!AutoOpen(true, false, true, true, 100.0), "the small map just back (a menu's frame): wait");
+        Check(!AutoOpen(false, false, true, true, 1e6), "the key off: never");
+        Check(!AutoOpen(true, true, true, true, 1e6), "up already: nothing");
+        Check(!AutoOpen(true, false, false, true, 1e6), "a menu / another view / no small map: not");
+        Check(!AutoOpen(true, false, true, false, 1e6), "the game's map closed by its key: not (the player's choice)");
+        Check(BigOnHand(false, true, true, true) && BigOnHand(false, false, false, true), "map_hand_full: on the hand whatever the other keys say");
+        Check(!FrontButton(true, false, true) && FrontButton(true, false, false), "map_hand_full: no button to the front");
+        Clicker c;
+        Check(c.Open() && c.Big() && !c.Open(), "Open: big, once");
+        Frame f = c.Step(true, false, true, false, false, false, true, true);
+        Check(f.claim && f.beam, "pointing at it: the laser's");
+        f = c.Step(true, false, true, false, false, true, true, true);
+        Check(f.event == Event::None && c.Big(), "pinned: a click on it does not put it back");
+        c.Step(true, false, false, false, false, false, true, true);
+        f = c.Step(true, false, false, false, false, true, true, true);
+        Check(!f.claim && c.Big(), "pinned + kept: an attack pointing away is the game's, it stays");
+        c.Step(true, false, true, true, false, false, true, true);
+        f = c.Step(true, false, true, true, false, true, true, true);
+        Check(f.event == Event::Rotate && c.Big(), "pinned: its Rotate button still works");
+        f = c.Step(false, false, false, false, false, false, true, true);
+        Check(f.event == Event::Close && !c.Big(), "pinned: a menu still takes it down");
+    }
     {   // the trigger: a press that began off the map stays the game's, even when the laser then comes onto the map
         Clicker c;
         Frame f = c.Step(true, false, false, false, true);

@@ -92,7 +92,9 @@ float TargetYaw() {
     // room's raw yaw, against g_recenter from whichever block was there at the last F11 - the body
     // stood ~100 deg off the view at game start until a lucky F11 (2026-10-10).
     if (float rel = 0.0f; NativeHeadView() && xr::PairHeadYaw(&rel)) return WrapDeg(yaw - rel * 57.2957795f);
-    if (g_set.headYaw.load() && HeadYaw(&head)) {
+    // VR F5 with [mode] f5_head_look=0: flat F3's camera - the mouse turns it, never the head (FlatVR's screen stays put, its Head Lock off).
+    // With it (the default) the head turns it on top of the mouse, as F4's (Serg 2026-11-19)
+    if (g_set.headYaw.load() && !(ArView() && !ArHead()) && HeadYaw(&head)) {
         float p[3]; PredictHead(Shared(), p);
         yaw += g_set.yawSign.load() * g_set.yawScale.load() * HeadYawFromCentre(Shared(), p[0]);
     }
@@ -113,8 +115,8 @@ bool HeadLevelIsGravity() { return g_set.platform.load() == 1; }
 // Roll about the line of sight from the head tilting sideways, 0 when off.
 float TargetRoll() {
     const D2RVR_Shared* sh = Shared();
-    if (!g_set.headRoll.load() || !sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !sh->rollValid || !std::isfinite(sh->headRollDeg))
-        return 0.0f;
+    if (!g_set.headRoll.load() || (ArView() && !ArHead()) || !sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid || !sh->rollValid || !std::isfinite(sh->headRollDeg))
+        return 0.0f;   // (VR F5 without f5_head_look: no head, as flat F3)
     float p[3]; PredictHead(sh, p);
     const float level = HeadLevelIsGravity() ? 0.0f : g_recenterRoll.load();
     return std::clamp(g_set.rollSign.load() * (p[2] - level), -80.0f, 80.0f);
@@ -131,7 +133,7 @@ float TargetPitch() {
     float pitch = g_set.pitch.load() + (g_pairNow.load() ? g_heldPitch.load() : g_mousePitch.load());
     if (StickPitchOn()) pitch += g_pairNow.load() ? g_heldStickPitch.load() : g_stickPitch.load();
     const D2RVR_Shared* sh = Shared();
-    if (g_set.headPitch.load() && sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid && sh->pitchValid && std::isfinite(sh->headPitchDeg))
+    if (g_set.headPitch.load() && !(ArView() && !ArHead()) && sh && sh->version == D2RVR_SHARED_VERSION && sh->headValid && sh->pitchValid && std::isfinite(sh->headPitchDeg))
     {
         float p[3]; PredictHead(sh, p);
         pitch -= g_set.pitchSign.load() * (p[1] - g_recenterPitch.load());

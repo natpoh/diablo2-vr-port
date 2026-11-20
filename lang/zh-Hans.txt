@@ -185,6 +185,8 @@ group.other_mods = 其他模组
 group.other_mods.help = 把你用 D2RMM 构建（或放在游戏的 mods 文件夹中）的模组与 D2R VR 一起加载。勾选后，它们的文件会在每次启动时合并进 D2R VR 的模组；D2R VR 自己的 VR 改动保持在你的改动之上。
 mods.merge_data_mods.label = 将我的其他模组与 D2R VR 一起加载（D2RMM）
 mods.merge_data_mods.tip = 游戏只加载一个模组，而 D2R VR 就是那个模组，所以你用 D2RMM 构建（mods\D2RMM）或自己放进游戏 mods 文件夹的模组不会随它一起加载。开启：启动时（以及启动器的“开始游戏”）它们的数据文件会被复制进 D2R VR 的模组（mods\D2R-VR\D2R-VR.mpq）并随之加载；当你在 D2RMM 中重新构建模组后，下次启动会采用新文件。不会合并：另一个 VR 模组（D2R-PCVR）、带有自己的 D2RLoader 插件的模组、打包的 .mpq。两个模组有同名文件时：采用 D2RMM 的。D2R VR 自己的文件仍保持其 VR 改动在你的改动之上。你的角色仍保存在 D2R VR 的存档文件夹中。所做的一切都记录在 d2r_vr_data_mods.txt（mods\D2R-VR\d2rloader\logs）中。关闭：其他模组的文件会在下次启动时再次移除，只剩 D2R VR，与以前一样。
+mods.restore_mod_data.label = D2R VR 的游戏文件丢失时重新生成
+mods.restore_mod_data.tip = D2R VR 会从你的游戏生成一些文件（游戏绘制的天空穹顶、洞穴顶部、水上的独木舟、世界的补丁），放进它的模组文件夹 mods\D2R-VR\D2R-VR.mpq。别的程序可能会删除这个文件夹：输出模组命名为 D2R-VR 的 D2RMM 每次构建都会这样做，之后天空在树后只显示空荡荡的虚空，直到再次打开本程序。开启：游戏启动时如果发现它们丢失，会不显示窗口地运行本程序来重新生成（在后台约半分钟；天空在本局游戏中恢复，其余的在下次启动时恢复）。关闭：游戏只在它的日志中说明。更好的做法：把 D2RMM 的输出命名为 D2RMM，并勾选上方的“将我的其他模组与 D2R VR 一起加载”。
 @status.data_mods.label = 其他模组：尚未检查
 
 # --- Status ---
@@ -1066,6 +1068,8 @@ direct.walk_flat_views.label = 在 F1、F2、F3 中也用左摇杆行走（仅�
 direct.walk_flat_views.tip = F1-F3：移动。配合上面的操控，BodyWalk 未运行时，左摇杆在其他 VR 视角 - 俯视（F1）、第三人称（F2）和桌面（F3）- 中也能让英雄行走（按键见上方选项；手势、面板和振动仍仅限 F4）。行走是游戏自己的：与 BodyWalk 的摇杆使用同样的行走代码、死区和停止，摇杆被转换到游戏的坐标系，方式与 BodyWalk 的摇杆在该视角中相同（F1 俯视：向前就是屏幕上方）。面板和菜单仍把摇杆留给自己。BodyWalk 运行时（其 Game Link 在线）：什么也不变，它的游戏手柄就是完整的游戏手柄，与以前一样。关闭：没有 BodyWalk 时 F1-F3 不能行走，与以前一样。日志（d2r-vr-vrcam.log）会写出“walking in VR F1-F3 - ...”，在不行走时还会说明原因。即时生效。
 direct.belt_flick_flat_views.label = F1、F2、F3 中的腰带药水：左扳机 + 拨动摇杆
 direct.belt_flick_flat_views.tip = F1-F3：药水。配合上面的操控，在其他 VR 视角 - 俯视（F1）、第三人称（F2）和桌面（F3）- 中，按住左扳机并拨动一个摇杆（任何一个）：向左喝第 1 列腰带药水，向上第 2 列，向右第 3 列，向下第 4 列 - 即游戏自己的腰带键 1-4，与手从腰带上喝药水时产生的按键相同。一次拨动，一瓶药水：下一次之前请先把摇杆回到中间；按下扳机时已被推动的摇杆，在回到中间之前什么也不做。扳机按住期间，左摇杆不行走（英雄停下，这样一次拨动绝不会让他走动）。单独的扳机什么也不做。仅在没有 BodyWalk 时有效（BodyWalk 运行时：用它自己的按键，什么也不变）。第一人称（F4）不受影响：那里扳机和摇杆属于布局。关闭：F1-F3 中摇杆不能喝药水。日志会为每瓶药水写出“belt flick - ...”，并说明某次拨动未被采用的原因。即时生效。
+direct.belt_flick_grip.label = ……用左握把代替扳机（也适用于 F5）
+direct.belt_flick_grip.tip = 上面的药水操作（F1、F2、F3 和 F5）改为按住左握把 + 拨动摇杆，代替左扳机。在这些视角中握把不做其他事；左扳机在那里是游戏的 Shift（按住它时按腰带键 = Shift + 腰带），并且仍是第二排技能。即时生效。关闭：使用左扳机，与以前一样。
 openxr.direct_bodywalk_walk.label = BodyWalk 的行走仍带动英雄行走（使用手柄摇杆）
 openxr.direct_bodywalk_walk.tip = 配合上面的操控：BodyWalk 根据你身体的动作行走 - 原地踏步、摆臂、倾身 - 并把它变成一个行走摇杆。开启：BodyWalk 仍会获得你的头部和双手（绝不包括手柄的任何按键或摇杆：它不会重复按下任何东西），并且只有它的左摇杆（不含它游戏手柄的其他任何部分）通过游戏自己的行走代码带动英雄行走，与手柄的左摇杆混合：各自都要超过游戏的死区才算数，两者相加（绝不超过摇杆推满），当两者方向相反时，较强的一方获胜。面板和菜单仍把手柄的摇杆留给自己。关闭：在直接模式下，BodyWalk 的行走与它其余的输入一起被忽略，并且不会给 BodyWalk 提供头显（与以前一样）。BodyWalk 必须正在运行并写入它的游戏手柄（输入来源：Game Link）。日志（d2r-vr-vrcam.log）会写出“BodyWalk's walk - combined / ignored / dropped”及原因。仅限 F4：在 F1、F2、F3 中，BodyWalk 的游戏手柄就是完整的游戏手柄，与以前一样。即时生效。
 openxr.skill_wheel.label = 技能轮盘：头显中手柄的技能槽
@@ -1817,6 +1821,14 @@ group.toolbar_life_mana_belt_in_first_person.help = 游戏的工具栏（生命�
 # --- In the game's picture ---
 group.in_the_game_s_picture = 在游戏画面中
 group.in_the_game_s_picture.help = 从游戏画面中取出什么，以便把它挂在别处：角落地图、工具栏的条带或整个界面。可以微调工具栏裁切的上下范围（“显示被裁切的条带”有助于此），如果工具栏和地图看起来太暗或发白，还可以翻转颜色。
+@mapmode.mode.label = 地图模式
+@mapmode.mode.tip = VR F4：地图如何显示，一次选择 - 它会为你设置下方的地图设置（头显中的设置面板有同样的列表：HUD > 地图）。手中的球：玻璃球上的小地图；用激光点击它会在面前显示大地图，点击大地图则把它放回去。手中的平面地图：同样的功能，但在平面面板上。左手上的大地图：用激光点击小地图会打开托在你左手上的游戏大地图；攻击时它保持显示，点击它即可关闭。左手上的全图：游戏的大地图始终在你的左手上。画面中的地图：手中什么都没有；游戏自己的角落地图在你的视野中，用游戏的地图键（轻按左摇杆）显示它的全图。自定义：下方的设置与以上都不符。即时生效。
+@mapmode.mode.choice0 = 手中的球
+@mapmode.mode.choice1 = 手中的平面地图
+@mapmode.mode.choice2 = 左手上的大地图
+@mapmode.mode.choice3 = 左手上的全图
+@mapmode.mode.choice4 = 画面中的地图
+@mapmode.mode.choice5 = 自定义（下方的设置）
 hud.map.label = 角落地图
 hud.map.tip = 游戏在它自己的裁剪框下绘制角落地图：它的绘制进入一张独立的纹理，怪物头顶的标签留在画面中 - 地图上方的那些也一样。
 hud.map.choice1 = 脱离画面（独立纹理）
@@ -1845,6 +1857,10 @@ hud.map_big_follow.label = 面前的大地图：留在房间里，缓慢跟随
 hud.map_big_follow.tip = 你面前的大地图，VR F4：你转头时它留在房间里原来的位置；只有当你看向很远的地方（超过 35 度）时，它才缓慢地跟上你的视线，从不跳动。它的高度保持在放置时的位置。取消勾选：它停在你点击时注视的地方，和以前一样。实时。
 hud.map_big_grab.label = 面前的大地图：抓取并移动（激光 + 握把）
 hud.map_big_grab.tip = 你面前的大地图，VR F4：用右手激光指向它，按住右握把即可拿起 - 移动手就能搬动它，右摇杆前 / 后可将它拉近 / 推远。松开后它就留在那里，以后也在那里打开（保存在 ini 中）；如果保存的位置在视野之外（在你身后、远在一侧），则改为在面前打开。取消勾选：不能用手移动，和以前一样。实时。
+hud.map_big_keep.label = 攻击时大地图保持显示（点击它关闭）
+hud.map_big_keep.tip = 大地图（手中的地图：激光点击放大），VR F4：战斗时它保持显示。只有当激光指向大地图或它的按钮时，右扳机才操作大地图；指向别处时扳机照常攻击、施法或射击，大地图保持不动 - 在你面前，或者开启“大地图托在左手上”（并取消勾选“地图：只有两种大小”）时在你的左手上。要关闭它，指向它并点击。菜单或切换视角仍会关闭它。攻击是游戏自己的；只是地图被保留。取消勾选：除了“旋转地图”按钮外的任何点击 - 包括攻击 - 都会把它放回你手中，与以前一样。即时生效。
+hud.map_hand_full.label = 全图始终在左手上
+hud.map_hand_full.tip = VR F4：游戏的全图（大地图）始终托在你的左手上，代替小地图 - 无需点击。攻击时它保持显示：只有当激光指向它时（它的“旋转地图”按钮、缩放），右扳机才操作它。菜单或切换视角会把它收起，半秒后再出现；游戏自己的地图键（轻按左摇杆）仍可隐藏它。它显示时，游戏绘制在工具栏上方画面中的内容（地上的物品名称、游戏的血条）会显示在地图上，而不是在世界中。取消勾选：手中是小地图，与以前一样。即时生效。
 hud.allies_place.label = 盟友显示位置（F4）
 hud.allies_place.tip = VR 第一人称（F4），原生 OpenXR。你的雇佣兵、你的召唤物和你的队伍显示在哪里——只在一处显示。游戏的顶部一行：游戏自己的头像，按它的绘制方式（在头显中位于视野最边缘）。手中地图下方：在你手持的地图下方，以及大地图打开时在其下方（那里更大），排成一个磁贴网格。右手腕：当你把右手腕背面转向眼睛时，同样的磁贴显示在右手腕上方（手腕状态面板的位置和大小）。每个磁贴：游戏自己的头像、名称、生命条（绿、黄、红）、一组的数量和玩家的等级。从游戏自己的列表读取，单人游戏和合作一样；游戏中没有任何东西被改变。头像从你的游戏复制到插件旁的 d2r_vr_game_ui（没有它们：显示首字母）。即时生效。
 hud.allies_place.choice0 = 游戏的顶部一行
@@ -2149,6 +2165,46 @@ hud.orb_color.label = 球的颜色
 hud.orb_color.tip = 光晕、边缘和球内的雾气。
 hud.orb_color.empty = 魔法蓝
 hud.map_width.label = 地图宽度，m
+
+# --- F5: first person with the mouse, no hands ---
+group.f5_first_person_with_the_mouse_no_hands = F5：用鼠标的第一人称，无手
+group.f5_first_person_with_the_mouse_no_hands.help = 用于头显或 AR 眼镜的第五个 VR 视角：按平面游戏的 F3 方式游玩的第一人称 - 由鼠标或手柄摇杆转向和行走，没有 VR 双手。在这里勾选，然后在游戏中按 F5（按主页上“视角按键”的设置）。摄像机可以像 F4 那样跟随你的头部。F5 使用平面游戏的 F3 设置 - 完全相同的那些：勾选后它们也会在 VR 中显示，位于“界面：F3 眼前”标签页（身体、地图、传送门）和“操控”标签页（“平面：”开头的选项：瞄准、拾取、右摇杆的上 / 下）- 并使用“操控”中的转向速度、分段转向和鼠标速度。物品标签和怪物血条使用 F4 的，同样的键（界面：F4 身体 > 地面物品标签、怪物血条），低生命 / 低法力暗角也一样（界面：F4 身体 > 低生命）：你在那里的设置同样适用于 F5。
+mode.f5_ar_view.label = F5：鼠标操控的第一人称，没有双手（头显或 AR 眼镜）
+mode.f5_ar_view.tip = 第五个视角 F5 - 与平面游戏的 F3 一样的第一人称，用鼠标和键盘或手柄来玩：鼠标转动镜头，W A S D 行走，界面在画面中，没有 VR 双手、手臂或手持武器；镜头像 F4 那样跟随你的头部（下方的勾选框）。它按“头显中的3D”的设置输出，与 F1 - F3 相同：原生 OpenXR - 在头显中使用头显自己的双眼；FlatVR 立体或 FlatVR 深度 - 通过 FlatVR，由 FlatVR 自己的 Output 选择头显或 AR 眼镜（XREAL 等作为显示器，左右并排）。用 F5 切换到它（或按“视角按键”的设置用 Shift + F5 或只用 F12）；F12 在全部五个视角之间循环。即时生效。关闭：F1 - F4，F5 仍是游戏的技能键，与以前一样。
+mode.f5_head_look.label = F5：镜头跟随头部（与 F4 相同）
+mode.f5_head_look.tip = F5 的镜头像 F4 那样跟随你的头部 - 你以第一人称环顾世界 - 同时像 F3 那样移动和战斗：鼠标或手柄的右摇杆让你转向，W A S D 或左摇杆行走，没有 VR 双手。原生 OpenXR 用头显自己的双眼绘制；FlatVR 获得你头部的转动，并把它的屏幕锁定在头部。即时生效。关闭：头部不转动任何东西 - 只有鼠标转动镜头（原生 OpenXR：双眼中是同一个平面画面；FlatVR：它的屏幕留在放置的位置）。
+
+# --- F5: the toolbar ---
+group.f5_the_toolbar = F5：工具栏
+group.f5_the_toolbar.help = F5 的工具栏位置：像平面游戏一样在画面中，或者在你前方下侧、身体下面，有自己的高度和距离。
+hud.f5_toolbar.label = F5：工具栏在前方下侧，身体下面
+hud.f5_toolbar.tip = 在 F5 中，游戏的工具栏 - 生命、法力、腰带和技能 - 从画面中取出，悬在你前方下侧、身体下面，就像 F4 中的“前方下侧”一样：低头即可看到。只有工具栏：地图和其他内容留在画面中。下面两个滑块设置它在眼睛下方多远以及前方多远；它随你头部左右转动，但不随上下转动。原生 OpenXR 自己悬挂它，FlatVR 以同样的高度和距离悬挂它。打开菜单（物品栏、商人……）时它会回到画面中，与所有视角一样。即时生效。关闭：工具栏留在画面底部，与以前一样。
+hud.f5_toolbar_below_cm.label = F5 工具栏：高度，眼睛下方 cm
+hud.f5_toolbar_below_cm.tip = F5 的工具栏悬在你眼睛下方多远，单位 cm：数值越大越低（60 - 70 时在腰带附近），越小越往上进入视野。默认 33；32 是 F4 的“前方下侧”悬挂的位置。即时生效。
+hud.f5_toolbar_ahead_cm.label = F5 工具栏：前方距离，cm
+hud.f5_toolbar_ahead_cm.tip = F5 的工具栏悬在你眼睛前方多远，单位 cm：越小越近（越大），越大越远（越小）。默认 32；55 是 F4 的“前方下侧”悬挂的位置。即时生效。
+
+# --- F5: the map and allies' portraits ---
+group.f5_the_map_and_allies_portraits = F5：地图和盟友头像
+group.f5_the_map_and_allies_portraits.help = F5 的画面跟随你的头部：游戏的角落地图和盟友头像位于头显视野的边缘。把它们移入视野，并把地图拉近。
+hud.f5_map.label = F5：角落中的地图，移入视野并拉近
+hud.f5_map.tip = F5 的画面跟随你的头部，所以游戏的角落地图位于头显视野的边缘。勾选：地图保持在一个角落（界面：F3 眼前 > 屏幕上的地图“与游戏选项相同”按那里选择的角落；左 / 居中 / 右保持所选），由下面两个滑块向中间和向下移动，并由第三个滑块在立体中拉近。这是游戏自己的地图，从它的界面中取出再画回那里（它随摄像机转动，按“地图随摄像机转动”的设置）。即时生效。关闭：与以前一样。
+hud.f5_map_x.label = F5 地图：向中间，%
+hud.f5_map_x.tip = F5 的地图从它的角落向画面中间移动多远，占其宽度的 %（右角的地图向左移，左角的地图向右移）。0 = 在游戏绘制它的角落。即时生效。
+hud.f5_map_y.label = F5 地图：向下，%
+hud.f5_map_y.tip = F5 的地图从顶部向下移动多远，占画面高度的 %。0 = 在游戏绘制它的顶部。即时生效。
+hud.f5_map_near.label = F5 地图：拉近 / 推远
+hud.f5_map_near.tip = 在立体中，地图被拉近到你眼前（+）或推到画面后面（-），步长与 F3 地板上的地图相同。0 = 在画面自身的深度，与界面的其余部分一样。即时生效。
+hud.f5_map_size.label = F5 地图：大小，%
+hud.f5_map_size.tip = F5 的地图变小或变大，占当前大小的 %（界面：F3 眼前 > 角落地图大小，F5 与平面 F3 共用它）：100 保持原样。它从自己的角落开始放大。即时生效。
+body.f5_aim_tilt_pct.label = F5：手臂随摄像机倾斜，%
+body.f5_aim_tilt_pct.tip = 在 F5 中，英雄的手臂和武器跟随摄像机上 / 下的多少（必须勾选 界面：F3 眼前 >“F3：手臂和武器随准星倾斜”；它自己的比例用于平面 F3）。F5 的摄像机也随你的头部倾斜，所以在 100 时每次看向地面手臂都会垂下；数值越小手臂保持得越高。0 = 不倾斜，100 = 完全跟随。只是绘制。即时生效。
+hud.f5_allies.label = F5：盟友头像移入视野
+hud.f5_allies.tip = 你的雇佣兵和队伍的头像位于画面左上角，在 F5 中处于头显视野的边缘。勾选：在 F5 中由下面的滑块把它们向右和向下移动，代替 界面：F4 身体 > 盟友头像的左 / 右和上 / 下（那些仍用于其他视角）。即时生效。关闭：与以前一样。
+hud.f5_allies_x.label = F5 盟友：向右，%
+hud.f5_allies_x.tip = F5 的盟友头像从左上角向右移动多远，占画面宽度的 %。即时生效。
+hud.f5_allies_y.label = F5 盟友：向下，%
+hud.f5_allies_y.tip = 它们从顶部向下移动多远，占画面高度的 %。即时生效。
 
 # ===== Tab: World =====
 tab.world = 世界
@@ -4347,6 +4403,28 @@ group.all_time_each_hero.help = 统计所知的每个英雄，攻击最多的在
 group.all_time_each_weapon_every_hero = 历史累计：每种武器（所有英雄）
 group.all_time_each_weapon_every_hero.help = 你用过的每种武器，所有英雄合计，攻击最多的在前。
 
+# --- Compare with other players (anonymous) ---
+group.compare_with_other_players_anonymous = 与其他玩家对比（匿名）
+group.compare_with_other_players_anonymous.help = 不带你的名字分享你的打击统计，查看你的速度和力道与每位分享过的玩家相比如何。在你按下“分享”并在显示具体发送内容的窗口中按“发送”之前，什么都不会发送：你各武器类别的数据（所有英雄合计）、你的游戏条件（重量、坐着或站着、身高、接触的最低速度）以及在这台电脑上生成的随机 ID。
+@run.stats_share.label = 匿名分享...
+@run.stats_share.tip = 先显示具体会发送什么；“发送”把它发给 bodywalkvr.com，“取消”什么都不发送。再次发送会替换你之前发送的内容。
+stats.share_anonymously.label = 游戏开始时自动分享（匿名）
+stats.share_anonymously.tip = 你同意“匿名分享”后开启（它先向你显示了文本）：游戏开始时以及本窗口打开期间，只要你的数据有变化（最多每 20 分钟一次），就会自动再次发送 - 同样类型的文本，不含名字。取消勾选即停止；你最后发送的内容会留在服务器上，直到“移除”。
+@run.stats_unshare.label = 移除我分享的数据
+@run.stats_unshare.tip = 从服务器删除你分享的内容，并忘记随机 ID（之后再分享会作为新玩家开始）。你在这台电脑上的数据保留。
+@status.ss_c_h0.label = 武器类别
+@status.ss_c_h0.tip = 武器类别（游戏中的武器种类）。
+@status.ss_c_h1.label = 玩家
+@status.ss_c_h1.tip = 分享过的玩家中，用这个类别至少打出 100 次攻击的人数。
+@status.ss_c_h2.label = 你
+@status.ss_c_h2.tip = 你用这个类别的平均接触速度，m/s。
+@status.ss_c_h3.label = 中位数
+@status.ss_c_h3.tip = 处于中间的玩家的平均接触速度，m/s：一半的玩家比这更快。
+@status.ss_c_h4.tip = 玩家平均速度的范围，m/s：十分之一的玩家比第一个数字慢，十分之一比第二个数字快。
+@status.ss_c_h5.tip = 你的平均力道 / 中间玩家的平均力道，N s（有重量的武器）。
+@status.ss_c_h6.label = 更快
+@status.ss_c_h6.tip = 使用这个类别的玩家中，平均速度低于你的玩家所占的比例。
+
 # ===== Tab: Status =====
 
 # --- The game's code ---
@@ -4420,6 +4498,7 @@ status.layer_warn.toolkit.how = 在 OpenXR Toolkit Companion 中勾选“Disable
 vr.hset.page.view = 视角
 vr.hset.page.f1 = F1
 vr.hset.page.f3 = F3
+vr.hset.page.f5 = F5
 vr.hset.page.options = 选项
 vr.hset.page.video = 视频
 vr.hset.page.render = 渲染
@@ -4427,6 +4506,7 @@ vr.hset.page.left = 左手
 vr.hset.page.right = 右手
 vr.hset.page.vibration = 振动
 vr.hset.page.hud = HUD
+vr.hset.page.map = 地图
 vr.hset.page.life = 生命
 vr.hset.page.look = 外观
 vr.hset.page.body = 身体
@@ -4440,6 +4520,7 @@ vr.hset.page.more = 更多
 vr.hset.page.co_op = 合作
 vr.hset.page.party = 队伍
 vr.hset.page.stats = 统计
+vr.hset.page.walk = 行走
 vr.hset.page.guide = 指南
 vr.hset.page.controls = 操控
 vr.hset.page.melee = 近战
@@ -4486,6 +4567,20 @@ vr.hset.table.full_width.label = 全宽
 vr.hset.table.full_width.detail = 四周是游戏的天空和雾，无边缘
 vr.hset.table.draw_distance.label = F3 距离
 vr.hset.table.draw_distance.detail = 近 (1) - 远 (8)；0 = 与其他视角相同
+vr.hset.mode.f5_ar_view.label = F5 视角
+vr.hset.mode.f5_ar_view.detail = 用鼠标或摇杆的第一人称，无手
+vr.hset.hud.f5_toolbar.label = F5：工具栏在前方下侧
+vr.hset.hud.f5_toolbar.detail = 在身体下面；关闭 = 在画面中
+vr.hset.hud.f5_toolbar_below_cm.label = F5 工具栏：高度
+vr.hset.hud.f5_toolbar_below_cm.detail = 在眼睛下方多远
+vr.hset.hud.f5_toolbar_ahead_cm.label = F5 工具栏：距离
+vr.hset.hud.f5_toolbar_ahead_cm.detail = 在眼睛前方多远
+vr.hset.hud.f5_map.label = F5：地图移入视野
+vr.hset.hud.f5_map.detail = 在角落中，向中间并拉近
+vr.hset.hud.f5_map_size.label = F5 地图：大小
+vr.hset.hud.f5_map_size.detail = 配合地图移入视野；100% = 保持现状
+vr.hset.body.f5_aim_tilt_pct.label = F5：手臂倾斜
+vr.hset.body.f5_aim_tilt_pct.detail = 跟随摄像机上 / 下的比例；越小 = 越高
 vr.hset.hud.low_hp_vignette.label = 低生命：红色暗角
 vr.hset.hud.low_hp_vignette.detail = 生命低时边缘跳动变红（F4）
 vr.hset.hud.low_hp_threshold.label = 低于此值出现
@@ -4760,8 +4855,36 @@ vr.hset.hud.names_own_far_pct.label = 我们的名称：远处大小
 vr.hset.hud.names_own_far_pct.detail = 远处怪物的大小百分比
 vr.hset.hud.names_own_alpha.label = 我们的名称：底板
 vr.hset.hud.names_own_alpha.detail = 它们后面的深色框：0 无，1 实心
+vr.hset.@mapmode.mode.label = 地图模式
+vr.hset.@mapmode.mode.detail = 球、平面、左手上的大地图 / 全图、视野中
+vr.hset.hud.map_big_keep.label = 攻击时大地图保持显示
+vr.hset.hud.map_big_keep.detail = 攻击时它保持显示；指向它并点击即可关闭
+vr.hset.hud.map.label = 角落地图脱离画面
+vr.hset.hud.map.detail = 0 在画面中，1 在手中
+vr.hset.hud.map_orb.label = 魔法球
+vr.hset.hud.map_orb.detail = 0 平面面板，1 玻璃球
+vr.hset.hud.map_place.label = 地图：位置
+vr.hset.hud.map_place.detail = 0 不显示，1 左手，2 右手，3 前方低处，4 胸前
+vr.hset.hud.map_click_big.label = 激光点击放大
+vr.hset.hud.map_click_big.detail = 0 / 1
+vr.hset.hud.map_two_sizes.label = 只有两种大小
+vr.hset.hud.map_two_sizes.detail = 0 / 1
+vr.hset.hud.map_big_on_hand.label = 左手上的大地图
+vr.hset.hud.map_big_on_hand.detail = 0 / 1
+vr.hset.hud.map_hand_full.label = 左手上的全图
+vr.hset.hud.map_hand_full.detail = 0 / 1
 vr.hset.hud.hide.label = 界面移出画面
 vr.hset.hud.hide.detail = 0 无，1 工具栏，2 全部
+vr.hset.walk_in_place.on.label = 走动来移动
+vr.hset.walk_in_place.on.detail = 原地踏步：英雄朝你注视的方向行走（F4）
+vr.hset.walk_in_place.sensitivity.label = 踏步灵敏度
+vr.hset.walk_in_place.sensitivity.detail = 越高：越轻的踏步也算数
+vr.hset.walk_in_place.speed.label = 踏步速度
+vr.hset.walk_in_place.speed.detail = 越高：更轻柔的踏步就能全速
+vr.hset.walk_in_place.smoothing.label = 平滑
+vr.hset.walk_in_place.smoothing.detail = 越高：越平稳，起步和停下越慢
+vr.hset.walk_in_place.run_at.label = 奔跑起点
+vr.hset.walk_in_place.run_at.detail = 踏步达到这个力度英雄就会奔跑；100% 则从不奔跑
 vr.toolbar.wrists = 手腕
 vr.toolbar.chest_low = 胸前，偏低
 vr.toolbar.low_in_front = 前方下侧
@@ -5081,6 +5204,18 @@ stats.heroes.line = {n} 个英雄
 stats.weapons.line = {n} 种武器
 stats.units = - 速度单位 m/s，力道单位 N s
 stats.more = - 显示使用最多的 {n} 项，文件中还有 {more} 项
+stats.share.title = 匿名分享我的打击统计
+stats.share.send = 发送
+stats.share.cancel = 取消
+stats.share.nothing = 还没有可分享的打击统计：先在 VR 第一人称（F4）中开启接触命中，向怪物挥击。
+stats.share.intro = 这正是“发送”交给 bodywalkvr.com 的内容 - 别无其他：你各武器类别的数据（所有英雄合计）、你的游戏条件，以及在这台电脑上生成的随机 ID（没有名字、没有邮箱、没有账号）。发送之后，每次游戏开始时同样类型的文本会自动再次发送，直到你在本标签页取消勾选“自动分享”；“移除”会把它从服务器删除。
+stats.unshare.ask = 从服务器删除你分享的打击统计并停止分享？你在这台电脑上的数据保留。
+stats.compare.not_shared = 分享：关闭。“匿名分享”会先向你显示具体会发送什么；然后你就能看到你的速度和力道与所有人相比如何。
+stats.compare.auto_on = 分享：开启 - 每次游戏开始时你的数据会自动再次发送。
+stats.compare.auto_off = 分享：关闭 - 服务器保留你最后发送的内容（“分享”会再次发送，“移除”会删除它）。
+stats.compare.line = {n} 位玩家已分享；你在每个武器类别中的位置（速度 m/s，力道 N s；百分位从某类别 100 次攻击起计算）。
+stats.compare.waiting = 正在等待服务器的对比结果...
+stats.compare.pct = {p} %
 status.sig.not_scanned = 尚未扫描 - 请启动游戏：模组每次启动时都会查找其所需地址
 status.sig.scanning = 正在扫描...
 status.sig.start_game = 请启动游戏 - 模组在启动时扫描
@@ -5171,6 +5306,7 @@ dome.restart = 游戏正在运行：请重启它以使用游戏绘制的天空
 campfire_scene.restart = 游戏正在运行：重启后才能看到更改
 status.kurast_boat.reading = 库拉斯特码头独木舟：正在从游戏文件读取城镇...
 status.kurast_boat.not_started = 库拉斯特码头独木舟：无法启动
+data_mods.rebuilt = D2R VR 的模组文件夹被另一个程序重建了（它的 modinfo.json savepath 为“{save}”；Setup 的是“../”）：输出模组命名为 D2R-VR 的 D2RMM 每次构建都会删除那里 D2R VR 的文件 - 请把 D2RMM 的输出命名为 D2RMM，并改为在这里勾选“将我的其他模组一起加载”
 data_mods.running_none = 没有可合并的
 data_mods.running = 游戏正在运行——将在下次启动时合并：{mods}
 data_mods.running_off = 关；已找到：{mods}
@@ -5661,6 +5797,11 @@ vr.preset.low = 低
 vr.preset.medium = 中
 vr.preset.custom = 自定义
 vr.distance.default = 2（默认）
+vr.mapmode.orb = 手中的球
+vr.mapmode.flat = 手中的平面地图
+vr.mapmode.big = 左手上的大地图
+vr.mapmode.whole = 左手上的全图
+vr.mapmode.picture = 画面中的地图
 vr.party.map = 游戏的地图显示
 vr.party.map.off = 你的队伍已隐藏：任何地图上都没有盟友（游戏的“显示队伍”）
 vr.party.map.unknown = 游戏的“显示队伍”/“显示队伍名称”（尚未读取）
@@ -5695,6 +5836,7 @@ vr.hset.status.video_unapplied = 尚未应用。“应用”向游戏请求这�
 vr.hset.status.unsaved = 有未保存的改动。“应用”保存，“关闭”放弃。
 vr.hset.status.video_idle_auto = 选一个尺寸，然后点“应用” - 或点 Auto：站定，游戏会自己调到头显的刷新率。
 vr.hset.status.video_idle = 选择一个尺寸，然后“应用”。你的英雄进入世界后生效。
+vr.hset.status.walk_idle = 每项改动都会自行生效。行走配置本身在 BodyWalk 中设置（F4）。
 vr.hset.status.body_idle = “校准身体”会隐藏此面板；测量完成后它会回来。
 vr.hset.status.keys_idle = 选择按键的功能，然后“应用”。组合键和其他长按：D2R VR Authentic Settings。
 vr.hset.status.keys_off = “无需 BodyWalk 的操控”已关闭：这些按键不起作用（操控由 BodyWalk 的映射负责）。
@@ -5776,6 +5918,8 @@ vr.party.go = 队伍
 vr.party.back = 中继
 vr.hset.render.go = 渲染
 vr.hset.render.back = 视频
+vr.hset.map.go = 地图
+vr.hset.map.back = HUD
 vr.hset.f3.go = F3
 vr.hset.f1.go = F1
 vr.hset.f3.back = 视角
@@ -5875,6 +6019,14 @@ vr.tiles.lt_row_off = LT 排已关闭
 vr.skills.all = 全部
 vr.skills.general = 通用 / 物品
 vr.tiles.no_trees_game = 无法从此游戏版本读取技能树 - 所有技能都在一个列表中
+vr.walk.status.off = 勾选“走动来移动”：原地踏步，英雄就会朝你注视的方向行走（F4）。
+vr.walk.status.bad_abi = 行走库的版本不同：请重新运行 D2R VR Setup。
+vr.walk.status.open_failed = 行走库无法启动：插件的日志会说明原因。
+vr.walk.status.missing = 行走库未安装（d2r_vr_walk.dll）：请重新运行 D2R VR Setup。
+vr.walk.status.not_f4 = 原地踏步在第一人称（F4）中生效。
+vr.walk.status.no_direct = 需要“无需 BodyWalk 的操控”（D2R VR Settings）：这样行走完全不需要 BodyWalk。
+vr.walk.status.walking = 行走中：{speed}% 速度，每秒 {steps} 步。每项改动都会自行生效。
+vr.walk.status.standing = 站立中。原地踏步即可行走；每项改动都会自行生效。
 vr.skills.skill_n = 技能 {id}
 vr.skills.unassigned = 未分配
 vr.skills.tree_n = 技能树 {n}
@@ -5918,6 +6070,8 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+vr.hset.mode.f5_head_look.label = F5：摄像机跟随头部
+vr.hset.mode.f5_head_look.detail = 摄像机跟随你的头部，与 F4 一样
 hands.left_handed_mirror.label = ……把英雄画成左撇子
 hands.left_handed_mirror.tip = 每只手臂伸向自己这一侧：英雄左手中的武器在左手柄处，盾牌在他的右前臂上，手指和握持从他自己的骨骼镜像而来。只改变绘制：刀刃命中的位置、腰带和抓取保持不变。仅限单手武器（另一只手持盾牌或空手）；持弓、弩、法杖、双手武器或双持武器时，手臂保持交换后的姿势。不勾选：手臂横过身体伸向另一侧的手柄（与以前一样）。即时生效。
 vr.tiles.no_trees = 技能分类需要图标缓存中的技能树 - 请重新运行 tools/skill_icons/prepare_skill_icons.py

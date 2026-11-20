@@ -1198,7 +1198,7 @@ SkyView SkyBack(int e) {   // under g_skyLock
 // the picture each present for 48 pixels nobody reads, and they showed in the headset's corner (PC2, 2026-10-26: PS_StampR 0.12 ms a frame)
 bool StampWanted() { return g_enabled.load() && g_afrBlock && g_set.stamps.load() && g_set.stampPixels.load() && !xr::Running(); }
 // [hud] low_hp_vignette rides on D2R_DepthFog.fx: the effect stays on for it in VR first person on native OpenXR.
-bool LowHpWanted() { return (lowhp::Enabled() || lowhp::ManaEnabled()) && g_enabled.load() && FullBody() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }
+bool LowHpWanted() { return (lowhp::Enabled() || lowhp::ManaEnabled()) && g_enabled.load() && VignetteAsF4() && !ThirdPerson() && xr::Running() && g_inWorld.load(); }   // (VR F5 as F4)
 
 // Who draws the sky and the fog (OurFogWanted, FogCannot, FogWanted, OurSkyWanted): vr/sky/sky_choice.cpp
 // [sky] bright_<period>: the sky's multiplier for this moment of the game's day (EffectsBegin, a present behind at most) - the open-air
@@ -1430,6 +1430,10 @@ void FlatVrFeed(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12Resource* bb) {
                                             : "standing by (native OpenXR, FlatVR not running, flat mode or [render] flatvr_feed=0)");
     }
     if (!want) { flatvrfeed::Idle(); return; }
+    // its own lines (a block made or taken over, a texture made or not) into the log: never wired before 2026-11-19, so a depth texture that
+    // could not be made said nothing (Serg's F5 on FlatVR depth). Only at a change, never per present.
+    static const bool logged = (flatvrfeed::SetLog(&Log), true);
+    (void)logged;
     if (replay::SkipWhileStuck("the FlatVR feed")) return;
     const bool ours = replay::t_ours;
     replay::t_ours = true;   // (our submission kept out of vrcam's own queue hooks, as monitor_eye's)
@@ -1553,7 +1557,9 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         }
         // [fog] game_fog_sky_off_axis: the view axis's place on the picture (the flat picture moved by [camera] flat_shift_x / _y is off-axis)
         // for the dome's test and the pixels' rays - dastarto on 0.217.1, flat F2: one side of the sky fogged as far ground. VR: 0, as before
-        if (g_set.gameFogSkyOffAxis.load() && !fp.ours) { fp.offX = g_projOffX.load(); fp.offY = g_projOffY.load(); }   // (the old effect fog frozen)
+        // Native OpenXR's eyes: their shared axis always (eyefov::SharedAxis - a fix, no key: F5's window of the room fogged half the dome as
+        // ground, Serg on 0.219.6; F4's headsets by their up / down asymmetry)
+        if ((g_set.gameFogSkyOffAxis.load() || g_projOffNative.load()) && !fp.ours) { fp.offX = g_projOffX.load(); fp.offY = g_projOffY.load(); }   // (the old effect fog frozen)
         // ([sky] game_sky: the game's dome left as the void is - its depth band, as the post pass's SkyDomeDepth)
         fp.skyDepth = engitem::DomeShown() ? skydome::DomeDepth(engitem::DomeRadius(), g_lastNear.load()) : 0.0f;
         if (planesOn && !fp.ours) {   // the planes from the game's fog's start to its Full fog ([fog] game_fog_start / _end; underground the caves')
@@ -1602,7 +1608,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         // black grass); from above (F1), behind (F2), the table and menus: the game's own
         const float metres = g_set.aoVrRadiusM.load();
         const float upm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();   // (the world's units a metre, as the body's)
-        const bool eyeLevel = viewgate::F4() || (g_set.platform.load() == 0 && g_enabled.load() && !ThirdPerson() && !Overhead());
+        const bool eyeLevel = viewgate::F4() || (FlatRules() && g_enabled.load() && !ThirdPerson() && !Overhead());   // (flat F3, VR F5)
         aovr::Frame(g_set.aoVr.load() && metres > 0.0f && g_inWorld.load() && eyeLevel, metres * upm, metres);
     }
     vcache::Apply(g_set.vcache.load(std::memory_order_relaxed), g_set.vcacheHow.load(std::memory_order_relaxed), &Log);   // [render] vcache: on the draw thread (its priority); only when it changes
@@ -2939,7 +2945,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         SetBool(rt, "UiMaskOn", mask);
         // flat, a menu open: a pixel of a panel keeps the game's colour whole, or the sky and the fog showed through its own see-through parts
         // (from sajmonsoft's flat fork; D2R_DepthFog.fx UiMaskSolid - an older effect has no such value, and its panels are as before)
-        SetBool(rt, "UiMaskSolid", mask && g_set.platform.load() == 0 && gamestate::MenuOpen());
+        SetBool(rt, "UiMaskSolid", mask && FlatRules() && gamestate::MenuOpen());   // (flat, VR F5)
         if (on) {   // on the floor (or for the plate alone) flat where the game puts them, each eye's own: only faded
             const bool floor = FloorView();
             const bool tilted = !floor && LabelsTilted();
@@ -2986,7 +2992,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                                                        platelook::EyeDistanceM(pin.groundM, UserEyeHeightM()), dt);
             }
             pin.m0 = g_projSx.load(); pin.halfGap = 0.5f * g_stereoIpd.load(); pin.conv = g_stereoConv.load(); pin.eyeHeightUnits = std::max(1.0f, ViewHeight());
-            pin.stereo = AfrOn() && g_enabled.load() && FullBody() && pin.m0 > 0.0f && pin.halfGap > 0.0f;   // as LabelDepthWanted
+            pin.stereo = AfrOn() && g_enabled.load() && LabelsAsF4() && pin.m0 > 0.0f && pin.halfGap > 0.0f;   // as LabelDepthWanted (VR F5 as F4)
             // The target's body and the point over its head (render metres): our plate stands there ([hud] monster_names_own), and in F2 / F3 the game's
             // plate is put at its depth ([hud_third] / [hud_floor] monster_depth)
             const bool otherStereo = !pin.firstPerson && PlateOtherStereo();
@@ -3100,7 +3106,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
             if (alliesHidden && sw && sh) AlliesBoxUv(sw, sh, allies, hideUnits);   // (moved off the picture below: its place left empty)
             else if (AlliesMoved() && sw && sh) AlliesBoxUv(sw, sh, allies);
             SetFloats(rt, "AlliesBox", allies, 4);
-            const float alliesOff[2] = {alliesHidden ? 4.0f : g_set.alliesX.load(), alliesHidden ? 0.0f : g_set.alliesY.load()};
+            float alliesOff[2];
+            AlliesOffNow(alliesOff);   // ([hud] f5_allies: VR F5's own)
+            if (alliesHidden) { alliesOff[0] = 4.0f; alliesOff[1] = 0.0f; }
             SetFloats(rt, "AlliesOff", alliesOff, 2);
             float dbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};   // the item-condition figure: first person only; its box, where it goes, how large, or gone
             const bool dOn = DurabilityMoved() && sw && sh && DurabilityBoxUv(sw, sh, dbox);
@@ -3118,7 +3126,7 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         }
     }
     SetFloat(rt, "GameBarShift", BarNearWanted() ? BarNearNow() * 0.005f : 0.0f);
-    SetFloat(rt, "GameMapShift", MapNearWanted() ? g_set.mapNearFloor.load() * 0.005f : 0.0f);
+    SetFloat(rt, "GameMapShift", MapNearWanted() ? MapNearNow() * 0.005f : 0.0f);   // (the floor's map_near, VR F5's f5_map_near)
     for (int i = 0; i < 2; ++i) {   // the toolbar and the map back in the picture, at their own size and depth (classic views)
         float box[4];
         uint64_t srv = 0;
@@ -3181,9 +3189,9 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         static std::vector<uint32_t> swingPx;
         float sbox[4] = {0.0f, 0.0f, 0.0f, 0.0f};
         uint32_t need = 0;
-        const int view = g_set.flatView.load();
+        const int view = FlatRulesView();   // (flat_view; VR F5: 3)
         const uint32_t sw = renderscale::g_screenW.load(), sh = renderscale::g_screenH.load();
-        bool swing = g_set.platform.load() == 0 && (view == 2 || view == 3) && sw && sh && !gamestate::MenuOpen() &&
+        bool swing = FlatRules() && (view == 2 || view == 3) && sw && sh && !gamestate::MenuOpen() &&
                      swingtimer::Monitor(GetTickCount64(), (float)sw / (float)sh, sbox, &need);
         if (swing) {
             const reshade::api::effect_texture_variable tv = rt->find_texture_variable("D2R_DepthFog.fx", "SwingTex");

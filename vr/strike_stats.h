@@ -15,6 +15,12 @@
 // Kept per hero (the name read from the game, local only - never in a log or report) and per weapon (its base item code, the game's own
 // name from vr/weapon_names.h); each with this session's numbers and all time's. The file (Serialize / Parse) is plain text, one line a
 // record; an unknown line is skipped, so a newer file reads in an older build (what it does not know is lost at the next write).
+//
+// Version 2 (Serg 2026-11-17: "распределения, а не средние"; the numbers players may share, vr/strike_share.h): per hero and weapon class
+// (the touch's kind), this game and all time - the blows by speed bucket (kSpeedEdges), the missed swings by the speed of their first
+// refused touch (the same buckets: where a threshold cuts real people), the blows by force bucket (kForceEdges); per hero the fatigue
+// curve - blows and speed by the minute since the session's first blow (kCurveMinutes, the last minute takes the rest); per weapon the
+// weight model's steel kg when it measured one.
 #pragma once
 
 #include <algorithm>
@@ -27,7 +33,21 @@
 
 namespace strikestats {
 
-constexpr int kVersion = 1;
+constexpr int kVersion = 2;
+// The buckets' upper edges: speed m/s (a bucket i holds [edge i-1, edge i); the last one everything from the last edge up) and force N s.
+constexpr float kSpeedEdges[] = {0.5f, 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 3.5f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 10.0f};
+constexpr int kSpeedBuckets = static_cast<int>(sizeof kSpeedEdges / sizeof kSpeedEdges[0]) + 1;   // 14
+constexpr float kForceEdges[] = {0.25f, 0.5f, 0.75f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f};
+constexpr int kForceBuckets = static_cast<int>(sizeof kForceEdges / sizeof kForceEdges[0]) + 1;   // 10
+constexpr int kCurveMinutes = 120;   // minutes 0 .. 119 since the session's first blow; 119 takes everything later
+template <size_t N>
+inline int BucketOf(const float (&edges)[N], float v) {
+    int i = 0;
+    while (i < static_cast<int>(N) && v >= edges[i]) ++i;
+    return i;
+}
+inline int SpeedBucket(float v) { return BucketOf(kSpeedEdges, v); }
+inline int ForceBucket(float v) { return BucketOf(kForceEdges, v); }
 constexpr size_t kMaxHeroes = 64;     // a file never grows past this many heroes ...
 constexpr size_t kMaxWeapons = 160;   // ... or weapons a hero (the oldest-used go first)
 constexpr uint32_t kBareHands = 0;    // the code of no weapon: bare fists
@@ -70,7 +90,28 @@ struct Weapon {
     uint32_t code = kBareHands;   // the base item's code (four characters, space padded), kBareHands, kPaws
     uint32_t kind = 0;            // its D2RVR_WeaponType (the touch's kind)
     uint64_t lastUse = 0;         // a counter of the store's notes: the oldest-used weapon goes first when a hero has too many
+    float kg = 0.0f;              // the weight model's steel, kg, the last time it measured one (0: never)
     Agg session, total;
+};
+
+// The distributions of one weapon class: blows by speed, missed swings by speed, blows by force.
+struct Hist {
+    uint64_t hit[kSpeedBuckets] = {}, miss[kSpeedBuckets] = {}, force[kForceBuckets] = {};
+    bool Empty() const {
+        for (uint64_t v : hit) if (v) return false;
+        for (uint64_t v : miss) if (v) return false;
+        for (uint64_t v : force) if (v) return false;
+        return true;
+    }
+};
+struct KindHist {
+    uint32_t kind = 0;
+    Hist session, total;
+};
+// One minute of the fatigue curve: the blows in it, and their speeds (sum over those that had one).
+struct Minute {
+    uint64_t blows = 0, speedN = 0;
+    double speedSum = 0.0;
 };
 
 struct Hero {
@@ -79,6 +120,8 @@ struct Hero {
     uint64_t lastUse = 0;
     Agg session, total;
     std::vector<Weapon> weapons;
+    std::vector<KindHist> kinds;                    // version 2: a weapon class each, in the order first struck
+    std::vector<Minute> curveTotal, curveSession;   // version 2: kCurveMinutes each once a blow was counted (empty before)
 };
 
 // A code as the store keeps it: the game's padding (0 or a space) always a space; bare hands stay 0.
@@ -135,22 +178,43 @@ public:
     const Hero* Current() const { return cur_ >= 0 && cur_ < static_cast<int>(heroes_.size()) ? &heroes_[cur_] : nullptr; }
     int CurrentIndex() const { return Current() ? cur_ : -1; }
 
-    void Blow(uint32_t code, uint32_t kind, float speed, float force) {
+    // A blow: speed m/s, force N s (<= 0: none), `minute` since the session's first blow (-1: not known), the weapon's steel kg (0: not measured).
+    void Blow(uint32_t code, uint32_t kind, float speed, float force, int minute = -1, float kg = 0.0f) {
         Hero& h = Cur();
         Weapon& w = WeaponOf(h, code, kind);
         h.session.Blow(speed, force);
         h.total.Blow(speed, force);
         w.session.Blow(speed, force);
         w.total.Blow(speed, force);
+        if (kg > 0.0f && kg < 1000.0f) w.kg = kg;
+        KindHist& k = KindOf(h, kind);
+        const bool sp = speed > 0.0f && speed < 100.0f, fo = force > 0.0f && force < 1000.0f;
+        if (sp) { ++k.session.hit[SpeedBucket(speed)]; ++k.total.hit[SpeedBucket(speed)]; }
+        if (fo) { ++k.session.force[ForceBucket(force)]; ++k.total.force[ForceBucket(force)]; }
+        if (minute >= 0) {
+            const int m = std::min(minute, kCurveMinutes - 1);
+            if (h.curveTotal.empty()) h.curveTotal.resize(kCurveMinutes);
+            if (h.curveSession.empty()) h.curveSession.resize(kCurveMinutes);
+            for (Minute* c : {&h.curveTotal[m], &h.curveSession[m]}) {
+                ++c->blows;
+                if (sp) { ++c->speedN; c->speedSum += speed; }
+            }
+        }
         dirty_ = true;
     }
-    void Miss(uint32_t code, uint32_t kind, bool slow) {
+    // A missed swing: `speed` the speed of its first refused touch (<= 0: not known - counted, not in a bucket).
+    void Miss(uint32_t code, uint32_t kind, bool slow, float speed = -1.0f) {
         Hero& h = Cur();
         Weapon& w = WeaponOf(h, code, kind);
         h.session.Miss(slow);
         h.total.Miss(slow);
         w.session.Miss(slow);
         w.total.Miss(slow);
+        if (speed > 0.0f && speed < 100.0f) {
+            KindHist& k = KindOf(h, kind);
+            ++k.session.miss[SpeedBucket(speed)];
+            ++k.total.miss[SpeedBucket(speed)];
+        }
         dirty_ = true;
     }
 
@@ -162,6 +226,8 @@ public:
         for (Hero& h : heroes_) {
             h.session = Agg{};
             for (Weapon& w : h.weapons) w.session = Agg{};
+            for (KindHist& k : h.kinds) k.session = Hist{};
+            h.curveSession.clear();
         }
     }
 
@@ -178,11 +244,19 @@ public:
             out += AggLine("all", h.total);
             if (!h.session.Empty()) out += AggLine("now", h.session);
             for (const Weapon& w : h.weapons) {
-                snprintf(line, sizeof line, "weapon %s %u %llu\n", CodeText(w.code).c_str(), w.kind, static_cast<unsigned long long>(w.lastUse));
+                if (w.kg > 0.0f) snprintf(line, sizeof line, "weapon %s %u %llu %.2f\n", CodeText(w.code).c_str(), w.kind, static_cast<unsigned long long>(w.lastUse), w.kg);
+                else snprintf(line, sizeof line, "weapon %s %u %llu\n", CodeText(w.code).c_str(), w.kind, static_cast<unsigned long long>(w.lastUse));
                 out += line;
                 out += AggLine("all", w.total);
                 if (!w.session.Empty()) out += AggLine("now", w.session);
             }
+            // version 2: "hist <kind> all|now hit|miss|force n0 n1 ..." (only what has a count), "curve all|now <minute> <blows> <speedN> <speedSum>"
+            for (const KindHist& k : h.kinds) {
+                out += HistLines(k.kind, "all", k.total);
+                out += HistLines(k.kind, "now", k.session);
+            }
+            out += CurveLines("all", h.curveTotal);
+            out += CurveLines("now", h.curveSession);
         }
         return out;
     }
@@ -232,7 +306,29 @@ public:
                 w = &FindOrAdd(*h, CodeOf(t[1].c_str()), static_cast<uint32_t>(v));
                 long long use = 0;
                 if (t.size() >= 4 && Int(t[3], &use) && use > 0) w->lastUse = std::max(w->lastUse, static_cast<uint64_t>(use));
+                double kg = 0.0;
+                if (t.size() >= 5 && Num(t[4], &kg) && kg < 1000.0) w->kg = static_cast<float>(kg);
                 clock_ = std::max(clock_, w->lastUse);
+            } else if (word == "hist" && h && t.size() >= 4 && Int(t[1], &v) && v > 0 && v < 1000 && (t[2] == "all" || t[2] == "now")) {
+                Hist& hs = t[2] == "all" ? KindOf(*h, static_cast<uint32_t>(v)).total : KindOf(*h, static_cast<uint32_t>(v)).session;
+                uint64_t* row = t[3] == "hit" ? hs.hit : t[3] == "miss" ? hs.miss : t[3] == "force" ? hs.force : nullptr;
+                const size_t n = t[3] == "force" ? kForceBuckets : kSpeedBuckets;
+                if (!row || t.size() != 4 + n) continue;
+                uint64_t got[kSpeedBuckets] = {};
+                bool ok = true;
+                for (size_t i = 0; i < n && ok; ++i) {
+                    long long c = 0;
+                    ok = Int(t[4 + i], &c) && c >= 0;
+                    got[i] = static_cast<uint64_t>(c);
+                }
+                if (ok) for (size_t i = 0; i < n; ++i) row[i] = got[i];
+            } else if (word == "curve" && h && t.size() >= 6 && (t[1] == "all" || t[1] == "now") && Int(t[2], &v) && v >= 0 && v < kCurveMinutes) {
+                long long b = 0, n = 0;
+                double sum = 0.0;
+                if (!Int(t[3], &b) || !Int(t[4], &n) || !Num(t[5], &sum) || b < 0 || n < 0) continue;
+                std::vector<Minute>& c = t[1] == "all" ? h->curveTotal : h->curveSession;
+                if (c.empty()) c.resize(kCurveMinutes);
+                c[static_cast<size_t>(v)] = Minute{static_cast<uint64_t>(b), static_cast<uint64_t>(n), sum};
             } else if ((word == "all" || word == "now") && h) {
                 Agg g;
                 if (!ParseAgg(t, &g)) continue;
@@ -253,10 +349,40 @@ private:
                  static_cast<unsigned long long>(g.missSlow), static_cast<unsigned long long>(g.missOff));
         return line;
     }
+    static std::string HistLines(uint32_t kind, const char* period, const Hist& hs) {
+        std::string out;
+        const struct { const char* name; const uint64_t* row; int n; } rows[3] = {{"hit", hs.hit, kSpeedBuckets}, {"miss", hs.miss, kSpeedBuckets}, {"force", hs.force, kForceBuckets}};
+        for (const auto& r : rows) {
+            bool any = false;
+            for (int i = 0; i < r.n; ++i) any = any || r.row[i];
+            if (!any) continue;
+            out += "hist " + std::to_string(kind) + " " + period + " " + r.name;
+            for (int i = 0; i < r.n; ++i) out += " " + std::to_string(r.row[i]);
+            out += "\n";
+        }
+        return out;
+    }
+    static std::string CurveLines(const char* period, const std::vector<Minute>& c) {
+        std::string out;
+        char line[160];
+        for (size_t m = 0; m < c.size(); ++m) {
+            if (!c[m].blows) continue;
+            snprintf(line, sizeof line, "curve %s %u %llu %llu %.3f\n", period, static_cast<unsigned>(m), static_cast<unsigned long long>(c[m].blows),
+                     static_cast<unsigned long long>(c[m].speedN), c[m].speedSum);
+            out += line;
+        }
+        return out;
+    }
+    static KindHist& KindOf(Hero& h, uint32_t kind) {
+        for (KindHist& k : h.kinds) if (k.kind == kind) return k;
+        h.kinds.push_back(KindHist{});
+        h.kinds.back().kind = kind;
+        return h.kinds.back();
+    }
     static std::vector<std::string> Words(const std::string& ln) {
         std::vector<std::string> out;
         size_t i = 0;
-        while (i < ln.size() && out.size() < 16) {
+        while (i < ln.size() && out.size() < 24) {
             while (i < ln.size() && (ln[i] == ' ' || ln[i] == '\t')) ++i;
             size_t j = i;
             while (j < ln.size() && ln[j] != ' ' && ln[j] != '\t') ++j;
@@ -364,9 +490,10 @@ public:
     struct Miss {
         uint32_t code = 0, kind = 0;
         bool slow = false;
+        float speed = -1.0f;   // the speed of the stroke's first refused touch, m/s (-1: not known)
     };
     // a refusal; returns true with *out set when an earlier stroke's miss is now settled
-    bool Refused(uint64_t key, uint32_t code, uint32_t kind, bool slow, uint64_t nowMs, Miss* out) {
+    bool Refused(uint64_t key, uint32_t code, uint32_t kind, bool slow, uint64_t nowMs, Miss* out, float speed = -1.0f) {
         bool settled = false;
         if (have_ && key_ != key) settled = Take(out);
         if (!have_ && !(landed_ && key_ == key)) {
@@ -374,7 +501,7 @@ public:
             landed_ = false;
             key_ = key;
             at_ = nowMs;
-            m_ = Miss{code, kind, slow};
+            m_ = Miss{code, kind, slow, speed};
         }
         return settled;
     }

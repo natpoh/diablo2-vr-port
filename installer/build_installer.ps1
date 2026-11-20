@@ -12,6 +12,7 @@
 #   -GameLink <file>  another game_link.dll than the standalone build's
 #   -WeightLibs <dir> where d2r_vr_weight.dll and d2r_vr_grip.dll are (the private weight_physics build)
 #   -GestureEngine <file> d2r_vr_gestures.dll, BodyWalk's gesture engine in the game ([gestures] engine_in_game; the private vjoy build, binary only)
+#   -WalkEngine <file>    d2r_vr_walk.dll, BodyWalk's walk in place in the game ([walk_in_place]; the private vjoy build, binary only)
 #   -CrashReporter <file> D2R_VR_Crash_Reporter.exe ([support] crash_reports / send_logs; the private vjoy build: cpp_src\crash_reporter\build.ps1 -Product d2r_vr)
 #   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
 #                     making one from Release_main (which may hold a BodyWalk not released yet)
@@ -53,6 +54,7 @@ param(
     [string]$WeightLibs = "C:\wsl\weight_physics\build\Release",
     [string]$CrashReporter = "C:\wsl\vjoy\cpp_src\crash_reporter\D2R_VR_Crash_Reporter.exe",
     [string]$GestureEngine = "",
+    [string]$WalkEngine = "",
     [switch]$SkipProfileCheck,
     [string]$BuildDir = "",
     [string]$VersionLabel = "",
@@ -165,6 +167,8 @@ foreach ($f in "d2r_vr_weight.dll", "d2r_vr_grip.dll", "d2r_vr_gait.dll") {   # 
 }
 # the optional gesture engine (BodyWalk's, closed, binary only): without it the Gestures tab says so and [gestures] engine_in_game does nothing
 if ($GestureEngine -and (Test-Path $GestureEngine)) { Copy-Item $GestureEngine "$payload\plugins\d2r_vr_gestures.dll" } else { Write-Warning "d2r_vr_gestures.dll not found ('$GestureEngine', -GestureEngine) - the installer goes without it" }
+# the optional walk library (BodyWalk's walk in place, closed, binary only): without it the Walk tab says so and [walk_in_place] on does nothing
+if ($WalkEngine -and (Test-Path $WalkEngine)) { Copy-Item $WalkEngine "$payload\plugins\d2r_vr_walk.dll" } else { Write-Warning "d2r_vr_walk.dll not found ('$WalkEngine', -WalkEngine) - the installer goes without it" }
 # the optional crash reporter (docs/crash_watchdog.md; a binary only, its source is private): without it the two crash report ticks are greyed out
 if ($CrashReporter -and (Test-Path $CrashReporter)) { Copy-Item $CrashReporter "$payload\plugins\D2R_VR_Crash_Reporter.exe" } else { Write-Warning "D2R_VR_Crash_Reporter.exe not found ($CrashReporter) - the installer goes without it" }
 # BodyWalk's side: its Game Link plugin, the mod's BodyWalk profile beside it, and the game's

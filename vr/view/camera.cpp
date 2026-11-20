@@ -849,6 +849,13 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
                  offX(1), r0, r5, fabsf(r0 - M[0]) > 0.01f * M[0] || fabsf(r5 - M[5]) > 0.01f * M[5] ? " - NOT mirrored: the replayed right eye is a little off" : "");
         }
         g_projSx.store(M[0]); g_projSy.store(M[5]); g_stereoIpd.store(2.0f * g_eyeHalf.load()); g_stereoConv.store(0.0f);
+        // the axis both eyes share, for the fog step's dome test (eyefov::SharedAxis: F5's window of the room is off-axis by the head's place
+        // in front of it - never told, part of the dome was fogged as far ground, Serg on 0.219.6); before, the flat picture's last value stayed
+        float ax = 0.0f, ay = 0.0f;
+        eyefov::SharedAxis({xe.tanL[0], xe.tanR[0], xe.tanU[0], xe.tanD[0]}, {xe.tanL[1], xe.tanR[1], xe.tanU[1], xe.tanD[1]}, &ax, &ay);
+        g_projOffX.store(ax);
+        g_projOffY.store(ay);
+        g_projOffNative.store(true);
     } else {
     d2rcam::m4::PerspectiveRevZ(CameraFov() * 3.14159265f / 180.0f, aspect, nearZ, M);
     // The frustum IS the FlatVR screen: each side by its own size at its distance.
@@ -863,7 +870,7 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         shift = M[0] * 0.5f * ipd / conv;
         M[8] += g_eye.load() == 0 ? shift : -shift;
     }
-    if (g_set.platform.load() == 0) {   // [camera] flat_shift_x / _y: flat F2 / F3, the picture moved (vr/flat_shift.h); and where the hero is on it
+    if (FlatRules()) {   // (flat, VR F5) [camera] flat_shift_x / _y: flat F2 / F3, the picture moved (vr/flat_shift.h); and where the hero is on it
         flatshift::Apply(M, g_set.flatShiftX.load(), g_set.flatShiftY.load());
         FlatShiftLog(in, M);
         g_projOffX.store(-M[8]);   // (the view axis's place on the flat picture, NDC: clip.w = -z, so x_ndc = sx x / -z - M[8])
@@ -872,6 +879,7 @@ bool VrProjInner(const d2rcam::WorldView& in, float M[16]) {
         g_projOffX.store(0.0f);    // (VR: the eyes' own off-axis values stay out of the fog step, as before)
         g_projOffY.store(0.0f);
     }
+    g_projOffNative.store(false);
     }
     if ((g_eye.load() & 1) == 0) {
         g_projShift.store(shift);

@@ -9,6 +9,10 @@
 //     Start asked once BodyWalk's Game Link is up (2026-10-10) - that stays whatever the keys say;
 //   - the switch in Settings: nothing started or stopped (only BodyWalk's Mapping source and FlatVR's 3D source follow, through Game Link).
 // BodyWalk itself is never closed. Flat mode ([mode] platform=0) is never touched.
+// Serg, 2026-11-19 (walk in place, [walk_in_place] on): "бодивалк при этом не запускается", "так же как мы сделали с маппингом" - with native OpenXR and
+// Controls without BodyWalk the plugin walks by the headset itself (BodyWalk's walk library inside the game), so BodyWalk is not started for it, as for
+// the mapping; the plan says so in its own words. Without Controls without BodyWalk, BodyWalk is the controls and is started as before (the walk then
+// needs it on: the Walk tab's line says so); FlatVR is BodyWalk's, so a FlatVR choice starts it as ever.
 #pragma once
 
 namespace bwauto {
@@ -23,6 +27,7 @@ struct Facts {
     bool vr = true;                 // [mode] platform=1 (the headset)
     bool native = false;            // [openxr] on: the game holds the headset itself
     bool directInput = false;       // [openxr] direct_input: native's controls without BodyWalk
+    bool walkInPlace = false;       // [walk_in_place] on: the plugin walks by the headset itself (BodyWalk's walk library in the game)
     bool startOn = true;            // [mode] flatvr_autostart
     bool closeOn = true;            // [mode] native_close_flatvr
     bool bodyWalkFound = false;     // a BodyWalkVR.exe found on this PC (one too old is refused by StartBodyWalk itself, which says so)
@@ -40,6 +45,7 @@ enum class Why {
     FlatVrStart,       // FlatVR: BodyWalk and / or FlatVR started
     FlatVrNoBodyWalk,  // FlatVR: no BodyWalk found to start
     NativeStartBodyWalk,  // native through BodyWalk's Mapping at the game's start: BodyWalk started (as before)
+    NativeWalkInPlace, // native, Controls without BodyWalk and walk in place at the game's start: the plugin controls and walks - BodyWalk not started
     NativeStopFlatVr,  // native: FlatVR in BodyWalk stopped through Game Link, BodyWalk stays
     NativeCloseFlatVr, // native: FlatVR.exe of its own closed, BodyWalk stays
     NativeCannotStop,  // native: FlatVR in BodyWalk holds the headset and this BodyWalk cannot stop it (no Game Link: Lite, an old copy) - left
@@ -71,6 +77,7 @@ inline Plan Decide(const Facts& f) {
         p.startBodyWalk = true;
         p.why = Why::NativeStartBodyWalk;
     }
+    if (f.when == When::GameStart && f.directInput && f.walkInPlace && f.bodyWalkRunning == 0) p.why = Why::NativeWalkInPlace;   // (nothing started: said so)
     if (!f.closeOn) return p;
     if (f.flatVrAppRunning > 0) {   // FlatVR on its own: closed (BodyWalk's own FlatVR, if any, is stopped below too)
         p.closeFlatVrApp = true;
@@ -108,6 +115,7 @@ inline const wchar_t* Text(Why w) {
     case Why::FlatVrStart: return L"FlatVR - BodyWalk and FlatVR started where they were not running";
     case Why::FlatVrNoBodyWalk: return L"FlatVR - no BodyWalk found to start";
     case Why::NativeStartBodyWalk: return L"native OpenXR through BodyWalk's Mapping - BodyWalk started";
+    case Why::NativeWalkInPlace: return L"native OpenXR with Controls without BodyWalk and walk in place - the plugin controls and walks by itself, BodyWalk not started";
     case Why::NativeStopFlatVr: return L"native OpenXR - FlatVR stopped through Game Link, BodyWalk stays";
     case Why::NativeCloseFlatVr: return L"native OpenXR - FlatVR.exe closed (it would hold the headset), BodyWalk stays";
     case Why::NativeCannotStop: return L"native OpenXR - FlatVR holds the headset and this BodyWalk has no Game Link to stop it (BodyWalk Lite or an old copy): "

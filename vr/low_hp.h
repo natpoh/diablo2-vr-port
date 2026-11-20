@@ -136,7 +136,7 @@ inline bool Fresh(double ageMs) { return ageMs >= 0.0 && ageMs <= kStaleMs; }
 // Everything the vignette needs of the view; vrcam fills it from its own flags.
 struct Where {
     bool cameraOn = false;      // vrcam's camera is on
-    bool fullBody = false;      // VR first person, F4 (FullBody())
+    bool fullBody = false;      // VR first person, F4 (FullBody()) - and VR F5 (vrcam's VignetteAsF4)
     bool thirdPerson = false;
     bool native = false;        // native OpenXR has the pair (the eyes of the headset)
     bool inWorld = false;       // a game area, not the title or character screens

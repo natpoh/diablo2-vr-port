@@ -59,7 +59,7 @@ float LabelSizeNow() {
 // [hud] labels_far, first person (F4): nearer labels larger, farther ones smaller, as signs in the room
 // (2026-10-12) - labels_size at 1.5 m and nearer, labels_far of it at 10 m and farther, a straight line
 // between; the distance from the hero's feet to the item's own place on the ground (its static path).
-bool LabelsByDistance() { return FullBody() && g_enabled.load() && g_set.labelsFarBody.load() < 0.995f; }
+bool LabelsByDistance() { return LabelsAsF4() && g_enabled.load() && g_set.labelsFarBody.load() < 0.995f; }   // (VR F5 as F4)
 // An item's distance on the ground from the hero's feet, world units.
 bool LabelItemDistance(void* unit, float* out) {
     uintptr_t path = 0;
@@ -119,14 +119,14 @@ float LabelScaleOf(const char* name, const int32_t* box, float fallback) {
 // labels' look as labels_depth_body sets it (0: where the game leaves them)
 // [hud] labels_own (vr/own_labels.h, docs/notes/custom_labels.md): in F4 the item labels drawn by us - the name painted sharp at the size it has in
 // the eye, in the game's own box (its layout, its hover and its pick-up untouched), at its item's depth. The effect needs each label's box for it.
-bool OwnLabelsNow() { return g_set.labelsOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
+bool OwnLabelsNow() { return g_set.labelsOwn.load() && g_enabled.load() && LabelsAsF4(); }   // (VR F5 as F4)
 // [hud] own_labels_drop_game: with our labels / names on, the game's own label, plate and hover layer not drawn at all (3c0ee102: its plate's Draw,
 // LabelPaint, its tooltip drawer skipped). Its own tick since 0.206.8's device-removed crash (DXGI_ERROR_INVALID_CALL): 0.206.6-0.206.8, the builds
 // with it, lost the device 2-3 minutes into every run with plates shown; 0.206.5, without it, ran clean. Unticked: none of those hooks is put in -
 // the game's layer drawn and hidden in our effect (0.206.5's way).
 bool DropGameLayer() { return g_set.ownDropGame.load(std::memory_order_relaxed); }
 bool LabelDepthWanted() {
-    return AfrOn() && g_enabled.load() && FullBody() && (g_set.labelsDepthBody.load() > 0.005f || replay::OverlaysWanted() || OwnLabelsNow());
+    return AfrOn() && g_enabled.load() && LabelsAsF4() && (g_set.labelsDepthBody.load() > 0.005f || replay::OverlaysWanted() || OwnLabelsNow());
 }
 SRWLOCK g_labelDepthLock = SRWLOCK_INIT;
 LabelDepth g_labelDepthNew[kLabelDepthMax];
@@ -234,7 +234,7 @@ bool HookLabelLayout(void* unit, char* name, int32_t* box, int32_t minX, int32_t
     float k = item ? (OwnLabelsNow() ? OwnLabelK(unit) : LabelSizeNow() * LabelDistanceK(unit)) : 1.0f;   // (labels_own: our curve, the game's box made that size too)
     // [input] point_pickup_label_pct (Serg, 0.199.1: "bigger"): its size, live - in place of Unleashed's 180% (130% out of reach). VR only: flat's lit
     // item (flat_pickup_key_on / flat_item_hitbox) keeps the game's size - its name lights up (the rim), flat's labels are the game's
-    if (lit && (uintptr_t)unit == lit && g_set.platform.load() == 1) {
+    if (lit && (uintptr_t)unit == lit && !FlatRules()) {   // (VR F5 plays as flat F3: the game's size)
         namespace la = unleashed::lootaim;
         const float pct = g_set.pointPickupLabelPct.load() * 0.01f * (pointpickup::LitInReach() ? 1.0f : la::OutOfReachLook.nameScale / la::InReachLook.nameScale);
         k = std::min(4.0f, k * pct);
@@ -311,11 +311,11 @@ double NamesNowMs() {
 // (Not given way to the room bar, monster_bar_room, since 2026-11-09: with ours on that bar stands aside - PlateWorldTick - as every old plate way does.)
 bool MonsterNamesOwnNow() {
     if (!g_set.monsterNamesOwn.load() || !g_enabled.load()) return false;
-    if (FullBody() && viewgate::F4()) return true;
-    return g_set.monsterNamesOwnAllViews.load() && g_set.platform.load() == 1 && !FullBody() && AfrOn();
+    if (LabelsAsF4()) return true;   // (VR F5 as F4)
+    return g_set.monsterNamesOwnAllViews.load() && g_set.platform.load() == 1 && !LabelsAsF4() && AfrOn();
 }
 // [hud] npc_names_own: the hover tooltip's names (ownnames::kHoverSites) - recorded like the plate's texts, skipped once ours is shown.
-bool NpcNamesOwnNow() { return g_set.npcNamesOwn.load() && g_enabled.load() && FullBody() && viewgate::F4(); }
+bool NpcNamesOwnNow() { return g_set.npcNamesOwn.load() && g_enabled.load() && LabelsAsF4(); }   // (VR F5 as F4)
 std::atomic<bool> g_hoverOn{false};
 std::atomic<bool> g_names3d{false};
 void NamesSet3d(bool on) { g_names3d.store(on, std::memory_order_relaxed); }
@@ -532,7 +532,7 @@ void MonsterPlateWhichTick() {
     ownplatewhy::In s;
     s.own = g_set.monsterNamesOwn.load();
     s.allViews = g_set.monsterNamesOwnAllViews.load();
-    s.firstPerson = FullBody() && viewgate::F4();
+    s.firstPerson = LabelsAsF4();   // (VR F5's plate as F4's)
     s.vrOurs = g_enabled.load() && g_set.platform.load() == 1;
     s.stereo = AfrOn();
     s.dropGame = DropGameLayer();
