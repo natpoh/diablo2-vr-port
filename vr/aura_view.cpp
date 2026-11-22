@@ -17,6 +17,7 @@
 #include <D2RLPlugin/api.h>
 
 #include "aura_view.h"
+#include "billboards.h"   // the one hook of view.direction, shared with the town portal ([stereo] portal_once)
 #include "log_async.h"
 #include "sigscan.h"
 
@@ -112,11 +113,18 @@ void Correct(void* output, const void* context) noexcept {
 
 void HookDirection(void* out, const void* in, const void* context) {
     g_orig(out, in, context);
-    if (!g_on.load(std::memory_order_relaxed) || !out || !context) return;
-    Correct(out, context);
+    if (g_on.load(std::memory_order_relaxed) && out && context) Correct(out, context);
+    billboards::AfterDirection(out, in, context);   // the town portal's correction (other lanes: its own assets only), the hook being one for both
 }
 
 }  // namespace
+
+bool DirectionHooked() { return g_orig != nullptr; }
+
+void AfterDirection(void* out, const void* /*in*/, const void* context) {
+    if (g_state.load(std::memory_order_acquire) != 1 || !g_on.load(std::memory_order_relaxed) || !out || !context) return;
+    Correct(out, context);
+}
 
 void Init(const PluginContext* ctx) { g_ctx = ctx; }
 
@@ -162,6 +170,10 @@ void Install() {
         g_state.store(1);
         Log("aura view: ready - the game's view.direction for particle scripts is hooked (the original always runs; only the Paladin's aura effects, "
             "data/hd/vfx/particles/overlays/paladin/, are changed, and only in VR views of the world)");
+    } else if (billboards::DirectionHooked()) {   // the town portal's hook has it: that hook runs this correction too (AfterDirection)
+        g_state.store(1);
+        Log("aura view: ready - the game's view.direction is hooked by the town portal's code ([stereo] portal_once), which runs the aura correction too (only the "
+            "Paladin's aura effects, data/hd/vfx/particles/overlays/paladin/, are changed, and only in VR views of the world)");
     } else if (++tries == 30) {
         g_state.store(2);
         Log("aura view: the hook could not be put in - the aura rings are drawn as the game places them");

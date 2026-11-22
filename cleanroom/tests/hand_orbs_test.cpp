@@ -38,6 +38,7 @@
 #include "hand_orbs.h"
 #include "d2r_vr_state.h"   // the hero class bits of the state block (shared/)
 #include "hud_globes.h"
+#include "drawn_hand.h"   // the slots -> where the game draws a right-slot shield ([hud] hand_vitals_orb_shield_any_slot)
 
 using Microsoft::WRL::ComPtr;
 using namespace handorbs;
@@ -1143,6 +1144,60 @@ void TestUnderShield() {
         Expect(ShieldWrist(3, true) == 0, "strapped to the RIGHT forearm (the hand swap): the right wrist");
         Expect(ShieldWrist(1, false) == -1 && ShieldWrist(3, false) == -1 && ShieldWrist(0, false) == -1, "no shield in the left slot: none (a stale strap does not count)");
         Expect(ShieldWrist(2, true) == -1, "a shield put away at the left shoulder ([hands] shoulder_draw_shield_stow) is on no wrist: the ball stays on the back of the hand");
+    }
+
+    // [hud] hand_vitals_orb_shield_any_slot: the shield's side from the item in each hand slot (nikswat, 0.221.0: a shield moved to the RIGHT slot in the inventory, a javelin alone
+    // in the left one, [hands] left_handed=1 - the log: "left slot weapon ... a shield in the right slot (to the right forearm)", "shield strapped to the RIGHT forearm" - and the
+    // mana ball on the right wrist stayed under the shield). The chain the plugin runs: the slots -> drawnhand::Decide (left_slot_drawn_left straps the right slot's shield to the
+    // right forearm: skel::ShieldStrapped() 3) -> ShieldWrist(strap, LeftShield, anySlot && RightShield) as effects.cpp passes it -> Step.
+    {
+        struct Case {
+            const char* name;
+            uint32_t kind[2];   // [0] right slot, [1] left slot (D2RVR_TYPE_*; 0 nothing or a shield)
+            bool shield[2];
+            bool leftHanded;    // [hands] left_handed: the sticks only (vr/hand_swap.h) - the skeleton's sides, the slots and the strap are the hero's, so not an input here
+            int wantWrist;      // skeleton side: 0 right, 1 left, -1 none
+        };
+        const Case cases[] = {
+            {"a shield in the left slot, a sword in the right", {D2RVR_TYPE_SWORD, 0}, {false, true}, false, 1},
+            {"a shield in the right slot, a javelin alone in the left", {0, D2RVR_TYPE_JAVELIN}, {true, false}, false, 0},
+            {"the same with left_handed=1 (nikswat)", {0, D2RVR_TYPE_JAVELIN}, {true, false}, true, 0},
+            {"no shield (a sword in the right slot)", {D2RVR_TYPE_SWORD, 0}, {false, false}, false, -1},
+            {"no shield, left_handed=1", {D2RVR_TYPE_SWORD, 0}, {false, false}, true, -1},
+        };
+        // the strap skeletons.cpp leaves: [shield] forearm for a left-slot shield (1, the left forearm), left_slot_drawn_left's mirrored strap for a right-slot one beside a weapon
+        // alone in the left slot (3), none without a shield
+        const auto strapOf = [](const Case& c) {
+            drawnhand::Slots sl;
+            sl.kind[0] = c.kind[0];
+            sl.kind[1] = c.kind[1];
+            sl.shield[0] = c.shield[0];
+            sl.shield[1] = c.shield[1];
+            const drawnhand::Plan p = drawnhand::Decide(sl);
+            if (c.shield[1]) return 1;
+            if (c.shield[0] && p.shieldToRight) return 3;
+            return 0;
+        };
+        for (const Case& c : cases) {
+            const int strap = strapOf(c);
+            const int wrist = ShieldWrist(strap, c.shield[1], c.shield[0]);
+            Expect(wrist == c.wantWrist, "%s: the shield's wrist is %d (want %d; strap %d)", c.name, wrist, c.wantWrist, strap);
+            const int old = ShieldWrist(strap, c.shield[1], false);   // the key unticked: the left slot alone, as before
+            Expect(c.shield[1] ? old == wrist : old == -1, "%s, hand_vitals_orb_shield_any_slot=0: %s (%d)", c.name, c.shield[1] ? "the same - the left arm's behaviour is kept" : "no shield seen, as before", old);
+
+            // Step with it: the shielded wrist's ball on its inner side, the other on the back of its hand (life on the left wrist, mana on the right)
+            State st;
+            In in = Base();
+            in.shieldWrist = wrist;
+            const Set s = Step(st, in);
+            const V3 lifeBack = wrist == 1 ? V3{0, -1, 0} : V3{0, 1, 0}, manaBack = wrist == 0 ? V3{0, -1, 0} : V3{0, 1, 0};
+            Expect(s.orb[kLife].on && s.orb[kMana].on && SameV(s.orb[kLife].back, lifeBack) && SameV(s.orb[kMana].back, manaBack),
+                   "%s: life %s, mana %s", c.name, wrist == 1 ? "on the inner side" : "on the back of the hand", wrist == 0 ? "on the inner side" : "on the back of the hand");
+            if (wrist == 0)
+                Expect(SameV(s.orb[kMana].c, Centre(RightArm(), Grip{}, cfg, 0, 0.0f, 0.0f, 1.0f).c) && SameV(s.orb[kLife].c, Centre(LeftArm(), Grip{}, cfg, 1).c),
+                       "%s: the mana ball sits on the right wrist's inner side, the left wrist's life ball where it always was", c.name);
+        }
+        Expect(Config{}.orbShieldAnySlot && handvitals::Sanitized(Config{}).orbShieldAnySlot, "hand_vitals_orb_shield_any_slot: on by default");
     }
 
     // Centre: not under a shield it is exactly what it was; fully under, the other side of the wrist

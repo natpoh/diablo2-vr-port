@@ -61,6 +61,16 @@ int UiBandMode();
 // The interface is laid out in the 16:9 band now (xr.cpp HangPanel: the menu's panel lowered so the band, not the canvas, is centred where it hangs).
 bool UiBandActive();
 
+// [render] vram_guard (vr/vram_guard.h; live, off = as before): xr.cpp's ini read. Off clears a cap it made (the size picked again).
+void SetVramGuard(bool on);
+bool VramGuardOn();
+// The 10 s line's thread (vr/render/effects/effects.cpp), every vramguard::kSampleMs while the guard is on: the process's video memory use
+// and its budget (bytes, the local segment, QueryVideoMemoryInfo). Over the budget a few readings in a row with a size of ours in force: the
+// render size lowered a step (or more), logged.
+void VramSample(uint64_t usage, uint64_t budget);
+// The cap on the render size's long side the guard holds now (0 = none). Any thread.
+uint32_t VramCap();
+
 // A size is in force (asked for; the game may still be taking it) - the depth pick must not take a shadow map for the picture.
 bool Active();
 // The size in force ({} = none): [render] apply_keep_size (vr/apply_keep_size.h). Any thread.

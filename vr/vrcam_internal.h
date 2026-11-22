@@ -336,6 +336,8 @@ bool LookAtNow(float out[3]);
 // (vr/body/hero_facing.cpp, at every pose UnderCamera measures). Any thread.
 bool HeroInLeapAir();
 bool BodyWalkReport(BWPadMirror* out, bool evenIfOff);
+bool BodyWalkRunning();                           // vr/input/pad.cpp: BodyWalk's Game Link alive or its pad report moving
+bool BodyWalkWalkStick(int16_t* lx, int16_t* ly);  // vr/input/pad.cpp: [walk_in_place] source=1 - BodyWalk's walking stick as last read
 uintptr_t SewerHero() noexcept;
 int SewerLevel(uintptr_t hero) noexcept;
 namespace replay { bool OverlaysWanted(); }

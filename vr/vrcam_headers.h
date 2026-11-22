@@ -275,6 +275,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "throw_hand.h"
 #include "throw_cast.h"
 #include "touch_empty_slot.h"   // [gameplay] melee_touch_empty_attack: an empty attack slot is read as the plain Attack for the touch's press
+#include "thrown_touch.h"       // [gameplay] melee_touch_thrown_melee: a throwing skill on the attack slot is read as the plain Attack for a thrown weapon's touch
 #include "throw_trace.h"
 #include "panel_input.h"
 #include "typed_keys.h"   // [openxr] laser_typing: the plugin's own keys carry kOwnKeyTag; a real one lets the keyboard layout in
@@ -316,7 +317,9 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "head_shadow.h"          // [arms] head_shadow: the hidden head still casts its shadow
 #include "simpler_sun.h"          // [render] sun_shadow_radius_m / sun_shadow_every: the game's sun shadow map filled for less (F4)
 #include "grab_priority.h"   // [belt] grab_nearest, grab_trigger: a grip press and the belt potion or the weapon
+#include "merc_give.h"       // [hands] merc_give_weapon: the weapon let go into the mercenary - the game's own quick moves give it to him
 #include "belt_drop.h"       // [hands] belt_drop_ground: the game's own drop of a belt potion (the belt slot's click, the cursor's drop)
+#include "stats_leak_wire.h"   // [debug] stats_leak_trace: the stat lists the game leaks when a game is left, named before its assert
 #include "belt_refill.h"     // [belt] refill_key: a tap = the game's Shift + click at the pointer, a hold = the game's own belt fill
 #include "belt_glow.h"       // [hands] belt_inner_glow: a bottle in reach lit with the game's own highlight
 #include "belt_bottle.h"     // [hands] belt_empty_bottle, belt_drop_ground: past the drink - the emptied bottle, a full one onto the ground (and bottle_fall.h, their fall)

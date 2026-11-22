@@ -513,6 +513,15 @@ int main() {
             Configure(c);
             EXPECT(Settings().orbUnderShield && std::fabs(Settings().orbShield.turnDeg - 180.0f) < 1e-6f && Settings().orbShield.rotZDeg == 0.0f);
         }
+        {   // [hud] hand_vitals_orb_shield_any_slot: on by default, live
+            EXPECT(Settings().orbShieldAnySlot);
+            c.orbShieldAnySlot = false;
+            Configure(c);
+            EXPECT(!Settings().orbShieldAnySlot && Settings().orbUnderShield);
+            c.orbShieldAnySlot = true;
+            Configure(c);
+            EXPECT(Settings().orbShieldAnySlot);
+        }
         c.orbFill = 99;   // not a direction: the default, out of the hand
         Configure(c);
         EXPECT(Settings().orbFill == kFillOutOfHand);

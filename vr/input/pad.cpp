@@ -408,10 +408,12 @@ void FoldRealLeftStick(BWPadMirror* out) {
 // walk-start line (HookStickGet). 0 while BodyWalk's report is not live.
 std::atomic<uint32_t> g_bwStickRaw{0};
 std::atomic<bool> g_bwStickLifted{false};
+std::atomic<ULONGLONG> g_bwStickLiveAt{0};   // when BodyWalk's walking stick last came in (its report or Game Link's Walk block): BodyWalkWalkStick
 // [input] bodywalk_walk_lift (vr/walk_path.h Lift): F4, in the world, no panel - BodyWalk's stick between the key's length and the game's
 // dead zone is lengthened to just past it, so the hero starts while BodyWalk's averages are still climbing. 0 = off, the stick as it is.
 void BodyWalkStickLift(BWPadMirror* bw, bool live) {
     g_bwStickRaw.store(live ? ((uint32_t)(uint16_t)bw->thumb_lx | ((uint32_t)(uint16_t)bw->thumb_ly << 16)) : 0u, std::memory_order_relaxed);
+    if (live) g_bwStickLiveAt.store(GetTickCount64(), std::memory_order_relaxed);
     const float from = g_set.bwWalkLift.load(std::memory_order_relaxed);
     bool lifted = false;
     if (live && from > 0.0f && viewgate::F4() && g_inWorld.load() && !gamestate::MenuOpen())
@@ -427,13 +429,38 @@ void WalkInPlaceStick(int16_t* lx, int16_t* ly) {
     if (!wipwire::Stick(&s.lx, &s.ly) || !g_inWorld.load() || gamestate::MenuOpen()) return;
     wip::Merge(lx, ly, s);
 }
+// [walk_in_place] source=1 (BodyWalk walks): BodyWalk's walking stick as the pad last read it (before any lift), for the Walk tab's line; false = none
+// came in during the last half second (no BodyWalk, its Steps / Output off, or the pad not polled).
+bool BodyWalkWalkStick(int16_t* lx, int16_t* ly) {
+    const ULONGLONG at = g_bwStickLiveAt.load(std::memory_order_relaxed);
+    if (!at || GetTickCount64() - at > 500) return false;
+    const uint32_t raw = g_bwStickRaw.load(std::memory_order_relaxed);
+    *lx = (int16_t)(uint16_t)(raw & 0xFFFF);
+    *ly = (int16_t)(uint16_t)(raw >> 16);
+    return true;
+}
+// [walk_in_place] source=1 in direct mode: BodyWalk's Output "Game Link" puts its walk in Game Link's Walk block - taken from there when its pad report
+// is not moving, so BodyWalk walks whichever output it has. Said once a change.
+bool WalkInPlaceLinkWalk(BWPadMirror* bw) {
+    float wx = 0.0f, wy = 0.0f;
+    const bool got = wipwire::BodyWalkWalks() && link::Walk(&wx, &wy);
+    static std::atomic<int> told{-1};
+    if (told.exchange(got ? 1 : 0) != (got ? 1 : 0) && got)
+        Log("vrcam: walk in place by BodyWalk - its walk from Game Link's Walk block (no pad report of BodyWalk's moving)");
+    if (!got) return false;
+    *bw = BWPadMirror{};
+    bw->version = BW_PAD_MIRROR_VERSION;
+    bw->thumb_lx = walkpath::LinkAxis(wx);
+    bw->thumb_ly = walkpath::LinkAxis(wy);
+    return true;
+}
 void WalkInPlaceDropsBodyWalk(BWPadMirror* bw) {
     static std::atomic<int> told{-1};
     const bool drop = wipwire::Walks();
     const int was = told.exchange(drop ? 1 : 0);
     if (was != (drop ? 1 : 0) && (drop || was == 1))
         Log(drop ? "vrcam: walk in place - the internal walk library walks the hero: BodyWalk's own walking stick is not mixed in"
-                 : "vrcam: walk in place - not walking by the library (off, not F4, or the library missing): BodyWalk's walking stick is mixed in as before");
+                 : "vrcam: walk in place - not walking by the library (off, BodyWalk chosen, not F4, or the library missing): BodyWalk's walking stick is mixed in as before");
     if (drop) { bw->thumb_lx = 0; bw->thumb_ly = 0; }
 }
 
@@ -461,8 +488,10 @@ bool PadMirrorRead(BWPadMirror* out, bool* walkOnly = nullptr, bool* pluginPad =
         float wx = 0.0f, wy = 0.0f;
         in.reportLive = direct && walks && link::Walk(&wx, &wy);
         if (in.reportLive) { bw.version = BW_PAD_MIRROR_VERSION; bw.thumb_lx = walkpath::LinkAxis(wx); bw.thumb_ly = walkpath::LinkAxis(wy); }
-    } else
+    } else {
         in.reportLive = (direct ? walks : in.bodywalkPadOn) && BodyWalkReport(&bw, walks);
+        if (!in.reportLive && direct && walks) in.reportLive = WalkInPlaceLinkWalk(&bw);   // ([walk_in_place] source=1: Game Link's Walk block without the report)
+    }
     BodyWalkStickLift(&bw, in.reportLive);   // [input] bodywalk_walk_lift / [debug] walk_start_log
     if (direct) WalkInPlaceDropsBodyWalk(&bw);   // [walk_in_place]: the internal walk library walks - BodyWalk's own walking stick is not mixed in
     in.ownLX = d.lx; in.ownLY = d.ly;

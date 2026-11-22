@@ -36,6 +36,8 @@ static hset::Rect SliderAtSide(int side) {
     return {x - 2, hset::kSlTrack.y, 4, hset::kSlTrack.h};
 }
 #include "../../vr/wheel_paint.h"
+// Walking in place closed (Serg 2026-11-22, vr/walk_in_place.h wip::kOpen): the Walk page and its tab are hidden - one page, one tab fewer.
+constexpr int kWalkHidden = wip::kOpen ? 0 : 1;
 
 using namespace wheel;
 namespace di = directinput;
@@ -99,6 +101,7 @@ static void TestSheet() {
     // every button of every page, at its window pixel, is the same button for the pages' own hit test through SheetPoint
     int checked = 0;
     for (int page = 0; page < hset::PageCount(); ++page) {
+        if (!hset::PageShown(page, 0)) continue;
         hset::Model m;
         hset::Snapshot sn;
         sn.ready = true;
@@ -1325,6 +1328,7 @@ static void TestScene() {
         hset::Snapshot sn;
         sn.ready = true;
         m.Open(sn);
+        if (!hset::PageShown(page, 0)) continue;
         m.Click({hset::Kind::Tab, page, 0});
         const hset::Scene full = hset::Compose(m, {});
         const hset::Scene bare = hset::Compose(m, {}, hset::ComposeOptions{false, true, nullptr});
@@ -1345,7 +1349,7 @@ static void TestScene() {
             for (int i = 0; i < hset::kTabCount; ++i) if (it.text == hset::kTabNames[i] && it.r.y == hset::kTab(i).y) ++tabs;   // (in the strip: a toggle's face can be "Left")
             if (it.text == "Recentre view" || it.text == "Close" || it.text == "Apply") ++bottom;
         }
-        CHECK(tabs == hset::kTabCount && bottom == 3);
+        CHECK(tabs == hset::kTabCount - kWalkHidden && bottom == 3);
     }
     // the one chosen page tab is the selected one
     hset::Model m;
@@ -1389,7 +1393,7 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 
 static void TestFlipper() {
     CHECK(kFlipPlaces == 28 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(27, 1) == 27 && FlipTo(27, -1) == 26 && FlipTo(2, 0) == 2);
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(27, 1) == 27 && FlipTo(27, -1) == 26 - kWalkHidden && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -1955,13 +1959,15 @@ static void TestFlipController() {
         CHECK(w.c.SettingsModel().page == hset::kPageParty && w.c.FlipPlace() == 1 + hset::kPageParty);   // the Party page (the Co-op tab's second page): a flick passes it too
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageStats && w.c.FlipPlace() == 1 + hset::kPageStats);   // the strike statistics' tab
-        Flick(w, 1.0f);
-        CHECK(w.c.SettingsModel().page == hset::kPageWalk && w.c.FlipPlace() == 1 + hset::kPageWalk);   // walking in place ([walk_in_place])
+        if (wip::kOpen) {
+            Flick(w, 1.0f);
+            CHECK(w.c.SettingsModel().page == hset::kPageWalk && w.c.FlipPlace() == 1 + hset::kPageWalk);   // walking in place ([walk_in_place])
+        }
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.SettingsModel().GuideShown());
         Flick(w, 1.0f);
         CHECK(w.c.SettingsModel().page == hset::kPageGuide && w.c.FlipPlace() == 1 + hset::kPageGuide && w.c.Open());   // the end: a stop
-        Flick(w, -1.0f);
+        if (wip::kOpen) Flick(w, -1.0f);   // (the Walk page)
         Flick(w, -1.0f);
         Flick(w, -1.0f);
         for (int i = 0; i < hset::kWorldPages; ++i) Flick(w, -1.0f);
@@ -2140,8 +2146,10 @@ static void TestFlipController() {
         w.ClickPx(CentreX(next), CentreY(next));
         CHECK(w.c.FlipPlace() == 1 + hset::kPageGuide);
         w.ClickPx(CentreX(prev), CentreY(prev));
-        CHECK(w.c.FlipPlace() == 1 + hset::kPageWalk && w.c.SettingsModel().page == hset::kPageWalk);
-        w.ClickPx(CentreX(prev), CentreY(prev));
+        if (wip::kOpen) {
+            CHECK(w.c.FlipPlace() == 1 + hset::kPageWalk && w.c.SettingsModel().page == hset::kPageWalk);
+            w.ClickPx(CentreX(prev), CentreY(prev));
+        }
         CHECK(w.c.FlipPlace() == 1 + hset::kPageStats && w.c.SettingsModel().page == hset::kPageStats);
         // the laser's click on a page tab of the sheet moves the place too, the same order
         w.ClickSheet(hset::kTab(hset::TabOf(hset::kPageView)));
@@ -2323,13 +2331,13 @@ static void TestViews() {
     for (int view = 0; view <= kViewF5; ++view) {   // (5: VR F5 - the overlay's view there, as F1 - F3)
         const bool flat = (view >= 1 && view <= 3) || view == kViewF5;
         const bool f5 = view == kViewF5;   // VR F5 shares F4's low-life vignette: its Life and Look pages show there (F5SharesPage)
-        for (int p : bodyPages) CHECK(PageShown(p, view) == (!flat || (f5 && IsLifePage(p))));
+        for (int p : bodyPages) CHECK(PageShown(p, view) == ((!flat || (f5 && IsLifePage(p))) && (p != kPageWalk || wip::kOpen)));
         for (int p : allPages) CHECK(PageShown(p, view));
         CHECK(PageShown(kPageF3, view) == (view == 0 || view == 3));   // F3's page ([table] full_width, draw_distance): VR F3 only (0: Settings' own)
         CHECK(PageShown(kPageF1, view) == (view == 0 || view == 1));   // F1's page ([top] perspective, tilt, distance): VR F1 only (0: Settings' own)
         int tabs = 0;
         for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
-        CHECK(tabs == (flat ? (f5 ? 10 : 8) : 17));   // View, F5, Options, Video, Controls, HUD, Co-op, Guide (VR F5: + Life, Look) - or all seventeen
+        CHECK(tabs == (flat ? (f5 ? 10 : 8) : 17 - kWalkHidden));   // View, F5, Options, Video, Controls, HUD, Co-op, Guide (VR F5: + Life, Look) - or all seventeen
         // the strip: the shown tabs inside it and apart, in order; one not shown has no place
         int lastEnd = 0;
         for (int t = 0; t < kTabCount; ++t) {
@@ -2348,7 +2356,7 @@ static void TestViews() {
         // the flips: Skills and the pages shown (Party with it, while it is on)
         const int f3Page = (view == 0 || view == 3 ? 1 : 0) + (view == 0 || view == 1 ? 1 : 0);   // (F3's page: VR F3 only, and 0; F1's: VR F1 only, and 0)
         const int lifePages = f5 ? 2 : 0;   // (VR F5: Life and Look)
-        CHECK(FlipCount(view) == (flat ? 11 : kFlipPlaces - 2) + f3Page + lifePages && FlipCount(view, false) == (flat ? 10 : kFlipPlaces - 3) + f3Page + lifePages);
+        CHECK(FlipCount(view) == (flat ? 11 : kFlipPlaces - 2 - kWalkHidden) + f3Page + lifePages && FlipCount(view, false) == (flat ? 10 : kFlipPlaces - 3 - kWalkHidden) + f3Page + lifePages);
     }
     // Controls: one tab, two pages, a button each on top
     CHECK(TabOf(kPageKeysL) == TabOf(kPageKeysR) && TabPage(kTabControls) == kPageKeysL && !std::strcmp(kTabNames[kTabControls], "Controls") && HasSubRow(kPageKeysR));
@@ -2460,7 +2468,7 @@ static void TestViews() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces - 2);   // (all but the View tab's second pages F1 and F3)
+        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces - 2 - kWalkHidden);   // (all but the View tab's second pages F1 and F3)
         w.ClickSheet(kTab(TabOf(kPageMelee)));
         CHECK(w.c.SettingsModel().page == kPageMelee);
     }

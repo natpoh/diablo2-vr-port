@@ -51,7 +51,7 @@ inline Hit RayQuad(V3 from, V3 dir, const Quad& q, float reach = 4.0f) {
 }
 
 // What one frame of the laser on the map does (Clicker::Step).
-enum class Event { None, Open, Close, Rotate, Front };   // Front: the big map to the front / back on the hand ([hud] map_big_on_hand)
+enum class Event { None, Open, Close, Rotate, Front, Ally };   // Front: the big map to the front / back on the hand ([hud] map_big_on_hand); Ally: below
 struct Frame {
     bool claim = false;   // the laser hand's trigger is the laser's this frame (hidden from the game)
     bool beam = false;    // the beam and dot drawn (it points at the map, the big map or its button - or the map is big)
@@ -69,15 +69,19 @@ public:
     Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger) { return Step(allowed, onMap, onBig, onButton, onFront, trigger, false); }
     // keep: [hud] map_big_keep (below, Keeps) - while big the trigger is the laser's only while it points at the big map or its buttons.
     // pinned: [hud] map_hand_full (below, AutoOpen) - a click on the big map does not put it back (there is no small map to go back to).
-    Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger, bool keep, bool pinned = false) {
+    // onAlly: [hud] allies_merc_click - it points at the mercenary's tile under the map (in the hand or the big one; vr/ally_portraits.h MercRect): the
+    // trigger is the laser's there too, and a fresh press is Event::Ally (his inventory opened by the caller) - the map neither opens nor closes for it.
+    Frame Step(bool allowed, bool onMap, bool onBig, bool onButton, bool onFront, bool trigger, bool keep, bool pinned = false, bool onAlly = false) {
         Frame f;
         if (!allowed && big_) { big_ = false; f.event = Event::Close; }   // the map goes back to the hand when the laser cannot act
-        const bool aimed = big_ ? (!keep || onBig || onButton || onFront) : onMap;   // where the laser takes the trigger
+        const bool aimed = onAlly || (big_ ? (!keep || onBig || onButton || onFront) : onMap);   // where the laser takes the trigger
         if (!trigger) claimed_ = allowed && aimed;                        // who has the trigger: decided while it is let go
         f.claim = claimed_;
         f.beam = allowed && aimed;
         if (allowed && claimed_ && trigger && !was_ && f.event == Event::None) {   // a fresh press, the laser's
-            if (!big_) {
+            if (onAlly && !onButton && !onFront) {
+                f.event = Event::Ally;
+            } else if (!big_) {
                 if (onMap) { big_ = true; f.event = Event::Open; }
             } else if (onButton) {
                 f.event = Event::Rotate;

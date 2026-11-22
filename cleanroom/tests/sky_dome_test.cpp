@@ -70,6 +70,10 @@ int main(int argc, char** argv) {
         in = c; in.inWorld = false; CHECK(std::strstr(CaveWhyNot(in), "world") != nullptr);
         in = c; in.underground = false; CHECK(std::strstr(CaveWhyNot(in), "underground") != nullptr);
         in = c; in.eyeOk = false; CHECK(std::strstr(CaveWhyNot(in), "eye") != nullptr);
+        // [sky] arcane_no_cave_dome: the Arcane Sanctuary is "underground" (off the outdoor list) but its void is its sky
+        in = c; in.arcaneOpen = true; CHECK(std::strstr(CaveWhyNot(in), "Arcane") != nullptr && std::strstr(CaveWhyNot(in), "arcane_no_cave_dome") != nullptr);
+        in = c; in.arcaneOpen = false; CHECK(std::strcmp(CaveWhyNot(in), "") == 0);   // (unticked or elsewhere: the dome as before)
+        in = c; in.arcaneOpen = true; in.ticked = false; CHECK(std::strstr(CaveWhyNot(in), "game_dome_caves=0") != nullptr);
         CHECK(CaveRadius(210.0f) == 210.0f && CaveRadius(105.0f) == 105.0f && CaveRadius(10.0f) == 20.0f);
     }
     {

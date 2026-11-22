@@ -340,8 +340,9 @@ struct Look {
     std::array<SkillTile, kMaxSkills> skill{};     // [hud] skill_under_map: the armed skills' row, over the allies (under the map only)
     uint8_t nSkills = 0;
     uint32_t art = 0;   // the portraits' revision, and the skill icons' (found, or not, on the painter's thread): a change repaints
+    bool mercLit = false;   // [hud] allies_merc_click: the right laser on the mercenary's tile - drawn lit (under the map only)
     bool operator==(const Look& o) const {
-        if (n != o.n || cols != o.cols || nSkills != o.nSkills || art != o.art) return false;
+        if (n != o.n || cols != o.cols || nSkills != o.nSkills || art != o.art || mercLit != o.mercLit) return false;
         for (int i = 0; i < n; ++i)
             if (!(tile[(size_t)i] == o.tile[(size_t)i])) return false;
         for (int i = 0; i < nSkills; ++i)
@@ -481,6 +482,36 @@ inline Cell SkillCell(const Look& l, int j) {
     return {(PicW(l) - n * kTilePx) / 2 + j * kTilePx, 0};
 }
 
+// ---- [hud] allies_merc_click: the mercenary's tile under the map is a button (Serg, 2026-11-22) ----------------------------------------------------
+// "Point the controller's laser at the merc's icon on the map in the hand, as at the map itself; a click opens his inventory, to move items." The right
+// laser (vr/map_laser.h's) lights the mercenary's tile while it points at it, and its trigger there presses the game's own Mercenary key command (0x36,
+// Cfghireling - the O key: docs/buttons_recon.md) - the game opens the hireling's inventory panel, which the menus' laser then works as any panel. Only
+// the mercenary's tile: a player's or a summon's has no inventory of ours to open. Where it is: its tile's square in the picture, u / v from the
+// picture's top left (0 - 1), the tile's rounded frame (4 px in from the cell, as the painter draws it).
+inline int MercTile(const Look& l) {
+    for (int i = 0; i < std::min<int>(l.n, kMaxTiles); ++i)
+        if (l.tile[(size_t)i].kind == Kind::Mercenary) return i;
+    return -1;
+}
+struct TileRect {
+    bool ok = false;
+    float u0 = 0.0f, v0 = 0.0f, u1 = 0.0f, v1 = 0.0f;
+    bool Has(float u, float v) const { return ok && u >= u0 && u < u1 && v >= v0 && v < v1; }
+};
+inline TileRect MercRect(const Look& l) {
+    TileRect r;
+    const int i = MercTile(l);
+    if (i < 0) return r;
+    const Cell c = AllyCell(l, i);
+    const float w = (float)PicW(l), h = (float)PicH(l), inset = 4.0f;
+    r.u0 = ((float)c.x + inset) / w;
+    r.v0 = ((float)c.y + inset) / h;
+    r.u1 = ((float)c.x + (float)kTilePx - inset) / w;
+    r.v1 = ((float)c.y + (float)kTilePx - inset) / h;
+    r.ok = r.u1 > r.u0 && r.v1 > r.v0;
+    return r;
+}
+
 // The life bar: how much of it is filled (0 - 1), and its colour - green above half, yellow above a quarter, red below; not known: empty.
 inline float LifeFill(int life) { return life < 0 ? 0.0f : std::clamp(life, 0, 100) / 100.0f; }
 enum class Tone : uint8_t { Unknown, Green, Yellow, Red, Dead };
@@ -503,6 +534,7 @@ struct Config {
     int mapCols = alliesplace::kMapColsDefault;          // [hud] allies_map_cols: tiles across under the map
     int wristCols = alliesplace::kWristColsDefault;      // [hud] allies_wrist_cols: tiles across on the wrist
     bool skills = false;                                 // [hud] skill_under_map: the armed skills' row under the map (off: as before)
+    bool mercClick = true;                               // [hud] allies_merc_click: the merc's tile under the map a button to his inventory (MercRect)
 };
 inline Config Sanitized(Config c) {
     c.place = alliesplace::Sanitized(c.place);
@@ -553,5 +585,33 @@ inline float WristLiftM(float panelHM, float tilesHM, bool panelUp) {
 // A read older than this is not what the party has any more (the reads come five times a second).
 constexpr double kStaleMs = 1500.0;
 inline bool Fresh(double ageMs) { return ageMs >= 0.0 && ageMs <= kStaleMs; }
+
+// [hud] allies_merc_click: B closes the merc's inventory the tile opened. The game's own B does not (Serg, 0.221.7: three presses of B in the log,
+// HirelingInventoryPanel stayed) - that panel is the keyboard's (O), not a page of the pad's tabbed menu (UISwitcher), whose B is the game's and works.
+// So with that panel open and no tabbed menu, the right B is ours: its press taps the game's Mercenary key again (O toggles the panel), and if the
+// panel is still open kCloseRetryMs later, the game's "close all panels" (command 0x26, Space). Who has B is decided while it is let go.
+constexpr uint64_t kCloseRetryMs = 400;
+struct MercCloser {
+    enum class Act { None, MercKey, CloseAll };
+    bool takes = false;      // B is ours (stripped from the game's pad while held)
+    bool down = false;
+    uint64_t pressedAt = 0;  // 0: no close waiting for its check
+    // on: the key, F4, focus; panel: the merc's panel open, no tabbed menu; b: the right B held now
+    Act Step(bool on, bool panel, bool b, uint64_t nowMs) {
+        if (!b) takes = on && panel;
+        Act a = Act::None;
+        if (takes && b && !down) {
+            a = Act::MercKey;
+            pressedAt = nowMs ? nowMs : 1;
+        }
+        else if (pressedAt && nowMs - pressedAt >= kCloseRetryMs) {
+            if (panel && on) a = Act::CloseAll;
+            pressedAt = 0;
+        }
+        if (!panel) pressedAt = 0;
+        down = b;
+        return a;
+    }
+};
 
 }  // namespace allyportraits

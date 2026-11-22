@@ -137,6 +137,8 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
 
 namespace gamestate { bool CinemaPlaying(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
+namespace gamecmd { void Tap(uint32_t cmd); }   // vr/gamecmd.cpp: one press of a game command, as its key's ([hud] allies_merc_click: 0x36, the Mercenary key)
+namespace gamestate { bool MercPanelAlone(); }   // [hud] allies_merc_click: the merc's inventory panel open outside the pad's tabbed menu (vr/gamestate.cpp)
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
 namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); bool KeyboardShown(); uint32_t KeyboardEpoch(); bool CreatePanelOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
@@ -515,6 +517,15 @@ struct AllyAnchor {
     float widthM = 0.0f, halfHM = 0.0f;
 };
 AllyAnchor g_allyAnchor;
+// [hud] allies_merc_click (vr/ally_portraits.h MercRect): the picture under the map as HangAllyPortraits last hung it - its quad in its own space (the
+// room's for the orb in the hand, g_space under the big map), when, and the merc's tile in it - for the next frame's right laser (MapLaserStep).
+struct AllyHung {
+    maplaser::Quad quad;
+    bool inRoom = false;
+    allyportraits::TileRect merc;
+    ULONGLONG at = 0;
+};
+AllyHung g_allyHung;
 bool g_bigFront = false;        // ... pressed: the big map in front this time (each opening starts on the hand)
 // [hud] map_big_follow / map_big_grab (vr/map_laser.h Spot): the big map's spot in front, in g_space - set at its first frame in front,
 // then kept in the room (followed lazily, dragged); and whether the last frame hung it in front (where the grip may take it)
@@ -1724,6 +1735,27 @@ constexpr uint32_t kGatedButtons = BW_LINK_XRB_TRIGGER | BW_LINK_XRB_PRIMARY | B
 
 void LaserStep(D2RVR_XrInput& in, bool focused);   // the laser, below
 void MapLaserStep(D2RVR_XrInput& in, bool focused);   // [hud] map_click_big: the right laser on the map in the hand, below
+
+// [hud] allies_merc_click: the right B closes the merc's inventory (allyportraits::MercCloser - the game's own B leaves that panel open). Before the
+// laser: a B that is ours is not the pad's navigation either.
+allyportraits::MercCloser g_mercCloser;
+void MercCloseStep(D2RVR_XrInput& in, bool focused) {
+    D2RVR_XrHand& r = in.hand[1];
+    const bool on = allyportraits::MercKeyOn() && viewgate::F4() && focused && !g_hsOpen.load();
+    const bool b = (r.buttons & BW_LINK_XRB_SECONDARY) != 0;
+    const allyportraits::MercCloser::Act act = g_mercCloser.Step(on, gamestate::MercPanelAlone(), b, GetTickCount64());
+    if (g_mercCloser.takes && b) r.buttons &= ~(uint32_t)BW_LINK_XRB_SECONDARY;
+    static uint32_t told = 0;
+    if (act == allyportraits::MercCloser::Act::MercKey) {
+        gamecmd::Tap(0x36);   // the Mercenary key again: O toggles the panel
+        haptics::Play(haptics::Event::MenuClick, 1);
+        if (++told <= 10 || told % 50 == 0) LogF("vrcam: openxr - B with the mercenary's inventory open: the game's Mercenary key pressed to close it ([hud] allies_merc_click; %u)", told);
+    }
+    else if (act == allyportraits::MercCloser::Act::CloseAll) {
+        gamecmd::Tap(0x26);   // the game's "close all panels" (Space)
+        if (told <= 10 || told % 50 == 0) LogF("vrcam: openxr - the mercenary's inventory still open %u ms after B: the game's Close panels pressed", (unsigned)allyportraits::kCloseRetryMs);
+    }
+}
 void LaserTeardown();
 void WheelTeardown();   // the skill wheel's picture, below (xr_skill_wheel.h)
 void RunesTeardown();   // the gesture runes' atlas, below (xr_runes.h)
@@ -2255,6 +2287,7 @@ void Publish(bool focused) {
     FeedCalibration(in, located, focused);
     PanelGrabStep(in, focused);   // [openxr] panel_grab: a grip that starts on a game panel carries it (before the laser: its stick and trigger)
     MenuZoomPre(in, focused);   // [openxr] menu_zoom: the right stick's Y while the right grip holds a game panel is the zoom's (before the laser parks for it)
+    MercCloseStep(in, focused);   // [hud] allies_merc_click: the right B closes the merc's inventory (before the laser reads B as the pad's)
     LaserStep(in, focused);   // what the laser takes is not BodyWalk's
     MapLaserStep(in, focused);   // [hud] map_click_big: ... nor what the laser on the map takes (the right trigger, while it points at the map)
     MenuZoomPost(in);           // ... and the grip's own press waits until it is let go without a zoom
@@ -4836,10 +4869,11 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     MapBeam& B = g_mapBeam;
     B.drawn = B.hit = false;
     const bool full = g_cfg.mapHandFull;   // [hud] map_hand_full: the whole map on the left hand all the time (vr/map_laser.h AutoOpen)
-    const bool want = g_cfg.mapClickBig || full || g_mapClick.Big();
+    const bool mercOn = allyportraits::MercClick();   // [hud] allies_merc_click: the merc's tile under the map a button to his inventory
+    const bool want = g_cfg.mapClickBig || full || g_mapClick.Big() || mercOn;
     D2RVR_XrHand& r = in.hand[1];
     const bool trig = (r.buttons & BW_LINK_XRB_TRIGGER) != 0;
-    if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); return; }
+    if (!want && !trig) { g_mapClick.Step(false, false, false, false, false); allyportraits::SetMercLit(false); return; }
     XrSpaceLocation aim{XR_TYPE_SPACE_LOCATION};
     const XrSpaceLocationFlags need = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
     const bool aimOk = r.active && g_aimSpace[1] && XR_SUCCEEDED(xrLocateSpace(g_aimSpace[1], g_space, g_fs.predictedDisplayTime, &aim)) &&
@@ -4848,7 +4882,8 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
     const bool big = g_mapClick.Big();
     const bool keepKey = g_cfg.mapBigKeep || full;
     const bool keep = maplaser::Keeps(keepKey, big);   // [hud] map_big_keep (map_hand_full too): the big map up while the trigger attacks elsewhere
-    const bool base = (g_cfg.mapClickBig || full) && viewgate::F4() && g_kind == kPair && focused && !g_hsOpen.load() && !g_laser.drawn && !g_panelOpen.load();
+    const bool clickBig = g_cfg.mapClickBig || full;   // (the map itself a button: without it only the merc's tile may be one)
+    const bool base = (clickBig || mercOn) && viewgate::F4() && g_kind == kPair && focused && !g_hsOpen.load() && !g_laser.drawn && !g_panelOpen.load();
     const bool handMap = g_mapQuadRoom.ok && g_mapQuadAt && now - g_mapQuadAt < 300;   // the small map is in the hand (HangHud hung it just now)
     const bool allowed = base && (aimOk || !maplaser::NeedsAim(keepKey, big)) && (big || handMap) &&
                          (!big || gamestate::AutoMapOpen());   // the game's map closed while big (its key, the stick's click): the whole big map down with it
@@ -4865,7 +4900,7 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         auto P = [&](maplaser::V3 v) { return v3(Plus(Rot(room.orientation, {v.x, v.y, v.z}), room.position)); };
         auto D = [&](maplaser::V3 v) { return v3(Rot(room.orientation, {v.x, v.y, v.z})); };
         q.at = P(q.at); q.right = D(q.right); q.up = D(q.up); q.front = D(q.front);
-        onMap = maplaser::RayQuad(v3(from), v3(dir), q, 2.0f);
+        if (clickBig) onMap = maplaser::RayQuad(v3(from), v3(dir), q, 2.0f);
         const XrVector3f x{q.right.x, q.right.y, q.right.z}, y{q.up.x, q.up.y, q.up.z}, z{q.front.x, q.front.y, q.front.z};
         mapTurn = FromAxes(x, y, z);
     }
@@ -4875,7 +4910,31 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
         onBig = maplaser::RayQuad(v3(from), v3(dir), g_bigQuad, 4.0f);
     }
     if (!maplaser::FrontButton(g_cfg.mapBigOnHand, g_cfg.mapTwoSizes, full)) onFront = maplaser::Hit{};   // ([hud] map_two_sizes / map_hand_full: no button to the hand counts)
-    const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig, keep, full);
+    // [hud] allies_merc_click: the merc's tile in the picture under the map, as HangAllyPortraits hung it the frame before (the room's space for the
+    // orb in the hand, g_space under the big map); a hit outside his tile is no hit (the other tiles are only pictures)
+    maplaser::Hit onAlly;
+    XrQuaternionf allyTurn{0.0f, 0.0f, 0.0f, 1.0f};
+    const AllyHung& hung = g_allyHung;
+    if (allowed && aimOk && mercOn && hung.quad.ok && hung.merc.ok && hung.at && now - hung.at < 300) {
+        maplaser::Quad q = hung.quad;
+        if (hung.inRoom) {
+            XrSpaceLocation rl{XR_TYPE_SPACE_LOCATION};
+            if (g_roomSpace && XR_SUCCEEDED(xrLocateSpace(g_roomSpace, g_space, g_fs.predictedDisplayTime, &rl)) && (rl.locationFlags & need) == need) {
+                auto P = [&](maplaser::V3 v) { return v3(Plus(Rot(rl.pose.orientation, {v.x, v.y, v.z}), rl.pose.position)); };
+                auto D = [&](maplaser::V3 v) { return v3(Rot(rl.pose.orientation, {v.x, v.y, v.z})); };
+                q.at = P(q.at); q.right = D(q.right); q.up = D(q.up); q.front = D(q.front);
+            } else {
+                q.ok = false;
+            }
+        }
+        const maplaser::Hit a = maplaser::RayQuad(v3(from), v3(dir), q, 4.0f);
+        if (a.hit && hung.merc.Has(a.u, a.v)) {
+            onAlly = a;
+            allyTurn = FromAxes({q.right.x, q.right.y, q.right.z}, {q.up.x, q.up.y, q.up.z}, {q.front.x, q.front.y, q.front.z});
+        }
+    }
+    allyportraits::SetMercLit(onAlly.hit);   // (the next picture draws his tile lit)
+    const maplaser::Frame f = g_mapClick.Step(allowed, onMap.hit, onBig.hit, onButton.hit, onFront.hit, trig, keep, full, onAlly.hit);
     if (f.claim) { r.trigger = 0.0f; r.buttons &= ~(uint32_t)BW_LINK_XRB_TRIGGER; }
     {   // [hud] map_big_grab: the right grip on the big map in front takes it; the laser drags it, the stick nearer / farther (as menu_zoom: forward nearer)
         BigGrab& G = g_bigGrab;
@@ -4935,13 +4994,13 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
                      big ? g_bigZoomWant : g_handZoom, told);
         }
     }
-    const maplaser::Hit& h = onButton.hit ? onButton : onFront.hit ? onFront : onBig.hit ? onBig : onMap;
+    const maplaser::Hit& h = onButton.hit ? onButton : onFront.hit ? onFront : onAlly.hit ? onAlly : onBig.hit ? onBig : onMap;
     B.drawn = f.beam || g_bigGrab.on;
     B.hit = h.hit;
     B.from = from; B.dir = dir;
     B.len = h.hit ? h.t : kBeamM;
     B.at = {h.at.x, h.at.y, h.at.z};
-    B.surface = big ? g_bigLayer[0].pose.orientation : mapTurn;   // (the big map's turn as hung: in front or on the hand)
+    B.surface = &h == &onAlly ? allyTurn : big ? g_bigLayer[0].pose.orientation : mapTurn;   // (the big map's turn as hung: in front or on the hand)
     auto openBig = [&]() {   // the big map up: by a click on the small map, or by itself ([hud] map_hand_full)
         g_bigEyes = g_viewsOk ? Times(Plus(g_views[0].pose.position, g_views[1].pose.position), 0.5f) : from;
         g_bigYaw = g_viewsOk ? YawOf(g_views[0].pose.orientation) : YawOf(aim.pose.orientation);
@@ -4977,6 +5036,15 @@ void MapLaserStep(D2RVR_XrInput& in, bool focused) {
             haptics::Play(haptics::Event::MenuClick, 1);
             LogF("vrcam: openxr - the big map's button: the map in the hand %s ([hud] map_rotate=%d)",
                  g_cfg.mapRotate ? "turns so the way you look is up" : "keeps the map's up up", (int)g_cfg.mapRotate);
+            break;
+        }
+        case maplaser::Event::Ally: {   // [hud] allies_merc_click: the game's own Mercenary key (O, command 0x36): it opens his inventory panel
+            gamecmd::Tap(0x36);
+            haptics::Play(haptics::Event::MenuClick, 1);
+            static uint32_t told = 0;
+            if (++told <= 5 || told % 50 == 0)
+                LogF("vrcam: openxr - the mercenary's tile under the %s clicked: the game's Mercenary key pressed - his inventory ([hud] allies_merc_click; %u times)",
+                     big ? "big map" : "map in the hand", told);
             break;
         }
         case maplaser::Event::Front:
@@ -7650,6 +7718,8 @@ void LoadSettings(const wchar_t* ini) {
         const int px = IniIntRun(L"render", L"vr_resolution_px", 0, ini);
         g_cfg.vrPick = rendersize::FromIni(mode, px);
         g_cfg.menuWide = GetPrivateProfileIntW(L"render", L"menu_wide", 1, ini) != 0;   // [render] menu_wide (live)
+        // [render] vram_guard (vr/vram_guard.h, live, off = as before): the render size lowered when the game's video memory runs over its budget
+        vrres::SetVramGuard(on && GetPrivateProfileIntW(L"render", L"vram_guard", 1, ini) != 0);
         if (!g_headsetPath[0]) {   // what the runtime says of the headset goes beside the ini for D2R VR Settings (WriteHeadsetInfo)
             wcscpy_s(g_headsetPath, ini);
             if (wchar_t* slash = wcsrchr(g_headsetPath, L'\\')) slash[1] = 0;

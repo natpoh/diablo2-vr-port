@@ -28,6 +28,7 @@
 #include "quality_presets.h"   // the Video page's Quality preset: the keys it writes (shared/quality_presets.h)
 #include "draw_distance.h"   // the Video page's Draw distance: its stops (shared/draw_distance.h kReach)
 #include "wrist_look.h"   // the HUD page's "Medallions: look" ([hud] wrist_look: its three looks, shared/wrist_look.h)
+#include "walk_in_place.h"   // the Walk tab: hidden while walking in place is closed (wip::kOpen)
 
 namespace hset {
 
@@ -612,6 +613,11 @@ inline constexpr Def kDefs[] = {
     // profile (50 % = as BodyWalk has it; the profile itself is set up in BodyWalk) and the run point (the game's own run threshold and Run key). Live, F4.
     {L"walk_in_place", L"on", "Move by walking", "Step in place: the hero walks where you look (F4)",
      0.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageWalk, true},
+    // [walk_in_place] source (Serg 2026-11-22: "встроенная библиотека или бодивалк"): what finds the steps - the built-in library (d2r_vr_walk.dll,
+    // as before) or the BodyWalk app with its own Steps settings (vr/walk_in_place.h kSourceBodyWalk). On BodyWalk the four rows below are the
+    // library's and stand greyed (WalkLibraryRowIdle). Live, F4.
+    {L"walk_in_place", L"source", "Walk by", "Built-in library, or BodyWalk's own Steps settings",
+     0.0f, 0.0f, 1.0f, 1.0f, "", "Built-in", "BodyWalk", kPageWalk, true},
     {L"walk_in_place", L"sensitivity", "Step sensitivity", "Higher: lighter steps count",
      50.0f, 0.0f, 100.0f, 5.0f, "%.0f%%", "", "", kPageWalk, true},
     {L"walk_in_place", L"speed", "Speed from steps", "Higher: full speed with gentler steps",
@@ -641,6 +647,15 @@ constexpr int IndexOf(const wchar_t* section, const wchar_t* key) {
         if (SameW(kDefs[i].section, section) && SameW(kDefs[i].key, key)) return i;
     return -1;
 }
+// The Walk page's library rows (the three trims and the run point): idle - greyed, a click does nothing - while BodyWalk is the walk source
+// ([walk_in_place] source=1 in the draft): BodyWalk's own Steps settings set the walk then.
+constexpr int kKeyWalkSource = IndexOf(L"walk_in_place", L"source");
+static_assert(kKeyWalkSource >= 0, "the Walk page's source row is in the table");
+constexpr bool WalkLibraryKey(int key) {
+    return key >= 0 && (key == IndexOf(L"walk_in_place", L"sensitivity") || key == IndexOf(L"walk_in_place", L"speed") ||
+                        key == IndexOf(L"walk_in_place", L"smoothing") || key == IndexOf(L"walk_in_place", L"run_at"));
+}
+constexpr bool WalkLibraryRowIdle(int key, float sourceValue) { return WalkLibraryKey(key) && sourceValue > 0.5f; }
 // The keys the hand-drawn pages work on.
 constexpr int kKeyMode = IndexOf(L"render", L"vr_resolution");
 constexpr int kKeyPx = IndexOf(L"render", L"vr_resolution_px");
@@ -802,7 +817,7 @@ constexpr bool F1OnlyPage(int page) { return page == kPageF1; }
 // VR F5 shares F4's low-life vignette (Serg 2026-11-20: "мигание экрана при слабой мане и слабом хп тоже как на ф4"): its Life and Look pages show there.
 constexpr bool F5SharesPage(int view, int page) { return view == kViewF5 && IsLifePage(page); }
 constexpr bool PageShown(int page, int view) {
-    return page >= 0 && page < kPageCount && !(FlatView(view) && F4OnlyPage(page) && !F5SharesPage(view, page)) && !(F3OnlyPage(page) && view != 0 && view != 3) &&
+    return page >= 0 && page < kPageCount && !(page == kPageWalk && !wip::kOpen) && !(FlatView(view) && F4OnlyPage(page) && !F5SharesPage(view, page)) && !(F3OnlyPage(page) && view != 0 && view != 3) &&
            !(F1OnlyPage(page) && view != 0 && view != 1);
 }
 // The View page's bottom button: the view's own page - F1's in VR F1, F3's in VR F3 and view 0 (as before) - or none (-1).

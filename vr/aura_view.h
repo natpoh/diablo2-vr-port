@@ -187,5 +187,9 @@ void Configure(bool on, float liftPct);
 void SetGameView(const float gameView[16]);
 // Puts the hook in when it is wanted and the game's code is where 3.3.93787 has it (tried again now and then); cheap to call every frame.
 void Install();
+// The game's view.direction has ONE inline hook, shared with vr/billboards.cpp ([stereo] portal_once): whichever module puts it in first runs the other's correction
+// after the game's answer (2026-11-22, test 0.221.8: the portal's hook went in first, this one could not - the aura rings were back beside the hero, one per eye).
+bool DirectionHooked();   // this module's own hook is in
+void AfterDirection(void* out, const void* in, const void* context);   // the aura correction on the game's answer (called by the portal's hook when that one owns it)
 
 }  // namespace auraview

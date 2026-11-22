@@ -907,6 +907,13 @@ std::vector<Item> g_items = {
     Only(kVr, Needs(L"@render", L"vr_headset", 0, Slider(L"@render", L"vr_px", L"Resolution (VR render size)",
            (float)rendersize::kStopWindow, (float)rendersize::kSideMax, (float)rendersize::kSideStep, (float)rendersize::kStopWindow, g_resTip))),
     Only(kVr, Toggle(L"@render", L"vr_headset", L"Use the headset's recommended size", 0, g_resTipHeadset)),
+    // [render] vram_guard (vr/vram_guard.h, crash report 400: an 8 GB card at 4096 x 4096 ran over its video memory budget for a minute, then hung)
+    Only(kVr, Toggle(L"render", L"vram_guard", L"Lower the render size when video memory runs out", 1,
+           L"Native OpenXR: the game's picture in the headset needs video memory, and a big render size on a card of 6 - 8 GB can need more than "
+           L"Windows gives the game - it then pages memory, runs at a few frames a second and can hang the graphics card. On: the game's use of "
+           L"its video memory budget is read every 2 s; over the budget three times in a row with a render size in force, the render size is "
+           L"lowered (as far as the reading says, not under 1536 a side) and the log says so. The size you picked stays in the ini; picking "
+           L"another size lets the lowered one go. Live. Off: the size picked, whatever the card holds, as before.")),
     Only(kVr, Status(L"vr_resolution", L"")),
     // [openxr] frame_generation (experimental): OFXR Bridge by tig3rmast3r (LGPL-3.0-or-later), loaded for the game's own process only (shared/frame_gen.h).
     // bearstonem/d2r-pcvr's idea (v0.3.25). Off by default; on / off at the next game start, the backend's options live.
@@ -1611,6 +1618,10 @@ std::vector<Item> g_items = {
     Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
+    Needs(L"sky", L"game_dome_caves", 1, Toggle(L"sky", L"arcane_no_cave_dome", L"No black dome in the Arcane Sanctuary", 1,
+           L"The Arcane Sanctuary counts as underground, so the black cave dome stood round you there too and hid its starry sky: the "
+           L"stars are drawn only into the empty void, and the dome left none. Ticked, the dome is put away there and the void shows the "
+           L"Arcane Sanctuary's stars. Unticked: the dome there too, as before. VR F4. Live.")),
     Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
            Slider(L"sky", L"game_dome_caves_radius_m", L"The cave dome: radius, m", 5, 500, 0.5f, 200,
            L"How far round you the black dome is laid underground, in metres (4 of the game's units a metre; the model visibility "
@@ -2327,7 +2338,7 @@ std::vector<Item> g_items = {
            L"number inside it. Bar at the top: a bar across the top of the view filling left to right, the numbers rising over it and fading. Live.")),
     // [gameplay] swing_pace_joined (vr/swing_timer.h PaceAt, Serg 2026-11-05: "расчёт на клиенте, регистрация на сервере. Для жёлтой зоны небольшая
     // задержка, для красной - промах"): changes what a joined client sends, so a box of its own, the timer's picture not needed
-    Toggle(L"gameplay", L"swing_pace_joined", L"Joined: send a touch when the host takes it (VR)", 0,
+    Toggle(L"gameplay", L"swing_pace_joined", L"Joined: send a touch when the host takes it (VR)", 1,
            L"Joined to someone else's TCP/IP game, VR first person (F4). The host's game decides when your hero may attack again, and a touch it refuses is lost. Ticked: your PC counts your hero's attack the way the swing timer does (from your hero's own animation) and sends a touch only when the host will take it - a touch while it would refuse is not sent (\"too soon\"), one in the last moments of the attack is held and sent as it ends, so it is never thrown away on the way. The attack, its speed and its roll stay the host's game's. Works from your second attack on (the first one is measured). Single player or a game you host: nothing changes (your own game decides at once). Unticked: every touch is sent as it comes. Live."),
     Needs(L"hud", L"swing_timer", 1, Toggle(L"hud", L"swing_timer_numbers", L"Swing timer: show what the blow did", 1,
            L"The life the blow took, or miss / blocked / dodged / avoided, in the ring or over the bar. Unticked: the timer alone (\"too soon\" "
@@ -2779,6 +2790,13 @@ std::vector<Item> g_items = {
            L"that pose. Where the right eye is drawn by a second pass (no replay, or before the replay starts in a new area) they "
            L"were stepped again with the tiny right-eye time and twitched. VR F4 only; the other views as before. Idea: "
            L"bearstonem/d2r-pcvr. Off: as before.")),
+    Toggle(L"stereo", L"portal_once", L"Town portal once for both eyes (first person)", 1,
+           L"The town portal's meshes face the middle of your head, upright toward the portal, and its centre offsets sit on one "
+           L"anchor - not turned to each eye's camera apart, which showed two portals between the eyes. Live. From bearstonem/d2r-pcvr. "
+           L"Off: as the game has it."),
+    Toggle(L"stereo", L"particles_head_centre", L"Particles face the head's centre (first person)", 1,
+           L"Smoke, sparks and other quads that face the camera face the middle of your head in both eyes, not each eye's own camera. "
+           L"Live. From bearstonem/d2r-pcvr. Off: each eye's own."),
     Toggle(L"render", L"fx_fence", L"Effects: each eye's values exactly its own", 0,
            L"The effects (fog, sky, ceiling) wait until the graphics card has drawn the last eye's effects before the next "
            L"eye's values go in. Both eyes of a pair get the same values anyway; this matters for FlatVR's frame stamps "
@@ -3869,6 +3887,10 @@ std::vector<Item> g_items = {
            L"The wrist that wears the shield (the left arm, or the right one after the shoulder draw swaps your hands) rolls its ball half a turn round the arm to the inner side of the wrist, so the shield "
            L"does not cover it, and rolls it back when the shield leaves that arm - a short smooth turn. Only in VR F4. Unticked: the ball stays on the back of the hand under a shield. The sliders below "
            L"tune the new place and are added to the wrist's own numbers above. Live.")),
+    // ... a shield moved to the RIGHT slot in the inventory counts too (handorbs::ShieldWrist): the wrist it is drawn on rolls its ball, left-handed or not
+    ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Toggle(L"hud", L"hand_vitals_orb_shield_any_slot", L"Under a shield: a shield in the right slot counts too", 1,
+           L"A shield you moved to the right hand's slot in the inventory counts as well: the wrist it is drawn on (the right forearm beside a weapon alone in the left slot) rolls its ball to the "
+           L"inner side, the same as for a shield on the left arm, with or without the left-handed mode. Only in VR F4. Unticked: only a shield in the left slot moves the ball, as before. Live."))),
     ShowFor(L"hud", L"bar_place", kBarWrist, Needs(L"hud", L"hand_vitals_orb_under_shield", 1, Slider(L"hud", L"hand_vitals_orb_shield_turn_deg", L"Under a shield: turn round the arm, °", -180, 180, 1, 180,
            L"How far the ball rolls round the wrist's axis when a shield is on that arm. 180 is the opposite side of the wrist (the inner side); a smaller number stops short of it. + sends the back of the "
            L"hand over the thumb side, - over the little finger side (the same on both wrists, so the roll is the mirror image). Live."))),
@@ -4317,6 +4339,10 @@ std::vector<Item> g_items = {
     Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"game_dome_caves", L"A black dome round you in caves", 0,
            L"Underground the game draws a black dome round your head at the models' visibility radius: no void past a ceiling's rim, the "
            L"game's fog fades into black walls - no glow behind the fires. The sky dome's own files (made by this program at its start). VR F4. Live.")),
+    Needs(L"sky", L"game_dome_caves", 1, Toggle(L"sky", L"arcane_no_cave_dome", L"No black dome in the Arcane Sanctuary", 1,
+           L"The Arcane Sanctuary counts as underground, so the black cave dome stood round you there too and hid its starry sky: the "
+           L"stars are drawn only into the empty void, and the dome left none. Ticked, the dome is put away there and the void shows the "
+           L"Arcane Sanctuary's stars. Unticked: the dome there too, as before. VR F4. Live.")),
     Needs(L"sky", L"game_dome_caves", 1, StartsFromConverted(L"game_dome_caves_size", &CaveRadiusMFromShare,
            Slider(L"sky", L"game_dome_caves_radius_m", L"The cave dome: radius, m", 5, 500, 0.5f, 200,
            L"How far round you the black dome is laid underground, in metres (4 of the game's units a metre; the model visibility "
@@ -5791,6 +5817,16 @@ std::vector<Item> g_items = {
            L"hits nothing until a hand holds it again, as a sword. The throw is the same: squeeze the grip, swing, let go - the game's own "
            L"throw; the touch still stands down for 0.7 s after a throw and one swing throws once. Unticked: as before - with the grip throw "
            L"on, a thrown weapon hits by touch only while its grip is squeezed. Live. F4 only."))),
+    Needs(L"gameplay", L"melee_touch", 1, Needs(L"gameplay", L"melee_touch_thrown", 1, Toggle(L"gameplay", L"melee_touch_thrown_melee",
+           L"A thrown weapon's touch is a melee strike, not a throw", 1,
+           L"The touch of a javelin, a throwing knife or a throwing axe is the game's own one-handed strike at the monster - the weapon's melee "
+           L"damage, reach and attack animation - and never throws it. The game picks a strike or a throw by the skill, not by the distance: its "
+           L"plain Attack strikes with a thrown weapon, Throw and the ranged javelin skills (Poison Javelin, Lightning Fury ...) throw it. With "
+           L"this ticked, a touch is read by the game as the plain Attack whenever the attack slot (A) holds a throwing skill or the javelin quiver "
+           L"chose one; a melee skill there (Jab, Power Strike, Impale, Charged Strike, Fend, Lightning Strike, Poison Dagger, Bash ...) stays that "
+           L"skill. The throw by gesture throws as before, your own A press casts what A holds. Works with the two boxes above: \"Thrown weapons hit "
+           L"by touch too\" must be ticked; \"... from the start\" decides when the touch counts, this box what it does. Unticked: as before - the "
+           L"touch casts what A holds. Live. F4 only."))),
     Needs(L"gameplay", L"melee_touch", 1, Toggle(L"gameplay", L"melee_touch_only", L"The trigger does not attack (only the blade's touch; a bow or a crossbow shoots with it)", 1,
            L"A part of hit by touch, on with it: a trigger that attacks lets you skip the swing and just pull it, which is a bug of hit by touch, not an option. First person (F4), hit by touch on, the plugin's own "
            L"controls (Stereo > Native OpenXR > Controls without BodyWalk): the trigger's attack is not passed to the game - only the blade's touch attacks. That is every weapon the touch swings: melee weapons, "
@@ -7353,6 +7389,12 @@ std::vector<Item> g_items = {
            L"With DRED: the report also names the game's events open where each unfinished command list stopped (Windows keeps the text of each "
            L"of the game's event marks - Windows 10 2004 and later), so a hang says which of the game's draws it was in, not only "
            L"\"DrawIndexedInstanced\". Costs a little. Takes effect at the next game start."),
+    Toggle(L"debug", L"stats_leak_trace", L"Name the stat lists the game leaks when a game is left", 0,
+           L"For the game's own end as it goes back to the menu: \"We have leaked Stats when the unit stats have all been deleted\". On: every stat list the "
+           L"game makes (an item's, a state's) is noted with the code that made it and forgotten when the game frees it - the game's functions run as they "
+           L"are, nothing is changed. If a game is left with lists no unit carries, the log (d2r-vr-vrcam.log) and d2rloader\\logs\\d2r_vr_stats_leak.txt "
+           L"name each one - where it was made and whether D2R VR's code had a hand in it - a moment before the game ends. Send that in. Costs a few "
+           L"microseconds a list. Needs a game restart."),
     Toggle(L"debug", L"d3d12_validation", L"D3D12 debug layer: errors in the log (slow)", 0,
            L"To find what takes the graphics device down. Needs Windows' optional feature Graphics Tools. On: before the game makes its device the D3D12 debug layer is switched "
            L"on, and its errors and warnings go to the log (d2r-vr-vrcam.log) in its own words - a barrier that names the wrong state, a copy past the end of a buffer, a "
@@ -10686,7 +10728,8 @@ void AutoRun(bwauto::When when) {
     f.vr = g_platform == 1;
     f.native = GetPrivateProfileIntW(L"openxr", L"on", 0, g_ini) != 0;
     f.directInput = GetPrivateProfileIntW(L"openxr", L"direct_input", 0, g_ini) != 0;
-    f.walkInPlace = GetPrivateProfileIntW(L"walk_in_place", L"on", 0, g_ini) != 0;   // (Serg 2026-11-19: BodyWalk not started for it)
+    f.walkInPlace = wip::kOpen && GetPrivateProfileIntW(L"walk_in_place", L"on", 0, g_ini) != 0;   // (Serg 2026-11-19: BodyWalk not started for it; closed: walk_in_place.h kOpen)
+    f.walkByBodyWalk = GetPrivateProfileIntW(L"walk_in_place", L"source", 0, g_ini) == 1;   // (Serg 2026-11-22: ... unless BodyWalk is the walk source: started for walking)
     f.startOn = GetPrivateProfileIntW(L"mode", L"flatvr_autostart", 1, g_ini) != 0;
     f.closeOn = GetPrivateProfileIntW(L"mode", L"native_close_flatvr", 1, g_ini) != 0;
     f.bodyWalkFound = !BodyWalkExe().empty();

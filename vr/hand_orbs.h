@@ -317,8 +317,12 @@ inline handvitals::OrbSpot SpotUnder(handvitals::OrbSpot s, const handvitals::Or
 // Which wrist wears the shield (skeleton side: 0 right, 1 left; -1 none): `strap` is skel::ShieldStrapped() (3 strapped to the RIGHT forearm - the hand swap, vr/shield_arm.h; 1 the left;
 // -1 asked but not strapped; 0 not asked) and `leftShield` a shield in the game's left slot (gamestate::LeftShield()). A shield is on the left arm - strapped there or on the hand, as the game
 // has it - unless the hand swap strapped it to the right one.
-inline int ShieldWrist(int strap, bool leftShield) {
-    if (!leftShield || strap == 2) return -1;   // (2: [hands] shoulder_draw_shield_stow has put it away - no shield on either wrist)
+// `rightShield`: a shield in the game's RIGHT slot (gamestate::RightShield(), moved there in the inventory) - the caller passes it only with [hud] hand_vitals_orb_shield_any_slot
+// ticked (unticked: false, the left slot alone, as before). The game draws a shield on the left arm whatever its slot (vr/drawn_hand.h); [hands] left_slot_drawn_left straps a
+// right-slot shield to the right forearm beside a weapon alone in the left slot, and says so the same way (strap 3). So which wrist is the strap's, whichever slot holds it.
+// Nothing here knows the controllers: [hands] left_handed trades the sticks only, the skeleton's sides stay the hero's.
+inline int ShieldWrist(int strap, bool leftShield, bool rightShield = false) {
+    if (!(leftShield || rightShield) || strap == 2) return -1;   // (2: [hands] shoulder_draw_shield_stow has put it away - no shield on either wrist)
     return strap == 3 ? 0 : 1;
 }
 

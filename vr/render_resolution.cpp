@@ -17,6 +17,7 @@
 
 #include "band_icons.h"
 #include "render_window.h"
+#include "vram_guard.h"
 
 namespace vrres {
 namespace {
@@ -41,6 +42,11 @@ std::atomic<bool> g_hero{false};
 std::atomic<bool> g_frontend{false};   // [render] menu_wide: the menus' scene has stood a while
 std::atomic<bool> g_reshade{true};     // ReShade drives the present: [render] menu_wide stands down (until vrcam says otherwise)
 MenuWide g_menuWide;                   // (the draw thread's)
+// [render] vram_guard (vram_guard.h): the guard under its lock (the 10 s line's thread reads, the draw thread resets), its cap mirrored for Update
+std::mutex g_guardLock;
+vramguard::Guard g_guard;
+std::atomic<bool> g_guardOn{false};
+std::atomic<uint32_t> g_guardCap{0};
 
 // -- the pointer: the game reads its cursor as GetCursorPos + ScreenToClient and moves it as ClientToScreen +
 // SetCursorPos (D2R.exe 3.3.93787 under D2RLoader 1.3.1: 0x14120A020 and 0x14120A290, read off the memory image).
@@ -196,12 +202,27 @@ void Update(HWND window, bool running, Size recommended, Size maximum, Size outp
     // Desktop with nothing of ours in force - the default - is no work at all, present after present.
     if (pick.kind == rendersize::Kind::Desktop && !menuWide && !g_ctl.InForce() && !g_window.Logical(window)) return;
     Size sel = Select(pick, recommended, maximum);
+    // [render] vram_guard: a new size picked (the slider, the headset's box) is the player's word again - the guard's cap goes
+    static rendersize::Pick guardPick;
+    if (!(pick == guardPick)) {
+        const bool had = g_guardCap.load() != 0;
+        guardPick = pick;
+        {
+            std::lock_guard<std::mutex> g(g_guardLock);   // (the cap's mirror under the lock too: a reading between the two would leave one)
+            g_guard.Reset();
+            g_guardCap.store(0);
+        }
+        if (had) Say("vrcam: render size - a new size picked: the video memory guard's cap let go ([render] vram_guard)");
+    }
+    const uint32_t cap = g_guardOn.load() ? g_guardCap.load() : 0;
+    const Size uncapped = sel;
+    sel = vramguard::Capped(sel, cap);
     // [render] menu_wide: the menus' 16:9 picture, as wide as the size picked - or the window, the window's own size picked
     Size wide;
     if (menuWide && running && maximum) {
         Size base = sel;
         RECT rc{};
-        if (!base && GetClientRect(window, &rc)) base = {(uint32_t)rc.right, (uint32_t)rc.bottom};
+        if (!base && GetClientRect(window, &rc)) base = vramguard::Capped({(uint32_t)rc.right, (uint32_t)rc.bottom}, cap);
         wide = Fit(Wide(base), maximum);
     }
     if (sel || wide) std::call_once(g_setup, Setup);
@@ -220,6 +241,10 @@ void Update(HWND window, bool running, Size recommended, Size maximum, Size outp
             Say("vrcam: render size - %s asked for, but none can be had (%s): the window's own size stays", what,
                 !g_hooksReady.load() && Select(pick, recommended, maximum) ? "no cursor hooks"
                 : asked ? "the runtime refused it and took none before" : "below the least or no recommendation");
+        else if (sel != uncapped && uncapped)
+            Say("vrcam: render size - %s: %ux%u, lowered from %ux%u by the video memory guard ([render] vram_guard, a long side of %u at most) "
+                "(the headset recommends %ux%u, takes %ux%u at most)", what, sel.w, sel.h, uncapped.w, uncapped.h, cap,
+                recommended.w, recommended.h, maximum.w, maximum.h);
         else
             Say("vrcam: render size - %s: %ux%u (the headset recommends %ux%u, takes %ux%u at most)", what, sel.w, sel.h,
                 recommended.w, recommended.h, maximum.w, maximum.h);
@@ -249,6 +274,42 @@ void Update(HWND window, bool running, Size recommended, Size maximum, Size outp
     else if (d.note == Note::GaveUp)
         Say("vrcam: render size - the game's output stays %ux%u, not %ux%u: given up until the choice or the game's options change",
             output.w, output.h, d.want.w, d.want.h);
+}
+
+void SetVramGuard(bool on) {
+    if (g_guardOn.exchange(on) == on) return;
+    if (!on) {   // off: as before - the size picked, whatever the card holds
+        std::lock_guard<std::mutex> g(g_guardLock);
+        const bool had = g_guardCap.exchange(0) != 0;
+        g_guard.Reset();
+        if (had) Say("vrcam: render size - the video memory guard off ([render] vram_guard=0): its cap let go, the size picked again");
+        return;
+    }
+    Say("vrcam: render size - the video memory guard on ([render] vram_guard): the game's use of its video memory budget read every %u s; over it %d "
+        "times in a row with a render size of ours in force - the size lowered (a long side of %u at the least), kept until another size is picked",
+        (unsigned)(vramguard::kSampleMs / 1000), vramguard::kOverSamples, vramguard::kFloor);
+}
+bool VramGuardOn() { return g_guardOn.load(); }
+uint32_t VramCap() { return g_guardOn.load() ? g_guardCap.load() : 0; }
+void VramSample(uint64_t usage, uint64_t budget) {
+    if (!g_guardOn.load()) return;
+    const Size inForce = g_ctl.InForce();
+    vramguard::Step st;
+    {
+        std::lock_guard<std::mutex> g(g_guardLock);
+        st = g_guard.Sample(GetTickCount64(), usage, budget, inForce);
+        if (st.event == vramguard::Event::Lowered) g_guardCap.store(g_guard.Cap());
+    }
+    if (st.event == vramguard::Event::Lowered) {
+        const Size to = vramguard::Capped(inForce, st.to);
+        Say("vrcam: render size - video memory over the game's budget (%llu of %llu MiB, %d readings in a row) with %ux%u in force: lowered to "
+            "%ux%u, a long side of %u ([render] vram_guard; the ini keeps the size picked - a new pick lets the cap go)",
+            (unsigned long long)(st.usage >> 20), (unsigned long long)(st.budget >> 20), vramguard::kOverSamples, inForce.w, inForce.h, to.w, to.h, st.to);
+    } else if (st.event == vramguard::Event::AtFloor) {
+        Say("vrcam: render size - video memory over the game's budget (%llu of %llu MiB) with %ux%u in force, already at the guard's least (%u a "
+            "side): nothing lower to ask ([render] vram_guard) - other settings (the game's texture quality, DLSS, shadows) must give room",
+            (unsigned long long)(st.usage >> 20), (unsigned long long)(st.budget >> 20), inForce.w, inForce.h, vramguard::kFloor);
+    }
 }
 
 void OptionsApplied() { g_ctl.OptionsApplied(GetTickCount64()); }

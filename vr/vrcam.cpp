@@ -1094,7 +1094,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.221.0";
+static const char g_info_version[] = "0.222.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1391,7 +1391,9 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     capture::InitConsole(ctx);   // "vrcapture [targets | status]" in the game's console   // [debug] patch_hunt: its line on the picture (D2RLoader's overlay - taken at the load only) and the UI thread
     partycmd::Init(ctx);     // the headset's Party page: the game's roster and its Party panel's buttons (vr/party_cmd.cpp)   // the headset's Players row: the game's own /players N (vr/players_cmd.cpp)
     beltdrop::Init(ctx);   // [hands] belt_drop_ground
+    mercgive::Init(ctx);   // [hands] merc_give_weapon
     beltrefill::Init(ctx);   // [belt] refill_key
+    statsleak::Init(ctx, GetPrivateProfileIntW(L"debug", L"stats_leak_trace", 0, g_iniPath) != 0, g_iniPath);   // [debug] stats_leak_trace (read once)
     beltglow::Init(ctx);   // [hands] belt_inner_glow
 #if D2RVR_FIRST_PERSON
     if (posewire::Init(ctx, &Log, IniB(L"multiplayer", L"pose_share", true), "vrcam: pose share")) PoseShareConfigure();   // [multiplayer] pose_share: the channel now or never this run
@@ -1472,6 +1474,8 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
         r.chatOpen = &ChatOpen;
         r.runThreshold = &GameRunThreshold;
         r.runSwitchOn = &GameRunSwitchOn;
+        r.bodyWalkRunning = &BodyWalkRunning;     // ([walk_in_place] source=1: the Walk tab's line)
+        r.bodyWalkStick = &BodyWalkWalkStick;
         wipwire::Init(ctx, r);
     }
     arrowflightwire::Init(ctx);   // [bow] arrow_flight: on the potion hide's two renderer hooks

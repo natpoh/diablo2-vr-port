@@ -56,6 +56,9 @@
 #include "panel_input.h"
 #include "plate_world.h"   // [hud] monster_bar_room: the plate hangs on the anchor only in the pad's layout
 #include "sigscan.h"
+#include "ally_portraits_wire.h"   // [hud] allies_merc_click: the key (MercKeyOn)
+
+namespace gamestate { bool MercPanelAlone(); }   // vr/gamestate.cpp: the merc's inventory panel (the keyboard's, O) open outside the pad's tabbed menu
 
 using namespace D2RL;
 
@@ -98,6 +101,10 @@ const uint8_t kSigTooltipCompare[22] = {0xB9,0x10,0x00,0x00,0x00,0xE8,0xEF,0x61,
                                         0x38,0x87,0x32,0x06,0x00,0x00,0x74,0x72};
 // sub rsp, 28h; call [GetAsyncKeyState]; shr eax, 0Fh; and eax, 1; add rsp, 28h; ret
 const uint8_t kSigKeyState[21] = {0x48,0x83,0xEC,0x28,0xFF,0x15,0x86,0x6E,0xAA,0x00,0xC1,0xE8,0x0F,0x83,0xE0,0x01,0x48,0x83,0xC4,0x28,0xC3};
+// [hud] allies_merc_click: InventoryItemManager::Update (0x1618A0) asks IsControllerLayout here and, in the pad layout, drops a cursor item on the
+// ground (0x15BDF0) unless a pad panel holds it - the merc's panel O opens is not one. call IsControllerLayout; test al, al; je past it all
+constexpr uint64_t RVA_MERC_CURSOR_DROP = 0x161946;
+const uint8_t kSigMercCursorDrop[13] = {0xE8,0xC5,0x64,0xF1,0xFF,0x84,0xC0,0x0F,0x84,0x67,0x04,0x00,0x00};
 constexpr ULONGLONG kLeaseMs = 300;
 
 using ActivityFn = bool (*)(void* event);
@@ -128,6 +135,7 @@ bool g_keyIn = false;                     // the timer thread's: the key-state h
 std::atomic<bool> g_tipWanted{false};     // [openxr] laser_tooltips
 std::atomic<bool> g_tipReady{false};      // the hooks are in and g_delaySite / g_compareSite are known
 uintptr_t g_delaySite = 0, g_compareSite = 0;   // the two queries' return addresses; written before g_tipReady
+std::atomic<uintptr_t> g_mercDropSite{0};   // [hud] allies_merc_click: the cursor drop's query, its return address (0: not found yet)
 lasertip::HoverLease g_hover;             // the draw thread's: the laser points at the menus' picture, holding nothing
 lasertip::HoverLease g_compareHeld;       // ... and the other hand's trigger is held ([openxr] laser_compare_hold)
 std::atomic<bool> g_compareHold{true};    // [openxr] laser_compare_hold
@@ -176,6 +184,15 @@ void TellFirst(std::atomic<bool>& told, const char* text) { if (!told.exchange(t
 
 bool HookIsController() {
     if (t_pointer) return false;
+    // [hud] allies_merc_click: with the merc's panel open (O, no tabbed menu) the cursor drop's query answers "mouse layout" - an item the laser's
+    // click put on the cursor stays there, and the next click puts it into his slot (Serg, 0.221.7: it was thrown on the ground). Letting the whole
+    // game into its mouse layout instead closed the panel (0.221.8). That one call site only, F4 only.
+    if (const uintptr_t site = g_mercDropSite.load(std::memory_order_acquire);
+        site && (uintptr_t)_ReturnAddress() == site && viewgate::F4() && allyportraits::MercKeyOn() && gamestate::MercPanelAlone()) {
+        static std::atomic<bool> told{false};
+        TellFirst(told, "vrcam: laser - the mercenary's inventory open: an item on the cursor is kept (the pad layout's drop asked 'mouse layout' at its call site; [hud] allies_merc_click)");
+        return false;
+    }
     // the item tooltip's "delayed" flag, asked for at its call site: not delayed while the laser hovers
     const bool at = g_tipReady.load(std::memory_order_acquire) && viewgate::F4() && lasertip::AtSite((uintptr_t)_ReturnAddress(), g_delaySite);   // (F4 only)
     if (at && lasertip::NoDelay(g_hover.Active(GetTickCount64()), at)) {
@@ -224,6 +241,26 @@ std::atomic<ULONGLONG> g_ownedAt{0};   // the last OwnPointer
 
 // Once the laser's hooks are in, and only while the tick box is on. Optional: what is not found (yet - code the game
 // has not run is not readable) leaves the laser with the game's own delay; told once after 30 s.
+// [hud] allies_merc_click: the cursor drop's call site, once the IsControllerLayout hook is in (no hook of its own). What is not found leaves the
+// game's drop; told once after 30 s.
+void InstallMercDrop() {
+    if (g_mercDropSite.load() || !g_in.controller) return;
+    const uintptr_t at = d2rsig::Check(RVA_MERC_CURSOR_DROP, kSigMercCursorDrop, sizeof kSigMercCursorDrop) ? d2rsig::Addr(RVA_MERC_CURSOR_DROP) : 0;
+    if (!at) {
+        static ULONGLONG since = 0;
+        static bool told = false;
+        if (!since) since = GetTickCount64();
+        if (!told && GetTickCount64() - since > 30000) {
+            told = true;
+            Log("vrcam: laser - the pad layout's cursor drop (InventoryItemManager::Update) not found after 30 s: with the mercenary's inventory open a "
+                "clicked item is still dropped on the ground ([hud] allies_merc_click)");
+        }
+        return;
+    }
+    g_mercDropSite.store(at + 5, std::memory_order_release);   // the call is 5 bytes
+    Log("vrcam: laser - the pad layout's cursor drop found: with the mercenary's inventory open a clicked item stays on the cursor ([hud] allies_merc_click)");
+}
+
 void InstallTooltips() {
     if (g_tipReady.load() || !g_tipWanted.load()) return;
     std::string missing;
@@ -272,7 +309,7 @@ bool Ready() { return g_ready.load(); }
 
 void Install() {
     if (!g_ctx) return;
-    if (g_ready.load()) { InstallTooltips(); return; }   // the laser's own hooks are in: the tooltips' go in after them
+    if (g_ready.load()) { InstallTooltips(); InstallMercDrop(); return; }   // the laser's own hooks are in: the tooltips' go in after them
     // Every address first, as expected - not a hook in before all of them are: half of them in
     // would leave the game half in KB/M. What does not read yet (code the game has not run) is
     // looked at again on the next tick.

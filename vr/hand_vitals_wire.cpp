@@ -49,6 +49,7 @@ std::atomic<float> g_orbSize{5.0f}, g_orbOpacity{0.95f};
 std::atomic<float> g_orbSpot[2][6] = {{3.0f, 0.0f, 4.0f, 0.0f, 0.0f, 0.0f}, {3.0f, 0.0f, 4.0f, 0.0f, 0.0f, 0.0f}};   // [left, right][along, side, up cm; rotation x, y, z degrees]
 std::atomic<bool> g_orbMirror{false};
 std::atomic<bool> g_orbUnderShield{true};                                         // the wrist under a shield rolls its ball to the other side (OrbUnderShield)
+std::atomic<bool> g_orbShieldAnySlot{true};                                       // ... a shield in the game's right slot counts too ([hud] hand_vitals_orb_shield_any_slot)
 std::atomic<float> g_orbShield[7] = {180.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};   // [turn deg; along, side, up cm; rotation x, y, z deg]
 std::atomic<float> g_orbClassZ[kHeroCount] = {};   // the depth offset of each hero class, cm
 // [shapeshift] the werebear's own depth offset (cm) and the auto lift by its forearm's model. Not carried here at first (0.201.0 RC): Settings() handed the effect 0 and off
@@ -91,6 +92,7 @@ Config Current() {
     }
     c.orbMirror = g_orbMirror.load(std::memory_order_relaxed);
     c.orbUnderShield = g_orbUnderShield.load(std::memory_order_relaxed);
+    c.orbShieldAnySlot = g_orbShieldAnySlot.load(std::memory_order_relaxed);
     c.orbShield.turnDeg = g_orbShield[0].load(std::memory_order_relaxed);
     c.orbShield.alongCm = g_orbShield[1].load(std::memory_order_relaxed);
     c.orbShield.sideCm = g_orbShield[2].load(std::memory_order_relaxed);
@@ -347,6 +349,7 @@ void Configure(const Config& config) {
     }
     g_orbMirror.store(c.orbMirror);
     g_orbUnderShield.store(c.orbUnderShield);
+    g_orbShieldAnySlot.store(c.orbShieldAnySlot);
     g_orbShield[0].store(c.orbShield.turnDeg);
     g_orbShield[1].store(c.orbShield.alongCm);
     g_orbShield[2].store(c.orbShield.sideCm);

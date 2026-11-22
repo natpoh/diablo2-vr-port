@@ -248,6 +248,25 @@ int main() {
         const Place r = PlaceBig({0.0f, 1.6f, 0.0f}, 1.5707963f, 2.0f);
         Check(Near(r.at.x, -1.3f, 1e-3f) && Near(r.h, 0.6f), "turned left a quarter: along -x; a wide map half as tall");
     }
+    {   // [hud] allies_merc_click: the merc's tile under the map is the laser's too; a press there is Ally - the map neither opens nor closes
+        Clicker c;
+        Frame f = c.Step(true, false, false, false, false, false, false, false, true);
+        Check(f.claim && f.beam && f.event == Event::None, "on the merc's tile: the trigger the laser's, the beam drawn");
+        f = c.Step(true, false, false, false, false, true, false, false, true);
+        Check(f.event == Event::Ally && !c.Big(), "pressed on it: Ally, the map stays small");
+        f = c.Step(true, false, false, false, false, true, false, false, true);
+        Check(f.event == Event::None, "held: nothing more");
+        c.Step(true, true, false, false, false, false, false, false, false);
+        c.Step(true, true, false, false, false, true, false, false, false);
+        Check(c.Big(), "the map itself still opens big");
+        c.Step(true, false, false, false, false, false, false, false, true);
+        f = c.Step(true, false, false, false, false, true, false, false, true);
+        Check(f.event == Event::Ally && c.Big(), "under the big map: Ally, the big map stays (not keep)");
+        Clicker g;   // a press begun elsewhere (an attack) stays the game's when it moves onto the tile
+        g.Step(true, false, false, false, false, true, false, false, false);
+        f = g.Step(true, false, false, false, false, true, false, false, true);
+        Check(!f.claim && f.event == Event::None, "an attack held onto the tile: still the game's");
+    }
     std::printf(g_fails ? "map_laser_test: %d failed\n" : "map_laser_test: all passed\n", g_fails);
     return g_fails ? 1 : 0;
 }

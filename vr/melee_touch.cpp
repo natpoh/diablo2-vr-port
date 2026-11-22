@@ -129,6 +129,7 @@ std::atomic<bool> g_thrownTouch{true};
 std::atomic<float> g_clawMinSpeed[2] = {0.0f, 0.0f};   // [shapeshift] wolf_min_speed / bear_min_speed (0 = none of the form's own)
 std::atomic<bool> g_clawHits{false};     // [shapeshift] claw_hits: a grafted werewolf / werebear's paws are the blades (skel::PosedWeaponPose::paws)
 std::atomic<bool> g_thrownHeld{false};   // [gameplay] melee_touch_thrown_held: a thrown weapon is in the hand from the equip, like a sword (vr/thrown_touch.h)
+std::atomic<bool> g_thrownMelee{false};  // [gameplay] melee_touch_thrown_melee: the touch with a thrown weapon is the game's one-handed blow (vr/thrown_touch.h MeleeAnswer)
 std::atomic<GripIsThrowsFn> g_gripIsThrows{nullptr};
 std::atomic<GripHeldFn> g_gripHeld{nullptr};
 std::atomic<GripAtFn> g_gripIsThrowsAt{nullptr}, g_gripHeldAt{nullptr};   // (SetThrowGripAt)
@@ -2231,6 +2232,12 @@ void SetThrownHeld(bool on) {
         Log(on ? "melee touch: a thrown weapon is in the hand from the equip, like a sword (melee_touch_thrown_held) - an open grip does not stop its touch"
                : "melee touch: with the grip throw on, a thrown weapon touches only while its grip is squeezed (melee_touch_thrown_held off)");
 }
+void SetThrownMelee(bool on) {
+    if (g_thrownMelee.exchange(on) != on && g_wanted.load())
+        Log(on ? "melee touch: a thrown weapon's touch is the game's one-handed blow (melee_touch_thrown_melee) - a Throw or a ranged javelin skill on A or in the quiver is read as the plain Attack for it"
+               : "melee touch: a thrown weapon's touch casts what the attack slot holds (melee_touch_thrown_melee off)");
+}
+bool ThrownMelee() { return g_thrownMelee.load(); }
 void SetThrowGripAt(GripAtFn gripIsThrowsAt, GripAtFn gripHeldAt) {
     g_gripIsThrowsAt.store(gripIsThrowsAt);
     g_gripHeldAt.store(gripHeldAt);
@@ -3354,8 +3361,9 @@ void Tick(const Frame& f) {
                      static_cast<unsigned long long>(clawstrike::RecoveryMs(g_clawClock.Ms())), g_clawClock.Measured() ? ", measured" : ": not measured yet, its default");
             }
         }
-        if (!thrown) haptics::Touched(haptics::FromSkel(hand));   // [openxr] haptics_touch: the blade's hand buzzes now, landed or not (a no-op when off)
-        if (thrown)   // one throw per swing: the throw by gesture's release of this swing is dropped (the touch's press is the throw)
+        const bool thrownBlow = thrown && g_thrownMelee.load();   // [gameplay] melee_touch_thrown_melee: this thrown weapon's touch is the game's one-handed blow
+        if (!thrown || thrownBlow) haptics::Touched(haptics::FromSkel(hand));   // [openxr] haptics_touch: the blade's hand buzzes now, landed or not (a no-op when off)
+        if (thrown)   // one action per swing: the throw by gesture's release of this swing is dropped (the touch's press was it - a throw, or with melee_touch_thrown_melee the blow)
             if (const HoldOffFn hold = g_holdOff.load()) hold(meleetouch::HoldOffUntil(now));
         if (p.thrust && (g_n.thrusts <= 20 || meleeboxes::Wanted())) {   // [gameplay] melee_thrust: the counted thrust's numbers (the first twenty, every one with [debug] melee_boxes)
             char accel[80];
@@ -3369,7 +3377,9 @@ void Tick(const Frame& f) {
         else if (g_n.pressed <= 20 && (p.thrust || !thrustdebugwire::Only()))   // ([debug] thrust_debug_only: the swing's press lines left out)
             LogF("melee touch: %c hand, %s %llu hit monster %u (class %u) - the blade at %.1f m/s (%.1f where it touched) - %s pressed on it%s", p.side ? 'L' : 'R', p.thrust ? "thrust" : "stroke",
                  static_cast<unsigned long long>(p.stroke), p.c->id, p.c->cls, p.sweepSpeed, p.speed, dual.dual ? (dual.skillId == doubleswing::kDoubleSwing ? "the game's Double Swing" : "the game's Frenzy") : "the game's attack",
-                 thrown ? " (a thrown weapon: a point-blank throw; the throw by gesture's release of this swing is held off)" : "");
+                 thrownBlow ? " (a thrown weapon: the game's one-handed blow - a throwing skill on the attack slot is read as the plain Attack, melee_touch_thrown_melee; the throw by gesture's release of this swing is held off)"
+                 : thrown   ? " (a thrown weapon: the skill on the attack slot - Attack is the game's one-handed blow, Throw or a javelin skill a point-blank throw; the throw by gesture's release of this swing is held off)"
+                            : "");
     }
 
     // [debug] melee_boxes: AFTER the engine's steps, so the colour and the numbers are those of this pose's step (read-only)

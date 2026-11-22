@@ -15,6 +15,7 @@ struct ApOut {
     std::vector<uint32_t> px;
     uint32_t pxRev = 0, uploadedRev = 0, pxW = 0, pxH = 0;
     bool pending = false;
+    allyportraits::TileRect pxMerc, uploadedMerc;   // [hud] allies_merc_click: the merc's tile in the picture fetched / in the one in the swapchain
     XrCompositionLayerQuad layer{XR_TYPE_COMPOSITION_LAYER_QUAD};
 };
 ApOut g_ap[2];   // kUnderMap, kOnWrist
@@ -23,7 +24,9 @@ ApOut g_ap[2];   // kUnderMap, kOnWrist
 bool ApReady(int where, uint32_t need) {
     ApOut& o = g_ap[where];
     uint32_t rev = 0, pw = 0, ph = 0;
-    if (allyportraits::Picture(where, &o.px, &rev, &pw, &ph)) {
+    allyportraits::TileRect merc;
+    if (allyportraits::Picture(where, &o.px, &rev, &pw, &ph, &merc)) {
+        o.pxMerc = merc;
         o.pxRev = rev;
         o.pxW = pw;
         o.pxH = ph;
@@ -32,6 +35,7 @@ bool ApReady(int where, uint32_t need) {
     if (o.pending && o.pxW && o.pxH && QuadAtlasUpload(o.atlas, o.pxW, o.pxH, o.px, where == allyportraits::kUnderMap ? "ally portraits (under the map)" : "ally portraits (wrist)")) {
         o.pending = false;   // (another size: a new swapchain)
         o.uploadedRev = o.pxRev;
+        o.uploadedMerc = o.pxMerc;
     }
     return o.atlas.shown && o.uploadedRev >= need && o.atlas.w && o.atlas.h;
 }
@@ -59,6 +63,21 @@ uint32_t HangAllyPortraits(const XrCompositionLayerBaseHeader** layers, uint32_t
             o.layer.space = a.map.space;   // the map's space: the room's for the orb in the hand, g_space for the big map
             o.layer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;   // (premultiplied)
             layers[nl++] = (const XrCompositionLayerBaseHeader*)&o.layer;
+            {   // [hud] allies_merc_click: where the next frame's right laser finds the merc's tile (MapLaserStep)
+                AllyHung& hung = g_allyHung;
+                const XrVector3f x = Rot(q, {1.0f, 0.0f, 0.0f}), y = Rot(q, {0.0f, 1.0f, 0.0f}), z = Rot(q, {0.0f, 0.0f, 1.0f});
+                hung.quad = maplaser::Quad{};
+                hung.quad.at = {at.x, at.y, at.z};
+                hung.quad.right = {x.x, x.y, x.z};
+                hung.quad.up = {y.x, y.y, y.z};
+                hung.quad.front = {z.x, z.y, z.z};
+                hung.quad.w = w;
+                hung.quad.h = w * aspect;
+                hung.quad.ok = true;
+                hung.inRoom = g_roomSpace && o.layer.space == g_roomSpace;
+                hung.merc = o.uploadedMerc;
+                hung.at = GetTickCount64();
+            }
             if (told[0] != (int)a.big) {
                 told[0] = (int)a.big;
                 LogF("vrcam: openxr - ally portraits: hung under the %s, %.1f x %.1f cm", a.big ? "big map" : "map in the hand", w * 100.0f, w * aspect * 100.0f);
@@ -100,7 +119,9 @@ void AllyPortraitsTeardown() {   // under g_lock or before the session exists
         o.px.shrink_to_fit();
         o.pending = false;
         o.pxRev = o.uploadedRev = o.pxW = o.pxH = 0;
+        o.pxMerc = o.uploadedMerc = allyportraits::TileRect{};
     }
     g_allyAnchor = AllyAnchor{};
+    g_allyHung = AllyHung{};
     allyportraits::Teardown();
 }

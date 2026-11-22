@@ -187,11 +187,16 @@ int main(int argc, char** argv) {
         Check(!gamestate.empty() && !order.empty() && !xr.empty() && !effects.empty() && !load.empty(), "sources read");
         Has(gamestate, "gamestate.cpp", "CinemaMessage(ctx, target, command, text);", "every UI message is classified");
         Has(gamestate, "gamestate.cpp", "bool CinemaPlaying() { return g_cinemaOn.load() && g_cinema.load(); }", "world_screen=0 leaves things as they were");
-        Has(load, "load_settings.cpp", "gamestate::SetCinemaEnabled(IniB(L\"cinema\", L\"world_screen\", false));", "the key, default 0");
+        Has(load, "load_settings.cpp", "gamestate::SetCinemaEnabled(IniB(L\"cinema\", L\"world_screen\", true));", "the key, default 1 (shipped on since 0.216.0, 59cf6ce7)");
         Has(order, "frame_order.cpp", "if (!depth) gamestate::CinemaWorldDrawn(GetTickCount64());", "the world drawn again is seen");
         Has(order, "frame_order.cpp", "&& !gamestate::CinemaPlaying();", "no stereo pairs while one plays");
         Has(order, "frame_order.cpp", "hud::SetMenuOpen(gamestate::MenuOpen() || !g_inWorld.load() || gamestate::CinemaPlaying());", "no interface strip cut out of the movie");
         Has(order, "frame_order.cpp", "gamestate::CinemaTick(", "the cap is ticked");
+        // A menu's panel left out from just before (an NPC's talk closed 24 ms before 'PlayVideo', Serg 2026-11-22) cut the movie out of
+        // the picture for the whole Act I -> II video: in a game no pair and no draw hook run to take it back, the present does.
+        Has(effects, "effects.cpp", "if (!g_inWorld.load() || !d2rcam::InWorld() || cinema) {", "the present takes a menu's panel back while one plays");
+        Has(effects, "effects.cpp", "hud::SetPanelOut(campfire::PanelOut() && !cinema);", "no panel out of the picture while one plays");
+        Has(order, "frame_order.cpp", "hud::SetPanelOut((out || campfire::PanelOut()) && !cinema);", "nor from the draw hook's mono branch");
         Has(effects, "effects.cpp", "xr::SetLaserWanted(gamestate::MenuOpen() || !g_inWorld.load() || gamestate::CinemaPlaying());", "the laser on the screen in a game too");
         Has(xr, "xr.cpp", "const bool cinemaNow = gamestate::CinemaPlaying();", "the flat picture asks whether one plays");
         Has(xr, "xr.cpp", "quad.subImage.imageRect = {{(int32_t)film.x, (int32_t)film.y}, {(int32_t)film.w, (int32_t)film.h}};", "the quad shows the film only");

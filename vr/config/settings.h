@@ -281,6 +281,7 @@ struct Settings {
     std::atomic<float> gameSkyRadius{6000.0f};   // [sky] game_sky_radius_m: the dome's radius in world units (1500 m shipped since 0.218; 50 m: a near horizon under the game's fog)
     std::atomic<bool>  gameDomeCaves{false};    // [sky] game_dome_caves: a black dome round the eye underground (engitem::CaveDomeFrame)
     std::atomic<float> gameDomeCavesRadius{800.0f}; // [sky] game_dome_caves_radius_m: its radius in world units (200 m)
+    std::atomic<bool>  arcaneNoCaveDome{false}; // [sky] arcane_no_cave_dome: no cave dome in the Arcane Sanctuary - its void is its sky (vr/sky_dome.h CaveIn)
     std::atomic<float> skyClouds{1.0f};     // times the biome's own cloud cover
     std::atomic<bool>  skyDrift{false};     // [sky] drift: the painted sky turns slowly (off: it stands still - painted stars went round with the clouds)
     std::atomic<bool>  skyDayNight{true};   // [sky] day_night: the sky and the open-air fog follow the game's own light

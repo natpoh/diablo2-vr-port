@@ -77,6 +77,7 @@ void LogF(const char* fmt, ...) {
 // -- the settings ---------------------------------------------------------------------------------------------------
 std::atomic<bool> g_on{false};
 std::atomic<bool> g_bwWalk{true};   // [openxr] direct_bodywalk_walk: BodyWalk's walking passes in direct mode
+std::atomic<bool> g_bwWalkWanted{false};   // [walk_in_place] source=1 in F4: BodyWalk walks by stepping in place (SetBodyWalkWalkWanted)
 std::atomic<bool> g_flatVrCtl{true};   // [direct] flatvr_controls: in FlatVR the layout runs on BodyWalk's raw controllers (flat_raw.h)
 std::atomic<bool> g_fedByLink{false};  // the frames come from Game Link (FlatVR), not from a native session
 std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick walks in VR F1-F3 (movement only, vr/walk_flat.h)
@@ -412,7 +413,12 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
 // -- the public API (direct_input.h) ----------------------------------------------------------------------------------
 
 bool On() { return g_on.load(); }
-bool BodyWalkWalks() { return g_on.load() && g_bwWalk.load(); }
+bool BodyWalkWalks() { return g_on.load() && (g_bwWalk.load() || g_bwWalkWanted.load()); }
+void SetBodyWalkWalkWanted(bool wanted) {
+    if (g_bwWalkWanted.exchange(wanted) != wanted && g_on.load() && !g_bwWalk.load())
+        Log(wanted ? "vrcam: direct input - BodyWalk walks by stepping in place ([walk_in_place] source=1, F4): its walking passes although [openxr] direct_bodywalk_walk=0"
+                   : "vrcam: direct input - BodyWalk's walking ignored again ([openxr] direct_bodywalk_walk=0; walk in place by BodyWalk off or not F4)");
+}
 bool FlatVrControlsOn() { return g_on.load() && g_flatVrCtl.load(); }
 bool FedByLink() { return g_fedByLink.load(); }
 bool Governing() { return g_on.load() && ViewOk(); }

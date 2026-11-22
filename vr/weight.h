@@ -272,6 +272,19 @@ bool Aim(AimInfo* out);
 // [debug] the shaft's two ends in BodyWalk's frame (metres from the head, the head's turn only), where the
 // weight model has them (the hands' offset in, as they are drawn); false when no weapon is held so lately.
 bool ShaftEnds(float butt[3], float tip[3]);
+// [hands] merc_give_weapon (vr/merc_give.h): the first weapon as the weight model has it once the hands let it go - where its shaft is in the RENDER world
+// (metres: render units / upm, the frame meleetouch::BodyFor's capsules are in), for "was it put into the mercenary". Any thread.
+struct FreeNote {
+    int state = 0;            // 0 in a hand, flying back, on the back or not placed; 1 let go and still in the air (falling); 2 on the floor (tipping over or lying)
+    uint32_t release = 0;     // bumped each time both hands let it go (a fresh release; a call-back and another let-go is another one)
+    bool thrown = false;      // the release was a throw of a throwing weapon (the game throws it: not ours to give)
+    int slot = 0;             // the game's hand slot of the weapon (0 right, 1 left)
+    float butt[3] = {}, tip[3] = {};   // the shaft's ends, render metres
+    float floorY = 0.0f;      // the floor under it, render metres
+    float upm = 0.0f;         // game units per metre at the hero's size (BodyFor's)
+    uint64_t at = 0;          // GetTickCount64 of the step it is from
+};
+bool LastFree(FreeNote* out);   // false when no weapon is placed, the world's frame is not known, or the last step is older than 300 ms
 // [debug] grip_trace (view only): a log line for every grip press - what was in reach (the shaft, the back, a call back, nothing), the fist's distance from the shaft and its place
 // along it against the second hand's hilt rule - and for every change of who holds the weapon (first, main, each hand's place on the shaft). The pose's side (the slot, the drawn bone,
 // the grip pose's hand) is skeletons.cpp's. GripTrace: on.

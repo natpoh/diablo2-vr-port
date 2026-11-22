@@ -104,9 +104,12 @@ Col ToneCol(Tone t) {
     }
 }
 
-void DrawTile(Canvas& cv, Fonts& fonts, const Tile& t, float x, float y) {
+// lit: [hud] allies_merc_click - the right laser points at this (the mercenary's) tile: a lighter back and a bright gold rim, the frame a click opens
+// his inventory from.
+void DrawTile(Canvas& cv, Fonts& fonts, const Tile& t, float x, float y, bool lit = false) {
     const bool player = t.kind == Kind::Player;
-    wheelpaint::kit::RoundRect(cv, Rect{x + 4.0f, y + 4.0f, x + 156.0f, y + 156.0f}, 14.0f, kBack, 0.86f, player ? kRim : kRimNpc, 0.95f, 2.5f);
+    if (lit) wheelpaint::kit::RoundRect(cv, Rect{x + 4.0f, y + 4.0f, x + 156.0f, y + 156.0f}, 14.0f, Col{58.0f, 48.0f, 30.0f}, 0.92f, Col{255.0f, 214.0f, 120.0f}, 1.0f, 5.0f);
+    else wheelpaint::kit::RoundRect(cv, Rect{x + 4.0f, y + 4.0f, x + 156.0f, y + 156.0f}, 14.0f, kBack, 0.86f, player ? kRim : kRimNpc, 0.95f, 2.5f);
     if (t.kind == Kind::More) {
         char more[12];
         snprintf(more, sizeof more, "+%u", (unsigned)std::min<uint16_t>(t.count, 99));
@@ -183,7 +186,7 @@ void Render(const Look& look, std::vector<uint32_t>& px) {
     }
     for (int i = 0; i < (int)look.n && i < kMaxTiles; ++i) {
         const Cell c = AllyCell(look, i);
-        DrawTile(cv, fonts, look.tile[(size_t)i], (float)c.x, (float)c.y);
+        DrawTile(cv, fonts, look.tile[(size_t)i], (float)c.x, (float)c.y, look.mercLit && look.tile[(size_t)i].kind == Kind::Mercenary);
     }
 }
 

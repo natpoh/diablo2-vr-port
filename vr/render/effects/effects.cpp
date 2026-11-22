@@ -6,6 +6,7 @@
 #include "../../flatvr_feed.h"   // [render] flatvr_feed: FlatVR's picture and depth without ReShade
 #include "../../resize_drain.h"   // [render] resize_drain: the GPU drained before the game resizes or releases DLSS, no stale replay
 #include "../../apply_keep_size.h"   // [render] apply_keep_size: the game's Apply does not resize its swap chain inside its frame
+#include "../../vram_guard.h"   // [render] vram_guard: the render size lowered when the game runs over its video memory budget
 #include "vrs_probe.h"   // [render] foveated: variable rate shading asked of D3D12 at the load (shared/)
 #include "../../ecl_hook.h"   // [fog] game_fog_before_fx: the submission order seen (fogfx::OnExecute, the tap)
 #include "../../phantom_rect.h"   // [render] phantom_rects: the vignette pass only where its carriers are
@@ -1629,9 +1630,15 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
     // No game area (the title and character screens, loading): the interface stays in the picture. A menu out as
     // a panel when the game was left (Esc, Save and Exit) is not kept there - the draw hook that sets it may not
     // run in the menus, and the main menu came up with no interface at all (2026-10-13).
-    if (!g_inWorld.load() || !d2rcam::InWorld()) {
+    // [cinema] world_screen: nor while one of the game's cinematics plays - the movie is a widget in the interface's layer, and a menu's
+    // panel left out cuts all of that layer from the picture. In a game nothing else would take it back: the movie draws no
+    // DrawGameScreen, so no pair begins (NativePairBegin) and the draw hook's mono branch never runs. Serg's Act I -> II video
+    // (2026-11-22 16:29:43, 0.221.5): an NPC's talk closed 24 ms before 'PlayVideo', its panel stayed out the 4 min 22 s and the big
+    // screen showed the world without the film ("hud: the menu's panel over" only at 16:34:09, after 'MovieComplete').
+    const bool cinema = gamestate::CinemaPlaying();   // (false with world_screen=0: as before)
+    if (!g_inWorld.load() || !d2rcam::InWorld() || cinema) {
         g_menu3dNow.store(false);
-        hud::SetPanelOut(campfire::PanelOut());   // ([campfire]: the creation scene's menu goes out as its board, vr/campfire_unleashed.h)
+        hud::SetPanelOut(campfire::PanelOut() && !cinema);   // ([campfire]: the creation scene's menu goes out as its board, vr/campfire_unleashed.h)
     }
     // FlatVR's laser on the menu panel is the mouse (its reader block): the pad's layout kept under it, as
     // native's LaserStep keeps it - 300 ms a call; parked, the focus is the pad's again
@@ -1682,7 +1689,17 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
                 pairtime::BusyThreads(0.0);
                 budgetasks::g_ourThread.store(GetCurrentThreadId());   // (gpufault::VideoMemory's own ask below: not the game's)
                 for (;;) {
-                    Sleep(10000);
+                    // [render] vram_guard (vr/vram_guard.h): with it on the 10 s are slept in steps, the video memory read at each for the render size's
+                    // guard (this thread's asks are not the game's: g_ourThread). Off: one 10 s sleep, as before.
+                    if (vrres::VramGuardOn()) {
+                        for (uint64_t slept = 0; slept < 10000; slept += vrres::vramguard::kSampleMs) {
+                            Sleep((DWORD)vrres::vramguard::kSampleMs);
+                            uint64_t gu = 0, gb = 0;
+                            if (vrres::VramGuardOn() && gpufault::VideoMemory(&gu, &gb)) vrres::VramSample(gu, gb);
+                        }
+                    } else {
+                        Sleep(10000);
+                    }
                     const double now = pairtime::UsNow();
                     const uint32_t n = pairtime::g_presents.load();
                     if (!pairtime::g_drawThread.load()) pairtime::g_drawThread.store(presentThread.load());
@@ -3392,7 +3409,8 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
                 in.vitalsOk = handvitals::Snapshot(&in.v);
                 in.time = pairtime::UsNow() * 1e-6;
                 in.heroClass = skel::HeroClass();   // the class of the hero playing now (the model's folder): its depth offset is on both wrists' Z
-                in.shieldWrist = viewgate::F4() ? handorbs::ShieldWrist(skel::ShieldStrapped(), gamestate::LeftShield()) : -1;   // the wrist under a shield rolls its ball to the other side (VR F4 only)
+                // the wrist under a shield rolls its ball to the other side (VR F4 only); [hud] hand_vitals_orb_shield_any_slot: a shield moved to the right slot counts too
+                in.shieldWrist = viewgate::F4() ? handorbs::ShieldWrist(skel::ShieldStrapped(), gamestate::LeftShield(), in.cfg.orbShieldAnySlot && gamestate::RightShield()) : -1;
                 {   // once per change: which hero, and the offset its class has
                     static int toldHero = -2;
                     if (in.heroClass != toldHero) {

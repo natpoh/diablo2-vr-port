@@ -1,5 +1,6 @@
 // vr/view/camera.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M16); what it gives: vr/view/camera.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
+#include "../billboards.h"   // [stereo] portal_once: the head's centre each view build
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -620,6 +621,10 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     const float hangA[3] = {hang.x, hang.y, hang.z};
     for (int i = 0; i < 3; ++i) g_eyeWorld[i].store(hangA[i]);
     g_headCentre[0].store(eye.x); g_headCentre[1].store(eye.y); g_headCentre[2].store(eye.z);
+    {   // the portal and the screen-facing particles face this, not each eye's camera ([stereo] portal_once, vr/billboards.h)
+        const float centre[3] = {eye.x, eye.y, eye.z};
+        billboards::SetCenter(centre);
+    }
     g_headAhead[0].store(ahead.x); g_headAhead[1].store(ahead.y); g_headAhead[2].store(ahead.z);
     g_headOk.store(true);
     for (int i = 0; i < 3; ++i) g_eyeFromLook[i].store(hangA[i] - L[i]);

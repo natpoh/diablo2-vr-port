@@ -61,6 +61,9 @@ static Pose Aim(V3 from, V3 to) {
 static V3 PanelPoint(const Pose& panel, float u, float v) {
     return Add(panel.p, Rot(panel.q, {(u - 0.5f) * kWidthM, (0.5f - v) * kHeightM, 0.0f}));
 }
+// A tab the headset shows (walking in place closed, Serg 2026-11-22: no Walk tab, walk_in_place.h kOpen); the next one shown after i (kTabCount: none).
+static bool TabOpen(int i) { return TabShown(i, 0); }
+static int NextOpenTab(int i) { int j = i + 1; while (j < kTabCount && !TabOpen(j)) ++j; return j; }
 static void Centre(const Rect& r, float* u, float* v) {
     *u = (r.x + 0.5f * r.w) / kW;
     *v = (r.y + 0.5f * r.h) / kH;
@@ -232,10 +235,42 @@ static void TestDefs() {
         m.Click({Kind::Change, ahead, 1});
         CHECK(std::fabs(m.Get()[ahead] - 33.0f) < 1e-3f, "+ 1 cm farther");
     }
-    {   // Walk (Serg 2026-11-19): [walk_in_place] - the tick, then the three trims and the run point; a tab of its own before the Guide, F4 only, live
+    {   // Walk (Serg 2026-11-19): [walk_in_place] - the tick, the source (2026-11-22), then the three trims and the run point; a tab of its own before the
+        // Guide, F4 only, live
         const int on = IndexOf(L"walk_in_place", L"on");
-        CHECK(RowsOn(kPageWalk) == 5 && KeyAt(kPageWalk, 0) == on && StartsTab(kPageWalk) && TabOf(kPageWalk) + 1 == TabOf(kPageGuide),
-              "Walk: its tick first, five rows, its own tab just before the Guide");
+        CHECK(RowsOn(kPageWalk) == 6 && KeyAt(kPageWalk, 0) == on && KeyAt(kPageWalk, 1) == kKeyWalkSource && StartsTab(kPageWalk) &&
+                  TabOf(kPageWalk) + 1 == TabOf(kPageGuide),
+              "Walk: its tick first, then the source, six rows, its own tab just before the Guide");
+        CHECK(IsToggle(kDefs[kKeyWalkSource]) && kDefs[kKeyWalkSource].def == 0.0f && !strcmp(kDefs[kKeyWalkSource].off, "Built-in") &&
+                  !strcmp(kDefs[kKeyWalkSource].on, "BodyWalk"),
+              "Walk by: Built-in / BodyWalk, the built-in library as shipped (as before)");
+        CHECK(std::strlen(kDefs[kKeyWalkSource].label) <= 30 && std::strlen(kDefs[kKeyWalkSource].detail) <= 52, "the source's texts fit the row");
+        int library = 0;
+        for (int r = 0; r < RowsOn(kPageWalk); ++r) {
+            const int k = KeyAt(kPageWalk, r);
+            library += WalkLibraryKey(k) ? 1 : 0;
+            CHECK(!WalkLibraryRowIdle(k, 0.0f), "with the built-in library every row works");
+            CHECK(WalkLibraryRowIdle(k, 1.0f) == (k != on && k != kKeyWalkSource), "with BodyWalk the four library rows are greyed, the tick and the source not");
+        }
+        CHECK(library == 4, "four library rows: the three trims and the run point");
+        if (wip::kOpen) {   // a click on a greyed row changes nothing; on the source it does, and back (the tab hidden while walking is closed)
+            Snapshot s;
+            for (int i = 0; i < kCount; ++i) s.values[i] = s.file[i] = kDefs[i].def;
+            s.ready = true;
+            Model m;
+            m.Open(s);
+            m.SetView(4);
+            m.Click({Kind::Tab, kPageWalk, 0});
+            const int sens = IndexOf(L"walk_in_place", L"sensitivity");
+            m.Click({Kind::Change, sens, 1});
+            CHECK(std::fabs(m.Get()[sens] - 55.0f) < 1e-3f, "built-in: + moves the sensitivity");
+            m.Click({Kind::Change, kKeyWalkSource, 1});
+            CHECK(m.Get()[kKeyWalkSource] > 0.5f, "the source flips to BodyWalk");
+            m.Click({Kind::Change, sens, 1});
+            CHECK(std::fabs(m.Get()[sens] - 55.0f) < 1e-3f, "BodyWalk: the sensitivity's + does nothing (greyed)");
+            m.Click({Kind::Change, kKeyWalkSource, 1});
+            CHECK(m.Get()[kKeyWalkSource] < 0.5f, "and back to the built-in library");
+        }
         CHECK(on >= 0 && IsToggle(kDefs[on]) && kDefs[on].def == 0.0f, "Move by walking: a tick, off as shipped (everything as before)");
         for (const wchar_t* k : {L"sensitivity", L"speed", L"smoothing"}) {
             const int i = IndexOf(L"walk_in_place", k);
@@ -243,8 +278,12 @@ static void TestDefs() {
         }
         const int run = IndexOf(L"walk_in_place", L"run_at");
         CHECK(run >= 0 && kDefs[run].def == 80.0f && kDefs[run].min == 20.0f && kDefs[run].max == 100.0f, "the run point: 20 - 100 % (100 never), 80 as walk by lean");
-        for (int r = 0; r < 5; ++r) CHECK(kDefs[KeyAt(kPageWalk, r)].live && F4OnlyKey(KeyAt(kPageWalk, r)), "each row live, F4 only");
-        CHECK(F4OnlyPage(kPageWalk) && !PageShown(kPageWalk, 1) && !PageShown(kPageWalk, 3) && PageShown(kPageWalk, 4) && PageShown(kPageWalk, 0), "the tab: F4 (and Settings' own), not VR F1 - F3");
+        for (int r = 0; r < 6; ++r) CHECK(kDefs[KeyAt(kPageWalk, r)].live && F4OnlyKey(KeyAt(kPageWalk, r)), "each row live, F4 only");
+        CHECK(F4OnlyPage(kPageWalk) && !PageShown(kPageWalk, 1) && !PageShown(kPageWalk, 3) && PageShown(kPageWalk, 4) == wip::kOpen && PageShown(kPageWalk, 0) == wip::kOpen,
+              "the tab: F4 (and view 0), not VR F1 - F3; hidden everywhere while walking in place is closed (Serg 2026-11-22)");
+        CHECK(wip::kOpen || (!TabShown(TabOf(kPageWalk), 4) && TabRect(TabOf(kPageWalk), 4).w == 0 &&
+                             TabRect(TabOf(kPageGuide), 4).x == TabRect(TabOf(kPageWalk) - 1, 4).x + TabRect(TabOf(kPageWalk) - 1, 4).w + 8),
+              "closed: no Walk tab in F4, the Guide right after the tab before it (no gap)");
     }
     {   // F1 (Serg 2026-11-13): the View tab's second page in VR F1 - [top] perspective, tilt, distance as D2R VR Settings > UI: F1 above > "View from
         // above" has them, live; VR F1 only (and Settings' own / a test); the bottom bar's F1 / View
@@ -417,7 +456,7 @@ static void TestHitTest() {
     CHECK(Inside(kApply) && Inside(kClose) && Inside(kRecentre) && Inside(kStatus), "bottom buttons inside the atlas");
     CHECK(!Overlap(kApply, kClose) && !Overlap(kClose, kRecentre) && !Overlap(kApply, kRecentre), "bottom buttons apart");
     CHECK(!Overlap(kStatus, kApply) && !Overlap(kStatus, kClose) && !Overlap(kStatus, kRecentre), "the status line is clear of the buttons");
-    for (int i = 0; i < kTabCount; ++i) CHECK(Inside(kTab(i)), "tabs inside the atlas");
+    for (int i = 0; i < kTabCount; ++i) CHECK(!TabOpen(i) || Inside(kTab(i)), "tabs inside the atlas");
     for (int i = 0; i + 1 < kTabCount; ++i) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
     for (int r = 0; r < kRowsMax; ++r) {   // the Melee page's seven, closer
         const int p = kPageMelee;
@@ -432,6 +471,7 @@ static void TestHitTest() {
         if (r + 1 < kRowsPerPage) CHECK(!Overlap(kToggle(r), kToggle(r + 1)), "rows apart");
     }
     for (int p = 0; p < PageCount(); ++p) {
+        if (!PageShown(p, 0)) continue;   // (the Walk page while walking in place is closed)
         for (int r = 0; r < RowsOn(p); ++r) {
             const int key = KeyAt(p, r);
             float u, v;
@@ -1579,6 +1619,7 @@ static void TestPagesHit() {
     CHECK(HitTest(kPageBody, u, v).kind == Kind::Guide && HitTest(kPageVideo, u, v).kind != Kind::Guide, "First-start guide, on the Body page only");
     CHECK(HitTest(kPageBody, 0.5f, (kBodyStep(1).y + 5.0f) / kH).kind == Kind::None, "the steps are text");
     for (int t = 0; t < kTabCount; ++t) {
+        if (!TabOpen(t)) continue;
         Centre(kTab(t), &u, &v);
         CHECK((HitTest(kPageBody, u, v) == Hit{Kind::Tab, TabPage(t), 0}) && (HitTest(kPageVideo, u, v) == Hit{Kind::Tab, TabPage(t), 0}), "all the tabs from the new pages too");
     }
@@ -2707,8 +2748,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 84 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F1 page's five, the F3 page's two, the Left page's Left-handed, the Map page's keep and the map mode's seven keys and the Walk page's five and the F5 page's seven - not the others");
+    CHECK(live == 85 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F1 page's five, the F3 page's two, the Left page's Left-handed, the Map page's keep and the map mode's seven keys and the Walk page's six (its source since 2026-11-22) and the F5 page's seven - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -2724,8 +2765,9 @@ static void TestBelt() {
 
     // the tabs: apart, inside the atlas, every one hit
     for (int i = 0; i < kTabCount; ++i) {
+        if (!TabOpen(i)) continue;
         CHECK(Inside(kTab(i)), "a tab inside the atlas");
-        if (i + 1 < kTabCount) CHECK(!Overlap(kTab(i), kTab(i + 1)), "tabs apart");
+        if (NextOpenTab(i) < kTabCount) CHECK(!Overlap(kTab(i), kTab(NextOpenTab(i))), "tabs apart");
         float u, v;
         Centre(kTab(i), &u, &v);
         CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, TabPage(i), 0}), "every tab is hit");
@@ -2954,7 +2996,7 @@ static void TestBelt() {
             CHECK(Paint(m, {}, pages[p]) && pages[p].size() == (size_t)kW * kH, "a page painted");
         }
         for (int a = 0; a < kPageCount; ++a)
-            for (int b = a + 1; b < kPageCount; ++b) CHECK(pages[a] != pages[b], "every page looks different");
+            for (int b = a + 1; b < kPageCount; ++b) CHECK(!PageShown(a, 0) || !PageShown(b, 0) || pages[a] != pages[b], "every page looks different");
         CHECK(std::string(StatusText(OnPage(Snap(), kPageBelt))).find("Each change applies by itself") != std::string::npos, "the Belt page says its changes apply by themselves");
         Snapshot off = Snap();
         off.values[kKeyBeltOn] = off.file[kKeyBeltOn] = 0.0f;
@@ -3457,6 +3499,7 @@ static void TestLowLife() {
 
     // the tab strip: six tabs under the title, each a tab, none off the sheet
     for (int i = 0; i < kTabCount; ++i) {
+        if (!TabOpen(i)) continue;
         float u, v;
         Centre(kTab(i), &u, &v);
         CHECK((HitTest(0, u, v) == Hit{Kind::Tab, TabPage(i), 0}) && Inside(kTab(i)), "a tab of the six");
@@ -3709,16 +3752,19 @@ static void TestMelee() {
     // the tabs share the strip by the length of their names: all inside the atlas, apart, none too narrow for its name, the long names wider
     int narrowest = 1 << 20;
     for (int i = 0; i < kTabCount; ++i) {
+        if (!TabOpen(i)) continue;
         CHECK(Inside(kTab(i)), "a tab inside the atlas");
-        if (i + 1 < kTabCount) CHECK(!Overlap(kTab(i), kTab(i + 1)) && kTab(i).x + kTab(i).w < kTab(i + 1).x, "tabs apart, in order");
+        const int n = NextOpenTab(i);
+        if (n < kTabCount) CHECK(!Overlap(kTab(i), kTab(n)) && kTab(i).x + kTab(i).w < kTab(n).x, "tabs apart, in order");
         narrowest = std::min(narrowest, kTab(i).w);
     }
     CHECK(kTab(kTabCount - 1).x + kTab(kTabCount - 1).w <= 32 + 960, "the strip ends where the rows do");
-    for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
+    for (int i = 0; i < kTabCount; ++i) CHECK(!TabOpen(i) || GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) <= kTab(i).w - 8, "a tab's name fits it in the panel's own painter");
     for (int i = 0; i < kTabCount; ++i) CHECK(GdiWidth(kTabNames[i], kTabFontPx, FW_SEMIBOLD) == kTabNameW[i], "kTabNameW is the names' width in that font (the strip is shared by it)");
     CHECK(kTab(TabOf(kPageOptions)).w > kTab(TabOf(kPageView)).w && kTab(TabOf(kPageView)).w + 1 >= kTab(TabOf(kPageHud)).w && kTab(TabOf(kPageMelee)).w > kTab(TabOf(kPageBody)).w, "a longer name has the wider tab (View and HUD: the same width at 19 px, a pixel of rounding between their tabs)");
     CHECK(kTab(TabOf(kPageHud)).w > kTab(TabOf(kPageLife)).w && kTab(TabOf(kPageHud)).w >= GdiWidth("HUD", kTabFontPx, FW_SEMIBOLD) + 8, "a three-letter name gets what its letters need (HUD's capitals are wide: wider than Life's tab)");
     for (int i = 0; i < kTabCount; ++i) {
+        if (!TabOpen(i)) continue;
         float u, v;
         Centre(kTab(i), &u, &v);
         CHECK((HitTest(kPageView, u, v) == Hit{Kind::Tab, TabPage(i), 0}), "every tab is hit");

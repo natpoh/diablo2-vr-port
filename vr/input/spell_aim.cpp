@@ -708,10 +708,34 @@ int SlotSkillFor(int slot, uintptr_t ret, int* boundOut) {
     }
     return skill;
 }
+// [gameplay] melee_touch_thrown_melee (vr/thrown_touch.h MeleeAnswer): the touch's own press with a javelin, throwing knife or axe in hand - a skill that would
+// THROW the weapon (Throw or a ranged javelin skill on A, or answered by the javelin quiver) is read as the plain Attack, which the game's server strikes with
+// as a one-handed blow (its Attack shoots only from a bow or a crossbow). A blow skill (Jab, Bash ...) and every other read stay as they are. After all the
+// other answers, so it wins only for the touch's press: the throw by gesture, the player's own A press and the quiver's throws keep theirs.
+int ThrownMeleeAnswer(int slot, uintptr_t ret, int skill) {
+    if (!meleetouch::ThrownMelee()) return skill;   // (the common case first: off)
+    meleetouch::MeleeAsk a;
+    a.on = g_set.meleeTouch.load() && meleetouch::ThrownTouch();
+    a.atCastSite = ret == g_slotSelectRet || ret == g_slotSetRet;
+    a.attackSlot = slot == 0;
+    a.touchPress = a.on && a.atCastSite && a.attackSlot && meleetouch::TargetPending();   // (young, F4: the touch's own press)
+    a.thrownInHand = a.touchPress && ThrownInHand();
+    a.throwLive = a.thrownInHand && GestureAimLive();
+    const int answer = meleetouch::MeleeAnswer(skill, a);
+    if (answer != skill) {
+        static ULONGLONG told = 0;
+        if (GetTickCount64() - told > 2000) {
+            told = GetTickCount64();
+            LogF("melee touch: a thrown weapon's touch - the attack slot's skill %d (a throw) was read as the plain Attack (0) by the %s: the game's one-handed blow "
+                 "([gameplay] melee_touch_thrown_melee)", skill, ret == g_slotSelectRet ? "cast's slot selection" : "unit's hand-skill setter");
+        }
+    }
+    return answer;
+}
 int HookSlotSkill(int slot) {
     const uintptr_t ret = (uintptr_t)_ReturnAddress();
     int bound = -1;
-    const int skill = SlotSkillFor(slot, ret, &bound);
+    const int skill = ThrownMeleeAnswer(slot, ret, SlotSkillFor(slot, ret, &bound));
     if (g_ptActive.load(std::memory_order_relaxed) && (ret == g_slotSelectRet || ret == g_slotSetRet))   // [debug] melee_press_trace: the game's reads of the pressed slot
         PressTraceSlot(ret == g_slotSelectRet ? presstrace::kSelect : presstrace::kSetter, slot, bound, skill);
     return skill;
@@ -721,7 +745,8 @@ bool ThrowAutoSkillReady() { return g_set.throwAutoSkill.load() && g_slotSkillHo
 
 void InstallSlotSkillHook() {
     if (!g_ctx || g_slotSkillHook.load() != 0 || !((g_set.throwGesture.load() && g_set.throwAutoSkill.load()) || quiverwire::On() || bowquiverwire::WantsHook() || meleearm::On() ||
-                                                    g_set.bowDrawArrow.load() || (g_set.meleeTouch.load() && (g_set.touchEmptyAttack.load() || g_set.touchInteractAttack.load())))) return;
+                                                    g_set.bowDrawArrow.load() || (g_set.meleeTouch.load() && (g_set.touchEmptyAttack.load() || g_set.touchInteractAttack.load() ||
+                                                                                                               (meleetouch::ThrownTouch() && meleetouch::ThrownMelee()))))) return;
     if (!Matches(RVA_SLOT_SKILL, kSigSlotSkill, sizeof kSigSlotSkill)) return;   // the code is decrypted as it runs: tried again
     if (!CallsTo(RVA_SLOT_SKILL_SELECT_RET, RVA_SLOT_SKILL) || !CallsTo(RVA_SLOT_SKILL_SET_RET, RVA_SLOT_SKILL)) {
         g_slotSkillHook.store(2);

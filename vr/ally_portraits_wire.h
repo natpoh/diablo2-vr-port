@@ -53,8 +53,15 @@ bool WristPanel(WristLayer* layer);
 // (vr/render/effects/effects.cpp) moves that corner off the picture, leaving its place empty. Any thread.
 bool GameCornerToHide(float* units);
 
-// A finished picture (premultiplied pixels, R in the low byte, width x height: PicW(cols) x PicH(n, cols)) newer than the last fetched, with its revision.
-bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height);
+// A finished picture (premultiplied pixels, R in the low byte, width x height: PicW(cols) x PicH(n, cols)) newer than the last fetched, with its revision
+// and where the mercenary's tile is in it (merc: may be null; not ok when he has none).
+bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height, TileRect* merc = nullptr);
+
+// [hud] allies_merc_click (vr/ally_portraits.h MercRect): the mercenary's tile under the map is a button - true while the key is ticked and the allies
+// are under the map. SetMercLit: the right laser points at it now (the draw thread, MapLaserStep) - the next picture draws it lit.
+bool MercClick();
+bool MercKeyOn();   // the key alone (any thread, lock-free): B closes his panel, and the laser has it in the mouse layout (vr/xr.cpp, vr/panel_input.cpp)
+void SetMercLit(bool lit);
 
 // With the session (Teardown): the picture is forgotten (the swapchain goes with the session).
 void Teardown();

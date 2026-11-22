@@ -89,12 +89,18 @@ struct CaveIn {
     bool inWorld = false;
     bool underground = false; // off the outdoor list: caves, dungeons, crypts
     bool eyeOk = false;
+    // [sky] arcane_no_cave_dome ticked and in the Arcane Sanctuary (act2_arcane, off the outdoor list - "underground"): no black dome there.
+    // Its void is its sky: our effect's stars ([sky] arcane_sky) are drawn only where the game drew nothing (depth 0), and the dome at
+    // 800 units filled every such pixel with its own black - "почему у меня в карте Аркана нету фона? Черный фон" (Serg, 0.221.5,
+    // 2026-11-22: the log said "sky on" all along, the cave dome shown since the palace cellar)
+    bool arcaneOpen = false;
 };
 inline const char* CaveWhyNot(const CaveIn& in) {
     if (!in.ticked) return "[sky] game_dome_caves=0";
     if (!in.f4) return "not VR F4";
     if (!in.inWorld) return "not in a world";
     if (!in.underground) return "not underground";
+    if (in.arcaneOpen) return "the Arcane Sanctuary - its void is its sky ([sky] arcane_no_cave_dome)";
     if (!in.eyeOk) return "no eye yet";
     return "";
 }

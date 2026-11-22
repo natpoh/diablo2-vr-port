@@ -21,6 +21,9 @@ void LoadSettings(const wchar_t* iniPath);
 // headset (xr.cpp's presenter request), and ITS LEFT STICK is mixed into the controller's own (vrcam's PadMirrorRead); nothing else of its pad,
 // its actions or its commands is read. 0 = direct mode ignores BodyWalk whole, as it did. Any thread.
 bool BodyWalkWalks();
+// [walk_in_place] source=1 (vr/walk_in_place.h BodyWalkPasses): BodyWalk walks by stepping in place in VR F4 - its walking passes as with
+// direct_bodywalk_walk=1, whatever that key says. Set by vr/walk_in_place_wire.cpp (its settings load, every headset frame: false out of F4). Any thread.
+void SetBodyWalkWalkWanted(bool wanted);
 
 // [direct] flatvr_controls (default 1) with direct input on: in FlatVR the layout and the F4 gestures run on BodyWalk's raw controllers, which
 // Game Link's Tracking carries from a BodyWalk that sends them (version 2, BW_LINK_TRACK_CONTROLS - vr/flat_raw.h; vrcam's FlatRawTick feeds

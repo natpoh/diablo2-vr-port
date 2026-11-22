@@ -201,8 +201,60 @@ static void TestEndToEnd() {
     CHECK(st.speed == 0.0f);   // closed: nothing
 }
 
+// [walk_in_place] source (Serg 2026-11-22: "встроенная библиотека или бодивалк"): 0 the built-in library as before, 1 the BodyWalk app with its Steps settings.
+static void TestSource() {
+    wip::Config c;
+    CHECK(c.source == wip::kSourceLibrary);   // the default: as before
+    CHECK(wip::SourceOf(0.0f) == wip::kSourceLibrary && wip::SourceOf(1.0f) == wip::kSourceBodyWalk && wip::SourceOf(0.8f) == wip::kSourceBodyWalk);
+    CHECK(wip::SourceOf(2.0f) == wip::kSourceLibrary && wip::SourceOf(-1.0f) == wip::kSourceLibrary && wip::SourceOf(NAN) == wip::kSourceLibrary);   // a stray value: the library
+    c.source = 7;
+    CHECK(wip::Clamped(c).source == wip::kSourceLibrary);
+    // off: nothing either way
+    c = {};
+    CHECK(!wip::LibraryOn(c) && !wip::BodyWalkOn(c));
+    c.source = wip::kSourceBodyWalk;
+    CHECK(!wip::LibraryOn(c) && !wip::BodyWalkOn(c));
+    // on: one of the two, never both
+    c.on = true;
+    CHECK(!wip::LibraryOn(c) && wip::BodyWalkOn(c));
+    c.source = wip::kSourceLibrary;
+    CHECK(wip::LibraryOn(c) && !wip::BodyWalkOn(c));
+    // the trims are the library's: the same numbers whatever the source (they wait for the library, unchanged)
+    wip::Config b = c;
+    b.source = wip::kSourceBodyWalk;
+    CHECK(wip::TrimsOf(b) == wip::TrimsOf(c));
+    // direct mode: BodyWalk's walking passes by [openxr] direct_bodywalk_walk, or with BodyWalk the walk source - in F4 only
+    for (int bits = 0; bits < 16; ++bits) {
+        wip::Config k;
+        k.on = (bits & 1) != 0;
+        k.source = bits & 2 ? wip::kSourceBodyWalk : wip::kSourceLibrary;
+        const bool key = (bits & 4) != 0, f4 = (bits & 8) != 0;
+        const bool passes = wip::BodyWalkPasses(key, k, f4);
+        CHECK(passes == (key || (f4 && k.on && k.source == wip::kSourceBodyWalk)));
+        CHECK(!key || passes);                                   // the old key alone: as before
+        CHECK(!(passes && !key) || (f4 && wip::BodyWalkOn(k)));  // more than before only for BodyWalk's walk in F4
+        CHECK(!(wip::LibraryOn(k) && passes && !key));           // never while the library walks
+    }
+    // the Walk tab's line with BodyWalk walking
+    wip::BodyWalkFacts f;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::NotF4);
+    f.f4 = true;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::NotRunning);   // nothing of BodyWalk's comes in: said so
+    f.running = true;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::NoStick);      // it runs, no walking stick
+    f.stickIn = true;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::Standing);
+    f.walking = true;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::Walking);
+    f.running = false;   // (a stick without Game Link: its pad report alone - it walks)
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::Walking);
+    f.f4 = false;
+    CHECK(wip::BodyWalkLineOf(f) == wip::BodyWalkLine::NotF4);
+}
+
 int main() {
     TestTrims();
+    TestSource();
     TestStickLength();
     TestRunKey();
     TestMergeAndGate();

@@ -88,6 +88,8 @@ std::atomic<bool> g_placed{false};    // a weapon held that way
 std::atomic<float> g_steelKg{0.0f};   // [weight] knock_props: its steel on the last step
 struct EndsOut { float butt[3], tip[3]; ULONGLONG at; };
 EndsOut g_ends{};
+FreeNote g_freeNote{};        // [hands] merc_give_weapon: the let-go weapon in the render world (LastFree), made on every step under g_lock
+uint32_t g_freeRelease = 0;   // ... bumped at every release of both hands
 // [debug] grip_trace / grip_draw (view only): a line per grip press and per change of who holds the weapon; the second hand's take zone for the drawing
 std::atomic<bool> g_gripTrace{false}, g_gripDraw{false};
 bool g_traceDown[2] = {false, false};   // the press's hysteresis, the trace's own (the step's thread)
@@ -1649,7 +1651,10 @@ void Apply(skel::Input* in, Out* out) {
             if ((wt.kind == (int)hh::Kind::Javelin || wt.kind == (int)hh::Kind::Throwing) && g_hold.Held())
                 WorkOutThrow(wt, head, s.floor, g_hold.WeaponShape().Lie(), g_hold.SteelKg(), stepMs);
         }
-        if (heldWas && !g_hold.Held() && !g_hold.Flying()) LogF("vrcam: weight - both grips let go: it falls");
+        if (heldWas && !g_hold.Held() && !g_hold.Flying()) {
+            LogF("vrcam: weight - both grips let go: it falls");
+            ++g_freeRelease;   // [hands] merc_give_weapon: a fresh release
+        }
         if (!stowWas && g_hold.Stowed()) LogF("vrcam: weight - it lay %.1f s: now on the back", (double)s.stowAfter);
         if (stowWas && !g_hold.Stowed()) {
             g_takenUntil.store(GetTickCount64() + kTakenLatchMs);
@@ -1793,6 +1798,30 @@ void Apply(skel::Input* in, Out* out) {
         for (int i = 0; i < 3; ++i) { e.butt[i] += in->handOffset[i]; e.tip[i] += in->handOffset[i]; }   // drawn beside the controllers as the hands
         e.at = GetTickCount64();
         g_ends = e;
+        {   // [hands] merc_give_weapon: the weapon let go, in the render world (the frame the mercenary's capsule is in: meleetouch::BodyFor) - no hand offset,
+            // as the monsters' bodies are put into the room (monsterbodies::RenderToHead, ToRoom)
+            FreeNote f{};
+            f.release = g_freeRelease;
+            f.slot = slot;
+            f.thrown = g_hold.Thrown();
+            f.at = e.at;
+            if (g_hold.Placed() && !g_hold.Held() && !g_hold.Flying() && !g_hold.Stowed() && wt.worldOk) {
+                monsterbodies::View view;
+                for (int k = 0; k < 3; ++k) { view.eye[k] = wt.worldEye[k]; view.camR[k] = wt.worldCamR[k]; view.camF[k] = wt.worldCamF[k]; }
+                view.upm = std::clamp(wt.worldUpm, 1.0f, 12.0f);
+                const V3 com = g_hold.Com();
+                float hb[3], ht[3], hf[3], fr[3], qq[4];
+                FromRoom(head, {butt, {}}, hb, qq);
+                FromRoom(head, {tip, {}}, ht, qq);
+                FromRoom(head, {{com.x, s.floor, com.z}, {}}, hf, qq);
+                if (monsterbodies::HeadToRender(view, hb, f.butt) && monsterbodies::HeadToRender(view, ht, f.tip) && monsterbodies::HeadToRender(view, hf, fr)) {
+                    f.state = g_hold.Falling() ? 1 : 2;
+                    f.floorY = fr[1];
+                    f.upm = view.upm;
+                }
+            }
+            g_freeNote = f;
+        }
         if (g_gripDraw.load(std::memory_order_relaxed)) {   // [debug] grip_draw: the second hand's take zone (the pommel to the hilt's end, or the whole shaft) and each holding hand's place on it
             const hh::Shape& cur = g_hold.WeaponShape();
             const double len = cur.tip - cur.butt;
@@ -2178,6 +2207,15 @@ bool ZoneDraw(GripZoneDraw* out) {
     *out = z;
     return true;
 }
+bool LastFree(FreeNote* out) {
+    AcquireSRWLockShared(&g_lock);
+    const FreeNote f = g_freeNote;
+    const bool on = g_hold.Placed();
+    ReleaseSRWLockShared(&g_lock);
+    if (out) *out = f;
+    return on && GetTickCount64() - f.at <= 300;
+}
+
 bool ShaftEnds(float butt[3], float tip[3]) {
     AcquireSRWLockShared(&g_lock);
     const EndsOut e = g_ends;
@@ -2240,6 +2278,7 @@ bool Reached(uint32_t, uint64_t) { return false; }
 void Knock(const float*, float, int) {}
 int TakeZone(int, float* cm) { if (cm) *cm = 1e6f; return 0; }
 bool ShaftEnds(float*, float*) { return false; }
+bool LastFree(FreeNote* out) { if (out) *out = FreeNote{}; return false; }
 void SetGripTrace(bool) {}
 bool GripTrace() { return false; }
 void SetGripDraw(bool) {}

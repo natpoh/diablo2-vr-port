@@ -1839,6 +1839,7 @@ void CaveDomeFrame() {
     in.f4 = GameDrawnView();   // (VR F4, or the flat game with [render] game_drawn_flat)
     in.inWorld = g_inWorld.load();
     in.underground = g_underground.load();
+    in.arcaneOpen = g_set.arcaneNoCaveDome.load() && g_arcaneArea.load();   // [sky] arcane_no_cave_dome: the Arcane Sanctuary's void stays open
     in.eyeOk = g_eyeOk.load();
     const float r = skydome::CaveRadius(g_set.gameDomeCavesRadius.load());
     g_caveDomeShown.store(DomeRun(g_caveDome, kDomeUnitCave, skydome::CaveWhyNot(in), r, "cave dome"));

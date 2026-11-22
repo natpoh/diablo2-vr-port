@@ -23,6 +23,7 @@
 #include "native_d3d12.h"
 #include "render/stereo/replay_list_gen.h"   // [stereo] native_replay: each list's resets, for the replay's check before it submits a list again
 #include "render/stereo/replay_alloc_guard.h"   // [stereo] replay_alloc_guard: each list's allocator, each allocator's resets
+#include "swapchain_pick.h"   // which swap chain is the game's (not an overlay's probe), its queue held (crash report 396)
 
 namespace natived3d {
 namespace {
@@ -1184,10 +1185,11 @@ PresentFn g_origPresent = nullptr;
 Present1Fn g_origPresent1 = nullptr;
 ResizeFn g_origResize = nullptr;
 Resize1Fn g_origResize1 = nullptr;
-// The game's swap chain and its queue: raw pointers, no reference of ours (a swap chain we held would keep its window from the game's next
-// one). Only compared, and used inside its own Present, while the game holds it.
+// The game's swap chain: a raw pointer, no reference of ours (a swap chain we held would keep its window from the game's next one). Only
+// compared, and used inside its own Present, while the game holds it. Its queue: held with a reference of ours (vr/swapchain_pick.h HeldRef) -
+// the resize drain signals on it from other moments than the Present (a DLSS release, an Apply), and a freed queue there was crash report 396.
 std::atomic<IDXGISwapChain*> g_sc{nullptr};
-std::atomic<ID3D12CommandQueue*> g_queue{nullptr};
+swapchainpick::HeldRef<ID3D12CommandQueue> g_queue;
 std::atomic<DWORD> g_presentTid{0};   // the thread of the game's last present (TellResize)
 
 void BeforePresent(IDXGISwapChain* sc, UINT flags) {
@@ -1198,7 +1200,7 @@ void BeforePresent(IDXGISwapChain* sc, UINT flags) {
     IDXGISwapChain3* sc3 = nullptr;
     if (FAILED(sc->QueryInterface(__uuidof(IDXGISwapChain3), (void**)&sc3)) || !sc3) return;
     ++t_present;
-    g_sinks.present(sc3, g_queue.load());
+    g_sinks.present(sc3, g_queue.Get());
     --t_present;
     sc3->Release();
 }
@@ -1251,10 +1253,15 @@ HRESULT STDMETHODCALLTYPE HookResize1(IDXGISwapChain3* sc, UINT n, UINT w, UINT 
     return g_origResize1(sc, n, w, h, f, flags, mask, qs);
 }
 
-// A swap chain made on a D3D12 queue (pDevice is the queue under D3D12): the game's - its functions hooked, it is the one told.
+// A swap chain made on a D3D12 queue (pDevice is the queue under D3D12): the game's - its functions hooked, it is the one told. Another
+// program's probe (an overlay plugin's tiny swap chain made to find the Present address, released at once - crash report 396: a 64x64 one on
+// its own queue) gets the same vtable hooks (shared by every swap chain) but is never taken as the game's: vr/swapchain_pick.h.
 void Took(IUnknown* device, IDXGISwapChain* sc) {
     ID3D12CommandQueue* q = nullptr;
     if (!device || FAILED(device->QueryInterface(__uuidof(ID3D12CommandQueue), (void**)&q)) || !q) return;   // not D3D12
+    DXGI_SWAP_CHAIN_DESC d{};
+    sc->GetDesc(&d);
+    const bool probe = swapchainpick::Adopt(d.BufferDesc.Width, d.BufferDesc.Height) == swapchainpick::Pick::LeaveProbe;
     void** vt = *(void***)sc;
     // IDXGISwapChain: IUnknown 0-2, IDXGIObject 3-6, GetDevice 7, Present 8, GetBuffer 9, ... ResizeBuffers 13;
     // IDXGISwapChain1: Present1 22; IDXGISwapChain3: ResizeBuffers1 39
@@ -1267,6 +1274,15 @@ void Took(IUnknown* device, IDXGISwapChain* sc) {
         ok &= HookOne(v3[39], (void*)&HookResize1, (void**)&g_origResize1, "IDXGISwapChain3::ResizeBuffers1");
         sc3->Release();
     }
+    if (probe) {
+        static std::atomic<int> told{0};
+        if (told.fetch_add(1) < 8)
+            LogF("vrcam: no ReShade - a swap chain %p (%ux%u, %u buffers) on queue %p left alone: too small to be the game's (another program's - an "
+                 "overlay's probe); the game's stays %p", (void*)sc, d.BufferDesc.Width, d.BufferDesc.Height, d.BufferCount, (void*)q,
+                 (void*)g_sc.load());
+        q->Release();
+        return;
+    }
     if (!g_deviceHooked.load()) {   // the device was made before the plugin's hook: its lists' functions from now on, its older views unknown
         ID3D12Device* dev = nullptr;
         if (SUCCEEDED(q->GetDevice(__uuidof(ID3D12Device), (void**)&dev)) && dev) {
@@ -1274,12 +1290,10 @@ void Took(IUnknown* device, IDXGISwapChain* sc) {
             dev->Release();
         }
     }
-    g_queue.store(q);
-    q->Release();   // (the swap chain holds it)
+    g_queue.Store(q);   // (our own reference: the queue outlives every use of ours, even past the swap chain's end)
+    q->Release();       // (QueryInterface's)
     g_sc.store(sc);
     g_swapSeen.store(true);
-    DXGI_SWAP_CHAIN_DESC d{};
-    sc->GetDesc(&d);
     LogF("vrcam: no ReShade - the game's swap chain %p (%ux%u, %u buffers) on queue %p: its presents go to the headset from here%s", (void*)sc,
          d.BufferDesc.Width, d.BufferDesc.Height, d.BufferCount, (void*)q, ok ? "" : " - NOT all its hooks went in (above)");
     if (g_sinks.swapChainChanged) g_sinks.swapChainChanged();
@@ -1363,7 +1377,7 @@ void SetAtlasStandIn(AtlasStandInFn fn) { g_atlasStandIn.store(fn); }
 ID3D12Resource* SrvResource(uint64_t handle) { return SrvAt((SIZE_T)handle); }
 bool ResourceName(ID3D12Resource* r, char* out, size_t n) { return ResourceNameImpl(r, out, n); }
 unsigned SrvIncrement() { return g_srvInc.load(); }
-ID3D12CommandQueue* GameQueue() { return g_queue.load(); }
+ID3D12CommandQueue* GameQueue() { return g_queue.Get(); }
 void SetOurs(bool ours) { t_ours = ours; }
 ID3D12GraphicsCommandList* SwapList() { return t_swapList; }
 bool HoldsHook(void* fn) {

@@ -210,6 +210,12 @@ bool ThrownTouch();
 // equipped, like a sword - its touch does not wait for the grip to be squeezed (the weight model's "a hand holds it" still decides). Off: as before,
 // the touch counts only while the throw's grip is squeezed (vr/thrown_touch.h). The throw by gesture is the same either way.
 void SetThrownHeld(bool on);
+// [gameplay] melee_touch_thrown_melee, from the ini (every read; default off): the touch with a thrown weapon is the game's one-handed BLOW at the monster -
+// the touch's own press of the attack slot is read by the game as its plain Attack whenever the skill it would carry throws the weapon (Throw or a ranged
+// javelin skill on A, or chosen in the javelin quiver; vr/thrown_touch.h MeleeAnswer); a blow skill (Jab ...) stays. The throw by gesture is untouched.
+// Off: the touch casts what A holds, as before. F4 only (the touch's press is).
+void SetThrownMelee(bool on);
+bool ThrownMelee();
 // [shapeshift] claw_hits, from the ini (every read; default off): a druid's werewolf / werebear grafted in F4 ([shapeshift] forms_first_person) strikes with its two paws
 // (vr/claw_strike.h) - each paw a blade from the form's own bones, the unarmed kind's numbers and rules, the game's own attack (the key, Direct hit by its rules, the armed
 // skill); the two paws one weapon: one recovery for both, as long as the hero's own attack. Needs hit by touch on (SetWanted). F4 only.

@@ -680,6 +680,60 @@ void TestGameSource() {
 
 }  // namespace
 
+// [hud] allies_merc_click: the merc's tile is found in the picture where the painter draws it, and only his
+void TestMercRect() {
+    printf("the merc's tile as a button\n");
+    Member party[2];
+    std::strcpy(party[0].name, "Pavel");
+    party[0].cls = 4; party[0].life = 64; party[0].level = 71;
+    std::strcpy(party[1].name, "Anna");
+    party[1].cls = 1; party[1].life = 20; party[1].level = 33;
+    const Pet pets[] = {{290, 3, 51, 80}, {338, 7, 54, 100}};
+    Look l = MakeLook(party, 2, pets, 2, nullptr, 0, nullptr, 0);   // players, the merc (index 2), the golem
+    l.cols = 4;
+    EXPECT(MercTile(l) == 2);
+    TileRect r = MercRect(l);
+    const Cell c = AllyCell(l, 2);
+    const float w = (float)PicW(l), h = (float)PicH(l);
+    EXPECT(r.ok && r.Has(((float)c.x + 80.0f) / w, ((float)c.y + 80.0f) / h));                         // his tile's middle
+    EXPECT(!r.Has(((float)c.x - 20.0f) / w, ((float)c.y + 80.0f) / h));                                // the player beside him
+    EXPECT(!r.Has(((float)c.x + 80.0f) / w, ((float)c.y + 2.0f) / h));                                 // the cell's margin, outside the frame
+    l.nSkills = 1;   // a skills' row over the allies moves his tile down by a row
+    l.skill[0].skill = 36;
+    const TileRect down = MercRect(l);
+    EXPECT(down.ok && std::fabs(down.v0 * (float)PicH(l) - (r.v0 * h + (float)kTilePx)) < 0.5f);   // (in pixels: one tile lower)
+    const Look none = MakeLook(party, 2, pets, 1, nullptr, 0, nullptr, 0);   // no merc
+    EXPECT(MercTile(none) < 0 && !MercRect(none).ok && !MercRect(none).Has(0.5f, 0.5f));
+    Look lit = l;
+    lit.mercLit = true;
+    EXPECT(!(lit == l));   // lit is a new picture
+}
+
+void TestMercCloser() {
+    printf("B closes the merc's inventory\n");
+    using A = MercCloser::Act;
+    MercCloser m;
+    EXPECT(m.Step(true, false, false, 1000) == A::None && !m.takes);          // no panel: B is the game's
+    EXPECT(m.Step(true, false, true, 1010) == A::None && !m.takes);
+    EXPECT(m.Step(true, true, true, 1020) == A::None && !m.takes);            // the panel opened under a held B: still the game's until let go
+    EXPECT(m.Step(true, true, false, 1030) == A::None && m.takes);            // let go with the panel open: ours
+    EXPECT(m.Step(true, true, true, 1040) == A::MercKey && m.takes);          // the press: the Mercenary key
+    EXPECT(m.Step(true, true, true, 1100) == A::None);                        // held: once
+    EXPECT(m.Step(true, false, false, 1200) == A::None && !m.takes);          // closed: no retry, B the game's again
+    EXPECT(m.Step(true, false, false, 2000) == A::None);
+    // the key did not close it: "close all panels" once, kCloseRetryMs later
+    MercCloser k;
+    k.Step(true, true, false, 5000);
+    EXPECT(k.Step(true, true, true, 5010) == A::MercKey);
+    EXPECT(k.Step(true, true, false, 5010 + kCloseRetryMs - 1) == A::None);
+    EXPECT(k.Step(true, true, false, 5010 + kCloseRetryMs) == A::CloseAll);
+    EXPECT(k.Step(true, true, false, 9000) == A::None);                       // only once
+    // the key off (or not F4, or no focus): never ours
+    MercCloser off;
+    EXPECT(off.Step(false, true, false, 100) == A::None && !off.takes);
+    EXPECT(off.Step(false, true, true, 110) == A::None);
+}
+
 int main(int argc, char** argv) {
     const std::string dir = argc > 1 ? argv[1] : "";
     if (argc > 2) {
@@ -700,6 +754,8 @@ int main(int argc, char** argv) {
     TestParty();
     TestLook();
     TestGrid();
+    TestMercRect();
+    TestMercCloser();
     TestSkills();
     TestPaint(dir);
     TestGameSource();

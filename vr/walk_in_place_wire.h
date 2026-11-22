@@ -20,14 +20,21 @@ struct Readers {
     bool (*chatOpen)() = nullptr;       // the chat line is open
     float (*runThreshold)() = nullptr;  // the game's stickRunToggleThreshold (0 = not readable)
     bool (*runSwitchOn)() = nullptr;    // the game's Run / walk switch is on run
+    // [walk_in_place] source=1 (BodyWalk walks): for the Walk tab's line
+    bool (*bodyWalkRunning)() = nullptr;                // BodyWalk's Game Link is alive or its pad report moves
+    bool (*bodyWalkStick)(int16_t*, int16_t*) = nullptr;   // BodyWalk's walking stick as last read (raw), false = none coming in
 };
 
 void Init(const D2RL::PluginContext* ctx, const Readers& r);
 // The settings load (d2r_vr.ini [walk_in_place]). Live.
 void Configure(const wip::Config& c);
 bool On();
-// On, VR F4 and the library open: the internal library walks - BodyWalk's own walking stick is not mixed in (vr/input/pad.cpp).
+// On, the library chosen ([walk_in_place] source=0), VR F4 and the library open: the internal library walks - BodyWalk's own walking stick is not
+// mixed in (vr/input/pad.cpp).
 bool Walks();
+// On, BodyWalk chosen ([walk_in_place] source=1) and VR F4: BodyWalk walks by stepping in place - its walking stick is mixed in, in direct mode too
+// (directinput::SetBodyWalkWalkWanted), and from Game Link's Walk block when its pad report is not there (vr/input/pad.cpp).
+bool BodyWalkWalks();
 
 // Any thread (the game's pad poll, vrcam's PadMirrorRead): the walk's stick in the view (x right, y ahead, XInput units) while it walks; false =
 // none (off, standing, not F4, a menu, or no headset frame in the last 150 ms).

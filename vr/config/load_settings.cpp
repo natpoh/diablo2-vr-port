@@ -10,6 +10,7 @@
 #include "../flat_weapon.h"   // [body] flat_weapon_adjust: the defaults and the range of [weapon_<kind>] flat_*
 #include "../aim_tilt.h"      // [body] flat_aim_tilt: the defaults and the range of its share and its cap
 #include "../view_keys.h"
+#include "../billboards.h"   // [stereo] portal_once / particles_head_centre
 #include "../ar_view.h"   // [mode] f5_ar_view: VR F5 for AR glasses
 #include "../f5_toolbar.h"   // [hud] f5_toolbar: F5's toolbar low in front
 #include "../f5_hud.h"       // [hud] f5_map / f5_allies: F5's map and allies' portraits off the picture's corners
@@ -292,6 +293,7 @@ void LoadSettings() {
         hv.orbMirror = IniB(L"hud", L"hand_vitals_orb_mirror", false);   // the right wrist takes the left's three numbers (and the three angles)
         // the wrist that wears a shield (the left arm, or the right one after a hand swap) turns its ball to the other side of the wrist (VR F4 only); the coefficients of that place
         hv.orbUnderShield = IniB(L"hud", L"hand_vitals_orb_under_shield", true);
+        hv.orbShieldAnySlot = IniB(L"hud", L"hand_vitals_orb_shield_any_slot", true);   // ... a shield in the game's right slot counts too (off: the left slot alone)
         hv.orbOnBone = IniB(L"hud", L"hand_vitals_orb_on_bone", false);   // on the forearm bone's own mesh box (handorbs::OnBone), no spot numbers - off by default
         // since 0.192.39: a hero's skeleton (more than 160 bones) never read before 0.192.36's 256-bone cap, so the box never placed a medallion until then -
         // the sliders did; read, it put the medallion 10-15 cm off the wrist (Serg's bisect 0.192.34 -> 0.192.36; 0.192.37's anchor on the bone line did not mend it)
@@ -329,6 +331,7 @@ void LoadSettings() {
         ap.mapCols = (int)IniF(L"hud", L"allies_map_cols", (float)alliesplace::kMapColsDefault);
         ap.wristCols = (int)IniF(L"hud", L"allies_wrist_cols", (float)alliesplace::kWristColsDefault);
         ap.skills = allyportraits::SkillsShown((int)std::lround(IniF(L"hud", L"skill_under_map", 2.0f)), (int)std::lround(IniF(L"hud", L"wrist_look", 0.0f)));   // [hud] skill_under_map: the armed skills' row under the map - by default with the game's medallions (wrist_look 1 / 2), which cannot show the icon
+        ap.mercClick = IniF(L"hud", L"allies_merc_click", 1.0f) != 0.0f;   // [hud] allies_merc_click: the merc's tile under the map opens his inventory (right laser)
         allyportraits::Configure(ap);
     }
     g_set.hudMap.store(std::clamp((int)IniF(L"hud", L"map", 0.0f), 0, 1));
@@ -587,6 +590,10 @@ void LoadSettings() {
     g_set.keepRoofs.store(IniB(L"render", L"keep_roofs", false));
     g_set.roofsTwoSided.store(IniB(L"render", L"roofs_two_sided", false));
     g_set.propsOncePair.store(IniB(L"stereo", L"props_once_a_pair", false));
+    // [stereo] portal_once / portal_centers / particles_head_centre (vr/billboards.h; after bearstonem/d2r-pcvr, MIT): live
+    billboards::ConfigurePortal(IniB(L"stereo", L"portal_once", true));
+    billboards::ConfigurePortalCenters(IniB(L"stereo", L"portal_centers", true));
+    billboards::ConfigureParticles(IniB(L"stereo", L"particles_head_centre", true));
     g_set.stampPixels.store(IniB(L"stereo", L"stamp_pixels", true));
     g_set.stamps.store(IniB(L"stereo", L"stamps", true));
     g_set.pictureRing.store(IniB(L"stereo", L"picture_ring", false));
@@ -847,6 +854,9 @@ void LoadSettings() {
         // [hands] belt_models: the belt's potions as the game's own models on the hero (F4); where: up and the arc's radius in
         // parts of his eye height, degrees between columns, size, side; and shifted across him (parts of his eye height, + to his right)
         // and swung round him (degrees, + to his right) - the headset settings' Belt page and D2R VR Settings write all of them
+        // [hands] merc_give_weapon (vr/merc_give.h): the weapon let go into the mercenary (touching him, or at his feet within merc_give_reach_cm) is given to him
+        mercgive::Configure(IniB(L"hands", L"merc_give_weapon", true), std::clamp(IniF(L"hands", L"merc_give_reach_cm", 30.0f), 0.0f, 200.0f) * 0.01f,
+                            IniB(L"debug", L"merc_give_trace", false));
         engitem::SetBelt(IniB(L"hands", L"belt_models", true), std::clamp(IniF(L"hands", L"belt_models_up", 0.57f), 0.0f, 1.5f),
                          std::clamp(IniF(L"hands", L"belt_models_ahead", 0.13f), -1.0f, 1.0f),
                          std::clamp(IniF(L"hands", L"belt_models_arc", 35.0f), 0.0f, 90.0f),
@@ -1022,6 +1032,7 @@ void LoadSettings() {
         g_set.gameDomeCavesRadius.store(std::clamp(cave, 1.0f, 1.0e5f));
     }
     g_set.gameDomeCaves.store(IniB(L"sky", L"game_dome_caves", false));
+    g_set.arcaneNoCaveDome.store(IniB(L"sky", L"arcane_no_cave_dome", true));   // (unticked: the cave dome there too, as before)
     LoadSkyActs();
     LoadCrosshairFile();
     g_set.skyClouds.store(std::clamp(IniF(L"sky", L"clouds", 1.0f), 0.0f, 3.0f));
@@ -1488,6 +1499,7 @@ void LoadSettings() {
     {   // [walk_in_place] (vr/walk_in_place.h): walk in place with the headset, BodyWalk's walk library in the game; the headset panel's Walk tab. Live, F4
         wip::Config w;
         w.on = IniB(L"walk_in_place", L"on", false);
+        w.source = wip::SourceOf(IniF(L"walk_in_place", L"source", 0.0f));   // 0 the built-in library (as before), 1 BodyWalk (its Steps settings)
         w.sensitivity = IniF(L"walk_in_place", L"sensitivity", 50.0f);
         w.speed = IniF(L"walk_in_place", L"speed", 50.0f);
         w.smoothing = IniF(L"walk_in_place", L"smoothing", 50.0f);
@@ -1561,6 +1573,7 @@ void LoadSettings() {
     meleetouch::SetWanted(g_set.meleeTouch.load());
     meleetouch::SetThrownTouch(IniB(L"gameplay", L"melee_touch_thrown", false));   // javelins, throwing knives and axes hit by touch too (a point-blank throw; vr/thrown_touch.h)
     meleetouch::SetThrownHeld(IniB(L"gameplay", L"melee_touch_thrown_held", false));   // ... from the equip, like a sword - not only while the throw's grip is squeezed
+    meleetouch::SetThrownMelee(IniB(L"gameplay", L"melee_touch_thrown_melee", true));   // ... and the touch is the game's one-handed blow, not a throw (vr/thrown_touch.h MeleeAnswer)
     meleetouch::SetClawHits(g_set.clawHits.load());   // [shapeshift] claw_hits: the form's paws strike by touch
     meleetouch::SetClawMinSpeed(IniF(L"shapeshift", L"wolf_min_speed", 0.0f), IniF(L"shapeshift", L"bear_min_speed", 0.0f));   // ... their least speed per form (0 / no key: as before)
     meleetouch::SetBarrelsWanted(IniB(L"gameplay", L"melee_touch_barrels", false),   // a swing through a barrel / pot presses the game's own interact on it (vr/barrel_touch.h)
@@ -1620,7 +1633,7 @@ void LoadSettings() {
     meleetouch::SetNoAttack(IniB(L"debug", L"melee_touch_no_attack", false));   // a touch presses nothing (the stab and the push tried alone)
     meleetouch::SetClientVerdict(g_set.meleeTouchClientVerdict.load());
     // [hud] swing_timer (vr/swing_timer.h): the attack's ring (0) or bar (1) after an attack the game started, the outcome in it - only shown
-    swingtimer::SetPace(IniB(L"gameplay", L"swing_pace_joined", false));   // joined: a touch sent when the host's gate takes it (vr/swing_timer.h PaceAt)
+    swingtimer::SetPace(IniB(L"gameplay", L"swing_pace_joined", true));   // joined: a touch sent when the host's gate takes it (vr/swing_timer.h PaceAt)
     swingtimer::SetWanted(IniB(L"hud", L"swing_timer", false), (int)IniF(L"hud", L"swing_timer_style", 0.0f), IniB(L"hud", L"swing_timer_numbers", true),
                           IniB(L"hud", L"swing_timer_reasons", true));   // ... and why a touch was no attack (vr/swing_reason.h)
     thrustdebugwire::SetWanted(IniB(L"debug", L"thrust_debug", false));   // the thrust's readout over the weapon hand, the blade tinted, a log line per thrust (vr/thrust_debug.h)

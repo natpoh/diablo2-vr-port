@@ -2,6 +2,7 @@
 // No game, no headset. Run: build/Release/thrown_touch_test.exe   (exit code 0 = all passed)
 
 #include "../../vr/blade_shape.h"
+#include "../../vr/quiver.h"
 #include "../../vr/thrown_touch.h"
 #include "../../vr/touch_why.h"
 
@@ -131,12 +132,103 @@ static void PotionsAreNotSwungTests() {
     Expect(bladeshape::TouchKind(D2RVR_TYPE_JAVELIN, bladeshape::Code('7', 'j', 'a', ' '), true), "potions: a hyperion javelin is");
 }
 
+// [gameplay] melee_touch_thrown_melee: the touch's own press with a thrown weapon is read as the plain Attack (the game's one-handed blow) whenever the skill it
+// would carry throws the weapon; a blow skill, every other read, and the throw by gesture keep theirs.
+static void MeleeAnswerTests() {
+    MeleeAsk a;
+    a.on = true;
+    a.touchPress = true;
+    a.atCastSite = true;
+    a.attackSlot = true;
+    a.thrownInHand = true;
+    // the throwing skills: Throw on A, Left Hand Throw, the quiver's ranged javelin skills, Double Throw - read as Attack
+    const int32_t throws[] = {2, 4, 15, 20, 25, 35, 140};
+    for (const int32_t s : throws) {
+        Expect(ThrowsTheWeapon(s), "melee: a throwing skill is known as one", s);
+        Expect(MeleeAnswer(s, a) == kSkillAttack, "melee: a throwing skill on the touch's press is read as the plain Attack", s);
+    }
+    // the plain Attack stays (it is already the blow); the blow skills stay what they are (Jab, Power Strike, Impale, Charged Strike, Fend, Lightning
+    // Strike, Poison Dagger, Bash, Zeal); an empty slot (-1) and a command (Interact 357) are not this switch's
+    const int32_t blows[] = {0, 10, 14, 19, 24, 30, 34, 73, 126, 106, -1, 357, 1, 3, 5};
+    for (const int32_t s : blows) {
+        Expect(!ThrowsTheWeapon(s), "melee: a blow or another skill is no throw", s);
+        Expect(MeleeAnswer(s, a) == s, "melee: a blow skill or another binding stays", s);
+    }
+    // the switch's own gates - each one off leaves the answer as it was (a Throw on A stays a Throw)
+    MeleeAsk g = a;
+    g.on = false;
+    Expect(MeleeAnswer(2, g) == 2, "melee: unticked - the touch casts what A holds, as before");
+    g = a;
+    g.touchPress = false;
+    Expect(MeleeAnswer(2, g) == 2, "melee: the player's own A press (no touch pending) keeps its Throw");
+    g = a;
+    g.atCastSite = false;
+    Expect(MeleeAnswer(2, g) == 2, "melee: any other read of the slot (the interface drawing it) is answered as it is");
+    g = a;
+    g.attackSlot = false;
+    Expect(MeleeAnswer(35, g) == 35, "melee: another slot (B X Y RB) keeps its skill");
+    g = a;
+    g.thrownInHand = false;
+    Expect(MeleeAnswer(2, g) == 2, "melee: no thrown weapon in hand - nothing to do (a potion is never swung)");
+    g = a;
+    g.throwLive = true;
+    Expect(MeleeAnswer(2, g) == 2, "melee: a throw by gesture is live - its press keeps the Throw");
+    Expect(MeleeAnswer(35, g) == 35, "melee: ... and the quiver's Lightning Fury");
+    // the list agrees with the javelin quiver's table: every ranged skill a thrown weapon can use is a throw here, every blow is not (vr/quiver.h kRules)
+    for (const quiver::Rule& r : quiver::kRules) Expect(ThrowsTheWeapon(r.id) == r.ranged, "melee: the quiver's ranged flag and ThrowsTheWeapon agree", r.id);
+    Expect(ThrowsTheWeapon(quiver::kSkillThrow), "melee: the quiver's Throw is a throw");
+}
+
+// Serg, 2026-11-21: «то должна магия срабатывать» - a skill on the button the touch presses fires as it is; only the throws become the one-handed blow.
+// Each row is the game's own skills.txt of 3.3: range h2h (a blow in reach - kept) or rng (a cast at a spot that throws the weapon - the blow instead).
+static void SkillOnTheButtonTests() {
+    MeleeAsk a;
+    a.on = a.touchPress = a.atCastSite = a.attackSlot = a.thrownInHand = true;
+    struct Row { int32_t id; const char* name; bool range_h2h; };
+    static const Row rows[] = {
+        {10, "Jab (h2h, SQ)", true},
+        {14, "Power Strike (h2h, A1)", true},
+        {19, "Impale (h2h, SQ)", true},
+        {24, "Charged Strike (h2h, A1; its bolts come out of the blow)", true},
+        {30, "Fend (h2h, A1)", true},
+        {34, "Lightning Strike (h2h, A1; its chain comes out of the blow)", true},
+        {73, "Poison Dagger (h2h, a throwing knife)", true},
+        {2, "Throw (rng, TH)", false},
+        {4, "Left Hand Throw (rng)", false},
+        {15, "Poison Javelin (rng, TH)", false},
+        {20, "Lightning Bolt (rng, TH)", false},
+        {25, "Plague Javelin (rng, TH)", false},
+        {35, "Lightning Fury (rng, TH)", false},
+        {140, "Double Throw (rng)", false},
+    };
+    for (const Row& r : rows) {
+        const int32_t got = MeleeAnswer(r.id, a);
+        if (r.range_h2h) {
+            if (got != r.id) std::printf("  %s\n", r.name);
+            Expect(got == r.id, "button: a melee skill on the touch's button fires as it is", r.id);
+        } else {
+            if (got != kSkillAttack) std::printf("  %s\n", r.name);
+            Expect(got == kSkillAttack, "button: a throw skill on the touch's button becomes the plain Attack (the one-handed blow)", r.id);
+        }
+    }
+    // a spell or skill that is no throw (a Sorceress's Fire Bolt 36, Teleport 54, a Barbarian's Bash 126, a Paladin's Zeal 106) stays: the game casts it at
+    // the monster the blade touched, as with the switch off
+    const int32_t others[] = {36, 54, 126, 106};
+    for (const int32_t s : others) Expect(MeleeAnswer(s, a) == s, "button: another skill or spell fires as it is", s);
+    // the switch off: every skill on the button, the throws included, is what the touch casts (as before)
+    MeleeAsk off = a;
+    off.on = false;
+    for (const Row& r : rows) Expect(MeleeAnswer(r.id, off) == r.id, "button: unticked - the touch casts what the button holds", r.id);
+}
+
 int main() {
     WhyNotTests();
+    SkillOnTheButtonTests();
     WhyToldTests();
     AllowedTests();
     HoldOffTests();
     PotionsAreNotSwungTests();
+    MeleeAnswerTests();
     if (g_failures) {
         std::printf("%d FAILED\n", g_failures);
         return 1;

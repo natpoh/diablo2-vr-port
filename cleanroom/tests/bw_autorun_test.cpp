@@ -187,8 +187,32 @@ int main() {
         f.walkInPlace = true;
         CHECK(Decide(f).startBodyWalk);
     }
+    {   // walk in place by BodyWalk ([walk_in_place] source=1, Serg 2026-11-22): native with Controls without BodyWalk starts BodyWalk at the game's start, for
+        // walking only; one running is not started again; none found: said so; the switch in Settings starts nothing; the source alone (walk in place off) nothing
+        Facts f = Native(When::GameStart);
+        f.walkInPlace = f.walkByBodyWalk = true;
+        f.bodyWalkRunning = 0;
+        f.flatVrRunning = false;
+        f.linkUp = f.linkStopsFlatVr = false;
+        Plan p = Decide(f);
+        CHECK(p.startBodyWalk && !p.startFlatVr && !p.stopFlatVr && !p.closeFlatVrApp && p.why == Why::NativeWalkByBodyWalk);
+        f.bodyWalkFound = false;
+        CHECK(Idle(Decide(f)) && Decide(f).why == Why::NativeWalkNoBodyWalk);
+        f.bodyWalkFound = true;
+        f.bodyWalkRunning = 1;
+        CHECK(!Decide(f).startBodyWalk);
+        f.bodyWalkRunning = 0;
+        f.when = When::ModeSwitch;
+        CHECK(!Decide(f).startBodyWalk);
+        f.when = When::GameStart;
+        f.walkInPlace = false;
+        CHECK(Idle(Decide(f)));
+        f.walkInPlace = true;
+        f.walkByBodyWalk = false;
+        CHECK(Idle(Decide(f)) && Decide(f).why == Why::NativeWalkInPlace);
+    }
     {   // every combination: the rules that always hold
-        for (int bits = 0; bits < (1 << 13); ++bits) {
+        for (int bits = 0; bits < (1 << 14); ++bits) {
             Facts f;
             f.when = bits & 1 ? When::GameStart : When::ModeSwitch;
             f.vr = (bits & 2) != 0;
@@ -203,6 +227,7 @@ int main() {
             f.flatVrRunning = (bits & 1024) != 0;
             f.flatVrAppRunning = bits & 2048 ? 1 : 0;
             f.walkInPlace = (bits & 4096) != 0;
+            f.walkByBodyWalk = (bits & 8192) != 0;
             const Plan p = Decide(f);
             CHECK(!(p.startFlatVr && p.stopFlatVr));
             CHECK(!(p.startBodyWalk && f.bodyWalkRunning));   // never a second BodyWalk
@@ -213,8 +238,11 @@ int main() {
             CHECK(!f.native || f.closeOn || (!p.closeFlatVrApp && !p.stopFlatVr));
             CHECK(!p.stopFlatVr || f.linkStopsFlatVr);                         // asked only of a BodyWalk that takes it
             CHECK(!p.closeFlatVrApp || f.flatVrAppRunning);
-            CHECK(!(f.native && f.directInput && p.startBodyWalk));            // native with its own controls starts no BodyWalk
-            CHECK(!(f.native && f.directInput && f.walkInPlace && p.startBodyWalk));   // ... nor for walking in place (Serg 2026-11-19)
+            CHECK(!(f.native && f.directInput && p.startBodyWalk) || (f.walkInPlace && f.walkByBodyWalk));   // native with its own controls starts no BodyWalk -
+            // but for walking in place by BodyWalk (Serg 2026-11-22), at the game's start only
+            CHECK(!(f.native && f.directInput && f.walkInPlace && !f.walkByBodyWalk && p.startBodyWalk));   // ... nor for the library's walk (Serg 2026-11-19)
+            CHECK(!(f.native && f.directInput && p.startBodyWalk) || f.when == When::GameStart);
+            CHECK(p.why != Why::NativeWalkByBodyWalk || (p.startBodyWalk && f.walkInPlace && f.walkByBodyWalk && f.directInput && f.native));
             CHECK(p.why != Why::NativeWalkInPlace || (f.walkInPlace && f.directInput && f.native && !p.startBodyWalk));
             CHECK(f.native || f.when != When::ModeSwitch || f.startOn || Idle(p));
             CHECK(std::wcslen(Text(p.why)) > 0);

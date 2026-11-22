@@ -410,6 +410,9 @@ target_compile_options(belt_bottle_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [hands] belt_drop_ground: the steps of the game's own drop - the belt slot's click, the cursor's drop, the way back (vr/belt_drop.h), pure.
 add_executable(belt_drop_test cleanroom/tests/belt_drop_test.cpp)
 target_compile_options(belt_drop_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [hands] merc_give_weapon: the let-go weapon against the mercenary, the game's own moves to him and back (vr/merc_give.h), pure.
+add_executable(merc_give_test cleanroom/tests/merc_give_test.cpp)
+target_compile_options(merc_give_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [belt] refill_key: the press (tap / hold), the Shift + click's steps, the potion kinds, the game's belt-fill plan per column, the belt before / after (vr/belt_refill.h), pure.
 add_executable(belt_refill_test cleanroom/tests/belt_refill_test.cpp)
 target_compile_options(belt_refill_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -579,8 +582,9 @@ target_include_directories(d2rl-vrcam PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared
 target_sources(d2rl-vrcam PRIVATE vr/shoulder_swap_wire.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp)   # [hands] shoulder_swap (wired to vr/direct_input.h)
 target_sources(d2rl-vrcam PRIVATE vr/turn_warp.cpp vr/effects_layer.cpp)   # [stereo] turn_warp: eyes by turns, the eye not drawn made on the GPU from pictures already drawn (bearstonem/d2r-pcvr's, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/attack_path_wire.cpp)   # [gameplay] flat_attack_path
+target_sources(d2rl-vrcam PRIVATE vr/stats_leak.cpp)   # [debug] stats_leak_trace: the game's plain stat lists followed (read only), the leaked ones named before its assert
 target_sources(d2rl-vrcam PRIVATE vr/belt_refill.cpp)   # [belt] refill_key: a tap = the game's Shift + click at the pointer, a hold = the game's own belt fill (BeltWidget's hold to populate belt)
-target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp)   # [hands] belt_inner_glow (the game's own highlight on a bottle in reach), belt_drop_ground (the game's own drop of a belt potion)
+target_sources(d2rl-vrcam PRIVATE vr/belt_glow.cpp vr/belt_drop.cpp vr/merc_give.cpp)   # [hands] belt_inner_glow (the game's own highlight on a bottle in reach), belt_drop_ground (the game's own drop of a belt potion)
 target_sources(d2rl-vrcam PRIVATE vr/aura_view.cpp)     # [render] aura_centre: the Paladin's aura rings centred under the hero in VR (hooks the game's view.direction for particle scripts)
 target_sources(d2rl-vrcam PRIVATE vr/own_effects.cpp)   # [render] dim_own_effects: the hero's own effects (Bone Armor ...) fainter, visual only (hooks the game's overlay creation to look)
 target_sources(d2rl-vrcam PRIVATE vr/head_shadow.cpp)   # [arms] head_shadow: the hidden head still casts its shadow (the eyes' skinning only has it shrunk), visual only
@@ -625,6 +629,7 @@ target_sources(d2rl-vrcam PRIVATE vr/render/stereo/prev_scan.cpp vr/render/stere
 target_sources(d2rl-vrcam PRIVATE vr/render/effects/effects.cpp)   # M15 our effect
 target_sources(d2rl-vrcam PRIVATE vr/view/head.cpp vr/view/camera.cpp vr/view/views.cpp)
 target_sources(d2rl-vrcam PRIVATE vr/campfire_unleashed.cpp)   # [campfire] character creation in 3D (MPL 2.0, from D2R VR Unleashed)   # M16 the head, our camera, the views
+target_sources(d2rl-vrcam PRIVATE vr/billboards.cpp)   # [stereo] portal_once / particles_head_centre (after bearstonem/d2r-pcvr, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/frame/frame_order.cpp)   # M17 the frame's order
 target_sources(d2rl-vrcam PRIVATE vr/combat/combat_ticks.cpp)   # the attacks' ticks
 target_sources(d2rl-vrcam PRIVATE vr/gait_lib.cpp)   # [multiplayer] pose_share_legs: the optional gait library d2r_vr_gait.dll (shared/d2r_vr_gait.h)
@@ -1284,6 +1289,11 @@ target_compile_options(patch_hunt_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_
 add_executable(adapter_class_test tools/adapter_class_test.cpp)
 target_include_directories(adapter_class_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(adapter_class_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# Which D3D12 swap chain is the game's (an overlay plugin's tiny probe never is) and its queue held with a counted reference
+# (vr/swapchain_pick.h, crash report 396). Pure. Run: swapchain_pick_test.exe
+add_executable(swapchain_pick_test tools/swapchain_pick_test.cpp)
+target_include_directories(swapchain_pick_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(swapchain_pick_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 # The headset's Party page: the game's party roster and its Party panel's own buttons (vr/party_cmd.cpp; its pure part vr/party_cmd_core.h), checked
 # against the game's image snapshot when there is one (dump_loader/D2R_image.bin). Run: party_cmd_test.exe [<snapshot>]
 add_executable(party_cmd_test tools/party_cmd_test.cpp)
@@ -1563,6 +1573,10 @@ target_compile_options(game_patches_image_test PRIVATE /utf-8 /W4 /EHsc /permiss
 add_executable(unleashed_room_stitch_test cleanroom/tests/unleashed_room_stitch_test.cpp)
 target_include_directories(unleashed_room_stitch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_room_stitch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# vr/stats_leak.h: [debug] stats_leak_trace's bookkeeping - births and frees, the last holder's own lists left out, the verdict, the log line. Run: stats_leak_test.exe
+add_executable(stats_leak_test cleanroom/tests/stats_leak_test.cpp)
+target_include_directories(stats_leak_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(stats_leak_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # vr/table_rows.h: a row id read from the game (an item class, a rig's parent) checked against the table it indexes - a data mod's rows (Reimagined) left alone, told once. Run: table_rows_test.exe
 add_executable(table_rows_test cleanroom/tests/table_rows_test.cpp)
 target_include_directories(table_rows_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -2179,6 +2193,12 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/vr_resolution_test.cpp")
     target_include_directories(render_pointer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
     target_link_libraries(render_pointer_test PRIVATE minhook user32)
     target_compile_options(render_pointer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/vram_guard_test.cpp")
+    # [render] vram_guard (vr/vram_guard.h): the render size lowered when the game runs over its video memory budget - the steps, the cap, crash 400 replayed.
+    add_executable(vram_guard_test tools/vram_guard_test.cpp)
+    target_include_directories(vram_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(vram_guard_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/game_link_test.cpp")
     # BodyWalk Game Link end to end: BodyWalk's game_link.dll and vr/link.cpp in one process.

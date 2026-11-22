@@ -68,13 +68,14 @@ public:
         cv_.notify_one();
         return rev;
     }
-    bool Fetch(std::vector<uint32_t>* out, uint32_t* rev, uint32_t* w, uint32_t* h) {
+    bool Fetch(std::vector<uint32_t>* out, uint32_t* rev, uint32_t* w, uint32_t* h, TileRect* merc) {
         std::lock_guard<std::mutex> lock(m_);
         if (done_ == 0 || done_ == fetched_) return false;
         out->swap(px_);
         *rev = done_;
         *w = w_;
         *h = h_;
+        if (merc) *merc = merc_;
         fetched_ = done_;
         return true;
     }
@@ -115,6 +116,7 @@ private:
             px_.swap(local);
             w_ = (uint32_t)PicW(look);
             h_ = (uint32_t)PicH(look);
+            merc_ = MercRect(look);   // [hud] allies_merc_click: where the merc's tile is in this very picture
             done_ = rev;
         }
     }
@@ -125,6 +127,7 @@ private:
     Look last_, want_;
     bool valid_ = false, has_ = false, stop_ = false;
     uint32_t serial_ = 0, rev_ = 0, done_ = 0, fetched_ = 0, epoch_ = 0, w_ = 0, h_ = 0;
+    TileRect merc_;
     std::vector<uint32_t> px_;
 };
 
@@ -138,6 +141,8 @@ Painter& P(int where) {
 bool g_wanted[2] = {};   // the draw thread's: hung lately
 uint32_t g_needRev[2] = {};
 std::atomic<bool> g_skills{false};   // [hud] skill_under_map
+std::atomic<bool> g_mercClick{true};   // [hud] allies_merc_click
+std::atomic<bool> g_mercLit{false};    // ... the right laser on the merc's tile now (xr.cpp's MapLaserStep)
 
 // [hud] skill_under_map: the armed skills, from where the mana and life medallions take theirs (vr/render/effects/effects.cpp's icon block): the right
 // hand's - the bow's chosen skill, else a glyph's on the right trigger, else the armed melee skill (armedicon::Pick); the left hand's - a glyph's on the
@@ -238,6 +243,10 @@ void Configure(const Config& config) {
     g_mapCols.store(c.mapCols);
     g_wristCols.store(c.wristCols);
     const bool skillsWas = g_skills.exchange(c.skills);
+    const bool mercWas = g_mercClick.exchange(c.mercClick);
+    if (c.mercClick != mercWas)
+        Log(c.mercClick ? "vrcam: allies - the mercenary's tile under the map is a button: the right laser lights it, its trigger opens his inventory ([hud] allies_merc_click=1)"
+                        : "vrcam: allies - the mercenary's tile under the map is only a picture ([hud] allies_merc_click=0)");
     if (c.skills != skillsWas) Log(c.skills ? "vrcam: skill under the map on ([hud] skill_under_map: the armed skills over the allies, VR F4)" : "vrcam: skill under the map off");
     if (c.place != was) {
         static const char* const kName[] = {"the game's own row at the top", "under the map in the hand", "on the right wrist"};
@@ -255,6 +264,7 @@ Config Settings() {
     c.mapCols = g_mapCols.load(std::memory_order_relaxed);
     c.wristCols = g_wristCols.load(std::memory_order_relaxed);
     c.skills = g_skills.load(std::memory_order_relaxed);
+    c.mercClick = g_mercClick.load(std::memory_order_relaxed);
     return c;
 }
 bool Enabled() { return GameRowHidden(Settings()); }
@@ -274,6 +284,7 @@ bool Want(int where, uint32_t* needRevision) {
     if (!allies) look = Look{};
     look.cols = (uint8_t)(where == kOnWrist ? c.wristCols : c.mapCols);
     if (where == kUnderMap && c.skills) AddSkills(&look);   // [hud] skill_under_map: a row of its own over the allies
+    if (where == kUnderMap) look.mercLit = g_mercClick.load(std::memory_order_relaxed) && g_mercLit.load(std::memory_order_relaxed) && MercTile(look) >= 0;
     const bool show = viewgate::F4() && (look.n > 0 || look.nSkills > 0);
     if (!show) {
         if (g_wanted[where]) {
@@ -333,8 +344,8 @@ bool GameCornerToHide(float* units) {
     return *units > 0.0f;
 }
 
-bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height) {
-    if (!P(where).Fetch(px, revision, width, height)) return false;
+bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t* width, uint32_t* height, TileRect* merc) {
+    if (!P(where).Fetch(px, revision, width, height, merc)) return false;
     static bool told = false;
     if (!told) {   // (the portraits are read with the first picture, on the painter's thread)
         told = true;
@@ -346,7 +357,12 @@ bool Picture(int where, std::vector<uint32_t>* px, uint32_t* revision, uint32_t*
     return true;
 }
 
+bool MercKeyOn() { return g_mercClick.load(std::memory_order_relaxed); }
+void SetMercLit(bool lit) { g_mercLit.store(lit, std::memory_order_relaxed); }
+bool MercClick() { return g_mercClick.load(std::memory_order_relaxed) && GridOn(Settings()); }
+
 void Teardown() {
+    g_mercLit.store(false);
     for (int where = 0; where < 2; ++where) {
         g_wanted[where] = false;
         g_needRev[where] = 0;

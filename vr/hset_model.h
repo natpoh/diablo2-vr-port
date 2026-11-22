@@ -820,6 +820,7 @@ public:
                 }
                 if (!ready || Busy() || hit.index < 0 || hit.index >= kCount || !KeyShown(hit.index, view_)) return a;
                 if (env_.vrs == 0 && NeedsVrs(hit.index)) return a;   // (no variable rate shading on this card: the row is greyed)
+                if (WalkLibraryRowIdle(hit.index, draft_[kKeyWalkSource])) return a;   // (BodyWalk walks, [walk_in_place] source=1: the library's rows are greyed)
                 if (page == kPageVideo && AutoShown()) return a;   // (the Video page's rows hidden under the Auto run's lines)
                 if (hit.index == kKeyPreset) {   // the Quality preset: every key of the next one into the draft, as D2R VR Settings' list writes them
                     const int now = PresetOf(draft_);

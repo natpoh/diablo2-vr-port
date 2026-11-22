@@ -551,7 +551,8 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         if (key < 0) break;
         const Def& d = kDefs[key];
         const bool noVrs = m.Env().vrs == 0 && NeedsVrs(key);   // (greyed: no variable rate shading on this card)
-        const bool rowEdit = canEdit && !noVrs;
+        const bool walkIdle = WalkLibraryRowIdle(key, m.Get()[kKeyWalkSource]);   // (greyed: BodyWalk walks - [walk_in_place] source=1 - and these are the library's)
+        const bool rowEdit = canEdit && !noVrs && !walkIdle;
         b.Fill(RowBand(r, pg), r % 2 ? Role::RowB : Role::RowA, Part::Row);
         b.Text(DefLabel(key), RowLabel(r, pg), world ? Face::Normal : Face::Bold, Role::Text);
         // (the render type's line: when the type in the draft takes effect - one pass after a restart when it was off at the start, vr/hset_names.h;
@@ -559,6 +560,7 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         const bool onePassWaits = key == kKeyPairPerTick && rendertype::FromKeys(RenderTypeKeys(m.Get())) == rendertype::kNativeOne && !m.Env().replayAtStart;
         if (RowDetail(pg))
             b.Text(noVrs ? std::string(uitext::Tr("vr.hset.no_vrs", "This graphics card has no variable rate shading - off"))
+                   : walkIdle ? std::string(uitext::Tr("vr.hset.walk_bodywalk_row", "Built-in library only - BodyWalk's Steps walk now"))
                    : key == kKeyPairPerTick ? std::string(RenderTypeWhen(rendertype::FromKeys(RenderTypeKeys(m.Get())), m.Env().replayAtStart))
                    : key == kKeyWristLook ? WristLookDetail(m)
                    : TopViewMissing(m, key) ? std::string(TopViewMissing(m, key))

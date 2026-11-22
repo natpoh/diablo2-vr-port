@@ -343,6 +343,8 @@ inline constexpr Sig kSigs[] = {
     {"TooltipCompare", 0x2C3F07, Kind::Code, "B9 10 00 00 00 E8 ?? ?? ?? ?? 85 C0 75 08 38 87 32 06 00 00 74 72 48 83 7D 80 00", 0x2C3F07, 0, 0, 0, 0, "B9 10 00 00 00 E8 ?? ?? ?? ?? 85 C0 75 08 38 87 32 06 00 00 74 72", nullptr, "item tooltips at once under the laser", "Laser menus"},
     // key-state query (virtual key): GetAsyncKeyState's top bit, hooked
     {"KeyState", 0x120A100, Kind::Code, "48 83 EC 28 FF 15 ?? ?? ?? ?? C1 E8 0F 83 E0 01 48 83 C4 28 C3", 0x120A100, 0, 0, 0, 0, "48 83 EC 28 FF 15 ?? ?? ?? ?? C1 E8 0F 83 E0 01 48 83 C4 28 C3", nullptr, "item tooltips at once under the laser", "Laser menus"},
+    // call IsControllerLayout in InventoryItemManager::Update: in the pad layout a cursor item is dropped (return address checked)
+    {"MercCursorDrop", 0x161946, Kind::Code, "E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B C8 E8 ?? ?? ?? ?? 48 85 C0 0F 84 ?? ?? ?? ?? 41 B8 BA 00 00 00 48 8D 15 ?? ?? ?? ??", 0x161946, 0, 0, 0, 0, "E8 ?? ?? ?? ?? 84 C0 0F 84 ?? ?? ?? ??", nullptr, "an item clicked in the merc's panel stays on the cursor", "Laser menus"},
     // the frame-constant builder (renderer, frame, camera, time), hooked
     {"BuildFrame", 0xE3B590, Kind::Code, "4C 8B DC 53 48 81 EC 00 02 00 00 48 8B 05 ?? ?? ?? ?? 48 33 C4", 0xE3B590, 0, 0, 0, 0, "4C 8B DC 53 48 81 EC 00 02 00 00", nullptr, "depth range at the source (depth_fix_mode 2)", "Laser menus"},
     // lea rcx, [rbx+11A00h]: the renderer's camera constants (checked)

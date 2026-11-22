@@ -3,6 +3,7 @@
 // thread (UpdateThread: keys, the arms, the interface, the sky, the hit by touch, pose share, the settings' reload and the installs) -
 // cut whole from vr/vrcam.cpp. The present's order is vr/render/effects/effects.cpp's PresentCommon. What it gives: vr/frame/frame_order.h.
 #include "../vrcam_headers.h"
+#include "../billboards.h"   // [stereo] portal_once
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
 #include "../f5_toolbar.h"  // [hud] f5_toolbar: F5's toolbar low in front
 #include "../f5_hud.h"      // [hud] f5_map: F5's map toward the middle
@@ -307,9 +308,11 @@ uintptr_t HookDrawGameScreen(int a) {
     if (depth || !PairWanted()) {
         if (!depth && !AfrOn()) flatsync::Wait();   // [flatvr] frame_sync: one picture a frame (mono, 3D from the depth) on FlatVR's frames too
         if (!depth) {   // no pair: a menu stays in the picture - but for FlatVR's panel (its eyes by turns)
-            const bool out = gamestate::MenuOpen() && FlatVrMenuPanel();
+            // ([cinema] world_screen: never while a cinematic plays - the movie is in the interface's layer; the present says the same, effects.cpp)
+            const bool cinema = gamestate::CinemaPlaying();
+            const bool out = gamestate::MenuOpen() && FlatVrMenuPanel() && !cinema;
             g_menu3dNow.store(out);
-            hud::SetPanelOut(out || campfire::PanelOut());
+            hud::SetPanelOut((out || campfire::PanelOut()) && !cinema);
         }
         if (!toldWhy && g_h.blit && AfrOn() && g_set.pairPerTick.load() && !FrameTimeFound()) {
             toldWhy = true;
@@ -718,6 +721,7 @@ static DWORD UpdateThreadBody() {
         patchhunt::Tick();    // [debug] patch_hunt: the game's graphics settings put to the step, on the UI thread
         partycmd::Tick();     // the headset's Party page: the roster read, a party button pressed, on the UI thread
         beltdrop::Tick();  // [hands] belt_drop_ground: a drop of a belt potion under way, on the UI thread
+        mercgive::Tick(g_inWorld.load());   // [hands] merc_give_weapon: the let-go weapon against the mercenary; the game's moves on the UI thread
         beltrefill::Tick(g_inWorld.load());   // [belt] refill_key: the button's tap (the game's Shift + click) or hold (the game's own belt fill), every view
         GameFrontTick();   // [openxr] game_front: no controllers - the keyboard back to the game, Esc posted to it (before PauseKeyTick sends it)
         PauseKeyTick();    // [direct] action:pause - the pause menu: Esc, tapped (F4 only)
@@ -888,11 +892,15 @@ static DWORD UpdateThreadBody() {
                 roofsides::Install(&Log, +[]() { return g_set.roofsTwoSided.load(std::memory_order_relaxed) && g_set.platform.load() == 1; });
             }
             prophook::Install();   // only once [stereo] props_once_a_pair asks for it
+            // [stereo] portal_once / particles_head_centre: the town portal and screen-facing particles to the head's centre in first person
+            // (after bearstonem/d2r-pcvr, MIT; vr/billboards.h). The hooks go in once their bytes check; the keys switch them live.
+            billboards::Install(&Log, +[]() { return g_enabled.load() && g_inWorld.load() && !ThirdPerson() && !Overhead() && !gamestate::MenuOpen(); });
             cavelight::Install();   // only once [cave_light] enabled, [fog] game_fog or [sky] game_sky (the lighting's time of day) asks for it
             InstallLabelHooks();
             InstallLabelArea();   // only once [hud] labels_whole_eye asks for it
             mobbars::Install(g_ctx);   // only once [hud] ordinary_mob_bars asks for it
             InstallKeyMoveHook();
+            statsleak::Tick();   // [debug] stats_leak_trace: its two hooks, once the game's code is decrypted
             InstallStickHook();
             InstallMapClickHook();
             InstallMouseGroundHook();   // [input] flat_aim_ground (flat), [input] vr_body_pick (VR)

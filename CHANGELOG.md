@@ -1,5 +1,28 @@
 # What's new in D2R VR
 
+## 0.222.0
+
+Your mercenary by hand, the town portal and the act videos right in VR, the Arcane Sanctuary's stars, and fixes.
+
+- **Give your mercenary a weapon by hand** (`[hands] merc_give_weapon`, on): let a held weapon go against your mercenary and the game's
+  own moves hand it to him.
+- **The mercenary's inventory from the hand map** (`[hud] allies_merc_click`, on): the mercenary's tile under the hand map opens his
+  inventory; the trigger picks an item up and puts it into his slot, B closes the panel.
+- **The town portal once for both eyes** (`[stereo] portal_once`, on): the portal no longer shows as two portals between the eyes;
+  smoke, sparks and other camera-facing effects face the middle of your head (`[stereo] particles_head_centre`). A Paladin's aura rings
+  stay under the hero.
+- **Act videos play in a game** (`[cinema] world_screen`): the video between acts now plays on the big screen, not a still frame.
+- **The Arcane Sanctuary shows its stars** (`[sky] arcane_no_cave_dome`, on): the black cave dome no longer stands round you there.
+- **The render size steps down when video memory runs out** (`[render] vram_guard`, on): on 6 - 8 GB cards a big render size could
+  run past the game's video memory budget, crawl at a few frames a second and hang the card. The size you picked stays in the ini.
+- **A javelin, throwing knife or axe touch is a melee strike** (`[gameplay] melee_touch_thrown_melee`, on): a touch with a thrown
+  weapon is the game's own one-handed blow, not a throw; the throw by gesture throws as before.
+- **Co-op, joined: a touch is sent when the host takes it** (`[gameplay] swing_pace_joined`, on): fewer touches lost in someone else's
+  game.
+- **Fix: a crash at the game's start with some overlays** (crash 396): only the game's own swap chain is taken.
+- **Fix: the wrist orb under a shield in the right slot** (`[hud] hand_vitals_orb_shield_any_slot`, on).
+- Not in this version: walk in place by the headset (its tab is hidden until it is tried).
+
 ## 0.221.0
 
 A map mode selector, your strike statistics against everyone's, D2R VR's files made again after D2RMM wipes them, and fixes.
