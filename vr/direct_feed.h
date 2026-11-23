@@ -12,6 +12,10 @@ namespace directinput {
 
 // The log line sink (xr.cpp's); null = silent.
 void SetLogger(void (*log)(const char*));
+// Every head direct input hands out (HeadShared) passes this first, in its own block - link::Init sets link::KeepRealHead(.., DirectInput)
+// (vr/link.h: a NaN, a blank or a gone head -> the last good one). None set (the offline tests): the head as made. Any thread.
+using HeadGuard = void (*)(D2RVR_Shared*);
+void SetHeadGuard(HeadGuard guard);
 
 // [openxr] direct_input and the ini's [direct] table (see direct_layout.h), on every change of d2r_vr.ini. Any thread.
 void LoadSettings(const wchar_t* iniPath);

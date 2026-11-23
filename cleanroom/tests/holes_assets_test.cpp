@@ -45,6 +45,7 @@ int wmain(int argc, wchar_t** argv) {
     }
     CHECK(Exists(In(mpq, holeslist::kFile)));
     CHECK(Exists(modRoot + L"world_holes.json"));
+    CHECK(Exists(modRoot + L"world_holes.stamp"));   // every place made: the stamp, so the next start makes nothing
     {   // the measures file reads, a line a place
         HANDLE f = CreateFileW(In(mpq, holeslist::kFile).c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
         std::string text(1 << 16, 0);
@@ -54,10 +55,31 @@ int wmain(int argc, wchar_t** argv) {
         std::vector<holeslist::Line> lines;
         CHECK(holeslist::Parse(text, &lines) && (int)lines.size() == holeslist::kPlaceCount);
     }
-    // again: nothing written
+    // again: nothing written, nothing made again (the stamp and the receipt's files as they were - rivas_10 2026-11-23: every Settings start
+    // made the patches again from the archives, 10 - 20 s of a core)
+    const ULONGLONG t0 = GetTickCount64();
     r = holesassets::Prepare(game, modRoot, true);
-    std::printf("again: %ls\n", r.text.c_str());
+    const ULONGLONG againMs = GetTickCount64() - t0;
+    std::printf("again (%llu ms): %ls\n", againMs, r.text.c_str());
     CHECK(r.state == holesassets::kMade && !r.wrote);
+    CHECK(r.text.find(L"as made before") != std::wstring::npos);
+    // a file of ours gone: made again (the stamp alone is not enough)
+    DeleteFileW(In(mpq, holeslist::LodPath(holeslist::kPlaces[0], 1)).c_str());
+    r = holesassets::Prepare(game, modRoot, true);
+    std::printf("one gone: %ls\n", r.text.c_str());
+    CHECK(r.state == holesassets::kMade && r.wrote && r.text.find(L"as made before") == std::wstring::npos);
+    CHECK(Exists(In(mpq, holeslist::LodPath(holeslist::kPlaces[0], 1))));
+    // another stamp (a game update, a new maker): made again, then the stamp is right again
+    {
+        HANDLE f = CreateFileW((modRoot + L"world_holes.stamp").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        DWORD put = 0;
+        WriteFile(f, "build 1\n", 8, &put, nullptr);
+        CloseHandle(f);
+    }
+    r = holesassets::Prepare(game, modRoot, true);
+    CHECK(r.state == holesassets::kMade && r.text.find(L"as made before") == std::wstring::npos);
+    r = holesassets::Prepare(game, modRoot, true);
+    CHECK(r.text.find(L"as made before") != std::wstring::npos);
     // a file of ours the player changed stays, made or not
     const std::wstring unit0 = In(mpq, holeslist::UnitPath(holeslist::kPlaces[0]));
     {
@@ -69,6 +91,7 @@ int wmain(int argc, wchar_t** argv) {
     r = holesassets::Prepare(game, modRoot, true);
     std::printf("changed by the player: %ls\n", r.text.c_str());
     CHECK(r.text.find(L"changed by you") != std::wstring::npos);
+    CHECK(!Exists(modRoot + L"world_holes.stamp"));   // a file left as the player had it: no stamp, looked at again next time
     // off: ours out, the player's stays
     r = holesassets::Prepare(game, modRoot, false);
     std::printf("off: %ls\n", r.text.c_str());
@@ -77,6 +100,7 @@ int wmain(int argc, wchar_t** argv) {
     CHECK(!Exists(In(mpq, holeslist::LodPath(holeslist::kPlaces[0], 0))));
     CHECK(!Exists(In(mpq, holeslist::kFile)));
     CHECK(!Exists(modRoot + L"world_holes.json"));
+    CHECK(!Exists(modRoot + L"world_holes.stamp"));
     std::printf(g_fail ? "holes_assets_test: %d FAILED\n" : "holes_assets_test: all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }

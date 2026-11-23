@@ -17,7 +17,8 @@
 #include "direct_feed.h"
 #include "ar_view.h"   // VR F5: FlatVR's Head Lock off, the Mapping's "main"
 #include "hand_swap.h"   // [hands] left_handed: BodyWalk's copy of the sticks traded when its Mapping is the input
-#include "finite_hold.h"   // nothing non-finite into the head every view is built from
+#include "finite_hold.h"   // nothing non-finite into the hands
+#include "head_hold.h"     // only a real head into the views: NaN, blank (identity) and gone heads -> the last good one
 #include "link.h"
 #include "rune_geom.h"
 #include "view_gate.h"
@@ -132,9 +133,9 @@ std::atomic<const D2RVR_Shared*> g_head{nullptr};
 std::atomic<uint32_t> g_headSeq{0};
 SRWLOCK g_headLock = SRWLOCK_INIT;
 
-void HoldFinite(D2RVR_Shared* o);   // (below: no NaN into the head)
+bool KeepRealHeadImpl(D2RVR_Shared* o, int src);   // (below: only a real head into the views; true = the last good one put in)
 
-void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
+bool ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {   // true: the head held (not this sample's)
     memset(o, 0, sizeof *o);
     o->version = D2RVR_SHARED_VERSION;
     o->counter = t.header.sequence >> 1;
@@ -165,32 +166,41 @@ void ToShared(const BW_LinkTracking& t, D2RVR_Shared* o) {
     o->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     o->userHeightMm = t.userHeightMm;
     o->flatVrStamped = (t.flags & BW_LINK_TRACK_FLATVR_STAMP) ? 1u : 0u;
-    HoldFinite(o);
+    return KeepRealHeadImpl(o, (int)HeadSource::BodyWalk);
 }
 
-// A head with a NaN or an infinity in it never reaches the camera (2026-11-06, Serg: "when the camera is not found, inside FlatVR
-// everything spins madly on nan - it must stand still"): PredictHead turned a NaN angle into 0, so a head flickering between NaN and
-// its real angles jumped the camera between straight ahead and the real turn, and the speed made of the jump threw the prediction
-// round - the picture FlatVR shows spun. BodyWalk's Game Link drops such heads itself (game_link.cpp, valid 0) - this is the plugin's
-// own net: the last good head is held (or none: not valid), a hand not finite is let go, a grip read 0; a line every 10 s at most.
-// Only under Head()'s lock (one writer).
-void HoldFinite(D2RVR_Shared* o) {
-    static finitehold::Hold<8> head;
-    static finitehold::Hold<1> missedHands;   // (only its counter and its once-a-while line)
-    float h[8] = {o->headYawDeg, o->headHeightM, o->headPitchDeg, o->headRollDeg, o->headRoom[0], o->headRoom[1], o->headRoom[2],
-                  o->headYawRoomDeg};
-    bool held = false;
-    if (o->headValid) {
-        if (!head.Take(h)) {
-            held = true;
-            if (!head.HadGood()) o->headValid = 0;   // never a good one: no head at all, not a made-up one
-            o->headYawDeg = h[0]; o->headHeightM = h[1]; o->headPitchDeg = h[2]; o->headRollDeg = h[3];
-            o->headRoom[0] = h[4]; o->headRoom[1] = h[5]; o->headRoom[2] = h[6]; o->headYawRoomDeg = h[7];
-        }
-    } else if (!finitehold::Finite(h, 8)) {   // not valid, and not finite either: readers that look anyway find the last good (or 0)
-        if (head.HadGood()) memcpy(h, head.good, sizeof h); else memset(h, 0, sizeof h);
-        o->headYawDeg = h[0]; o->headHeightM = h[1]; o->headPitchDeg = h[2]; o->headRollDeg = h[3];
-        o->headRoom[0] = h[4]; o->headRoom[1] = h[5]; o->headRoom[2] = h[6]; o->headYawRoomDeg = h[7];
+// Only a real head reaches the camera (vr/head_hold.h) - every head source passes here (KeepRealHead, link.h): BodyWalk's Game Link
+// (ToShared), the plugin's own direct input with a native session (Head()), the native pair's own head (frame_order's XrIntoShared).
+// The history, so it is not fixed a fourth time on one path while another stays open:
+//  - 2026-10-10 (D2R Bridge, then BodyWalk's game_link.cpp head filter): one sender thread, a jump dropped, a gone head held 1 s -
+//    on BodyWalk's side, on its own yaw only; a blank head that holds 300 ms passes there as a recentre;
+//  - 2026-11-06 (6ad08ba7, "inside FlatVR everything spins madly on nan - it must stand still"): a NaN head held - here, NaN only;
+//  - 2026-11-22 (FlatVR stereo, "as if it got no data from the headset - without data it must stand still, but it seems to get
+//    null"): the identity pose a runtime hands over without a pose (FlatVR starting, the headset asleep) came as a valid head and
+//    turned the camera to the room's zero, and a gone head (valid 0) dropped the head's turn - the body's straight ahead - until it
+//    came back. Now a NaN, a blank and a gone head are each replaced by the last good head of the same source, its flags too (or none:
+//    not valid, before any good one); a hand not finite is let go, a grip read 0; a line every 10 s at most per source.
+// One writer per source (BodyWalk: Head()'s lock; direct input: its copy's lock; the native pair: the draw thread).
+const char* const kSourceName[3] = {"BodyWalk (Game Link)", "the plugin's direct input", "the native pair"};
+headhold::Hold g_heads[3];                 // the last good head per source
+finitehold::Hold<1> g_missedHands[3];      // (only their counters and their once-a-while lines)
+bool KeepRealHeadImpl(D2RVR_Shared* o, int src) {
+    headhold::Hold* const heads = g_heads;
+    finitehold::Hold<1>* const missedHands = g_missedHands;
+    if (!o || src < 0 || src > 2) return false;
+    headhold::Hold& head = heads[src];
+    headhold::Head h;
+    h.valid = o->headValid; h.pitchValid = o->pitchValid; h.rollValid = o->rollValid; h.room = o->roomMagic == D2RVR_ROOM_MAGIC ? 1u : 0u;
+    h.yaw = o->headYawDeg; h.height = o->headHeightM; h.pitch = o->headPitchDeg; h.roll = o->headRollDeg;
+    memcpy(h.roomPos, o->headRoom, sizeof h.roomPos);
+    h.yawRoom = o->headYawRoomDeg;
+    const headhold::Kind kind = head.Take(&h);
+    if (kind != headhold::Kind::Good) {
+        o->headValid = h.valid; o->pitchValid = h.pitchValid; o->rollValid = h.rollValid;
+        o->roomMagic = h.room ? D2RVR_ROOM_MAGIC : 0u;
+        o->headYawDeg = h.yaw; o->headHeightM = h.height; o->headPitchDeg = h.pitch; o->headRollDeg = h.roll;
+        memcpy(o->headRoom, h.roomPos, sizeof o->headRoom);
+        o->headYawRoomDeg = h.yawRoom;
     }
     bool handLost = false;
     auto hand = [&](uint32_t bit, float* pos, float* rot, float* grip) {
@@ -205,15 +215,22 @@ void HoldFinite(D2RVR_Shared* o) {
     };
     hand(1u, o->rightHand, o->rightRot, &o->rightGrip);
     hand(2u, o->leftHand, o->leftRot, &o->leftGrip);
-    if (handLost) { float z = NAN; missedHands.Take(&z); }
+    if (handLost) { float z = NAN; missedHands[src].Take(&z); }
+    // the hands of a blank or a not finite head: placed from that head ("ahead of me") - not the head held, so let go
+    if (kind == headhold::Kind::Blank || kind == headhold::Kind::NotFinite) o->handsValid = 0;
     const unsigned long long now = GetTickCount64();
-    if (held && head.Due(now))
-        LogF("vrcam: Game Link - the head from BodyWalk came NOT finite (NaN / inf) %llu time(s): %s - the camera stands still "
-             "(log at most every 10 s)", (unsigned long long)head.TakeCount(),
+    if (head.Due(now)) {
+        uint64_t notFinite = 0, blank = 0, missing = 0;
+        head.TakeCounts(&notFinite, &blank, &missing);
+        LogF("vrcam: head - no real head from %s: %llu blank (the identity pose - the headset not tracked yet, asleep or off the face), "
+             "%llu gone (valid 0), %llu NOT finite (NaN / inf): %s - the camera stands still (log at most every 10 s)", kSourceName[src],
+             (unsigned long long)blank, (unsigned long long)missing, (unsigned long long)notFinite,
              head.HadGood() ? "the last good head held" : "no good head yet, so none (not valid)");
-    if (missedHands.Due(now))
-        LogF("vrcam: Game Link - a hand from BodyWalk came NOT finite %llu time(s): let go for that sample (log at most every 10 s)",
-             (unsigned long long)missedHands.TakeCount());
+    }
+    if (missedHands[src].Due(now))
+        LogF("vrcam: head - a hand from %s came NOT finite %llu time(s): let go for that sample (log at most every 10 s)", kSourceName[src],
+             (unsigned long long)missedHands[src].TakeCount());
+    return kind != headhold::Kind::Good && o->headValid != 0;
 }
 
 // Actions of our Manifest, consistent; false when there are none.
@@ -250,30 +267,71 @@ void Init(void (*log)(const char*), const wchar_t* iniPath, const char* modVersi
     WriteManifest(modVersion);
     // the rest made now too, so whichever side comes first finds them
     g_gameState.Get(); g_tracking.Get(); g_actions.Get(); g_requests.Get(); g_host.Get();
+    directinput::SetHeadGuard([](D2RVR_Shared* o) { KeepRealHeadImpl(o, (int)HeadSource::DirectInput); });   // every head direct input hands out
 }
+
+void KeepRealHead(D2RVR_Shared* o, HeadSource src) { KeepRealHeadImpl(o, (int)src); }
+
+namespace {
+// [the source gone] A held head stands only while its source lives: BodyWalk closed (Game Link's host gone) with the last good head held
+// - the head goes out as gone (valid 0), as before the hold, until BodyWalk sends again. Asked only while a held head is out, at most
+// every 100 ms.
+std::atomic<bool> g_headHeld{false};   // g_head is a held head (KeepRealHead put the last good one in)
+std::atomic<ULONGLONG> g_hostAskedAt{0};
+std::atomic<bool> g_hostWasAlive{true};
+bool HostAliveNow() {
+    const ULONGLONG now = GetTickCount64(), at = g_hostAskedAt.load();
+    if (at && now - at < 100) return g_hostWasAlive.load();
+    g_hostAskedAt.store(now);
+    const bool alive = HostAlive(nullptr);
+    g_hostWasAlive.store(alive);
+    return alive;
+}
+}  // namespace
+
+namespace {
+// A held head while BodyWalk is gone: the head out as gone (valid 0) from now on, until BodyWalk sends again. Under g_headLock or not at all.
+const D2RVR_Shared* GoneIfHostGone() {
+    if (g_headHeld.load() && !HostAliveNow() && TryAcquireSRWLockExclusive(&g_headLock)) {   // a held head, BodyWalk gone: no head
+        if (const D2RVR_Shared* held = g_head.load(); held && g_headHeld.load()) {
+            D2RVR_Shared* o = &g_ring[g_ringNext++ % kRing];
+            memcpy(o, held, sizeof *o);
+            o->headValid = 0;
+            o->handsValid = 0;
+            g_head.store(o);
+            g_headHeld.store(false);
+            g_heads[(int)HeadSource::BodyWalk] = headhold::Hold{};   // a BodyWalk started again holds nothing of the last one
+            Log("vrcam: Game Link - BodyWalk gone with the last good head held: no head now (not valid)");
+        }
+        ReleaseSRWLockExclusive(&g_headLock);
+    }
+    return g_head.load();
+}
+}  // namespace
 
 const D2RVR_Shared* Head() {
     // [openxr] direct_input with a native session: the game's own headset, not BodyWalk's. Fed by FlatVR's raw controllers instead
     // ([direct] flatvr_controls): the controls are the layout's, the head and hands stay BodyWalk's - its recentred yaw and FlatVR's stamps
     // are what the FlatVR camera and the arms are made from.
-    if (directinput::Active() && !directinput::FedByLink()) return directinput::HeadShared();
+    if (directinput::Active() && !directinput::FedByLink()) return directinput::HeadShared();   // (guarded in its own block: SetHeadGuard)
     const BW_LinkTracking* t = g_tracking.Get();
-    if (!t) return g_head.load();
+    if (!t) return GoneIfHostGone();
     const uint32_t seq = ((const volatile BW_LinkHeader*)&t->header)->sequence;
-    if (seq == g_headSeq.load() || (seq & 1u) || t->header.magic != BW_LINK_MAGIC) return g_head.load();
+    if (seq == g_headSeq.load() || (seq & 1u) || t->header.magic != BW_LINK_MAGIC) return GoneIfHostGone();
     if (!TryAcquireSRWLockExclusive(&g_headLock)) return g_head.load();   // another thread is at it
     if (seq != g_headSeq.load()) {
         BW_LinkTracking c;
         if (bw::link::Read(t, &c)) {
             D2RVR_Shared* o = &g_ring[g_ringNext++ % kRing];
-            ToShared(c, o);
+            const bool held = ToShared(c, o);
             if (!g_head.load()) Log("vrcam: Game Link - head tracking from BodyWalk");
             g_head.store(o);
+            g_headHeld.store(held);
             g_headSeq.store(c.header.sequence);
         }
     }
     ReleaseSRWLockExclusive(&g_headLock);
-    return g_head.load();
+    return GoneIfHostGone();
 }
 
 bool RawTracking(BW_LinkTracking* out) {

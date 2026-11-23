@@ -1,5 +1,15 @@
 # What's new in D2R VR
 
+## 0.222.2
+
+A hotfix: D2R VR Settings opens without slowing the PC, and the FlatVR camera no longer spins when the headset sends no pose.
+
+- **Fix: an open D2R VR Settings no longer slows the PC**: every time it opened, it made the patches over the world's holes (the
+  Rogue Encampment's and Tristram's bridges) again from the game's archives - 10 - 20 seconds of heavy work, more on a mid-range PC and
+  beside a running game. They are now made once per game build and only checked afterwards.
+- **Fix: the FlatVR camera stands still when the headset sends no pose**: an empty, missing or broken head pose (a headset that does
+  not see itself yet or has gone to sleep) spun the camera round; the last good head is held now, for every source of the head.
+
 ## 0.222.0
 
 Your mercenary by hand, the town portal and the act videos right in VR, the Arcane Sanctuary's stars, and fixes.

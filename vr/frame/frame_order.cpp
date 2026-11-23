@@ -81,10 +81,23 @@ void TurnTick();
 // frame will be shown - what Game Link makes of BodyWalk's frame (hands from the head in
 // the frame of its turn alone), without the trip out to BodyWalk and back. The rest of the
 // block (the user's height) stays BodyWalk's.
-bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
+bool XrIntoShared(D2RVR_Shared* dst, const D2RVR_Shared* bridge) {
+    // built in a copy: `dst` is the pair's block already (bridge's copy) - a frame without a head the native pair never had leaves it as it was
+    D2RVR_Shared made;
+    D2RVR_Shared* out = &made;
+    if (bridge) memcpy(out, dst, sizeof made);   // (the rest of the block - the user's height - stays BodyWalk's)
+    else memset(out, 0, sizeof made);
     D2RVR_XrInput in;
-    if (!xr::PairInput(&in) || !in.head.valid) return false;
-    if (!bridge) memset(out, 0, sizeof *out);
+    if (!xr::PairInput(&in)) return false;
+    if (!in.head.valid) {   // the runtime has no head this frame: the last good one of the native pair (link::KeepRealHead), none before it
+        out->version = D2RVR_SHARED_VERSION;
+        out->headValid = 0;
+        out->handsValid = 0;
+        link::KeepRealHead(out, link::HeadSource::NativePair);
+        if (!out->headValid) return false;
+        memcpy(dst, out, sizeof made);
+        return true;
+    }
     const float r2d = 57.2957795f;
     const V3 f = d2rcam::m4::Rotate(in.head.rot, {0.0f, 0.0f, -1.0f});
     const V3 r = d2rcam::m4::Rotate(in.head.rot, {1.0f, 0.0f, 0.0f});
@@ -122,6 +135,9 @@ bool XrIntoShared(D2RVR_Shared* out, const D2RVR_Shared* bridge) {
     out->sampleStamp = D2RVRStampNow();
     out->sampleStampMagic = D2RVR_SAMPLE_STAMP_MAGIC;
     out->counter++;
+    link::KeepRealHead(out, link::HeadSource::NativePair);   // (a blank or NaN pose from the runtime: the last good one)
+    if (!out->headValid) return false;
+    memcpy(dst, out, sizeof made);
     return true;
 }
 

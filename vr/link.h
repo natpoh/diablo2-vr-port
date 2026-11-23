@@ -27,6 +27,14 @@ void Init(void (*log)(const char*), const wchar_t* iniPath, const char* modVersi
 // pointer stays good for a good while (a ring of copies), never for ever.
 const D2RVR_Shared* Head();
 
+// Every head the views are built from passes here, whatever made it (vr/head_hold.h): a NaN, a blank (the identity pose a runtime hands
+// over with no pose) or a gone head (valid 0) is replaced by the last good head of the same source, its flags too - the camera stands
+// still; none (valid 0) before any good one. Held only while the source lives: BodyWalk closed with a head held - no head (valid 0). Each
+// source calls it on its own block: ToShared, direct input's (its guard, set by Init), frame_order's native pair.
+// cleanroom/tests/head_sources_test.cpp fails on a head made anywhere that does not pass here. One writer per source.
+enum class HeadSource { BodyWalk = 0, DirectInput = 1, NativePair = 2 };
+void KeepRealHead(D2RVR_Shared* o, HeadSource src);
+
 // A consistent copy of BodyWalk's Tracking block as it is now (vr/flat_raw.h makes the FlatVR controllers from it); false when there is none.
 bool RawTracking(BW_LinkTracking* out);
 

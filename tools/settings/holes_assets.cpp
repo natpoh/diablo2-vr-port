@@ -7,6 +7,7 @@
 #endif
 #include <windows.h>
 
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -100,6 +101,31 @@ std::vector<std::string> OurPaths() {
     return rels;
 }
 
+// The stamp beside the receipt (mods\D2R-VR\world_holes.stamp): the game build and what the maker makes. The same stamp, and every file of the
+// receipt still there with its hash, = nothing to make again (rivas_10 2026-11-23: an open D2R VR Settings slowed mid-range PCs - every start made
+// the patches again from the game's archives, 10 - 20 s of a core here). Bump kMaker when shared/world_holes_list.h changes what it makes for the
+// same place (the places' names and count are in the stamp already).
+constexpr const char* kMaker = "holes maker 1";
+std::string StampOf(const std::string& build) {
+    std::string s = "build " + build + "\n" + kMaker + "\nplaces";
+    for (const holeslist::Place& p : holeslist::kPlaces) s += std::string(" ") + p.name;
+    return s + "\n";
+}
+// Every file the receipt names is there with its hash (and the measures file is one of them); `places` = the places with a unit made.
+bool AsReceipt(const std::string& receipt, const std::function<std::wstring(const std::string&)>& pathOf, int* places) {
+    *places = 0;
+    bool measures = false;
+    for (const std::string& rel : OurPaths()) {
+        const std::string hash = arcanesky::ReceiptValue(receipt, "mods/D2R-VR/D2R-VR.mpq/" + rel);
+        if (hash.empty()) continue;
+        std::string have;
+        if (!ReadFile(pathOf(rel), &have) || arcanesky::Hash(have.data(), have.size()) != hash) return false;
+        if (rel == holeslist::kFile) measures = true;
+        for (const holeslist::Place& p : holeslist::kPlaces) *places += rel == holeslist::UnitPath(p) ? 1 : 0;
+    }
+    return measures;
+}
+
 }  // namespace
 
 Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on) {
@@ -126,6 +152,7 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on) {
             if (ReadFile(pathOf(rel), &old) && !lastHash.empty() && arcanesky::Hash(old.data(), old.size()) == lastHash && DeleteFileW(pathOf(rel).c_str())) ++out;
         }
         if (!last.empty()) DeleteFileW(receiptPath.c_str());
+        DeleteFileW((modRoot + L"world_holes.stamp").c_str());
         r.state = kOff;
         r.wrote = out > 0;
         r.text = L"off ([holes] patch_world): no patches made; " + std::to_wstring(out) + L" of ours taken out";
@@ -140,6 +167,19 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on) {
     }
     CASC_STORAGE_PRODUCT product{};
     const bool haveBuild = CascGetStorageInfo(storage, CascStorageProduct, &product, sizeof product, nullptr) && product.BuildNumber;
+    const std::wstring stampPath = modRoot + L"world_holes.stamp";
+    const std::string stamp = StampOf(haveBuild ? std::to_string(product.BuildNumber) : std::string("unknown"));
+    {   // made before from this build by this maker, and nothing of it gone or changed: ready as it is
+        std::string lastStamp;
+        int places = 0;
+        if (haveBuild && ReadFile(stampPath, &lastStamp) && lastStamp == stamp && AsReceipt(last, pathOf, &places)) {
+            CascCloseStorage(storage);
+            r.state = kMade;
+            r.text = L"ready: " + std::to_wstring(places) + L" of " + std::to_wstring(holeslist::kPlaceCount) +
+                     L" places patched (mods\\D2R-VR\\D2R-VR.mpq), as made before from this game build";
+            return r;
+        }
+    }
     const worldscene::Reader read = [storage](const std::string& name, std::string* out) { return CascRead(storage, name, out); };
     std::vector<holeslist::Made> made;
     std::wstring notMade;
@@ -188,6 +228,9 @@ Result Prepare(const std::wstring& game, const std::wstring& modRoot, bool on) {
         return r;
     }
     r.state = made.empty() ? kFailed : kMade;
+    // the stamp only when every place was made and nothing was left as the player had it: a place not made is tried again at the next start
+    if (haveBuild && made.size() == (size_t)holeslist::kPlaceCount && kept == 0) WriteFile(stampPath, stamp.data(), stamp.size());
+    else DeleteFileW(stampPath.c_str());
     std::wstring list;
     for (const holeslist::Line& l : lines) {
         wchar_t b[256];

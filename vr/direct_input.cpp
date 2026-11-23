@@ -565,6 +565,8 @@ void Haptic(int hand, float amplitude, float durationMs, float frequencyHz) {
 // -- the plumbing (direct_feed.h) -------------------------------------------------------------------------------------
 
 void SetLogger(void (*log)(const char*)) { g_log = log; }
+std::atomic<HeadGuard> g_headGuard{nullptr};
+void SetHeadGuard(HeadGuard guard) { g_headGuard.store(guard); }
 
 void LoadSettings(const wchar_t* ini) {
     wchar_t b[320];
@@ -901,6 +903,7 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     D2RVR_Shared* sh = &g_ring[g_ringNext++ % kRing];
     s.sharedCounter++;
     SharedFromXr(*in, s.sharedCounter, sh);
+    if (const HeadGuard guard = g_headGuard.load()) guard(sh);   // link::KeepRealHead(.., DirectInput): only a real head handed out
 
     AcquireSRWLockExclusive(&g_pubLock);
     g_out = o;

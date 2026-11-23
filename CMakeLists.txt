@@ -2762,6 +2762,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/finite_hold_test.cpp")
     target_include_directories(finite_hold_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(finite_hold_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/head_hold_test.cpp")
+    # only a real head to the camera (vr/head_hold.h): a NaN, a blank (identity) or a gone head -> the last good one, its flags too
+    add_executable(head_hold_test cleanroom/tests/head_hold_test.cpp)
+    target_include_directories(head_hold_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(head_hold_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/head_sources_test.cpp")
+    # every head the views read passes link::KeepRealHead - read off vr/ itself: a new pose source bypassing the guard fails here
+    add_executable(head_sources_test cleanroom/tests/head_sources_test.cpp)
+    target_compile_definitions(head_sources_test PRIVATE "D2RVR_SRC=\"${CMAKE_CURRENT_SOURCE_DIR}\"")
+    target_compile_options(head_sources_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/turn_math_test.cpp")
     # [stereo] turn_warp (vr/turn_math.h): eyes by turns - a point moved with its depth lands where the other eye sees it, the turn, what the hero carries, the edge cut
     add_executable(turn_math_test cleanroom/tests/turn_math_test.cpp)
