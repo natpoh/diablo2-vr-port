@@ -638,6 +638,16 @@ uintptr_t FacingAtNow(bool* structural) {
 // ([body] under_camera, below: the body down to the camera's ground or up with it).
 thread_local bool t_roomShiftOk = false;
 thread_local float t_roomShift[3] = {};
+// [camera] smooth_follow, the views from inside (VR F4, VR F5, flat F3): the camera's eased offset in the hero's model units, from the matrix this
+// pose's facing was read with (FreshYawInModel) - the upper body down to the waist takes it at the pose's end (skel::Input::upperShift).
+thread_local bool t_upperShiftOk = false;
+thread_local float t_upperShift[3] = {}, t_bodyShift[3] = {};   // the height's part (down to the waist), the part across the floor (the whole body)
+bool FreshUpperShift(float whole[3], float upper[3]) {
+    const bool ok = t_upperShiftOk;
+    t_upperShiftOk = false;
+    if (ok) for (int i = 0; i < 3; ++i) { whole[i] = t_bodyShift[i]; upper[i] = t_upperShift[i]; }
+    return ok;
+}
 bool FreshRoomShift(float shift[3]) {
     const bool ok = t_roomShiftOk;
     t_roomShiftOk = false;
@@ -741,6 +751,8 @@ bool UnderCamera(bool structural, const float* r, float* m, float out[3]) {
     g_underLiftAt.store(GetTickCount64());
     bool moved = false;
     if (!why) {
+        // ([camera] smooth_follow: the body stays on the game's look-at here - the hips and legs on the hero; the upper body glides with the eased
+        // camera at the pose's end, FreshUpperShift / skeletons.cpp PoseBody)
         float to[3];
         undercam::Target(look, ask, to);
         moved = undercam::MoveInModel(r, to, out);
@@ -763,6 +775,7 @@ bool UnderCameraFar(float out[3]) {
 bool FreshYawInModel(float* yawInModel, float* eyeModel, bool* eyeOk) {
     float m[16], rows[3][3], yaw = 0.0f;
     t_roomShiftOk = false;
+    t_upperShiftOk = false;
     if (!g_enabled.load()) return false;
     bool structural = false;
     const uintptr_t at = FacingAtNow(&structural);
@@ -796,6 +809,8 @@ bool FreshYawInModel(float* yawInModel, float* eyeModel, bool* eyeOk) {
             t_roomShiftOk = std::isfinite(t_roomShift[0]) && std::isfinite(t_roomShift[1]);
         }
     }
+    if (float whole[3], upper[3]; FollowBodyOffsets(whole, upper))   // [camera] smooth_follow: the drawn body with the eased camera (views from inside)
+        t_upperShiftOk = smoothfollow::ToModel(m, whole, t_bodyShift) && smoothfollow::ToModel(m, upper, t_upperShift);
     if (underOn) {   // [body] under_camera: on top of the room's (that one is counted from the look-at; the body stood at his place)
         if (!t_roomShiftOk) t_roomShift[0] = t_roomShift[1] = 0.0f;
         t_roomShift[0] += under[0]; t_roomShift[1] += under[2]; t_roomShift[2] = under[1];   // (x, z, then up)

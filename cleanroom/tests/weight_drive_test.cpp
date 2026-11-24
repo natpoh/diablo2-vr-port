@@ -63,6 +63,12 @@ static void HoldsTests() {
     }
     // a sword and a shield (no weapon on the left): held, no second
     Expect(WeightHolds(true, kSword, HeldAlone(false, true), -1).on, "a sword and a shield: held");
+    // the shield in the RIGHT slot, the sword in the left (a player's Amazon, 0.205.0: "hands right 'sml ' left 'flc '"): the right slot holds no weapon,
+    // so the sword is alone and held - with "anything in the right slot" it was left out and never struck
+    {
+        const meleetouch::Holds h = WeightHolds(true, kSword, HeldAlone(true, false), -1);
+        Expect(h.on && !h.second && h.kind == kSword, "a shield on the right, a sword on the left: held");
+    }
     // a weapon in each hand: both bodies
     {
         const meleetouch::Holds h = WeightHolds(true, kSword, HeldAlone(true, true), kAxe);

@@ -60,6 +60,8 @@ struct Settings {
     std::atomic<float> eyeOffset{0.0f};     // added to that, world units
     std::atomic<bool>  followJump{true};    // the camera goes up when the animation lifts the hero (Leap)
     std::atomic<float> jumpFrom{0.3f};      // hip rise (model units) still taken for the stride's bob
+    std::atomic<bool>  smoothFollow{false}; // [camera] smooth_follow: VR F4, the camera's anchor eased over a jerk of the hero (a bump, a step), vr/smooth_follow.h
+    std::atomic<float> smoothFollowMs{200.0f};   // [camera] smooth_follow_ms: the ease's time
     std::atomic<float> pitch{-60.0f};       // camera pitch relative to the game's own (deg); -60 = level, more negative = higher
     std::atomic<float> flatShiftX{0.0f}, flatShiftY{0.0f};   // [camera] flat_shift_x / _y: flat F2 / F3, the picture moved by % of its width (right) / height (down)
     std::atomic<bool>  stickPitchF2{false}; // [camera] stick_pitch_f2: VR F2, the right stick's up / down tilts the camera (vr/stick_pitch.h)
@@ -260,6 +262,7 @@ struct Settings {
     std::atomic<bool>  gameSky{false};      // [sky] game_sky: our painted sky as the game's own dome (engitem::SkyDome)
     std::atomic<bool>  domePastFar{false};      // [sky] dome_past_far: off F4, the dome laid past the game's depth range in every pixel (skydome::PastFarRadius)
     std::atomic<bool>  domeInGameColour{true};   // [sky] dome_in_game_colour: the game samples our baked picture for the dome (vr/sky/dome_atlas.h)
+    std::atomic<bool>  domeAtlasTiled{false};    // [sky] dome_atlas_tiled: that picture reserved, only the shown bands backed (vr/sky/dome_backing.h); 0 = committed, whole
     std::atomic<bool>  domeTrueColour{false};   // [sky] dome_true_colour: the game's dome brought to our sky's colours (D2R_DepthFog.fx DomeSeen / DomeLookOf)
     std::atomic<bool>  effectWorld{true};       // [render] effect_world: our effect's sky and fog passes (off: only its overlays and interface)
     std::atomic<bool>  phantomRects{true};      // [render] phantom_rects: the vignette pass drawn only where it can change the picture (vr/phantom_rect.h)

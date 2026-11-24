@@ -1965,6 +1965,7 @@ void DomeAtlas(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandLi
     in.on = g_set.gameSky.load() && (g_set.domeInGameColour.load() || three);
     in.band = engitem::DomeBand();
     in.capLayout = engitem::DomeAtlasHasCap();   // (the pictures' layout: the zenith's square or not)
+    in.tiled = g_set.domeAtlasTiled.load();     // ([sky] dome_atlas_tiled: reserved, or committed and whole - the default)
     in.night = g_domeBake.night;
     in.mul = g_domeBake.mul;
     in.capOn = g_domeBake.capOn;

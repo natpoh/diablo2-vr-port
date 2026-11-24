@@ -11,8 +11,9 @@
 // goes back to the effect (BakedGain, D2RVR_DOME_GAIN): it measures the dome as baked, so its next gain is the baked one times what is
 // still off.
 //
-// Only the bands the game shows are backed by memory (a reserved texture, ~22 MiB at 4096 wide: the act's and the cave's band, every mip),
-// where the card reads unbacked tiles as zero (tiled resources tier 2 or more); else the whole texture (~134 MiB). R11G11B10_FLOAT.
+// The whole texture backed by memory (committed, ~134 MiB at 4096 wide), R11G11B10_FLOAT - the default since the crash batch of 2026-11-24
+// (vr/sky/dome_backing.h). [sky] dome_atlas_tiled=1: only the bands the game shows backed (a reserved texture, ~22 MiB: the act's and the
+// cave's band, every mip), where the card reads unbacked tiles as zero (tiled resources tier 2 or more), as up to 0.222.5.
 // Without the plugin's own effects (ReShade's path, [render] native_effects=0) nothing stands in: the game's own view, as before.
 #pragma once
 
@@ -56,6 +57,9 @@ struct BakeIn {
     // the pictures hold each act's zenith in a square of its own (shared/sky_atlas.h HasCap - the atlas' header): each texel's direction
     // by that layout; false: the old panorama, every row an elevation from 90 degrees down
     bool capLayout = false;
+    // [sky] dome_atlas_tiled (vr/sky/dome_backing.h): ours made reserved, only the shown bands backed (tiled resources tier 2+), as up to
+    // 0.222.5; false (the default): committed, all of it backed, no tile mappings. Taken when ours is made (the game's next view of its picture)
+    bool tiled = false;
 };
 // Each present, on our list on the game's queue `q`, before it is submitted: the tiles of the shown bands mapped (on q, so before the list),
 // then baked when anything changed (or every kGainEvery presents while the gain is measured). Recorded only on `l`.

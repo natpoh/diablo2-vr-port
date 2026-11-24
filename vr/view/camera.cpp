@@ -10,7 +10,157 @@ namespace vrc {
 std::atomic<float> g_gameDownDeg{60.0f};   // the game camera's own downward angle, degrees (the flat view's last build)
 void FlatPortalFrame();   // [input] portal_look_horizon / portal_auto (below)
 void FlatPickupFrame();  // [input] flat_pickup_key_on (vr/input/flat_click.cpp)
-void VrFrame() { prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); FlatPickupFrame(); campfire::Frame(); }
+// [camera] smooth_follow (vr/smooth_follow.h): our camera's anchor - the game camera's look-at, the hero's point on his ground - eased over a jerk
+// (Serg 2026-11-22, Act 3's jungle: the camera shook as the hero jerked over the ground's bumps; 2026-11-23: "и в 2д виде" - every view our camera
+// builds on the look-at, first and third person, VR and flat: smoothfollow::Eases, FollowViewKind). One state, stepped once a game frame in VrFrame -
+// right after the game placed its camera, with that frame's look-at and the time since the last frame's - and every reader of the frame (the view's
+// passes, the pose that puts the upper body under the camera) takes the same offset (FollowAnchor, FollowBodyOffsets). Until 0.222.4 the frame's first
+// reader stepped it, at whatever moment of the frame it came: in flat F3 the pose and the view took turns, the time between steps jumped about while
+// the hero moved evenly, and a steady run read as jerks both ways ("на 2д бегаю все трясется").
+// Off, not in a game, the game's own camera: dropped (the look-at as it is; coming back starts afresh). A view that is not eased (the table, the
+// view from above) does not apply it. The head's own pose is never touched.
+namespace {
+SRWLOCK g_followLock = SRWLOCK_INIT;
+smoothfollow::State g_follow;            // (under g_followLock)
+double g_followAt = 0.0;                 // NowSeconds of the last step (VrFrame's thread)
+std::atomic<bool> g_followSnap{false};   // a recentre: the next step takes the look-at at once
+std::atomic<int> g_followKind{(int)smoothfollow::ViewKind::GameOwn};   // the view the last VrViewInner built (FollowViewKind)
+struct FollowStats { uint32_t eased = 0, snaps = 0; float mostUp = 0.0f, mostDown = 0.0f, mostAside = 0.0f; double since = 0.0; bool told = false; };
+FollowStats g_followStats;               // (VrFrame's thread) the log's: one line on the first use, then one a minute while it eases
+// (VrFrame's thread) what the look-at did while the hero moved, 10 s at a time: how the floor's height stepped under him frame to frame, how even his
+// speed was, and how much the camera's height still moved - the next report of a shake says which it is
+struct MoveStats {
+    uint32_t frames = 0, steps = 0, still = 0;     // frames he moved; of them the floor stepped; frames in a run where his place did not move at all (the game's ticks)
+    double absDy = 0.0, speed = 0.0, speed2 = 0.0, camDy = 0.0;
+    double gSpeed = 0.0, gSpeed2 = 0.0; uint32_t gFrames = 0;   // his speed by the game's own frame time
+    double camSpeed = 0.0, camSpeed2 = 0.0;                     // the camera's speed across the floor (after the tracker)
+    double jumpDy = 0.0; float maxJumpDy = 0.0f;                // [camera] follow_jump's lift (vrcam JumpLift): how much it moved the camera a frame
+    float maxDy = 0.0f, maxCamDy = 0.0f, lastOut = NAN, lastOutX = NAN, lastOutZ = NAN, lastJump = NAN;
+    double movedAt = 0.0, since = 0.0;
+};
+MoveStats g_moveStats;
+bool FollowWanted() { return g_set.smoothFollow.load() && g_inWorld.load() && g_enabled.load() && !campfire::Now(); }
+// The frame's step (VrFrame): the look-at the game just gave its camera.
+void FollowStep() {
+    float raw[3];
+    if (!FollowWanted() || !d2rcam::LookAtNow(raw)) {   // off or not here: dropped, the next use starts afresh
+        AcquireSRWLockExclusive(&g_followLock);
+        if (g_follow.has) smoothfollow::Reset(g_follow);
+        ReleaseSRWLockExclusive(&g_followLock);
+        return;
+    }
+    const double now = NowSeconds();
+    char line[320];
+    line[0] = 0;
+    float out[3];
+    AcquireSRWLockExclusive(&g_followLock);
+    const float dt = g_follow.has ? (float)(now - g_followAt) : 0.0f;
+    const smoothfollow::Result r = smoothfollow::Step(g_follow, raw, dt, g_set.smoothFollowMs.load(), g_followSnap.exchange(false), out);
+    ReleaseSRWLockExclusive(&g_followLock);
+    {   // the moving look-at's numbers (one line in 10 s, only while he moves)
+        MoveStats& m = g_moveStats;
+        if (!m.since) m.since = now;
+        const float jump = g_viewJumpLift.load();
+        const bool going = r.did != smoothfollow::Did::Snapped && r.did != smoothfollow::Did::Started && dt > 0.0f;
+        if (going && r.moveH > 1e-3f) {
+            const float dy = std::fabs(r.moveV), sp = r.moveH / dt, camDy = std::isfinite(m.lastOut) ? std::fabs(out[1] - m.lastOut) : 0.0f;
+            ++m.frames; m.steps += dy > 0.01f;
+            m.absDy += dy; m.maxDy = std::max(m.maxDy, dy);
+            m.speed += sp; m.speed2 += (double)sp * sp;
+            m.camDy += camDy; m.maxCamDy = std::max(m.maxCamDy, camDy);
+            float gdt = 0.0f;
+            if (SafeRead(&gdt, (void*)d2rsig::Addr(RVA_FRAME_TIME), sizeof gdt) && gdt > 0.001f && gdt < 0.25f) {
+                const double gs = r.moveH / gdt;
+                m.gSpeed += gs; m.gSpeed2 += gs * gs; ++m.gFrames;
+            }
+            if (std::isfinite(m.lastOutX)) {
+                const double cs = std::hypot(out[0] - m.lastOutX, out[2] - m.lastOutZ) / dt;
+                m.camSpeed += cs; m.camSpeed2 += cs * cs;
+            }
+            if (std::isfinite(m.lastJump)) {
+                const float jd = std::fabs(jump - m.lastJump);
+                m.jumpDy += jd; m.maxJumpDy = std::max(m.maxJumpDy, jd);
+            }
+            m.movedAt = now;
+        } else if (going && now - m.movedAt < 0.15) {
+            ++m.still;   // in a run, his place the same as the frame before: the game moved him in a tick this frame did not get
+        }
+        m.lastOut = out[1]; m.lastOutX = out[0]; m.lastOutZ = out[2]; m.lastJump = jump;
+        if (now - m.since >= 10.0) {
+            if (m.frames >= 30) {
+                const auto spread = [](double sum, double sum2, uint32_t n) { const double mn = n ? sum / n : 0.0; return n ? std::sqrt(std::max(0.0, sum2 / n - mn * mn)) : 0.0; };
+                const double mean = m.speed / m.frames, sd = spread(m.speed, m.speed2, m.frames);
+                const double gMean = m.gFrames ? m.gSpeed / m.gFrames : 0.0, gSd = spread(m.gSpeed, m.gSpeed2, m.gFrames);
+                const double cMean = m.camSpeed / m.frames, cSd = spread(m.camSpeed, m.camSpeed2, m.frames);
+                char b[640];
+                snprintf(b, sizeof b, "vrcam: smooth follow - %u frames moving in %.0f s (+ %u in a run with his place unmoved: the game's ticks): the floor's height stepped in "
+                         "%u of them (mean %.3f, most %.3f units a frame); the camera's height moved mean %.3f, most %.3f a frame; his speed %.1f units/s, spread %.1f "
+                         "(by our frame time; by the game's %.1f, spread %.1f); the camera's speed across %.1f, spread %.1f; follow_jump moved the eyes mean %.3f, most %.3f a frame",
+                         m.frames, now - m.since, m.still, m.steps, m.absDy / m.frames, m.maxDy, m.camDy / m.frames, m.maxCamDy, mean, sd, gMean, gSd, cMean, cSd,
+                         m.jumpDy / m.frames, m.maxJumpDy);
+                Log(b);
+            }
+            const MoveStats keep = m;
+            m = MoveStats{};
+            m.lastOut = keep.lastOut; m.lastOutX = keep.lastOutX; m.lastOutZ = keep.lastOutZ; m.lastJump = keep.lastJump; m.movedAt = keep.movedAt;
+            m.since = now;
+        }
+    }
+    if (!(dt > 0.0f && dt < smoothfollow::kMinDt)) g_followAt = now;   // (a second call in the same frame keeps the frame's time)
+    FollowStats& st = g_followStats;
+    if (!st.since) st.since = now;
+    if (r.did == smoothfollow::Did::Eased) {
+        ++st.eased;
+        st.mostUp = std::max(st.mostUp, r.jerkV);
+        st.mostDown = std::max(st.mostDown, -r.jerkV);
+        st.mostAside = std::max(st.mostAside, r.jerkH);
+    } else if (r.did == smoothfollow::Did::Snapped) {
+        ++st.snaps;
+    }
+    if (!st.told) {
+        st.told = true;
+        snprintf(line, sizeof line, "vrcam: smooth follow on ([camera] smooth_follow, %.0f ms) - the camera's anchor eased over a jerk of the hero (a bump, a step, "
+                 "a shove) in first and third person, walking followed exactly, a jump past %.0f units across / %.0f up or down taken at once", smoothfollow::Ms(g_set.smoothFollowMs.load()),
+                 smoothfollow::kSnapH, smoothfollow::kSnapV);
+    } else if (now - st.since >= 60.0 && st.eased) {   // one line a minute, only while it eases (a line can cost a millisecond)
+        snprintf(line, sizeof line, "vrcam: smooth follow - %.0f s: %u jerks eased (the biggest %.2f up, %.2f down, %.2f aside, world units), %u taken at once",
+                 now - st.since, st.eased, st.mostUp, st.mostDown, st.mostAside, st.snaps);
+        st = FollowStats{};
+        st.told = true;
+        st.since = now;
+    }
+    if (line[0]) Log(line);
+}
+}  // namespace
+void SmoothFollowSnap() { g_followSnap.store(true); }
+static_assert(smoothfollow::kShear == flatground::kShear, "smooth_follow takes the game's height push off the look-at as the game puts it on");
+// The view VrViewInner builds now, as smooth_follow sorts them (smoothfollow::Eases): the native 3D F3 / F1 and the table / Real geometry are the room's
+// and the view from above's cameras; everything else it builds stands on the hero's eyes, first person or behind him.
+smoothfollow::ViewKind FollowViewKind(bool native, int xrMode) {
+    if (!g_enabled.load()) return smoothfollow::ViewKind::GameOwn;
+    if ((native && xrMode == xr::kViewsRoom) || TableView()) return smoothfollow::ViewKind::Table;
+    if ((native && xrMode == xr::kViewsWindow) || TopPersp()) return smoothfollow::ViewKind::Above;
+    return ThirdPerson() ? smoothfollow::ViewKind::ThirdPerson : smoothfollow::ViewKind::FirstPerson;
+}
+void FollowAnchor(const float raw[3], float out[3]) {
+    if (!FollowWanted()) { out[0] = raw[0]; out[1] = raw[1]; out[2] = raw[2]; return; }
+    AcquireSRWLockShared(&g_followLock);
+    smoothfollow::Apply(g_follow, raw, out);
+    ReleaseSRWLockShared(&g_followLock);
+}
+bool FollowBodyOffsets(float whole[3], float upper[3]) {
+    whole[0] = whole[1] = whole[2] = upper[0] = upper[1] = upper[2] = 0.0f;
+    if (!FollowWanted() || !smoothfollow::Inside((smoothfollow::ViewKind)g_followKind.load())) return false;
+    AcquireSRWLockShared(&g_followLock);
+    smoothfollow::Split(g_follow, whole, upper);   // (the frame's offset, the camera's exactly: whole + upper)
+    ReleaseSRWLockShared(&g_followLock);
+    return std::isfinite(whole[0] + whole[2] + upper[0] + upper[1] + upper[2]);
+}
+
+void VrFrame() {
+    prevscan::FrameDone(); AfrNextFrame(); engitem::Frame(g_enabled.load() && FullBody()); FlatPortalFrame(); FlatPickupFrame(); campfire::Frame();
+    FollowStep();   // [camera] smooth_follow: once a game frame, with the look-at the game just gave its camera
+}
 
 // The game's view from above, per eye: orthographic, so moving the camera
 // aside would only slide the picture. Each eye's view is turned instead, half
@@ -436,6 +586,20 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     // Native OpenXR (vr/xr.cpp): the runtime's eyes for the moment this frame is shown.
     xr::Eyes xe{};
     const bool native = NativeEyes(&xe);
+    float followed[3];   // [camera] smooth_follow: the anchor eased over a jerk of the hero in the views built on the hero's eyes (the look-at as it is otherwise)
+    const smoothfollow::ViewKind followKind = FollowViewKind(native, xe.mode);
+    g_followKind.store((int)followKind);   // (the pose's body asks it: FollowBodyOffsets)
+    if (g_set.smoothFollow.load()) {   // one line at each change of the view: whether it eases (Serg on 0.222.4: "нет плавной камеры")
+        static int told = -1;
+        if ((int)followKind != told) {
+            told = (int)followKind;
+            static const char* const kKind[] = {"the game's own camera - not eased", "first person - eased, the upper body with it",
+                                                "behind the hero - eased (the camera only)", "the game on the floor - not eased", "from above - not eased"};
+            LogF("vrcam: smooth follow - this view (%s%s): %s", g_set.platform.load() == 1 ? "VR " : "flat ", native ? "native" : "our camera",
+                 kKind[std::clamp((int)followKind, 0, 4)]);
+        }
+    }
+    if (smoothfollow::Eases(followKind)) { FollowAnchor(in.lookAt, followed); L = followed; }
     float nativeIpd = 0.0f;   // world units
     float pivotY = NAN;       // first person F4: the standing eyes' height in the world with the jump (the pivot), for g_headOverStand
     float turnBody = 0.0f;    // native first person: the room's -z in the world (xr::TurnView, eyes by turns)
@@ -506,7 +670,10 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
                         "recentre (F11) standing upright, or measure your height in D2R VR Settings");
             }
         }
-        RoomWalkView(xe, L, cb, sb, upm, &mid.x, &mid.z);   // [openxr] roomscale_walk: the hero walks under the head, the view stays with it
+        // [openxr] roomscale_walk: the hero walks under the head, the view stays with it. The hero as the game has him (in.lookAt), never the eased
+        // anchor: walked against the camera's glide it drove him by a lagging place, and its body under the neck ([openxr] roomscale_body) took
+        // [camera] smooth_follow's offset in its target and then again at the pose's end - VR F4's body went its own way (Serg on 0.222.8)
+        RoomWalkView(xe, in.lookAt, cb, sb, upm, &mid.x, &mid.z);
         V3 head = pivot + toWorld(mid) * upm;
         if (!ThirdPerson() && g_set.neckModel.load()) {
             // the head turns about the top of the neck, as with FlatVR (VrViewInner's neck model): looking

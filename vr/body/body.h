@@ -17,6 +17,7 @@ bool CameraRightInModel(float out[3]);
 // ... and a world point in the hero's model space by the same matrix ([body] flat_aim_tilt_target: the body under the crosshair)
 bool WorldPointInModel(const float world[3], float out[3]);
 bool FreshRoomShift(float shift[3]);
+bool FreshUpperShift(float whole[3], float upper[3]);   // [camera] smooth_follow: the camera's eased offset in his model units, a view from inside (skel::Input::bodyShift, upperShift)
 // vr/body/arms.cpp: the head in BodyWalk's room, the hands, the hero's arms (skel::Input, every round of the update thread)
 void PushArms();
 

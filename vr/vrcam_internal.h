@@ -332,6 +332,15 @@ extern std::atomic<uint32_t> g_handWalkReads;
 extern bool g_lookOk;
 bool AfrOn();
 bool LookAtNow(float out[3]);
+// [camera] smooth_follow (vr/smooth_follow.h, vr/view/camera.cpp): VR F4's anchor - the look-at `raw`, eased over a jerk - to `out` (the look-at as it
+// is when off). Stepped once a game frame in VrFrame (the frame's look-at and time); every reader (the view's passes, the pose) gets that offset.
+void FollowAnchor(const float raw[3], float out[3]);
+void SmoothFollowSnap();   // the next step takes the look-at at once (a recentre)
+// ... in a view from inside (VR F4, VR F5, flat F3: smoothfollow::Inside, the last view built): the frame's offset (the camera's, as FollowAnchor
+// adds it) in its two parts, world units - `whole` across the floor (the whole drawn body takes it), `upper` the height's (down to the waist):
+// smoothfollow::Split. False: off, not a view from inside.
+bool FollowBodyOffsets(float whole[3], float upper[3]);
+extern std::atomic<float> g_viewJumpLift;   // vr/vrcam.cpp JumpLift: the last lift a view took (the smooth follow's log)
 // [gameplay] leap_air_aim (vr/leap_air_aim.h): the hero is in a leap's air now - his model matrix over the camera's ground, from a pose of the last 250 ms
 // (vr/body/hero_facing.cpp, at every pose UnderCamera measures). Any thread.
 bool HeroInLeapAir();

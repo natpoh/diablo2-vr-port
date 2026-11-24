@@ -83,6 +83,7 @@
 #include "crouch.h"         // [body] crouch: the hero crouches when you do (F4)
 #include "shoulder_pads.h"  // [body] flat_hide_shoulder_right / _left: which bones carry the shoulder pads
 #include "trunk_hold.h"     // [body] lock (F4) and flat_hold_trunk (flat F3): which pose each bone above the pelvis takes
+#include "smooth_follow.h"  // [camera] smooth_follow: the upper body down to the waist glides with the eased camera (views from inside)
 #include "attack_lean.h"    // [body] attack_lean (flat F2 / F3, VR F2): the swing leans toward where the crosshair looks
 #include "aim_tilt.h"       // [body] flat_aim_tilt (flat F3): the arms tilt with the crosshair, and onto the body under it through a swing
 #include "claw_strike.h"   // [shapeshift] claw_hits: a form's paws as the touch's blades
@@ -584,6 +585,7 @@ SRWLOCK g_inLock = SRWLOCK_INIT;
 Input g_in;
 std::atomic<FreshFn> g_fresh{nullptr};
 std::atomic<RoomShiftFn> g_freshShift{nullptr};   // [openxr] roomscale_body
+std::atomic<UpperShiftFn> g_freshUpper{nullptr};  // [camera] smooth_follow: the upper body with the eased camera (views from inside)
 std::atomic<FreshHandsFn> g_freshHands{nullptr};
 std::atomic<GrabHandsFn> g_grabHands{nullptr};   // [weight] grab_bodies (SetGrabHands)
 std::atomic<WorldHandsFn> g_worldHands{nullptr};   // [weight] world_contact_hands (SetWorldHands)
@@ -2292,9 +2294,15 @@ bool CarryBowFingers(const Hero& h, const std::vector<Mat>& oldW, std::vector<Ma
 // raised by this just before they are written (PoseBody's end). A read of the hero's model-to-world within the pose goes through
 // PoseModel, which carries the same move: what is taken to the world from a bone of the pose is where it will be drawn. 0 outside a pose.
 thread_local float t_poseUp = 0.0f;
+// [camera] smooth_follow, the views from inside: the camera's eased offset (model units) the upper body takes at the pose's end (PoseBody, by each
+// bone's share - the hands, what they hold and the chest the whole of it). A read through PoseModel is of those bones: it carries the whole offset.
+thread_local float t_upperShift[3] = {};
+thread_local float t_bodyShift[3] = {};   // ... and its part across the floor every bone takes whole (the legs too)
 void PoseModel(Mat& model) {
-    if (t_poseUp == 0.0f) return;
-    for (int k = 0; k < 3; ++k) model.m[12 + k] += t_poseUp * model.m[4 + k];   // (0, up, 0) through the model's own rows
+    const float u[3] = {t_upperShift[0] + t_bodyShift[0], t_upperShift[1] + t_bodyShift[1], t_upperShift[2] + t_bodyShift[2]};
+    if (t_poseUp == 0.0f && u[0] == 0.0f && u[1] == 0.0f && u[2] == 0.0f) return;
+    for (int k = 0; k < 3; ++k)
+        model.m[12 + k] += t_poseUp * model.m[4 + k] + u[0] * model.m[k] + u[1] * model.m[4 + k] + u[2] * model.m[8 + k];
 }
 
 // [shapeshift] a grafted form's paw grip point against the controller (PawGrip): in the controller's own frame, so the grab adds it to wherever the controller is
@@ -3499,6 +3507,8 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
         formIn = given;
         for (float& e : formIn.eyeModel) e /= drawScale;
         for (float& r : formIn.roomShift) r /= drawScale;
+        for (float& u : formIn.upperShift) u /= drawScale;
+        for (float& u : formIn.bodyShift) u /= drawScale;
         formIn.crouchDrop /= drawScale;
     }
     const Input& in = h.form ? formIn : given;
@@ -3732,6 +3742,12 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     // game's camera trails him across the floor here, and up or down by roomShift[2] (a Leap's arc lifts his model off the camera's ground)
     // only at the end of the pose (t_poseUp): the arms and everything else are worked out with his feet at the model's own height.
     t_poseUp = 0.0f;
+    t_upperShift[0] = t_upperShift[1] = t_upperShift[2] = 0.0f;
+    t_bodyShift[0] = t_bodyShift[1] = t_bodyShift[2] = 0.0f;
+#if D2RVR_FIRST_PERSON
+    if (in.upperShiftOn && !in.along && h.bindOk && std::isfinite(in.upperShift[0] + in.upperShift[1] + in.upperShift[2] + in.bodyShift[0] + in.bodyShift[1] + in.bodyShift[2]))
+        for (int k = 0; k < 3; ++k) { t_upperShift[k] = in.upperShift[k]; t_bodyShift[k] = in.bodyShift[k]; }   // [camera] smooth_follow: added at the end (below, with t_poseUp)
+#endif
     if (in.roomShiftOn && std::isfinite(in.roomShift[0]) && std::isfinite(in.roomShift[1]) && std::isfinite(in.roomShift[2])) {
         for (int i = 0; i < n; ++i) { newW[i].m[12] += in.roomShift[0]; newW[i].m[14] += in.roomShift[1]; }
         t_poseUp = in.roomShift[2];
@@ -6401,6 +6417,25 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
     if (t_poseUp != 0.0f)
         for (int i = 0; i < n; ++i) newW[i].m[13] += t_poseUp;
     t_poseUp = 0.0f;
+    // [camera] smooth_follow, the views from inside (Serg 2026-11-23: "вся верхняя часть тела", "до пояса"): the camera glides over the hero's jerk,
+    // and the upper body with it - every bone above the pelvis moved by the camera's eased offset, by its share (smoothfollow::UpperWeights over the
+    // bind heights: nothing at the pelvis, all of it from the chest up, the belly between, so the trunk stretches and nothing tears at the waist).
+    // The hips and legs stay on the hero, where the game has him. The arms were worked out against the eye as it stands over the hero (the hands'
+    // targets with them): moved whole with the chest they land where the controllers are under the eased camera.
+    if (t_bodyShift[0] != 0.0f || t_bodyShift[1] != 0.0f || t_bodyShift[2] != 0.0f)   // across the floor: the whole body, the legs too (the camera's evenness, a snap aside's glide)
+        for (int i = 0; i < n; ++i) for (int k = 0; k < 3; ++k) newW[i].m[12 + k] += t_bodyShift[k];
+    if (t_upperShift[0] != 0.0f || t_upperShift[1] != 0.0f || t_upperShift[2] != 0.0f) {
+        const int chest = attacklean::Chest(n, h.parent.data(), h.spine, h.upr[0], h.upr[1]);
+        const float pelvisY = h.pelvis >= 0 ? h.bind[h.pelvis].m[13] : h.spine >= 0 ? h.bind[h.spine].m[13] : 0.0f;
+        const float chestY = chest >= 0 ? h.bind[chest].m[13] : pelvisY;
+        std::vector<float> bindY(n), share(n);
+        for (int i = 0; i < n; ++i) bindY[i] = h.bind[i].m[13];
+        smoothfollow::UpperWeights(n, h.parent.data(), h.upper.data(), bindY.data(), pelvisY, chestY, share.data());
+        for (int i = 0; i < n; ++i)
+            if (share[i] > 0.0f) for (int k = 0; k < 3; ++k) newW[i].m[12 + k] += share[i] * t_upperShift[k];
+    }
+    t_upperShift[0] = t_upperShift[1] = t_upperShift[2] = 0.0f;
+    t_bodyShift[0] = t_bodyShift[1] = t_bodyShift[2] = 0.0f;
 #endif
     // [shapeshift] a grafted form: posed in its rig's own units, drawn at drawScale about the model's origin (the feet stay on the ground) -
     // its eyes at the form's height (FormEye). Everything after reads the pose as it is drawn.
@@ -9593,6 +9628,8 @@ void Arms(uintptr_t self) {
     }
     in.roomShiftOn = false;   // [openxr] roomscale_body: from this pose's matrix only (the fresh facing above read it)
     if (in.haveYaw) if (const RoomShiftFn f = g_freshShift.load()) in.roomShiftOn = f(in.roomShift);
+    in.upperShiftOn = false;   // [camera] smooth_follow: the camera's eased offset, this pose's (views from inside)
+    if (in.haveYaw) if (const UpperShiftFn f = g_freshUpper.load()) in.upperShiftOn = f(in.bodyShift, in.upperShift);
     if (in.mode == 2) if (const FreshHandsFn f = g_freshHands.load()) f(&in);
     // [hands] shoulder_draw, the shield: which arm it is on (or put away), stepped once per head sample, before the weight model asks which hand is busy with it
     shieldarmwire::Apply(&in);
@@ -11810,6 +11847,7 @@ bool UnitEntities(std::vector<uint32_t>* out, const char** why) {
 
 void SetFresh(FreshFn fn) { g_fresh.store(fn); }
 void SetFreshRoomShift(RoomShiftFn fn) { g_freshShift.store(fn); }
+void SetFreshUpperShift(UpperShiftFn fn) { g_freshUpper.store(fn); }
 void SetFreshHands(FreshHandsFn fn) { g_freshHands.store(fn); }
 void SetGrabHands(GrabHandsFn fn) { g_grabHands.store(fn); }
 void SetWorldHands(WorldHandsFn fn) { g_worldHands.store(fn); }

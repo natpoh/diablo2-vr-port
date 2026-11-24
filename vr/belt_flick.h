@@ -102,4 +102,54 @@ private:
     bool armed_[2] = {false, false};
 };
 
+// [direct] belt_flick_shift_free (2026-11-24, _tiet_ on 0.222.2, VR F2: "the drink sound, but the potion is never drunk"): with
+// [direct] flat_controller on, the left trigger is the game's Shift in these views (the layout's plain LT), so the trigger held for a
+// flick sent Shift + the belt key - the game's give-the-potion-to-the-mercenary, not a drink. The gate lets the trigger's Shift go for
+// the game once a stick leaves the middle under the hold (a flick on its way) and keeps it let go until the trigger is released; the
+// trigger held with both sticks in the middle stays the game's Shift. A flick that comes before the game can have seen the Shift go
+// (within kShiftLeadMs of letting it go) is held back until then, so the belt key never arrives with Shift still down.
+constexpr uint64_t kShiftLeadMs = 40;   // ~3 frames of the game's pad poll at 72-90 Hz
+
+class ShiftGate {
+public:
+    struct Out {
+        bool shiftOff = false;   // the trigger's Shift is not the game's now
+        int column = -1;         // the belt column to press now (the machine's, perhaps held back a few frames), -1 = none
+        Dir dir = Dir::None;
+        int stick = -1;
+    };
+
+    // One call per frame after Machine::Step. enabled: the gate's key (off: the machine's flick passes at once, Shift untouched).
+    Out Step(const Machine::Out& m, Stick left, Stick right, uint64_t nowMs, bool enabled) {
+        Out o;
+        if (!enabled) {
+            Reset();
+            o.column = m.column; o.dir = m.dir; o.stick = m.stick;
+            return o;
+        }
+        if (!m.holding) {   // let go: Shift is the trigger's again; a flick still held back goes now (Shift is up anyway)
+            off_ = false;
+            if (pending_.column >= 0) { o.column = pending_.column; o.dir = pending_.dir; o.stick = pending_.stick; pending_ = Machine::Out{}; }
+            return o;
+        }
+        const auto away = [](Stick s) { const float l = Len(s); return std::isfinite(l) && l > kOff; };
+        if (!off_ && (m.column >= 0 || away(left) || away(right))) { off_ = true; offAt_ = nowMs; }
+        if (m.column >= 0 && pending_.column < 0) pending_ = m;
+        if (pending_.column >= 0 && nowMs - offAt_ >= kShiftLeadMs) {
+            o.column = pending_.column; o.dir = pending_.dir; o.stick = pending_.stick;
+            pending_ = Machine::Out{};
+        }
+        o.shiftOff = off_;
+        return o;
+    }
+
+    void Reset() { off_ = false; offAt_ = 0; pending_ = Machine::Out{}; }
+    bool ShiftOff() const { return off_; }
+
+private:
+    bool off_ = false;
+    uint64_t offAt_ = 0;
+    Machine::Out pending_;
+};
+
 }  // namespace beltflick

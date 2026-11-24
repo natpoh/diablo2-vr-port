@@ -2616,7 +2616,8 @@ static void TestTurn() {
     CHECK(IsToggle(kDefs[sm]) && kDefs[sm].def == 1.0f, "smooth turning is a toggle, on as shipped");
     CHECK(kDefs[sn].min == kSnapMin && kDefs[sn].max == kSnapMax && kDefs[sn].step == 15.0f && kDefs[sn].def == kSnapDefault, "the angle: 15 - 180 by 15, default 30");
     CHECK(kDefs[sp].max == kSpeedMax && kDefs[sp].step == 30.0f && kDefs[sp].def == kSpeedDefault && Normalize(sp, kSpeedDefault) == kSpeedDefault, "the speed: up to 720 by 30, the default on the grid");
-    CHECK(RowsOn(kPageOptions) == kRowsMax && KeyAt(kPageOptions, kRowsMax - 1) == kKeyPlayers, "the Options page is full: its seventh row is the game's Players");
+    CHECK(RowsOn(kPageOptions) == kRowsTight && KeyAt(kPageOptions, kRowsTight - 1) == kKeyPlayers && KeyAt(kPageOptions, kRowsTight - 2) == KeyOf(L"smooth_follow"),
+          "the Options page is full: its eighth row is the game's Players, the smooth camera ([camera] smooth_follow) above it");
 
     const std::wstring path = g_dir + L"\\turn.ini";
     const std::wstring backup = path + L".before-headset-menu";
@@ -3257,7 +3258,7 @@ static void TestHud() {
             if (r + 1 < kRowsTight) CHECK(!Overlap(kToggle(r, kPageHud), kToggle(r + 1, kPageHud)) && !Overlap(RowDetailRect(r, kPageHud), RowLabel(r + 1, kPageHud)),
                                           "tight rows apart, a name clear of the line above it");
         }
-        CHECK(!TightRows(kPageMelee) && !TightRows(kPageOptions) && !TightRows(kPageVideo) && !TightRows(kPageWorld), "no other page is tight");
+        CHECK(!TightRows(kPageMelee) && !TightRows(kPageVideo) && !TightRows(kPageWorld), "no other page is tight but Options (its eight rows, TestPlayers)");
         // a click steps round Settings' order (the mod's, the game's models, the game's globes) and is written by itself
         const std::wstring path = g_dir + L"\\wristlook.ini";
         Spit(path, "[hud]\r\nhide=1\r\nbar_place=5\r\n[other]\r\nx=1\r\n");
@@ -4103,15 +4104,22 @@ static void TestPlayers() {
     const Def& on = kDefs[kKeyPlayersOn];
     CHECK(!wcscmp(on.section, L"openxr") && !wcscmp(on.key, L"headset_players") && IsToggle(on) && on.def == 0.0f && on.page == kNoPage && !on.live,
           "its switch: [openxr] headset_players, off as shipped, no row");
-    CHECK(CloseRows(kPageOptions) && RowStep(kPageOptions) == kRowStepClose && RowY(6, kPageOptions) + kRowStepClose - 5 <= kStatus.y,
-          "seven rows: the Options page stands them closer, the last above the status line");
+    CHECK(TightRows(kPageOptions) && RowStep(kPageOptions) == kTightRowStep && RowY(7, kPageOptions) + kTightRowStep - 5 <= kStatus.y,
+          "eight rows: the Options page stands them closest, the last above the status line");
+    for (int r = 0; r < kRowsTight; ++r) {
+        CHECK(Inside(kDec(r, kPageOptions)) && Inside(kInc(r, kPageOptions)) && Inside(kVal(r, kPageOptions)) && Inside(kToggle(r, kPageOptions)), "an Options row inside the atlas");
+        if (r + 1 < kRowsTight) CHECK(!Overlap(kToggle(r, kPageOptions), kToggle(r + 1, kPageOptions)) && !Overlap(RowDetailRect(r, kPageOptions), RowLabel(r + 1, kPageOptions)),
+                                      "Options rows apart, a name clear of the line above it");
+    }
     float u, v;
-    Centre(kInc(6, kPageOptions), &u, &v);
+    Centre(kInc(7, kPageOptions), &u, &v);
     CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, kKeyPlayers, 1}), "+ is hit where it is drawn");
-    Centre(kDec(6, kPageOptions), &u, &v);
+    Centre(kDec(7, kPageOptions), &u, &v);
     CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, kKeyPlayers, -1}), "- too");
+    Centre(kToggle(6, kPageOptions), &u, &v);
+    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, KeyOf(L"smooth_follow"), 1}), "the row above is the smooth camera's switch, hit where it is drawn");
     Centre(kInc(5, kPageOptions), &u, &v);
-    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, KeyOf(L"speed"), 1}), "the row above is still the smooth turn speed");
+    CHECK((HitTest(kPageOptions, u, v) == Hit{Kind::Change, KeyOf(L"speed"), 1}), "and above it the smooth turn speed");
     CHECK(!Repeats({Kind::Change, kKeyPlayers, 1}) && Repeats({Kind::Change, KeyOf(L"speed"), 1}), "a held trigger sends one command, not a stream");
 
     // the store neither reads nor writes it
@@ -4179,7 +4187,7 @@ static void TestPlayers() {
         Item minus;
         bool found = false;
         for (const Item& it : Compose(m, {}))
-            if (it.type == Item::Type::Button && it.text == "-" && it.r.y == kDec(6, kPageOptions).y) { minus = it; found = true; }
+            if (it.type == Item::Type::Button && it.text == "-" && it.r.y == kDec(7, kPageOptions).y) { minus = it; found = true; }
         CHECK(found && !minus.enabled, "at 1 the - is greyed");
     }
     // another edit keeps its own line; the panel opened again starts without an answer

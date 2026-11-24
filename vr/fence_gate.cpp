@@ -31,6 +31,7 @@ Gate g_gate;
 
 std::atomic<uint32_t> g_looks{0}, g_heldLooks{0}, g_events{0}, g_heldEvents{0}, g_multi{0}, g_gaveUpTold{0};
 std::atomic<double> g_maxHeldMs{0.0};
+uint32_t g_gaveUpBase = 0;   // given up in gates reset since (SetOn(false)), under g_lock
 
 double NowMs() { return (double)GetTickCount64(); }
 uint64_t Real(ID3D12Fence* f) { return g_origGet ? g_origGet(f) : f->GetCompletedValue(); }
@@ -174,6 +175,7 @@ void SetOn(bool on) {
     g_on.store(on);
     if (!on) {
         AcquireSRWLockExclusive(&g_lock);
+        g_gaveUpBase += g_gate.GaveUp();
         g_gate = Gate{};
         g_tracked.store(0);
         ReleaseSRWLockExclusive(&g_lock);
@@ -210,7 +212,7 @@ Stats TakeStats() {
     s.multi = g_multi.exchange(0);
     s.maxHeldMs = g_maxHeldMs.exchange(0.0);
     AcquireSRWLockShared(&g_lock);
-    const uint32_t all = g_gate.GaveUp();
+    const uint32_t all = g_gaveUpBase + g_gate.GaveUp();
     ReleaseSRWLockShared(&g_lock);
     s.gaveUp = all - g_gaveUpTold.exchange(all);
     return s;

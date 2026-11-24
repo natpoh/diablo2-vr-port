@@ -85,6 +85,10 @@ struct Input {
     float roomShift[3] = {};    // ... model units, x and z: from the hero's place to the floor under your neck (drawn bones only);
                                 // [body] under_camera adds the move under the camera (vr/under_camera.h): the camera's lag across the
                                 // floor, and [2] up - a Leap's arc that the game lifts his model by, taken out or followed by the camera
+    bool upperShiftOn = false;  // [camera] smooth_follow, the views from inside (VR F4, VR F5, flat F3): the drawn body glides with the eased camera -
+    float bodyShift[3] = {};    // the offset's part across the floor (model units) added to every bone at the pose's end, the legs too, and
+    float upperShift[3] = {};   // its height's part to every bone above the pelvis by its share (smoothfollow::UpperWeights: the hips and legs
+                                // none, the chest and all above it whole, the belly between); the head and the hands get the camera's exactly
     bool wrist = false;         // mode 2: the hands turn with the controllers, not only follow the forearm
     float wristDeg[3] = {};     // pitch, yaw, roll on top, in the controller's own axes (mirrored for the left)
     float scale = 1.0f;         // arm reach on top of the hero/user height ratio
@@ -635,6 +639,10 @@ void SetFresh(FreshFn fn);
 // walking and no camera lag, no matrix).
 using RoomShiftFn = bool (*)(float shift[3]);
 void SetFreshRoomShift(RoomShiftFn fn);
+// [camera] smooth_follow (vr/smooth_follow.h): at the hero's pose, right after the fresh facing, the camera's eased offset in his model units in
+// a view from inside, in its two parts (Input::bodyShift across the floor, Input::upperShift the height's). False: none (off, another view).
+using UpperShiftFn = bool (*)(float whole[3], float upper[3]);
+void SetFreshUpperShift(UpperShiftFn fn);
 // [weight] grip_model 1: the grip library's hand step (vrcam registers griplib::HandStep) - where the hand sits on the wood and how its fingers close. The hook uses it only when the
 // weight model says the library holds the weapon (weight::Out::gripLib). None registered: the hook has only its own fit.
 }  // namespace skel

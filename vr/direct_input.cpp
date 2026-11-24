@@ -84,6 +84,9 @@ std::atomic<bool> g_walkFlat{true}; // [direct] walk_flat_views: the left stick 
 // [direct] belt_flick_grip (Serg 2026-11-20 for F5: "прием зелий ... грип + стик"): the LEFT GRIP held + a flick instead of the left trigger - the trigger
 // is the game's Shift in controller mode (a belt key with it is Shift + belt), the grip is bound to nothing in these views. 0 = the left trigger, as before.
 std::atomic<bool> g_beltGrip{false};
+// [direct] belt_flick_shift_free (vr/belt_flick.h ShiftGate): the trigger held for a flick no longer reaches the game as Shift once a stick moves
+// (Shift + belt key was the game's give-to-the-mercenary: _tiet_, 0.222.2). 0 = as before (the trigger's Shift held through the flick)
+std::atomic<bool> g_beltShiftFree{true};
 std::atomic<bool> g_beltFlat{true}; // [direct] belt_flick_flat_views: left trigger + a flick of a stick drinks a belt column in VR F1-F3 (vr/belt_flick.h)
 // [direct] stick_deadzone_*_pct / stick_outer_*_pct: each thumbstick's dead zone and outer edge (vr/stick_shape.h), 0 left, 1 right - in force whatever
 // direct_input says (native OpenXR with BodyWalk's input too: BodyWalk is given the shaped stick)
@@ -176,6 +179,8 @@ struct FeedState {
     bool walkWas = false;
     uint32_t walkCounter = 0;
     beltflick::Machine belt;   // the left trigger + a flick: a belt column (VR F1-F3)
+    beltflick::ShiftGate beltShift;   // [direct] belt_flick_shift_free: the trigger's Shift let go for the flick
+    bool beltShiftOff = false;
     // the plugin's own controller in VR F1-F3: a layout of its own, its release gate, what FeedWalk made of the left stick for its pad
     Layout flatLayout;
     ReleaseGate flatGate;
@@ -221,10 +226,13 @@ void FeedWalk(const D2RVR_XrInput& in, bool focused, bool menu) {
     const float hold = g_beltGrip.load() ? h.squeeze : h.trigger;   // ([direct] belt_flick_grip: the left grip)
     const float trigger = focused && h.active && std::isfinite(hold) ? hold : 0.0f;
     const beltflick::Machine::Out b = s.belt.Step(trigger, left, right, live && g_beltFlat.load());
-    if (b.column >= 0) {
-        if (const BeltSink sink = g_beltSink.load()) sink((uint32_t)b.column, b.stick, (int)b.dir);
+    // (the grip as the hold is bound to nothing here: no Shift to let go)
+    const beltflick::ShiftGate::Out g = s.beltShift.Step(b, left, right, GetTickCount64(), g_beltShiftFree.load() && !g_beltGrip.load() && g_flatCtl.load());
+    if (g.column >= 0) {
+        if (const BeltSink sink = g_beltSink.load()) sink((uint32_t)g.column, g.stick, (int)g.dir);
     }
     s.beltHolding = b.holding;
+    s.beltShiftOff = g.shiftOff;
     if (live && !g_flatCtl.load()) {   // the controller is off: a control pressed that nothing of ours takes here is said (rarely) in the log
         if (const char* what = PressedElsewhere(in)) {
             const ULONGLONG now = GetTickCount64();
@@ -395,6 +403,7 @@ void FeedFlatController(const D2RVR_XrInput& in, bool focused, bool menu) {
         o.pad.ly = s.walkLY;
     }
     if (s.beltHolding) { o.pad.lx = o.pad.ly = o.pad.rx = o.pad.ry = 0; }   // a flick's trigger is held: the sticks are the belt's
+    if (s.beltShiftOff) o.pad.lt = 0;   // ([direct] belt_flick_shift_free: a flick under way - the trigger is not the game's Shift)
     if (o.skillPanel && !s.flatPanelWas) g_panelAt.store(GetTickCount64());   // a long press asks for the overlay, once (TakeSkillPanelToggle)
     s.flatPanelWas = o.skillPanel;
     o.skillPanel = false;
@@ -649,6 +658,18 @@ void LoadSettings(const wchar_t* ini) {
         if (grip != g_beltGrip.exchange(grip) && on)
             Log(grip ? "vrcam: direct input - [direct] belt_flick_grip=1: the belt's potions in VR F1, F2, F3 and F5 with the LEFT GRIP held + a flick of a stick"
                      : "vrcam: direct input - [direct] belt_flick_grip=0: the belt's potions with the left trigger held + a flick, as before");
+    }
+    {
+        const bool free = GetPrivateProfileIntW(L"direct", L"belt_flick_shift_free", 1, ini) != 0;
+        static int told = -1;
+        g_beltShiftFree.store(free);
+        if (on && (int)free != told) {
+            told = (int)free;
+            Log(free ? "vrcam: direct input - [direct] belt_flick_shift_free=1: a flick with the left trigger held lets the trigger's Shift go for the game (the belt key "
+                       "goes out alone: a drink, not Shift + belt = the potion to the mercenary); the trigger alone stays the game's Shift"
+                     : "vrcam: direct input - [direct] belt_flick_shift_free=0: the trigger's Shift is held through a flick, as before (with flat_controller the belt key "
+                       "is then Shift + belt)");
+        }
     }
     g_beltFlat.store(beltFlat);
     static int toldBelt = -1;

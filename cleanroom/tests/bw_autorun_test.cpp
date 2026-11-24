@@ -1,6 +1,7 @@
 // Offline checks of tools/settings/bw_autorun.h: what D2R VR Settings starts or stops of BodyWalk and FlatVR at the switch of the 3D in the
 // headset (FlatVR <-> native OpenXR) and at the game's start - by mode, already running, not installed, a second copy, the keys off; BodyWalk
-// is never closed - and the steps of a gentle close of a FlatVR.exe (never killed once it is on its way out).
+// is never closed; an idle FlatVR.exe is left open while FlatVR's headset bridge runs - and the steps of a gentle close of a FlatVR.exe
+// (never killed once it is on its way out).
 // Run: build/Release/bw_autorun_test.exe (exit code 0 = passed)
 
 #include <cstdio>
@@ -211,8 +212,76 @@ int main() {
         f.walkByBodyWalk = false;
         CHECK(Idle(Decide(f)) && Decide(f).why == Why::NativeWalkInPlace);
     }
+    // --- native with FlatVR's headset bridge running (BodyWalkStreamer.exe, Meta Quest): a FlatVR.exe that runs no session holds no headset -
+    //     left open, and the log says so; one that runs a session is closed as before
+    for (When w : {When::ModeSwitch, When::GameStart})
+        for (bool direct : {true, false}) {
+            Facts f = Native(w);
+            f.directInput = direct;
+            f.flatVrRunning = false;   // FlatVR.exe idle beside a running BodyWalk
+            f.flatVrAppRunning = 1;
+            f.bridgeRunning = true;
+            Plan p = Decide(f);
+            CHECK(Idle(p) && p.why == Why::NativeFlatVrOnBridge);
+            f.flatVrAppRunning = 2;   // two of them: the same
+            CHECK(Idle(Decide(f)) && Decide(f).why == Why::NativeFlatVrOnBridge);
+            f.flatVrAppRunning = 1;
+            f.bodyWalkRunning = 0;   // no BodyWalk and none to start: the same
+            f.bodyWalkFound = false;
+            f.linkUp = f.linkStopsFlatVr = false;
+            p = Decide(f);
+            CHECK(Idle(p) && p.why == Why::NativeFlatVrOnBridge);
+            f.bridgeRunning = false;   // the bridge gone: closed, as before
+            p = Decide(f);
+            CHECK(p.closeFlatVrApp && p.why == Why::NativeCloseFlatVr);
+            f = Native(w);
+            f.directInput = direct;
+            f.flatVrAppRunning = 1;   // a session running (the head sample moves): closed, bridge or not
+            f.bridgeRunning = true;
+            p = Decide(f);
+            CHECK(p.closeFlatVrApp && !p.stopFlatVr && p.why == Why::NativeCloseFlatVr);
+            f.bodyWalkRunning = 0;
+            f.linkUp = f.linkStopsFlatVr = false;
+            p = Decide(f);
+            CHECK(p.closeFlatVrApp && p.why == Why::NativeCloseFlatVr);
+            f = Native(w);
+            f.directInput = direct;
+            f.bridgeRunning = true;   // FlatVR inside BodyWalk (no FlatVR.exe): the bridge changes nothing - stopped through Game Link
+            p = Decide(f);
+            CHECK(p.stopFlatVr && !p.closeFlatVrApp && p.why == Why::NativeStopFlatVr);
+            f.flatVrRunning = false;   // nothing running but the streamer: nothing to do, nothing claimed
+            CHECK(Idle(Decide(f)) && Decide(f).why == Why::Nothing);
+            f = Native(w);
+            f.directInput = direct;
+            f.flatVrRunning = false;
+            f.flatVrAppRunning = 1;
+            f.bridgeRunning = true;
+            f.closeOn = false;   // the key off: nothing stopped or closed anyway, and no line about the bridge
+            CHECK(Idle(Decide(f)) && Decide(f).why == Why::Nothing);
+        }
+    {   // ... and at the game's start through BodyWalk's Mapping with none running: BodyWalk is started, the idle FlatVR.exe on the bridge stays
+        Facts f = Native(When::GameStart);
+        f.directInput = false;
+        f.bodyWalkRunning = 0;
+        f.linkUp = f.linkStopsFlatVr = false;
+        f.flatVrRunning = false;
+        f.flatVrAppRunning = 1;
+        f.bridgeRunning = true;
+        Plan p = Decide(f);
+        CHECK(p.startBodyWalk && !p.closeFlatVrApp && !p.stopFlatVr && p.why == Why::NativeStartBodyWalk);
+        f.bridgeRunning = false;   // (without the bridge: BodyWalk started and FlatVR.exe closed, as before)
+        p = Decide(f);
+        CHECK(p.startBodyWalk && p.closeFlatVrApp && p.why == Why::NativeCloseFlatVr);
+    }
+    {   // FlatVR mode: the bridge has nothing to say
+        Facts f = FlatVr(When::GameStart);
+        f.flatVrAppRunning = 1;
+        f.bridgeRunning = true;
+        Plan p = Decide(f);
+        CHECK(p.startBodyWalk && p.startFlatVr && !p.closeFlatVrApp && p.why == Why::FlatVrStart);
+    }
     {   // every combination: the rules that always hold
-        for (int bits = 0; bits < (1 << 14); ++bits) {
+        for (int bits = 0; bits < (1 << 15); ++bits) {
             Facts f;
             f.when = bits & 1 ? When::GameStart : When::ModeSwitch;
             f.vr = (bits & 2) != 0;
@@ -228,7 +297,20 @@ int main() {
             f.flatVrAppRunning = bits & 2048 ? 1 : 0;
             f.walkInPlace = (bits & 4096) != 0;
             f.walkByBodyWalk = (bits & 8192) != 0;
+            f.bridgeRunning = (bits & 16384) != 0;
             const Plan p = Decide(f);
+            {   // the bridge: an idle FlatVR.exe is never closed with it, a FlatVR.exe running a session always is (native, the key on);
+                // anywhere else the plan is the one without the bridge
+                CHECK(!(f.bridgeRunning && !f.flatVrRunning && p.closeFlatVrApp));
+                CHECK(!(f.vr && f.native && f.closeOn && f.flatVrAppRunning && f.flatVrRunning) || p.closeFlatVrApp);
+                CHECK((p.why == Why::NativeFlatVrOnBridge) <= (f.bridgeRunning && f.flatVrAppRunning && !f.flatVrRunning && !p.closeFlatVrApp));
+                Facts g = f;
+                g.bridgeRunning = false;
+                const Plan q = Decide(g);
+                CHECK(p.startBodyWalk == q.startBodyWalk && p.startFlatVr == q.startFlatVr && p.stopFlatVr == q.stopFlatVr);
+                const bool spared = f.vr && f.native && f.closeOn && f.bridgeRunning && f.flatVrAppRunning && !f.flatVrRunning;
+                CHECK(spared ? (q.closeFlatVrApp && !p.closeFlatVrApp) : (p.closeFlatVrApp == q.closeFlatVrApp && p.why == q.why));
+            }
             CHECK(!(p.startFlatVr && p.stopFlatVr));
             CHECK(!(p.startBodyWalk && f.bodyWalkRunning));   // never a second BodyWalk
             CHECK(!(p.startBodyWalk && !f.bodyWalkFound));

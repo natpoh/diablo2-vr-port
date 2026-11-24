@@ -14,9 +14,11 @@ struct Drive {
 };
 
 // Does the weight model hold this weapon: a weapon alone in EITHER hand's slot - not a weapon in each hand (then each blade pushes the doll itself: vr/blade_push.h).
-// leftWeapon: a weapon in the game's left slot (D2RVR_LEFT_WEAPON); rightHeld: anything in its right slot (HandsHeld bit 0). The headset 2026-10-23: a weapon
+// leftWeapon: a weapon in the game's left slot (D2RVR_LEFT_WEAPON); rightWeapon: a WEAPON in its right slot (gamestate::HandKind(0) != 0: a claw counts, a shield
+// or a quiver does not). A player's log 2026-11-07 (0.205.0, an Amazon, a shield in the right slot and a sword in the left): with "anything in the right slot"
+// the sword was not alone, never the weight model's, and with strike_by_force it never hit a monster nor broke an urn. The headset 2026-10-23: a weapon
 // in the left hand alone was left out with the second weapon («оружие в левой руке - кукла прозрачная»).
-inline bool HeldAlone(bool leftWeapon, bool rightHeld) { return !leftWeapon || !rightHeld; }
+inline bool HeldAlone(bool leftWeapon, bool rightWeapon) { return !leftWeapon || !rightWeapon; }
 
 // What the weight model holds for the hands as the game has them (vrcam PushArms): `wanted` - [weight] on, F4, the body on the controllers; `kind` - the
 // heft::hold::Kind of the slot the game's weapon kind comes from, -1 for none (nothing, a bow or crossbow - they have their own draw -, claws, orbs);

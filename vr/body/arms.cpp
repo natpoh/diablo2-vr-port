@@ -324,7 +324,8 @@ void PushArms() {
         // A weapon alone in EITHER hand's slot (the game's left one too: «оружие в левой руке - кукла прозрачная», the headset 2026-10-23 - it was left out with
         // the second weapon). A weapon in each hand: the first (the slot the game's kind comes from) is the weight model's, the other a body of its own beside it
         // (vr/weight.cpp StepSecond: «когда два оружия в двух руках, они проходят сквозь куклу») - one hand on each
-        const bool alone = meleetouch::HeldAlone((two & D2RVR_LEFT_WEAPON) != 0, (held & 1u) != 0);
+        // (a shield in the right slot beside a weapon in the left: the weapon is alone - HandKind reads 0 for a shield or a quiver)
+        const bool alone = meleetouch::HeldAlone((two & D2RVR_LEFT_WEAPON) != 0, gamestate::HandKind(0) != 0);
         const int otherKind = alone ? -1 : kindOf(gamestate::HandKind((int)(gamestate::WeaponHand() & 1u) ^ 1));
         // (a bow with its quiver: no kind on either side - nothing held, the draw keeps both hands; weight_drive_test)
         const meleetouch::Holds holds = meleetouch::WeightHolds(own && in.mode == 2 && viewgate::F4() && g_set.weightOn.load(), kind, alone, otherKind);

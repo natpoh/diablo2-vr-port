@@ -4,6 +4,7 @@
 #define NOMINMAX
 #endif
 #include "dome_atlas.h"
+#include "dome_backing.h"   // [sky] dome_atlas_tiled: committed (whole) or reserved (tiled)
 #include "sky_atlas.h"   // the pictures' layout (the zenith's square)
 
 #include <windows.h>
@@ -140,6 +141,8 @@ ID3D12Resource* g_atlas = nullptr;   // the game's picture (a reference of ours:
 // ours
 ID3D12Resource* g_tex = nullptr;
 bool g_reserved = false;
+bool g_tiledKey = false;             // [sky] dome_atlas_tiled as the presents last handed it (BakeIn::tiled)
+bool g_madeTiledKey = false;         // ... as it was when ours was made
 uint32_t g_w = 0, g_h = 0, g_mips = 0, g_bandRows = 0;
 ID3D12Heap* g_heap = nullptr;
 UINT g_heapTiles = 0;
@@ -325,7 +328,9 @@ UINT RegionsFor(int band, std::vector<Region>* out) {
 bool EnsureTexture(ID3D12Device* dev) {
     if (!g_atlas) return false;
     const D3D12_RESOURCE_DESC ad = g_atlas->GetDesc();
-    if (g_tex && g_w == ad.Width && g_h == ad.Height && g_mips == ad.MipLevels) return true;
+    if (domebacking::Keep(g_tex != nullptr, g_w == ad.Width && g_h == ad.Height && g_mips == std::min<uint32_t>(ad.MipLevels, 16), g_madeTiledKey,
+                          g_tiledKey))
+        return true;
     Retire(g_tex);
     g_tex = nullptr;
     Retire(g_heap);
@@ -351,7 +356,9 @@ bool EnsureTexture(ID3D12Device* dev) {
     const bool tier2 = SUCCEEDED(dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o, sizeof o)) &&
                        o.TiledResourcesTier >= D3D12_TILED_RESOURCES_TIER_2;
     g_reserved = false;
-    if (tier2) {
+    g_madeTiledKey = g_tiledKey;
+    domebacking::Choice way = domebacking::Choose(g_tiledKey, tier2);
+    if (way.reserved) {
         rd.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
         if (SUCCEEDED(dev->CreateReservedResource(&rd, kRead, nullptr, IID_PPV_ARGS(&g_tex)))) {
             UINT n = 0, subs = g_mips;
@@ -371,6 +378,7 @@ bool EnsureTexture(ID3D12Device* dev) {
             }
         }
         rd.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        if (!g_reserved) way = domebacking::Fallback();
     }
     if (!g_tex) {
         D3D12_HEAP_PROPERTIES hp{};
@@ -400,9 +408,7 @@ bool EnsureTexture(ID3D12Device* dev) {
         dev->CreateRenderTargetView(m < g_mips ? g_tex : g_gain, &r, h);
     }
     g_clear = !g_reserved;   // (made whole: black before the first bake; reserved: once its tiles are mapped)
-    Line("vrcam: game sky - the dome's colours in the game: our texture made, %ux%u, %u mips, R11G11B10 - %s", g_w, g_h, g_mips,
-         g_reserved ? "only the shown act's band and the cave's backed (reserved, tiled resources tier 2+)"
-                    : "all of it backed (the card has no tiled resources tier 2)");
+    Line("vrcam: game sky - the dome's colours in the game: our texture made, %ux%u, %u mips, R11G11B10 - %s", g_w, g_h, g_mips, way.why);
     return true;
 }
 
@@ -626,6 +632,7 @@ void Present(ID3D12Device* dev, ID3D12CommandQueue* q, ID3D12GraphicsCommandList
         if (g_pipeOk) Line("vrcam: game sky - the dome's colours in the game: the bake is ready; the game's next view of the domes' picture is made on ours");
     }
     g_on = in.on && g_pipeOk;
+    g_tiledKey = in.tiled;   // (taken where ours is made: the game's next view of its picture)
     g_lastPresent = GetTickCount64();
     if (!g_ours || !g_tex || !q || !l) return;
     const int band = in.band >= 0 && in.band < kCave ? in.band : g_mapped >= 0 ? g_mapped : -1;

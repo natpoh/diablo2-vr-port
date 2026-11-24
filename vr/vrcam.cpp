@@ -228,11 +228,14 @@ float ViewHeight() {
 // How far a jump lifts the eyes now, world units: on top of ViewHeight in the
 // view only - the world's scale must not change in mid-air.
 float UnderLiftForView();   // [body] under_camera (below)
+std::atomic<float> g_viewJumpLift{0.0f};   // the last JumpLift a view took ([camera] smooth_follow's log: how much follow_jump moves the eyes)
 float JumpLift() {
     float eye = 0.0f, lift = 0.0f;
     const float arc = UnderLiftForView();   // [body] under_camera + leap_camera_up: the game's own lift of the model on a Leap's arc
-    if (ThirdPerson() || !g_set.followJump.load() || !skel::HeroEye(&eye, &lift)) return arc;
-    return lift * g_heroScale.load() + arc;
+    if (ThirdPerson() || !g_set.followJump.load() || !skel::HeroEye(&eye, &lift)) { g_viewJumpLift.store(arc); return arc; }
+    const float up = lift * g_heroScale.load() + arc;
+    g_viewJumpLift.store(up);
+    return up;
 }
 
 // The head as the last view saw it: its centre (before the eyes' half shift) and where it looks
@@ -1094,7 +1097,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.222.2";
+static const char g_info_version[] = "0.223.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1311,6 +1314,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     skel::TrackHero(true);   // the hero's SkeletonInstance is how his facing is found (FacingStructural)
     skel::SetFresh(&FreshYawInModel);
     skel::SetFreshRoomShift(&FreshRoomShift);
+    skel::SetFreshUpperShift(&FreshUpperShift);   // [camera] smooth_follow: the upper body with the eased camera (views from inside)
     skel::SetFreshHands(&FreshHands);
     weight::SetLog(&Log);
     grabwire::SetLog(&Log);                  // [weight] grab_bodies

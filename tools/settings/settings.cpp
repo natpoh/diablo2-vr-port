@@ -74,6 +74,7 @@
 #include "turn_mode.h"       // [turn] smooth / snap / speed: how the right stick turns, and what an older ini's snap=0 means (the plugin's rule)
 #include "crash_reply.h"         // our reply to a crash report the player sent: sent.jsonl / replies.jsonl, the answer, the notice (tested)
 #include "d2r_vr_crash_watch.h"   // [support] crash_reports / send_logs: D2R VR Crash Reporter's place, its quiet event, a report's state (docs/crash_watchdog.md)
+#include "problem_report.h"       // Report a problem: the issue's address, issues.jsonl, the description, the settings changed (docs/crash_watchdog.md section 8)
 #include "rtss_detect.h"         // [support] rtss_warning: RivaTuner's programs by name (the Home Warning row, UpdateRtssWarning)
 #include "game_version.h"        // the game data's version from D2RLoader's log: older than 3.x a Warning on Home (UpdateGameVersionWarning; crash group K)
 #include "mod_layout.h"      // D2R VR as the D2RLoader mod D2R-VR: its ini and ReShade under <game>\mods\D2R-VR (shared/mod_layout.h)
@@ -1203,6 +1204,16 @@ std::vector<Item> g_items = {
     // d2rloader\d2r_vr_libs, offers a report to the BodyWalk server after a game that closed badly, and sends the Collect logs zip on the button
     // below - each only on its own Send button, with every file shown first. Both ticks off (the default) and greyed while it is not there.
     Hide(Slider(L"@crashrep", L"found", L"", 0, 1, 1, 0)),
+    // Report a problem (shared/problem_report.h, docs/crash_watchdog.md section 8; Serg 2026-11-10): a problem that is not a crash. The player
+    // describes it in a small window; the Collect logs zip goes with that text and the settings changed from the shipped ones through the
+    // reporter's --send-logs window (Send there). The server opens a GitHub issue for it at once; its link comes back and the button below opens it.
+    Needs(L"@crashrep", L"found", 1, Button(L"@run", L"report_problem", L"Report a problem",
+           L"For something that is wrong but not a crash - the fog, the ceilings, a picture, the controls. Describe it in the window that opens; "
+           L"the logs and your settings are collected as Collect logs does and shown in the window that sends them to the BodyWalk server "
+           L"(your Windows user and PC name, character names, addresses and passwords taken out). Nothing is sent until you press Send there. "
+           L"The server opens a GitHub issue for it, and you get its link to follow it.")),
+    Hide(Button(L"@run", L"problem_issue", L"Follow my problem report on GitHub",
+           L"Opens the GitHub issue of the problem you reported last, in your browser: what we found and what is done about it.")),
     Status(L"crashrep", L"Crash reports: off"),
     // Our reply to a report the player sent (shared/crash_reply.h): asked of the BodyWalk server at most once an hour with the report's number
     // and token only; shown here until dismissed. Only while one of the two ticks below is on and a sent report waits for an answer.
@@ -1642,6 +1653,17 @@ std::vector<Item> g_items = {
     Only(kFlat, Slider(L"camera", L"flat_shift_y", L"Move the picture down, % (F2, F3)", -50, 50, 0.5f, 0,
            L"Flat mode, third and first person: the whole picture moved down by this share of its height (minus = up). The log says "
            L"where the hero stands on the picture (\"flat picture\") and the values that would put his feet in the middle. 0 = as before. Live.")),
+    // [camera] smooth_follow (Serg 2026-11-22, Act 3's jungle: "камеру трясёт" when the hero jerks over the ground's bumps; 2026-11-23: "и в 2д виде";
+    // vr/smooth_follow.h): our camera's anchor eased over a jerk of the hero in first and third person, VR and flat; walking followed exactly, a
+    // teleport / portal / recentre at once. Off by default.
+    Toggle(L"camera", L"smooth_follow", L"Smooth camera over bumps and steps", 1,
+           L"When the hero jerks over a bump, a step or a stair, or the game shoves him aside, the camera glides up, down or aside to him "
+           L"instead of jumping, its height follows the uneven ground smoothly and its run across it is made even - in VR F4 and F5 (first person), VR F2 (behind), and on the monitor in F3 (inside) and F2 (behind). From inside, your body glides with the camera "
+           L"- all of it across the ground, only down to the waist up and down (the legs stay on the ground). Your head still moves the view "
+           L"at once; walking and running are followed exactly; a teleport, a waypoint, a town portal and a recentre still jump at once. "
+           L"The game's own view from above (F1) and VR F3 (the game on your floor) are not changed. Live."),
+    Needs(L"camera", L"smooth_follow", 1, Slider(L"camera", L"smooth_follow_ms", L"Smooth camera: glide time, ms", 30, 1000, 10, 500,
+           L"How long the camera takes to catch up after a jerk. Longer = softer, but the world lags the hero for longer.")),
     Only(kVr, Toggle(L"head", L"yaw_from_head", L"Turn with the headset", 1, L"Needs BodyWalk with the Game Link plugin.")),
     Only(kVr, Needs(L"head", L"yaw_from_head", 1, Invert(L"head", L"yaw_sign", L"Reverse turning", -1, L"Tick if turning the head left turns the view right."))),
     Only(kVr, Toggle(L"head", L"pitch_from_head", L"Look up and down with the headset", 1)),
@@ -2545,6 +2567,12 @@ std::vector<Item> g_items = {
            L"The potions above (F1, F2, F3 and F5) with the LEFT GRIP held + a flick of a stick, in place of the left trigger. The grip does nothing else "
            L"in these views; the left trigger is the game's Shift there (a belt key with it held is Shift + belt) and stays the second row of skills. "
            L"Live. Off: the left trigger, as before."))),
+    // [direct] belt_flick_shift_free (2026-11-24, _tiet_ on 0.222.2: the drink sound, no potion - Shift + belt gave it to the mercenary)
+    Needs(L"openxr", L"direct_input", 1, Needs(L"direct", L"belt_flick_flat_views", 1, Toggle(L"direct", L"belt_flick_shift_free", L"... the trigger lets go of Shift for the flick", 1,
+           L"With the controller playing in F1, F2, F3 the left trigger is the game's Shift, and Shift + a belt key is the game's \"give the potion to "
+           L"the mercenary\" - the drink sound, but no potion for you. Ticked: as soon as a stick moves while the trigger is held, the game no longer "
+           L"sees Shift (until you let the trigger go), and the belt key goes out alone, so you drink. The trigger held with the sticks in the middle "
+           L"is still Shift. Live. Off: Shift held through the flick, as before."))),
     Needs(L"openxr", L"direct_input", 1, Toggle(L"openxr", L"direct_bodywalk_walk", L"BodyWalk's walking still walks the hero (with the controllers' stick)", 1,
            L"With the controls above: BodyWalk walks by the motion of your body - steps in place, an arm swing, a lean - and turns it into a "
            L"walking stick. On: BodyWalk is still given your head and hands (never a button or a stick of the controllers: it presses nothing "
@@ -4385,6 +4413,11 @@ std::vector<Item> g_items = {
            L"under it, the void and the fog showing through. Ticked, it closes into a whole sphere and its lower half is one colour - "
            L"the sky's own at the horizon (with a fog drawn, the fog's: they meet in one colour). In every act, VR and flat. This "
            L"program makes the dome's models again at once; the game takes them at its next start. Off: the open dome, as before.")),
+    Needs(L"sky", L"game_sky", 1, Toggle(L"sky", L"dome_atlas_tiled", L"The game's sky: only the shown part in video memory", 0,
+           L"Our picture of the game's sky is held whole in video memory (about 134 MB) by default. Ticked, only the shown act's part "
+           L"is held (about 22 MB, a tiled texture - on cards that support tiled resources tier 2), as up to 0.222.5. That way was "
+           L"suspected in GPU hangs (the game freezing, then closing) on 6-8 GB cards such as the RTX 2060, 2080 and 3050, so it is off "
+           L"by default. The sky looks the same either way. Counts from the game's next start.")),
     Toggle(L"sky", L"game_skybox", L"Arreat Summit: the sky dome far out", 0,
            L"At the Arreat Summit (level 120) and the uber Summit (137) the game-drawn sky dome is laid as far out as the depth buffer holds "
            L"it, so the game's mist along the cliffs stays in front of it however far. Off: the Summits as any open-air act 5 area - the dome "
@@ -10031,6 +10064,7 @@ void UpdateGameVersionWarning() {
     }
 }
 void UpdateReplyNotice();   // (below: our reply to a sent report, on Home)
+std::string ReadSmallFile(const std::wstring& path);
 void UpdateCrashRepStatus() {
     static ULONGLONG at = 0;
     static int last = -1;
@@ -10061,6 +10095,13 @@ void UpdateCrashRepStatus() {
     }
     SetStatus(L"crashrep", state, line.c_str());
     UpdateReplyNotice();   // (the replies file is looked at with it, every 3 s)
+    if (Item* b = FindItem(L"@run", L"problem_issue")) {   // Report a problem: a GitHub issue to follow
+        const bool none = LogsFolder().empty() || problemreport::ParseIssues(ReadSmallFile(LogsFolder() + L"\\crash_reports\\issues.jsonl")).empty();
+        if (b->hidden != none) {
+            b->hidden = none;
+            LayoutPage();
+        }
+    }
     if (Item* b = FindItem(L"@run", L"crash_offer"); b && b->hidden != g_crashPending.empty()) {
         b->hidden = g_crashPending.empty();
         LayoutPage();
@@ -10149,6 +10190,20 @@ bool ReplyGet(const std::wstring& path, int* status, std::string* body) {
     return ok;
 }
 
+// Report a problem: the GitHub issue in the server's answer about report `id`, kept in crash_reports\issues.jsonl (once). True: one is known.
+bool SaveProblemIssue(const std::wstring& dir, int id, const std::string& answer) {
+    if (problemreport::ParseIssues(ReadSmallFile(dir + L"issues.jsonl")).count(id)) return true;
+    const std::string url = problemreport::ParseIssue(answer);
+    if (url.empty()) return false;
+    if (FILE* f = _wfopen((dir + L"issues.jsonl").c_str(), L"ab")) {
+        const std::string line = problemreport::IssueLine(id, url);
+        fwrite(line.data(), 1, line.size(), f);
+        fclose(f);
+    }
+    LogLine(L"problem report: report #" + std::to_wstring(id) + L" has its issue " + Widen(url));
+    return true;
+}
+
 // One poll: every sent report without an answer asked once; the answers appended to replies.jsonl. Returns how many new replies came.
 int PollReplies(const std::wstring& dir) {
     const std::vector<crashreply::Sent> sent = crashreply::ParseSent(ReadSmallFile(dir + L"sent.jsonl"));
@@ -10163,6 +10218,7 @@ int PollReplies(const std::wstring& dir) {
             LogLine(L"crash replies: the server did not answer (report #" + std::to_wstring(s.id) + L") - next hour again");
             break;
         }
+        if (status == 200) SaveProblemIssue(dir, s.id, body);   // Report a problem: the GitHub issue, with "none" too
         crashreply::Reply r;
         if (status == 200 && crashreply::ParseAnswer(body, &r) == 1) {
             r.id = s.id;
@@ -10739,10 +10795,12 @@ void AutoRun(bwauto::When when) {
     f.linkStopsFlatVr = f.linkUp && (caps & BW_LINK_CAP_FLATVR_RUNNING) != 0;
     f.flatVrRunning = FlatVrRunningNow();
     f.flatVrAppRunning = (int)ProcessIds(L"FlatVR.exe").size();
+    f.bridgeRunning = !ProcessIds(L"BodyWalkStreamer.exe").empty();   // FlatVR's headset bridge (Meta Quest): an idle FlatVR.exe is left open then
     const bwauto::Plan p = bwauto::Decide(f);
     AutoSay(std::wstring(L"bodywalk: ") + (when == bwauto::When::GameStart ? L"the game's start" : L"3D in the headset switched") + L": " +
             bwauto::Text(p.why) + L" (BodyWalk running " + std::to_wstring(f.bodyWalkRunning) + (f.linkUp ? L", Game Link up" : L", no Game Link") +
-            (f.flatVrRunning ? L", FlatVR running" : L"") + (f.flatVrAppRunning ? L", FlatVR.exe running" : L"") + L")");
+            (f.flatVrRunning ? L", FlatVR running" : L"") + (f.flatVrAppRunning ? L", FlatVR.exe running" : L"") +
+            (f.bridgeRunning ? L", headset bridge running" : L"") + L")");
     if (p.stopFlatVr)
         if (BW_LinkRequests* r = LinkRequests()) bw::link::Request(r, &r->flatvrRunning, 0);
     if (p.closeFlatVrApp && !g_autoClosing.exchange(true)) {
@@ -12684,7 +12742,45 @@ int RunHeadsetReport(const std::wstring& out) {
     return (int)code;
 }
 
-void CollectThread(HWND wnd, std::wstring game, bool running) {
+// Report a problem: problem.txt (the player's words) and settings_changed.txt (d2r_vr.ini against the shipped d2r_vr.default.ini beside it)
+// in a folder of their own in TEMP (D2R_VR_problem_<time>), which the packing script copies into the zip's top; "" when it could not be made.
+// problem.txt's header carries the view and headset picked in the window (g_problemView / g_problemHeadset, problemreport::kViews /
+// kHeadsets) and whether the game runs: the server's template issue is made of those fixed values only, never of the words below them.
+std::atomic<int> g_problemView{-1}, g_problemHeadset{-1};   // (set by ReportProblem before the collect starts; one collect at a time)
+std::wstring WriteProblemFiles(const std::wstring& problem, const wchar_t* stamp, bool running) {
+    wchar_t tmp[MAX_PATH + 1] = {};
+    const DWORD tl = GetTempPathW(MAX_PATH, tmp);
+    if (tl == 0 || tl >= MAX_PATH) return std::wstring();
+    const std::wstring dir = std::wstring(tmp) + L"D2R_VR_problem_" + stamp;
+    if (!CreateDirectoryW(dir.c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return std::wstring();
+    auto put = [&](const wchar_t* file, const std::string& text) {
+        if (FILE* f = _wfopen((dir + L"\\" + file).c_str(), L"wb")) {
+            fwrite("\xEF\xBB\xBF", 1, 3, f);
+            fwrite(text.data(), 1, text.size(), f);
+            fclose(f);
+        }
+    };
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    char when[40];
+    snprintf(when, sizeof when, "%04d-%02d-%02d %02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+    put(L"problem.txt", problemreport::ProblemText(Utf8Narrow(D2RVR_VERSION_W), when, g_problemView.load(), g_problemHeadset.load(),
+                                                   running ? 1 : 0, Utf8Narrow(problem)));
+    std::wstring def = g_ini;
+    def = def.substr(0, def.find_last_of(L'\\') + 1) + L"d2r_vr.default.ini";
+    const std::string shipped = ReadSmallFile(def);
+    put(L"settings_changed.txt", shipped.empty() ? std::string("No d2r_vr.default.ini beside d2r_vr.ini: the settings changed are not known.\r\n")
+                                                 : problemreport::IniDiffText(ReadSmallFile(g_ini), shipped));
+    return dir;
+}
+void RemoveProblemFiles(const std::wstring& dir) {
+    if (dir.empty() || dir.find(L"D2R_VR_problem_") == std::wstring::npos) return;
+    DeleteFileW((dir + L"\\problem.txt").c_str());
+    DeleteFileW((dir + L"\\settings_changed.txt").c_str());
+    RemoveDirectoryW(dir.c_str());
+}
+
+void CollectThread(HWND wnd, std::wstring game, bool running, std::wstring problem) {
     if (running) {
         wchar_t v[32];
         swprintf_s(v, L"%lu", GetTickCount());
@@ -12712,6 +12808,11 @@ void CollectThread(HWND wnd, std::wstring game, bool running) {
     wchar_t name[64];
     swprintf_s(name, L"D2R_VR_logs_%04d-%02d-%02d_%02d-%02d-%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
     const std::wstring zip = dir + L"\\" + name + L".zip";
+    const std::wstring extra = problem.empty() ? std::wstring() : WriteProblemFiles(problem, name + 12, running);   // (name + 12: the time of "D2R_VR_logs_<time>")
+    struct ExtraGone {
+        std::wstring dir;
+        ~ExtraGone() { RemoveProblemFiles(dir); }
+    } extraGone{extra};
     std::wstring script = LR"PS($ErrorActionPreference='SilentlyContinue'
 $g=__GAME__; $z=__ZIP__; $n=__NAME__
 $tmp=[IO.Path]::GetTempPath(); if(-not $tmp -or -not $n -or ($n -notlike 'D2R_VR_logs_*')){ exit 3 }
@@ -12757,6 +12858,7 @@ Get-CimInstance Win32_OperatingSystem | ForEach-Object { $i+=('Windows: '+$_.Cap
 Get-CimInstance Win32_Processor | ForEach-Object { $i+=('CPU: '+$_.Name) }
 Get-CimInstance Win32_VideoController | ForEach-Object { $i+=('GPU: '+$_.Name+', driver '+$_.DriverVersion+', '+$_.CurrentHorizontalResolution+'x'+$_.CurrentVerticalResolution+' at '+$_.CurrentRefreshRate+' Hz') }
 $i | Set-Content -LiteralPath (Join-Path $t 'versions_and_pc.txt') -Encoding UTF8
+$x=__EXTRA__; if($x -and (Test-Path -LiteralPath $x)){ Get-ChildItem -LiteralPath $x -File | ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $t -Force } }
 Compress-Archive -Path (Join-Path $t '*') -DestinationPath $z -Force
 if($t.StartsWith([IO.Path]::GetFullPath($tmp),[StringComparison]::OrdinalIgnoreCase) -and ((Split-Path $t -Leaf) -like 'D2R_VR_logs_*')){ Remove-Item -LiteralPath $t -Recurse -Force }
 if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
@@ -12768,6 +12870,7 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     put(L"__MOD__", ModInstall() ? modlayout::ModRoot(game) : std::wstring());   // D2R VR as the D2RLoader mod: its plugin folder, logs and ReShade are the mod's
     put(L"__ZIP__", zip);
     put(L"__NAME__", name);
+    put(L"__EXTRA__", extra);   // Report a problem: problem.txt and settings_changed.txt into the zip's top ("" none)
     put(L"__SESSIONS__", std::to_wstring(std::clamp((int)GetPrivateProfileIntW(L"support", L"collect_sessions", 3, g_ini), 0, 10)));   // [support] collect_sessions
     // The script goes to a file of its own in TEMP and runs with -File (2026-10-19: a player's antivirus took the Settings program and
     // D2RLoader away after this button - a hidden PowerShell with -EncodedCommand looks like malware to it). The script itself removes
@@ -12801,6 +12904,8 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
     if (g_collectSend.load()) {   // the reporter scrubs a copy and shows its window; the zip on the desktop stays as it is
         PostCollect(wnd, kUnknown, TR(L"status.collect.send_window", L"Opening the window that shows what would be sent - nothing is sent until you press Send there"), false);
         const std::wstring exe = CrashReporterExe();
+        const std::wstring reports = LogsFolder() + L"\\crash_reports\\";
+        const std::string sentBefore = ReadSmallFile(reports + L"sent.jsonl");   // Report a problem: what the window sends shows as new lines here
         std::wstring cmd = L"\"" + exe + L"\" --send-logs \"" + zip + L"\" --logs \"" + LogsFolder() + L"\" --ini \"" + std::wstring(g_ini) +
                            L"\" --version " D2RVR_VERSION_W;
         STARTUPINFOW si{sizeof si};
@@ -12816,6 +12921,30 @@ if(Test-Path -LiteralPath $z){ exit 0 } else { exit 2 })PS";
         GetExitCodeProcess(pi.hProcess, &rc);
         CloseHandle(pi.hProcess);
         LogLine(L"collect logs: the reporter's --send-logs ended, exit code " + std::to_wstring(rc));
+        if (!problem.empty()) {   // Report a problem: the report the window sent, and its GitHub issue - the server opens it as it takes the report
+            const std::vector<crashreply::Sent> fresh = problemreport::NewlySent(sentBefore, ReadSmallFile(reports + L"sent.jsonl"));
+            if (fresh.empty()) {
+                LogLine(L"problem report: nothing sent (exit code " + std::to_wstring(rc) + L")");
+                PostCollect(wnd, kWarn, TRF(L"status.problem.not_sent", L"Nothing was sent: the window was closed without Send. The zip is on your desktop: {name}.zip",
+                                            {{L"name", name}}), true);
+                return;
+            }
+            const crashreply::Sent& sent = fresh.back();
+            bool issue = false;
+            for (int i = 0; i < 3 && !issue; ++i) {   // a slow GitHub: asked again after 3 and 6 s
+                if (i) Sleep(3000);
+                int status = 0;
+                std::string body;
+                if (!ReplyGet(L"/api/crash/reply?id=" + std::to_wstring(sent.id) + L"&token=" + Widen(sent.token), &status, &body) || status != 200) break;
+                issue = SaveProblemIssue(reports, sent.id, body);
+            }
+            LogLine(L"problem report #" + std::to_wstring(sent.id) + L" sent, " + (issue ? L"its issue known" : L"no issue yet - the hourly ask looks again"));
+            const std::wstring id = std::to_wstring(sent.id);
+            PostCollect(wnd, kOk, issue ? TRF(L"status.problem.issue", L"Sent - problem report #{id}. Its GitHub issue is open: \"Follow my problem report on GitHub\" shows how it goes.", {{L"id", id}})
+                                        : TRF(L"status.problem.sent", L"Sent - problem report #{id}. The link to its GitHub issue comes here once the server has made it; you can also tell us #{id} in Discord.", {{L"id", id}}),
+                        true);
+            return;
+        }
         PostCollect(wnd, kOk, TRF(L"status.collect.send_done", L"The send window is closed. The zip is on your desktop too: {name}.zip", {{L"name", name}}), true);
         return;
     }
@@ -13840,14 +13969,15 @@ void FollowHeadsetShot() {   // (the 500 ms timer)
     }
 }
 
-void StartCollectLogs(bool send = false) {
+void StartCollectLogs(bool send = false, std::wstring problem = std::wstring()) {
     if (g_collectBusy.exchange(true)) return;
     g_collectSend.store(send);
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, FALSE);
     if (Item* b = FindItem(L"@run", L"send_logs")) EnableWindow(b->ctl, FALSE);
+    if (Item* b = FindItem(L"@run", L"report_problem")) EnableWindow(b->ctl, FALSE);
     SetStatus(L"collect", kUnknown, TR(L"status.collect.collecting", L"Collecting the logs..."));
     try {
-        std::thread(CollectThread, g_main, GameFolder(), ProcessRunning(L"D2R.exe")).detach();
+        std::thread(CollectThread, g_main, GameFolder(), ProcessRunning(L"D2R.exe"), std::move(problem)).detach();
     } catch (const std::exception&) {
         g_collectBusy.store(false);
         SetStatus(L"collect", kBad, TR(L"status.collect.not_started", L"Could not start collecting the logs"));
@@ -13861,6 +13991,162 @@ void OnCollectProgress(D2RLProgress* raw) {
     g_collectBusy.store(false);
     if (Item* b = FindItem(L"@run", L"collect_logs")) EnableWindow(b->ctl, TRUE);
     if (Item* b = FindItem(L"@run", L"send_logs")) EnableWindow(b->ctl, TRUE);
+    UpdateEnabled();   // (Report a problem: greyed again by its own rule when the reporter is not there)
+}
+
+// Report a problem (Home > D2R VR; shared/problem_report.h, docs/crash_watchdog.md section 8): a small window asks what is wrong, then the logs
+// are collected and the reporter's window sends them with the text (Send there). The reporter sends logs only with [support] send_logs on, so
+// pressing "Collect and send" here ticks it (the player asked to send; the tick's button then shows too, and our reply is asked for as for logs).
+constexpr int kProblemEdit = 101;
+struct ProblemAsk {
+    HWND edit = nullptr, ok = nullptr, view = nullptr, headset = nullptr;
+    bool done = false, send = false;
+    std::wstring text;
+    int viewPick = -1, headsetPick = -1;   // index into problemreport::kViews / kHeadsets, -1 "not sure"
+};
+std::wstring EditText(HWND edit) {
+    std::wstring t((size_t)GetWindowTextLengthW(edit), L'\0');
+    if (!t.empty()) t.resize((size_t)GetWindowTextW(edit, t.data(), (int)t.size() + 1));
+    return t;
+}
+LRESULT CALLBACK ProblemAskProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    auto* a = reinterpret_cast<ProblemAsk*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    switch (m) {
+    case WM_NCCREATE:
+        SetWindowLongPtrW(h, GWLP_USERDATA, (LONG_PTR)reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);
+        break;
+    case WM_COMMAND:
+        if (!a) break;
+        if (LOWORD(w) == kProblemEdit && HIWORD(w) == EN_CHANGE) {
+            EnableWindow(a->ok, !problemreport::CleanText(Utf8Narrow(EditText(a->edit))).empty());
+        } else if (LOWORD(w) == IDOK) {
+            if (problemreport::CleanText(Utf8Narrow(EditText(a->edit))).empty()) { MessageBeep(MB_OK); SetFocus(a->edit); return 0; }
+            a->text = EditText(a->edit);
+            a->viewPick = (int)SendMessageW(a->view, CB_GETCURSEL, 0, 0) - 1;      // (item 0 is "Not sure")
+            a->headsetPick = (int)SendMessageW(a->headset, CB_GETCURSEL, 0, 0) - 1;
+            a->send = true;
+            DestroyWindow(h);
+        } else if (LOWORD(w) == IDCANCEL) {
+            DestroyWindow(h);
+        }
+        return 0;
+    case WM_CLOSE:
+        DestroyWindow(h);
+        return 0;
+    case WM_DESTROY:
+        if (a) a->done = true;
+        return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+// The window, modal over Settings; false: the player closed it. *text: what the player wrote; *view / *headset: the picks (-1 not sure).
+bool AskProblem(std::wstring* text, int* view, int* headset) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSW wc{};
+        wc.lpfnWndProc = ProblemAskProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE);
+        wc.lpszClassName = L"D2RVRProblemAsk";
+        registered = RegisterClassW(&wc) != 0;
+    }
+    ProblemAsk a;
+    const int W = S(520), H = S(380), pad = S(12), bw = S(150), bh = S(30), ch = S(24);
+    const int pickY = H - pad - bh - S(12) - ch;   // the View / Headset row, above the buttons
+    RECT owner{};
+    GetWindowRect(g_main, &owner);
+    RECT frame{0, 0, W, H};
+    AdjustWindowRectExForDpi(&frame, WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, g_dpi);
+    const int fw = frame.right - frame.left, fh = frame.bottom - frame.top;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT, L"D2RVRProblemAsk", TR(L"problem.title", L"Report a problem"),
+                               WS_POPUP | WS_CAPTION | WS_SYSMENU, owner.left + (owner.right - owner.left - fw) / 2, owner.top + S(80), fw, fh,
+                               g_main, nullptr, GetModuleHandleW(nullptr), &a);
+    if (!dlg) return false;
+    HWND say = CreateWindowExW(0, L"STATIC",
+                               TR(L"problem.describe", L"Describe the problem: what you see, where in the game, and what you expected - for example "
+                                                       L"\"the fog does not hide far trees in Act 1\" or \"the cave ceilings are too low\". Any language is fine.\n\n"
+                                                       L"Then the program collects the logs and your settings (the versions, the view, your ticks, the game's log) "
+                                                       L"and shows you everything it would send to the BodyWalk server. You get a link to follow your report on GitHub."),
+                               WS_CHILD | WS_VISIBLE, pad, pad, W - 2 * pad, S(110), dlg, nullptr, nullptr, nullptr);
+    a.edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+                             pad, pad + S(116), W - 2 * pad, pickY - S(10) - pad - S(116), dlg, (HMENU)(INT_PTR)kProblemEdit, nullptr, nullptr);
+    SendMessageW(a.edit, EM_SETLIMITTEXT, 4000, 0);
+    // The view and the headset: fixed lists, the only things of the report the public GitHub issue shows (with the version)
+    const int lw = S(60), cw = (W - 2 * pad - 2 * lw - S(16)) / 2;
+    HWND viewSay = CreateWindowExW(0, L"STATIC", TR(L"problem.view", L"View:"), WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, pad, pickY, lw, ch, dlg,
+                                   nullptr, nullptr, nullptr);
+    a.view = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, pad + lw, pickY, cw, S(240),
+                             dlg, nullptr, nullptr, nullptr);
+    HWND headsetSay = CreateWindowExW(0, L"STATIC", TR(L"problem.headset", L"Headset:"), WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
+                                      pad + lw + cw + S(16), pickY, lw, ch, dlg, nullptr, nullptr, nullptr);
+    a.headset = CreateWindowExW(0, L"COMBOBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, pad + 2 * lw + cw + S(16),
+                                pickY, cw, S(300), dlg, nullptr, nullptr, nullptr);
+    const std::wstring notSure = TR(L"problem.not_sure", L"Not sure");
+    SendMessageW(a.view, CB_ADDSTRING, 0, (LPARAM)notSure.c_str());
+    for (int i = 0; i < problemreport::kViewCount; ++i) {
+        const std::wstring v = Widen(problemreport::kViews[i]);
+        const std::wstring label = v == L"flat" ? TR(L"problem.view_flat", L"Flat (no headset)") : TRF(L"problem.view_key", L"{key} view", {{L"key", v}});
+        SendMessageW(a.view, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    }
+    SendMessageW(a.headset, CB_ADDSTRING, 0, (LPARAM)notSure.c_str());
+    for (int i = 0; i < problemreport::kHeadsetCount; ++i) {
+        const std::wstring h = Widen(problemreport::kHeadsets[i]);
+        const std::wstring label = h == L"Other" ? TR(L"problem.headset_other", L"Other") : h;   // (headset names are not translated)
+        SendMessageW(a.headset, CB_ADDSTRING, 0, (LPARAM)label.c_str());
+    }
+    SendMessageW(a.view, CB_SETCURSEL, 0, 0);
+    SendMessageW(a.headset, CB_SETCURSEL, 0, 0);
+    a.ok = CreateWindowExW(0, L"BUTTON", TR(L"problem.send", L"Collect and send..."), WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_DISABLED,
+                           W - pad - 2 * bw - S(8), H - pad - bh, bw, bh, dlg, (HMENU)IDOK, nullptr, nullptr);
+    HWND cancel = CreateWindowExW(0, L"BUTTON", TR(L"problem.cancel", L"Cancel"), WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  W - pad - bw, H - pad - bh, bw, bh, dlg, (HMENU)IDCANCEL, nullptr, nullptr);
+    for (HWND c : {say, a.edit, viewSay, a.view, headsetSay, a.headset, a.ok, cancel}) SendMessageW(c, WM_SETFONT, (WPARAM)g_font, TRUE);
+    EnableWindow(g_main, FALSE);
+    ShowWindow(dlg, SW_SHOW);
+    SetFocus(a.edit);
+    MSG msg;
+    while (!a.done) {
+        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+        if (got == 0) { PostQuitMessage((int)msg.wParam); break; }   // (the program is closing: the quit goes on to the main loop)
+        if (got < 0) break;
+        if (!IsDialogMessageW(dlg, &msg)) {   // Tab between the controls, Esc = Cancel (Enter stays in the text: ES_WANTRETURN)
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    if (!a.done) DestroyWindow(dlg);
+    EnableWindow(g_main, TRUE);
+    SetForegroundWindow(g_main);
+    *text = a.text;
+    *view = a.viewPick;
+    *headset = a.headsetPick;
+    return a.send;
+}
+void ReportProblem() {
+    if (g_collectBusy.load()) return;
+    std::wstring text;
+    int view = -1, headset = -1;
+    if (!AskProblem(&text, &view, &headset)) return;
+    g_problemView.store(view);
+    g_problemHeadset.store(headset);
+    if (GetPrivateProfileIntW(L"support", L"send_logs", 0, g_ini) != 1) {
+        WritePrivateProfileStringW(L"support", L"send_logs", L"1", g_ini);
+        RefreshControls();
+        LogLine(L"problem report: [support] send_logs=1 (the player asked to send a problem report)");
+    }
+    LogLine(L"problem report: described (" + std::to_wstring(text.size()) + L" characters, view " +
+            (view >= 0 ? Widen(problemreport::kViews[view]) : std::wstring(L"not sure")) + L", headset " +
+            (headset >= 0 ? Widen(problemreport::kHeadsets[headset]) : std::wstring(L"not sure")) + L") - collecting the logs");
+    StartCollectLogs(true, text);
+}
+// "Follow my problem report on GitHub": the newest report's issue, only an address of our public repository (problemreport::GoodIssue).
+void OpenProblemIssue() {
+    if (LogsFolder().empty()) return;
+    const auto issues = problemreport::ParseIssues(ReadSmallFile(LogsFolder() + L"\\crash_reports\\issues.jsonl"));
+    const int id = problemreport::NewestIssue(issues);
+    if (!id) return;
+    ShellExecuteW(g_main, L"open", Widen(issues.at(id)).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
 // Make a headset report (Home, [support] headset_report ticked): RunHeadsetReport on a thread of its own, then the report in Notepad.
@@ -14220,6 +14506,8 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"framegen_get") == 0) StartFrameGenInstall();
                 else if (wcscmp(it.key, L"collect_logs") == 0) StartCollectLogs();
                 else if (wcscmp(it.key, L"send_logs") == 0) StartCollectLogs(true);
+                else if (wcscmp(it.key, L"report_problem") == 0) ReportProblem();
+                else if (wcscmp(it.key, L"problem_issue") == 0) OpenProblemIssue();
                 else if (wcscmp(it.key, L"crash_offer") == 0) OfferCrashReport();
                 else if (wcscmp(it.key, L"stats_share") == 0) StatsShareClicked();     // [stats] strike_stats: shared anonymously (shown first)
                 else if (wcscmp(it.key, L"stats_unshare") == 0) StatsUnshareClicked();

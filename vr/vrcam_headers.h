@@ -259,6 +259,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "leap_gaze.h"     // [gameplay] leap_by_gaze: Leap and Leap Attack where the head looks
 #include "leap_air_aim.h"  // [gameplay] leap_air_aim: the next leap aimed in the air
 #include "under_camera.h"  // [body] under_camera: the drawn body under the camera while the game's camera trails the hero
+#include "smooth_follow.h" // [camera] smooth_follow: VR F4's anchor eased over a jerk of the look-at (a bump, a step, a shove)
 #include "skill_link.h"        // [gestures] skill_link: kDefaultSpareSlot
 #include "gesture_engine_wire.h"   // [gestures] engine_in_game: the gesture engine in the game (d2r_vr_gestures.dll)
 #include "walk_in_place_wire.h"   // [walk_in_place]: walk in place with the headset, BodyWalk's walk library in the game (d2r_vr_walk.dll)

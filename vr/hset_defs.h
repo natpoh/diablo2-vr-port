@@ -188,10 +188,16 @@ inline constexpr Def kDefs[] = {
      30.0f, 15.0f, 180.0f, 15.0f, "%.0f deg", "", "", kPageOptions},
     {L"turn", L"speed", "Smooth turn speed", "Degrees per second, while smooth turning is on",
      120.0f, 30.0f, 720.0f, 30.0f, "%.0f deg/s", "", "", kPageOptions},
+    // [camera] smooth_follow (Serg 2026-11-22, the camera shook as the hero jerked over Act 3's bumps; vr/smooth_follow.h): VR F4's anchor eased over a
+    // jerk - a comfort switch beside the turning's. The eighth row: the page's rows stand closest (hset_model.h TightRows). Every view (VR F2, F4, F5
+    // ease; 2026-11-23 "и в 2д виде"); its glide time ([camera] smooth_follow_ms) is D2R VR Settings' slider alone. Written by Apply, as the page's
+    // other rows (the plugin reads it live from the ini).
+    {L"camera", L"smooth_follow", "Smooth camera on bumps", "The view glides over steps and jerks",
+     1.0f, 0.0f, 1.0f, 1.0f, "", "Off", "On", kPageOptions},
     // Serg (2026-10-30, a player's question in Discord: how to set "players 8" in VR): "я имел в виду выбор сложности". The game's players count, 1 - 8:
     // the value is the game's own (its Options > Gameplay "Offline Difficulty Scaling", Settings.json), not a key of d2r_vr.ini; - / + send the game's own
     // chat command "/players N" (vr/players_cmd.cpp), with every check of the game's: only in a game of one's own (single player, a TCP/IP host). The
-    // seventh row: the page's rows stand closer (hset_model.h RowStep). [openxr] headset_players (no row, below) switches it on.
+    // last row (the eighth since [camera] smooth_follow above it): the page's rows stand closest (hset_model.h TightRows). [openxr] headset_players (no row, below) switches it on.
     {L"game", L"players", "Players (difficulty)", "As /players: tougher monsters, more experience and drops",
      1.0f, 1.0f, 8.0f, 1.0f, "%.0f", "", "", kPageOptions, false, DefType::Game},
     // F1 (the View tab's second page in VR F1): the view from above's three of D2R VR Settings > UI: F1 above > "View from above", in its words.

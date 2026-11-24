@@ -2254,6 +2254,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/dome_atlas_test.cpp")
     target_link_libraries(dome_atlas_test PRIVATE d3d12 dxgi)
     target_compile_options(dome_atlas_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/dome_backing_test.cpp")
+    # [sky] dome_atlas_tiled (vr/sky/dome_backing.h): the dome's texture committed and whole by default, reserved (tiled) only on the key and a
+    # tier 2 card; the log's reason; remade on a key change. dome_backing_test.exe
+    add_executable(dome_backing_test cleanroom/tests/dome_backing_test.cpp)
+    target_include_directories(dome_backing_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(dome_backing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/phantom_rect_test.cpp")
     # [render] phantom_rects (vr/phantom_rect.h): where the vignette pass can change the picture. Run: phantom_rect_test.exe
     add_executable(phantom_rect_test cleanroom/tests/phantom_rect_test.cpp)
@@ -2653,6 +2660,9 @@ target_compile_options(leap_air_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [body] under_camera (vr/under_camera.h): the drawn body under the camera while the game's camera trails the hero on its spring - a leap, a knockback: under_camera_test
 add_executable(under_camera_test cleanroom/tests/under_camera_test.cpp)
 target_compile_options(under_camera_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [camera] smooth_follow (vr/smooth_follow.h): F4's anchor eased over a jerk of the look-at (a bump, a step, a shove), walking followed exactly, a teleport at once: smooth_follow_test
+add_executable(smooth_follow_test cleanroom/tests/smooth_follow_test.cpp)
+target_compile_options(smooth_follow_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [gameplay] teleport_circle (vr/point_cast.h): the tap against the hold, the arc's landing from the hand's pose, the cap, the skill list, the ring: point_cast_test
 add_executable(point_cast_test cleanroom/tests/point_cast_test.cpp)
 target_compile_options(point_cast_test PRIVATE /utf-8 /W4 /EHsc /permissive-)

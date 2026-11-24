@@ -95,6 +95,7 @@ void FlatVrCentreTick() {
 }
 
 void Recenter() {
+    SmoothFollowSnap();   // [camera] smooth_follow: the anchor taken at once, never a glide after a recentre
     float head = 0.0f;
     if (HeadYaw(&head)) g_recenter.store(head);
     if (const D2RVR_Shared* sh = Shared(); sh && sh->pitchValid && std::isfinite(sh->headPitchDeg)) g_recenterPitch.store(sh->headPitchDeg);

@@ -218,7 +218,57 @@ static void TestSlowPush() {
     CHECK(r.fired.size() == 1 && (firedAt == 14 || firedAt == 15));   // 14 / 20 = 0.70, the circle's edge (a float's last bit decides)
 }
 
+// [direct] belt_flick_shift_free: the trigger's Shift let go once a stick moves, the belt key held back until the game saw it go
+static void TestShiftGate() {
+    Machine m;
+    ShiftGate g;
+    uint64_t t = 1000;
+    auto step = [&](float trig, Stick l, Stick r, bool on = true) { const Machine::Out mo = m.Step(trig, l, r, true); t += 11; return g.Step(mo, l, r, t, on); };
+    // the trigger alone: Shift stays the game's
+    ShiftGate::Out o = step(1.0f, kMid, kMid);
+    CHECK(!o.shiftOff && o.column < 0);
+    o = step(1.0f, kMid, kMid);
+    CHECK(!o.shiftOff);
+    // a slow flick: Shift goes as the stick leaves the middle; the potion comes later, past the lead
+    o = step(1.0f, kMid, At(-0.4f, 0.0f));
+    CHECK(o.shiftOff && o.column < 0);
+    o = step(1.0f, kMid, At(-0.6f, 0.0f));
+    o = step(1.0f, kMid, At(-0.6f, 0.0f));
+    o = step(1.0f, kMid, At(-0.6f, 0.0f));
+    o = step(1.0f, kMid, At(-1.0f, 0.0f));   // 44 ms after Shift went: at once
+    CHECK(o.shiftOff && o.column == 0 && o.stick == 1);
+    // back to the middle, trigger still held: Shift stays let go until release
+    o = step(1.0f, kMid, kMid);
+    CHECK(o.shiftOff && o.column < 0);
+    o = step(0.0f, kMid, kMid);
+    CHECK(!o.shiftOff && o.column < 0);
+    // a snap flick (middle to full in one frame): held back until the lead has passed, then pressed once
+    o = step(1.0f, kMid, kMid);
+    o = step(1.0f, kMid, At(0.0f, 1.0f));
+    CHECK(o.shiftOff && o.column < 0);
+    int fired = -1, frames = 0;
+    for (; frames < 10; ++frames) {
+        o = step(1.0f, kMid, At(0.0f, 1.0f));
+        if (o.column >= 0) { fired = o.column; break; }
+    }
+    CHECK(fired == 1 && frames >= 2);   // 40 ms at 11 ms a frame: the third frame after
+    o = step(1.0f, kMid, At(0.0f, 1.0f));
+    CHECK(o.column < 0);                 // one flick, one potion
+    // let go before the lead: the held-back flick goes at the release (Shift is up then anyway)
+    o = step(0.0f, kMid, kMid);
+    o = step(1.0f, kMid, kMid);
+    o = step(1.0f, kMid, At(1.0f, 0.0f));
+    CHECK(o.column < 0);
+    o = step(0.0f, kMid, kMid);
+    CHECK(o.column == 2 && !o.shiftOff);
+    // the key off: the flick passes at once and Shift is never let go
+    o = step(1.0f, kMid, kMid, false);
+    o = step(1.0f, kMid, At(0.0f, -1.0f), false);
+    CHECK(!o.shiftOff && o.column == 3);
+}
+
 int main() {
+    TestShiftGate();
     TestDirections();
     TestFourWays();
     TestOnePerFlick();

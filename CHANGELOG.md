@@ -1,5 +1,27 @@
 # What's new in D2R VR
 
+## 0.223.0
+
+A smooth camera over bumps and steps, belt potions that drink again with the trigger, a fix for graphics card hangs on 6 - 8 GB cards, and Report a problem.
+
+- **Smooth camera** (`[camera] smooth_follow`, on; D2R VR Settings > Camera, "Smooth camera over bumps and steps", and the headset's
+  Options page): when the hero jerks over a bump, a step or a bridge, or the game shoves him aside, the camera glides after him instead of
+  jumping - up, down and sideways - and an uneven run is evened out. In VR first person (F4, F5) the body you see glides with the view.
+  Works in VR F2, F4, F5 and the flat game's first person (F3) and view from behind (F2). Teleports, waypoints and portals still jump at
+  once. The glide time is a slider (`smooth_follow_ms`, 0.5 s by default).
+- **Fix: belt potions drink again with the left trigger in VR F1 - F3 and F5** (`[direct] belt_flick_shift_free`, on): holding the
+  trigger for the flick also held the game's Shift, and Shift + a belt key gives the potion to the mercenary - you heard the drink but
+  nothing was drunk.
+- **Fix: graphics card hangs on 6 - 8 GB cards** (`[sky] dome_atlas_tiled`, off): our picture of the game's sky is now held whole in
+  video memory (about 134 MB) instead of only its shown part - the partial way stood in four players' graphics card hangs. Tick it to go
+  back.
+- **Report a problem** (D2R VR Settings > Home): for something wrong that is not a crash - describe it, pick the view and headset, and
+  the logs go to us; a GitHub issue link comes back so you can follow it.
+- **Fix: a weapon in the left slot beside a shield in the right** is held by the weight model and hits by touch (it never struck before).
+- **FlatVR's headset bridge** (Meta Quest): an idle FlatVR.exe is no longer closed at the switch to native OpenXR while the bridge runs.
+- Also in it, from the 0.222.2 hotfix: D2R VR Settings opens without slowing the PC; the FlatVR camera stands still when the headset
+  sends no pose.
+
 ## 0.222.2
 
 A hotfix: D2R VR Settings opens without slowing the PC, and the FlatVR camera no longer spins when the headset sends no pose.

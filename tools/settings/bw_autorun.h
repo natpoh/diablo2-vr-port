@@ -16,6 +16,10 @@
 // Serg, 2026-11-22 ([walk_in_place] source=1, "встроенная библиотека или бодивалк"): with BodyWalk chosen as the walk source, BodyWalk does the walking with
 // its own Steps settings, so the game's start starts it (native, Controls without BodyWalk) - for walking only: the plugin gives it the head and hands
 // with the controls zeroed (vr/link.cpp PublishXr), so its Mapping presses nothing, and the plugin's own controls stay as they are.
+//
+// Serg, 2026-11-14: with FlatVR's headset bridge (Meta Quest; its own process BodyWalkStreamer.exe, started from FlatVR's Headset tab) the
+// game's OpenXR session goes through the streamer, so a FlatVR.exe that runs no session holds no headset - and closing it takes the bridge's
+// Enable tick and its latency figures with it. Such a FlatVR.exe is left open; one that runs a session is closed as before, bridge or not.
 #pragma once
 
 namespace bwauto {
@@ -40,6 +44,7 @@ struct Facts {
     bool linkStopsFlatVr = false;   // ... and it takes FlatVR's Start / Stop (BW_LINK_CAP_FLATVR_RUNNING)
     bool flatVrRunning = false;     // FlatVR's head sample moves (FlatVR started, in BodyWalk or on its own)
     int flatVrAppRunning = 0;       // FlatVR.exe processes (FlatVR on its own, not inside BodyWalk)
+    bool bridgeRunning = false;     // FlatVR's headset bridge runs (a BodyWalkStreamer.exe process): the headset is the streamer's, not FlatVR's
 };
 
 // Why the plan is what it is - one line in the log.
@@ -54,6 +59,7 @@ enum class Why {
     NativeWalkNoBodyWalk,  // ... with BodyWalk as the walk source, but no BodyWalk found to start
     NativeStopFlatVr,  // native: FlatVR in BodyWalk stopped through Game Link, BodyWalk stays
     NativeCloseFlatVr, // native: FlatVR.exe of its own closed, BodyWalk stays
+    NativeFlatVrOnBridge,  // native: FlatVR.exe of its own left open - it runs no session and the headset is on its bridge (BodyWalkStreamer.exe)
     NativeCannotStop,  // native: FlatVR in BodyWalk holds the headset and this BodyWalk cannot stop it (no Game Link: Lite, an old copy) - left
 };
 
@@ -89,9 +95,15 @@ inline Plan Decide(const Facts& f) {
         else p.why = Why::NativeWalkNoBodyWalk;
     }
     if (!f.closeOn) return p;
-    if (f.flatVrAppRunning > 0) {   // FlatVR on its own: closed (BodyWalk's own FlatVR, if any, is stopped below too)
-        p.closeFlatVrApp = true;
-        p.why = Why::NativeCloseFlatVr;
+    if (f.flatVrAppRunning > 0) {   // FlatVR on its own
+        if (f.bridgeRunning && !f.flatVrRunning) {
+            // the headset bridge runs and FlatVR runs no session: the game's OpenXR goes through the streamer, FlatVR holds nothing - left
+            // open (the bridge's Enable tick and its figures live in it). Said in the log unless BodyWalk's start above is the line's news.
+            if (p.why == Why::Nothing) p.why = Why::NativeFlatVrOnBridge;
+        } else {   // closed (a session running in it holds the headset, bridge or not)
+            p.closeFlatVrApp = true;
+            p.why = Why::NativeCloseFlatVr;
+        }
     }
     if (f.flatVrRunning && f.bodyWalkRunning > 0 && f.flatVrAppRunning == 0) {   // FlatVR inside BodyWalk
         if (f.linkStopsFlatVr) {
@@ -131,6 +143,7 @@ inline const wchar_t* Text(Why w) {
     case Why::NativeWalkNoBodyWalk: return L"native OpenXR with Controls without BodyWalk and walk in place by BodyWalk - no BodyWalk found to start: the hero will not walk by stepping";
     case Why::NativeStopFlatVr: return L"native OpenXR - FlatVR stopped through Game Link, BodyWalk stays";
     case Why::NativeCloseFlatVr: return L"native OpenXR - FlatVR.exe closed (it would hold the headset), BodyWalk stays";
+    case Why::NativeFlatVrOnBridge: return L"native OpenXR - FlatVR.exe left open: it runs no session and the headset is on its bridge (BodyWalkStreamer.exe)";
     case Why::NativeCannotStop: return L"native OpenXR - FlatVR holds the headset and this BodyWalk has no Game Link to stop it (BodyWalk Lite or an old copy): "
                                        L"left as it is - stop FlatVR in BodyWalk, or close BodyWalk and restart SteamVR";
     case Why::Nothing:

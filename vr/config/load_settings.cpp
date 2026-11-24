@@ -140,6 +140,8 @@ void LoadSettings() {
     g_set.eyeOffset.store(std::clamp(IniF(L"camera", L"eye_offset", 0.0f), -5.0f, 5.0f));
     g_set.followJump.store(IniB(L"camera", L"follow_jump", true));
     g_set.jumpFrom.store(std::clamp(IniF(L"camera", L"jump_from", 0.3f), 0.0f, 3.0f));
+    g_set.smoothFollow.store(IniB(L"camera", L"smooth_follow", true));
+    g_set.smoothFollowMs.store(smoothfollow::Ms(IniF(L"camera", L"smooth_follow_ms", smoothfollow::kDefMs)));
     g_set.pitch.store(std::clamp(IniF(L"camera", L"pitch", -60.0f), -150.0f, 60.0f));
     g_set.flatShiftX.store(flatshift::Clamp(IniF(L"camera", L"flat_shift_x", 0.0f)));
     g_set.flatShiftY.store(flatshift::Clamp(IniF(L"camera", L"flat_shift_y", 0.0f)));
@@ -1019,6 +1021,7 @@ void LoadSettings() {
     g_set.effectWorld.store(IniB(L"render", L"effect_world", true));
     g_set.phantomRects.store(IniB(L"render", L"phantom_rects", true));   // (our effect's wrist-orb pass in rectangles: vr/phantom_rect.h; 0 = full screen - 0.208 ships it off)
     g_set.domeInGameColour.store(IniB(L"sky", L"dome_in_game_colour", true));
+    g_set.domeAtlasTiled.store(IniB(L"sky", L"dome_atlas_tiled", false));   // (0: committed, whole - crash batch 2026-11-24 group A)
     g_set.domePastFar.store(IniB(L"sky", L"dome_past_far", false));
     g_set.gameSkyTest.store(std::clamp((int)IniF(L"debug", L"game_sky_test", 0.0f), 0, 4));   // another model for the dome (draws only)
     {   // the domes' radii in metres (shared/draw_distance.h: 4 world units a metre); an ini without them: the keys they took over from

@@ -1442,6 +1442,9 @@ static void BeltSinkForTest(uint32_t column, int stick, int dir) {
 static void TestBeltFlat() {
     const std::wstring ini = TempIni();
     WritePrivateProfileStringW(L"openxr", L"direct_input", L"1", ini.c_str());
+    // the flick's timing as before the Shift gate ([direct] belt_flick_shift_free=1 by default since 0.223 holds a fast flick back 40 ms of
+    // real time so the game sees Shift go first - its own rules are belt_flick_test's ShiftGate cases); these frames come back to back
+    WritePrivateProfileStringW(L"direct", L"belt_flick_shift_free", L"0", ini.c_str());
     LoadSettings(ini.c_str());   // belt_flick_flat_views and walk_flat_views left out: both on
     viewgate::Set(&TestViewIsF4);
     viewgate::SetFlat(&TestViewIsFlat);
@@ -1578,7 +1581,8 @@ static bool FlatGateForTest() { return g_flatGateOk; }
 static void TestFlatController() {
     const std::wstring ini = TempIni();
     WritePrivateProfileStringW(L"openxr", L"direct_input", L"1", ini.c_str());
-    LoadSettings(ini.c_str());   // every flat key left out: on
+    WritePrivateProfileStringW(L"direct", L"belt_flick_shift_free", L"0", ini.c_str());   // (the flick's old timing: see TestBeltFlat)
+    LoadSettings(ini.c_str());   // every flat key left out: on (the Shift gate pinned off above)
     viewgate::Set(&TestViewIsF4);
     viewgate::SetFlat(&TestViewIsFlat);
     g_testF4 = false; g_testFlat = true; g_flatGateOk = true;
