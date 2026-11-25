@@ -189,7 +189,7 @@ struct Cfg {
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
     float cinemaDistM = 5.0f, cinemaWidthM = 6.0f;   // [cinema] distance_m, width_m: the big screen of world_screen (vr/unleashed_cinema_screen.h), live
-    bool video3d = false;          // [cinema] video_3d: the films in 3D on that screen (d2r_vr_video3d.dll), every VR view; 0 = flat, as before. Live
+    bool video3d = true;           // [cinema] video_3d: the films in 3D on that screen (d2r_vr_video3d.dll), every VR view; 0 = flat, as before. Live
     float video3dPct = 1.6f;       // [cinema] video_3d_strength_pct: the largest separation between the eyes, % of the film's width
     float video3dConv = 0.4f;      // [cinema] video_3d_convergence: the depth that stays on the screen, 0 far .. 1 near (nearer comes out of it)
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
@@ -7489,7 +7489,7 @@ void LoadSettings(const wchar_t* ini) {
         const cinema::Screen s = cinema::Clamped(d, wcstof(b, nullptr));
         g_cfg.cinemaDistM = s.distance;
         g_cfg.cinemaWidthM = s.width;
-        g_cfg.video3d = GetPrivateProfileIntW(L"cinema", L"video_3d", 0, ini) != 0;
+        g_cfg.video3d = GetPrivateProfileIntW(L"cinema", L"video_3d", 1, ini) != 0;   // (on since 0.224.1: Serg checked it in the headset)
         GetPrivateProfileStringW(L"cinema", L"video_3d_strength_pct", L"1.6", b, 32, ini);   // (1.6: Serg 2026-11-25, 80% of the first 2 - less depth)
         const float pct = wcstof(b, nullptr);
         g_cfg.video3dPct = std::isfinite(pct) ? std::clamp(pct, 0.0f, 6.0f) : 2.0f;

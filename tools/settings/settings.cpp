@@ -1032,7 +1032,7 @@ std::vector<Item> g_items = {
            L"(click or press the game's skip button to skip). The sound is the game's. Live. Off: the game's whole picture on the flat "
            L"picture close in front of you, as before.")),
     // [cinema] video_3d (vr/video3d_lib.h, xr.cpp DrawFilm3d): the films in 3D on that screen - the optional library d2r_vr_video3d.dll in d2r_vr_libs
-    Only(kVr, Needs(L"cinema", L"world_screen", 1, Toggle(L"cinema", L"video_3d", L"Videos in 3D", 0,
+    Only(kVr, Needs(L"cinema", L"world_screen", 1, Toggle(L"cinema", L"video_3d", L"Videos in 3D", 1,
            L"The videos on the big screen in 3D, in every VR view: a small depth network guesses how far each part of the picture is, "
            L"while the video plays, and each eye gets its own picture from that - near things stand out of the screen, the rest goes "
            L"behind it. Nothing is prepared at install and nothing is waited for: the first moment of a video is flat until its depth is "

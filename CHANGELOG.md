@@ -1,5 +1,14 @@
 # What's new in D2R VR
 
+## 0.224.1
+
+The act videos in 3D, now on for everyone.
+
+- **The act videos on the big screen in 3D** (`[cinema] video_3d`, now on; D2R VR Settings, "Videos in 3D"): in every VR view a small
+  depth network (ZipDepth, MIT) guesses each frame's depth while the video plays and each eye gets its own picture - near things stand out
+  of the screen. Nothing is prepared at install; the first moment of a video is flat until its depth is ready. The depth is a little
+  gentler than in the first try (`video_3d_strength_pct` 1.6). Untick the box for the flat screen.
+
 ## 0.224.0
 
 Fewer freezes, backups of the build and your settings, caves whose ceiling steps up with the floor, the F2 corner map where you want it, and ports from other authors.
