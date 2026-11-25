@@ -20,6 +20,10 @@
 
 namespace vrres {
 
+// [openxr] square_window_one_step (vr/hud/window.cpp SquareFollowNow): on the window's own thread, as a new render size is handed to the game, the
+// square window made that size at once (SetWindowPos, not posted) - true when it resized the window. nullptr / false: the window is left to its own tick.
+inline std::atomic<bool (*)(HWND, Size)> g_windowFollow{nullptr};
+
 // The real window calls.
 struct Win32Env {
     UINT Message() const {
@@ -37,6 +41,10 @@ struct Win32Env {
     bool Iconic(HWND h) const { return IsIconic(h) != FALSE; }
     bool Zoomed(HWND h) const { return IsZoomed(h) != FALSE; }
     LRESULT Call(WNDPROC proc, HWND h, UINT m, WPARAM w, LPARAM l) const { return CallWindowProcW(proc, h, m, w, l); }
+    bool Follow(HWND h, Size next) const {
+        bool (*f)(HWND, Size) = g_windowFollow.load();
+        return f && f(h, next);
+    }
 };
 
 template <class Env>
@@ -45,6 +53,7 @@ class RenderWindowT {
     std::atomic<HWND> target_{nullptr};
     std::atomic<uint64_t> desired_{0}, logical_{0};
     std::atomic<bool> queued_{false}, reapply_{false};
+    bool inFollow_ = false, sizeSeen_ = false;   // (the window's thread only) the window being made the new size's square / a WM_SIZE came in it
 
     static bool IsMouse(UINT m) {   // the wheel's position is in screen pixels, every other button/move message's in the client's
         return m >= WM_MOUSEFIRST && m <= WM_MOUSELAST && m != WM_MOUSEWHEEL && m != WM_MOUSEHWHEEL;
@@ -97,6 +106,18 @@ public:
             const bool forced = reapply_.exchange(false);
             if (next == Unpack(logical_.load()) && !forced) return true;
             logical_.store(Pack(next));
+            // [openxr] square_window_one_step (2026-11-25: each render size change froze twice - the game's swap chain ~400 ms, then the square
+            // window following it ~1.6 s later ~300 ms): the window is made the new size's square in this same step. Its own WM_SIZE comes back
+            // through here (below) carrying `next`: that is the game's one resize, and no second one is sent. A move that brought no WM_SIZE (the
+            // game took WM_WINDOWPOSCHANGED itself) or no move: the WM_SIZE is sent as before.
+            if (next) {
+                inFollow_ = true;
+                sizeSeen_ = false;
+                const bool moved = env_.Follow(h, next);
+                inFollow_ = false;
+                if (moved && sizeSeen_ && Unpack(logical_.load()) == next) return true;
+                logical_.store(Pack(next));   // (a WM_SIZE in the move took a newer wish: the game is told `next` below, the newer one is posted again)
+            }
             const Size size = next ? next : client;
             result = env_.Call(original, h, WM_SIZE, env_.Zoomed(h) ? SIZE_MAXIMIZED : SIZE_RESTORED, MAKELPARAM(size.w, size.h));
             return true;
@@ -114,6 +135,7 @@ public:
         }
         if (message == WM_SIZE && w != SIZE_MINIMIZED) {
             // A real resize of the window (a drag, a monitor change) must not take the game off its size.
+            if (inFollow_) sizeSeen_ = true;
             logical_.store(desired_.load());
             if (const Size s = Unpack(logical_.load())) l = MAKELPARAM(s.w, s.h);
             return false;

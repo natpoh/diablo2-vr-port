@@ -125,6 +125,20 @@ int main() {
 		EXPECT(out[1].holds, "a free hand on the shaft with its grip squeezed did not take the sword (the test is vacuous)");
 	}
 
+	// -- Side(): which hand -------------------------------------------------------------------------------------------
+	{
+		// a shield in the left slot: the left hand, or the arm shoulder_draw moved it to; put away: none
+		EXPECT(shieldfist::Side(true, 1, false, -1) == 1, "left slot shield on the left arm: the left hand");
+		EXPECT(shieldfist::Side(true, 0, false, -1) == 0, "left slot shield moved to the right arm: the right hand");
+		EXPECT(shieldfist::Side(true, 2, false, -1) == -1, "the shield put away: no fist");
+		EXPECT(shieldfist::Side(false, 1, false, -1) == -1, "no shield fist asked for: none");
+		// a shield in the RIGHT slot, a weapon alone in the left one (nikswat's spear and shield): the hand of the forearm it is strapped to
+		EXPECT(shieldfist::Side(false, 1, true, 0) == 0, "right slot shield on the right forearm: the right hand closes with its grip");
+		EXPECT(shieldfist::Side(false, 1, true, 1) == 1, "the weapon passed to the right hand alone, the shield on the left forearm: the left hand");
+		EXPECT(shieldfist::Side(false, 1, true, -1) == -1, "the right slot's shield not strapped (the left hand holds the weapon): no fist");
+		EXPECT(shieldfist::Side(false, 1, false, 0) == -1, "box unticked: the strap alone gives no fist");
+	}
+
 	if (g_fails) {
 		std::printf("shield_fist_test: %d FAILED\n", g_fails);
 		return 1;

@@ -86,6 +86,8 @@ render.menu_wide.label = 16:9 主菜单
 render.menu_wide.tip = 原生 OpenXR：游戏按画面的形状来排布菜单，而方形画面（方形窗口、方形渲染尺寸或头显的渲染尺寸）会把主菜单挤扁 - 侧面板压在英雄身上，底部按钮被切掉。开启：游戏显示自己的菜单时（主菜单、角色列表、创建新角色），画面为 16:9，宽度与渲染尺寸相同，头显中的面板也是这个形状。菜单出现 3 秒后游戏采用新尺寸（画面短暂重建）；进入游戏后，英雄在世界中站立 3 秒，画面就恢复为所选尺寸，和渲染尺寸一向的做法一样。显示器上的菜单拉伸到窗口大小。即时生效。关闭：菜单保持画面本身的形状，和以前一样。（16:9 菜单是 bearstonem/d2r-pcvr 的创意。）
 cinema.world_screen.label = 在大屏幕上观看视频
 cinema.world_screen.tip = 原生 OpenXR：游戏的视频——开场、各幕视频、结局以及主菜单的“过场动画”——在世界中立着的一块平面大屏幕上播放：宽 6 m，位于你前方 5 m、与眼睛同高，在视频开始时放置，你环顾四周时保持不动（F11 会把它重新放到你面前）。只显示影片，四周为黑色，激光在上面的用法与在菜单中相同（单击或按游戏的跳过按钮即可跳过）。声音是游戏的。即时生效。关闭：游戏的整个画面显示在你面前近处的平面画面上，与以前一样。
+cinema.video_3d.label = 3D 视频
+cinema.video_3d.tip = 大屏幕上的视频以 3D 显示，适用于所有 VR 视角：一个小型深度网络在视频播放时估算画面各部分的远近，每只眼睛据此得到各自的画面——近处的东西从屏幕中突出，其余的退到屏幕后面。安装时不做任何准备，也无需等待：视频的第一瞬间是平面的，直到深度准备好。需要 d2rloader\d2r_vr_libs 中的 d2r_vr_video3d.dll（没有它视频保持平面；日志会说明）。强度：d2r_vr.ini 中的 [cinema] video_3d_strength_pct（2 = 画面宽度的 2%）。即时生效。关闭：平面大屏幕，与以前一样。
 campfire.enabled.label = 3D 角色创建
 campfire.enabled.tip = 原生 OpenXR：角色创建界面变成环绕你的 3D 场景 - 你和英雄们一起站在篝火旁。用右手指向一个英雄并扣动扳机（或按 A）来选中他；名字框、创建和返回在你面前的一块板上，被选中英雄的话语在英雄们上方的一块板上。点击火堆会溅起火星；火堆会噼啪作响。D2R VR Settings 会根据你的游戏重建这个场景（去掉其中的云，篝火周围是城镇）。如果无法显示该场景，会自动恢复为平面界面。关闭：平面的角色创建界面，与之前一致。
 openxr.name_keyboard.label = 角色名字键盘
@@ -286,6 +288,25 @@ update.check.tip = 向 bodywalkvr.com 询问模组的最新版本。不会下载
 update.develop.label = 同时包含测试版（develop 频道）
 update.develop.tip = 同时提供在向所有人发布之前的测试版。
 
+# --- Backups ---
+group.backups = 备份
+group.backups.help = 保留你现有的 D2R VR 版本——模组、本程序和你的全部设置——或只保留设置，以便以后回到它们：在更新之后，或在尝试其他设置之后。列表显示每个备份（包括 Setup 在更新前做的）：选一个，然后点“恢复”或“删除”（双击也会恢复）。其中不包含你的角色（“备份我的存档”负责保存它们）。
+@run.build_backup.label = 备份版本
+@run.build_backup.tip = 把 D2R VR 版本按现在的样子复制到 mods\D2R-VR\build_backups\<version>_<date>：插件及其库、D2R VR Settings、语言文件、模组根据你的游戏制作的游戏数据、天空和特效文件、BodyWalk Game Link，以及你的全部设置（d2r_vr.ini 和其他设置文件）。约 250 MB；不包括你的角色、日志和缓存。你做的备份会一直保留，直到你删除它们。
+@run.settings_backup.label = 保存设置
+@run.settings_backup.tip = 只把你的设置（d2r_vr.ini、头显的、本程序的以及模组的其他设置文件）复制到同一个文件夹 - 几百 KB。恢复它只会放回设置；模组本身保持原样。
+@run.build_restore.label = 恢复...
+@run.build_restore.tip = 请先在列表中选一个备份。请先关闭游戏（恢复版本时也关闭 BodyWalk）。把选中的备份放回去——版本：版本的每个文件和你当时的设置；设置：只恢复设置——放回前会先备份现在的内容（方便你再回来）。之后 D2R VR Settings 会重新打开。
+@run.build_delete.label = 删除...
+@run.build_delete.tip = 请先在列表中选一个备份。将其永久删除（会先询问）。
+@status.buildbak.label = 备份：暂无
+@run.build_open.label = 打开备份文件夹
+@run.build_open.tip = 在资源管理器中打开 mods\D2R-VR\build_backups。
+support.build_backup_before_update.label = Setup 在更新前备份版本
+support.build_backup_before_update.tip = 勾选：D2R VR Setup 在把新版本安装到已安装版本之上前，会提议（默认勾选）先备份已安装的版本，这样即使你忘了，也能在这里恢复旧版本。它在历史记录中显示为“自动”。取消勾选：Setup 的选项默认不勾选，和以前一样。
+support.build_backup_keep.label = 保留的自动备份数
+support.build_backup_keep.tip = 保留多少个自动备份（Setup 在更新前做的，以及恢复时被替换掉的内容）；创建新备份时最旧的会被删除。你用按钮做的备份永远不会因此被删除。一个版本备份约 250 MB。
+
 # --- Monitor (screen recording) ---
 group.monitor_screen_recording = 显示器（录屏）
 group.monitor_screen_recording.help = 在 VR 中游玩时，你显示器上的游戏窗口显示什么 - 用于用 OBS 录制或直播：双眼交替，或只显示一只眼，保持其自身的比例。头显中的画面不变。
@@ -405,6 +426,8 @@ group.quality = 画质
 group.quality.help = 游戏绘制多少、看起来多好与运行多快之间的权衡。一个预设（土豆、低、中）会一次性设置这里的所有项：游戏的渲染阶段、绘制距离、雾和天空。房间环、模型和帧率上限需要重启游戏。
 autotune.enabled.label = 画面自动调节
 autotune.enabled.tip = 在头显的设置面板（视频页，渲染尺寸滑块旁）以及上方的画质预设旁添加一个 Auto 按钮。在游戏中站定后按下它（最好在城镇里）：游戏会用你当前的设置测量每秒帧数。如果达到头显的刷新率，就不做任何更改 - 任何显卡都一样（高于头显自身刷新率的尺寸会保留：更清晰）。如果达不到，它会按固定顺序逐步降低，每一步都测量，并在第一个达标的步骤停下：渲染尺寸降到 1600 x 1600（你设置的低于此值的尺寸绝不会被调高），然后画质预设 中 -> 低 -> 土豆，然后尺寸降到 1300，然后注视点渲染（先 中，再 最高 - 前提是显卡支持可变速率着色且游戏启动时已开启），然后尺寸降到 1200，然后双眼交替加填充（画面比单通道略差，所以放在最后；否则以你在“头显中的3D”里的选择为准）。到这里仍然不够：它会告诉你这台电脑低于这里 VR 的最低要求，以及是处理器（CPU）还是显卡（GPU）拖了后腿。从不更改：双通道 / FlatVR、头显的刷新率、腕上的徽章。需要一两分钟；渲染尺寸变化时画面会冻结几秒。测量期间不会写入任何内容。保留会把结果写入 d2r_vr.ini（旧文件会先复制为 d2r_vr.ini.before_autotune，步骤记录到 d2r_vr_autotune.txt）；撤销、停止或关闭游戏会把一切恢复原样。帧生成和游戏自己的图形选项从不更改。取消勾选：没有 Auto 按钮，和以前一样。
+autotune.clean_measure.label = Auto：测量时不计头显串流的停顿
+autotune.clean_measure.tip = Auto 测量游戏的帧和我们的帧，而不是头显运行时的等待：每帧自身的时间（不含 xrWaitFrame 和 xrEndFrame 停留的时间）以及几秒内的中位数。如果某次测量中有被运行时扣住的帧（Virtual Desktop 有时会扣住帧约 100 ms）、卡顿或画面尺寸变化，就重新测量。如果大约半分钟内没有一次干净的测量，Auto 会停止、给出提示且不做任何改动 - 它不再根据这样的数字选择 Potato。即时生效。取消勾选：按每次测量的全部帧计数，和以前一样。
 autotune.keep.label = 保留自动调节的结果
 autotune.keep.tip = 把最近一次 Auto 运行的结果写入 d2r_vr.ini（旧文件会先复制为 d2r_vr.ini.before_autotune），与头显面板上的“保留”相同。本窗口稍后会显示新的值（预设也一样）。没有等待中的结果时什么也不会发生。
 autotune.undo.label = 撤销 / 停止自动调节
@@ -485,6 +508,8 @@ camera.smooth_follow.label = 摄像机平滑越过颠簸和台阶
 camera.smooth_follow.tip = 当英雄在颠簸、台阶或楼梯上抖动，或被游戏推向一侧时，摄像机会向上、向下或向侧面平滑滑向他，而不是跳动；它的高度平滑地跟随不平的地面，在地面上的移动也被拉匀 - 适用于 VR F4 和 F5（第一人称）、VR F2（身后），以及显示器上的 F3（内部）和 F2（身后）。在内部视角中，你的身体随摄像机滑动 - 沿地面整体滑动，上下只限腰部以上（双腿留在地面上）。你的头部仍会立即移动视角；行走和奔跑被精确跟随；传送、传送点、城镇传送门和重新居中仍会立即跳转。游戏自己的俯视视角（F1）和 VR F3（游戏在你的地板上）不受影响。即时生效。
 camera.smooth_follow_ms.label = 平滑摄像机：滑动时间，ms
 camera.smooth_follow_ms.tip = 抖动后摄像机追上英雄所需的时间。越长 = 越柔和，但世界落后于英雄的时间也越长。
+camera.entry_facing.label = 到达时面向区域内部（F4）
+camera.entry_facing.tip = VR 第一人称（F4）：当你从城外到达城镇时（城镇传送门、传送点），视角每次都会转向该幕的同一个位置 - 盗贼营地朝向德卡德·凯恩，鲁高因朝向法拉，库拉斯特码头朝向凯恩，万魔要塞朝向哈尔布和加麦拉之间，哈洛加斯则越过城镇、玛拉在你右边。当你通过楼梯、洞口或门口进入任何其他区域时，视角会背对那个入口，朝向区域内部。只有视角转动，每次到达一次；英雄和游戏不变。关闭 = 视角保持原来的朝向。即时生效。
 head.yaw_from_head.label = 随头显转向
 head.yaw_from_head.tip = 需要带 Game Link 插件的 BodyWalk。
 head.yaw_sign.label = 反转转向
@@ -596,6 +621,8 @@ arms.scale.label = 手臂长度（缩放）
 arms.scale.tip = 在英雄与你身高之比之上，再调整手臂的伸展长度。
 arms.full_reach.label = 双手始终够得到手柄
 arms.full_reach.tip = F4：当一只手离英雄肩膀的距离超过他手臂的长度时 - 比如斜劈过身体、第二只手握在远端髋部的双手剑柄上、英雄的肩比你的宽 - 它仍然会画在手柄的位置：先让肩膀过去（他的锁骨朝手的方向转动，最多 20 度，就像真实的肩膀伸向对侧那样），然后手臂再为仍缺少的部分加长（最多 35 %：超过这个程度手柄就会跳动）。手中的武器随之移动，双手武器的第二只手仍留在杆身上它的位置。仅影响绘制的骨骼。关闭：手臂在其长度处停住，手连同武器够不到手柄，与以前一样。即时生效。
+hands.palm_from_knuckle.label = 手掌贴握把，量到指关节
+hands.palm_from_knuckle.tip = F4：手按掌心放置 - 放在你控制器的握把上、武器的柄上、抓住的身体上 - 而掌心取在手腕到中指指关节的中点，也就是英雄自己骨骼中的位置。亚马逊、圣骑士和德鲁伊的每根手指都从手掌内的一根骨头开始；量到那根骨头时，她们的手掌只有一半长，手会越过握把约 2 cm，偏向指尖。其他英雄的手两种方式都一样。仅视觉效果。关闭：和以前一样。即时生效。
 arms.up.label = 手向上（+）/ 向下（-），cm
 arms.forward.label = 手向前（+）/ 向后（-），cm
 arms.side.label = 手向右（+）/ 向左（-），cm
@@ -1050,6 +1077,8 @@ openxr.end_session_on_exit.label = 游戏关闭前先结束头显会话（原生
 openxr.end_session_on_exit.tip = 在 Oculus 运行时和 Virtual Desktop 上，退出到 Windows 会让游戏在最后一刻崩溃（安全检查，0xC0000409，就在游戏存档之后 - 没有丢失任何东西，但每次都会产生一份崩溃报告）。开启：游戏退出时 - 窗口被关闭（X、Alt+F4）、Windows 注销，或在标题画面选择退出 - 会先结束头显会话，方式与关闭原生 OpenXR 相同，游戏最多等待 3 秒再关闭。“保存并退出”回到角色界面不算退出：VR 会在那里继续。关闭：会话交给游戏自己的退出流程处理，和以前一样。
 openxr.stop_flatvr_watch.label = 如果 FlatVR 在原生会话期间启动，则再次停止它
 openxr.stop_flatvr_watch.tip = 原生会话开始时，BodyWalk 的 FlatVR 会通过其 Game Link 被停止——但只限当时正在运行的 FlatVR。之后启动的（在游戏之后打开的 BodyWalk、等到 SteamVR 就绪才启动的、它的 START 按钮）会在游戏剩余时间里与原生会话并行运行：两者都在头显中，共享它的帧。开启：会话运行期间，每秒检查一次 FlatVR，如果它在运行就再次通过 Game Link 停止它（原生 OpenXR 结束时会重新启动，与开始时被停止的那个一样）。没有 Game Link 的 BodyWalk（BodyWalk Lite）无法被告知：日志会说明。即时生效。关闭：只在会话开始时停止，与以前相同。
+openxr.prewarm.label = 提前制作界面图像（首次使用不卡顿）
+openxr.prewarm.tip = 原生 OpenXR：头显内界面的着色器在会话开始时编译（过去会让第一帧 VR 多花约 0.13 s），菜单面板的图像在加载画面或游戏自身调整尺寸时制作（第一次打开传送点或背包面板过去要为它等待 0.1 - 0.25 s），任务提示和旋转后的大地图的图像在做好后、使用数量较少时会保留（过去每条提示都会新建一张）。即时生效（着色器：从下次会话开始）。关闭：一切在第一次显示时制作，和以前一样。
 openxr.reap_drain_max_ms.label = 旧交换链：释放前的最长等待，毫秒（原生 OpenXR）
 openxr.reap_drain_max_ms.tip = 我们重新创建的交换链（新的鼠标指针、另一尺寸的菜单面板）会在显卡完成游戏的工作后才被释放：先等 20 毫秒，每次不够就加倍，最多到这个值。显卡繁忙时（头显的推荐尺寸）20 毫秒从来不够，旧交换链越积越多，SteamVR 便拒绝创建新的（XR_ERROR_LIMIT_REACHED）：物品栏打开时没有面板、指针消失、画面变黑。20 = 和以前一样。实时。
 openxr.menus_wait_tracking.label = 仅在头显被追踪时才放置菜单
@@ -1065,9 +1094,7 @@ openxr.roomscale_body.tip = 游戏绝不会让英雄走得比他全速行走的�
 openxr.roomscale_cap_m.label = 房间尺度行走：视角离开被阻挡英雄的最远距离，m
 openxr.roomscale_cap_m.tip = 当英雄无法跟随（墙、怪物、门）而你继续走时，视角最多领先他这么远；超过之后，房间随你滑动 - 视角与他保持这个距离，没有跳变。退后一步，他就会重新走到你的头部之下。即时生效。
 openxr.direct_input.label = 无需 BodyWalk 的操控（插件自行读取手柄）
-openxr.direct_input.tip = 仅限原生 OpenXR。插件读取两个手柄的摇杆、扳机、握把和按键，并给游戏它自己的游戏手柄、动作和按键命令 - 操控不需要 BodyWalk。开启时，BodyWalk 的手柄按键、手势和动作会被忽略（它可以为 FlatVR 保持开启）；它的行走是例外，见下方的选项。布局：左摇杆行走，右摇杆转向；右扳机攻击，A 键拾取或打开，B / X / Y 是游戏手柄的技能键（按住左扳机：第二排），右摇杆按下切换武器，左摇杆按下显示物品（Alt），快速点按则是地图，菜单键打开物品栏（按住半秒：游戏的暂停菜单 Esc；在 PS VR2 上，菜单键是右手柄的 Options 键）；在菜单中，手柄就是游戏自己的游戏手柄（A B X Y，握把是肩键），激光照旧工作。任何设置都可以在操控 > 手柄按键下的列表中更改，或在 d2r_vr.ini 的 [direct] 段中更改。关闭：BodyWalk 的操控，与以前一样。仅限 F4：在 F1、F2、F3 和平面模式下，BodyWalk 的操控就是操控，就像此项关闭一样 - 但 BodyWalk 未运行时 F1-F3 中的手柄除外（见下方的“在 F1、F2、F3 中无需 BodyWalk 即可用手柄游玩”）。
-direct.flat_controller.label = 在 F1、F2、F3 中无需 BodyWalk 即可用手柄游玩
-direct.flat_controller.tip = VR 视角 F1（俯视）、F2（第三人称）和 F3（地板上的游戏），BodyWalk 未运行时：插件自己的手柄在那里就是游戏的游戏手柄 - 布局与第一人称（F4）相同：右扳机攻击，A 键拾取或打开，B / X / Y 是游戏手柄的技能键（按住左扳机：第二排），右摇杆按下切换武器，左摇杆按下显示物品（Alt），快速点按则是地图，菜单键打开物品栏（暂停菜单的长按属于 F4），摇杆就是游戏手柄的摇杆（左摇杆让英雄行走，左扳机 + 拨动一个摇杆喝一瓶腰带药水，见下方选项）；在菜单中，它们就是游戏自己的游戏手柄。可在 d2r_vr.ini 的 [direct] 段中重新绑定（与 F4 相同的行）。仍仅限 F4 的有：手势、接触命中、拉弓、投掷、技能轮盘和按手瞄准（在 F1 和 F3 中，英雄朝他面对的方向攻击）。BodyWalk 运行时（其 Game Link 在线，或其游戏手柄在动）：什么也不变，BodyWalk 的游戏手柄就是完整的游戏手柄。如果真实的游戏手柄也有响应，手柄是叠加在它之上的，绝不覆盖它。关闭：没有 BodyWalk 时，F1-F3 中手柄没有任何按键（只有行走和药水）。接管时，日志会写出“the plugin's own controller is the game's pad”。即时生效。
+openxr.direct_input.tip = 仅限原生 OpenXR。插件读取两个手柄的摇杆、扳机、握把和按键，并给游戏它自己的游戏手柄、动作和按键命令 - 操控不需要 BodyWalk。开启时，BodyWalk 的手柄按键、手势和动作会被忽略（它可以为 FlatVR 保持开启）；它的行走是例外，见下方的选项。布局：左摇杆行走，右摇杆转向；右扳机攻击，A 键拾取或打开，B / X / Y 是游戏手柄的技能键（按住左扳机：第二排），右摇杆按下切换武器，左摇杆按下显示物品（Alt），快速点按则是地图，菜单键打开物品栏（按住半秒：游戏的暂停菜单 Esc；在 PS VR2 上，菜单键是右手柄的 Options 键）；在菜单中，手柄就是游戏自己的游戏手柄（A B X Y，握把是肩键），激光照旧工作。任何设置都可以在操控 > 手柄按键下的列表中更改，或在 d2r_vr.ini 的 [direct] 段中更改。关闭：BodyWalk 的操控，与以前一样。仅限 F4：在 F1、F2、F3 和平面模式下，BodyWalk 的操控就是操控，就像此项关闭一样 - 但 BodyWalk 未运行时 F1-F3 中的手柄除外，它们同样按此布局操作；真正的 Xbox 手柄可与它们同时使用。
 direct.flatvr_controls.label = FlatVR：按此布局使用手柄（无需 BodyWalk 的映射）
 direct.flatvr_controls.tip = 在 FlatVR 中，手柄的工作方式与原生 OpenXR 相同：BodyWalk 把手柄原样交给游戏（Game Link、带原始操控的 BodyWalk - 1.83 加上 D2R VR 链接），上面的布局 - 按键、扳机、摇杆，可在操控 > 手柄按键中重新绑定 - 以及第一人称的一切（腰带、手势、弓、箭袋、肩部、暂停菜单）都在它们上面运行。此时 BodyWalk 的映射和它的游戏手柄完全不被读取（Game Link 直连：不会重复按键）；在 F1、F2、F3 中，手柄的行为与无 BodyWalk 时相同（见上方选项）。BodyWalk 的行走经 Game Link 传来 - 它的输出“Game Link”（BodyWalk 的引擎：FlatVR + D2R VR）- 进入手柄的摇杆（见选项“BodyWalk 的行走仍带动英雄行走”）。摄像机和手臂仍使用 BodyWalk 的头部和双手，与以前一样。较旧的 BodyWalk 不发送原始手柄数据：此时它的映射仍是操控（日志会说明）。状态栏会显示“BodyWalk：Game Link 直连”。关闭：FlatVR 中使用 BodyWalk 的映射和游戏手柄，与以前一样。即时生效。
 direct.hold_enabled.label = 长按：摇杆按下（右 = 技能面板，左 = 物品栏），左菜单键 = 暂停菜单
@@ -1133,6 +1160,8 @@ openxr.window_size.label = 方形窗口：大小，px
 openxr.window_size.tip = 方形窗口的边长，以显示器所能容纳的为限（超出显示器边缘，游戏本身会关闭）：4K 屏幕上约为 2060。更大：请在 BodyWalk 中创建一个那么大的虚拟显示器（Virtual Monitor，无需设为主显示器）- vrcam 会自动把游戏窗口移到上面。越大越清晰，也越慢。
 openxr.square_window_follow.label = 方形窗口：与渲染尺寸一样大
 openxr.square_window_follow.tip = 设置了渲染尺寸（性能 > 渲染尺寸，自动或预设）后，游戏画面是该尺寸，但方形窗口仍保持周围上方的尺寸。开启：窗口也会变为渲染尺寸（1024 对应 1024 x 1024），在英雄进入游戏几秒后以及每次渲染尺寸改变时生效。关闭：与以前相同。即时生效；游戏退出时会把窗口尺寸写入其选项，因此下次启动时就是该尺寸。
+openxr.square_window_one_step.label = 方形窗口：与画面在同一步调整尺寸
+openxr.square_window_one_step.tip = 改变渲染尺寸会让游戏卡住两次：画面调整尺寸（约 0.4 s），然后约 2 s 后窗口跟着调整（约 0.3 s）。开启：窗口与画面在同一时刻变为新尺寸，游戏只调整一次 - 一次短暂卡顿。仅限窗口所在的显示器；移到另一台显示器时仍会稍后再跟上。即时生效。关闭：和以前一样（卡顿两次）。
 @status.square_window.label = 游戏窗口保持游戏自身的样子
 openxr.third_gaze.label = F2：摄像机随视线绕英雄转动
 openxr.third_gaze.tip = 关闭：转身时摄像机留在英雄身后，头部可以自由环顾。开启：它随头部绕着他转动，就像在 FlatVR 的屏幕上那样。
@@ -1325,7 +1354,25 @@ hud.map_compass_flat.tip = 开启“地图随镜头旋转”时：屏幕上圆�
 hud.map_compass_flat.choice1 = 条带
 hud.map_compass_flat.choice2 = 细条：仅字母
 hud.map_compass_flat.choice3 = 字母环
+hud_third.bar_low.label = 工具栏：位置
+hud_third.bar_low.tip = 在前方，画面内：工具栏——生命、法力、腰带和技能——位于画面底部，深度和位置由下方滑块设定。在镜头下方低处：它从画面中移出，低低地悬在你面前，就像 F5 的工具栏：低头即可查看。它随头部左右转动，但不随上下转动；下方两个滑块设定它在眼睛下方多远、前方多远。仅工具栏：地图仍留在画面中。打开菜单（物品栏、商人……）时，它会像在所有视角中一样回到画面中。即时生效。
+hud_third.bar_low.choice0 = 在前方，画面内（与以前一样）
+hud_third.bar_low.choice1 = 在镜头下方低处（与 F5 一样）
+hud_third.bar_low_below_cm.label = 低位工具栏：高度，眼睛下方 cm
+hud_third.bar_low_below_cm.tip = F2 的低位工具栏在眼睛下方多远，单位 cm：越大越低，越小越升入视野。默认 33，与 F5 相同。即时生效。
+hud_third.bar_low_ahead_cm.label = 低位工具栏：前方距离，cm
+hud_third.bar_low_ahead_cm.tip = F2 的低位工具栏在眼睛前方多远，单位 cm：越小越近（越大），越大越远（越小）。默认 32，与 F5 相同。即时生效。
 hud_third.bar_near.tip = 仅限真立体：+ 把工具栏拉向眼睛，- 把它推到屏幕后面；0 = 游戏放置的位置。
+hud_third.map_x.label = 地图移向中间，%
+hud_third.map_x.tip = 第三人称（F2）：游戏的角落地图向屏幕中间移动，单位为屏幕宽度的 % - 右上角的地图向左移，左上角的地图向右移。0 = 在它的角落，即游戏放置的位置。地图永远不会离开屏幕。需要开启 D2R_DepthFog.fx（由它重新绘制地图）。即时生效。
+hud_third.map_y.label = 地图下移，%
+hud_third.map_y.tip = 第三人称（F2）：游戏的角落地图沿屏幕向下移动，单位为屏幕高度的 %。0 = 在顶部，即游戏放置的位置。地图永远不会离开屏幕。需要开启 D2R_DepthFog.fx（由它重新绘制地图）。即时生效。
+hud_third.map_size.label = 地图大小，%
+hud_third.map_size.tip = 第三人称（F2）：游戏的角落地图缩小或放大，从它自己的角落缩放（然后由上方两个滑块移动）。100 = 游戏绘制的大小。需要开启 D2R_DepthFog.fx（由它重新绘制地图）。即时生效。
+hud_third.allies_x.label = 盟友头像：向右，%
+hud_third.allies_x.tip = 你的佣兵和队友的头像位于画面左上角——在头显中处于视野边缘。这里将它们向右移动，单位为画面宽度的 %（约 30 会移入三分之一）。此处和下方为 0 时：按 UI: F4 body 上“盟友头像”滑块在所有视角中的位置（0 = 游戏放置的位置）。仅 VR F2；F5 有自己的设置。即时生效。
+hud_third.allies_y.label = 盟友头像：向下，%
+hud_third.allies_y.tip = 同上，向下，单位为画面高度的 %。仅 VR F2。即时生效。
 
 # --- Swing ---
 group.swing = 挥击
@@ -1372,7 +1419,6 @@ hud_floor.bar_near.tip = 仅限真立体：+ 把工具栏拉向眼睛，- 把它
 # --- Map, the game on your floor ---
 group.map_the_game_on_your_floor = 地图，游戏在你的地板上
 group.map_the_game_on_your_floor.help = 游戏躺在你的地板上（F3）时的角落地图：它的大小、它在真立体中有多近，以及它在屏幕上的位置。需要在 ReShade 中开启 D2R_DepthFog.fx。
-hud_floor.map_size.label = 地图大小，%
 hud_floor.map_size.tip = 角落地图（Tab）更小或更大，围绕它自己的角缩放。需要在 ReShade 中开启 D2R_DepthFog.fx（它把地图重新绘制出来）；没有它，游戏自己的地图保持不变。鼠标指针在这里自己贴在游戏的地面上。
 hud_floor.map_near.label = 地图更近 / 更远
 hud_floor.map_near.tip = 仅限真立体：+ 把地图拉向眼睛，- 把它推到屏幕后面；0 = 游戏放置的位置。
@@ -1468,6 +1514,13 @@ hud_top.bar_size.label#2 = F1：工具栏大小，%
 hud_top.bar_size.tip#2 = F1 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F1 的设置是同一个（界面：F1 俯视）。
 hud_third.bar_size.label#2 = F2：工具栏大小，%
 hud_third.bar_size.tip#2 = F2 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F2 的设置是同一个（界面：F2 背后）。
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = F2 中的地图（第三人称）
+group.map_in_f2_third_person.help = F2 中的角落地图：向屏幕中间和下方移动，以及它的大小。与 VR F2 的设置相同（UI：F2 身后）。需要在 ReShade 中开启 D2R_DepthFog.fx。
+hud_third.map_x.label#2 = F2：地图移向中间，%
+hud_third.map_y.label#2 = F2：地图下移，%
+hud_third.map_size.label#2 = F2：地图大小，%
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = 鼠标和键盘的第一人称
@@ -2304,6 +2357,10 @@ world.town_heads_look_down.label = 城镇转头：向下看，度
 world.town_heads_look_down.tip = 头部能向下低多远去看你的双眼（当你蹲下，或他们很高时）。实时生效。
 holes.patch_world.label = 修补世界中的空洞（测试：盗贼营地出口的桥）
 holes.patch_world.tip = 游戏是为从上方俯视的摄像机制作的：有些地方在那种摄像机从不看的位置从未建模 - 盗贼营地出口的桥，其桥面和护栏之间沿桥面有一条没有地面的窄带，第一和第三人称都能透过它看到远处下方的河流。勾选后，本程序会根据你游戏自己的文件为每个这样的地方制作一个补丁（桥面自己的地面材质，其边缘延伸到护栏 - 没有任何手工放置），游戏会把它作为自己的一块来绘制，光照和阴影与桥面一致。所有视角：平面 F1、F2、F3 和 VR。下次启动游戏时生效。取消勾选：文件会再次被移除，桥保持游戏原样。
+holes.sewer_backdrop.label = 库拉斯特下水道楼梯：一面暗墙封住远端
+holes.sewer_backdrop.tip = 在库拉斯特市集和上库拉斯特，通往下水道的楼梯在地下延伸，最低一层的地面尽头是空的：那里没有墙封住通道（上方的摄像机从不看进去），所以在第一人称中你会透过楼梯井底看到天空。开启：游戏自带黑色面板的两个面立在那个开口端后方半个单位处，比开口稍宽稍高，按每个楼梯井自己的位置摆放（由 bearstonem/d2r-pcvr 发现）。本程序在打开时根据你游戏自己的文件制作这四个场景文件，并保存在模组内部（mods\D2R-VR\D2R-VR.mpq）；只改变画面 - 楼梯、入口以及你游玩的一切仍是游戏原样。所有视角（从上方看，墙在地下，看不到）。下次启动游戏时生效。关闭：文件会被再次取出，楼梯恢复为游戏原样。
+holes.bazaar_mask_hidden.label = 库拉斯特市集：地下深处没有灰色平面
+holes.bazaar_mask_hidden.tip = 库拉斯特市集的一个场景文件在地下 23 个单位处放置了一个平坦的地形遮罩平面，远离其他一切 - 是关卡制作时的残留。俯视视角从不看那里；在第一人称中它会透过草地显示为一片平坦的灰色。开启：把这一块从场景中取出（文件其余部分仍是游戏原样）。本程序在打开时根据你游戏自己的文件制作该文件，并保存在模组内部（mods\D2R-VR\D2R-VR.mpq）；只改变画面。所有视角。下次启动游戏时生效。关闭：该文件会被再次取出，市集恢复为游戏原样。
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = 怪物（平面游玩）
@@ -2589,6 +2646,8 @@ group.cave_ceiling.help = 在洞穴和地下城的黑色虚空上方加一个顶
 ceiling.enabled.tip#2 = 在洞穴和地下城的黑色虚空上方加一个顶部，仅第一人称——游戏自己的（它被照亮的石头）或我们效果的拱顶，按“由谁绘制顶部”的设置；每个房间的高度在下面。
 ceiling.game_ceiling_wall.label = 游戏的顶部：在边缘向下弯成墙
 ceiling.game_ceiling_wall.tip = 在游戏的顶部结束处（图块大小 10 时约 215 单位远），用同样受光照的岩石围成一圈，从顶部一直延伸到地板之下（地板的深度）：顶部边缘之外的黑色虚空 - 它与远处地板之间由火焰后面的雾照亮的一条亮带 - 被石头封住，就像我们效果的远墙封住它一样。关闭：平的顶部。即时生效。
+ceiling.follow_floor.label = 游戏的天花板：地面升高处随之阶梯式升高（洞穴）
+ceiling.follow_floor.tip = 在天然洞穴中，天花板立在每个位置下方的地面上，而不是你脚下的地面上：地面升高的地方，上方的天花板也在同一位置以一个台阶升高同样的高度，因此它在各处都与地面保持同一高度 - 固定在世界中，走上台阶不会让任何东西移动。地面从游戏自己的地面（你双脚所站的那层）读取，并为该区域保留；同样的受光岩石，台阶的侧面也由它封住。关闭：跟随你的、高于区域地面的单一高度，和以前一样。VR F4。即时生效。
 ceiling.game_ceiling_beams.label = 游戏的顶部：兵营自己的木梁
 ceiling.game_ceiling_beams.tip = 游戏为兵营（及其监牢）附带了一个从未放置过的木制顶部框架：一个梁格，底部位于兵营墙壁的顶端。勾选：游戏在你头顶以固定在世界中的整框网格绘制这个框架 - 它自己的模型、木材和尺寸，由它的火把照亮 - 梁上方铺着兵营的石头，封住梁之间的空隙。用你的游戏文件制作。仅限 VR F4。关闭：平坦的石质顶部。即时生效。
 ceiling.game_ceiling_dome.label = 游戏的顶部：大教堂礼拜堂上方的穹顶
@@ -3124,6 +3183,12 @@ gameplay.leap_head_gain.label = 野蛮人：头部倾斜的作用距离
 gameplay.leap_head_gain.tip = 头部的倾斜先乘以这个数，再用来瞄准跳跃弧线：2 表示只需一半的倾斜就能落到同样远，稍微抬头就已经能跳很远；1 = 头部本身的倾斜。最远仍是跳跃自身的范围。实时。
 gameplay.leap_air_aim.label = 野蛮人：在空中瞄准下一次跳跃
 gameplay.leap_air_aim.tip = 开启跳跃弧线时：英雄在空中时按住跳跃或跳跃攻击，弧线和圆圈也会在空中显示；在空中松开，下一次跳跃就落向那个圆圈——其按键会一直按住到落地后，直到游戏施放它。已在空中的跳跃仍落在施放时游戏设定的位置：不修改游戏本身就无法重新瞄准进行中的跳跃。关闭：在空中松开会立即按下，与在地面上一样。即时生效。
+
+# --- Barbarian Whirlwind ---
+group.barbarian_whirlwind = 野蛮人旋风斩
+group.barbarian_whirlwind.help = 野蛮人的旋风斩朝哪里去，仅限 VR 第一人称（F4）。勾选后由行走摇杆操控方向。
+gameplay.whirlwind_stick_steer.label = 野蛮人：行走摇杆操控旋风斩
+gameplay.whirlwind_stick_steer.tip = 仅限 VR 第一人称（F4）。当你推动行走摇杆时，你施放的每个旋风斩 - 按一次，或按住按键时的每次重复 - 都会朝那个推动方向旋转 10 格，而不是朝你瞄准处附近的怪物。旋风一旦开始就无法转向，所以请按住按键，用摇杆操控下一次旋风。不会替你按任何键：施放、法力和命中都是游戏自己的，只是选择了落点。摇杆静止时，或旋风斩被设为触碰施放时：和以前一样瞄准。关闭：和以前一样瞄准。即时生效。
 
 # --- Point skills (arc and circle) ---
 group.point_skills_arc_and_circle = 定点技能（弧线与圆圈）
@@ -3674,6 +3739,10 @@ weight.shield_collide.label = 武器会撞上你自己的盾牌
 weight.shield_collide.tip = 即时生效。仅限 VR 第一人称（F4）。一只手中的武器碰到另一只手臂上的盾牌：它停在盾面上并沿其滑动——盾牌的形状是游戏自己的模型，就在游戏绘制它的位置——握着武器的手会让开，而你的手柄继续前进，最多 60 cm；再往前压，武器会穿过去，直到脱离。双手都能感到一记撞击，重击会播放游戏自己的格挡声音。只影响它们如何移动、手感和声音——绝不涉及攻击、格挡或游戏的任何东西。取消勾选：武器穿过你的盾牌，与以前一样。
 weight.clash_sound.label = 钢铁相击的声音：撞得越重，声音越大
 weight.clash_sound.tip = 即时生效。双手中的两件武器相互撞击，以及格挡的相击（怪物的武器碰到你的武器或盾牌），会播放游戏自己的格挡声音——撞得多重，声音就有多响：轻轻一点很小声，重击与游戏播放的一样响，低于 0.5 m/s 则没有声音。手中的脉冲遵循同样的规则。仅是声音：游戏的任何东西都不变。取消勾选：撞击能感觉到，但听不到，与以前相同。
+weight.clash_sound_min_mps.label = 钢铁碰撞：只在达到此速度时发声，m/s
+weight.clash_sound_min_mps.tip = 即时生效。武器碰到你自己的盾牌，以及你的两把武器互相碰撞时，只有在此速度及以上才会发声；较轻的碰撞仍能在手中感觉到，但没有声音。0：和以前一样（两把武器之间从 0.5 m/s 起，盾牌上从 1 m/s 起）。3：只有重击（真实挥击为 2 - 6 m/s）。
+weight.clash_sound_gap_s.label = 钢铁碰撞：两次声音至少间隔，s
+weight.clash_sound_gap_s.tip = 即时生效。在你自己的盾牌上或你的两把武器之间听到一次碰撞后，要过这么久才会听到下一次 - 在盾牌上嘎嘎作响的武器只铿锵一声，而不是每次接触都响。每次碰撞仍能在手中感觉到。0：没有间隔，和以前一样。0.5：每秒最多两次。
 weight.second_lets_go.label = 每只手一件武器：第二件也可以松开
 weight.second_lets_go.tip = 即时生效。双手各持一件武器时，第二件和第一件一样由它那只手的握把握持：松开后它会掉落并躺在地上，而第一件仍是手中完整的武器（它打击、停在躯体上、其握把能让它松开）。“丢下的武器”对它同样适用：它躺在地上或回到背上；使用肩后拔出时，各自从自己那只手的肩后拔出（右手的武器从右肩，左手的从左肩），两件都挂在那里。该手的握把在远离被丢下的那件处按下会把它唤回；握拳时碰到它则把它拿起。取消勾选：第二件被永久握住，与以前相同。
 weight.parry_feel.label = 格挡：感受武器相击
@@ -3754,6 +3823,8 @@ weight.knock_haptic_pct.label = 击飞：手中的脉冲，%
 weight.knock_haptic_pct.tip = 即时生效。武器使物件动起来的那只手中的短脉冲（击得越重越强）。0：无。
 weight.prop_heft.label = 物件有重量：杯子轻轻一点，木桶沉沉一响
 weight.prop_heft.tip = 即时生效。勾选：每个物件的重量由它的种类和大小决定——杯子约 0.2 kg，凳子 2，椅子 10，木桶 48，一袋谷物 60。轻轻一戳就能让杯子飞出去，剑几乎推不动木桶，大锤能把它推开。让物件动起来的那把武器所在的手也会感觉到：杯子或盘子是轻而短的一点，木桶、麻袋或椅子则是一记重击，之后跟着一声更长、更闷的撞击（物件吃掉你挥击的份额越多就越重，所以匕首比大锤更能感到木桶）；脉冲强度由上方的滑块决定。这些质量需要支持它们的重量库（日志会说明）；旧版本只改变脉冲。取消勾选：物件的重量按其材质而定，每次撞击都是同样短的脉冲，与以前一样。
+weight.props_on_contact.label = 物件只在被触碰时才变为物理物体（测试）
+weight.props_on_contact.tip = 勾选：没人触碰的物件根本不是物理物体 - 只有当你的武器、你的手或另一个移动中的物件可能碰到它时，它以及它下面的架子或桌子才变成物理物体，一切再次静止后就不再是；你的武器只在物件附近才是物理物体，没有东西移动时物件的物理不做任何步进。进入满是物件的房间或从它们旁边走过，物件线程的开销只有以前的一小部分。碰撞效果应当不变：杯子、盘子、木桶照旧飞起、滚动和落地。需要支持此功能的重量库（日志会说明；旧版库会让每个物件都保持为物理物体）。切换时会重新创建物件世界。取消勾选：你附近的每个物件从被发现起就是物理物体，和以前一样。
 weight.grab_props.label = 把物件拿在手中（测试）
 weight.grab_props.tip = 即时生效。勾选：用掌心压在或靠近杯子、罐子、书、头骨、凳子……上，有力地握紧空手（手中没有武器、盾牌、弓或药瓶）的握把，手就在掌心下的位置拿起它（一次脉冲）：它到了你手中，并在你握紧握把期间停留在那里——由你手的力量对抗它的重量来承载（凳子比杯子重），会撞击它碰到的东西。松手后它按你的手抛出的样子飞出去，然后像被击飞的物件那样停在落点。把手拉离它很远（抓取的挣脱距离，见上方的抓取躯体），它就会扯开（最初 2 s 内不会）。手会随“抓取：手包住所握之物合拢”包住它。抓取是 VR 工具包自己的，位于重量库的物件世界中（带手部的 d2r_vr_weight.dll——没有时日志会说明）。只是绘制：没有物品，游戏的任何东西都不改变，区域再次载入时物件回到原位。取消勾选：空手的握把只合拢拳头，与以前相同。
 
@@ -4523,6 +4594,7 @@ status.layer_warn.toolkit.how = 在 OpenXR Toolkit Companion 中勾选“Disable
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = 视角
 vr.hset.page.f1 = F1
+vr.hset.page.f2 = F2
 vr.hset.page.f3 = F3
 vr.hset.page.f5 = F5
 vr.hset.page.options = 选项
@@ -4591,6 +4663,12 @@ vr.hset.top.sky.label = 游戏的天空
 vr.hset.top.sky.detail = 配合真实几何：游戏围绕世界的天空穹顶
 vr.hset.top.fog.label = 游戏的雾
 vr.hset.top.fog.detail = 配合真实几何：游戏覆盖远处地面的雾
+vr.hset.hud_third.map_x.label = 地图移向中间
+vr.hset.hud_third.map_x.detail = 屏幕宽度的 %；0 = 在它的角落
+vr.hset.hud_third.map_y.label = 地图下移
+vr.hset.hud_third.map_y.detail = 屏幕高度的 %；0 = 在顶部
+vr.hset.hud_third.map_size.label = 地图大小
+vr.hset.hud_third.map_size.detail = 从角落缩放；100% = 和现在一样
 vr.hset.table.full_width.label = 全宽
 vr.hset.table.full_width.detail = 四周是游戏的天空和雾，无边缘
 vr.hset.table.draw_distance.label = F3 距离
@@ -5260,8 +5338,6 @@ status.sig.row_bad = {name}：不正常 - {without} 有偏差
 language.label = 语言
 language.tip = 本程序的语言。文本位于模组的 lang 文件夹中（mods\D2R-VR\lang），每种语言一个文件：要翻译成你自己的语言，请把 en.txt 复制为 <你的语言代码>.txt（de.txt、pl.txt……），手动或用翻译工具翻译每个“=”之后的文字，并保持“=”之前的键和每个 {name} 原样——它就会出现在这个列表中。文件里没有的内容保持英文。程序会以你选择的语言重新打开。
 language.auto = Windows 语言（{name}）
-home.xbox_pad.label = 在 VR 中使用 Xbox 手柄（游戏手柄）
-home.xbox_pad.tip = 勾选：在 VR 的 F1、F2 和 F3 中，由真实的 Xbox 手柄（游戏手柄）单独操控游戏 - F2（第三人称）和 F3（地板上的游戏）是适合它的视角；VR 手柄在那里不再按下任何按键（它们仍可行走和喝腰带药水）。F4（第一人称）仍是为 VR 手柄设计的。不勾选（默认）：真实的游戏手柄同样可用，VR 手柄叠加在它之上。与立体 > “在 F1、F2、F3 中无需 BodyWalk 即可用手柄游玩”是同一个键，只是方向相反。当“无需 BodyWalk 的操控”（立体）关闭时变灰：此时 BodyWalk 的操控就是操控。改用鼠标和键盘：操控 > 鼠标和键盘 > “VR 视角 F2 和 F4 中也使用鼠标视角”；在游戏中按 F9 可释放指针。即时生效。
 status.d2rloader.ok = D2RLoader 已安装
 status.d2rloader.missing = 游戏文件夹中没有 D2RLoader - 模组只能在它之下运行
 status.d2rloader.downloading_pct = 正在从 d2rloader.net 下载 D2RLoader 1.3.1... {pct}%
@@ -5338,6 +5414,8 @@ status.world_contact.not_started = 世界接触墙体：无法启动
 boat.restart = 游戏正在运行：重启游戏才能看到更改
 status.kurast_boat.result = 库拉斯特码头独木舟：{text}
 dome.restart = 游戏正在运行：请重启它以使用游戏绘制的天空
+bazaar.restart = 游戏正在运行：重启游戏才能看到变化
+sewer.restart = 游戏正在运行：重启游戏才能看到变化
 campfire_scene.restart = 游戏正在运行：重启后才能看到更改
 status.kurast_boat.reading = 库拉斯特码头独木舟：正在从游戏文件读取城镇...
 status.kurast_boat.not_started = 库拉斯特码头独木舟：无法启动
@@ -5368,6 +5446,44 @@ problem.view_key = {key} 视角
 problem.headset_other = 其他
 problem.send = 收集并发送...
 problem.cancel = 取消
+build.type.auto_update = 自动（更新前）
+build.type.auto_restore_settings = 自动（恢复前的设置）
+build.type.auto_restore = 自动（恢复前的版本）
+build.type.settings = 设置
+build.type.build = 版本
+build.row_unfinished = {version}，{when} - 未完成（请删除）
+build.row = {type}：{version}，{when}，{size}
+build.col.type = 类型
+build.col.version = 版本
+build.col.made = 创建时间
+build.col.size = 大小
+build.type_unfinished = {type} - 未完成
+status.buildbak.not_mod = 备份：仅适用于以模组方式安装的 D2R VR（mods\D2R-VR）
+status.buildbak.none = 备份：暂无
+status.buildbak.list = 备份：{count} 个，共 {size} - 在列表中选一个，然后点“恢复”或“删除”
+status.buildbak.no_space = 游戏所在磁盘的可用空间不足以备份（{error}）
+status.buildbak.nothing = 此游戏文件夹中没有可备份的 D2R VR 版本
+status.buildbak.bad = 该备份不完整，未恢复：{error}
+status.buildbak.failed = 失败：{error}
+status.buildbak.saving = 正在保存设置...
+status.buildbak.making = 正在备份版本...
+status.buildbak.saved = 已保存 {version} 的设置：{files} 个文件，{size}
+status.buildbak.made = 已备份 {version}：{files} 个文件，{size}
+status.buildbak.unfinished = 该备份未完成：无法恢复（请删除）
+msg.build_game_runs = 请先关闭游戏：游戏运行时无法放回它的文件。
+msg.build_bodywalk_runs = 请先关闭 BodyWalk：BodyWalk 运行时无法放回 Game Link（它在版本中的部分）。
+msg.settings_restore = 放回 {when} 保存的设置（D2R VR {version}）？\n\n你的全部设置都将回到该备份；模组本身保持原样。你现在的设置会先被保存，以便你能回到它们。之后 D2R VR Settings 会重新打开。
+msg.build_restore = 把 D2R VR {version} 放回到 {when} 时的样子？\n\n版本的每个文件和你的全部设置都将回到该备份。现在的版本会先被备份，以便你能回到它。之后 D2R VR Settings 会重新打开。
+status.buildbak.restoring_settings = 正在保存现有设置，然后恢复...
+status.buildbak.restoring = 正在备份现有版本，然后恢复...
+status.buildbak.restored_settings = 设置已恢复 - D2R VR Settings 将重新打开
+status.buildbak.restored = 已恢复 {version} - D2R VR Settings 将重新打开
+status.buildbak.half = - 原有内容在备份 {folder} 中
+msg.build_delete = 永久删除此备份？\n\n{label}
+status.buildbak.not_deleted = 无法完全删除该备份：其中有文件被打开
+status.buildbak.restoring_pct = 正在恢复... {percent}%
+status.buildbak.making_pct = 正在备份... {percent}%
+msg.build_pending = 恢复的 D2R VR Settings 无法在本程序运行时替换它。请关闭此窗口，然后把\n{pending}\n重命名为 D2R_VR_Settings.exe。
 status.hreport.running = 正在生成头显报告：请保持戴着头显，并把两个手柄拿在身前（约 20 s）……
 status.hreport.saved = 头显报告已保存：{path}——“收集日志”会打包它
 status.hreport.missing = 在本程序旁边找不到 D2R_VR_Headset_Report.exe——请重新安装 D2R VR
@@ -5436,6 +5552,33 @@ boat.not_written = 无法写入 mods\D2R-VR\D2R-VR.mpq\...\docktown3.json（错�
 boat.no_receipt = 无法写入 mods\D2R-VR\kurast_boat.json
 boat.made = 已根据你的游戏生成：水面上的独木舟（mods\D2R-VR\D2R-VR.mpq），从游戏下次启动起生效
 boat.ready = 就绪：水面上的独木舟（mods\D2R-VR\D2R-VR.mpq）
+sewer.no_mod = 仅在模组自己的文件夹中（mods\D2R-VR\D2R-VR.mpq），而这里没有：使用游戏原有的楼梯
+sewer.ours_out = 已从 mods\D2R-VR 中取出我们的 {n} 个库拉斯特预设
+sewer.not_ours = mods\D2R-VR 中 {n} 个不属于我们的库拉斯特下水道预设保持原样
+sewer.off = 关闭（[holes] sewer_backdrop，“世界”选项卡）：楼梯保持游戏原样
+sewer.no_archives = 无法打开游戏的存档包（错误 {error}）；下次启动时会再试
+sewer.no_files = 此游戏中的库拉斯特下水道楼梯与已知的不同：无需处理
+sewer.refused = 游戏的下水道楼梯与已知的不同（{why}）；保留游戏原有的
+sewer.preset_refused = {preset} 与已知的不同（{why}）；保留游戏原有的楼梯
+sewer.not_written = 无法写入 mods\D2R-VR\D2R-VR.mpq\{preset}（错误 {error}）
+sewer.no_receipt = 无法写入 mods\D2R-VR\sewer_backdrop.json
+sewer.made = 已根据你的游戏制作：库拉斯特下水道楼梯尽头的一面暗墙（{size} 个单位，{n} 个预设位于 mods\D2R-VR\D2R-VR.mpq），从下次启动游戏起生效
+sewer.ready = 就绪：库拉斯特下水道楼梯尽头的一面暗墙（{n} 个预设位于 mods\D2R-VR\D2R-VR.mpq）
+sewer.changed_by_you = {n} 个被你改过：保持原样
+bazaar.no_mod = 仅在模组自己的文件夹中（mods\D2R-VR\D2R-VR.mpq），而这里没有：使用游戏原有的市集
+bazaar.not_taken_out = 无法取出 mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json（错误 {error}）
+bazaar.ours_out = 已从 mods\D2R-VR 中取出我们的市集预设
+bazaar.not_ours = mods\D2R-VR 中一个不属于我们的 burbs08x16_1.json 保持原样
+bazaar.off = 关闭（[holes] bazaar_mask_hidden，“世界”选项卡）：市集保持游戏原样
+bazaar.no_archives = 无法打开游戏的存档包（错误 {error}）；下次启动时会再试
+bazaar.no_preset = 此游戏中没有市集的预设：无需处理
+bazaar.no_need = 游戏原有的市集在地下没有多余的平面：无需处理
+bazaar.refused = 游戏的市集预设与已知的不同（{why}）；保留游戏原有的
+bazaar.changed_by_you = mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json 被你改过：保持原样
+bazaar.not_written = 无法写入 mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json（错误 {error}）
+bazaar.no_receipt = 无法写入 mods\D2R-VR\bazaar_mask.json
+bazaar.made = 已根据你的游戏制作：库拉斯特市集地下深处的灰色平面已取出（mods\D2R-VR\D2R-VR.mpq），从下次启动游戏起生效
+bazaar.ready = 就绪：库拉斯特市集地下深处的灰色平面已取出（mods\D2R-VR\D2R-VR.mpq）
 dome.no_mod = 仅限模组自己的文件夹（mods\D2R-VR\D2R-VR.mpq），这里没有：没有游戏的天穹
 dome.off = 关闭（[sky] game_sky）：不制作天穹模型；已移除我们的 {n} 个
 dome.no_archives = 无法打开游戏的存档文件（错误 {error}）；下次启动时会再试
@@ -5533,6 +5676,10 @@ vr.autotune.line.up_no = 已恢复 {what} {from} -> {to}：{b} 帧/秒，太慢 
 vr.autotune.line.final = 再次检查：{b} 帧/秒
 vr.autotune.title.running = 自动：正在测量，请站定（已完成 {done}，还需约 {left}）
 vr.autotune.status.running = 每项设置会试几秒钟。“停止”会把一切恢复原样。
+vr.autotune.title.noisy = Auto：未得出结论 - 帧太不均匀，无法测量
+vr.autotune.status.noisy = 没有做任何改动。“撤销”（或“保留”）会关闭此面板。
+vr.autotune.line.noisy = 连续 {n} 次测量中有被头显串流扣住的帧（每次约 100 ms）、卡顿或尺寸变化 - 不会根据这样的数字选择任何设置。
+vr.autotune.line.noisy_vd = Virtual Desktop：试试换一种编码器或降低码率、PC 用有线连接，然后在城镇里站着不动再次运行 Auto。
 vr.autotune.title.below_cpu = Auto：低于最低要求 - 处理器（CPU）把它限制在 {now} 帧/秒
 vr.autotune.title.below_gpu = Auto：低于最低要求 - 显卡（GPU）把它限制在 {now} 帧/秒
 vr.autotune.title.reached = 自动：已达到 {fps} 帧/秒（头显 {hz} Hz）
@@ -5968,7 +6115,9 @@ vr.hset.map.go = 地图
 vr.hset.map.back = HUD
 vr.hset.f3.go = F3
 vr.hset.f1.go = F1
+vr.hset.f2.go = F2
 vr.hset.f3.back = 视角
+vr.hset.f2.back = 视角
 vr.hset.f1.back = 视角
 vr.hset.recentre = 重新居中视角
 vr.hset.close = 关闭
@@ -6120,6 +6269,15 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+build.picked = 已选
+status.buildbak.count = 备份：{count} 个，共 {size} - 点击一个以恢复或删除
+status.buildbak.more = （显示最新的 {rows} 个：其余的请打开备份文件夹）
+status.buildbak.pick = 请先在列表中点击一个备份
+home.xbox_pad.label = 在 VR 中使用 Xbox 手柄（游戏手柄）
+home.xbox_pad.tip = 勾选：在 VR 的 F1、F2 和 F3 中，由真实的 Xbox 手柄（游戏手柄）单独操控游戏 - F2（第三人称）和 F3（地板上的游戏）是适合它的视角；VR 手柄在那里不再按下任何按键（它们仍可行走和喝腰带药水）。F4（第一人称）仍是为 VR 手柄设计的。不勾选（默认）：真实的游戏手柄同样可用，VR 手柄叠加在它之上。与立体 > “在 F1、F2、F3 中无需 BodyWalk 即可用手柄游玩”是同一个键，只是方向相反。当“无需 BodyWalk 的操控”（立体）关闭时变灰：此时 BodyWalk 的操控就是操控。改用鼠标和键盘：操控 > 鼠标和键盘 > “VR 视角 F2 和 F4 中也使用鼠标视角”；在游戏中按 F9 可释放指针。即时生效。
+direct.flat_controller.label = 在 F1、F2、F3 中无需 BodyWalk 即可用手柄游玩
+direct.flat_controller.tip = VR 视角 F1（俯视）、F2（第三人称）和 F3（地板上的游戏），BodyWalk 未运行时：插件自己的手柄在那里就是游戏的游戏手柄 - 布局与第一人称（F4）相同：右扳机攻击，A 键拾取或打开，B / X / Y 是游戏手柄的技能键（按住左扳机：第二排），右摇杆按下切换武器，左摇杆按下显示物品（Alt），快速点按则是地图，菜单键打开物品栏（暂停菜单的长按属于 F4），摇杆就是游戏手柄的摇杆（左摇杆让英雄行走，左扳机 + 拨动一个摇杆喝一瓶腰带药水，见下方选项）；在菜单中，它们就是游戏自己的游戏手柄。可在 d2r_vr.ini 的 [direct] 段中重新绑定（与 F4 相同的行）。仍仅限 F4 的有：手势、接触命中、拉弓、投掷、技能轮盘和按手瞄准（在 F1 和 F3 中，英雄朝他面对的方向攻击）。BodyWalk 运行时（其 Game Link 在线，或其游戏手柄在动）：什么也不变，BodyWalk 的游戏手柄就是完整的游戏手柄。如果真实的游戏手柄也有响应，手柄是叠加在它之上的，绝不覆盖它。关闭：没有 BodyWalk 时，F1-F3 中手柄没有任何按键（只有行走和药水）。接管时，日志会写出“the plugin's own controller is the game's pad”。即时生效。
+hud_floor.map_size.label = 地图大小，%
 vr.hset.mode.f5_head_look.label = F5：摄像机跟随头部
 vr.hset.mode.f5_head_look.detail = 摄像机跟随你的头部，与 F4 一样
 hands.left_handed_mirror.label = ……把英雄画成左撇子

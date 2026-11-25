@@ -31,6 +31,8 @@ constexpr const wchar_t* kReceipts[] = {
     L"cave_ceiling.json",    // [ceiling] game_ceiling & co. (dome_assets.cpp PrepareCeiling)
     L"kurast_boat.json",     // [world] kurast_boat: the Kurast Docks' preset (boat_assets.cpp)
     L"world_holes.json",     // [holes] patch_world (holes_assets.cpp)
+    L"sewer_backdrop.json",  // [holes] sewer_backdrop: the Kurast sewer presets (sewer_assets.cpp)
+    L"bazaar_mask.json",     // [holes] bazaar_mask_hidden: the Kurast Bazaar tile (bazaar_assets.cpp)
     L"wrist_orbs.json",      // [hud] wrist_game_models (orb_assets.cpp)
     L"campfire_scene.json",  // [campfire] enabled (campfire_assets_unleashed.cpp)
     L"reshade\\reshade-shaders\\Textures\\D2R_Arcane\\made.json",   // [sky] arcane_sky: its visual files in the .mpq (arcane_assets.cpp)

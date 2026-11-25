@@ -104,17 +104,20 @@ int main() {
     EXPECT(g_takes == 1 && g_takeHand[0] == 1);
     EXPECT((g_takeMask[0] & (kSqueeze | kTakeSqueeze)) == (kSqueeze | kTakeSqueeze));
     EXPECT(g_takeSrc == kSrcOther1);
+    EXPECT(!(g_takeMask[0] & kChordOtherGrip));   // (the right hand on it: its chords are not moved to the left grip)
     EXPECT(weightwire::RawGrips(raw) && raw[0] > 0.99f && raw[1] < 0.01f);
 
     // both hands on it: both grips taken
     weight::g_holds[1] = true;
     NewFrame(kFocused, 1.0f, 1.0f);
     EXPECT(g_takes == 2 && g_takeHand[0] == 1 && g_takeHand[1] == 0);
+    EXPECT(!(g_takeMask[0] & kChordOtherGrip) && !(g_takeMask[1] & kChordOtherGrip));   // (both on it: no free grip to lend)
 
     // only the left on it
     weight::g_holds[0] = false;
     NewFrame(kFocused, 1.0f, 1.0f);
     EXPECT(g_takes == 1 && g_takeHand[0] == 0);
+    EXPECT((g_takeMask[0] & (kSqueeze | kTakeSqueeze | kChordOtherGrip)) == (kSqueeze | kTakeSqueeze | kChordOtherGrip));   // the left alone (a left-slot weapon): its chords take the right grip
 
     // a menu, the lost focus, another view, the frame's other-view flag: nothing taken
     NewFrame(kFocused | kInMenu, 1.0f, 1.0f);

@@ -198,6 +198,8 @@ std::atomic<ULONGLONG> g_takenUntil{0};
 std::atomic<uint32_t> g_takeZone[2] = {};   // per hand, from the last step: where a grip pressed now would take the weapon (hh::Hold::TakeZone): the zone in the low byte, the fist's distance in mm above
 std::atomic<HapticFn> g_haptic{nullptr};
 std::atomic<ClashSoundFn> g_clashSound{nullptr};
+std::atomic<float> g_clashGateMinMps{0.0f}, g_clashGateGapS{0.0f};   // [weight] clash_sound_min_mps / clash_sound_gap_s (vrcam's timer writes)
+clashloud::Gate g_clashGate;   // ... the last knock heard (the weight thread: the shield's knock and the pair's)
 SRWLOCK g_cleaveLock = SRWLOCK_INIT;   // [weight] cleave: vrcam's timer writes, the weight thread reads
 CleaveSettings g_cleave;
 int g_cleaveSeen[2] = {}, g_cleaveTold = 0;
@@ -697,6 +699,9 @@ double ShieldGap(const hh::Hold& h) {
 }
 // After the first weapon's step: did it meet the shield - a new touch at shieldcollide::kFeltMps or faster is felt in the weapon's hand(s) and the shield's, a
 // hard one (kSoundMps) is heard too: the game's block sound as loud as clashloud says. Resting on it, sliding along it: silent.
+// [weight] clash_sound_min_mps / clash_sound_gap_s (clashloud::Gate, one for the shield's knock and the pair's): a knock its site would sound is heard only at
+// that speed and up, that long after the last one heard (0 / 0: every one, as before). The pulse is not asked.
+bool ClashHeard(float mps, ULONGLONG nowMs) { return g_clashGate.Pass({g_clashGateMinMps.load(), g_clashGateGapS.load()}, mps, (uint64_t)nowMs); }
 void ShieldKnock(const hh::Hold& h) {
     const heft::contact::Report& c = h.LastContact();
     double approach = 0.0;
@@ -712,11 +717,13 @@ void ShieldKnock(const hh::Hold& h) {
         for (int side = 0; side < 2; ++side)
             if (g_out[side].holds || side == g_shieldDrawn.arm) pulse(side, k.amplitude, k.ms);   // (the weapon's hand and the shield's)
     const ClashSoundFn sound = k.heard ? g_clashSound.load() : nullptr;
-    if (sound) sound((float)approach, k.gameVolume, "the weapon on the hero's own shield");
+    const bool gated = sound && !ClashHeard((float)approach, nowMs);
+    if (sound && !gated) sound((float)approach, k.gameVolume, "the weapon on the hero's own shield");
     if (++g_shieldTold <= 10 || nowMs - g_shieldToldAt >= 1000) {
         g_shieldToldAt = nowMs;
         LogF("vrcam: weight - shield_collide: the weapon struck the %s arm's shield at %.1f m/s - a pulse %.2f for %d ms in its hand and the shield's, %s", HandName(g_shieldDrawn.arm),
-             approach, k.amplitude, k.ms, !k.heard ? "silent (under 1 m/s)" : sound ? "the game's block sound" : "no sound registered");
+             approach, k.amplitude, k.ms,
+             !k.heard ? "silent (under 1 m/s)" : !sound ? "no sound registered" : gated ? "silent (clash_sound_min_mps / clash_sound_gap_s)" : "the game's block sound");
     }
 }
 
@@ -737,11 +744,13 @@ void DualKnock(const hh::Hold& h, const char* who) {
             for (int side = 0; side < 2; ++side)
                 if (g_out[side].holds || g_out2[side].holds) pulse(side, k.pulse, k.pulseMs);   // (0.6 and up: PS VR2's weak motor shows little under it)
         const ClashSoundFn sound = g_clashSound.load();
-        if (sound) sound((float)approach, k.gameVolume, "the two weapons of a pair");
+        const bool gated = sound && !ClashHeard((float)approach, nowMs);
+        if (sound && !gated) sound((float)approach, k.gameVolume, "the two weapons of a pair");
         if (++g_dualTold <= 10 || nowMs - g_dualToldAt >= 1000) {
             g_dualToldAt = nowMs;
             LogF("vrcam: weight - the two weapons struck each other at %.1f m/s (%s against the other): steel on steel - strength %.2f, sound %u/255 (%.0f %%)%s, a pulse %.2f for %d ms in both hands",
-                 approach, who, k.strength, k.gameVolume, k.volume * 100.0f, sound ? "" : " not played (no sound registered)", k.pulse, k.pulseMs);
+                 approach, who, k.strength, k.gameVolume, k.volume * 100.0f,
+                 !sound ? " not played (no sound registered)" : gated ? " not played (clash_sound_min_mps / clash_sound_gap_s)" : "", k.pulse, k.pulseMs);
         }
     }
     g_dualTouch = touch;
@@ -1974,6 +1983,11 @@ bool LastThrow(ThrowOutcome* out) {
 
 void SetHaptic(HapticFn fn) { g_haptic.store(fn); }
 void SetClashSound(ClashSoundFn fn) { g_clashSound.store(fn); }
+void SetClashSoundGate(float minMps, float gapS) {
+    const clashloud::GateSettings s = clashloud::Clamp({minMps, gapS});
+    g_clashGateMinMps.store(s.minMps);
+    g_clashGateGapS.store(s.gapS);
+}
 void SetCleave(const CleaveSettings& c) {
     AcquireSRWLockExclusive(&g_cleaveLock);
     const CleaveSettings was = g_cleave;
@@ -2240,6 +2254,7 @@ void SetDrawnShield(const float*, int, int, uint32_t) {}
 bool LastThrow(ThrowOutcome* out) { if (out) *out = ThrowOutcome{}; return false; }
 void SetHaptic(HapticFn) {}
 void SetClashSound(ClashSoundFn) {}
+void SetClashSoundGate(float, float) {}
 void SetCleave(const CleaveSettings&) {}
 void SetHeroModeSource(HeroModeFn) {}
 void SetLibrarySource(LibraryFn) {}

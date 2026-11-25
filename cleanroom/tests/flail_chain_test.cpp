@@ -6,7 +6,8 @@
 // stretches, a free swing loses energy and never gains it, the head settles under the anchor wherever the hand takes it, the period is a
 // pendulum's, "swing 0" carries it stiffly, a hit turns the head back, it stays numbers under any shaking and at any frame rate; the pose:
 // rest = the game's, a hanging chain points its links along itself, only the chain's bones are written; the gate: only a flail, only the hero's,
-// only ticked in F4.
+// only ticked in F4; one step a game frame: both eyes of a stereo pair drawn as two passes get the very same bones, one step a pair, eyes by
+// turns and a pose outside a draw as before (FrameHold, DriveAll).
 
 #include "flail_chain.h"
 
@@ -666,6 +667,153 @@ void TestThreeBalls() {
     }
 }
 
+// ---- one step a game frame: both eyes of a stereo pair see one chain (FrameHold, DriveAll) ----
+// The pose hook as skeletons.cpp PoseFlail runs it, without the game: FrameHold first (a frame's other pose lays the first pose's bones again;
+// a frame refused at its first pose is refused at the others), then the time since the frame's first pose before, DriveAll, Keep.
+struct HookRun {
+    Skel s;
+    ChainRig rig[kMaxChains];
+    Sim sim[kMaxChains];
+    int chains = 0, lowest = 0, highest = -1;
+    Head head;
+    FrameHold once;
+    Params p;
+    double lastAt = -1.0;
+    int driven = 0, again = 0, refused = 0;
+    explicit HookRun(bool khalim) {
+        s = khalim ? Load(kKhalim) : Load(kFlail);
+        Layout l;
+        FindChains(s.names.data(), s.parents.data(), (int)s.names.size(), &l, nullptr);
+        for (int c = 0; c < l.chains; ++c)
+            if (Learn(l.chain[c], s.parents.data(), s.bind.data(), (int)s.names.size(), &rig[chains], nullptr)) {
+                for (int k = 0; k < rig[chains].bones; ++k) {
+                    lowest = highest < 0 ? rig[chains].bone[k] : std::min(lowest, rig[chains].bone[k]);
+                    highest = std::max(highest, rig[chains].bone[k]);
+                }
+                ++chains;
+            }
+        head = HeadOf(khalim ? "khalim_flail" : "flail");
+    }
+    // One pose: `out` is the game's pose of this pass (the bind pose: the chain stiff along the handle) with the chain's bones written over it
+    // when the hook lays it. toSim: the item's model space in the room at this pose. refuse: left to the game after FrameHold (the hands not
+    // placed, a frame not numbers - PoseFlail's returns after Begin).
+    bool Pose(uint64_t frame, double time, const Mat& toSim, std::vector<Mat>& out, bool refuse = false) {
+        out = s.bind;
+        switch (once.Of(frame)) {
+        case FrameHold::Is::Refused: ++refused; return false;
+        case FrameHold::Is::Again: once.Lay(out.data()); ++again; return true;
+        case FrameHold::Is::First: once.Begin(frame); break;
+        }
+        if (refuse) return false;
+        Mat fromSim;
+        if (!Inverse(toSim, &fromSim)) return false;
+        const float dt = lastAt >= 0.0 ? (float)(time - lastAt) : 1.0f;
+        lastAt = time;
+        DriveAll(rig, sim, chains, head, toSim, fromSim, dt, {0, -9.81f, 0}, 1.0f, false, p, out.data());
+        ++driven;
+        once.Keep(out.data(), lowest, highest);
+        return true;
+    }
+};
+bool SameBytes(const std::vector<Mat>& a, const std::vector<Mat>& b) { return a.size() == b.size() && !std::memcmp(a.data(), b.data(), a.size() * sizeof(Mat)); }
+// The hand swinging the flail about, k a game frame: the item in the room, turned and moved (metres).
+Mat Swung(int k, float dx = 0.0f) {
+    const float t = (float)k / 55.0f;
+    return Turn({0.3f, 0.2f, 1.0f}, 0.9f * std::sin(t * 5.0f), {0.5f * std::sin(t * 6.0f) + dx, 1.2f + 0.2f * std::cos(t * 9.0f), 0.3f * std::cos(t * 4.0f)});
+}
+
+void TestPairs() {
+    std::printf("one step a game frame\n");
+    {   // FrameHold itself
+        FrameHold h;
+        std::vector<Mat> pose(kMaxBones, Identity()), laid(kMaxBones, Identity());
+        EXPECT(h.Of(0) == FrameHold::Is::First && h.Of(7) == FrameHold::Is::First, "nothing laid yet: every pose is a first");
+        h.Begin(7);
+        EXPECT(h.Of(7) == FrameHold::Is::Refused, "a frame begun and not kept: its other poses are refused too (the game's pose)");
+        for (int i = 2; i <= 5; ++i) SetPosition(laid[i], {(float)i, 1, 2});
+        h.Keep(laid.data(), 2, 5);
+        EXPECT(h.Of(7) == FrameHold::Is::Again && h.Of(8) == FrameHold::Is::First, "kept: the same frame again, the next a first");
+        EXPECT(h.Of(0) == FrameHold::Is::First, "a pose outside a draw (frame 0) is always a first: stepped by the time, as before");
+        h.Lay(pose.data());
+        EXPECT(SameBytes(std::vector<Mat>(pose.begin() + 2, pose.begin() + 6), std::vector<Mat>(laid.begin() + 2, laid.begin() + 6)) &&
+               SameBytes(std::vector<Mat>(pose.begin(), pose.begin() + 2), std::vector<Mat>(2, Identity())) &&
+               SameBytes(std::vector<Mat>(pose.begin() + 6, pose.end()), std::vector<Mat>(kMaxBones - 6, Identity())), "Lay writes the kept bones and nothing else");
+        h.Keep(laid.data(), 3, kMaxBones);
+        EXPECT(h.Of(7) == FrameHold::Is::Refused, "a range past the bones: not kept");
+        h.Begin(9); h.Keep(laid.data(), 2, 5); h.Forget();
+        EXPECT(h.Of(9) == FrameHold::Is::First, "forgotten: a first again");
+    }
+    for (int khalim = 0; khalim < 2; ++khalim) {
+        const char* name = khalim ? "Khalim's three chains" : "the Flail";
+        const double pair = 1.0 / 55.0, between = 0.008;   // 55 pairs a second, the right eye's pass 8 ms after the left's
+        const int pairs = 165;
+        // Two passes a game frame (the default): both eyes' poses inside one game draw - one frame number.
+        HookRun two(khalim), one(khalim), byTime(khalim);
+        std::vector<Mat> left, right, ref, tl, tr;
+        bool same = true, asOne = true, swung = false;
+        int timeDiffer = 0;
+        for (int k = 1; k <= pairs; ++k) {
+            const double t = k * pair;
+            two.Pose((uint64_t)k, t, Swung(k), left);
+            two.Pose((uint64_t)k, t + between, Swung(k, 0.05f), right);   // the hands read 5 cm on (the other pass's): changes nothing
+            same = same && SameBytes(left, right);
+            one.Pose((uint64_t)k, t, Swung(k), ref);                       // one pose a game frame (by turns, the replay)
+            asOne = asOne && SameBytes(left, ref);
+            // the old way (and still a pose outside a game draw): every pose stepped by the time since the last
+            byTime.Pose(0, t, Swung(k), tl);
+            byTime.Pose(0, t + between, Swung(k, 0.05f), tr);
+            if (!SameBytes(tl, tr)) ++timeDiffer;
+            if (k > 1 && Dist(Position(left[two.rig[0].bone[two.rig[0].bones - 1]]), Position(two.s.bind[two.rig[0].bone[two.rig[0].bones - 1]])) > 0.05f) swung = true;
+        }
+        EXPECT(same, "%s, two passes: the right eye's pose lays the left eye's very bones, byte for byte", name);
+        EXPECT(two.driven == pairs && two.again == pairs, "%s, two passes: one step a pair (%d driven of %d pairs), the other eye laid again (%d)", name, two.driven, pairs, two.again);
+        EXPECT(asOne, "%s, two passes: stepped by the time between pairs - byte for byte as one pose a game frame", name);
+        EXPECT(swung, "%s: and it swung (the chain off the handle)", name);
+        EXPECT(byTime.driven == 2 * pairs && timeDiffer > pairs * 9 / 10,
+               "%s, by the time alone (the bug): two steps a pair (%d), the eyes' chains apart in %d of %d pairs", name, byTime.driven, timeDiffer, pairs);
+        std::printf("  %s: two passes - %d steps, %d laid again, eyes identical; by the time alone - %d steps, the eyes apart in %d of %d pairs\n", name,
+                    two.driven, two.again, byTime.driven, timeDiffer, pairs);
+        // Eyes by turns: one pass a game frame, each its own frame number - a step every pose, exactly as by the time (as before).
+        HookRun turns(khalim), old(khalim);
+        bool asBefore = true;
+        for (int k = 1; k <= pairs; ++k) {
+            turns.Pose((uint64_t)k, k / 90.0, Swung(k), tl);
+            old.Pose(0, k / 90.0, Swung(k), tr);
+            asBefore = asBefore && SameBytes(tl, tr);
+        }
+        EXPECT(asBefore && turns.driven == pairs && turns.again == 0, "%s, eyes by turns: a step every frame, byte for byte as before (%d driven, %d again)", name, turns.driven, turns.again);
+    }
+    {   // refused at the left eye: the right eye is the game's pose too, and the next frame lays again
+        HookRun r(false);
+        std::vector<Mat> out;
+        for (int k = 1; k <= 10; ++k) r.Pose((uint64_t)k, k / 55.0, Swung(k), out);
+        EXPECT(!r.Pose(11, 11 / 55.0, Swung(11), out, true) && SameBytes(out, r.s.bind), "the left eye left to the game");
+        EXPECT(!r.Pose(11, 11 / 55.0 + 0.008, Swung(11), out) && SameBytes(out, r.s.bind) && r.refused == 1, "the right eye of that pair: the game's pose too");
+        EXPECT(r.Pose(12, 12 / 55.0, Swung(12), out) && !SameBytes(out, r.s.bind), "the next frame: laid again");
+    }
+    {   // DriveAll is the hook's loop as it was: each chain driven, Khalim's balls kept apart, laid again - byte for byte
+        HookRun a(true), b(true);
+        bool equal = true;
+        std::vector<Mat> pa, pb;
+        for (int k = 1; k <= 400 && equal; ++k) {
+            const Mat toSim = Swung(k);
+            Mat fromSim;
+            Inverse(toSim, &fromSim);
+            const float dt = k == 1 ? 1.0f : 1.0f / 55.0f;
+            pa = a.s.bind; pb = b.s.bind;
+            DriveAll(a.rig, a.sim, a.chains, a.head, toSim, fromSim, dt, {0, -9.81f, 0}, 1.0f, k == 200, a.p, pa.data());
+            for (int c = 0; c < b.chains; ++c) Drive(b.rig[c], b.sim[c], toSim, fromSim, dt, {0, -9.81f, 0}, 1.0f, k == 200, b.p, pb.data());
+            V3 restHeads[kMaxChains];
+            for (int c = 0; c < b.chains; ++c) restHeads[c] = RestHead(b.rig[c], pb.data(), toSim);
+            const float minDist = 2.0f * b.head.radius * Length(Row(toSim, 0)) * 0.95f;
+            if (Separate(b.sim, b.chains, minDist, restHeads, b.p.iterations, b.head.along * Length(Row(toSim, 0))) > 0)
+                for (int c = 0; c < b.chains; ++c) Repose(b.rig[c], b.sim[c], fromSim, pb.data());
+            equal = SameBytes(pa, pb);
+        }
+        EXPECT(equal, "DriveAll: as the hook's own loop (Drive, Separate, Repose), byte for byte");
+    }
+}
+
 // [flail] ball_weight_pct: 1 is the model's own (exactly as before); heavier swings on longer, a hit turns it back less (it pushes through), the
 // weight model's flail weighs more by the ball's part of it; the pendulum itself (its period, where it hangs) does not change with the mass.
 void TestWeight() {
@@ -756,6 +904,7 @@ int main() {
     TestBall();
     TestThreeBalls();
     TestWeight();
+    TestPairs();
     TestGate();
     std::printf("flail_chain_test: %d checks, %d failed\n", g_checks, g_fails);
     return g_fails ? 1 : 0;

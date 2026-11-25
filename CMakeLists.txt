@@ -317,6 +317,10 @@ target_compile_options(hang_watch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(save_backups_test tools/save_backups_test.cpp)
 target_include_directories(save_backups_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(save_backups_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
+# Build backups (shared/build_backup_rule.h + D2R VR Settings' tools/settings/build_backup.cpp): which files are the build, the names, the
+# manifest, which old backups go, the restore's order, and a real backup / restore / prune / delete in a scratch folder under %TEMP%.
+add_executable(build_backup_test cleanroom/tests/build_backup_test.cpp tools/settings/build_backup.cpp)
+target_compile_options(build_backup_test PRIVATE /utf-8 /W4 /EHsc /permissive- /D_CRT_SECURE_NO_WARNINGS)
 add_executable(melee_touch_test cleanroom/tests/melee_touch_test.cpp)
 target_include_directories(melee_touch_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
 target_compile_options(melee_touch_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
@@ -467,6 +471,11 @@ target_include_directories(fist_knuckle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(fist_knuckle_test PRIVATE d2rcam heft user32)
 target_compile_definitions(fist_knuckle_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 target_compile_options(fist_knuckle_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
+add_executable(palm_knuckle_test cleanroom/tests/palm_knuckle_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
+target_include_directories(palm_knuckle_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_link_libraries(palm_knuckle_test PRIVATE d2rcam heft user32)
+target_compile_definitions(palm_knuckle_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+target_compile_options(palm_knuckle_test PRIVATE /utf-8 /W3 /EHsc /permissive-)
 # ... the arm's IK on a toy rig: [arms] full_reach puts the wrist on a target past the arm's reach (the collarbone turned, then the arm lengthened), no pile-up, off as before
 add_executable(full_reach_rig_test cleanroom/tests/full_reach_rig_test.cpp vr/weight.cpp vr/shield_arm_wire.cpp vr/ranged_hand_wire.cpp cleanroom/tests/head_shadow_stub.cpp vr/gait_lib.cpp vr/stride_lib.cpp)
 target_include_directories(full_reach_rig_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -598,6 +607,7 @@ target_sources(d2rl-vrcam PRIVATE vr/point_pickup_wire.cpp)   # [input] point_pi
 target_sources(d2rl-vrcam PRIVATE vr/belt_trigger_wire.cpp)   # [belt] hold_takes_trigger: the triggers while a belt bottle is in a hand (the game reads the left one as Shift)
 target_sources(d2rl-vrcam PRIVATE vr/weight_lib.cpp)    # [weight] hands_model 1: the weight-physics library d2r_vr_weight.dll, when it is beside the plugin (shared/d2r_vr_weight.h)
 target_sources(d2rl-vrcam PRIVATE vr/doll_lib.cpp)      # [weight] monster_ragdoll: the doll library d2r_vr_doll.dll, when it is in d2r_vr_libs (shared/d2r_vr_doll.h)
+target_sources(d2rl-vrcam PRIVATE vr/video3d_lib.cpp)   # [cinema] video_3d: the films in 3D, the library d2r_vr_video3d.dll when it is in d2r_vr_libs (shared/d2r_vr_video3d.h)
 target_sources(d2rl-vrcam PRIVATE vr/grab_move.cpp)   # [weight] grab_moves_unit: a carried or thrown body put by the game's own knockback on the cell under it (vr/grab_move.h)
 target_sources(d2rl-vrcam PRIVATE vr/fall_lib.cpp vr/knock_down.cpp)   # [weight] knock_down: a struck humanoid drawn falling, lying and getting up - the weight library's knock-down (D2rf* exports, shared/d2r_vr_fall.h)
 target_sources(d2rl-vrcam PRIVATE vr/grab_wire.cpp vr/grab_lib.cpp)   # [weight] grab_bodies: an empty hand's grip holds a body - the weight library's grab (d2r_vr_weight.dll 1.4, shared/d2r_vr_grab.h)
@@ -628,6 +638,7 @@ target_sources(d2rl-vrcam PRIVATE vr/render/depth/depth_fix.cpp vr/render/depth/
 target_sources(d2rl-vrcam PRIVATE vr/render/stereo/prev_scan.cpp vr/render/stereo/replay.cpp vr/render/stereo/frame_sync.cpp vr/render/stereo/pair_pace.cpp)   # M14 the stereo
 target_sources(d2rl-vrcam PRIVATE vr/render/effects/effects.cpp)   # M15 our effect
 target_sources(d2rl-vrcam PRIVATE vr/view/head.cpp vr/view/camera.cpp vr/view/views.cpp)
+target_sources(d2rl-vrcam PRIVATE vr/unleashed_entry_facing_wire.cpp)   # [camera] entry_facing (MPL, vr/unleashed_entry_facing.h)
 target_sources(d2rl-vrcam PRIVATE vr/campfire_unleashed.cpp)   # [campfire] character creation in 3D (MPL 2.0, from D2R VR Unleashed)   # M16 the head, our camera, the views
 target_sources(d2rl-vrcam PRIVATE vr/billboards.cpp)   # [stereo] portal_once / particles_head_centre (after bearstonem/d2r-pcvr, MIT)
 target_sources(d2rl-vrcam PRIVATE vr/frame/frame_order.cpp)   # M17 the frame's order
@@ -742,6 +753,20 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/doll_lib_test.cpp")   # [
     target_compile_definitions(doll_lib_test PRIVATE STANDIN_GOOD="$<TARGET_FILE:doll_lib_standin>" STANDIN_BAD="$<TARGET_FILE:doll_lib_standin_bad>")
     target_compile_options(doll_lib_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
     add_dependencies(doll_lib_test doll_lib_standin doll_lib_standin_bad)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/video3d_lib_test.cpp")   # [cinema] video_3d: the 3D video library's loader against stand-in DLLs (one right, one of another version)
+    add_library(video3d_lib_standin SHARED cleanroom/tests/video3d_lib_standin.cpp)
+    target_include_directories(video3d_lib_standin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(video3d_lib_standin PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    add_library(video3d_lib_standin_bad SHARED cleanroom/tests/video3d_lib_standin.cpp)
+    target_compile_definitions(video3d_lib_standin_bad PRIVATE STANDIN_BAD_ABI=1)
+    target_include_directories(video3d_lib_standin_bad PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared)
+    target_compile_options(video3d_lib_standin_bad PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    add_executable(video3d_lib_test cleanroom/tests/video3d_lib_test.cpp vr/video3d_lib.cpp)
+    target_include_directories(video3d_lib_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_definitions(video3d_lib_test PRIVATE STANDIN_GOOD="$<TARGET_FILE:video3d_lib_standin>" STANDIN_BAD="$<TARGET_FILE:video3d_lib_standin_bad>")
+    target_compile_options(video3d_lib_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+    add_dependencies(video3d_lib_test video3d_lib_standin video3d_lib_standin_bad)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/weight_lib_test.cpp")   # (not in the public tree's allow-list)
     # The loader and the engine adapter, tested against a stand-in DLL that implements shared/d2r_vr_weight.h with heft (two builds of it: one right, one of another version).
@@ -1189,6 +1214,10 @@ target_compile_options(ar_view_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 add_executable(f5_toolbar_test cleanroom/tests/f5_toolbar_test.cpp)
 target_include_directories(f5_toolbar_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(f5_toolbar_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# F2's corner map moved and sized (vr/f2_map.h, [hud_third] map_x / map_y / map_size): the shift, the zoom, held inside the picture, only in F2.
+add_executable(f2_map_test cleanroom/tests/f2_map_test.cpp)
+target_include_directories(f2_map_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(f2_map_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # Why W A S D do not walk in flat F2 / F3 (vr/flat_keys_why.h): the verdict's order (the plugin's reasons before the game's) and its log line.
 add_executable(flat_keys_why_test cleanroom/tests/flat_keys_why_test.cpp)
 target_include_directories(flat_keys_why_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1397,6 +1426,11 @@ target_compile_options(unleashed_shapeshift_form_test PRIVATE /utf-8 /W4 /EHsc /
 add_executable(unleashed_head_look_test cleanroom/tests/unleashed_head_look_test.cpp)
 target_include_directories(unleashed_head_look_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_head_look_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [camera] entry_facing (vr/unleashed_entry_facing.h, MPL, from Unleashed's steamvr/entry_facing.h by Piotr Kożuch, PR #602): VR F4's view turned
+# on an arrival - a town to its act's NPC, another area away from its entrance. Run: unleashed_entry_facing_test.exe
+add_executable(unleashed_entry_facing_test cleanroom/tests/unleashed_entry_facing_test.cpp)
+target_include_directories(unleashed_entry_facing_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_entry_facing_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [shapeshift] claw_hits (vr/claw_strike.h): a form's paw from its bones, the two paws one weapon (one shared recovery). Run: claw_strike_test.exe
 add_executable(claw_strike_test cleanroom/tests/claw_strike_test.cpp)
 target_include_directories(claw_strike_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr)
@@ -1541,6 +1575,11 @@ target_compile_options(unleashed_cinema_screen_test PRIVATE /utf-8 /W4 /EHsc /pe
 add_executable(unleashed_loot_aim_test cleanroom/tests/unleashed_loot_aim_test.cpp)
 target_include_directories(unleashed_loot_aim_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
 target_compile_options(unleashed_loot_aim_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+# [gameplay] whirlwind_stick_steer (vr/unleashed_whirl_steer.h, MPL 2.0 from D2R VR Unleashed 09c3093 by Berk): F4, each Whirlwind cast aims
+# 10 cells where the pushed walk stick would walk - the dead zone, the way on the ground, the spot through aimpoint. Run: unleashed_whirl_steer_test.exe
+add_executable(unleashed_whirl_steer_test cleanroom/tests/unleashed_whirl_steer_test.cpp)
+target_include_directories(unleashed_whirl_steer_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+target_compile_options(unleashed_whirl_steer_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 # [weight] prop_heft (vr/unleashed_prop_heft.h, MPL 2.0 from D2R VR Unleashed fbb31fb): a knockable prop's mass by its kind and size, the knock's tick or thud.
 # Run: unleashed_prop_heft_test.exe
 add_executable(unleashed_prop_heft_test cleanroom/tests/unleashed_prop_heft_test.cpp)
@@ -1848,6 +1887,26 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/holes_assets_test.cpp")
     target_link_libraries(holes_assets_test PRIVATE casc_static)
     target_compile_options(holes_assets_test PRIVATE /utf-8 /EHsc)
 endif()
+# [holes] sewer_backdrop: the Kurast sewer stairs' open end closed by the game's black quad (shared/unleashed_sewer_backdrop.h, MPL 2.0, after
+# D2R VR Unleashed steamvr/prepare_sewer_backdrop.py 063360f) - a made-up stairwell always; with the game, its own stairs and the four presets,
+# and D2R_VR_Settings' maker (tools/settings/sewer_assets.cpp). Run: unleashed_sewer_backdrop_test.exe [<game folder> <empty scratch folder>]
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/unleashed_sewer_backdrop_test.cpp")
+    add_executable(unleashed_sewer_backdrop_test cleanroom/tests/unleashed_sewer_backdrop_test.cpp tools/settings/sewer_assets.cpp)
+    target_include_directories(unleashed_sewer_backdrop_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3)
+    target_compile_definitions(unleashed_sewer_backdrop_test PRIVATE UNICODE _UNICODE)
+    target_compile_features(unleashed_sewer_backdrop_test PRIVATE cxx_std_20)
+    target_link_libraries(unleashed_sewer_backdrop_test PRIVATE casc_static)
+    target_compile_options(unleashed_sewer_backdrop_test PRIVATE /utf-8 /EHsc)
+endif()
+# [holes] bazaar_mask_hidden: Kurast Bazaar's stray terrain-mask plane cut out of burbs08x16_1.json (shared/bazaar_mask.h) - made-up presets always;
+# with the game, its own preset and D2R_VR_Settings' maker (tools/settings/bazaar_assets.cpp). Run: bazaar_mask_test.exe [<game folder> <empty scratch folder>]
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/bazaar_mask_test.cpp")
+    add_executable(bazaar_mask_test cleanroom/tests/bazaar_mask_test.cpp tools/settings/bazaar_assets.cpp)
+    target_include_directories(bazaar_mask_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/tools/settings)
+    target_compile_definitions(bazaar_mask_test PRIVATE UNICODE _UNICODE)
+    target_link_libraries(bazaar_mask_test PRIVATE casc_static)
+    target_compile_options(bazaar_mask_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
 # [hud] wrist_game_models: the medallions' matrices and the liquid lens (pure), and D2R_VR_Settings' maker of their game models (tools/settings/orb_assets.cpp)
 # on the game's own files into a scratch mod folder. Run: wrist_orb_models_test.exe [<game folder> <empty scratch folder>]
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/wrist_orb_models_test.cpp")   # (not in the public tree's allow-list)
@@ -2071,7 +2130,7 @@ else()
     FetchContent_MakeAvailable(CascLib)
 endif()
 unset(CMAKE_POLICY_VERSION_MINIMUM)
-add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/orb_assets.cpp tools/settings/menu_assets.cpp tools/settings/campfire_assets_unleashed.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
+add_executable(d2r_vr_settings WIN32 tools/settings/settings.cpp tools/settings/arcane_assets.cpp tools/settings/props_assets.cpp tools/settings/solids_assets.cpp tools/settings/boat_assets.cpp tools/settings/dome_assets.cpp tools/settings/holes_assets.cpp tools/settings/sewer_assets.cpp tools/settings/orb_assets.cpp tools/settings/menu_assets.cpp tools/settings/campfire_assets_unleashed.cpp tools/settings/build_backup.cpp tools/settings/bazaar_assets.cpp tools/settings/settings.rc vr/api_layers_lib.cpp)
 add_dependencies(d2r_vr_settings d2r_vr_version_h)
 target_link_libraries(d2r_vr_settings PRIVATE casc_static)
 target_compile_options(d2r_vr_settings PRIVATE /utf-8 /W3 /EHsc)
@@ -2373,6 +2432,13 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/game_ceiling_test.cpp")
     target_include_directories(game_ceiling_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3)
     target_compile_options(game_ceiling_test PRIVATE /utf-8 /EHsc)
 endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/ceiling_floor_test.cpp")
+    # [ceiling] follow_floor (shared/ceiling_floor.h): the floor under each ceiling tile from its rays, kept per tile; the tops, the slab at
+    # the highest with tiles under it and step faces; the hero climbing a step changes nothing; the matrices; the tile model seamless
+    add_executable(ceiling_floor_test cleanroom/tests/ceiling_floor_test.cpp)
+    target_include_directories(ceiling_floor_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/shared ${CMAKE_CURRENT_SOURCE_DIR}/vr ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybg3)
+    target_compile_options(ceiling_floor_test PRIVATE /utf-8 /EHsc)
+endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cleanroom/tests/granny_remesh_test.cpp")
     # [sky] game_sky: the dome made from the game's own Summit sky card (shared/granny_remesh.h; BitKnit2 by third_party/pybg3, MIT).
     # Run: granny_remesh_test.exe [<the game's skybox01_lod1.model> [<out .model>]]
@@ -2557,6 +2623,18 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/fence_wait_test.cpp")
     add_executable(fence_wait_test tools/fence_wait_test.cpp)
     target_include_directories(fence_wait_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
     target_compile_options(fence_wait_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/pace_clock_test.cpp")
+    # A pass's "since the last one" clock starts again after another path's frames or a cinematic (vr/frame/pace_clock.h: no 422 s "frame hitch")
+    add_executable(pace_clock_test tools/pace_clock_test.cpp)
+    target_include_directories(pace_clock_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(pace_clock_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/prewarm_test.cpp")
+    # [openxr] prewarm (vr/prewarm.h): the menu panel's / notice's swapchain made on a loading screen or in the game's own resize, never mid-play
+    add_executable(prewarm_test tools/prewarm_test.cpp)
+    target_include_directories(prewarm_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vr)
+    target_compile_options(prewarm_test PRIVATE /utf-8 /W4 /EHsc /permissive-)
 endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/replay_list_gen_test.cpp")
     # [stereo] replay_reset_guard (vr/render/stereo/replay_list_gen.h): a list the game reset after submitting it is never replayed (crash batch 2026-11-09)

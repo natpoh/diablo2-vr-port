@@ -85,6 +85,23 @@ Third-party parts, each under its own licence:
     mass by its kind and size, the knock's tick or thud ([weight] prop_heft; steamvr/prop_heft.h and prop_heft_test.cpp at fbb31fb)
     vr/unleashed_wall_cells.h, vr/unleashed_wall_cells_game.h, vr/unleashed_wall_cells.cpp, cleanroom/tests/unleashed_wall_cells_test.cpp -
     the weapon stops at the game's walls, closed doors and the floor ([weight] wall_contact_mode 2 (Bear's); b0f8eb1, "Weapons hit walls")
+    shared/unleashed_sewer_backdrop.h, cleanroom/tests/unleashed_sewer_backdrop_test.cpp - the Kurast sewer stairs' open end closed
+    by the game's black panel ([holes] sewer_backdrop; steamvr/prepare_sewer_backdrop.py 4f3a6a3, 94ac5de, 063360f)
+    vr/unleashed_whirl_steer.h, cleanroom/tests/unleashed_whirl_steer_test.cpp - the Barbarian's Whirlwind steered by the walk stick
+    ([gameplay] whirlwind_stick_steer; steamvr/whirl_steer.h and whirl_steer_test.cpp at 09c3093 by Berk (bearstonem),
+    https://github.com/bearstonem/d2r-pcvr/commit/09c3093ae312eeb6549a2302f76fa461e3dff35e; the parts of vr/input/spell_aim.cpp,
+    vr/input/aim.cpp and vr/input/pad.cpp marked [gameplay] whirlwind_stick_steer call into it)
+    vr/unleashed_entry_facing.h, vr/unleashed_entry_facing_wire.cpp, cleanroom/tests/unleashed_entry_facing_test.cpp - the view faces
+    into the area on arrival: a town toward its act's NPC, another area away from its entrance ([camera] entry_facing; by Piotr Kożuch
+    (ptkk73), PR #602 "Character rotation on entering new areas/TP to town" - thank you:
+    https://github.com/bearstonem/d2r-pcvr/commit/f5ecd55098f05c8c498a36efba8465fb67ee07af
+    https://github.com/bearstonem/d2r-pcvr/commit/1f36dc59c0943bb1ef3830cc44f2b083d70d1072
+    https://github.com/bearstonem/d2r-pcvr/commit/29adeb2b0ef8660f70e505fba16f24b6a8bd9d32
+    https://github.com/bearstonem/d2r-pcvr/commit/b62c239aea56320ba32ff9e3af511efd137461b8
+    https://github.com/bearstonem/d2r-pcvr/commit/a5bb284d75077fc4646338e649789718460d573d
+    https://github.com/bearstonem/d2r-pcvr/commit/18b04ed25bbd84935f68e9312e5161206b5044eb
+    https://github.com/bearstonem/d2r-pcvr/commit/1b223a03b90d694f464034b9b98dd2c84cd06a37
+    https://github.com/bearstonem/d2r-pcvr/commit/b57ed57c5458d87fb12f04e832faadc715a022b2)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin

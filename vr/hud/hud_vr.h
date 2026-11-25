@@ -26,6 +26,7 @@ bool MapNearWanted();
 float MapNearNow();     // the map's depth for the effect ([hud_floor] map_near on the floor, [hud] f5_map_near in VR F5)
 bool F5MapNow();        // [hud] f5_map in VR F5 (vr/f5_hud.h)
 bool F5AlliesNow();     // [hud] f5_allies in VR F5
+bool F2MapNow();        // [hud_third] map_x / map_y / map_size off their defaults in F2 (vr/f2_map.h)
 bool FloorView();
 void LabelLookNow(float* alpha, float* size);
 extern std::atomic<bool> g_labelPaintIn, g_labelSizeIn;   // the game's item-label code hooked

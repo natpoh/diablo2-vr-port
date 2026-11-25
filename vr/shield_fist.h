@@ -43,4 +43,18 @@ inline float Grip(const Want& w) {
     return std::min(g, 1.0f);
 }
 
+// WHICH hand the shield fist is on (0 right, 1 left; -1 none this pose).
+//   leftSlotShield: vrcam's shieldFist - the box ticked, F4, a shield in the LEFT slot; shieldArm: the arm it is on ([hands] shoulder_draw: 0 right, 1 left,
+//     2 put away - no shield on any hand).
+//   rightSlotShield: vrcam's shieldFistRightSlot - the box ticked, a shield in the RIGHT slot beside a weapon alone in the left one ([hands] left_slot_drawn_left);
+//     rightSlotArm: the forearm the pose strapped it to (the right; the left while the right hand alone holds the weapon), -1 not strapped (left where the game
+//     draws it, on the left arm, whose hand holds the weapon: no fist).
+// The game animates a lone left-slot weapon as a right-hand one: without this the hand under that right-slot shield kept the game's grip of a weapon
+// (nikswat, 0.223.0: "the right hand is positioned as if holding a weapon shaft ... the hands don't clench into a fist").
+inline int Side(bool leftSlotShield, int shieldArm, bool rightSlotShield, int rightSlotArm) {
+    if (rightSlotShield && (rightSlotArm == 0 || rightSlotArm == 1)) return rightSlotArm;
+    if (leftSlotShield && shieldArm != 2) return shieldArm == 0 ? 0 : 1;
+    return -1;
+}
+
 }  // namespace shieldfist

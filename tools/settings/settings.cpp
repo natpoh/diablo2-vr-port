@@ -31,11 +31,15 @@
 #include "campfire_assets_unleashed.h"   // [campfire] enabled: character creation's scene from the player's own game (CascLib; MPL 2.0, D2R VR Unleashed)
 #include "holes_assets.h"    // [holes] patch_world: the world's holes patched from the player's own game (CascLib)
 #include "orb_assets.h"      // [hud] wrist_game_models: the wrist medallions' game models from the player's own game (CascLib)
+#include "bazaar_assets.h"    // [holes] bazaar_mask_hidden: Kurast Bazaar's stray terrain-mask plane cut out, from the player's own game (CascLib)
+#include "sewer_assets.h"    // [holes] sewer_backdrop: the Kurast sewer stairs' open end closed, from the player's own game (CascLib; after D2R VR Unleashed, MPL 2.0)
 #include "boat_assets.h"     // [world] kurast_boat: the Kurast Docks' flying canoe put on the water, from the player's own game (CascLib)
 #include "data_mods.h"       // [mods] merge_data_mods: the player's other data mods (D2RMM's output) merged into D2R VR's mod
 #include "mod_data_check.h"  // [mods] restore_mod_data: D2R VR's files in its .mpq gone (D2RMM's wipe) - Setup's put back, the makers run again
 #include <tlhelp32.h>
 #pragma comment(lib, "version.lib")   // GetFileVersionInfo: which BodyWalk is new enough
+#include <uxtheme.h>
+#pragma comment(lib, "uxtheme.lib")   // SetWindowTheme: the Backups list in Explorer's look (the row under the mouse lights up)
 #include <winhttp.h>    // the update check, D2RLoader's download
 #include <wincrypt.h>   // CryptBinaryToStringW: PowerShell's -EncodedCommand
 #include <bcrypt.h>     // SHA-256 of the D2RLoader download
@@ -100,6 +104,7 @@
 #include "safe_screen.h"     // the game's interface size in Settings.json: VR starts it at 80 where the player chose none, flat mode has his own (the plugin's policy, tested)
 #include "rooms_bridge.h"    // the Multiplayer tab's D2R Rooms bridge: its d2r-rooms.ini and d2r-rooms-status.json, the plugin's formats (tested: rooms_bridge_test)
 #include "lang.h"            // the player's language: lang\<code>.txt read, {placeholders} filled (tested: settings_lang_test)
+#include "build_backup.h"    // Build backups on Home: the installed build copied, listed, restored, deleted (tested: build_backup_test)
 #include <functional>
 
 #pragma comment(lib, "comctl32.lib")
@@ -693,6 +698,17 @@ constexpr const wchar_t* kFlatMapPlaceTip =
     L"not turn; the arrow on it still shows where you look). The mod puts the map there with the game's own setter while you play, for "
     L"this session only - the game's options keep their own choice. As in the game's options: the map where the game's options put it "
     L"(with Map turns with the camera, a whole-screen map goes in the top right corner while it turns). Live.";
+// [hud_third] map_x / map_y / map_size (vr/f2_map.h): F2's corner map moved and sized, VR F2 (UI: F2 behind) and flat F2 (UI: F3 eyes)
+constexpr const wchar_t* kF2MapXTip =
+    L"Third person (F2): the game's corner map moved toward the middle of the screen, % of the screen's width - a map in the top right "
+    L"corner goes left, one in the top left corner goes right. 0 = in its corner, where the game puts it. The map never leaves the "
+    L"screen. Needs D2R_DepthFog.fx on (it draws the map back). Live.";
+constexpr const wchar_t* kF2MapYTip =
+    L"Third person (F2): the game's corner map moved down the screen, % of the screen's height. 0 = at the top, where the game puts it. "
+    L"The map never leaves the screen. Needs D2R_DepthFog.fx on (it draws the map back). Live.";
+constexpr const wchar_t* kF2MapSizeTip =
+    L"Third person (F2): the game's corner map smaller or larger, grown from its own corner (then moved by the two sliders above). "
+    L"100 = as the game draws it. Needs D2R_DepthFog.fx on (it draws the map back). Live.";
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map on the screen turned with the camera, flat F2 / F3 and VR F2 / F3
 constexpr const wchar_t* kMapRotateFlatTip =
     L"The game's corner map on the screen in your own camera's views (flat F2 and F3, VR F2 and F3 with the map in the picture): drawn round "
@@ -1015,6 +1031,13 @@ std::vector<Item> g_items = {
            L"round (F11 puts it in front of you again). Only the film is shown, black round it, and the laser works on it as in a menu "
            L"(click or press the game's skip button to skip). The sound is the game's. Live. Off: the game's whole picture on the flat "
            L"picture close in front of you, as before.")),
+    // [cinema] video_3d (vr/video3d_lib.h, xr.cpp DrawFilm3d): the films in 3D on that screen - the optional library d2r_vr_video3d.dll in d2r_vr_libs
+    Only(kVr, Needs(L"cinema", L"world_screen", 1, Toggle(L"cinema", L"video_3d", L"Videos in 3D", 0,
+           L"The videos on the big screen in 3D, in every VR view: a small depth network guesses how far each part of the picture is, "
+           L"while the video plays, and each eye gets its own picture from that - near things stand out of the screen, the rest goes "
+           L"behind it. Nothing is prepared at install and nothing is waited for: the first moment of a video is flat until its depth is "
+           L"ready. Needs d2r_vr_video3d.dll in d2rloader\\d2r_vr_libs (without it the videos stay flat; the log says so). How strong: "
+           L"[cinema] video_3d_strength_pct in d2r_vr.ini (2 = 2% of the picture's width). Live. Off: the flat big screen, as before."))),
     // [campfire] enabled (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue, bearstonem): character creation round you
     // (0.214: hidden - still broken in the headset, Serg's rule: no half-done feature in a release; Only(kVr, ...) brings it back)
     Only(0, Toggle(L"campfire", L"enabled", L"Character creation in 3D", 0,
@@ -1080,9 +1103,8 @@ std::vector<Item> g_items = {
     Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Button(L"@run", L"fov_from_headset", L"Set the sliders to the headset's own angles", kFovFromHeadsetTip))),
     Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Status(L"fov_headset", L""))),
     Only(kVr, ShowFor(L"openxr", L"fov_override", 1u << 1, Toggle(L"openxr", L"fov_override_centred", L"Names and interface single in both eyes", 1, kFovCentredTip))),
-    // An Xbox controller in VR (2026-11-02, Serg's wish, the second player asking): the inverse of [direct] flat_controller (Stereo), one key -
-    // ticked writes 0, so in F1-F3 the real pad alone drives the game. Its words are TR's (FillPadItem): the Stereo box's key has other English.
-    Only(kVr, Needs(L"openxr", L"direct_input", 1, Reversed(Toggle(L"direct", L"flat_controller", nullptr, 1)))),
+    // (Home's "Use an Xbox controller (gamepad) in VR" box is gone since 0.224: the VR controllers always play F1-F3 without BodyWalk and a real
+    // Xbox pad works with them as a second layer - [direct] flat_controller is no longer read, vr/direct_input.cpp.)
     // One slider over the distance keys set apart on Performance, World and Sky (2026-10-28, the author's wish: players asked how to
     // trade distance for frames). "@distance": its stops are shared/draw_distance.h; nothing of its own is kept - it shows the stop the
     // keys match, else Custom (ReadDrawDistance), and a stop writes them all (WriteDrawDistance). The single sliders stay where they are;
@@ -1324,6 +1346,39 @@ std::vector<Item> g_items = {
            L"Asks bodywalkvr.com for the newest version of the mod. Nothing is downloaded."),
     Needs(L"update", L"check", 1, Toggle(L"update", L"develop", L"Beta versions too (develop channel)", 0,
            L"Also offers test builds before they are released to everyone.")),
+    // Backups (shared/build_backup_rule.h, tools/settings/build_backup.cpp; playful_pony in #support 2026-11-25, Serg: "кнопку бэкап и там
+    // история бэкапов списком", "и можно туда же добавить сейв сеттинг"): Back up the build (the plugin, its libraries, this program, the language
+    // files, the mod's made game data and the settings) or Save settings (the settings files only) into mods\D2R-VR\build_backups\<version>_<date>;
+    // the history below it, a list as Windows programs have it (Serg 2026-11-25 on 0.223.3: "where is Restore", "how people are used to it",
+    // "Restore at the top", "into the first column"): Restore and Delete over the list, greyed until a row is picked; the row under the mouse
+    // lights up, the picked one stays marked, a double click restores (after the same question). Game and BodyWalk closed; a backup of what is
+    // there first; this program opens again after it.
+    // [support] build_backup_before_update / build_backup_keep: Setup's own backup before an update (D2R_VR_Settings.exe --backup-build).
+    InColumn(0, Group(L"Backups", L"Keep the D2R VR build you have - the mod, this program and all your settings - or only your settings, to go back to "
+                                  L"them later: after an update, or after trying other settings. The list shows every backup (Setup's before an update "
+                                  L"too): pick one, then Restore or Delete (a double click restores too). Your characters are not in them (Back up my "
+                                  L"saves keeps those).")),
+    Button(L"@run", L"build_backup", L"Back up the build",
+           L"Copies the D2R VR build as it is now into mods\\D2R-VR\\build_backups\\<version>_<date>: the plugin and its libraries, D2R VR "
+           L"Settings, the language files, the game data the mod made from your game, the sky and effect files, BodyWalk Game Link, and all your "
+           L"settings (d2r_vr.ini and the others). About 250 MB; not your characters, logs or caches. Backups you make stay until you delete them."),
+    Beside(Button(L"@run", L"settings_backup", L"Save settings",
+           L"Copies only your settings (d2r_vr.ini, the headset's, this program's and the mod's other setting files) into the same folder - a few "
+           L"hundred KB. Restoring it puts back only the settings; the mod itself stays as it is.")),
+    Button(L"@run", L"build_restore", L"Restore...",   // ("...": it asks first, as Windows writes it - and not the keyboard's "Delete" key's words)
+           L"Pick a backup in the list first. Close the game first (and BodyWalk for a build). Puts the picked backup back - a build: every file "
+           L"of the build and your settings as they were; settings: only the settings - after backing up what is there now (so you can come back "
+           L"to it). D2R VR Settings then opens again."),
+    Beside(Button(L"@run", L"build_delete", L"Delete...", L"Pick a backup in the list first. Removes it for good (it asks first).")),
+    Status(L"buildbak", L"Backups: none yet"),
+    Hide(Status(L"bklist", L"")),   // the list (a ListView: Build: its columns; ShowBuildRows fills it)
+    Button(L"@run", L"build_open", L"Open the backups folder", L"Opens mods\\D2R-VR\\build_backups in Explorer."),
+    Toggle(L"support", L"build_backup_before_update", L"Setup backs up the build before an update", 1,
+           L"Ticked: D2R VR Setup offers (ticked) to back up the installed build before it installs a new version over it, so the old one can be "
+           L"restored here even if you forgot. It shows in the history as Auto. Unticked: Setup's box starts unticked, as before."),
+    Slider(L"support", L"build_backup_keep", L"Automatic backups kept", 1, 10, 1, 3,
+           L"How many Auto backups (Setup's before an update, and what a restore replaced) are kept; the oldest go when a new one is made. Backups "
+           L"you made with the buttons are never removed by this. A build backup is about 250 MB."),
     Only(kVr, InColumn(1, Group(L"Monitor (screen recording)", L"What the game's window on your monitor shows while you play in VR - for recording or streaming it with OBS: both eyes in turn, or one eye only, at its own proportions. The headset's picture does not change."))),   // under D2R VR: the left column is full
     // [render] monitor_eye (vr/monitor_eye.h): the window shows one eye, steady - to capture the screen while playing in VR (bearstonem/d2r-pcvr's
     // desktop_one_eye, MIT). 0 as before (each present shows its own eye: both in turn), 1 the left (the default), 2 the right. Live.
@@ -1544,6 +1599,12 @@ std::vector<Item> g_items = {
            L"Nothing is written while it measures. Keep writes the result to d2r_vr.ini (the old one is copied to d2r_vr.ini.before_autotune "
            L"first, the steps go to d2r_vr_autotune.txt); Undo, Stop or closing the game puts everything back. Frame generation and the "
            L"game's own graphics options are never changed. Unticked: no Auto button, as before.")),
+    // [autotune] clean_measure (vr/auto_tune_measure.h, 2026-11-25): Auto chose Potato 1300 from windows full of Virtual Desktop's 100 ms holds
+    Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Toggle(L"autotune", L"clean_measure", L"Auto: measure without the headset stream's holds", 1,
+           L"Auto measures the game's frames and ours, not the waits of the headset's runtime: each frame's own time (without what xrWaitFrame and "
+           L"xrEndFrame stood) and the median of a few seconds. A measure with a frame the runtime held (Virtual Desktop holds frames ~100 ms at "
+           L"times), a freeze or a picture resize in it is measured again. If no measure is clean for about half a minute, Auto stops, says so and "
+           L"changes nothing - it no longer picks Potato from such numbers. Live. Unticked: frames counted over each measure, as before."))),
     Only(kVr, ShowFor(L"autotune", L"enabled", 2u, Button(L"autotune", L"keep", L"Keep the Auto result",
            L"Writes the result of the last Auto run to d2r_vr.ini (the old one copied to d2r_vr.ini.before_autotune first), as Keep on the "
            L"headset panel. This window shows the new values a moment later (the preset too). Nothing happens while no result waits."))),
@@ -1664,6 +1725,14 @@ std::vector<Item> g_items = {
            L"The game's own view from above (F1) and VR F3 (the game on your floor) are not changed. Live."),
     Needs(L"camera", L"smooth_follow", 1, Slider(L"camera", L"smooth_follow_ms", L"Smooth camera: glide time, ms", 30, 1000, 10, 500,
            L"How long the camera takes to catch up after a jerk. Longer = softer, but the world lags the hero for longer.")),
+    // [camera] entry_facing (vr/unleashed_entry_facing.h, MPL - Piotr Kożuch's, PR #602 of the other mod; 2026-11-25): VR F4's view turned once on
+    // an arrival. Off by default.
+    Only(kVr, Toggle(L"camera", L"entry_facing", L"Face into the area on arrival (F4)", 0,
+           L"VR first person (F4): when you arrive in a town from outside it (a town portal, a waypoint), the view turns to the same spot of that act "
+           L"every time - toward Deckard Cain in the Rogue Encampment, Fara in Lut Gholein, Cain in Kurast Docks, between Halbu and Jamella in the "
+           L"Pandemonium Fortress, and in Harrogath across the town with Malah on your right. When you enter any other area by its stairs, cave mouth "
+           L"or doorway, the view turns away from that entrance, into the area. Only the view turns, once per arrival; the hero and the game are not "
+           L"changed. Off = the view keeps the turn it had. Live.")),
     Only(kVr, Toggle(L"head", L"yaw_from_head", L"Turn with the headset", 1, L"Needs BodyWalk with the Game Link plugin.")),
     Only(kVr, Needs(L"head", L"yaw_from_head", 1, Invert(L"head", L"yaw_sign", L"Reverse turning", -1, L"Tick if turning the head left turns the view right."))),
     Only(kVr, Toggle(L"head", L"pitch_from_head", L"Look up and down with the headset", 1)),
@@ -1792,6 +1861,12 @@ std::vector<Item> g_items = {
            L"what is still missing (at most 35 %: past that the controller jumped). The weapon in the hand goes with it, and a two-handed "
            L"weapon's second hand stays on its place on the shaft. Drawn bones only. Off: the arm stops at its length and the hand, with "
            L"the weapon, falls short of the controller, as before. Live."))),
+    // [hands] palm_from_knuckle (vr/palm_knuckle.h; idea: Berk / bearstonem, d2r-pcvr 12bd172): the palm's middle half way to the middle finger's knuckle; live
+    Needs(L"arms", L"mode", 2, Only(kVr, Toggle(L"hands", L"palm_from_knuckle", L"Palm on the grip, measured to the knuckles", 0,
+           L"F4: a hand is placed by the middle of its palm - on your controller's grip, on a weapon's shaft, on a held body - and that middle is taken "
+           L"half way from the wrist to the middle finger's knuckle, where the hero's own skeleton has it. The Amazon's, the Paladin's and the Druid's "
+           L"fingers each start with a bone inside the palm; measured to that one, their palm came out half as long and the hand sat about 2 cm past "
+           L"the grip, toward the fingertips. The other heroes' hands are the same either way. Visual only. Off: as before. Live."))),
     Needs(L"arms", L"mode", 2, Slider(L"arms", L"up", L"Hands up (+) / down (-), cm", -40, 40, 1, 0)),
     Needs(L"arms", L"mode", 2, Slider(L"arms", L"forward", L"Hands forward (+) / back (-), cm", -40, 40, 1, 0)),
     Needs(L"arms", L"mode", 2, Slider(L"arms", L"side", L"Hands right (+) / left (-), cm", -40, 40, 1, 0)),
@@ -2456,6 +2531,12 @@ std::vector<Item> g_items = {
            L"of the game: both in the headset, sharing its frames. On: while the session runs, FlatVR is looked at once a second and stopped again "
            L"through Game Link when it runs (started again when native OpenXR ends, as the one stopped at the start). A BodyWalk without Game Link "
            L"(BodyWalk Lite) cannot be told: the log says so. Live. Off: stopped only at the session's start, as before."),
+    // [openxr] prewarm (vr/xr.cpp PrewarmHudPipeline / PrewarmChains, 2026-11-25): no hitch the first time a menu, the map or a quest notice shows
+    Only(kVr, Toggle(L"openxr", L"prewarm", L"Interface pictures made ahead (no hitch on first use)", 1,
+           L"Native OpenXR: the in-headset interface's shader is compiled while the session starts (it cost the first VR frame about 0.13 s), the "
+           L"menu panel's picture is made on a loading screen or during the game's own resize (the first waypoint or inventory panel used to wait "
+           L"0.1 - 0.25 s for it), and the quest notice's and the turned big map's pictures are kept once made while few are in use (each notice "
+           L"made a new one). Live (the shader: from the next session start). Off: everything is made the first time it shows, as before.")),
     Slider(L"openxr", L"reap_drain_max_ms", L"Old swapchains: longest wait to free them, ms (native OpenXR)", 20, 500, 10, 200,
            L"A swapchain of ours made again (a new mouse pointer, a menu panel of another size) is freed later, once the graphics card has "
            L"finished the game's work: waited for 20 ms, doubled each time that was not enough, up to this. With a busy card (the headset's "
@@ -2509,17 +2590,9 @@ std::vector<Item> g_items = {
            L"the menu button opens the inventory (held for half a second: the game's pause menu, Esc; on PS VR2 the menu button is the Options button of the RIGHT controller); in a menu the controllers are the game's own gamepad (A B X Y, the grips "
            L"are the bumpers) and the laser works as before. Change any of it in the lists under Controls > Buttons of the controllers, or in d2r_vr.ini, section [direct]. "
            L"Off: BodyWalk's controls, as before. F4 only: in F1, F2, F3 and the flat modes BodyWalk's controls are the controls, as if this were off - "
-           L"except the controllers in F1-F3 when BodyWalk is not running (the box \"Play with the controllers in F1, F2, F3 without BodyWalk\" below)."),
-    Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"flat_controller", L"Play with the controllers in F1, F2, F3 without BodyWalk", 1,
-           L"VR views F1 (from above), F2 (third person) and F3 (the game on the floor) with no BodyWalk running: the plugin's own controllers are the "
-           L"game's gamepad there - the same layout as first person (F4): the right trigger attacks, A picks up or opens, B / X / Y are the gamepad's skill "
-           L"buttons (left trigger held: the second row), the right stick click swaps weapons, the left stick click shows items (Alt) and, as a quick click, "
-           L"the map, the menu button opens the inventory (the pause menu's long press is F4's), the sticks are the gamepad's (the left one walks the hero, the left trigger + a flick of a stick "
-           L"drinks a belt potion, see the boxes below); in a menu they are the game's own gamepad. Rebind in d2r_vr.ini, section [direct] (the same lines "
-           L"as F4). What stays F4 only: gestures, hit by touch, the bow's draw, throws, the skill wheel and aiming by the hand (in F1 and F3 the hero "
-           L"attacks where he faces). With BodyWalk running (its Game Link alive, or its gamepad moving) nothing changes: BodyWalk's gamepad is the "
-           L"gamepad, whole. If a real gamepad answers as well, the controllers are added to it, never over it. Off: no buttons from the controllers in "
-           L"F1-F3 without BodyWalk (the walk and the potions only). The log says \"the plugin's own controller is the game's pad\" when it takes over. Live.")),
+           L"except the controllers in F1-F3 when BodyWalk is not running, which play by this layout too; a real Xbox gamepad works together with them."),
+    // [direct] flat_controller has no box here any more (Serg 2026-11-25: one box turned it off unnoticed and F1-F3 lost the controllers without
+    // BodyWalk): only Home's "Use an Xbox controller (gamepad) in VR" switches it, the other way round.
     Needs(L"openxr", L"direct_input", 1, Toggle(L"direct", L"flatvr_controls", L"FlatVR: the controllers by this layout (BodyWalk's Mapping not needed)", 1,
            L"In FlatVR the controllers work as in native OpenXR: BodyWalk hands the controllers to the game as they are (Game Link, BodyWalk with raw "
            L"controls - 1.83 with the D2R VR link), and the layout above - the buttons, the triggers, the sticks, rebindable in Controls > Buttons of the "
@@ -2707,6 +2780,11 @@ std::vector<Item> g_items = {
            L"stayed at the size above round it. On: the window is made the render size too (1024 x 1024 for 1024), a few seconds after "
            L"the hero is in a game and whenever the render size changes. Off: as before. Live; the game writes the window's size into "
            L"its options when it quits, so it starts at that size next time."),
+    // [openxr] square_window_one_step (vr/render_window.h Handle + vr/hud/window.cpp SquareFollowNow, 2026-11-25): one freeze a render size change, not two
+    ShowFor(L"openxr", L"square_window_follow", 2u, Toggle(L"openxr", L"square_window_one_step", L"Square window: resized in the same step as the picture", 1,
+           L"A render size change froze the game twice: the picture's resize (about 0.4 s), then about 2 s later the window following it "
+           L"(about 0.3 s). On: the window is made the new size at the same moment as the picture, so the game resizes once - one short freeze. "
+           L"Only on the monitor the window is on; a move onto another monitor still follows a moment later. Live. Off: as before (two freezes).")),
     Status(L"square_window", L"The game window as the game has it"),
     Toggle(L"openxr", L"third_gaze", L"F2: the camera swings round the hero with the gaze", 0,
            L"Off: the camera stays behind the hero on his turn and the head looks round freely. On: it swings round him "
@@ -2976,15 +3054,37 @@ std::vector<Item> g_items = {
     Toggle(L"hud", L"map_direction", L"Arrow on the map: where you look", 1, kMapDirectionTip),
     Needs(L"hud_third", L"classic", 0, Toggle(L"hud", L"map_rotate_flat", L"Map turns with the camera", 0, kMapRotateFlatTip)),
     Needs(L"hud_third", L"classic", 0, Needs(L"hud", L"map_rotate_flat", 1, Choice(L"hud", L"map_compass_flat", L"Compass over the turned map", 2, {L"None", L"Strip", L"Thin: letters only", L"Ring of letters"}, kMapCompassFlatTip))),
-    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_size", L"Toolbar size, %", 30, 200, 1, 100,
-           L"The toolbar in the picture, smaller or larger, about the middle of its bottom edge (then moved by the sliders below).")),
-    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_near", L"Toolbar nearer / farther", -10, 10, 0.1f, 0,
-           L"Real stereo only: + brings the toolbar towards the eyes, - pushes it behind the screen; 0 = where the game puts it.")),
-    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_x", L"Toolbar left / right, %", -50, 50, 1, 0,
-           L"The toolbar moved across the screen, % of its width: + right, - left; 0 = the middle, where the game puts it.")),
-    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"bar_y", L"Toolbar up / down, %", -30, 100, 1, 0,
+    // [hud_third] bar_low (vr/f5_toolbar.h WantedF2; Serg 2026-11-25: "толбар с хп давай сделаем как на виде ф5 внизу под камерой ... выбор: либо внизу под
+    // камерой либо просто перед экраном как сейчас"): VR F2's toolbar low under the camera, as F5's. 0 = in front, in the picture, as before.
+    Needs(L"hud_third", L"classic", 0, Choice(L"hud_third", L"bar_low", L"Toolbar: where", 0, {L"In front, in the picture (as before)", L"Low under the camera (as F5)"},
+           L"In front, in the picture: the toolbar - life, mana, the belt and the skills - at the bottom of the screen, at the depth and place the sliders below set. "
+           L"Low under the camera: it is taken out of the picture and hangs low in front of you, as F5's toolbar does: look down to read it. It turns with your "
+           L"head's left and right, not its up and down; the two sliders under this set how far under your eyes and how far ahead. Only the toolbar: the map "
+           L"stays in the picture. A menu (inventory, trader...) puts it back in the picture as in every view. Live.")),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 1, Slider(L"hud_third", L"bar_low_below_cm", L"Low toolbar: height, cm under the eyes", 5, 90, 1, 33,
+           L"How far under your eyes F2's low toolbar hangs, in cm: more and it hangs lower, less and it comes up into the view. 33 by default, as F5's. Live."))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 1, Slider(L"hud_third", L"bar_low_ahead_cm", L"Low toolbar: distance ahead, cm", 15, 120, 1, 32,
+           L"How far ahead of your eyes F2's low toolbar hangs, in cm: less brings it nearer (bigger), more pushes it away (smaller). 32 by default, as F5's. Live."))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 0, Slider(L"hud_third", L"bar_size", L"Toolbar size, %", 30, 200, 1, 100,
+           L"The toolbar in the picture, smaller or larger, about the middle of its bottom edge (then moved by the sliders below)."))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 0, Slider(L"hud_third", L"bar_near", L"Toolbar nearer / farther", -10, 10, 0.1f, 0,
+           L"Real stereo only: + brings the toolbar towards the eyes, - pushes it behind the screen; 0 = where the game puts it."))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 0, Slider(L"hud_third", L"bar_x", L"Toolbar left / right, %", -50, 50, 1, 0,
+           L"The toolbar moved across the screen, % of its width: + right, - left; 0 = the middle, where the game puts it."))),
+    Needs(L"hud_third", L"classic", 0, Needs(L"hud_third", L"bar_low", 0, Slider(L"hud_third", L"bar_y", L"Toolbar up / down, %", -30, 100, 1, 0,
            L"The toolbar moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, "
-           L"where the game puts it.")),
+           L"where the game puts it."))),
+    // [hud_third] map_x / map_y / map_size (vr/f2_map.h; a player 2026-11-25: "its always too far in top right corner"): F2's corner map moved and sized
+    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"map_x", L"Map toward the middle, %", -10, 90, 1, 0, kF2MapXTip)),
+    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"map_y", L"Map down, %", -10, 90, 1, 0, kF2MapYTip)),
+    Needs(L"hud_third", L"classic", 0, Slider(L"hud_third", L"map_size", L"Map size, %", 30, 300, 1, 100, kF2MapSizeTip)),
+    // [hud_third] allies_x / allies_y (vr/f2_map.h; Serg 2026-11-25: "иконки союзников надо тоже двигать на ф2"): VR F2's allies' portraits moved, as F5's f5_allies_x / _y
+    Slider(L"hud_third", L"allies_x", L"Allies' portraits: right, %", -20, 80, 1, 0,
+           L"The portraits of your mercenary and your party sit at the top left of the picture - in the headset at the edge of the view. Here they are "
+           L"moved right, % of the picture's width (about 30 brings them a third of the way in). 0 here and below: as the \"Allies' portraits\" sliders on "
+           L"UI: F4 body put them in every view (0 = where the game puts them). VR F2 only; F5 has its own. Live."),
+    Slider(L"hud_third", L"allies_y", L"Allies' portraits: down, %", -20, 80, 1, 0,
+           L"The same down, % of the picture's height. VR F2 only. Live."),
 #if D2RVR_FIRST_PERSON
     Group(L"Swing", L"Your hero's swing leans toward where you aim."),
     Toggle(L"body", L"attack_lean", L"F2: the swing leans where you aim", 0, kAttackLeanTip),
@@ -3150,6 +3250,11 @@ std::vector<Item> g_items = {
     Slider(L"hud_third", L"bar_size", L"F2: toolbar size, %", 30, 200, 1, 100,
            L"The toolbar in F2, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. "
            L"The same setting as VR F2's (UI: F2 behind)."),
+    // [hud_third] map_x / map_y / map_size (vr/f2_map.h): flat F2's corner map - the same keys as VR F2's (UI: F2 behind)
+    Only(kFlat, Group(L"Map in F2 (third person)", L"The corner map in F2: moved toward the middle of the screen and down, and its size. The same settings as VR F2's (UI: F2 behind). Needs D2R_DepthFog.fx on in ReShade.")),
+    Only(kFlat, Slider(L"hud_third", L"map_x", L"F2: map toward the middle, %", -10, 90, 1, 0, kF2MapXTip)),
+    Only(kFlat, Slider(L"hud_third", L"map_y", L"F2: map down, %", -10, 90, 1, 0, kF2MapYTip)),
+    Only(kFlat, Slider(L"hud_third", L"map_size", L"F2: map size, %", 30, 300, 1, 100, kF2MapSizeTip)),
     Group(L"First person with mouse and keyboard", L"First person played with mouse and keyboard. The slider makes the corner map in the picture bigger, grown from its own corner; set the game's mini map to the left in its options to have it top left. Needs D2R_DepthFog.fx on in ReShade."),
     Slider(L"hud_inside", L"map_zoom", L"Corner map size", 0.3f, 3, 0.05f, 1,
            L"The corner map in the picture this much bigger (1 = as the game draws it), grown from its own corner. "
@@ -4335,6 +4440,20 @@ std::vector<Item> g_items = {
            L"ground material, its edges carried on to the parapet - nothing placed by hand) and the game draws it as its own piece, lit and "
            L"shadowed as the deck. Every view: flat F1, F2, F3 and VR. Takes effect at the next start of the game. Off: the files are taken out again, the bridge as "
            L"the game has it."),
+    Toggle(L"holes", L"sewer_backdrop", L"Kurast sewer stairs: a dark wall closes their far end", 1,
+           L"In Kurast Bazaar and Upper Kurast the stairs down to the Sewers run under the ground, and their lowest floor ends in the open: "
+           L"no wall closes the tunnel there (the camera above never looks into it), so in first person you see the sky through the bottom "
+           L"of the stairwell. On: two faces of the game's own black panel stand half a unit behind that open end, a little wider and taller "
+           L"than the opening, laid by each stairwell's own place (found by bearstonem/d2r-pcvr). This program makes the four scenery files from "
+           L"your game's own when it opens and keeps them inside the mod (mods\\D2R-VR\\D2R-VR.mpq); only the picture - the stairs, the way "
+           L"in and everything you play with stay the game's. Every view (from above the wall is under the ground, out of sight). Takes effect "
+           L"at the next start of the game. Off: the files are taken out again, the stairs as the game has them."),
+    Toggle(L"holes", L"bazaar_mask_hidden", L"Kurast Bazaar: no grey plane deep under the ground", 1,
+           L"One of Kurast Bazaar's scenery files places a flat terrain-mask plane 23 units under the ground, away from everything else - a "
+           L"leftover of the level's build. The view from above never looks there; in first person it shows through the grass as a flat grey "
+           L"sheet. On: that one piece is taken out of the scenery (the rest of the file stays the game's). This program makes the file from your "
+           L"game's own when it opens and keeps it inside the mod (mods\\D2R-VR\\D2R-VR.mpq); only the picture changes. Every view. Takes effect at "
+           L"the next start of the game. Off: the file is taken out again, the Bazaar as the game has it."),
     // [weight] death_ragdoll_flat in flat mode: its own tick lives on the VR-only Weapon Weight tab, hidden here (Serg 2026-11-03: «это все скрыто на 2д режиме»)
     Only(kFlat | kF5, Group(L"Monsters (flat play)", L"How the monsters you fight are drawn when you play on the monitor.")),
     Only(kFlat | kF5, Toggle(L"weight", L"death_ragdoll_flat", L"A killed humanoid falls as a ragdoll (a test)", 0,
@@ -4776,6 +4895,12 @@ std::vector<Item> g_items = {
            L"A ring of the same lit rock round you where the game's ceiling ends (about 215 units out at tile size 10), from the ceiling down "
            L"to below the floor (the floor's depth below): the black void past the ceiling's edge - a band between it and the far floor, lit by "
            L"the fog behind fires - is closed by stone, as our effect's far wall closed it. Off: the flat ceiling. Live.")),
+    Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"follow_floor", L"The game's ceiling: steps up where the floor rises (caves)", 0,
+           L"In the natural caves the ceiling stands on the floor under each place instead of on yours: where the floor rises, the "
+           L"ceiling over it rises the same in a step at the same place, so it keeps one height over the floor everywhere - fixed in the "
+           L"world, climbing a step moves nothing. The floor is read from the game's own floor (the one your feet stand on) and kept for "
+           L"the area; the same lit rock, the step's side closed by it too. Off: one height over the area's floor that follows you, as "
+           L"before. VR F4. Live.")),
     Needs(L"ceiling", L"game_ceiling", 1, Toggle(L"ceiling", L"game_ceiling_beams", L"The game's ceiling: the barracks' own wooden beams", 0,
            L"The game ships a wooden ceiling frame for the barracks (and its jail) that it never places: a grid of beams whose bottom sits at "
            L"the barracks walls' top. Ticked, the game draws that frame over you in a grid of whole frames fixed in the world - its own model, "
@@ -5604,6 +5729,12 @@ std::vector<Item> g_items = {
            L"leap goes to that circle - its button is held through the landing until the game casts it. The leap already in the air still lands where the game set "
            L"it when it was cast: nothing can re-aim a leap under way without changing the game itself. Off: a release in the air is pressed at once, as on the "
            L"ground. Live.")),
+    Group(L"Barbarian Whirlwind", L"Where the Barbarian's Whirlwind goes, in VR first person (F4) only. Ticked, the walk stick steers it."),
+    Toggle(L"gameplay", L"whirlwind_stick_steer", L"Barbarian: the walk stick steers Whirlwind", 0,
+           L"VR first person (F4) only. While you push the walk stick, each Whirlwind you cast - a press, or each repeat while you hold its button - "
+           L"whirls 10 cells the way that push would walk, not at the monster near your aim. A whirl cannot turn once it has started, so hold the "
+           L"button and steer the next whirl with the stick. Nothing is pressed for you: the cast, its mana and its hits are the game's own, only its "
+           L"spot is chosen. Stick at rest, or a Whirlwind armed for a touch: aimed as before. Off: aimed as before. Live."),
     Group(L"Point skills (arc and circle)", L"Aim skills cast on a spot (Teleport, Fire Wall, Meteor, Blizzard, curses...) with an arc in F4: a tap casts where you look, hold to see an arc and a circle, let go to cast into it. The sliders set how far the circle goes, how high the arc rises, its colour and how strongly it is drawn."),
     Toggle(L"gameplay", L"teleport_circle", L"Point skills (Teleport, Fire Wall, Meteor...): hold for an arc and a circle", 1,
            L"VR first person (F4) only, the skill on one of the pad's skill buttons (B, X, Y, RB, A or RT, with or without the left trigger). A tap casts where you look. "
@@ -6461,6 +6592,15 @@ std::vector<Item> g_items = {
            L"Live. The two weapons in your hands striking each other, and a parry's clash (a monster's weapon meeting your weapon or shield), play the game's own "
            L"block sound - as loud as they met hard: a light tap quiet, a hard blow as loud as the game plays it, under 0.5 m/s nothing. The pulse in the hands "
            L"follows the same rule. A sound only: nothing of the game's changes. Unticked: the knock is felt, not heard, as before."))),
+    // [weight] clash_sound_min_mps / clash_sound_gap_s (vr/clash_loud.h clashloud::Gate): which knocks of the hero's own steel are heard; 0 / 0 = as before
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"clash_sound", 1, Slider(L"weight", L"clash_sound_min_mps",
+           L"Steel on steel: heard only from this speed, m/s", 0, 10, 0.1f, 0.0f,
+           L"Live. The weapon on your own shield and your two weapons striking each other sound only at this speed and up; a softer knock is still felt in the hands, "
+           L"silent. 0: as before (from 0.5 m/s between your two weapons, from 1 m/s on the shield). 3: only a hard knock (real swings are 2 - 6 m/s).")))),
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"clash_sound", 1, Slider(L"weight", L"clash_sound_gap_s",
+           L"Steel on steel: at least this long between sounds, s", 0, 5, 0.05f, 0.0f,
+           L"Live. After a knock is heard on your own shield or between your two weapons, the next one is heard only this long later - a weapon rattling on "
+           L"the shield clanks once, not on every touch. Every knock is still felt in the hands. 0: no gap, as before. 0.5: at most two a second.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"second_lets_go", L"A weapon in each hand: the second one can be let go too", 1,
            L"Live. With a weapon in each hand the second one is held by its hand's grip as the first is: let go, it falls and lies, and the first stays a full weapon "
            L"in its hand (it strikes, stops on the bodies, its grip lets it go). 'After a drop' is the same for it: it lies on the floor or goes to the back; with "
@@ -6630,6 +6770,13 @@ std::vector<Item> g_items = {
            L"a hard knock and a longer, duller thud after it for a barrel, a sack or a chair (harder the more of your swing the prop took, so a dagger feels a barrel more "
            L"than a maul does); the pulse's strength is the slider above. The masses need a weight library that takes them (the log says so); with an older one only the "
            L"pulse changes. Unticked: the props weigh what their material says and every knock is the same short pulse, as before."))),
+    // [weight] props_on_contact: props physics bodies only on contact (vr/knock_props.h; the idea is Berk's, bearstonem/d2r-pcvr 632ddf0 - the library's own code, D2rpParams.onContact)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Toggle(L"weight", L"props_on_contact", L"Props become physics only when touched (a test)", 0,
+           L"Ticked: a prop nobody touches is not a physics body at all - it, and the shelf or table under it, become one only when your weapon, your hand or another moving "
+           L"prop could reach it, and stop being one once everything lies still again; your weapon is a physics body only near props, and with nothing moving the props' "
+           L"physics takes no steps. Entering a room full of props or walking past them costs the props' thread a fraction of what it did. The knocks are meant to be the same: "
+           L"cups, plates, barrels fly, roll and land as before. Needs a weight library that has it (the log says so; an older one keeps every prop a body). The props' world "
+           L"is made anew when you switch it. Unticked: every prop near you is a physics body from the moment it is found, as before."))),
     // [weight] grab_props: an empty hand's grip takes a prop (vr/knock_props.h, grab_wire.cpp; the hands are the props world's, D2rpSetHands)
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"knock_props", 1, Toggle(L"weight", L"grab_props", L"Take the props in your hand (a test)", 0,
            L"Live. Ticked: squeeze the grip of an EMPTY hand (no weapon, shield, bow or bottle in it) firmly with the palm on or near a cup, a jar, a book, a skull, a stool... "
@@ -8809,6 +8956,9 @@ void AddTip(HWND ctl, const wchar_t* text) {
     SendMessageW(g_tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
 }
 
+HWND BuildListMake(HWND page, int id);   // (the Backups list, with the Backups code)
+int BuildListHeight();
+void BuildListColumns(HWND lv);
 void Build(HWND page) {
     if (g_items.size() > (size_t)kMaxItems)   // (a developer's build only: every id range must hold every item - see kMaxItems)
         MessageBoxW(nullptr, L"More Settings items than kMaxItems: raise it (tools/settings/settings.cpp) - clicks would go to the wrong item.", L"D2R VR Authentic Settings", MB_ICONERROR);
@@ -8855,9 +9005,15 @@ void Build(HWND page) {
         }
         case Kind::Status:
             it.modes &= groupModes;
+            if (wcscmp(it.key, L"bklist") == 0) {   // the Backups list: a Windows list (BuildListMake), not a status line
+                it.ctl = BuildListMake(page, id);
+                break;
+            }
             // the weapon list's rows take clicks (SS_NOTIFY): one picks that kind for the sliders
-            it.ctl = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX | ((it.key[0] == L'w' && it.key[1] == L'k') || it.cell >= 0 ? SS_NOTIFY : 0),
-                          it.key[0] == L'w' && it.key[1] == L'k' ? id : -1);   // wraps to two lines
+            {
+                const bool clickRow = it.key[0] == L'w' && it.key[1] == L'k' && iswdigit(it.key[2]);
+                it.ctl = Make(page, L"STATIC", it.label, SS_LEFT | SS_NOPREFIX | (clickRow || it.cell >= 0 ? SS_NOTIFY : 0), clickRow ? id : -1);   // wraps to two lines
+            }
             it.color = it.warn ? RGB(205, 80, 0) : GetSysColor(it.cell >= 0 ? COLOR_WINDOWTEXT : COLOR_GRAYTEXT);   // (a table's cells are plain text)
             break;
         case Kind::File:
@@ -9169,11 +9325,11 @@ void LayoutPage() {
         places.push_back({head.line, x, y + S(26), colW, 2});
         y += headH;
         int gridX = -1, gridN = 1, gridK = 0;   // a sub-heading's grid of ticks: where its cells start, how many to a row, the next one's place
-        size_t besidePlaced = (size_t)-1;      // the Beside button the Choice before it has placed on its row
+        size_t besideUntil = 0;                // the Beside buttons before this index are placed (on the row of the Choice or Status before them)
         for (size_t i = g.first + 1; i < g.end; ++i) {
             const Item& it = g_items[i];
             if (!(it.modes & PlatformBit()) || it.hidden || it.off) continue;
-            if (i == besidePlaced) continue;
+            if (i < besideUntil && it.kind == Kind::Button && it.beside) continue;
             if (it.kind == Kind::Group) {   // a sub-heading (Sub): its name on the left of its row, its ticks beside it - or a line of its own
                 const int nameW = it.across > 0 ? std::clamp(colW * 24 / 100, S(90), S(150)) : colW;
                 if (it.line) {   // the classes apart (the author: "proper separators between the classes")
@@ -9223,6 +9379,12 @@ void LayoutPage() {
                 }
                 break;
             case Kind::Status: {   // two lines, or as many as its words take (up to five; a warning all it takes)
+                if (wcscmp(it.key, L"bklist") == 0) {   // the Backups list: its header and every row, no scroll bar of its own (BuildListHeight)
+                    const int ht = BuildListHeight();
+                    places.push_back({it.ctl, x, y + S(4), colW, ht});
+                    y += ht + S(8) - rowH;
+                    break;
+                }
                 it.lines = LinesAt(it.ctl, colW, it.warn ? 12 : 5);
                 const int more = (std::max(2, it.lines) - 2) * lineH;
                 places.push_back({it.ctl, x, y + S(4), colW, S(40) + more});
@@ -9251,7 +9413,7 @@ void LayoutPage() {
                         const int bw = std::min(S(96), listW / 3);
                         listW -= bw + S(6);
                         places.push_back({nb.ctl, x + colW - bw, y + S(2) + mid, bw, S(26)});
-                        besidePlaced = i + 1;
+                        besideUntil = i + 2;
                     }
                 }
                 places.push_back({it.ctl, x + labelW, y + S(3) + mid, listW, S(240)});   // the height is the open list's
@@ -9274,7 +9436,17 @@ void LayoutPage() {
                     y += S(66) - rowH;
                     break;
                 }
-                places.push_back({it.ctl, x, y + S(4), colW, S(24)});
+                {   // Beside buttons after it share its row, all as wide (the Backups' Back up / Save settings, Restore / Delete)
+                    std::vector<HWND> row{it.ctl};
+                    size_t e = i + 1;
+                    for (; e < g.end && g_items[e].kind == Kind::Button && g_items[e].beside; ++e) {
+                        const Item& nb = g_items[e];
+                        if ((nb.modes & PlatformBit()) && !nb.hidden && !nb.off) row.push_back(nb.ctl);
+                    }
+                    besideUntil = e;
+                    const int n = (int)row.size(), bw = (colW - (n - 1) * S(6)) / n;
+                    for (int k = 0; k < n; ++k) places.push_back({row[k], x + k * (bw + S(6)), y + S(4), bw, S(24)});
+                }
                 break;
             case Kind::Toggle:
             case Kind::Invert: {   // a tick box: its words wrap beside the box
@@ -9308,6 +9480,7 @@ void LayoutPage() {
     for (const Place& p : places)
         if (p.h) dw = DeferWindowPos(dw, p.h, nullptr, p.x, p.y - g_scrollY, p.w, p.ht, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     EndDeferWindowPos(dw);
+    if (const Item* list = FindItem(L"@status", L"bklist")) if (list->ctl) BuildListColumns(list->ctl);   // (its columns by its new width)
     InvalidateRect(g_page, nullptr, TRUE);
 }
 
@@ -10965,8 +11138,10 @@ void ReShadeStatus() {
 
 
 void RefreshRooms(bool now = false);
+void RefreshBuildStatus();
 void RefreshStatus() {
     LaunchButton();   // flat and VR alike
+    RefreshBuildStatus();   // Home > Build backups: its line as it was last set
     BodyWalkRows();
     UpdateDepthStatus();   // World > Fog: the depth our effects read (any tab: it is a no-op without its row)
     UpdateSafeScreenStatus();   // UI: F4 body: do two side panels fit the picture at the interface size in the file
@@ -12160,22 +12335,6 @@ void FillLanguageItem() {
         g_langChoiceCodes.push_back(f.code);
     }
     it->max = (float)it->choices.size() - 1;
-}
-// Home's "Use an Xbox controller (gamepad) in VR": [direct] flat_controller reversed. Its own words (TR here; the item is left out of the
-// table's keys, which the Stereo tab's box of the same key has).
-void FillPadItem() {
-    for (Item& i : g_items) {
-        if (!i.reversed || wcscmp(i.section, L"direct") != 0 || wcscmp(i.key, L"flat_controller") != 0) continue;
-        i.tr = true;
-        i.label = TR(L"home.xbox_pad.label", L"Use an Xbox controller (gamepad) in VR");
-        i.tip = TR(L"home.xbox_pad.tip",
-                   L"Ticked: in VR F1, F2 and F3 a real Xbox controller (gamepad) drives the game alone - F2 (third person) and F3 (the game on "
-                   L"the floor) are the views for it; the VR controllers no longer press buttons there (they still walk and drink belt potions). F4 (first person) stays made for the VR "
-                   L"controllers. Unticked (the default): a real gamepad works too, the VR controllers are added to it. The same key as Stereo > "
-                   L"\"Play with the controllers in F1, F2, F3 without BodyWalk\", the other way round. Greyed while \"Controls without BodyWalk\" "
-                   L"(Stereo) is off: then BodyWalk's controls are the controls. Mouse and keyboard instead: Controls > Mouse and keyboard > "
-                   L"\"Mouse look in VR views F2 and F4 too\"; F9 in the game frees the pointer. Live.");
-    }
 }
 float ReadLanguage() {
     const std::wstring s = LanguageSetting();
@@ -13631,6 +13790,42 @@ holesassets::Result PrepareHolesNow() {
     const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
     return holesassets::Prepare(game, modRoot, GetPrivateProfileIntW(L"holes", L"patch_world", 0, g_ini) != 0);
 }
+// [holes] sewer_backdrop: the Kurast sewer presets with the dark wall (sewer_assets.cpp), the same way: at the start and when the tick changes.
+sewerassets::Result PrepareSewerNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    return sewerassets::Prepare(game, modRoot, GetPrivateProfileIntW(L"holes", L"sewer_backdrop", 1, g_ini) != 0);
+}
+// [holes] bazaar_mask_hidden: the Bazaar tile without its stray terrain-mask plane (bazaar_assets.cpp), the same way.
+bazaarassets::Result PrepareBazaarNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    return bazaarassets::Prepare(game, modRoot, GetPrivateProfileIntW(L"holes", L"bazaar_mask_hidden", 1, g_ini) != 0);
+}
+void StartBazaar() {
+    try {
+        std::thread([] {
+            bazaarassets::Result r = PrepareBazaarNow();
+            if (r.wrote && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")))
+                r.text += std::wstring(L" - ") + TR(L"bazaar.restart", L"the game running now: restart it to see the change");
+            LogLine(L"kurast bazaar mask plane: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"kurast bazaar mask plane: could not be started");
+    }
+}
+void StartSewer() {
+    try {
+        std::thread([] {
+            sewerassets::Result r = PrepareSewerNow();
+            if (r.wrote && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")))
+                r.text += std::wstring(L" - ") + TR(L"sewer.restart", L"the game running now: restart it to see the change");
+            LogLine(L"kurast sewer backdrop: " + r.text);
+        }).detach();
+    } catch (const std::exception&) {
+        LogLine(L"kurast sewer backdrop: could not be started");
+    }
+}
 void StartHoles() {
     try {
         std::thread([] {
@@ -14149,6 +14344,417 @@ void OpenProblemIssue() {
     ShellExecuteW(g_main, L"open", Widen(issues.at(id)).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+// ---- Backups (Home): the installed build, or only its settings, copied into mods\D2R-VR\build_backups, listed as a history, restored, deleted
+// (tools/settings/build_backup.cpp, shared/build_backup_rule.h; tested by build_backup_test). Copying ~250 MB takes seconds: on a thread of its
+// own, its progress on the status line. This program is one of the build's files: a restore moves the running exe aside and puts the restored
+// one in its place (or, where it cannot even be moved, a helper copy of this program puts it there once this one has exited), then the
+// restored program opens.
+constexpr UINT WM_APP_BUILDBAK = WM_APP + 52;        // done (BuildDone*)
+constexpr UINT WM_APP_BUILDBAK_STEP = WM_APP + 53;   // progress (wParam: percent, lParam: 1 = a restore)
+constexpr int kBuildRows = 12;                       // the list's rows on the page before it scrolls in itself, newest first
+int g_buildPick = -1;                                // the list's picked row (-1 none: Restore and Delete greyed)
+std::atomic<bool> g_buildBusy{false};
+std::vector<buildbackup::Info> g_builds;   // the history, newest first
+bool g_buildRestart = false;               // a restore put other files in place: the window closes without writing its own file, and opens again
+struct BuildDone { int state; std::wstring text; bool restart; std::wstring pending; };
+// The status line's last words, kept: a tab's controls are made again at each switch, and RefreshStatus puts them back.
+int g_buildState = kUnknown;
+std::wstring g_buildText;
+void SetBuildStatus(int state, const wchar_t* text) {
+    g_buildState = state;
+    g_buildText = text;
+    SetStatus(L"buildbak", state, text);
+}
+
+int BuildKeep() {
+    return std::clamp((int)GetPrivateProfileIntW(L"support", L"build_backup_keep", buildbackup::kKeepDefault, g_ini), buildbackup::kKeepMin, buildbackup::kKeepMax);
+}
+std::wstring BuildTypeWord(const buildbackup::Info& b) {
+    if (b.kind == buildbackup::kUpdate) return TR(L"build.type.auto_update", L"Auto (before an update)");
+    if (b.kind == buildbackup::kRestore) return b.scope == buildbackup::kSettings ? TR(L"build.type.auto_restore_settings", L"Auto (settings before a restore)")
+                                                                                  : TR(L"build.type.auto_restore", L"Auto (build before a restore)");
+    return b.scope == buildbackup::kSettings ? TR(L"build.type.settings", L"Settings") : TR(L"build.type.build", L"Build");
+}
+std::wstring BuildWhen(const buildbackup::Info& b) {   // "2026-11-25 22:12:20": with the seconds (two backups of one minute read apart)
+    return b.made.size() >= 19 ? b.made.substr(0, 19) : b.made;
+}
+std::wstring BuildRowText(const buildbackup::Info& b) {   // (the Delete question names it so)
+    if (!b.complete) return TRF(L"build.row_unfinished", L"{version}, {when} - did not finish (delete it)", {{L"version", b.version}, {L"when", BuildWhen(b)}});
+    return TRF(L"build.row", L"{type}: {version}, {when}, {size}",
+               {{L"type", BuildTypeWord(b)}, {L"version", b.version}, {L"when", BuildWhen(b)}, {L"size", buildbackup::SizeText(b.bytes)}});
+}
+HWND BuildList() {
+    const Item* it = FindItem(L"@status", L"bklist");
+    return it ? it->ctl : nullptr;
+}
+const buildbackup::Info* BuildPicked() {
+    return g_buildPick >= 0 && g_buildPick < (int)g_builds.size() ? &g_builds[g_buildPick] : nullptr;
+}
+// The list scrolls the page, not itself, for the wheel (it is as tall as its rows, up to kBuildRows).
+LRESULT CALLBACK BuildListProc(HWND h, UINT msg, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR) {
+    if (msg == WM_MOUSEWHEEL && (int)g_builds.size() <= kBuildRows) return SendMessageW(g_page, msg, w, l);
+    return DefSubclassProc(h, msg, w, l);
+}
+// The Backups list (Build): a Windows list with its columns - the row under the mouse lights up (the Explorer look), the picked row stays
+// marked, one row at a time (BuildListNotify).
+HWND BuildListMake(HWND page, int id) {
+    HWND lv = Make(page, WC_LISTVIEWW, L"", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, id);
+    ListView_SetExtendedListViewStyle(lv, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);   // (LABELTIP: a cut type shows whole on hover)
+    SetWindowTheme(lv, L"Explorer", nullptr);
+    SetWindowSubclass(lv, BuildListProc, 0, 0);
+    const wchar_t* heads[4] = {TR(L"build.col.type", L"Type"), TR(L"build.col.version", L"Version"), TR(L"build.col.made", L"Made"), TR(L"build.col.size", L"Size")};
+    for (int c = 0; c < 4; ++c) {
+        LVCOLUMNW col{};
+        col.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_FMT;
+        col.fmt = c == 3 ? LVCFMT_RIGHT : LVCFMT_LEFT;
+        col.pszText = (LPWSTR)heads[c];
+        col.cx = 80;   // (BuildListColumns: by the list's width)
+        ListView_InsertColumn(lv, c, &col);
+    }
+    return lv;
+}
+// The columns by the list's width: Type takes what Version, Made and Size leave.
+void BuildListColumns(HWND lv) {
+    RECT r{};
+    GetClientRect(lv, &r);
+    const int w = r.right - r.left;
+    if (w <= 0) return;
+    const int version = S(58), made = S(122), size = S(60);
+    ListView_SetColumnWidth(lv, 1, version);
+    ListView_SetColumnWidth(lv, 2, made);
+    ListView_SetColumnWidth(lv, 3, size);
+    ListView_SetColumnWidth(lv, 0, std::max(S(80), w - version - made - size));
+}
+// Its height on the page (LayoutPage): the header and every row up to kBuildRows (more scroll in the list).
+int BuildListHeight() {
+    HWND lv = BuildList();
+    const int rows = std::clamp((int)g_builds.size(), 1, kBuildRows);
+    int rowH = S(22), headH = S(24);
+    if (lv && ListView_GetItemCount(lv) > 0) {
+        RECT r{};
+        if (ListView_GetItemRect(lv, 0, &r, LVIR_BOUNDS)) rowH = r.bottom - r.top;
+    }
+    if (HWND hd = lv ? ListView_GetHeader(lv) : nullptr) {
+        RECT r{};
+        if (GetWindowRect(hd, &r) && r.bottom > r.top) headH = r.bottom - r.top;
+    }
+    return headH + rows * rowH + S(4);
+}
+// The buttons as the pick and the work allow: Restore needs a finished backup picked, Delete any picked one, nothing while one runs.
+void BuildButtonsState() {
+    const bool busy = g_buildBusy.load();
+    const buildbackup::Info* b = BuildPicked();
+    auto set = [](const wchar_t* key, bool on) { if (Item* it = FindItem(L"@run", key)) if (it->ctl) EnableWindow(it->ctl, on ? TRUE : FALSE); };
+    set(L"build_backup", !busy);
+    set(L"settings_backup", !busy);
+    set(L"build_restore", !busy && b && b->complete);
+    set(L"build_delete", !busy && b);
+    if (HWND lv = BuildList()) EnableWindow(lv, busy ? FALSE : TRUE);
+}
+// The list as g_builds has it, the picked row selected; shown only with a backup in it (the page laid out again when that or its height changes).
+void ShowBuildRows() {
+    Item* list = FindItem(L"@status", L"bklist");
+    if (!list || !list->ctl) return;
+    HWND lv = list->ctl;
+    SendMessageW(lv, WM_SETREDRAW, FALSE, 0);
+    ListView_DeleteAllItems(lv);
+    for (size_t i = 0; i < g_builds.size(); ++i) {
+        const buildbackup::Info& b = g_builds[i];
+        const std::wstring type = b.complete ? BuildTypeWord(b) : TRF(L"build.type_unfinished", L"{type} - did not finish", {{L"type", BuildTypeWord(b)}});
+        const std::wstring cells[4] = {type, b.version, BuildWhen(b), b.complete ? buildbackup::SizeText(b.bytes) : std::wstring(L"-")};
+        LVITEMW row{};
+        row.mask = LVIF_TEXT;
+        row.iItem = (int)i;
+        row.pszText = (LPWSTR)cells[0].c_str();
+        const int at = ListView_InsertItem(lv, &row);
+        for (int c = 1; c < 4; ++c) ListView_SetItemText(lv, at, c, (LPWSTR)cells[c].c_str());
+    }
+    if (g_buildPick >= 0) {
+        ListView_SetItemState(lv, g_buildPick, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_EnsureVisible(lv, g_buildPick, FALSE);
+    }
+    SendMessageW(lv, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(lv, nullptr, TRUE);
+    static int shownRows = -1;
+    const int rows = std::min((int)g_builds.size(), kBuildRows);
+    const bool show = !g_builds.empty();
+    if (list->hidden == show || rows != shownRows) {
+        list->hidden = !show;
+        shownRows = rows;
+        if (g_page) LayoutPage();
+    }
+    BuildListColumns(lv);
+    BuildButtonsState();
+}
+void RefreshBuildStatus() {   // (RefreshStatus: after a tab switch)
+    if (!g_buildText.empty()) SetStatus(L"buildbak", g_buildState, g_buildText.c_str());
+    BuildButtonsState();
+}
+// The history as the folder has it now (at the start and after each backup, restore, delete).
+void LoadBuilds(bool showSummary = true) {
+    const std::wstring game = GameFolder();
+    const std::wstring picked = BuildPicked() ? BuildPicked()->folder : std::wstring();
+    g_builds = ModInstall() ? buildbackup::List(game) : std::vector<buildbackup::Info>();
+    g_buildPick = -1;   // (the same folder stays picked)
+    for (size_t i = 0; i < g_builds.size(); ++i) if (!picked.empty() && g_builds[i].folder == picked) g_buildPick = (int)i;
+    if (showSummary) {
+        if (!ModInstall()) SetBuildStatus(kUnknown, TR(L"status.buildbak.not_mod", L"Backups: only for D2R VR installed as the mod (mods\\D2R-VR)"));
+        else if (g_builds.empty()) SetBuildStatus(kUnknown, TR(L"status.buildbak.none", L"Backups: none yet"));
+        else {
+            uint64_t bytes = 0;
+            for (const buildbackup::Info& b : g_builds) bytes += b.bytes;
+            SetBuildStatus(kOk, TRF(L"status.buildbak.list", L"Backups: {count}, {size} in all - pick one in the list, then Restore or Delete",
+                                    {{L"count", std::to_wstring(g_builds.size())}, {L"size", buildbackup::SizeText(bytes)}}).c_str());
+        }
+    }
+    ShowBuildRows();
+}
+// The list's word to the page (WM_NOTIFY): a row picked or let go; a double click restores it (after the same question as Restore).
+void StartBuildRestore();
+bool BuildListNotify(const NMHDR* n) {
+    HWND lv = BuildList();
+    if (!lv || n->hwndFrom != lv) return false;
+    if (n->code == LVN_ITEMCHANGED) {
+        const NMLISTVIEW* v = (const NMLISTVIEW*)n;
+        if ((v->uChanged & LVIF_STATE) && ((v->uNewState ^ v->uOldState) & LVIS_SELECTED)) {
+            g_buildPick = ListView_GetNextItem(lv, -1, LVNI_SELECTED);
+            BuildButtonsState();
+        }
+    } else if (n->code == NM_DBLCLK) {
+        const NMITEMACTIVATE* a = (const NMITEMACTIVATE*)n;
+        if (a->iItem >= 0) {   // (that row picked and marked, whatever was picked before)
+            ListView_SetItemState(lv, a->iItem, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+            g_buildPick = a->iItem;
+            BuildButtonsState();
+            StartBuildRestore();
+        }
+    }
+    return true;
+}
+
+// The worker's progress, at most once per percent.
+buildbackup::Progress BuildProgress(HWND wnd, bool restore) {
+    auto last = std::make_shared<int>(-1);
+    return [wnd, restore, last](uint64_t done, uint64_t total) {
+        const int pct = total ? (int)(done * 100 / total) : 100;
+        if (pct != *last) { *last = pct; PostMessageW(wnd, WM_APP_BUILDBAK_STEP, (WPARAM)pct, restore ? 1 : 0); }
+    };
+}
+void PostBuildDone(HWND wnd, int state, std::wstring text, bool restart, std::wstring pending = std::wstring()) {
+    auto* p = new BuildDone{state, std::move(text), restart, std::move(pending)};
+    if (!PostMessageW(wnd, WM_APP_BUILDBAK, 0, (LPARAM)p)) delete p;
+}
+std::wstring BuildFailText(const buildbackup::Outcome& o) {
+    if (o.code == buildbackup::kNoSpace) return TRF(L"status.buildbak.no_space", L"Not enough free space on the game's drive for a backup ({error})", {{L"error", o.error}});
+    if (o.code == buildbackup::kNothing) return TR(L"status.buildbak.nothing", L"There is no D2R VR build in this game's folder to back up");
+    if (o.code == buildbackup::kBadBackup) return TRF(L"status.buildbak.bad", L"That backup is not whole and was not restored: {error}", {{L"error", o.error}});
+    return TRF(L"status.buildbak.failed", L"Failed: {error}", {{L"error", o.error}});
+}
+
+// Back up the build (scope kBuild) or Save settings (kSettings).
+void StartBackup(int scope) {
+    if (!ModInstall()) { LoadBuilds(); return; }
+    if (g_buildBusy.exchange(true)) return;
+    BuildButtonsState();
+    SetBuildStatus(kUnknown, scope == buildbackup::kSettings ? TR(L"status.buildbak.saving", L"Saving the settings...") : TR(L"status.buildbak.making", L"Backing up the build..."));
+    const std::wstring game = GameFolder();
+    const int keep = BuildKeep();
+    try {
+        std::thread([game, keep, scope](HWND wnd) {
+            const std::wstring version = buildbackup::InstalledVersion(game);
+            const buildbackup::Outcome o = buildbackup::Make(buildbackup::PlacesFor(game), buildbackup::kManual, version, keep, buildbackup::Now(),
+                                                             BuildProgress(wnd, false), {}, scope);
+            LogLine(std::wstring(scope == buildbackup::kSettings ? L"settings backup: " : L"build backup: ") +
+                    (o.code == buildbackup::kDone ? L"made " + o.folder + L" (" + std::to_wstring(o.files) + L" files, " + buildbackup::SizeText(o.bytes) + L")"
+                                                  : L"failed - " + o.error));
+            if (o.code != buildbackup::kDone) { PostBuildDone(wnd, kBad, BuildFailText(o), false); return; }
+            const std::initializer_list<std::pair<const wchar_t*, std::wstring>> v = {{L"version", version}, {L"files", std::to_wstring(o.files)}, {L"size", buildbackup::SizeText(o.bytes)}};
+            PostBuildDone(wnd, kOk, scope == buildbackup::kSettings ? TRF(L"status.buildbak.saved", L"Settings of {version} saved: {files} files, {size}", v)
+                                                                    : TRF(L"status.buildbak.made", L"Backed up {version}: {files} files, {size}", v), false);
+        }, g_main).detach();
+    } catch (const std::exception&) {
+        g_buildBusy.store(false);
+        BuildButtonsState();
+    }
+}
+
+void StartBuildRestore() {   // Restore, or a double click in the list: the picked row
+    if (g_buildBusy.load()) return;
+    const buildbackup::Info* b = BuildPicked();
+    if (!b) return;
+    if (!b->complete) {
+        SetBuildStatus(kBad, TR(L"status.buildbak.unfinished", L"That backup did not finish: it cannot be restored (delete it)"));
+        return;
+    }
+    if (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")) {
+        MessageBoxW(g_main, TR(L"msg.build_game_runs", L"Close the game first: its files cannot be put back while it runs."), kAppName, MB_ICONWARNING);
+        return;
+    }
+    const bool settingsOnly = b->scope == buildbackup::kSettings;
+    if (!settingsOnly && ProcessRunning(L"BodyWalkVR.exe")) {
+        MessageBoxW(g_main, TR(L"msg.build_bodywalk_runs", L"Close BodyWalk first: Game Link, its part of the build, cannot be put back while it runs."), kAppName, MB_ICONWARNING);
+        return;
+    }
+    const std::wstring ask = settingsOnly
+        ? TRF(L"msg.settings_restore", L"Put back the settings saved on {when} (D2R VR {version})?\n\nAll your settings go back to that backup; the mod itself stays "
+                                       L"as it is. The settings you have now are saved first, so you can come back to them. D2R VR Settings then opens again.",
+              {{L"version", b->version}, {L"when", b->made}})
+        : TRF(L"msg.build_restore", L"Put back D2R VR {version} as it was on {when}?\n\nEvery file of the build and all your settings go back to that "
+                                    L"backup. The build there now is backed up first, so you can come back to it. D2R VR Settings then opens again.",
+              {{L"version", b->version}, {L"when", b->made}});
+    if (MessageBoxW(g_main, ask.c_str(), kAppName, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    g_buildBusy.store(true);
+    BuildButtonsState();
+    SetBuildStatus(kUnknown, settingsOnly ? TR(L"status.buildbak.restoring_settings", L"Saving the settings there now, then restoring...")
+                                          : TR(L"status.buildbak.restoring", L"Backing up the build there now, then restoring..."));
+    const std::wstring game = GameFolder(), folder = b->folder, version = b->version;
+    const int keep = BuildKeep();
+    try {
+        std::thread([game, folder, version, keep, settingsOnly](HWND wnd) {
+            const buildbackup::Outcome o = buildbackup::Restore(buildbackup::PlacesFor(game), folder, keep, buildbackup::Now(), BuildProgress(wnd, true));
+            LogLine(L"backup restore: " + folder + L" - " +
+                    (o.code == buildbackup::kDone ? L"done (" + std::to_wstring(o.files) + L" files" + (o.settingsReplaced ? L", this program replaced" : L"") +
+                                                        (o.settingsPending.empty() ? L"" : L", this program replaced after it exits") + L"), what was there in " + o.folder
+                                                  : L"failed - " + o.error + (o.folder.empty() ? L"" : L" (what was there is in " + o.folder + L")")));
+            if (o.code == buildbackup::kDone)
+                PostBuildDone(wnd, kOk, settingsOnly ? TR(L"status.buildbak.restored_settings", L"Settings restored - D2R VR Settings opens again")
+                                                     : TRF(L"status.buildbak.restored", L"Restored {version} - D2R VR Settings opens again", {{L"version", version}}),
+                              true, o.settingsPending);
+            else if (!o.folder.empty())   // stopped half way: the files as they were are in the backup just made
+                PostBuildDone(wnd, kBad, BuildFailText(o) + L" " + TRF(L"status.buildbak.half", L"- what was there is in the backup {folder}", {{L"folder", o.folder}}), false);
+            else
+                PostBuildDone(wnd, kBad, BuildFailText(o), false);
+        }, g_main).detach();
+    } catch (const std::exception&) {
+        g_buildBusy.store(false);
+        BuildButtonsState();
+    }
+}
+
+void DeleteBuildBackup() {   // Delete: the picked row
+    if (g_buildBusy.load()) return;
+    const buildbackup::Info* b = BuildPicked();
+    if (!b) return;
+    const std::wstring ask = TRF(L"msg.build_delete", L"Delete this backup for good?\n\n{label}", {{L"label", BuildRowText(*b)}});
+    if (MessageBoxW(g_main, ask.c_str(), kAppName, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    const std::wstring folder = b->folder;
+    const bool ok = buildbackup::Remove(GameFolder(), folder);
+    LogLine(L"backup: " + folder + (ok ? L" deleted" : L" could not be deleted (whole)"));
+    g_buildPick = -1;
+    LoadBuilds();
+    if (!ok) SetBuildStatus(kBad, TR(L"status.buildbak.not_deleted", L"Could not delete all of that backup: a file in it is open"));
+}
+
+void OpenBuildBackups() {
+    const std::wstring dir = buildbackup::BackupsDir(GameFolder());
+    CreateDirectoryW(dir.c_str(), nullptr);
+    ShellExecuteW(g_main, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+// The restored settings program waits beside its place (Outcome::settingsPending): a copy of THIS program (the restored one may be too old
+// to know how) waits for this process to end, moves it in, and opens it when `open`. false: the helper did not start.
+bool LaunchFinisher(const std::wstring& pending, const std::wstring& target, bool open) {
+    wchar_t self[MAX_PATH];
+    if (!GetModuleFileNameW(nullptr, self, MAX_PATH)) return false;
+    const std::wstring game = target.substr(0, target.find_last_of(L'\\') + 1);
+    const std::wstring dir = buildbackup::BackupsDir(game) + buildbackup::kReplaced;
+    CreateDirectoryW(buildbackup::BackupsDir(game).c_str(), nullptr);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const std::wstring helper = dir + L"finish_restore_" + std::to_wstring(GetTickCount64()) + L".exe";
+    if (!CopyFileW(self, helper.c_str(), FALSE)) return false;
+    std::wstring cmd = L"\"" + helper + L"\" --finish-restore " + std::to_wstring(GetCurrentProcessId()) + L" \"" + pending + L"\" \"" + target + L"\"" + (open ? L" open" : L"");
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(helper.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, game.c_str(), &si, &pi)) return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
+void OnBuildStep(int pct, bool restore) {
+    if (!g_buildBusy.load()) return;
+    SetBuildStatus(kUnknown, restore ? TRF(L"status.buildbak.restoring_pct", L"Restoring... {percent}%", {{L"percent", std::to_wstring(pct)}}).c_str()
+                                     : TRF(L"status.buildbak.making_pct", L"Backing up... {percent}%", {{L"percent", std::to_wstring(pct)}}).c_str());
+}
+void BuildCliLog(const std::wstring& game, const std::wstring& line);
+void OnBuildDone(BuildDone* raw) {
+    std::unique_ptr<BuildDone> p(raw);
+    g_buildBusy.store(false);
+    LoadBuilds(false);
+    SetBuildStatus(p->state, p->text.c_str());
+    if (!p->restart) return;
+    // the restored D2R VR Settings opens (the settings changed under this window); this one closes without writing its window file over them
+    const std::wstring exe = GameFolder() + L"D2R_VR_Settings.exe";
+    g_buildRestart = true;
+    if (!p->pending.empty()) {
+        if (!LaunchFinisher(p->pending, exe, true)) {
+            LogLine(L"backup restore: the helper that puts the restored D2R_VR_Settings.exe in place did not start - it waits as " + p->pending);
+            MessageBoxW(g_main, TRF(L"msg.build_pending", L"The restored D2R VR Settings could not replace this one while it runs. Close this window, then rename\n{pending}\nto D2R_VR_Settings.exe.",
+                                    {{L"pending", p->pending}}).c_str(), kAppName, MB_ICONWARNING);
+        }
+    } else {
+        ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, GameFolder().c_str(), SW_SHOWNORMAL);
+    }
+    DestroyWindow(g_main);
+}
+
+// D2R_VR_Settings.exe --backup-build / --restore-build / --finish-restore: no window. A line of what it did into the mod's d2r_vr_settings.log
+// (the program may run from Setup's temporary folder, where LogLine finds no game).
+void BuildCliLog(const std::wstring& game, const std::wstring& line) {
+    const std::wstring logs = modlayout::ModRoot(game) + L"d2rloader\\logs";
+    CreateDirectoryW(logs.c_str(), nullptr);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t stamp[40];
+    swprintf_s(stamp, L"%04d-%02d-%02d %02d:%02d:%02d.%03d ", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+    const std::wstring text = stamp + line + L"\r\n";
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), nullptr, 0, nullptr, nullptr);
+    std::string utf8((size_t)std::max(bytes, 0), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), (int)text.size(), utf8.data(), bytes, nullptr, nullptr);
+    const HANDLE f = CreateFileW((logs + L"\\d2r_vr_settings.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(f, utf8.data(), (DWORD)utf8.size(), &wrote, nullptr);
+    CloseHandle(f);
+}
+int BuildCliKeep(const std::wstring& game) {
+    const std::wstring ini = modlayout::ModPlugins(game) + L"d2r_vr.ini";
+    return std::clamp((int)GetPrivateProfileIntW(L"support", L"build_backup_keep", buildbackup::kKeepDefault, ini.c_str()), buildbackup::kKeepMin, buildbackup::kKeepMax);
+}
+// --backup-build <game folder> [update|manual|settings]: D2R VR Setup, before it installs over a build (it runs the NEW program from its
+// temporary folder: the installed one may be too old to know this). 0 made, 1 failed, 2 no build there, 3 not enough space.
+int BackupBuildCli(const std::wstring& game, const std::wstring& what) {
+    const int kind = what == L"settings" ? buildbackup::kManual : buildbackup::KindFromWord(what);
+    const int scope = what == L"settings" ? buildbackup::kSettings : buildbackup::kBuild;
+    const buildbackup::Places places = buildbackup::PlacesFor(game);
+    const std::wstring version = buildbackup::InstalledVersion(places.game);
+    const buildbackup::Outcome o = buildbackup::Make(places, kind, version, BuildCliKeep(places.game), buildbackup::Now(), nullptr, {}, scope);
+    if (o.code != buildbackup::kNothing)
+        BuildCliLog(places.game, L"backup (" + what + L"): " + (o.code == buildbackup::kDone ? L"made " + o.folder + L" (" + std::to_wstring(o.files) + L" files, " +
+                                                                                                   buildbackup::SizeText(o.bytes) + L")"
+                                                                                             : L"failed - " + o.error));
+    return o.code == buildbackup::kDone ? 0 : o.code == buildbackup::kNothing ? 2 : o.code == buildbackup::kNoSpace ? 3 : 1;
+}
+// --restore-build <game folder> <backup folder name>: the same restore as the button, without the window (by hand, when this program's
+// window does not open). 0 restored, 1 failed (what was there is in a backup of its own), 3 not enough space, 4 the game or BodyWalk runs,
+// 5 no such finished backup.
+int RestoreBuildCli(const std::wstring& game, const std::wstring& folder) {
+    if (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe") || ProcessRunning(L"BodyWalkVR.exe")) return 4;
+    const buildbackup::Places places = buildbackup::PlacesFor(game);
+    const buildbackup::Outcome o = buildbackup::Restore(places, folder, BuildCliKeep(places.game), buildbackup::Now());
+    BuildCliLog(places.game, L"backup restore (command line): " + folder + L" - " + (o.code == buildbackup::kDone ? L"done, what was there in " + o.folder : L"failed - " + o.error));
+    if (o.code == buildbackup::kDone && !o.settingsPending.empty()) LaunchFinisher(o.settingsPending, places.game + buildbackup::kSettingsExe, false);
+    return o.code == buildbackup::kDone ? 0 : o.code == buildbackup::kBadBackup ? 5 : o.code == buildbackup::kNoSpace ? 3 : 1;
+}
+// --finish-restore <pid> <pending> <target> [open]: the helper LaunchFinisher starts. 0 in place, 1 not (the pending file stays).
+int FinishRestoreCli(unsigned long pid, const std::wstring& pending, const std::wstring& target, bool open) {
+    const bool ok = buildbackup::FinishPending(pid, pending, target, 60000);
+    const std::wstring game = target.substr(0, target.find_last_of(L'\\') + 1);
+    BuildCliLog(game, L"backup restore: the restored D2R_VR_Settings.exe " + std::wstring(ok ? L"put in place after the old one exited" : L"could NOT be put in place - it waits as " + pending));
+    if (ok && open) ShellExecuteW(nullptr, L"open", target.c_str(), nullptr, game.c_str(), SW_SHOWNORMAL);
+    return ok ? 0 : 1;
+}
+
 // Make a headset report (Home, [support] headset_report ticked): RunHeadsetReport on a thread of its own, then the report in Notepad.
 constexpr UINT WM_APP_HREPORT = WM_APP + 51;
 std::atomic<bool> g_hreportBusy{false};
@@ -14514,6 +15120,11 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 else if (wcscmp(it.key, L"crash_reply_dismiss") == 0) DismissReply();
                 else if (wcscmp(it.key, L"crash_reply_update") == 0) OpenDownload();
                 else if (wcscmp(it.key, L"headset_report") == 0) StartHeadsetReport();
+                else if (wcscmp(it.key, L"build_backup") == 0) StartBackup(buildbackup::kBuild);        // Backups
+                else if (wcscmp(it.key, L"settings_backup") == 0) StartBackup(buildbackup::kSettings);
+                else if (wcscmp(it.key, L"build_restore") == 0) StartBuildRestore();                    // ... the picked row's
+                else if (wcscmp(it.key, L"build_delete") == 0) DeleteBuildBackup();
+                else if (wcscmp(it.key, L"build_open") == 0) OpenBuildBackups();
                 else if (wcscmp(it.key, L"arcane_make") == 0) StartArcaneSky();
                 else if (wcscmp(it.key, L"calibration_forget") == 0) ForgetCalibration();
                 else if (wcscmp(it.key, L"hang_dlss_off") == 0) HangDlssOff();             // [support] hang_advice's buttons
@@ -14536,6 +15147,8 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"weight") == 0 && wcscmp(it.key, L"world_contact_hands") == 0) StartSolidsCatalog();   // ([weight] wall_contact_mode's Ours: its own write)
                 if (wcscmp(it.section, L"world") == 0 && wcscmp(it.key, L"kurast_boat") == 0) StartKurastBoat();
                 if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"patch_world") == 0) StartHoles();
+                if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"sewer_backdrop") == 0) StartSewer();
+                if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"bazaar_mask_hidden") == 0) StartBazaar();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"wrist_game_models") == 0) StartOrbs();
                 if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
@@ -14553,6 +15166,9 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         }
         return 0;
     }
+    case WM_NOTIFY:
+        if (BuildListNotify((const NMHDR*)l)) return 0;   // the Backups list: a row picked, a double click
+        break;
     case WM_CTLCOLORSTATIC:
     case WM_CTLCOLORBTN:
         return ColorStatic((HWND)l, (HDC)w);
@@ -14598,6 +15214,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartSkyDome();
         StartGameCeiling();
         StartHoles();
+        StartSewer();
+        StartBazaar();
         StartOrbs();
         StartCampfireScene();
         StartMenuArt();
@@ -14613,6 +15231,8 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
     case WM_APP_D2RL: OnD2RLProgress((D2RLProgress*)l); return 0;
     case WM_APP_COLLECT: OnCollectProgress((D2RLProgress*)l); return 0;
     case WM_APP_HREPORT: OnHeadsetReportDone((D2RLProgress*)l); return 0;
+    case WM_APP_BUILDBAK: OnBuildDone((BuildDone*)l); return 0;
+    case WM_APP_BUILDBAK_STEP: OnBuildStep((int)w, l != 0); return 0;
     case WM_APP_ARCANE: OnArcaneDone((D2RLProgress*)l); return 0;
     case WM_APP_PROPS: OnPropsDone((D2RLProgress*)l); return 0;
     case WM_APP_SOLIDS: OnSolidsDone((D2RLProgress*)l); return 0;
@@ -14658,6 +15278,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         return 0;
     case WM_CTLCOLORSTATIC: return ColorStatic((HWND)l, (HDC)w);
     case WM_DESTROY: {
+        if (g_buildRestart) { PostQuitMessage(0); return 0; }   // (a restore: d2r_vr_settings.ini is the restored one now - left as it is)
         WINDOWPLACEMENT wp{sizeof wp};
         GetWindowPlacement(wnd, &wp);
         const float toLogical = 96.0f / g_dpi;
@@ -14899,6 +15520,26 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             SyncUnreadFlag(dir, ini.c_str(), ui.c_str());
             return fresh;
         }
+        if (argv && argc >= 3 && wcscmp(argv[1], L"--backup-build") == 0) {
+            // D2R VR Setup before an update (its own copy of this program, from its temporary folder): the installed build backed up.
+            const std::wstring game = argv[2];
+            const std::wstring what = argc >= 4 ? argv[3] : L"update";   // update | manual | settings
+            LocalFree(argv);
+            return BackupBuildCli(game, what);
+        }
+        if (argv && argc >= 4 && wcscmp(argv[1], L"--restore-build") == 0) {
+            const std::wstring game = argv[2], folder = argv[3];
+            LocalFree(argv);
+            return RestoreBuildCli(game, folder);
+        }
+        if (argv && argc >= 5 && wcscmp(argv[1], L"--finish-restore") == 0) {
+            // a restore's helper (LaunchFinisher): the restored D2R_VR_Settings.exe put in place once the program that restored it has exited
+            const unsigned long pid = wcstoul(argv[2], nullptr, 10);
+            const std::wstring pending = argv[3], target = argv[4];
+            const bool open = argc >= 6 && wcscmp(argv[5], L"open") == 0;
+            LocalFree(argv);
+            return FinishRestoreCli(pid, pending, target, open);
+        }
         if (argv && argc >= 2 && wcscmp(argv[1], L"--setup-bodywalk") == 0) {
             const int r = SetupBodyWalk(argc, argv);
             LocalFree(argv);
@@ -14923,6 +15564,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });           // [sky] game_sky / game_dome_caves: the domes' models and the act pictures' atlas
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });  // [ceiling] game_ceiling & co.: the slabs, the measures, the cathedral's vault
             timed(L"world holes", [] { return PrepareHolesNow().text; });           // [holes] patch_world: the patches over the world's holes
+            timed(L"kurast sewer backdrop", [] { return PrepareSewerNow().text; }); // [holes] sewer_backdrop: the dark wall at the sewer stairs' end
+            timed(L"kurast bazaar mask plane", [] { return PrepareBazaarNow().text; });   // [holes] bazaar_mask_hidden: the stray plane under the Bazaar
             timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });   // [hud] wrist_game_models: the medallions' game models
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });     // [campfire] enabled: character creation's scene round the fire
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
@@ -14965,6 +15608,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"sky dome", [] { return PrepareSkyDomeNow().text; });
             timed(L"game cave ceiling", [] { return PrepareCeilingNow().text; });
             timed(L"world holes", [] { return PrepareHolesNow().text; });
+            timed(L"kurast sewer backdrop", [] { return PrepareSewerNow().text; });
+            timed(L"kurast bazaar mask plane", [] { return PrepareBazaarNow().text; });
             timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) != 0) timed(L"arcane sky", [] { return PrepareArcane().text; });
@@ -14992,7 +15637,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             AddGameCodeTab();
             AddRoomsRows();
             FillLanguageItem();
-            FillPadItem();
             const int r = WriteLangTemplate(argv[2]);
             LocalFree(argv);
             return r;
@@ -15073,7 +15717,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     AddGameCodeTab();
     AddRoomsRows();
     FillLanguageItem();
-    FillPadItem();
     TranslateItems();
     FillRelayChoices();   // the relays of d2r-rooms.ini after the drop-down's first entry, which is translated by now
     g_tab = 0;   // always the Home page first (2026-10-14, the user's wish); the tab last used is no longer restored
@@ -15110,6 +15753,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         SetWindowPos(wnd, nullptr, work.left + (work.right - work.left - w) / 2, work.top + (work.bottom - work.top - h) / 2, w, h, SWP_NOZORDER);
     }
     ShowWindow(wnd, show);
+    if (ModInstall()) buildbackup::CleanReplaced(GameFolder());   // (the program a restore moved aside, now that it no longer runs)
+    LoadBuilds();   // Backups: the history and its status line (Setup's backup before this update among them)
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) {
         const bool ctrl = GetKeyState(VK_CONTROL) < 0;

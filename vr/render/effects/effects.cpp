@@ -2208,7 +2208,10 @@ void SwapChainChanged() {
     gpufault::Note("game: its swap chain resized or made anew (its old buffers freed)");
 }
 // [render] resize_drain: the game's swap chain is about to be resized (its old buffers still alive) - vr/resize_drain.h
-void BeforeResize() { resizedrain::Event(resizedrain::Why::kResize); }
+void BeforeResize() {
+    resizedrain::Event(resizedrain::Why::kResize);
+    autotunerun::NoteResize();   // ([autotune] clean_measure: a window with a resize in it is measured again)
+}
 // [render] apply_keep_size (vr/apply_keep_size.h): the game's resize right after its Apply, from inside its frame - left out while the buffers already have
 // the render size (true). Every resize after an Apply is told (the first 24), kept or not.
 bool KeepSize(IDXGISwapChain* sc, unsigned n, unsigned w, unsigned h, unsigned format, unsigned flags) {

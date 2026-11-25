@@ -1,6 +1,7 @@
 // vr/hud/looks.cpp - cut from vr/vrcam.cpp (docs/plan_modules.md M9); what it gives: vr/hud/hud_vr.h. It sees vrcam.cpp's headers.
 #include "../vrcam_headers.h"
 #include "../f5_hud.h"   // [hud] f5_map / f5_allies: VR F5's map and allies' portraits
+#include "../f2_map.h"   // [hud_third] map_x / map_y / map_size: F2's corner map
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -34,6 +35,11 @@ bool BarNearWanted() { return AfrOn() && ClassicNow() && std::abs(BarNearNow()) 
 // ... and VR F5's map with [hud] f5_map (vr/f5_hud.h): f5_map_near
 bool F5MapNow() { return f5hud::Wanted(g_set.f5Map.load(), ArView()); }
 bool F5AlliesNow() { return f5hud::Wanted(g_set.f5Allies.load(), ArView()); }
+// F2's corner map moved or sized ([hud_third] map_x / map_y / map_size, vr/f2_map.h): VR and flat F2, the sliders off 0 / 0 / 100
+bool F2MapNow() {
+    return f2map::IsF2(g_enabled.load(), TopPersp(), TableView(), ThirdPerson(), ArView()) &&
+           f2map::Moved(g_set.mapInThird.load(), g_set.mapDownThird.load(), g_set.mapSizeThird.load());
+}
 float MapNearNow() { return F5MapNow() ? g_set.f5MapNear.load() : TableView() ? g_set.mapNearFloor.load() : 0.0f; }
 bool MapNearWanted() { return AfrOn() && ClassicNow() && (TableView() || F5MapNow()) && std::abs(MapNearNow()) > 0.01f; }
 // VR F3, the game on the floor, with our camera on (ClassicNow's order: off is F1 whatever the view).
@@ -119,9 +125,19 @@ bool PlateFaded() {
 // [hud] allies_x, allies_y: the allies' portraits elsewhere - the interface comes out for that too, the
 // portraits' corner drawn back moved (AlliesBoxUv). The target's plate is kept out of that corner: read too.
 // [hud] f5_allies (vr/f5_hud.h): VR F5's own shift in place of allies_x / allies_y
+// [hud_third] allies_x / allies_y (vr/f2_map.h): VR F2's own shift in place of them while either is off 0
+bool F2AlliesNow() {
+    return g_set.platform.load() == 1 && f2map::IsF2(g_enabled.load(), TopPersp(), TableView(), ThirdPerson(), ArView()) &&
+           f2map::AlliesMoved(g_set.f2AlliesRight.load(), g_set.f2AlliesDown.load());
+}
 void AlliesOffNow(float off[2]) {
     if (F5AlliesNow()) {
         const f5hud::Uv u = f5hud::AlliesOff(g_set.f5AlliesRight.load(), g_set.f5AlliesDown.load());
+        off[0] = u.x; off[1] = u.y;
+        return;
+    }
+    if (F2AlliesNow()) {
+        const f2map::Uv u = f2map::AlliesOff(g_set.f2AlliesRight.load(), g_set.f2AlliesDown.load());
         off[0] = u.x; off[1] = u.y;
         return;
     }

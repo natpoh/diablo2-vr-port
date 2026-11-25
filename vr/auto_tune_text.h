@@ -45,6 +45,14 @@ inline hset::AutoTune Make(const autotunerun::View& v, bool enabled) {
         a.title = uitext::TrF("vr.autotune.title.running", "Auto: measuring, stand still ({done} done, about {left} to go)",
                               {{"done", std::to_string(v.measured)}, {"left", std::to_string(v.left)}});
         a.status = uitext::Tr("vr.autotune.status.running", "Each setting is tried for a few seconds. Stop puts everything back as it was.");
+    } else if (v.noisy) {   // [autotune] clean_measure: no clean window for too long - nothing picked, nothing changed
+        a.title = uitext::Tr("vr.autotune.title.noisy", "Auto: not concluded - the frames were too uneven to measure");
+        a.status = uitext::Tr("vr.autotune.status.noisy", "Nothing was changed. Undo (or Keep) closes this.");
+        lines.push_back(uitext::TrF("vr.autotune.line.noisy",
+                                    "{n} measures in a row had frames the headset's stream held (~100 ms each), freezes or a resize in them - no setting is picked from such numbers.",
+                                    {{"n", std::to_string(std::max(1, v.noisyN))}}));
+        lines.push_back(uitext::Tr("vr.autotune.line.noisy_vd",
+                                   "Virtual Desktop: try another codec or a lower bitrate, the PC on a cable, then Auto again standing still in town."));
     } else {
         a.title = v.belowMin ? (v.limit == 2 ? uitext::TrF("vr.autotune.title.below_cpu", "Auto: below the minimum - the processor (CPU) holds it at {now} frames/s",
                                                            {{"now", Fps(v.nowFps)}})

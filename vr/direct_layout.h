@@ -58,6 +58,11 @@ struct Controls {
     // Each stick's lean (its length, 0..1) as the hand holds it - before a gate or a gesture hid it (the stick above reads centred then): what
     // [direct] hold_stick_max_pct judges a click by. 0 = only `stick`.
     float lean[2] = {};
+    // The chords of hand h's controls are made with the OTHER hand's grip: hand h's own grip holds the weapon (the weight model took it - a grip that holds the
+    // weapon is always down, so it can be no chord's modifier) - from Take's kChordOtherGrip. nikswat, 0.223.0, a weapon in the game's left slot drawn in the
+    // left hand: "the combinations involving the grip plus the menu button have stopped working" - the left grip was the spear's, so left_grip+left_menu (the
+    // map) could never come; with this the right grip + the menu is the map, as the left grip + the menu is with the weapon in the right hand.
+    bool chordOtherGrip[2] = {};
 };
 
 // The controls whose shots are dropped this frame (bit per Ctl), from the frame's takes (Take with kNoShotTrigger / kNoShotSqueeze; hand 0
@@ -323,9 +328,10 @@ public:
             const bool htCtl = world_.holdEnabled && HasOut(t.hold[i]);
             const bool drop = ((noShot >> i) & 1u) != 0;   // this control's shots are left out
             const bool edge = now[i] && !down_[i];
-            if (edge) {   // which binding this press is: the chord if the same hand's grip is already held
+            if (edge) {   // which binding this press is: the chord if the same hand's grip is already held (the other hand's, while this one's holds the weapon)
                 const int h = HandOf(ctl);
-                const bool chord = ctl != GripOf(h) && now[GripOf(h)] && HasOut(t.chord[i]);
+                const Ctl mod = GripOf(c.chordOtherGrip[h] ? 1 - h : h);
+                const bool chord = ctl != GripOf(h) && ctl != mod && now[mod] && HasOut(t.chord[i]);
                 latch_[i] = chord ? i + kCtlCount : i;
                 htOn_[i] = htCtl && !chord;
             }

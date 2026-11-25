@@ -46,6 +46,12 @@ struct Settings {
     std::atomic<float> f5MapSize{100.0f};   // [hud] f5_map_size: % of the corner map's size now ([hud_inside] map_zoom)
     std::atomic<float> f5MapIn{12.0f}, f5MapDown{10.0f}, f5MapNear{2.0f}, f5AlliesRight{12.0f}, f5AlliesDown{10.0f};
     std::atomic<float> f5BarBelow{33.0f}, f5BarAhead{32.0f}, f5BarWidth{0.0f};   // (f5bar::kDefaultBelowCm / kDefaultAheadCm)
+    // [hud_third] bar_low (vr/f5_toolbar.h WantedF2): VR F2's toolbar 0 in front, in the picture (as before), 1 low under the camera as F5's,
+    // bar_low_below_cm under the eyes and bar_low_ahead_cm ahead of them (F5's defaults), as wide as F5's (f5BarWidth)
+    std::atomic<int>   f2BarLow{0};
+    std::atomic<float> f2BarBelow{33.0f}, f2BarAhead{32.0f};
+    // [hud_third] allies_x / allies_y (vr/f2_map.h AlliesOff): VR F2's allies' portraits moved right / down, %; both 0 = [hud] allies_x / allies_y as before
+    std::atomic<float> f2AlliesRight{0.0f}, f2AlliesDown{0.0f};
     // [view] keys (vr/view_keys.h): 0 F1 - F4 pick the view (the game does not get them), 1 Shift + F1 - F4 (a plain F1 - F8 is the
     // game's), 2 no F key (F12, Settings, the controller). -1 until read, so the first read logs.
     std::atomic<int>   viewKeys{-1};
@@ -62,6 +68,7 @@ struct Settings {
     std::atomic<float> jumpFrom{0.3f};      // hip rise (model units) still taken for the stride's bob
     std::atomic<bool>  smoothFollow{false}; // [camera] smooth_follow: VR F4, the camera's anchor eased over a jerk of the hero (a bump, a step), vr/smooth_follow.h
     std::atomic<float> smoothFollowMs{200.0f};   // [camera] smooth_follow_ms: the ease's time
+    std::atomic<bool>  entryFacing{false};  // [camera] entry_facing: VR F4, the view turned on an arrival - a town to its act's NPC, an area away from its entrance (vr/unleashed_entry_facing.h)
     std::atomic<float> pitch{-60.0f};       // camera pitch relative to the game's own (deg); -60 = level, more negative = higher
     std::atomic<float> flatShiftX{0.0f}, flatShiftY{0.0f};   // [camera] flat_shift_x / _y: flat F2 / F3, the picture moved by % of its width (right) / height (down)
     std::atomic<bool>  stickPitchF2{false}; // [camera] stick_pitch_f2: VR F2, the right stick's up / down tilts the camera (vr/stick_pitch.h)
@@ -126,6 +133,8 @@ struct Settings {
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
     // [hud_floor] map_size / map_near / map_x / map_y: the corner map on the floor (F3), as its toolbar
     std::atomic<float> mapSizeFloor{1.0f}, mapNearFloor{0.0f}, mapXFloor{0.0f}, mapYFloor{0.0f};
+    // [hud_third] map_x / map_y / map_size: F2's corner map toward the middle and down (%), and its size (%), vr/f2_map.h; 0, 0, 100 = as the game draws it
+    std::atomic<float> mapInThird{0.0f}, mapDownThird{0.0f}, mapSizeThird{100.0f};
     std::atomic<float> barNear{0.0f};       // [hud] bar_near: from above and behind, the toolbar nearer (+) or farther (-), % of the half screen per eye
     std::atomic<float> labelsNear{0.0f};     // [hud] labels_near: from above in stereo, labels nearer (+) / farther (-), % of the half screen per eye
     std::atomic<float> labelsTilt{0.0f};
@@ -316,6 +325,7 @@ struct Settings {
     std::atomic<bool>  wristGameModels{false};   // [hud] wrist_game_models with the wrists' glass-ball look: the medallions as the game's own models (engitem::WristOrbsFrame), VR F4
     std::atomic<bool>  holesPatch{false};        // [holes] patch_world: the world's holes patched by the game's own pieces (engitem::HolesFrame; shared/world_holes_list.h), VR F4
     std::atomic<bool>  ceilFromWalls{false};     // [ceiling] height_from_walls: each room's ceiling on its walls' top (measured from the game's models)
+    std::atomic<bool>  ceilFollowFloor{false};   // [ceiling] follow_floor: the game's cave ceiling a step up wherever the floor under it rises, world-fixed (shared/ceiling_floor.h); 0 = one height over the area's floor, as before
     std::atomic<float> ceilHeadroomM{1.0f};      // [ceiling] min_headroom_m: the ceiling's lowest at least this many metres over the eyes, 0 = off (gameceiling::HeadroomNeed)
     std::atomic<bool>  gameCeilingDome{false};   // [ceiling] game_ceiling_dome: the cathedral's dome over its chapel in the game's ceiling (engitem::CeilingFrame)
     std::atomic<bool>  gameCeilingDomesTall{false};   // [ceiling] game_ceiling_worldstone_dome: the same over the Worldstone, level 132 (ceilmeasure::kWorldstoneBiome)
@@ -442,6 +452,7 @@ struct Settings {
     std::atomic<bool>  spellAim{true};      // [hands] spell_aim: a spell that flies goes along the hand, no auto-target (mode 4); off = the game's
     std::atomic<bool>  aimNoChase{true};    // [gameplay] aim_no_chase: the cast's own look at the controller's target (0x1454A0) finds none for a directed cast
     std::atomic<bool>  leapByGaze{true};    // [gameplay] leap_by_gaze: Leap and Leap Attack go where the head looks (F4, vr/leap_gaze.h); off = the game's aim
+    std::atomic<bool>  whirlStickSteer{false};   // [gameplay] whirlwind_stick_steer: each Whirlwind cast aims 10 cells where the pushed walk stick would walk (F4, vr/unleashed_whirl_steer.h); off = as before
     std::atomic<bool>  teleportCircle{true};   // [gameplay] teleport_circle: the point skills (Teleport, Fire Wall, Meteor ...) by a tap where the head looks, by a hold to an arc's circle (F4); off = the game's
     std::atomic<bool>  leapArc{false};         // [gameplay] leap_arc: Leap and Leap Attack on the arc too (off: leap_by_gaze alone)
     std::atomic<bool>  leapArcHead{false};     // [gameplay] leap_arc_head: their arc from the drawn hero's belly, aimed by the head (off: from the weapon or the hand)
@@ -686,6 +697,7 @@ struct Settings {
     std::atomic<bool>  dollFeet{false};         // [body] doll_feet: the feet the doll's, not the game's - planted, stepping after the body (0 = the game's legs, as before)
     std::atomic<int>   bodyTurn{2};         // 0 game facing, 1 above the pelvis, 2 whole body turns to where the camera looks
     std::atomic<bool>  wrist{true};         // arms mode 2: the hands turn with the controllers
+    std::atomic<bool>  palmKnuckle{false};  // [hands] palm_from_knuckle (vr/palm_knuckle.h): the palm's middle half way to the middle finger's knuckle; 0 = to its first bone, as before
     std::atomic<float> wristPitch{0.0f}, wristYaw{0.0f}, wristRoll{0.0f};   // degrees on top, controller axes
     std::atomic<float> convergence{15.0f};  // distance (world units) that sits ON the screen; 0 = parallel eyes
     std::atomic<float> thirdDistance{7.0f}; // third person: camera this far behind the eye point

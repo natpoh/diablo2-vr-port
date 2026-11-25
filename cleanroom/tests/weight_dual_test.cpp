@@ -690,12 +690,13 @@ void TestSecondInPalm() {
 // by side; the right driven across into the left at 2 m/s: it stops on it (its hand drawn held back, the controller gone on), a knock felt in BOTH hands and told;
 // then slid along the other's blade it glances (moves on along it). Off: the right passes through, as before. Never a strike: nothing counted on a monster.
 void TestDualCollide() {
-	float held[3] = {}, slid = 0.0f, amp = 0.0f;
-	int pulses[3][2] = {};
-	std::vector<ClashHeard> heard[3];
+	float held[4] = {}, slid = 0.0f, amp = 0.0f, amp3 = 0.0f;
+	int pulses[4][2] = {};
+	std::vector<ClashHeard> heard[4];
 	bool told = false;
 	weight::SetClashSound(&ClashSound);
-	for (int pass = 0; pass < 3; ++pass) {   // off at 2 m/s; on at 2 m/s; on, laid on gently (0.3 m/s)
+	for (int pass = 0; pass < 4; ++pass) {   // off at 2 m/s; on at 2 m/s; on, laid on gently (0.3 m/s); on at 2 m/s with [weight] clash_sound_min_mps=3
+		weight::SetClashSoundGate(pass == 3 ? 3.0f : 0.0f, 0.0f);
 		const bool on = pass != 0;
 		const float speed = pass == 2 ? 0.3f : 2.0f;
 		Rig r(0, (int)heft::hold::Kind::Sword);
@@ -717,6 +718,7 @@ void TestDualCollide() {
 		pulses[pass][1] = g_pulses[1];
 		heard[pass] = g_clashes;
 		if (pass == 1) amp = g_pulseAmp;
+		if (pass == 3) amp3 = g_pulseAmp;
 		for (const std::string& l : g_log) told = told || (pass == 1 && l.find("the two weapons struck each other") != std::string::npos && l.find("sound ") != std::string::npos);
 		if (pass == 1) {   // ... and slid along the left's blade (along -z, still pressed across): it goes on along it
 			const float z0 = r.drawn.hand[0][2];
@@ -731,6 +733,7 @@ void TestDualCollide() {
 		r.Step();
 	}
 	weight::SetClashSound(nullptr);
+	weight::SetClashSoundGate(0.0f, 0.0f);
 	std::printf("  a weapon in each hand, the right driven across the left at 2 m/s: dual_collide off - its hand %.0f cm behind the controller (it passes); on - %.0f cm behind (it stops "
 	            "on the other), pulses %d / %d; slid along the other's blade it went on %.0f cm of 33\n", held[0] * 100.0f, held[1] * 100.0f, pulses[1][0], pulses[1][1], slid * 100.0f);
 	const ClashHeard first = heard[1].empty() ? ClashHeard{0.0f, 0} : heard[1][0];
@@ -742,6 +745,10 @@ void TestDualCollide() {
 	EXPECT(heard[0].empty(), "off: no clash sound (%zu)", heard[0].size());
 	EXPECT(held[2] > 0.15f && heard[2].empty() && pulses[2][0] == 0 && pulses[2][1] == 0, "laid on gently: it stops on the other, silent and unfelt (%.2f m, %zu, %d / %d)", held[2],
 	       heard[2].size(), pulses[2][0], pulses[2][1]);
+	// [weight] clash_sound_min_mps=3 (Bear's hard-knock-only): the same 2 m/s knock is felt as hard as before, silent
+	std::printf("  with clash_sound_min_mps=3: %zu sound(s), pulses %d / %d at %.2f (as before: %.2f)\n", heard[3].size(), pulses[3][0], pulses[3][1], amp3, amp);
+	EXPECT(heard[3].empty() && pulses[3][0] > 0 && pulses[3][1] > 0 && std::fabs(amp3 - amp) < 0.05f, "min 3 m/s: the 2 m/s knock silent, felt as before (%zu, %d / %d, %.2f vs %.2f)",
+	       heard[3].size(), pulses[3][0], pulses[3][1], amp3, amp);
 	EXPECT(held[0] < 0.05f, "off: the right sword passes through the left (%.2f m behind)", held[0]);
 	EXPECT(held[1] > 0.15f, "on: the right sword stops on the left - its hand held back (%.2f m)", held[1]);
 	EXPECT(pulses[1][0] > 0 && pulses[1][1] > 0 && told, "on: the knock felt in both hands (%d / %d) and told", pulses[1][0], pulses[1][1]);

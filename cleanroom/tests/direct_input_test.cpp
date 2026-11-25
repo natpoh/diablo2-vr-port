@@ -131,6 +131,48 @@ static void TestChordsAndLatch() {
     // the other hand's grip is no modifier of this hand's button
     o = L.Step(Mode::World, Held({{kLGrip, 1.0f}, {kRB, 1.0f}}));
     CHECK(o.pad.buttons == pad::kB);
+    L.Step(Mode::World, Held({}));
+}
+
+// The left grip holds the weapon (a weapon in the game's left slot - nikswat, 0.223.0): it is taken (reads 0 here) and the left controls' chords take the
+// RIGHT grip (Controls::chordOtherGrip[0]); the right controls keep their own grip.
+static Controls LeftOnWeapon(std::initializer_list<std::pair<Ctl, float>> l) {
+    Controls c = Held(l);
+    c.chordOtherGrip[0] = true;
+    return c;
+}
+static void TestChordOtherGrip() {
+    Layout L = ClassicLayout();
+    // the right grip + the left menu button: the map (as the left grip + the menu with the weapon on the right)
+    CHECK(L.Step(Mode::World, LeftOnWeapon({{kRGrip, 1.0f}, {kLMenu, 1.0f}})).actions == act::kMap);
+    L.Step(Mode::World, LeftOnWeapon({}));
+    // the menu alone: the inventory
+    CHECK(L.Step(Mode::World, LeftOnWeapon({{kLMenu, 1.0f}})).actions == act::kInventory);
+    L.Step(Mode::World, LeftOnWeapon({}));
+    // the right grip + the left stick's click: the recentre
+    CHECK(L.Step(Mode::World, LeftOnWeapon({{kRGrip, 1.0f}, {kLStick, 1.0f}})).actions == act::kRecenter);
+    L.Step(Mode::World, LeftOnWeapon({}));
+    // the right controls' own chord is untouched: the right grip + B is RB
+    CHECK(L.Step(Mode::World, LeftOnWeapon({{kRGrip, 1.0f}, {kRB, 1.0f}})).pad.buttons == pad::kRightBumper);
+    L.Step(Mode::World, LeftOnWeapon({}));
+    // the left X has no chord line: X with the right grip is X
+    CHECK(L.Step(Mode::World, LeftOnWeapon({{kRGrip, 1.0f}, {kLX, 1.0f}})).pad.buttons == pad::kX);
+    L.Step(Mode::World, LeftOnWeapon({}));
+    // ... and with one: left_grip+left_x is made with the right grip too
+    {
+        Layout M = ClassicLayout();
+        Table t = M.World();
+        t.chord[kLX] = Bind(OutPadBtn(pad::kLeftBumper));
+        M.SetWorld(t);
+        CHECK(M.Step(Mode::World, LeftOnWeapon({{kRGrip, 1.0f}, {kLX, 1.0f}})).pad.buttons == pad::kLeftBumper);
+        M.Step(Mode::World, LeftOnWeapon({}));
+        CHECK(M.Step(Mode::World, LeftOnWeapon({{kLX, 1.0f}})).pad.buttons == pad::kX);
+        M.Step(Mode::World, LeftOnWeapon({}));
+        // without the flag (the weapon on the right) the right grip is no modifier of X, as before
+        CHECK(M.Step(Mode::World, Held({{kRGrip, 1.0f}, {kLX, 1.0f}})).pad.buttons == pad::kX);
+        M.Step(Mode::World, Held({}));
+        CHECK(M.Step(Mode::World, Held({{kLGrip, 1.0f}, {kLX, 1.0f}})).pad.buttons == pad::kLeftBumper);
+    }
 }
 
 static void TestMenuLayout() {
@@ -824,12 +866,14 @@ static std::wstring TempIni() {
 static int g_listened = 0;
 static uint32_t g_lastSession = 0, g_lastEpoch = 0, g_lastFlags = 0;
 static bool g_takeGrip = false;
+static uint32_t g_takeBits0 = 0;   // ... and of the left hand (the weight model's hold of a left-slot weapon: kSqueeze | kTakeSqueeze | kChordOtherGrip)
 static uint32_t g_takeBits1 = 0;   // whatever a gesture takes of the right hand this frame (the bow's draw-only mode: kNoShotTrigger ...)
 static void Listener(const Frame& f, void*) {
     ++g_listened;
     g_lastSession = f.session; g_lastEpoch = f.epoch; g_lastFlags = f.flags;
     if (g_takeGrip) Take(1, kTakeSqueeze, kSrcShoulderSwap);
     if (g_takeBits1) Take(1, g_takeBits1, kSrcBowDraw);
+    if (g_takeBits0) Take(0, g_takeBits0, kSrcOther1);
 }
 
 // Every gesture of the mod gets its frames: 17 listen in 0.206 (the table of 16 refused the last, the bow quiver) - room for 24 distinct ones here.
@@ -1728,7 +1772,7 @@ static void TestFlatController() {
     g_testFlat = true;
 
     // the key off: nothing; the walk alone goes on
-    WritePrivateProfileStringW(L"direct", L"flat_controller", L"0", ini.c_str());
+    WritePrivateProfileStringW(L"direct", L"flat_controller_off", L"1", ini.c_str());
     LoadSettings(ini.c_str());
     CHECK(!FlatControllerOn() && !FlatControllerLive() && !pad());
     idle();
@@ -1736,7 +1780,7 @@ static void TestFlatController() {
     in = Walking(true, 0.0f, 0.0f); frame();
     in = Walking(true, 0.0f, 1.0f); frame();
     CHECK(!FlatControllerLive() && FlatActions() == 0 && WalkRead(&wo, &wi) && wo.ly == 32767);
-    WritePrivateProfileStringW(L"direct", L"flat_controller", L"1", ini.c_str());
+    WritePrivateProfileStringW(L"direct", L"flat_controller_off", L"0", ini.c_str());
     LoadSettings(ini.c_str());
     idle(); idle();
     CHECK(FlatControllerLive() && pad());
@@ -1773,7 +1817,7 @@ static bool HintSinkForTest(const char* what) { ++g_hintCalls; g_hintWhat = what
 static void TestPressHint() {
     const std::wstring ini = TempIni();
     WritePrivateProfileStringW(L"openxr", L"direct_input", L"1", ini.c_str());
-    WritePrivateProfileStringW(L"direct", L"flat_controller", L"0", ini.c_str());   // the controller off: the controls it would take are said in the log
+    WritePrivateProfileStringW(L"direct", L"flat_controller_off", L"1", ini.c_str());   // the controller off: the controls it would take are said in the log
     LoadSettings(ini.c_str());
     viewgate::Set(&TestViewIsF4);
     viewgate::SetFlat(&TestViewIsFlat);
@@ -1822,7 +1866,7 @@ static void TestPressHint() {
     CHECK(g_hintCalls == 0);
     // the controller on ([direct] flat_controller=1): it takes those controls - nothing to say
     g_testF4 = false; g_testFlat = true;
-    WritePrivateProfileStringW(L"direct", L"flat_controller", L"1", ini.c_str());
+    WritePrivateProfileStringW(L"direct", L"flat_controller_off", L"0", ini.c_str());
     LoadSettings(ini.c_str());
     SetPressSink(&HintSinkForTest);
     g_hintCalls = 0;
@@ -2015,6 +2059,46 @@ static void TestNoShotRuntime() {
     CHECK(!Active() && !PadRead(&po) && LayoutActions() == 0);
     g_viewIsF4 = true;
     g_takeBits1 = 0;
+    Unlisten(&Listener, nullptr);
+    SessionEnd();
+    viewgate::Set(nullptr);
+    LoadSettings(ini.c_str());
+    DeleteFileW(ini.c_str());
+}
+
+// The weight model holds a weapon in the LEFT hand (weight_wire: the left grip taken with kChordOtherGrip): through Feed, the right grip + the left menu button
+// is the map; the left grip + the menu is the inventory (the grip is the weapon's); without the bit the right grip + the menu is the inventory as before.
+static void TestChordOtherGripRuntime() {
+    const std::wstring ini = TempIni();
+    WritePrivateProfileStringW(L"openxr", L"direct_input", L"1", ini.c_str());
+    WritePrivateProfileStringW(L"direct", L"hold_enabled", L"0", ini.c_str());
+    LoadSettings(ini.c_str());
+    viewgate::Set(&TheView);
+    g_viewIsF4 = true;
+    SetMenuNow(false);
+    CHECK(Listen(&Listener, nullptr));
+    SessionBegin();
+    auto press = [&](uint32_t take, bool leftGrip, bool rightGrip) {
+        g_takeBits0 = take;
+        D2RVR_XrInput in = Input(true);
+        Feed(&in, false);
+        in = Input(true);
+        Feed(&in, false);   // (let go first: the gate)
+        in = Input(true);
+        if (leftGrip) { in.hand[0].squeeze = 1.0f; in.hand[0].buttons |= kSqueeze; }
+        if (rightGrip) { in.hand[1].squeeze = 1.0f; in.hand[1].buttons |= kSqueeze; }
+        Feed(&in, false);   // the grips first
+        in.hand[0].buttons |= kMenuButton;
+        Feed(&in, false);   // then the menu button
+        return LayoutActions();
+    };
+    const uint32_t weaponLeft = kSqueeze | kTakeSqueeze | kChordOtherGrip;
+    CHECK(press(weaponLeft, true, true) == act::kMap);         // both grips down (the left holds the spear): the right one makes the chord
+    CHECK(press(weaponLeft, true, false) == act::kInventory);  // the weapon's grip alone is no modifier
+    CHECK(press(kSqueeze | kTakeSqueeze, true, true) == act::kInventory);   // taken without the bit (the old rule): the right grip is no modifier of the left menu
+    CHECK(press(0, true, false) == act::kMap);                 // nothing taken: the left grip + the menu is the map, as ever
+    CHECK(press(0, false, true) == act::kInventory);           // ... and the right grip alone no modifier of it
+    g_takeBits0 = 0;
     Unlisten(&Listener, nullptr);
     SessionEnd();
     viewgate::Set(nullptr);
@@ -2225,6 +2309,7 @@ int main() {
     TestSticks();
     TestHysteresis();
     TestChordsAndLatch();
+    TestChordOtherGrip();
     TestMenuLayout();
     TestGate();
     TestGateTaken();
@@ -2244,6 +2329,7 @@ int main() {
     TestPressHint();
     TestNoShot();
     TestNoShotRuntime();
+    TestChordOtherGripRuntime();
     TestFlatRawFeed();
     if (g_failures) { std::printf("%d check(s) FAILED\n", g_failures); return 1; }
     std::printf("direct input: all %d checks passed\n", g_checks);

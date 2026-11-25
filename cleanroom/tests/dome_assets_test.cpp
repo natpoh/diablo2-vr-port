@@ -281,6 +281,29 @@ int wmain(int argc, wchar_t** argv) {
     std::string unit;
     CHECK(ReadAll(scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\ceiling\\cave_ceiling_unit.json", &unit) && unit.find("cliffside01.model") != std::string::npos);
     CHECK(ReadAll(scratch + L"cave_ceiling.json", &receipt) && receipt.find("cave_ceiling_unit.json") != std::string::npos);
+    // [ceiling] follow_floor: each natural cave's tile of its rock - five models (one tile of the slab's mesh from its corner, the kind's maps,
+    // its own bytes) and its unit
+    for (int k = 0; k < gameceiling::kKindCount; ++k) {
+        const gameceiling::Kind& kind = gameceiling::kKinds[k];
+        if (!kind.patch) continue;
+        grannyremesh::Mesh made = grannyremesh::CeilingPatchMesh(gameceiling::kTile, 1, gameceiling::kCells, kind.relief);
+        grannyremesh::Salt(&made, gameceiling::PatchSaltOf(k));
+        for (int lod = 0; lod < 5; ++lod) {
+            std::wstring path = scratch + L"D2R-VR.mpq\\";
+            const std::string rel = gameceiling::LodPath(kind.patch, lod);
+            for (char c : rel) path += c == '/' ? L'\\' : (wchar_t)c;
+            std::string data, why;
+            grannyremesh::File f;
+            grannyremesh::Mesh back;
+            CHECK(ReadAll(path, &data) && grannyremesh::Read(data, &f, &why) && grannyremesh::MeshOf(f, &back, &why));
+            CHECK(back.idx == made.idx && back.v.size() == made.v.size() && back.idx.size() == gameceiling::kPatchIndexCount);
+            CHECK(data.find(gameceiling::MapPath(kind, "ALB")) != std::string::npos);
+        }
+        std::string pu;
+        std::wstring upath = scratch + L"D2R-VR.mpq\\";
+        for (char c : gameceiling::PatchUnitPath(k)) upath += c == '/' ? L'\\' : (wchar_t)c;
+        CHECK(ReadAll(upath, &pu) && pu == gameceiling::PatchUnitJson(k) && receipt.find(gameceiling::PatchUnitPath(k)) != std::string::npos);
+    }
     {   // an earlier build's ceiling slab at a dome's path, and its unit as made before the atlas, neither in the receipt (the test PC
         // 2026-11-08: act 2's dome drawn from the jungle slab at Tests/pillar01 - a giant rock round the eye): replaced as ours. With the
         // game folder's own mod holding such files, those very files are tried too.
@@ -451,7 +474,7 @@ int wmain(int argc, wchar_t** argv) {
     r = PrepareCeiling(game, scratch, false);
     std::wprintf(L"  ceiling off: %ls\n", r.text.c_str());
     CHECK(r.state == kOff && r.wrote && GetFileAttributesW((cliff + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES);
-    CHECK(GetFileAttributesW((wallAt + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES && r.text.find(L"127 of ours") != std::wstring::npos);   // (15 kinds, 3 walls, the beams, 2 vaults: 6 files each; the measures)
+    CHECK(GetFileAttributesW((wallAt + L"0.model").c_str()) == INVALID_FILE_ATTRIBUTES && r.text.find(L"145 of ours") != std::wstring::npos);   // (15 kinds, 3 walls, 3 caves' tiles, the beams, 2 vaults: 6 files each; the measures)
     CHECK(GetFileAttributesW((scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\Tests\\test_cloth\\cloth01_lod0.model").c_str()) == INVALID_FILE_ATTRIBUTES);
     CHECK(GetFileAttributesW((scratch + L"D2R-VR.mpq\\data\\hd\\env\\model\\d2r_vr\\ceiling\\measures.txt").c_str()) == INVALID_FILE_ATTRIBUTES);
     CHECK(GetFileAttributesW((scratch + L"cave_ceiling.json").c_str()) == INVALID_FILE_ATTRIBUTES);

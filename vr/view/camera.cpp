@@ -642,6 +642,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
         up = toWorld(d2rcam::m4::Rotate(q, {0.0f, 1.0f, 0.0f}));
         right = toWorld(d2rcam::m4::Rotate(q, {1.0f, 0.0f, 0.0f}));
         yaw = WrapDeg(body - atan2f(-hf.x, -hf.z) / d2r);   // + turns right, as TargetYaw
+        if (!ThirdPerson()) EntryFacingView(heading0 / d2r, yaw);   // [camera] entry_facing: an arrival turns the body by TurnTick
         const float heading = heading0 - yaw * d2r;
         ahead = Facing(heading, 0.0f);
         if (g_set.mapTurn.load()) {   // (heading = base + the head's turn in the room: that turn held while the head looks straight down)
@@ -707,6 +708,7 @@ bool VrViewInner(const d2rcam::WorldView& in, float out[16]) {
     g_gameDownDeg.store(down0 * 57.2957795f);   // [input] portal_look_horizon: the horizon is this much up from the game camera's own look
     const float d2r = 3.14159265f / 180.0f;
     yaw = TargetYaw();                                   // + turns right
+    if (!ThirdPerson()) EntryFacingView(heading0 / d2r, yaw);   // [camera] entry_facing (VR F4 only, inside): an arrival turns the body by TurnTick
     const float heading = heading0 - yaw * d2r;
     // [flatvr] head_level (VR F4 on FlatVR): the head's own pitch and roll, level = level (FlatVrLevel)
     const bool level = FlatVrLevel();

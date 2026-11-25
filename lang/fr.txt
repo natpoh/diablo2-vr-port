@@ -86,6 +86,8 @@ render.menu_wide.label = Menu principal en 16:9
 render.menu_wide.tip = OpenXR natif : le jeu compose ses menus pour la forme de son image, et une image carrée (la fenêtre carrée, un carré ou la taille de rendu du casque) écrasait le menu principal - panneaux latéraux par-dessus le héros, boutons du bas coupés. Activé : tant que le jeu affiche ses propres menus (le menu principal, la liste des personnages, Créer), son image est en 16:9, aussi large que la taille de rendu, et le panneau dans le casque a cette forme. 3 s après l'apparition du menu, le jeu prend la nouvelle taille (courte reconstruction de l'image) ; en partie, l'image reprend la taille choisie une fois que le héros est resté 3 s dans le monde, comme la taille de rendu l'a toujours fait. Le moniteur montre le menu étiré à la fenêtre. Immédiat. Désactivé : les menus à la forme de l'image, comme avant. (Les menus 16:9 sont une idée de bearstonem/d2r-pcvr.)
 cinema.world_screen.label = Vidéos sur un grand écran
 cinema.world_screen.tip = OpenXR natif : les vidéos du jeu - l'intro, les vidéos des actes, la fin et les Cinématiques du menu principal - passent sur un grand écran plat dressé dans le monde : 6 m de large, 5 m devant vous à hauteur des yeux, placé au début de la vidéo et immobile pendant que vous regardez autour (F11 le replace devant vous). Seul le film est montré, avec du noir autour, et le laser y fonctionne comme dans un menu (cliquez ou appuyez sur le bouton du jeu pour passer la vidéo). Le son est celui du jeu. Immédiat. Désactivé : toute l'image du jeu sur l'image plate tout près devant vous, comme avant.
+cinema.video_3d.label = Vidéos en 3D
+cinema.video_3d.tip = Les vidéos du grand écran en 3D, dans toutes les vues VR : un petit réseau de profondeur estime, pendant la lecture, la distance de chaque partie de l'image, et chaque œil en reçoit sa propre image - ce qui est proche sort de l'écran, le reste passe derrière. Rien n'est préparé à l'installation et rien n'est attendu : le premier instant d'une vidéo est plat jusqu'à ce que sa profondeur soit prête. Nécessite d2r_vr_video3d.dll dans d2rloader\d2r_vr_libs (sans lui les vidéos restent plates ; le journal le dit). Intensité : [cinema] video_3d_strength_pct dans d2r_vr.ini (2 = 2 % de la largeur de l'image). En direct. Désactivé : le grand écran plat, comme avant.
 campfire.enabled.label = Création du personnage en 3D
 campfire.enabled.tip = OpenXR natif : l'écran de création du personnage en scène 3D autour de vous - vous vous tenez près du feu de camp avec les héros. Pointez un héros avec la main droite et appuyez sur la gâchette (ou A) pour le choisir ; la zone du nom, Créer et Retour sont sur un panneau devant vous, les paroles du héros choisi sur un panneau au-dessus des héros. Un clic sur le feu fait jaillir des étincelles ; le feu crépite. D2R VR Settings reconstruit la scène à partir de votre jeu (ses nuages retirés, la ville autour du feu). Si la scène ne peut pas être affichée, l'écran plat revient de lui-même. Désactivé : l'écran plat de création du personnage, comme avant.
 openxr.name_keyboard.label = Clavier pour le nom du personnage
@@ -286,6 +288,25 @@ update.check.tip = Interroge bodywalkvr.com pour la version la plus récente du 
 update.develop.label = Versions bêta aussi (canal develop)
 update.develop.tip = Propose aussi des versions de test avant leur sortie pour tout le monde.
 
+# --- Backups ---
+group.backups = Sauvegardes
+group.backups.help = Gardez la version de D2R VR que vous avez - le mod, ce programme et tous vos réglages - ou seulement vos réglages, pour y revenir plus tard : après une mise à jour ou après avoir essayé d'autres réglages. La liste montre chaque sauvegarde (aussi celles de Setup avant une mise à jour) : choisissez-en une, puis Restaurer ou Supprimer (un double-clic restaure aussi). Vos personnages n'y sont pas (« Sauvegarder mes parties » s'en charge).
+@run.build_backup.label = Sauvegarder la version
+@run.build_backup.tip = Copie la version de D2R VR telle qu'elle est maintenant dans mods\D2R-VR\build_backups\<version>_<date> : le plugin et ses bibliothèques, D2R VR Settings, les fichiers de langue, les données de jeu que le mod a faites à partir de votre jeu, les fichiers du ciel et des effets, BodyWalk Game Link, et tous vos réglages (d2r_vr.ini et les autres). Environ 250 MB ; pas vos personnages, journaux ni caches. Les sauvegardes que vous faites restent jusqu'à ce que vous les supprimiez.
+@run.settings_backup.label = Sauvegarder les réglages
+@run.settings_backup.tip = Copie seulement vos réglages (d2r_vr.ini, ceux du casque, ceux de ce programme et les autres fichiers de réglages du mod) dans le même dossier - quelques centaines de KB. La restaurer ne remet que les réglages ; le mod lui-même reste tel quel.
+@run.build_restore.label = Restaurer...
+@run.build_restore.tip = Choisissez d'abord une sauvegarde dans la liste. Fermez d'abord le jeu (et BodyWalk pour une version). Remet la sauvegarde choisie - une version : chaque fichier de la version et vos réglages tels qu'ils étaient ; des réglages : seulement les réglages - après avoir sauvegardé ce qui est là maintenant (pour pouvoir y revenir). D2R VR Settings s'ouvre ensuite à nouveau.
+@run.build_delete.label = Supprimer...
+@run.build_delete.tip = Choisissez d'abord une sauvegarde dans la liste. La supprime définitivement (demande avant).
+@status.buildbak.label = Sauvegardes : aucune pour l'instant
+@run.build_open.label = Ouvrir le dossier des sauvegardes
+@run.build_open.tip = Ouvre mods\D2R-VR\build_backups dans l'Explorateur.
+support.build_backup_before_update.label = Setup sauvegarde la version avant une mise à jour
+support.build_backup_before_update.tip = Coché : D2R VR Setup propose (coché) de sauvegarder la version installée avant d'installer une nouvelle version par-dessus, pour que l'ancienne puisse être restaurée ici même si vous avez oublié. Elle apparaît dans l'historique comme Auto. Décoché : la case de Setup commence décochée, comme avant.
+support.build_backup_keep.label = Sauvegardes automatiques gardées
+support.build_backup_keep.tip = Combien de sauvegardes Auto (celles de Setup avant une mise à jour, et ce qu'une restauration a remplacé) sont gardées ; les plus anciennes partent quand une nouvelle est faite. Les sauvegardes faites avec les boutons ne sont jamais supprimées par ceci. Une sauvegarde de version fait environ 250 MB.
+
 # --- Monitor (screen recording) ---
 group.monitor_screen_recording = Moniteur (enregistrement de l'écran)
 group.monitor_screen_recording.help = Ce que la fenêtre du jeu sur votre moniteur montre pendant que vous jouez en RV - pour l'enregistrer ou la diffuser avec OBS : les deux yeux à tour de rôle, ou un seul œil, à ses propres proportions. L'image du casque ne change pas.
@@ -405,6 +426,8 @@ group.quality = Qualité
 group.quality.help = Ce que le jeu dessine et la qualité de son aspect par rapport à sa vitesse. Un préréglage (Pomme de terre, Minimale, Moyenne) règle tout ici d'un coup : les étapes de rendu du jeu, la distance d'affichage, le brouillard et le ciel. Les anneaux de salles, les modèles et le plafond d'images demandent de relancer le jeu.
 autotune.enabled.label = Réglage graphique automatique
 autotune.enabled.tip = Ajoute un bouton Auto au panneau de réglages du casque (page Vidéo, à côté du curseur de taille du rendu) et à côté du Préréglage de qualité ci-dessus. Appuyez dessus en restant immobile dans le jeu (en ville, c'est le mieux) : le jeu mesure ses images par seconde avec vos réglages. S'ils tiennent la fréquence du casque, rien ne change - sur n'importe quelle carte graphique (une taille supérieure à celle du casque est conservée : elle est plus nette). Sinon, il descend dans un ordre fixe, en mesurant chaque étape et en s'arrêtant à la première qui tient : la taille du rendu jusqu'à 1600 x 1600 (une taille que vous avez réglée en dessous n'est jamais relevée), puis le Préréglage de qualité Moyenne -> Minimale -> Pomme de terre, puis la taille jusqu'à 1300, puis le rendu fovéal (Moyenne, puis Maximale - si la carte graphique a l'ombrage à cadence variable et qu'il était activé au démarrage du jeu), puis la taille jusqu'à 1200, puis yeux en alternance avec le remplissage (l'image est un peu moins bonne qu'avec une passe, donc c'est en dernier ; sinon, votre choix dans « 3D dans le casque »). Toujours insuffisant : il vous dit que le PC est sous le minimum pour la RV ici, et si c'est le processeur (CPU) ou la carte graphique (GPU) qui le freine. Jamais modifiés : deux passes / FlatVR, la fréquence du casque, les médaillons du poignet. Cela prend une minute ou deux ; l'image se fige quelques secondes quand la taille du rendu change. Rien n'est écrit pendant la mesure. Garder écrit le résultat dans d2r_vr.ini (l'ancien est d'abord copié dans d2r_vr.ini.before_autotune, les étapes vont dans d2r_vr_autotune.txt) ; Annuler, Arrêter ou fermer le jeu remet tout en place. La génération d'images et les options graphiques propres au jeu ne sont jamais modifiées. Décoché : pas de bouton Auto, comme avant.
+autotune.clean_measure.label = Auto : mesurer sans les retenues du flux du casque
+autotune.clean_measure.tip = Auto mesure les images du jeu et les nôtres, pas les attentes du runtime du casque : le temps propre de chaque image (sans ce qu'ont attendu xrWaitFrame et xrEndFrame) et la médiane de quelques secondes. Une mesure contenant une image retenue par le runtime (Virtual Desktop retient parfois des images ~100 ms), un gel ou un redimensionnement de l'image est refaite. Si aucune mesure n'est propre pendant environ une demi-minute, Auto s'arrête, le dit et ne change rien - il ne choisit plus Potato à partir de tels chiffres. En direct. Décoché : images comptées sur chaque mesure, comme avant.
 autotune.keep.label = Garder le résultat d'Auto
 autotune.keep.tip = Écrit le résultat de la dernière exécution d'Auto dans d2r_vr.ini (l'ancien d'abord copié dans d2r_vr.ini.before_autotune), comme Garder sur le panneau du casque. Cette fenêtre montre les nouvelles valeurs un instant plus tard (le préréglage aussi). Rien ne se passe tant qu'aucun résultat n'attend.
 autotune.undo.label = Annuler / arrêter Auto
@@ -485,6 +508,8 @@ camera.smooth_follow.label = Caméra douce sur les bosses et les marches
 camera.smooth_follow.tip = Quand le héros sursaute sur une bosse, une marche ou un escalier, ou que le jeu le pousse de côté, la caméra glisse vers lui en haut, en bas ou de côté au lieu de sauter, sa hauteur suit en douceur le sol inégal et sa course dessus est régularisée - en VR F4 et F5 (première personne), VR F2 (de dos) et sur le moniteur en F3 (de l'intérieur) et F2 (de dos). De l'intérieur, votre corps glisse avec la caméra - entièrement sur le sol, et en haut et en bas seulement au-dessus de la taille (les jambes restent au sol). Votre tête bouge toujours la vue tout de suite ; la marche et la course sont suivies exactement ; une téléportation, un point de passage, un portail de ville et un recentrage sautent toujours tout de suite. La vue propre du jeu d'en haut (F1) et VR F3 (le jeu sur votre sol) ne changent pas. Effet immédiat.
 camera.smooth_follow_ms.label = Caméra douce : durée du glissement, ms
 camera.smooth_follow_ms.tip = Le temps que met la caméra à rattraper le héros après un sursaut. Plus long = plus doux, mais le monde reste en retard sur le héros plus longtemps.
+camera.entry_facing.label = Regarder vers l'intérieur de la zone à l'arrivée (F4)
+camera.entry_facing.tip = Première personne en VR (F4) : quand vous arrivez dans une ville depuis l'extérieur (un portail de ville, un point de passage), la vue se tourne à chaque fois vers le même endroit de cet acte - vers Deckard Cain au Camp des Rôdeuses, Fara à Lut Gholein, Cain aux Quais de Kurast, entre Halbu et Jamella à la Forteresse du Pandémonium, et à Harrogath à travers la ville avec Malah sur votre droite. Quand vous entrez dans une autre zone par ses escaliers, l'entrée d'une grotte ou une porte, la vue se détourne de cette entrée, vers l'intérieur de la zone. Seule la vue tourne, une fois par arrivée ; le héros et le jeu ne sont pas modifiés. Désactivé = la vue garde l'orientation qu'elle avait. En direct.
 head.yaw_from_head.label = Tourner avec le casque
 head.yaw_from_head.tip = Demande BodyWalk avec le plugin Game Link.
 head.yaw_sign.label = Inverser la rotation
@@ -596,6 +621,8 @@ arms.scale.label = Longueur des bras (échelle)
 arms.scale.tip = Portée des bras par-dessus le rapport entre le héros et votre taille.
 arms.full_reach.label = Les mains atteignent toujours les manettes
 arms.full_reach.tip = F4 : une main plus loin de l'épaule du héros que la longueur de son bras - un coup en travers du corps, la seconde main sur une poignée à deux mains à la hanche opposée, un héros aux épaules plus larges que les vôtres - est dessinée quand même sur sa manette : l'épaule vient d'abord (sa clavicule tournée vers la main, de 20 degrés au plus, comme une vraie épaule qui atteint de l'autre côté), puis le bras s'allonge pour ce qui manque encore (de 35 % au plus : au-delà, la manette sautait). L'arme en main suit, et la seconde main d'une arme à deux mains reste à sa place sur le manche. Os dessinés seulement. Désactivé : le bras s'arrête à sa longueur et la main, avec l'arme, reste en deçà de la manette, comme avant. Effet immédiat.
+hands.palm_from_knuckle.label = Paume sur la poignée, mesurée jusqu'aux jointures
+hands.palm_from_knuckle.tip = F4 : une main est placée par le milieu de sa paume - sur la poignée de votre manette, sur le manche d'une arme, sur un corps tenu - et ce milieu est pris à mi-chemin du poignet à la jointure du majeur, là où le squelette propre du héros l'a. Chez l'Amazone, le Paladin et le Druide, chaque doigt commence par un os à l'intérieur de la paume ; mesurée jusqu'à celui-ci, leur paume sortait moitié moins longue et la main se trouvait environ 2 cm au-delà de la poignée, vers le bout des doigts. Les mains des autres héros sont les mêmes dans les deux cas. Visuel seulement. Désactivé : comme avant. En direct.
 arms.up.label = Mains plus haut (+) / plus bas (-), cm
 arms.forward.label = Mains en avant (+) / en arrière (-), cm
 arms.side.label = Mains à droite (+) / à gauche (-), cm
@@ -1050,6 +1077,8 @@ openxr.end_session_on_exit.label = Terminer la session du casque avant la fermet
 openxr.end_session_on_exit.tip = Quitter vers Windows faisait planter le jeu tout à la fin avec le runtime Oculus et Virtual Desktop (un contrôle de sécurité, 0xC0000409, juste après la sauvegarde - rien de perdu, mais un rapport de plantage à chaque fois). Activé : quand le jeu quitte - sa fenêtre fermée (la croix, Alt+F4), la session Windows fermée, ou Quitter sur l'écran-titre - la session du casque est d'abord terminée, comme le fait la désactivation d'OpenXR natif, et le jeu l'attend 3 secondes au plus avant de se fermer. Sauvegarder et quitter vers l'écran des personnages n'est pas un départ : la RV continue là. Désactivé : la session est laissée à la sortie propre du jeu, comme avant.
 openxr.stop_flatvr_watch.label = Arrêter de nouveau FlatVR s'il démarre pendant la session native
 openxr.stop_flatvr_watch.tip = Le FlatVR de BodyWalk est arrêté via son Game Link quand la session native démarre - mais seulement un FlatVR qui tourne à ce moment-là. Un FlatVR lancé plus tard (BodyWalk ouvert après le jeu, son démarrage retenu jusqu'à ce que SteamVR soit prêt, son bouton START) tournait à côté de la session native pour le reste de la partie : les deux dans le casque, se partageant ses images. Activé : pendant que la session tourne, FlatVR est vérifié une fois par seconde et arrêté de nouveau via Game Link s'il tourne (relancé quand l'OpenXR natif se termine, comme celui arrêté au début). Un BodyWalk sans Game Link (BodyWalk Lite) ne peut pas en recevoir l'ordre : le journal le dit. Immédiat. Désactivé : arrêté seulement au début de la session, comme avant.
+openxr.prewarm.label = Images de l'interface préparées d'avance (pas d'à-coup au premier usage)
+openxr.prewarm.tip = OpenXR natif : le shader de l'interface dans le casque est compilé au démarrage de la session (il coûtait environ 0.13 s à la première image VR), l'image du panneau de menu est faite sur un écran de chargement ou pendant le propre redimensionnement du jeu (le premier panneau de point de passage ou d'inventaire l'attendait 0.1 - 0.25 s), et les images de l'avis de quête et de la grande carte tournée sont gardées une fois faites tant que peu sont utilisées (chaque avis en créait une nouvelle). En direct (le shader : au prochain démarrage de session). Désactivé : tout est fait la première fois que cela s'affiche, comme avant.
 openxr.reap_drain_max_ms.label = Anciennes swapchains : attente maximale pour les libérer, ms (OpenXR natif)
 openxr.reap_drain_max_ms.tip = Une de nos swapchains refaite (un nouveau pointeur de souris, un panneau de menu d'une autre taille) est libérée plus tard, une fois que la carte graphique a fini le travail du jeu : attente de 20 ms, doublée chaque fois que ce n'était pas assez, jusqu'à cette valeur. Avec une carte occupée (la taille recommandée du casque), 20 ms ne suffisaient jamais, les anciennes s'empilaient et SteamVR en refusait de nouvelles (XR_ERROR_LIMIT_REACHED) : l'inventaire s'ouvrait sans panneau, le pointeur disparaissait, l'image devenait noire. 20 = comme avant. En direct.
 openxr.menus_wait_tracking.label = Menus placés seulement quand le casque est suivi
@@ -1065,9 +1094,7 @@ openxr.roomscale_body.tip = Le jeu ne fait jamais marcher le héros plus lenteme
 openxr.roomscale_cap_m.label = Marche à l'échelle de la pièce : écart maximal de la vue avec un héros bloqué, m
 openxr.roomscale_cap_m.tip = Quand le héros ne peut pas suivre (un mur, un monstre, une porte) et que vous continuez de marcher, la vue le devance d'au plus cette distance ; au-delà, la pièce glisse avec vous - la vue reste à cette distance de lui, sans saut. Reculez et il marche de nouveau sous votre tête. Effet immédiat.
 openxr.direct_input.label = Commandes sans BodyWalk (le plugin lit lui-même les manettes)
-openxr.direct_input.tip = OpenXR natif seulement. Le plugin lit les sticks, gâchettes, poignées et boutons des deux manettes et donne au jeu sa propre manette, ses actions et ses commandes clavier - BodyWalk n'est pas nécessaire pour les commandes. Tant que ceci est activé, les boutons de manette, les gestes et les actions de BodyWalk sont ignorés (il peut rester activé pour FlatVR) ; sa marche fait exception, voir la case ci-dessous. Disposition : le stick gauche marche, le stick droit tourne ; la gâchette droite attaque, A ramasse ou ouvre, B / X / Y sont les boutons de compétence de la manette (gâchette gauche maintenue : la seconde rangée), le clic du stick droit change d'armes, le clic du stick gauche montre les objets (Alt) et, en clic rapide, la carte, le bouton menu ouvre l'inventaire (maintenu une demi-seconde : le menu pause du jeu, Esc ; sur PS VR2 le bouton menu est le bouton Options de la manette DROITE) ; dans un menu, les manettes sont la manette propre au jeu (A B X Y, les poignées sont les bumpers) et le laser fonctionne comme avant. Changez tout cela dans les listes de Commandes > Boutons des manettes, ou dans d2r_vr.ini, section [direct]. Désactivé : les commandes de BodyWalk, comme avant. F4 seulement : en F1, F2, F3 et les modes plats les commandes de BodyWalk sont les commandes, comme si ceci était désactivé - sauf les manettes en F1-F3 quand BodyWalk ne tourne pas (la case « Jouer avec les manettes en F1, F2, F3 sans BodyWalk » ci-dessous).
-direct.flat_controller.label = Jouer avec les manettes en F1, F2, F3 sans BodyWalk
-direct.flat_controller.tip = Vues RV F1 (du dessus), F2 (troisième personne) et F3 (le jeu sur le sol) sans BodyWalk en marche : les manettes propres du plugin y sont la manette du jeu - la même disposition qu'en première personne (F4) : la gâchette droite attaque, A ramasse ou ouvre, B / X / Y sont les boutons de compétence de la manette (gâchette gauche maintenue : la seconde rangée), le clic du stick droit change d'armes, le clic du stick gauche montre les objets (Alt) et, en clic rapide, la carte, le bouton menu ouvre l'inventaire (l'appui long du menu pause est celui de F4), les sticks sont ceux de la manette (le gauche fait marcher le héros, la gâchette gauche + un coup de stick boit une potion de la ceinture, voir les cases ci-dessous) ; dans un menu, ce sont la manette propre au jeu. Re-liez dans d2r_vr.ini, section [direct] (les mêmes lignes qu'en F4). Ce qui reste F4 seulement : les gestes, la frappe au contact, la traction de l'arc, les lancers, la roue de compétences et la visée à la main (en F1 et F3 le héros attaque là où il fait face). Avec BodyWalk en marche (son Game Link actif, ou sa manette qui bouge), rien ne change : la manette de BodyWalk est la manette, entière. Si une vraie manette de console répond aussi, les manettes lui sont ajoutées, jamais par-dessus. Désactivé : aucun bouton des manettes en F1-F3 sans BodyWalk (seulement la marche et les potions). Le journal dit « the plugin's own controller is the game's pad » quand il prend le relais. Effet immédiat.
+openxr.direct_input.tip = OpenXR natif seulement. Le plugin lit les sticks, gâchettes, poignées et boutons des deux manettes et donne au jeu sa propre manette, ses actions et ses commandes clavier - BodyWalk n'est pas nécessaire pour les commandes. Tant que ceci est activé, les boutons de manette, les gestes et les actions de BodyWalk sont ignorés (il peut rester activé pour FlatVR) ; sa marche fait exception, voir la case ci-dessous. Disposition : le stick gauche marche, le stick droit tourne ; la gâchette droite attaque, A ramasse ou ouvre, B / X / Y sont les boutons de compétence de la manette (gâchette gauche maintenue : la seconde rangée), le clic du stick droit change d'armes, le clic du stick gauche montre les objets (Alt) et, en clic rapide, la carte, le bouton menu ouvre l'inventaire (maintenu une demi-seconde : le menu pause du jeu, Esc ; sur PS VR2 le bouton menu est le bouton Options de la manette DROITE) ; dans un menu, les manettes sont la manette propre au jeu (A B X Y, les poignées sont les bumpers) et le laser fonctionne comme avant. Changez tout cela dans les listes de Commandes > Boutons des manettes, ou dans d2r_vr.ini, section [direct]. Désactivé : les commandes de BodyWalk, comme avant. F4 seulement : en F1, F2, F3 et les modes plats les commandes de BodyWalk sont les commandes, comme si ceci était désactivé - sauf les manettes en F1-F3 quand BodyWalk ne tourne pas - qui jouent aussi selon cette disposition ; une vraie manette Xbox fonctionne en même temps.
 direct.flatvr_controls.label = FlatVR : les manettes selon cette disposition (le Mapping de BodyWalk est inutile)
 direct.flatvr_controls.tip = Dans FlatVR, les manettes fonctionnent comme en OpenXR natif : BodyWalk remet les manettes au jeu telles quelles (Game Link, BodyWalk avec commandes brutes - 1.83 avec la liaison D2R VR), et la disposition ci-dessus - les boutons, les gâchettes, les sticks, re-liables dans Commandes > Boutons des manettes - et tout ce qui est première personne (la ceinture, les gestes, l'arc, les carquois, les épaules, le menu pause) tourne dessus. Le Mapping de BodyWalk et sa manette ne sont alors pas lus du tout (Game Link direct : pas de double appui) ; en F1, F2, F3 les manettes agissent comme sans BodyWalk (la case ci-dessus). La marche de BodyWalk passe par Game Link - sa Sortie « Game Link » (Engine de BodyWalk : FlatVR + D2R VR) - dans le stick des manettes (la case « La marche de BodyWalk fait toujours marcher le héros »). La caméra et les bras gardent la tête et les mains de BodyWalk, comme avant. Un BodyWalk plus ancien n'envoie pas de manettes brutes : son Mapping reste les commandes (le journal le dit). État dit « BodyWalk: Game Link direct ». Désactivé : le Mapping et la manette de BodyWalk dans FlatVR, comme avant. Effet immédiat.
 direct.hold_enabled.label = Appuis longs : clic du stick (droit = panneau de compétences, gauche = inventaire), bouton menu gauche = menu pause
@@ -1133,6 +1160,8 @@ openxr.window_size.label = Fenêtre carrée : taille, px
 openxr.window_size.tip = Le côté de la fenêtre carrée, aussi grand qu'un moniteur le permet (au-delà du bord d'un moniteur le jeu se ferme lui-même) : environ 2060 sur un écran 4K. Plus grand : créez un moniteur virtuel de cette taille dans BodyWalk (Virtual Monitor, inutile de le mettre en principal) - vrcam déplace lui-même la fenêtre du jeu dessus. Plus grand est plus net et plus lent.
 openxr.square_window_follow.label = Fenêtre carrée : aussi grande que la taille de rendu
 openxr.square_window_follow.tip = Avec une taille de rendu définie (Performances > Taille de rendu, Auto ou un préréglage), l'image du jeu a cette taille, mais la fenêtre carrée gardait la taille d'autour. Activé : la fenêtre prend aussi la taille de rendu (1024 x 1024 pour 1024), quelques secondes après que le héros est en jeu et à chaque changement de taille de rendu. Désactivé : comme avant. Immédiat ; le jeu écrit la taille de la fenêtre dans ses options à la fermeture, donc il démarre à cette taille la fois suivante.
+openxr.square_window_one_step.label = Fenêtre carrée : redimensionnée dans le même pas que l'image
+openxr.square_window_one_step.tip = Un changement de taille de rendu figeait le jeu deux fois : le redimensionnement de l'image (environ 0.4 s), puis environ 2 s plus tard la fenêtre qui la suit (environ 0.3 s). Activé : la fenêtre prend la nouvelle taille au même moment que l'image, donc le jeu se redimensionne une seule fois - un seul gel court. Seulement sur le moniteur où se trouve la fenêtre ; un déplacement vers un autre moniteur suit toujours un instant plus tard. En direct. Désactivé : comme avant (deux gels).
 @status.square_window.label = La fenêtre du jeu telle que le jeu l'a
 openxr.third_gaze.label = F2 : la caméra tourne autour du héros avec le regard
 openxr.third_gaze.tip = Désactivé : la caméra reste derrière le héros quand il tourne et la tête regarde librement autour. Activé : elle pivote autour de lui avec la tête, comme sur l'écran de FlatVR.
@@ -1325,7 +1354,25 @@ hud.map_compass_flat.tip = Avec Carte qui tourne avec la caméra : une boussole 
 hud.map_compass_flat.choice1 = Bande
 hud.map_compass_flat.choice2 = Fine : lettres seules
 hud.map_compass_flat.choice3 = Anneau de lettres
+hud_third.bar_low.label = Barre : où
+hud_third.bar_low.tip = Devant, dans l'image : la barre - vie, mana, ceinture et compétences - en bas de l'écran, à la profondeur et à l'endroit que fixent les curseurs ci-dessous. Basse sous la caméra : elle est sortie de l'image et pend bas devant vous, comme la barre de F5 : baissez les yeux pour la lire. Elle tourne avec la tête à gauche et à droite, pas en haut et en bas ; les deux curseurs dessous fixent à quelle distance sous les yeux et devant. Seulement la barre : la carte reste dans l'image. Un menu (inventaire, marchand...) la remet dans l'image comme dans toutes les vues. En direct.
+hud_third.bar_low.choice0 = Devant, dans l'image (comme avant)
+hud_third.bar_low.choice1 = Basse sous la caméra (comme F5)
+hud_third.bar_low_below_cm.label = Barre basse : hauteur, cm sous les yeux
+hud_third.bar_low_below_cm.tip = À quelle distance sous les yeux pend la barre basse de F2, en cm : plus et elle pend plus bas, moins et elle remonte dans la vue. 33 par défaut, comme en F5. En direct.
+hud_third.bar_low_ahead_cm.label = Barre basse : distance devant, cm
+hud_third.bar_low_ahead_cm.tip = À quelle distance devant les yeux pend la barre basse de F2, en cm : moins la rapproche (plus grande), plus l'éloigne (plus petite). 32 par défaut, comme en F5. En direct.
 hud_third.bar_near.tip = Vraie stéréo seulement : + rapproche la barre d'outils des yeux, - la repousse derrière l'écran ; 0 = là où le jeu la met.
+hud_third.map_x.label = Carte vers le milieu, %
+hud_third.map_x.tip = Troisième personne (F2) : la carte d'angle du jeu déplacée vers le milieu de l'écran, en % de la largeur de l'écran - une carte dans le coin supérieur droit va à gauche, une dans le coin supérieur gauche va à droite. 0 = dans son coin, là où le jeu la met. La carte ne quitte jamais l'écran. Nécessite D2R_DepthFog.fx activé (il redessine la carte). En direct.
+hud_third.map_y.label = Carte vers le bas, %
+hud_third.map_y.tip = Troisième personne (F2) : la carte d'angle du jeu déplacée vers le bas de l'écran, en % de la hauteur de l'écran. 0 = en haut, là où le jeu la met. La carte ne quitte jamais l'écran. Nécessite D2R_DepthFog.fx activé (il redessine la carte). En direct.
+hud_third.map_size.label = Taille de la carte, %
+hud_third.map_size.tip = Troisième personne (F2) : la carte d'angle du jeu plus petite ou plus grande, agrandie depuis son propre coin (puis déplacée par les deux curseurs ci-dessus). 100 = comme le jeu la dessine. Nécessite D2R_DepthFog.fx activé (il redessine la carte). En direct.
+hud_third.allies_x.label = Portraits des alliés : droite, %
+hud_third.allies_x.tip = Les portraits de votre mercenaire et de votre groupe sont en haut à gauche de l'image - dans le casque, au bord de la vue. Ici ils sont déplacés à droite, en % de la largeur de l'image (environ 30 les rentre d'un tiers). 0 ici et dessous : comme les placent les curseurs « Portraits des alliés » de UI: F4 body dans toutes les vues (0 = là où le jeu les met). VR F2 seulement ; F5 a les siens. En direct.
+hud_third.allies_y.label = Portraits des alliés : bas, %
+hud_third.allies_y.tip = La même chose vers le bas, en % de la hauteur de l'image. VR F2 seulement. En direct.
 
 # --- Swing ---
 group.swing = Balancement
@@ -1372,7 +1419,6 @@ hud_floor.bar_near.tip = Vraie stéréo seulement : + rapproche la barre d'outil
 # --- Map, the game on your floor ---
 group.map_the_game_on_your_floor = Carte, le jeu sur votre sol
 group.map_the_game_on_your_floor.help = La carte en coin quand le jeu est posé sur votre sol (F3) : sa taille, sa proximité en vraie stéréo, et sa place sur l'écran. Demande D2R_DepthFog.fx activé dans ReShade.
-hud_floor.map_size.label = Taille de la carte, %
 hud_floor.map_size.tip = La carte en coin (Tab) plus petite ou plus grande, autour de son propre coin. Demande D2R_DepthFog.fx activé dans ReShade (il redessine la carte) ; sans lui la carte propre au jeu reste. Le pointeur de souris repose ici de lui-même sur le sol du jeu.
 hud_floor.map_near.label = Carte plus près / plus loin
 hud_floor.map_near.tip = Vraie stéréo seulement : + rapproche la carte des yeux, - la repousse derrière l'écran ; 0 = là où le jeu la met.
@@ -1468,6 +1514,13 @@ hud_top.bar_size.label#2 = F1 : taille de la barre d'outils, %
 hud_top.bar_size.tip#2 = La barre d'outils en F1, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F1 (Interface : F1 dessus).
 hud_third.bar_size.label#2 = F2 : taille de la barre d'outils, %
 hud_third.bar_size.tip#2 = La barre d'outils en F2, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F2 (Interface : F2 derrière).
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Carte en F2 (troisième personne)
+group.map_in_f2_third_person.help = La carte d'angle en F2 : déplacée vers le milieu de l'écran et vers le bas, et sa taille. Les mêmes réglages que ceux de VR F2 (UI : F2 de dos). Nécessite D2R_DepthFog.fx activé dans ReShade.
+hud_third.map_x.label#2 = F2 : carte vers le milieu, %
+hud_third.map_y.label#2 = F2 : carte vers le bas, %
+hud_third.map_size.label#2 = F2 : taille de la carte, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = Première personne à la souris et au clavier
@@ -2304,6 +2357,10 @@ world.town_heads_look_down.label = Têtes en ville : regarder vers le bas, degr�
 world.town_heads_look_down.tip = Jusqu'où une tête s'incline vers le bas pour vos yeux (quand vous vous accroupissez, ou qu'ils sont grands). Appliqué en direct.
 holes.patch_world.label = Trous du monde rebouchés (un test : le pont hors du Camp des Rôdeuses)
 holes.patch_world.tip = Le jeu a été construit pour une caméra qui regarde d'en haut : certains endroits n'ont jamais été modélisés là où cette caméra ne regarde jamais - le pont hors du Camp des Rôdeuses a le long de son tablier une bande sans sol, entre le tablier et son parapet, par laquelle la première et la troisième personne voient la rivière bien en dessous. Coché, ce programme fabrique un correctif pour chacun de ces endroits à partir des fichiers propres de votre jeu (le matériau de sol propre du tablier, ses bords prolongés jusqu'au parapet - rien de placé à la main) et le jeu le dessine comme sa propre pièce, éclairée et ombrée comme le tablier. Toutes les vues : à plat F1, F2, F3 et RV. Prend effet au prochain démarrage du jeu. Désactivé : les fichiers sont retirés à nouveau, le pont tel que le jeu l'a.
+holes.sewer_backdrop.label = Escaliers des égouts de Kurast : un mur sombre ferme leur fond
+holes.sewer_backdrop.tip = Au Bazar de Kurast et au Haut-Kurast, les escaliers qui descendent aux Égouts passent sous le sol, et leur étage le plus bas finit à l'air libre : aucun mur ne ferme le tunnel à cet endroit (la caméra du dessus n'y regarde jamais), donc en première personne vous voyez le ciel par le fond de la cage d'escalier. Activé : deux faces du propre panneau noir du jeu se dressent une demi-unité derrière cette extrémité ouverte, un peu plus larges et plus hautes que l'ouverture, posées selon l'emplacement propre de chaque cage d'escalier (trouvé par bearstonem/d2r-pcvr). Ce programme fait les quatre fichiers de décor à partir de ceux de votre jeu à son ouverture et les garde dans le mod (mods\D2R-VR\D2R-VR.mpq) ; seulement l'image - les escaliers, l'entrée et tout ce avec quoi vous jouez restent ceux du jeu. Toutes les vues (vu d'en haut, le mur est sous le sol, hors de vue). Prend effet au prochain démarrage du jeu. Désactivé : les fichiers sont retirés, les escaliers tels que le jeu les a.
+holes.bazaar_mask_hidden.label = Bazar de Kurast : pas de plan gris loin sous le sol
+holes.bazaar_mask_hidden.tip = Un des fichiers de décor du Bazar de Kurast place un plan plat de masque de terrain 23 unités sous le sol, loin de tout le reste - un reste de la construction du niveau. La vue du dessus n'y regarde jamais ; en première personne, il apparaît à travers l'herbe comme une feuille grise plate. Activé : cette seule pièce est retirée du décor (le reste du fichier reste celui du jeu). Ce programme fait le fichier à partir de celui de votre jeu à son ouverture et le garde dans le mod (mods\D2R-VR\D2R-VR.mpq) ; seule l'image change. Toutes les vues. Prend effet au prochain démarrage du jeu. Désactivé : le fichier est retiré, le Bazar tel que le jeu l'a.
 
 # --- Monsters (flat play) ---
 group.monsters_flat_play = Monstres (jeu à plat)
@@ -2589,6 +2646,8 @@ group.cave_ceiling.help = Un plafond sur le vide noir dans les grottes et donjon
 ceiling.enabled.tip#2 = Un plafond sur le vide noir dans les grottes et donjons, en première personne seulement - celui du jeu (sa pierre éclairée) ou la voûte de notre effet, selon « Qui dessine le plafond » ; la hauteur de chaque salle ci-dessous.
 ceiling.game_ceiling_wall.label = Plafond du jeu : recourbé en mur à son bord
 ceiling.game_ceiling_wall.tip = Un anneau de la même roche éclairée autour de vous là où s'arrête le plafond du jeu (environ 215 unités plus loin à la taille de tuile 10), du plafond jusque sous le sol (la profondeur du sol) : le vide noir au-delà du bord du plafond - une bande entre lui et le sol lointain, éclairée par le brouillard derrière les feux - est fermé par de la pierre, comme le mur lointain de notre effet le fermait. Désactivé : le plafond plat. En direct.
+ceiling.follow_floor.label = Le plafond du jeu : monte par marches là où le sol monte (grottes)
+ceiling.follow_floor.tip = Dans les grottes naturelles, le plafond repose sur le sol sous chaque endroit au lieu du vôtre : là où le sol monte, le plafond au-dessus monte d'autant, par une marche au même endroit, de sorte qu'il garde partout une même hauteur au-dessus du sol - fixe dans le monde, monter une marche ne déplace rien. Le sol est lu dans le propre sol du jeu (celui sur lequel se tiennent vos pieds) et gardé pour la zone ; la même roche éclairée, et le côté de la marche fermé par elle aussi. Désactivé : une seule hauteur au-dessus du sol de la zone qui vous suit, comme avant. VR F4. En direct.
 ceiling.game_ceiling_beams.label = Plafond du jeu : les poutres en bois de la caserne
 ceiling.game_ceiling_beams.tip = Le jeu contient une charpente de plafond en bois pour la caserne (et sa prison) qu'il ne place jamais : une grille de poutres dont le bas repose sur le haut des murs de la caserne. Coché, le jeu dessine cette charpente au-dessus de vous en une grille de charpentes entières fixée dans le monde - son propre modèle, son bois et sa taille, éclairée par ses torches - avec la pierre de la caserne au-dessus des poutres pour fermer les espaces entre elles. Faite à partir des fichiers de votre jeu. VR F4 seulement. Désactivé : le plafond de pierre plat. En direct.
 ceiling.game_ceiling_dome.label = Plafond du jeu : le dôme de la cathédrale au-dessus de la chapelle
@@ -3124,6 +3183,12 @@ gameplay.leap_head_gain.label = Barbare : jusqu'où porte une inclinaison de la 
 gameplay.leap_head_gain.tip = L'inclinaison de la tête est multipliée par ce nombre avant de viser la trajectoire du Saut : 2 atterrit aussi loin avec la moitié de l'inclinaison, donc un petit lever de tête porte déjà loin ; 1 = l'inclinaison propre de la tête. Le plus loin reste la portée propre du Saut. En direct.
 gameplay.leap_air_aim.label = Barbare : viser le prochain Bond en l'air
 gameplay.leap_air_aim.tip = Avec l'arc du Bond activé : maintenez Bond ou Attaque bondissante pendant que le héros est en l'air et l'arc et le cercle s'affichent là aussi ; relâchez en l'air et le PROCHAIN Bond va vers ce cercle - son bouton reste maintenu pendant l'atterrissage jusqu'à ce que le jeu le lance. Le Bond déjà en l'air atterrit toujours là où le jeu l'a fixé au lancement : rien ne peut réorienter un Bond en cours sans modifier le jeu lui-même. Désactivé : un relâchement en l'air est pressé aussitôt, comme au sol. Immédiat.
+
+# --- Barbarian Whirlwind ---
+group.barbarian_whirlwind = Tourbillon du Barbare
+group.barbarian_whirlwind.help = Où va le Tourbillon du Barbare, en première personne VR (F4) seulement. Coché, le stick de marche le dirige.
+gameplay.whirlwind_stick_steer.label = Barbare : le stick de marche dirige Tourbillon
+gameplay.whirlwind_stick_steer.tip = Première personne VR (F4) seulement. Tant que vous poussez le stick de marche, chaque Tourbillon que vous lancez - une pression, ou chaque répétition pendant que vous maintenez son bouton - tourbillonne sur 10 cases dans la direction où cette poussée marcherait, pas vers le monstre près de votre visée. Un tourbillon ne peut plus tourner une fois commencé, donc maintenez le bouton et dirigez le suivant avec le stick. Rien n'est appuyé à votre place : le lancement, son mana et ses coups sont ceux du jeu, seul son point est choisi. Stick au repos, ou un Tourbillon assigné à un toucher : visé comme avant. Désactivé : visé comme avant. En direct.
 
 # --- Point skills (arc and circle) ---
 group.point_skills_arc_and_circle = Compétences ciblées (arc et cercle)
@@ -3674,6 +3739,10 @@ weight.shield_collide.label = L'arme frappe votre propre bouclier
 weight.shield_collide.tip = Immédiat. Première personne RV (F4) seulement. L'arme dans une main rencontre le bouclier sur votre autre bras : elle s'arrête sur la face du bouclier et glisse le long - la forme du bouclier est le modèle propre du jeu, là où le jeu le dessine - et la main sur l'arme cède tandis que votre manette continue, jusqu'à 60 cm ; poussée plus loin, l'arme passe à travers jusqu'à se dégager. Un choc se sent dans les deux mains, et un coup dur joue le son de blocage propre du jeu. Seulement leurs mouvements, leur toucher et leur son - jamais une attaque, un blocage ou quoi que ce soit du jeu. Décoché : l'arme traverse votre bouclier, comme avant.
 weight.clash_sound.label = Sons d'acier sur acier : plus le choc est fort, plus ils sonnent
 weight.clash_sound.tip = Immédiat. Les deux armes dans vos mains qui se frappent, et le choc d'une parade (l'arme d'un monstre qui rencontre votre arme ou votre bouclier), jouent le son de blocage propre du jeu - aussi fort qu'ils se sont rencontrés durement : une tape légère silencieuse, un coup dur aussi fort que le jeu le joue, en dessous de 0,5 m/s rien. L'impulsion dans les mains suit la même règle. Un son seulement : rien du jeu ne change. Décoché : le choc se sent, ne s'entend pas, comme avant.
+weight.clash_sound_min_mps.label = Acier contre acier : entendu seulement à partir de cette vitesse, m/s
+weight.clash_sound_min_mps.tip = En direct. L'arme sur votre propre bouclier et vos deux armes qui se frappent ne sonnent qu'à partir de cette vitesse ; un choc plus doux se sent toujours dans les mains, en silence. 0 : comme avant (dès 0.5 m/s entre vos deux armes, dès 1 m/s sur le bouclier). 3 : seulement un choc dur (les vrais coups vont de 2 - 6 m/s).
+weight.clash_sound_gap_s.label = Acier contre acier : au moins ce délai entre deux sons, s
+weight.clash_sound_gap_s.tip = En direct. Après un choc entendu sur votre propre bouclier ou entre vos deux armes, le suivant n'est entendu qu'après ce délai - une arme qui cliquette sur le bouclier tinte une fois, pas à chaque contact. Chaque choc se sent toujours dans les mains. 0 : pas de délai, comme avant. 0.5 : au plus deux par seconde.
 weight.second_lets_go.label = Une arme dans chaque main : la seconde peut aussi être lâchée
 weight.second_lets_go.tip = Immédiat. Avec une arme dans chaque main la seconde est tenue par la poignée de sa main comme la première : relâchée, elle tombe et reste au sol, et la première reste une arme complète dans sa main (elle frappe, s'arrête sur les corps, sa poignée la lâche). « Après une chute » vaut de même pour elle : elle reste au sol ou va dans le dos ; avec le dégainage à l'épaule chacune est dégainée de derrière l'épaule de sa propre main (l'arme droite de la droite, la gauche de la gauche) et les deux y pendent. La poignée de cette main serrée loin de l'arme lâchée la rappelle ; le poing qui se ferme dessus la reprend. Décoché : la seconde est tenue pour de bon, comme avant.
 weight.parry_feel.label = Parade : sentir le choc des armes
@@ -3754,6 +3823,8 @@ weight.knock_haptic_pct.label = Renversement : l'impulsion dans la main, %
 weight.knock_haptic_pct.tip = Immédiat. La courte impulsion dans la main dont l'arme a mis un accessoire en mouvement (plus dure pour un choc plus dur). 0 : aucune.
 weight.prop_heft.label = Les accessoires ont un poids : un petit coup sec pour une tasse, un choc sourd pour un tonneau
 weight.prop_heft.tip = Immédiat. Coché : chaque accessoire pèse ce que disent son type et sa taille - une tasse environ 0.2 kg, un tabouret 2, une chaise 10, un tonneau 48, un sac de grain 60. Un léger coup fait voler une tasse, une épée déplace à peine un tonneau, un maillet le pousse. La main dont l'arme en met un en mouvement le sent aussi : un petit coup sec et bref pour une tasse ou une assiette, un choc dur suivi d'un choc sourd plus long et plus mat pour un tonneau, un sac ou une chaise (d'autant plus dur que l'accessoire a pris une plus grande part de votre élan, donc une dague sent un tonneau plus qu'un maillet) ; la force de l'impulsion est le curseur ci-dessus. Les masses demandent une bibliothèque de poids qui les accepte (le journal le dit) ; avec une plus ancienne, seule l'impulsion change. Décoché : les accessoires pèsent ce que dit leur matériau et chaque choc est la même courte impulsion, comme avant.
+weight.props_on_contact.label = Les objets ne deviennent physiques qu'au contact (un test)
+weight.props_on_contact.tip = Coché : un objet que personne ne touche n'est pas du tout un corps physique - lui, et l'étagère ou la table dessous, n'en deviennent un que lorsque votre arme, votre main ou un autre objet en mouvement pourrait l'atteindre, et cessent de l'être dès que tout est de nouveau immobile ; votre arme n'est un corps physique que près des objets, et quand rien ne bouge la physique des objets ne fait aucun pas. Entrer dans une pièce pleine d'objets ou passer à côté coûte au thread des objets une fraction de ce que cela coûtait. Les chocs sont censés être les mêmes : tasses, assiettes, tonneaux volent, roulent et retombent comme avant. Nécessite une bibliothèque de poids qui le gère (le journal le dit ; une plus ancienne garde chaque objet comme corps). Le monde des objets est recréé quand vous le changez. Décoché : chaque objet près de vous est un corps physique dès qu'il est trouvé, comme avant.
 weight.grab_props.label = Prendre les accessoires dans votre main (un test)
 weight.grab_props.tip = Immédiat. Coché : serrez fermement la poignée d'une main VIDE (ni arme, ni bouclier, ni arc, ni flacon dedans), paume sur ou près d'une tasse, d'une cruche, d'un livre, d'un crâne, d'un tabouret... et la main le prend à l'endroit sous la paume (une impulsion) : il vient dans votre main et y reste tant que vous gardez la poignée serrée - porté par la force de votre main contre son poids (un tabouret est plus lourd qu'une tasse), heurtant ce qu'il rencontre. Lâchez et il file comme votre main l'a lancé, puis repose où il atterrit comme un accessoire renversé. Tirez votre main loin de lui (la distance de rupture de la saisie, Saisir monstres et alliés plus haut) et il se détache (pas pendant les 2 premières secondes). La main se referme autour de lui avec « Saisie : la main se referme sur ce qu'elle tient ». La saisie est celle du kit VR, dans le monde des accessoires de la bibliothèque de poids (d2r_vr_weight.dll avec les mains - le journal dit quand elle n'en a pas). Seulement le dessin : aucun objet, rien du jeu ne change, tout est remis en place quand la zone se recharge. Décoché : la poignée d'une main vide ne fait que fermer le poing, comme avant.
 
@@ -4523,6 +4594,7 @@ status.layer_warn.toolkit.how = cochez "Disable OpenXR Toolkit" dans OpenXR Tool
 # ===== In the headset: the settings panel's rows, the first-start guide (the plugin's tables) =====
 vr.hset.page.view = Vue
 vr.hset.page.f1 = F1
+vr.hset.page.f2 = F2
 vr.hset.page.f3 = F3
 vr.hset.page.f5 = F5
 vr.hset.page.options = Options
@@ -4591,6 +4663,12 @@ vr.hset.top.sky.label = Ciel du jeu
 vr.hset.top.sky.detail = Avec Vraie géométrie : le dôme céleste du jeu autour du monde
 vr.hset.top.fog.label = Brouillard du jeu
 vr.hset.top.fog.detail = Avec Vraie géométrie : le brouillard du jeu sur le sol lointain
+vr.hset.hud_third.map_x.label = Carte vers le milieu
+vr.hset.hud_third.map_x.detail = % de la largeur de l'écran ; 0 = dans son coin
+vr.hset.hud_third.map_y.label = Carte vers le bas
+vr.hset.hud_third.map_y.detail = % de la hauteur de l'écran ; 0 = en haut
+vr.hset.hud_third.map_size.label = Taille de la carte
+vr.hset.hud_third.map_size.detail = Agrandie depuis son coin ; 100% = comme maintenant
 vr.hset.table.full_width.label = Pleine largeur
 vr.hset.table.full_width.detail = Le ciel et le brouillard du jeu autour, sans bord
 vr.hset.table.draw_distance.label = Distance F3
@@ -5260,8 +5338,6 @@ status.sig.row_bad = {name} : PAS OK - {without} décalé
 language.label = Langue
 language.tip = La langue de ce programme. Les textes sont dans le dossier lang du mod (mods\D2R-VR\lang), un fichier par langue : pour le traduire dans la vôtre, copiez en.txt vers <le code de votre langue>.txt (de.txt, pl.txt...), traduisez à la main ou avec un traducteur le texte après chaque « = », et gardez tels quels les clés avant le « = » et chaque {name} - il apparaît dans cette liste. Ce qu'un fichier n'a pas reste en anglais. Le programme se rouvre dans la langue choisie.
 language.auto = Langue de Windows ({name})
-home.xbox_pad.label = Utiliser une manette Xbox (manette de console) en RV
-home.xbox_pad.tip = Coché : en RV F1, F2 et F3 une vraie manette Xbox (manette de console) pilote le jeu seule - F2 (troisième personne) et F3 (le jeu sur le sol) sont les vues faites pour elle ; les manettes RV n'y appuient plus sur aucun bouton (elles font toujours marcher et boire les potions de la ceinture). F4 (première personne) reste faite pour les manettes RV. Décoché (par défaut) : une vraie manette de console marche aussi, les manettes RV lui sont ajoutées. La même clé que Stéréo > « Jouer avec les manettes en F1, F2, F3 sans BodyWalk », dans l'autre sens. Grisé tant que « Commandes sans BodyWalk » (Stéréo) est désactivé : les commandes de BodyWalk sont alors les commandes. Souris et clavier à la place : Commandes > Souris et clavier > « Souris aussi dans les vues RV F2 et F4 » ; F9 dans le jeu libère le pointeur. Effet immédiat.
 status.d2rloader.ok = D2RLoader installé
 status.d2rloader.missing = D2RLoader n'est pas dans le dossier du jeu - le mod ne fonctionne qu'avec lui
 status.d2rloader.downloading_pct = Téléchargement de D2RLoader 1.3.1 depuis d2rloader.net... {pct}%
@@ -5338,6 +5414,8 @@ status.world_contact.not_started = Murs du contact avec le monde : impossible de
 boat.restart = le jeu tourne en ce moment : redémarrez-le pour voir le changement
 status.kurast_boat.result = Pirogue des Quais de Kurast : {text}
 dome.restart = le jeu est lancé : redémarrez-le pour le ciel dessiné par le jeu
+bazaar.restart = le jeu est lancé : redémarrez-le pour voir le changement
+sewer.restart = le jeu est lancé : redémarrez-le pour voir le changement
 campfire_scene.restart = le jeu en cours : redémarrez-le pour voir le changement
 status.kurast_boat.reading = Pirogue des Quais de Kurast : lecture de la ville dans les fichiers du jeu...
 status.kurast_boat.not_started = Pirogue des Quais de Kurast : impossible de la lancer
@@ -5368,6 +5446,44 @@ problem.view_key = Vue {key}
 problem.headset_other = Autre
 problem.send = Rassembler et envoyer...
 problem.cancel = Annuler
+build.type.auto_update = Auto (avant une mise à jour)
+build.type.auto_restore_settings = Auto (réglages avant une restauration)
+build.type.auto_restore = Auto (version avant une restauration)
+build.type.settings = Réglages
+build.type.build = Version
+build.row_unfinished = {version}, {when} - inachevée (supprimez-la)
+build.row = {type} : {version}, {when}, {size}
+build.col.type = Type
+build.col.version = Version
+build.col.made = Créée
+build.col.size = Taille
+build.type_unfinished = {type} - inachevée
+status.buildbak.not_mod = Sauvegardes : seulement pour D2R VR installé comme mod (mods\D2R-VR)
+status.buildbak.none = Sauvegardes : aucune pour l'instant
+status.buildbak.list = Sauvegardes : {count}, {size} au total - choisissez-en une dans la liste, puis Restaurer ou Supprimer
+status.buildbak.no_space = Pas assez d'espace libre sur le disque du jeu pour une sauvegarde ({error})
+status.buildbak.nothing = Il n'y a aucune version de D2R VR à sauvegarder dans le dossier de ce jeu
+status.buildbak.bad = Cette sauvegarde n'est pas complète et n'a pas été restaurée : {error}
+status.buildbak.failed = Échec : {error}
+status.buildbak.saving = Sauvegarde des réglages...
+status.buildbak.making = Sauvegarde de la version...
+status.buildbak.saved = Réglages de {version} sauvegardés : {files} fichiers, {size}
+status.buildbak.made = {version} sauvegardée : {files} fichiers, {size}
+status.buildbak.unfinished = Cette sauvegarde est inachevée : elle ne peut pas être restaurée (supprimez-la)
+msg.build_game_runs = Fermez d'abord le jeu : ses fichiers ne peuvent pas être remis tant qu'il tourne.
+msg.build_bodywalk_runs = Fermez d'abord BodyWalk : Game Link, sa part de la version, ne peut pas être remis tant qu'il tourne.
+msg.settings_restore = Remettre les réglages sauvegardés le {when} (D2R VR {version}) ?\n\nTous vos réglages reviennent à cette sauvegarde ; le mod lui-même reste tel quel. Les réglages que vous avez maintenant sont sauvegardés d'abord, pour pouvoir y revenir. D2R VR Settings se rouvre ensuite.
+msg.build_restore = Remettre D2R VR {version} tel qu'il était le {when} ?\n\nChaque fichier de la version et tous vos réglages reviennent à cette sauvegarde. La version présente maintenant est sauvegardée d'abord, pour pouvoir y revenir. D2R VR Settings se rouvre ensuite.
+status.buildbak.restoring_settings = Sauvegarde des réglages actuels, puis restauration...
+status.buildbak.restoring = Sauvegarde de la version actuelle, puis restauration...
+status.buildbak.restored_settings = Réglages restaurés - D2R VR Settings se rouvre
+status.buildbak.restored = {version} restaurée - D2R VR Settings se rouvre
+status.buildbak.half = - ce qui était là est dans la sauvegarde {folder}
+msg.build_delete = Supprimer définitivement cette sauvegarde ?\n\n{label}
+status.buildbak.not_deleted = Impossible de supprimer toute cette sauvegarde : un fichier y est ouvert
+status.buildbak.restoring_pct = Restauration... {percent}%
+status.buildbak.making_pct = Sauvegarde... {percent}%
+msg.build_pending = Le D2R VR Settings restauré n'a pas pu remplacer celui-ci pendant qu'il tourne. Fermez cette fenêtre, puis renommez\n{pending}\nen D2R_VR_Settings.exe.
 status.hreport.running = Création du rapport du casque : gardez le casque et les deux manettes devant vous (environ 20 s)...
 status.hreport.saved = Rapport du casque enregistré : {path} - Rassembler les journaux l'emballe
 status.hreport.missing = D2R_VR_Headset_Report.exe introuvable à côté de ce programme - réinstallez D2R VR
@@ -5436,6 +5552,33 @@ boat.not_written = impossible d'écrire mods\D2R-VR\D2R-VR.mpq\...\docktown3.jso
 boat.no_receipt = impossible d'écrire mods\D2R-VR\kurast_boat.json
 boat.made = créé à partir de votre jeu : la pirogue sur l'eau (mods\D2R-VR\D2R-VR.mpq), dès le prochain démarrage du jeu
 boat.ready = prêt : la pirogue sur l'eau (mods\D2R-VR\D2R-VR.mpq)
+sewer.no_mod = seulement dans le dossier propre du mod (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici : les escaliers du jeu
+sewer.ours_out = nos {n} préréglages de Kurast retirés de mods\D2R-VR
+sewer.not_ours = {n} préréglages des égouts de Kurast dans mods\D2R-VR qui ne sont pas les nôtres restent tels quels
+sewer.off = désactivé ([holes] sewer_backdrop, l'onglet Monde) : les escaliers tels que le jeu les a
+sewer.no_archives = les archives du jeu n'ont pas pu être ouvertes (erreur {error}) ; nouvel essai au prochain démarrage
+sewer.no_files = les escaliers des égouts de Kurast ne sont pas dans ce jeu sous la forme connue : rien à faire
+sewer.refused = les escaliers des égouts du jeu ne sont pas tels que connus ({why}) ; ceux du jeu restent
+sewer.preset_refused = {preset} n'est pas tel que connu ({why}) ; les escaliers du jeu restent
+sewer.not_written = impossible d'écrire mods\D2R-VR\D2R-VR.mpq\{preset} (erreur {error})
+sewer.no_receipt = impossible d'écrire mods\D2R-VR\sewer_backdrop.json
+sewer.made = fait à partir de votre jeu : un mur sombre au fond des escaliers des égouts de Kurast ({size} unités, {n} préréglages dans mods\D2R-VR\D2R-VR.mpq), à partir du prochain démarrage du jeu
+sewer.ready = prêt : un mur sombre au fond des escaliers des égouts de Kurast ({n} préréglages dans mods\D2R-VR\D2R-VR.mpq)
+sewer.changed_by_you = {n} modifiés par vous : laissés tels quels
+bazaar.no_mod = seulement dans le dossier propre du mod (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici : le Bazar du jeu
+bazaar.not_taken_out = impossible de retirer mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json (erreur {error})
+bazaar.ours_out = notre préréglage du Bazar retiré de mods\D2R-VR
+bazaar.not_ours = un burbs08x16_1.json dans mods\D2R-VR qui n'est pas le nôtre reste tel quel
+bazaar.off = désactivé ([holes] bazaar_mask_hidden, l'onglet Monde) : le Bazar tel que le jeu l'a
+bazaar.no_archives = les archives du jeu n'ont pas pu être ouvertes (erreur {error}) ; nouvel essai au prochain démarrage
+bazaar.no_preset = le préréglage du Bazar n'est pas dans ce jeu : rien à faire
+bazaar.no_need = le Bazar du jeu n'a pas de plan égaré sous le sol : rien à faire
+bazaar.refused = le préréglage du Bazar du jeu n'est pas tel que connu ({why}) ; celui du jeu reste
+bazaar.changed_by_you = mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json a été modifié par vous : laissé tel quel
+bazaar.not_written = impossible d'écrire mods\D2R-VR\D2R-VR.mpq\...\burbs08x16_1.json (erreur {error})
+bazaar.no_receipt = impossible d'écrire mods\D2R-VR\bazaar_mask.json
+bazaar.made = fait à partir de votre jeu : le plan gris loin sous le Bazar de Kurast retiré (mods\D2R-VR\D2R-VR.mpq), à partir du prochain démarrage du jeu
+bazaar.ready = prêt : le plan gris loin sous le Bazar de Kurast retiré (mods\D2R-VR\D2R-VR.mpq)
 dome.no_mod = seulement dans le dossier propre du mod (mods\D2R-VR\D2R-VR.mpq), qui n'est pas ici : pas de dôme de ciel du jeu
 dome.off = désactivé ([sky] game_sky) : aucun modèle de dôme fait ; {n} des nôtres retirés
 dome.no_archives = les archives du jeu n'ont pas pu être ouvertes (erreur {error}) ; nouvel essai au prochain démarrage
@@ -5533,6 +5676,10 @@ vr.autotune.line.up_no = Rétabli {what} {from} -> {to} : {b} images/s, trop len
 vr.autotune.line.final = Revérifié : {b} images/s
 vr.autotune.title.running = Auto : mesure en cours, restez immobile ({done} faits, encore {left} environ)
 vr.autotune.status.running = Chaque réglage est essayé quelques secondes. Stop remet tout comme avant.
+vr.autotune.title.noisy = Auto : pas de conclusion - les images étaient trop irrégulières pour mesurer
+vr.autotune.status.noisy = Rien n'a été changé. Annuler (ou Garder) ferme ceci.
+vr.autotune.line.noisy = {n} mesures d'affilée contenaient des images retenues par le flux du casque (~100 ms chacune), des gels ou un redimensionnement - aucun réglage n'est choisi à partir de tels chiffres.
+vr.autotune.line.noisy_vd = Virtual Desktop : essayez un autre codec ou un débit plus bas, le PC sur câble, puis relancez Auto en restant immobile en ville.
 vr.autotune.title.below_cpu = Auto : sous le minimum - le processeur (CPU) le retient à {now} images/s
 vr.autotune.title.below_gpu = Auto : sous le minimum - la carte graphique (GPU) le retient à {now} images/s
 vr.autotune.title.reached = Auto : {fps} images/s atteintes (casque {hz} Hz)
@@ -5968,7 +6115,9 @@ vr.hset.map.go = Carte
 vr.hset.map.back = HUD
 vr.hset.f3.go = F3
 vr.hset.f1.go = F1
+vr.hset.f2.go = F2
 vr.hset.f3.back = Vue
+vr.hset.f2.back = Vue
 vr.hset.f1.back = Vue
 vr.hset.recentre = Recentrer la vue
 vr.hset.close = Fermer
@@ -6120,6 +6269,15 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+build.picked = choisie
+status.buildbak.count = Sauvegardes : {count}, {size} au total - cliquez-en une pour la restaurer ou la supprimer
+status.buildbak.more = (les {rows} plus récentes affichées : Ouvrir le dossier des sauvegardes pour le reste)
+status.buildbak.pick = Cliquez d'abord une sauvegarde dans la liste
+home.xbox_pad.label = Utiliser une manette Xbox (manette de console) en RV
+home.xbox_pad.tip = Coché : en RV F1, F2 et F3 une vraie manette Xbox (manette de console) pilote le jeu seule - F2 (troisième personne) et F3 (le jeu sur le sol) sont les vues faites pour elle ; les manettes RV n'y appuient plus sur aucun bouton (elles font toujours marcher et boire les potions de la ceinture). F4 (première personne) reste faite pour les manettes RV. Décoché (par défaut) : une vraie manette de console marche aussi, les manettes RV lui sont ajoutées. La même clé que Stéréo > « Jouer avec les manettes en F1, F2, F3 sans BodyWalk », dans l'autre sens. Grisé tant que « Commandes sans BodyWalk » (Stéréo) est désactivé : les commandes de BodyWalk sont alors les commandes. Souris et clavier à la place : Commandes > Souris et clavier > « Souris aussi dans les vues RV F2 et F4 » ; F9 dans le jeu libère le pointeur. Effet immédiat.
+direct.flat_controller.label = Jouer avec les manettes en F1, F2, F3 sans BodyWalk
+direct.flat_controller.tip = Vues RV F1 (du dessus), F2 (troisième personne) et F3 (le jeu sur le sol) sans BodyWalk en marche : les manettes propres du plugin y sont la manette du jeu - la même disposition qu'en première personne (F4) : la gâchette droite attaque, A ramasse ou ouvre, B / X / Y sont les boutons de compétence de la manette (gâchette gauche maintenue : la seconde rangée), le clic du stick droit change d'armes, le clic du stick gauche montre les objets (Alt) et, en clic rapide, la carte, le bouton menu ouvre l'inventaire (l'appui long du menu pause est celui de F4), les sticks sont ceux de la manette (le gauche fait marcher le héros, la gâchette gauche + un coup de stick boit une potion de la ceinture, voir les cases ci-dessous) ; dans un menu, ce sont la manette propre au jeu. Re-liez dans d2r_vr.ini, section [direct] (les mêmes lignes qu'en F4). Ce qui reste F4 seulement : les gestes, la frappe au contact, la traction de l'arc, les lancers, la roue de compétences et la visée à la main (en F1 et F3 le héros attaque là où il fait face). Avec BodyWalk en marche (son Game Link actif, ou sa manette qui bouge), rien ne change : la manette de BodyWalk est la manette, entière. Si une vraie manette de console répond aussi, les manettes lui sont ajoutées, jamais par-dessus. Désactivé : aucun bouton des manettes en F1-F3 sans BodyWalk (seulement la marche et les potions). Le journal dit « the plugin's own controller is the game's pad » quand il prend le relais. Effet immédiat.
+hud_floor.map_size.label = Taille de la carte, %
 vr.hset.mode.f5_head_look.label = F5 : caméra sur la tête
 vr.hset.mode.f5_head_look.detail = La caméra suit votre tête, comme en F4
 hands.left_handed_mirror.label = ... dessiner le héros en gaucher

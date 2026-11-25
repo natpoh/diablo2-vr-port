@@ -329,8 +329,8 @@ inline Hit HitTest(int page, float u, float v, int view = 0) {
     // the HUD tab's two pages: Map from the HUD page (F4 only, as the page is), HUD back from the Map page
     if (((page == kPageHud && PageShown(kPageMap, view)) || page == kPageMap) && kPreviewBtn.Contains(x, y))
         return {Kind::Tab, page == kPageHud ? kPageMap : kPageHud, 0};
-    // the View tab's second page: F1 (VR F1) or F3 (VR F3) from the View page (ViewSubPage, as the pages are shown), View back from either
-    if (((page == kPageView && ViewSubPage(view) >= 0) || page == kPageF1 || page == kPageF3) && kPreviewBtn.Contains(x, y))
+    // the View tab's second page: F1 (VR F1), F2 (VR F2) or F3 (VR F3) from the View page (ViewSubPage, as the pages are shown), View back from each
+    if (((page == kPageView && ViewSubPage(view) >= 0) || page == kPageF1 || page == kPageF2 || page == kPageF3) && kPreviewBtn.Contains(x, y))
         return {Kind::Tab, page == kPageView ? ViewSubPage(view) : kPageView, 0};
     if (page == kPageVideo) {
         if (kAutoBtn.Contains(x, y)) return {Kind::Auto, 0, 0};   // (the model takes these only as the run's state allows)

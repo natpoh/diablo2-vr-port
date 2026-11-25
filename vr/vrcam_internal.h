@@ -133,6 +133,13 @@ void InstallClientSize(bool on, bool pointer);   // [render] vr_resolution_ui, v
 void InstallLabelWidthGuard();
 void InstallRoomHeightHook();
 void InstallTerrainHeightHook();   // [render] terrain_heights (vr/render/render_switches.cpp)
+void InstallCeilingFloor();        // [ceiling] follow_floor: the floor rays after each level tick (vr/render/render_switches.cpp)
+namespace ceilfloorwire {          // (the same file: shared/ceiling_floor.h's keeper of the floor under each ceiling tile)
+void Ask(bool want, float tile, const float hero[3]);
+int Window(int x0, int z0, float* floor, bool* known);
+bool Ready();
+void Took(uint32_t* rays, uint32_t* hits, uint32_t* offLine, uint32_t* tiles, double* usTick, size_t* kept);
+}
 extern std::atomic<bool> g_renderDirty, g_bigDirty;
 namespace roofhook { void Install(); void Tick(); }   // [render] keep_roofs
 namespace prophook { void Install(); void Tick(); }   // [stereo] props_once_a_pair
@@ -280,7 +287,7 @@ bool ViewStickToGame(float* px, float* py);
 
 // ---- what vr/input/spell_aim.cpp (M10) reads of vrcam.cpp ----
 struct Calib { double c1 = 0, s1 = 0, c2 = 0, s2 = 0; int n = 0; float angle = 0; int mirror = 0; bool ok = false; };
-struct SpellCast { bool directed = false, point = false, leap = false, view = false; float gx = 0.0f, gy = 0.0f; };   // view: [hands] spell_aim_by 1, gx gy the gaze's
+struct SpellCast { bool directed = false, point = false, leap = false, view = false, whirl = false; float gx = 0.0f, gy = 0.0f; };   // view: [hands] spell_aim_by 1, gx gy the gaze's; whirl: [gameplay] whirlwind_stick_steer, gx gy the walk stick's
 constexpr uint64_t RVA_ATTACK_POINT = 0x18BAD0, RVA_ATTACK_POINT_RET = 0x14484A;   // the aim's own call returns there
 using AttackPointFn = float* (*)(void* mgr, float* out, void* unit, uint64_t from, uint64_t dir);
 using ClientIndexFn = int (*)(void* unit);
@@ -349,6 +356,10 @@ bool BodyWalkRunning();                           // vr/input/pad.cpp: BodyWalk'
 bool BodyWalkWalkStick(int16_t* lx, int16_t* ly);  // vr/input/pad.cpp: [walk_in_place] source=1 - BodyWalk's walking stick as last read
 uintptr_t SewerHero() noexcept;
 int SewerLevel(uintptr_t hero) noexcept;
+// [camera] entry_facing (vr/unleashed_entry_facing_wire.cpp, MPL): each view built in first person hands the game camera's heading and the yaw
+// it was built with (degrees); on an arrival the turn that faces into the area waits for TurnTick (vr/view/views.cpp), which takes it once.
+void EntryFacingView(float cameraHeading, float yaw);
+float TakeEntryTurn();
 namespace replay { bool OverlaysWanted(); }
 
 // ---- what the modules read of vrcam.cpp: the hero unit and the look-at ----

@@ -58,6 +58,7 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "campfire_unleashed.h"   // [campfire] the creation scene's boards (MPL 2.0, from D2R VR Unleashed)
 #include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard (MPL 2.0, from D2R VR Unleashed)
 #include "unleashed_cinema_screen.h"   // [cinema] world_screen: the big screen's part of the frame and its place (MPL 2.0, from D2R VR Unleashed)
+#include "video3d_lib.h"   // [cinema] video_3d: the films in 3D on the big screen - the optional library d2r_vr_video3d.dll (shared/d2r_vr_video3d.h)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "hand_keep.h"       // [openxr] hands_kept / bare_hand_poses / panels_key: the hands and the panels when the runtime gives no controllers
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
@@ -68,6 +69,8 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "pointer_cache.h"   // the mouse pointer's picture known by what it shows (pointer_cache.h Key)
 #include "chain_reaper.h"   // a swapchain made again in a session is destroyed later, once the game's queue was drained, not inside the present (chain_reaper.h)
 #include "chain_count.h"    // our swapchains alive, by kind, said when the number changes (SteamVR gives a session 16)
+#include "fence_wait.h"     // a fence wait that does not end on a wake meant for an older wait (WaitFence)
+#include "prewarm.h"        // [openxr] prewarm: when the menu panel's / notice's swapchain is made ahead, whether the shown-now-and-then ones are kept
 #include "sticker_atlas.h"  // the pictures painted once a session, in one swapchain (g_stickers)
 #include "gpu_fault.h"   // the D3D12 device lost: told at once, nothing touched after it (vr/gpu_fault.h)
 #include "view_gate.h"
@@ -137,6 +140,7 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
 
 namespace gamestate { bool CinemaPlaying(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
+namespace vrc { extern std::atomic<bool> g_inWorld; }   // a game area is loaded (vr/sky/sky_tick.cpp): [openxr] prewarm makes its swapchains only outside one (a loading screen)
 namespace gamecmd { void Tap(uint32_t cmd); }   // vr/gamecmd.cpp: one press of a game command, as its key's ([hud] allies_merc_click: 0x36, the Mercenary key)
 namespace gamestate { bool MercPanelAlone(); }   // [hud] allies_merc_click: the merc's inventory panel open outside the pad's tabbed menu (vr/gamestate.cpp)
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
@@ -185,6 +189,9 @@ struct Cfg {
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
     float quadWidthM = 2.4f;  // and this wide
     float cinemaDistM = 5.0f, cinemaWidthM = 6.0f;   // [cinema] distance_m, width_m: the big screen of world_screen (vr/unleashed_cinema_screen.h), live
+    bool video3d = false;          // [cinema] video_3d: the films in 3D on that screen (d2r_vr_video3d.dll), every VR view; 0 = flat, as before. Live
+    float video3dPct = 1.6f;       // [cinema] video_3d_strength_pct: the largest separation between the eyes, % of the film's width
+    float video3dConv = 0.4f;      // [cinema] video_3d_convergence: the depth that stays on the screen, 0 far .. 1 near (nearer comes out of it)
     float leanM = 0.10f;      // the head may move this far from the body sideways (lean_m); farther, the body follows
     bool byTurns = false;     // eyes by turns ([stereo] afr without pair_per_tick): one eye a game frame
     bool turnWarp = true;     // [stereo] turn_warp: by turns, the eye not drawn made on the GPU (vr/turn_warp.h); 0 = as last drawn, at its own pose
@@ -569,6 +576,7 @@ struct NearCost {
 NearCost g_nearCost;
 nearoverlay::Pass g_nearPass;   // (its pipeline and descriptors made as the tab opens, released once its last list is done after it closes: FreeIdle)
 UINT64 g_nearFence = 0;         // the copy fence's value after the pass's last list
+HudOut g_film3d;     // [cinema] video_3d: the film's two eyes side by side (left half, right half) - what the big screen shows instead of the flat film (DrawFilm3d)
 HudOut g_noticeOut;  // the quest / level-up notice's card (HangNotice): a swapchain at the notice's box's size, kept to the session's end
 noticecard::Card g_noticeCard;   // when the card comes and goes (draw thread)
 XrPosef g_noticePose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};   // where it stands, set when it comes up
@@ -2363,7 +2371,8 @@ void FlushHaptics() {
 }
 
 // -- start: instance, system, session (a worker thread) ------------------------
-void WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
+bool WaitFence(UINT64 v, DWORD ms);   // (the copy list, below)
+void PrewarmHudPipeline();   // [openxr] prewarm: the interface's pipeline built on a worker as the session is made (below)
 void SweepGraveyard(bool all);
 void TurnTeardown();   // eyes by turns' kept pictures and pass (below)
 void TurnFrameEnd();   // ... the frame's steps given up: the other eye's image given back if vrcam did not finish (CloseFrame)
@@ -2483,6 +2492,8 @@ void Teardown() {   // under g_lock or before the session exists
     DestroyChain(g_noticeOut.sc);   // (the notice card's: here, or unused for a while: FreeIdle)
     DestroyChain(g_bigTurnOut.sc);   // [hud] map_click_big: the turned big map's square
     g_bigTurnOut = HudOut{};
+    DestroyChain(g_film3d.sc);   // [cinema] video_3d: the 3D film's (here, or unused for a while: FreeIdle)
+    g_film3d = HudOut{};
     g_rotButtonFailed = false;
     if (g_mapClick.Big()) { hud::SetMapBig(false); gamestate::SetMapBig(false); }
     g_mapClick.Reset();
@@ -2870,6 +2881,7 @@ DWORD WINAPI StartThread(void*) {
     LogModules();
     if (!directinput::Governing() || directinput::BodyWalkWalks()) link::RequestPresenter(true);   // BodyWalk's Mapping on the game's own headset ("Game Link"; not while direct_input governs (the key set, view F4): it gets no controllers then - except for its walking: [openxr] direct_bodywalk_walk gives it the poses)
     LogF("vrcam: openxr - ready in %.1f s, waiting for the runtime's go", (GetTickCount64() - t0) / 1000.0);
+    PrewarmHudPipeline();   // [openxr] prewarm: the interface's shader and pipeline built off the frame while the runtime starts
     g_state.store(kCreated);
     return 0;
 }
@@ -2888,12 +2900,25 @@ bool MakeCopyList() {
     g_fence->SetName(L"d2rvr xr copy fence");
     return true;
 }
-void WaitFence(UINT64 v, DWORD ms) {
-    if (!g_fence || g_fence->GetCompletedValue() >= v) return;
+// True: v was reached within ms. The event is shared by every wait here (auto-reset): a wait that ran out left its SetEventOnCompletion armed, the event was set
+// when that older value came, and the next wait - for a newer value - woke at once on it and went on as if its own value had come (2026-11-25, PC1 on Virtual
+// Desktop: the reaper's 200 ms drains "ran out" 7 times in a row without a single 200 ms stall in the frame lines, and from then on every drain did, the same
+// stale wake handed from one wait to the next - 64 retired swapchains never destroyed by the end, video memory 7.3 -> 9.7 GB). Now the value is looked at again
+// after every wake (fence_wait.h, as the replay's waits) and a stale set event is cleared before the arming.
+std::atomic<unsigned> g_fenceStaleWakes{0};   // wakes on an older wait's arming that this wait went past (the 10 s chains line)
+bool WaitFence(UINT64 v, DWORD ms) {
+    if (!g_fence) return true;
+    if (g_fence->GetCompletedValue() >= v) return true;
     const double t = UsNow();
-    g_fence->SetEventOnCompletion(v, g_fenceEvt);
-    WaitForSingleObject(g_fenceEvt, ms);
+    const bool done = fencewait::WaitValue(
+        v, (unsigned)ms, [] { return g_fence->GetCompletedValue(); },
+        [](uint64_t x) { ResetEvent(g_fenceEvt); g_fence->SetEventOnCompletion(x, g_fenceEvt); },
+        [v](unsigned m) {
+            if (WaitForSingleObject(g_fenceEvt, m) == WAIT_OBJECT_0 && g_fence->GetCompletedValue() < v) ++g_fenceStaleWakes;
+        },
+        [] { return UsNow() / 1000.0; });
     g_clock.fence += UsNow() - t;
+    return done;
 }
 
 // Before a swapchain of ours goes: the lists we submitted that draw into or copy into its images are done (2026-10-17, the device lost: a
@@ -3091,8 +3116,7 @@ void ReapChains() {
     const double waitMs = g_reaper.DrainMs(limits);
     UINT64 v = 0;
     if (SUCCEEDED(g_queue->Signal(g_fence, g_fenceV + 1))) v = ++g_fenceV;
-    if (v) WaitFence(v, (DWORD)waitMs);
-    const bool drained = v && g_fence->GetCompletedValue() >= v;
+    const bool drained = v && WaitFence(v, (DWORD)waitMs);
     const unsigned ranOut = g_reaper.RanOut();
     const size_t n = g_reaper.Sweep(drained, now, limits, &DestroyRetired);
     static int told = 0;
@@ -3101,6 +3125,26 @@ void ReapChains() {
         LogF("vrcam: openxr - %u retired swapchain(s) destroyed after %u drain(s) that ran out: the game's queue drained within %.0f ms",
              (unsigned)n, ranOut, waitMs);
     }
+}
+// The 10 s line (OpenFrame): while any wait to be destroyed, or the window destroyed / drained / ran out any, or a fence wait woke on an older wait's arming -
+// how many are alive and let go, and what the drains did. Nothing when all is quiet (a log line costs ~1 ms).
+struct ReapTold { ULONGLONG at = 0; chainreap::Reaper<XrSwapchain>::Totals t; unsigned stale = 0; } g_reapTold;
+void ReapTell() {
+    const ULONGLONG now = GetTickCount64();
+    if (!g_reapTold.at) { g_reapTold.at = now; return; }
+    if (now - g_reapTold.at < 10000) return;
+    const auto& t = g_reaper.Total();
+    const unsigned stale = g_fenceStaleWakes.load();
+    const size_t destroyed = t.destroyed - g_reapTold.t.destroyed, drained = t.drained - g_reapTold.t.drained, ranOut = t.ranOut - g_reapTold.t.ranOut;
+    const unsigned staleN = stale - g_reapTold.stale;
+    if (g_reaper.Size() || destroyed || drained || ranOut || staleN)
+        LogF("vrcam: openxr - swapchains, 10 s: %u alive, %u let go and waiting to be destroyed (the oldest %.0f s); in 10 s destroyed %u after %u drain(s) "
+             "that came back, %u ran out; fence waits that woke on an older wait's arming %u (waited on); this session destroyed %u, drains ran out %u",
+             (unsigned)g_chains.Live(), (unsigned)g_reaper.Size(), g_reaper.OldestAgeMs(UsNow() / 1000.0) / 1000.0, (unsigned)destroyed, (unsigned)drained,
+             (unsigned)ranOut, staleN, (unsigned)t.destroyed, (unsigned)t.ranOut);
+    g_reapTold.at = now;
+    g_reapTold.t = t;
+    g_reapTold.stale = stale;
 }
 // The session's end: Teardown waited for the queue as it could; every retired one goes with the session, as all the others do.
 void ReapAll() { g_reaper.All(&DestroyRetired); }
@@ -3571,9 +3615,20 @@ constexpr int kSrvRing = 64;   // (was 16: as many as the allocators - a slot is
 uint32_t g_srvAt = 0;
 bool g_hudFailed = false;
 
+// [openxr] prewarm (2026-11-25: "FlatVR's shader compiled" inside the first VR frame's layers, a 126 ms hitch): the pipeline is built on a worker
+// as the session is made (PrewarmHudPipeline), off every frame - D3DCompile and the device's Create* calls are free-threaded. While it builds,
+// the pieces that need it stay out of the frame (MakeHudPipeline false); the globals are the worker's until it says done (g_hudBuild 2, release).
+std::atomic<int> g_hudBuild{0};      // 0 not asked, 1 building on the worker, 2 the worker is done (made or failed: MakeHudPipelineNow looks again)
+std::atomic<bool> g_prewarm{true};   // [openxr] prewarm (LoadSettings)
+bool MakeHudPipelineNow();
 bool MakeHudPipeline() {
+    if (g_hudBuild.load(std::memory_order_acquire) == 1) return false;   // (being built off the frame: this frame without those pieces)
+    return MakeHudPipelineNow();
+}
+bool MakeHudPipelineNow() {
     if (g_hudPso[0] && g_hudPso[1] && g_hudPso[2]) return true;
     if (g_hudFailed) return false;
+    const double builtFrom = UsNow();
     g_hudFailed = true;   // until it is all made
     HMODULE dc = LoadLibraryW(L"d3dcompiler_47.dll");
     const pD3DCompile compile = dc ? (pD3DCompile)GetProcAddress(dc, "D3DCompile") : nullptr;
@@ -3652,8 +3707,19 @@ bool MakeHudPipeline() {
     }
     if (!ok) { Log("vrcam: openxr - interface in the room: the pipeline could not be made - the toolbar and the map stay off"); return false; }
     g_hudFailed = false;
-    Log("vrcam: openxr - interface in the room: FlatVR's shader compiled (the toolbar, the map orb; the gesture zones' balls)");
+    LogF("vrcam: openxr - interface in the room: FlatVR's shader compiled (the toolbar, the map orb; the gesture zones' balls) in %.0f ms%s",
+         (UsNow() - builtFrom) / 1000.0, g_hudBuild.load() == 1 ? ", made ahead on a worker as the session started ([openxr] prewarm): no frame waited for it" : "");
     return true;
+}
+// The session is made (its start thread, before the runtime's go): the pipeline built on a worker, once a process (it stays across sessions).
+void PrewarmHudPipeline() {
+    if (!g_prewarm.load() || !g_dev) return;
+    int none = 0;
+    if (!g_hudBuild.compare_exchange_strong(none, 1)) return;
+    std::thread([] {
+        MakeHudPipelineNow();
+        g_hudBuild.store(2, std::memory_order_release);
+    }).detach();
 }
 
 // Its swapchain handed to the reaper (destroyed later, once the game's queue is drained: chain_reaper.h) and its render-target places given back.
@@ -3753,6 +3819,75 @@ bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint3
     l->DrawInstanced(3, 1, 0, 0);   // the image stays a render target: as the binding wants it back
     SubmitList();
     return Ok(xrReleaseSwapchainImage(o.sc, &ri), "xrReleaseSwapchainImage(interface)");
+}
+
+// -- [cinema] video_3d: the film in 3D (vr/video3d_lib.h) ---------------------------
+// The film's pixels in the flat picture: the movie player draws at the window's own size in the frame's top left (MovieBand), the film's 16:9 in the middle of
+// that (FilmIn). Shared by the drawing below and the big screen in CloseFrame, so both take the same rectangle.
+cinema::Crop FilmNow() {
+    RECT client{};
+    const bool win = g_wnd && GetClientRect(g_wnd, &client) && client.right > 0 && client.bottom > 0;
+    return cinema::FilmIn(cinema::MovieBand(g_quadChain.w, g_quadChain.h, win ? (uint32_t)client.right : 0u, win ? (uint32_t)client.bottom : 0u));
+}
+bool g_film3dShown = false;        // this frame's screen has its two eyes
+cinema::Crop g_film3dFilm{};       // ... drawn from this rectangle of the frame
+bool g_film3dWasPlaying = false;   // a film played the frame before (a new one forgets the last one's depth)
+
+// While a film plays with [cinema] video_3d on: the film of this back buffer through the library into g_film3d. False: the screen stays flat this frame
+// (the key off, no library, a format it cannot read, no image) - never an empty screen.
+bool DrawFilm3d(ID3D12Resource* bb) {
+    const bool playing = g_cfg.video3d && gamestate::CinemaPlaying();
+    if (playing && !g_film3dWasPlaying) video3dlib::Reset();
+    g_film3dWasPlaying = playing;
+    if (!playing || !bb || !g_dev || !g_queue || gpufault::Removed()) return false;
+    if (!video3dlib::Start(g_dev, g_queue)) return false;
+    const D3D12_RESOURCE_DESC bd = bb->GetDesc();
+    DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN;
+    uint32_t enc = D2RV3_SRC_LINEAR;
+    switch (Family(bd.Format)) {   // what sampling the back buffer gives: linear light through an _SRGB view; a 10-bit buffer has no such twin
+        case 1: view = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
+        case 2: view = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; break;
+        case 3: view = DXGI_FORMAT_R10G10B10A2_UNORM; enc = D2RV3_SRC_GAMMA; break;
+        case 4: view = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
+        default: return false;
+    }
+    const cinema::Crop film = FilmNow();
+    if (film.w < 16 || film.h < 16 || film.x + film.w > bd.Width || film.y + film.h > bd.Height) return false;
+    if (!MakeHudPipeline() || !EnsureHudOut(g_film3d, film.w * 2, film.h, "3D film")) return false;
+    g_film3d.usedAt = GetTickCount64();
+    uint32_t idx = 0;
+    XrSwapchainImageReleaseInfo ri{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    if (NextImage(g_film3d.sc, &idx, "3D film") <= 0) return false;
+    ID3D12GraphicsCommandList* l = OpenList();
+    if (!l || idx >= g_film3d.img.size()) { xrReleaseSwapchainImage(g_film3d.sc, &ri); return false; }
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    rtv.ptr += (SIZE_T)(g_film3d.rtv0 + (int)idx) * g_rtvInc;
+    D2rv3Frame f{};
+    f.size = sizeof f;
+    f.src = bb;
+    f.srcState = D3D12_RESOURCE_STATE_PRESENT;
+    f.srcViewFormat = view;
+    f.srcEncoding = enc;
+    f.filmX = film.x; f.filmY = film.y; f.filmW = film.w; f.filmH = film.h;
+    f.rtv = rtv.ptr;
+    f.rtvFormat = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+    f.outW = film.w * 2;
+    f.outH = film.h;
+    f.strengthPct = g_cfg.video3dPct;
+    f.convergence = g_cfg.video3dConv;
+    const int r = video3dlib::Record(l, &f);
+    SubmitList();   // (an open list is always handed over: the allocator ring counts on it)
+    if (r >= 0) video3dlib::Submitted();
+    const bool released = Ok(xrReleaseSwapchainImage(g_film3d.sc, &ri), "xrReleaseSwapchainImage(3D film)");
+    if (r < 0 || !released) return false;
+    g_film3dFilm = film;
+    static int toldDepth = -1;
+    if (toldDepth != (r == 1 ? 1 : 0)) {
+        toldDepth = r == 1 ? 1 : 0;
+        LogF("vrcam: openxr - cinema: the film in 3D on the big screen, %ux%u a side%s ([cinema] video_3d=1, %.1f%%, convergence %.2f)", film.w, film.h,
+             r == 1 ? "" : " - flat in both eyes until its depth is ready", g_cfg.video3dPct, g_cfg.video3dConv);
+    }
+    return true;
 }
 
 // -- where a piece hangs (FlatVR's rules) -------------------------------------------
@@ -5590,6 +5725,7 @@ bool OpenFrame(Kind kind) {
     const bool beginGone = g_failStreak[1].Note(br, GetTickCount64());
     if (br != XR_FRAME_DISCARDED && !Ok(br, "xrBeginFrame")) { if (beginGone) GiveUp("xrBeginFrame", br); return false; }
     ReapChains();   // swapchains retired earlier, destroyed only if the game's queue drains in a few ms (chain_reaper.h)
+    ReapTell();     // ... and while any wait, a line every 10 s with what the drains did
     g_beginUs = t1;
     g_kind = kind;
     g_copied[0] = g_copied[1] = false;
@@ -6732,11 +6868,56 @@ uint32_t HangCalibration(const XrCompositionLayerBaseHeader** layers, uint32_t n
 // these is named by one. The pictures the painters handed over are kept and uploaded again. (Not the flat picture: a refused make of it is
 // taken for a render size the runtime refuses - vrres::SwapchainMade - and the size falls back.)
 constexpr ULONGLONG kIdleFreeMs = 10000;
+// [openxr] prewarm (vr/prewarm.h: the 2026-11-25 hitches of the waypoint panel's, the big map's and the quest notice's swapchains made on first use):
+// the menu panel's swapchain made at the picture's size on a loading screen or in the game's own resize, the notice card's on a loading screen once
+// its size is known; one a frame. The panel's size is the game's interface canvas = its picture (the flat chain's whole size); a canvas of another
+// size (rare) is made again at first use, as before.
+prewarm::Plan g_prewarmPlan;
+void PrewarmChains() {
+    if (!g_prewarm.load() || g_hudBuild.load(std::memory_order_acquire) == 1 || !g_session || gpufault::Removed()) return;
+    const ULONGLONG now = GetTickCount64();
+    HudOut& panel = g_hudOut[hud::kNativePanel];
+    hud::NativePiece notice;
+    prewarm::In in;
+    in.now = now;
+    in.pw = g_quadChain.pw;
+    in.ph = g_quadChain.ph;
+    in.loading = !vrc::g_inWorld.load();
+    in.panelMade = panel.sc != XR_NULL_HANDLE;
+    in.panelW = panel.w;
+    in.panelH = panel.h;
+    in.panelUsedAt = panel.usedAt;
+    in.noticeMade = g_noticeOut.sc != XR_NULL_HANDLE;
+    if (!in.noticeMade && in.loading && hud::NoticePiece(&notice, nullptr)) { in.noticeW = notice.w; in.noticeH = notice.h; }
+    const prewarm::Make make = g_prewarmPlan.Step(in);
+    if (make == prewarm::Make::None || !MakeHudPipeline()) return;
+    static int told = 0;
+    const double t0 = UsNow();
+    const bool loading = in.loading;
+    const uint32_t pw = in.pw, ph = in.ph;
+    if (make == prewarm::Make::Panel) {
+        if (EnsureHudOut(panel, pw, ph, "menu panel") && told++ < 6)
+            LogF("vrcam: openxr - the menu panel's swapchain %ux%u made ahead (%s, %.0f ms; [openxr] prewarm): the first menu opens without it",
+                 pw, ph, loading ? "a loading screen" : "in the game's own resize", (UsNow() - t0) / 1000.0);
+        return;   // (one a frame)
+    }
+    if (!EnsureHudOut(g_noticeOut, notice.w, notice.h, "quest / level-up notice")) return;
+    g_noticeOut.usedAt = now;   // (FreeIdle counts its idle time from here)
+    if (told++ < 6) {
+        LogF("vrcam: openxr - the quest / level-up notice's swapchain %ux%u made ahead (a loading screen, %.0f ms; [openxr] prewarm)", notice.w, notice.h,
+             (UsNow() - t0) / 1000.0);
+    }
+}
+
 void FreeIdle() {
     const ULONGLONG now = GetTickCount64();
     auto idle = [&](ULONGLONG usedAt) { return now - usedAt > kIdleFreeMs; };
+    // [openxr] prewarm: the notice card's and the turned big map's are kept while our swapchains are few (each was made again at every notice: 7
+    // times in one session, 70-110 ms each); SteamVR's 16 a session stays the reason they go when there are many (prewarm::kKeepUnder)
+    const bool keepShown = prewarm::KeepShown(g_prewarm.load(), g_chains.Live());
     for (HudOut* o : {&g_noticeOut, &g_bigTurnOut})
-        if (o->sc && idle(o->usedAt)) ReleaseHudOut(*o);
+        if (o->sc && idle(o->usedAt) && !keepShown) ReleaseHudOut(*o);
+    if (g_film3d.sc && idle(g_film3d.usedAt)) ReleaseHudOut(g_film3d);   // ([cinema] video_3d: the film's eye pair goes when idle, never kept)
     {   // [openxr] hands_over_panels: only while the skill panel is up on its Gestures tab - as it closes its two swapchains go back at once and the
         // pass's pipeline and descriptors once the GPU is past its last list; elsewhere nothing of it exists (vr/near_overlay.h)
         const bool want = NearOverlayWanted();
@@ -6790,6 +6971,7 @@ void FreeIdle() {
 void CloseFrame() {
     if (g_kind == kNone) return;
     FreeIdle();
+    PrewarmChains();   // [openxr] prewarm: the menu panel's / notice's swapchain made where no frame is seen waiting
     TurnFrameEnd();   // eyes by turns: an image acquired for the eye made goes back before the frame's layers (normally TurnFinish did)
     const double closeUs = UsNow();   // the layers built from here, xrEndFrame from endUs (g_clock)
     XrCompositionLayerProjectionView pv[2] = {{XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}, {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
@@ -6903,6 +7085,7 @@ void CloseFrame() {
         if (proj.views == pv) nl = HangNear(layers, nl, most, pv, nearProj, nearPv);   // [openxr] hands_over_panels: ... but the hands and the weapon over them
         if (runesOverPanel) nl = HangRunes(layers, nl, most);   // ... but the trail drawn for the Gestures tab lies over it (the window keeps its place)
         g_cinemaPlace.placed = false;   // [cinema] world_screen: the world again - the next cinematic's screen placed in front anew
+        g_film3dWasPlaying = false;     // ([cinema] video_3d: ... and the next film's depth starts afresh)
         ++g_st.pairs;
     } else if (g_fs.shouldRender && g_kind == kMono && g_copied[0]) {
         const bool cinemaNow = gamestate::CinemaPlaying();   // [cinema] world_screen: the flat picture is the big screen (false with the key off)
@@ -6912,7 +7095,7 @@ void CloseFrame() {
             RECT client{};
             const bool win = g_wnd && GetClientRect(g_wnd, &client) && client.right > 0 && client.bottom > 0;
             const cinema::Crop band = cinema::MovieBand(g_quadChain.w, g_quadChain.h, win ? (uint32_t)client.right : 0u, win ? (uint32_t)client.bottom : 0u);
-            const cinema::Crop film = cinema::FilmIn(band);
+            const cinema::Crop film = g_film3dShown ? g_film3dFilm : cinema::FilmIn(band);   // ([cinema] video_3d: the rectangle its eyes were drawn from)
             const cinema::Size size = cinema::ScreenSize(film, g_cfg.cinemaWidthM);
             const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
             const bool again = !g_cinemaPlace.placed || g_cinemaPlace.epoch != g_epoch || !g_anchorReady;
@@ -6930,7 +7113,19 @@ void CloseFrame() {
             quad.pose.orientation = Yaw(g_cinemaPlace.yaw);
             quad.pose.position = g_cinemaPlace.pos;
             quad.size = {size.width, size.height};
-            layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
+            if (g_film3dShown && g_film3d.sc && nl + 2 <= most) {
+                // [cinema] video_3d: the same screen, a quad for each eye from its half of the 3D film's swapchain
+                for (int e = 0; e < 2; ++e) {
+                    XrCompositionLayerQuad& q = winQuad[e];
+                    q = quad;
+                    q.eyeVisibility = e == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+                    q.subImage.swapchain = g_film3d.sc;
+                    q.subImage.imageRect = {{(int32_t)(e * film.w), 0}, {(int32_t)film.w, (int32_t)film.h}};
+                    layers[nl++] = (const XrCompositionLayerBaseHeader*)&q;
+                }
+            } else {
+                layers[nl++] = (const XrCompositionLayerBaseHeader*)&quad;
+            }
             FlatShown shown{quad.pose, quad.size, true};
             cinema::Fractions(film, g_quadChain.w, g_quadChain.h, shown.crop);
             g_flatShown = shown;   // where the next frame's laser points: the film's own pixels of the window
@@ -7097,7 +7292,7 @@ void CloseFrame() {
     const double now = UsNow();
     g_st.frameUs += now - g_beginUs;
     ++g_st.frames;
-    autotunerun::OnFrame(now, g_lastWaitUs, (double)g_fs.predictedDisplayPeriod, viewgate::F4());   // ([autotune]: nothing unless a run measures)
+    autotunerun::OnFrame(now, g_lastWaitUs, g_clock.submit, (double)g_fs.predictedDisplayPeriod, viewgate::F4());   // ([autotune]: nothing unless a run measures)
     g_kind = kNone;
     if (!g_st.since) g_st.since = GetTickCount64();
     if (GetTickCount64() - g_st.since >= 10000) {
@@ -7117,7 +7312,7 @@ void CloseFrame() {
 // [hud] map_compass_flat: the same compass picture for the flat map's strip (vr/render/effects/effects.cpp uploads it into D2R_DepthFog.fx).
 std::vector<uint32_t> CompassPixels() { return PaintCompass(); }
 
-void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
+void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); video3dlib::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
 // The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
@@ -7216,6 +7411,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
     g_cfg.endOnExit = f(L"end_session_on_exit", 0.0f) != 0.0f;   // (live: read when the game quits)
     g_reapDrainMaxMs.store(std::clamp(f(L"reap_drain_max_ms", 200.0f), 20.0f, 500.0f));   // (chain_reaper.h DrainMs; 20 = as before)
+    g_prewarm.store(f(L"prewarm", 1.0f) != 0.0f);   // [openxr] prewarm: the interface's shader / swapchains made ahead (live; the shader at a session's start)
     g_cfg.fovCrop = f(L"fov_crop", 1.0f) != 0.0f;   // on: sharper (square pixels), black above and below (2026-10-10)
     g_cfg.symmetric = f(L"symmetric_fov", 1.0f) != 0.0f;
     {   // [openxr] runtime_fov: each eye exactly as the runtime gives it (off: symmetric_fov / fov_crop as before); live, told when it changes
@@ -7293,6 +7489,13 @@ void LoadSettings(const wchar_t* ini) {
         const cinema::Screen s = cinema::Clamped(d, wcstof(b, nullptr));
         g_cfg.cinemaDistM = s.distance;
         g_cfg.cinemaWidthM = s.width;
+        g_cfg.video3d = GetPrivateProfileIntW(L"cinema", L"video_3d", 0, ini) != 0;
+        GetPrivateProfileStringW(L"cinema", L"video_3d_strength_pct", L"1.6", b, 32, ini);   // (1.6: Serg 2026-11-25, 80% of the first 2 - less depth)
+        const float pct = wcstof(b, nullptr);
+        g_cfg.video3dPct = std::isfinite(pct) ? std::clamp(pct, 0.0f, 6.0f) : 2.0f;
+        GetPrivateProfileStringW(L"cinema", L"video_3d_convergence", L"0.4", b, 32, ini);
+        const float conv = wcstof(b, nullptr);
+        g_cfg.video3dConv = std::isfinite(conv) ? std::clamp(conv, 0.0f, 1.0f) : 0.4f;
     }
     {
         static float said[3] = {};
@@ -8680,6 +8883,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     if (OpenFrame(kMono)) {
         g_pairYawAt.store(0);   // a flat frame: the body goes the game's way again
         if (g_fs.shouldRender && bb && EnsureChain(g_quadChain, bb->GetDesc(), "flat picture's")) g_copied[0] = CopyInto(g_quadChain, bb);
+        g_film3dShown = g_fs.shouldRender && g_copied[0] && DrawFilm3d(bb);   // [cinema] video_3d: the film's two eyes for the big screen
         CloseFrame();
     }
     ReleaseSRWLockExclusive(&g_lock);

@@ -29,7 +29,7 @@ constexpr ULONGLONG kStaleMs = 300;   // frames older than this are not "now"
 const D2RL::PluginContext* g_ctx = nullptr;
 std::atomic<uint32_t> g_counter{0};
 std::atomic<ULONGLONG> g_counterAt{0};
-std::atomic<bool> g_taking{false};
+std::atomic<int> g_taking{0};   // 0 nothing taken, 1 a hand's grip is the weapon's, 2 the left alone: its chords take the right grip
 std::atomic<bool> g_gripNoChord{false};   // [weight] weapon_grip_no_chord
 
 void Log(const char* text) { if (g_ctx) logasync::Info(g_ctx, text); }
@@ -42,17 +42,24 @@ void OnFrame(const directinput::Frame& f, void*) {
     // F4 only (vr/view_gate.h); a menu or panel open, or no input focus: the grips are not the weapon's (the pad is the menu's)
     const bool ok = weight::Placed() && viewgate::F4() && (f.flags & directinput::kFocused) &&
                     !(f.flags & (directinput::kInMenu | directinput::kOtherView));
-    bool took = false;
+    bool took = false, lent = false;
     if (ok) {
         for (int side = 0; side < 2; ++side) {   // weight's hands: 0 right, 1 left; direct_input's: 0 left, 1 right
             if (!weight::HoldsWeapon(side)) continue;
-            directinput::Take(1 - side, directinput::kSqueeze | directinput::kTakeSqueeze, directinput::kSrcOther1);
+            // The LEFT hand alone on the weapon (a weapon in the game's left slot, [hands] left_slot_drawn_left, or passed over to it): the left controls' chords
+            // (left_grip+left_menu = the map, left_grip+left_stick = the recentre) take the free RIGHT grip, as they take the free left grip with the weapon on the
+            // right. The right hand on the weapon keeps the rule as it was (its chords are not moved to the left grip).
+            const bool lend = side == 1 && !weight::HoldsWeapon(0);
+            directinput::Take(1 - side, directinput::kSqueeze | directinput::kTakeSqueeze | (lend ? directinput::kChordOtherGrip : 0u), directinput::kSrcOther1);
             took = true;
+            lent = lent || lend;
         }
     }
-    if (took != g_taking.exchange(took))
-        Log(took ? "vrcam: weight - the grip of a hand on the weapon is the weapon's: not a chord's modifier"
-                 : "vrcam: weight - no hand on the weapon: the grips are the layout's again");
+    const int state = took ? (lent ? 2 : 1) : 0;
+    if (state != g_taking.exchange(state))
+        Log(state == 2 ? "vrcam: weight - the left hand alone holds the weapon: its grip is the weapon's, so the left controls' grip chords (the map, the recentre) are made with the RIGHT grip"
+            : state == 1 ? "vrcam: weight - the grip of a hand on the weapon is the weapon's: not a chord's modifier"
+                         : "vrcam: weight - no hand on the weapon: the grips are the layout's again");
 }
 
 }  // namespace

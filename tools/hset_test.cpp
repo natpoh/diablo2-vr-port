@@ -30,6 +30,7 @@
 #include "hset_store.h"
 #include "ini_txn.h"
 #include "turn_mode.h"
+#include "f2_map.h"   // [hud_third] map_x / map_y / map_size: the F2 page's ranges are the plugin's clamps
 
 using namespace hset;
 
@@ -195,8 +196,8 @@ static void TestDefs() {
     CHECK(RowsOn(kPageGuide) == 0 && RowsOn(kPageCoop) == 0, "the Co-op and Guide pages have no table rows (they draw their own)");
     CHECK(RowsOn(kPageVideo) == 7, "the Video page: its slider by hand, seven table rows under it (the Quality preset, the Draw distance, 3D in the headset, Sky / Fog drawn by, the Potato light's two brightnesses)");
     CHECK(RowsOn(kPageBody) == 1 && KeyAt(kPageBody, 0) == kKeySeated, "the Body page: one table row on top, how you play ([calibration] seated)");
-    CHECK(PageCount() == 27 && PageCount() <= kMaxPages && kTabCount == 17,
-          "twenty-seven pages under seventeen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F1 and F3 under View, Map under HUD; F5 its own)");
+    CHECK(PageCount() == 28 && PageCount() <= kMaxPages && kTabCount == 17,
+          "twenty-eight pages under seventeen tabs (Controls' two, Melee's two, World's four, Party under Co-op, Render under Video, F1, F2 and F3 under View, Map under HUD; F5 its own)");
     {   // F5 (Serg 2026-11-19: "и так же во внутреннем оврелее" "для ф5"): a tab of its own after View - VR F5's five keys as D2R VR Settings > F5 has
         // them, the same ini keys, live; shown in every view (F5 is switched on from another); in VR F5 (view 5) the pages are F1 - F3's
         CHECK(RowsOn(kPageF5) == 7 && CloseRows(kPageF5) && !TightRows(kPageF5) && StartsTab(kPageF5) && TabOf(kPageF5) == TabOf(kPageView) + 1 && TabPage(TabOf(kPageF5)) == kPageF5,
@@ -309,8 +310,8 @@ static void TestDefs() {
         float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
         CHECK((HitTest(kPageView, u, v, 1) == Hit{Kind::Tab, kPageF1, 0}) && (HitTest(kPageF1, u, v, 1) == Hit{Kind::Tab, kPageView, 0}),
               "View's F1 button in VR F1, F1's View button");
-        CHECK((HitTest(kPageView, u, v, 0) == Hit{Kind::Tab, kPageF3, 0}) && HitTest(kPageView, u, v, 2).kind == Kind::None,
-              "view 0 keeps the F3 button; none in VR F2");
+        CHECK((HitTest(kPageView, u, v, 0) == Hit{Kind::Tab, kPageF3, 0}) && (HitTest(kPageView, u, v, 2) == Hit{Kind::Tab, kPageF2, 0}),
+              "view 0 keeps the F3 button; VR F2 its F2 one");
         CHECK(!std::strcmp(kPageNames[kPageF1], "F1"), "the page's name");
         Snapshot s;
         s.ready = true;
@@ -337,6 +338,44 @@ static void TestDefs() {
         }
         m.Click({Kind::Change, persp, 1});   // (a tick flips)
         CHECK((m.Get()[persp] < 0.5f) != (persp1 < 0.5f) && (TopViewMissing(m, sky) != nullptr || persp1 < 0.5f), "the other way round");
+    }
+    {   // F2 (a player 2026-11-25 via Serg: "its always too far in top right corner"): the View tab's second page in VR F2 - [hud_third] map_x / map_y /
+        // map_size as D2R VR Settings > UI: F2 behind has them (vr/f2_map.h), live; VR F2 only (and Settings' own / a test); the bottom bar's F2 / View
+        CHECK(RowsOn(kPageF2) == 3 && !CloseRows(kPageF2) && TabOf(kPageF2) == TabOf(kPageView) && !StartsTab(kPageF2) && LeadOf(kPageF2) == kPageView,
+              "F2: three rows under the View tab");
+        const int mx = KeyAt(kPageF2, 0), my = KeyAt(kPageF2, 1), ms = KeyAt(kPageF2, 2);
+        const wchar_t* const keys[3] = {L"map_x", L"map_y", L"map_size"};
+        const float defs[3] = {0.0f, 0.0f, 100.0f};
+        for (int r = 0; r < 3; ++r) {
+            const int k = KeyAt(kPageF2, r);
+            CHECK(k >= 0 && !wcscmp(kDefs[k].section, L"hud_third") && !wcscmp(kDefs[k].key, keys[r]) && !IsToggle(kDefs[k]) && kDefs[k].def == defs[r] &&
+                      kDefs[k].live && Normalize(k, defs[r]) == defs[r],
+                  "an F2 row: [hud_third]'s key, the plugin's default (as now, on the grid), live");
+            if (k >= 0) CHECK(std::strlen(kDefs[k].label) <= 30 && std::strlen(kDefs[k].detail) <= 52, "the texts fit the row");
+        }
+        CHECK(kDefs[mx].min == f2map::kShiftMin && kDefs[mx].max == f2map::kShiftMax && kDefs[my].min == f2map::kShiftMin && kDefs[my].max == f2map::kShiftMax &&
+                  kDefs[ms].min == f2map::kSizeMin && kDefs[ms].max == f2map::kSizeMax,
+              "the plugin's clamps (vr/f2_map.h)");
+        CHECK(PageShown(kPageF2, 2) && PageShown(kPageF2, 0) && !PageShown(kPageF2, 1) && !PageShown(kPageF2, 3) && !PageShown(kPageF2, 4) && !PageShown(kPageF2, kViewF5),
+              "VR F2 only (and Settings' own)");
+        float u = (kPreviewBtn.x + 0.5f * kPreviewBtn.w) / kW, v = (kPreviewBtn.y + 0.5f * kPreviewBtn.h) / kH;
+        CHECK((HitTest(kPageView, u, v, 2) == Hit{Kind::Tab, kPageF2, 0}) && (HitTest(kPageF2, u, v, 2) == Hit{Kind::Tab, kPageView, 0}),
+              "View's F2 button in VR F2, F2's View button");
+        CHECK(ViewSubPage(2) == kPageF2 && ViewSubPage(1) == kPageF1 && ViewSubPage(3) == kPageF3 && ViewSubPage(0) == kPageF3 && ViewSubPage(4) < 0,
+              "each view its own page; view 0 keeps F3's");
+        CHECK(!std::strcmp(kPageNames[kPageF2], "F2"), "the page's name");
+        Snapshot s;
+        s.ready = true;
+        Model m;
+        m.Open(s);
+        m.Click({Kind::Tab, kPageF2, 0});
+        CHECK(m.page == kPageF2, "the page opens");
+        m.Click({Kind::Change, mx, 1});
+        CHECK(std::fabs(m.Get()[mx] - 5.0f) < 1e-3f && (kLiveMask & Bit(mx)) && (kLiveMask & Bit(my)) && (kLiveMask & Bit(ms)), "+ moves it 5 %; all three keys live");
+        for (int i = 0; i < 40; ++i) m.Click({Kind::Change, mx, 1});
+        CHECK(std::fabs(m.Get()[mx] - 90.0f) < 1e-3f, "+ stops at 90 %");
+        for (int i = 0; i < 60; ++i) m.Click({Kind::Change, ms, -1});
+        CHECK(std::fabs(m.Get()[ms] - 30.0f) < 1e-3f, "- stops at 30 %");
     }
     {   // F3 (Serg 2026-11-08, "Yes, add them"): the View tab's second page - [table] full_width and draw_distance as D2R VR Settings > Camera > "F3 The
         // game on your floor" has them, live; VR F3 only (and Settings' own / a test); the bottom bar's F3 / View
@@ -2749,8 +2788,8 @@ static void TestBelt() {
     CHECK(kDefs[kKeyBeltOn].page == kNoPage && !kDefs[kKeyBeltOn].live && IsToggle(kDefs[kKeyBeltOn]), "belt_models: the Belt page's note, not live");
     int live = 0;
     for (int i = 0; i < kCount; ++i) live += kDefs[i].live ? 1 : 0;
-    CHECK(live == 85 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
-          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F1 page's five, the F3 page's two, the Left page's Left-handed, the Map page's keep and the map mode's seven keys and the Walk page's six (its source since 2026-11-22) and the F5 page's seven - not the others");
+    CHECK(live == 88 && kLiveMask != 0 && (kLiveMask & Bit(KeyOf(L"brightness"))) == 0 && (kLiveMask & Bit(kKeySmooth)) == 0,
+          "the live keys: the World pages' 22, the belt's, the Melee tab's (the skill arming's two, quick blow and the faster attack, Direct hit's three, the swing timer and its reasons), the Body page's standing / seated and its Arm span's three (use, version, arm_span_m) and the HUD page's three of our names and its medallions' look, the F1 page's five, the F2 page's three, the F3 page's two, the Left page's Left-handed, the Map page's keep and the map mode's seven keys and the Walk page's six (its source since 2026-11-22) and the F5 page's seven - not the others");
     CHECK(kCount <= 256 && kCount > 128, "the masks are 256 bits, and the table is past 128 keys (the Quality preset's)");
     {   // the 256-bit mask: a key past 64, 128 or 192 has its own bit, sets and tests as the first ones do
         const Mask a = Bit(3), b = Bit(70), c = Bit(140), d = Bit(200), ab = a | b, all4 = a | b | c | d;
@@ -3492,7 +3531,7 @@ static void TestLowLife() {
     }
     CHECK(kDefs[KeyAt(kPageLife, 0)].key == std::wstring(L"low_hp_vignette"), "the first row of the Life page is the tick that switches it on");
     CHECK(RowsOn(kPageLife) == 6 && RowsOn(kPageLook) == 5, "six rows on Life, five on Look: all eleven keys");
-    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 27, "the tabs");
+    CHECK(!std::strcmp(kPageNames[kPageLife], "Life") && !std::strcmp(kPageNames[kPageLook], "Look") && !std::strcmp(kPageNames[kPageHud], "HUD") && PageCount() == 28, "the tabs");
     CHECK(IsLifePage(kPageLife) && IsLifePage(kPageLook) && !IsLifePage(kPageView) && !IsLifePage(kPageOptions) && !IsLifePage(kPageVideo) && !IsLifePage(kPageBody) &&
               !IsLifePage(-1) && !IsLifePage(99),
           "only those two pages ask for the preview");

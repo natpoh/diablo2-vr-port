@@ -59,4 +59,15 @@ constexpr unsigned kAnchor = 3;
 // F5's toolbar hung now? The box, VR F5 (vr/ar_view.h IsArView).
 inline bool Wanted(bool f5Toolbar, bool arView) { return f5Toolbar && arView; }
 
+// [hud_third] bar_low (Serg 2026-11-25: "толбар с хп давай сделаем как на виде ф5 внизу под камерой … выбор: либо внизу под камерой либо просто перед
+// экраном как сейчас"): VR F2's toolbar hung the same way - cut out of the picture, low in front at F2's own height and distance (bar_low_below_cm,
+// bar_low_ahead_cm, the same defaults as F5's). 0 = in front, in the picture, as before. Only while F2's interface is in the picture ([hud_third]
+// classic 0): "Hung in the room" has F4's places already. vrF2: VR, our camera on, behind the hero - not from above, not the floor, not F5.
+inline bool WantedF2(int barLow, bool vrF2, bool inPicture) { return barLow == 1 && vrF2 && inPicture; }
+
+// Which height and distance the strip takes: F2's own sliders while F2 wants it, else F5's.
+inline Offset OffsetNow(bool f2, float f2Below, float f2Ahead, float f5Below, float f5Ahead) {
+    return f2 ? OffsetFor(f2Below, f2Ahead) : OffsetFor(f5Below, f5Ahead);
+}
+
 }  // namespace f5bar

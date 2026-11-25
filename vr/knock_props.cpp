@@ -71,6 +71,7 @@ bool g_glowing = false;   // the tick's: props handed to the glow
 std::atomic<bool> g_grabWanted{false};   // [weight] grab_props
 std::atomic<float> g_strength{1.0f}, g_haptic{0.35f};
 std::atomic<bool> g_heft{false};   // [weight] prop_heft
+std::atomic<bool> g_onContact{false};   // [weight] props_on_contact
 propscene::Catalog g_catalog;
 std::atomic<bool> g_catalogReady{false};
 std::atomic<int> g_state{0};   // 0 off, 1 waiting (no library / catalogue / F4), 2 running
@@ -440,6 +441,7 @@ struct Out {
     std::vector<D2rpKnock> knocks;
     unsigned steps = 0, moving = 0, late = 0;
     double stepUs = 0, worstUs = 0;
+    int bodiesMost = -1;       // [weight] props_on_contact: the most Box3D bodies the props and their surfaces held at once since the last report (-1: not known)
     // [weight] grab_props: each hand after the newest step, where it and its prop were the step before (the write pass draws between the two), what it did since it was read
     struct HandShot {
         bool ok = false;
@@ -522,7 +524,7 @@ void PhysicsThread() {
     params.propMass = 1.0f;
     void* world = nullptr;
     float strengthMade = -1.0f;
-    bool heftMade = false;
+    bool heftMade = false, onContactMade = false;
     uint64_t worldNo = 0, propsSerial = 0;
     std::vector<D2rpProp> props;
     std::vector<float> masses;
@@ -589,12 +591,16 @@ void PhysicsThread() {
         }
         // [weight] prop_heft: the library weighs each prop by its kind and size (D2rpSetPropMass) - switched either way, the world is made anew (off: the materials' masses again)
         const bool heft = g_heft.load() && propslib::HasPropMass();
-        if (world && (strength != strengthMade || heft != heftMade)) { propslib::Destroy(world); world = nullptr; clear = true; }
+        // [weight] props_on_contact: bodies only on contact (D2rpParams.onContact; a library without it does not read the field) - switched, the world is made anew
+        const bool onContact = g_onContact.load() && propslib::HasOnContact();
+        if (world && (strength != strengthMade || heft != heftMade || onContact != onContactMade)) { propslib::Destroy(world); world = nullptr; clear = true; }
         if (!world) {
             params.strength = strength;
+            params.onContact = onContact ? 1 : 0;
             world = propslib::Create(&params);
             strengthMade = strength;
             heftMade = heft;
+            onContactMade = onContact;
             if (!world) { next = Now() + 1.0; continue; }
             clear = true;
             newProps = newStatics = true;
@@ -620,6 +626,7 @@ void PhysicsThread() {
             const double t0 = Now();
             const int moving = propslib::Step(world, next, (float)kStep);
             const double us = (Now() - t0) * 1e6;
+            const int bodies = propslib::BodyCount(world);   // ([weight] props_on_contact's log: -1 with a library without it)
             next += kStep;
             ++steps;
             const int np = propslib::Poses(world, poses, D2RP_MAX_PROPS);
@@ -650,6 +657,7 @@ void PhysicsThread() {
             g_out.moving = (unsigned)std::max(0, moving);
             g_out.stepUs += us;
             g_out.worstUs = std::max(g_out.worstUs, us);
+            g_out.bodiesMost = std::max(g_out.bodiesMost, bodies);
         }
         if (next <= Now()) { ++late; next = Now() + kStep; }   // behind by more than kMaxCatchUp steps: start afresh from now, not a run of catch-up steps
         if (late) { std::lock_guard<std::mutex> l(g_outMutex); g_out.late += late; }
@@ -877,6 +885,13 @@ void Init(LogFn log, PulseFn pulse, const wchar_t* pluginDir) {
         LogF("knock props: no catalogue (%s): the level's props stand where they are until D2R VR Settings makes it from your game (Weapon Weight > Knock props)",
              data.empty() ? "d2r_vr_props\\props.bin is missing" : "d2r_vr_props\\props.bin does not read");
     }
+}
+
+void ConfigureOnContact(bool on) {
+    const bool was = g_onContact.exchange(on);
+    if (was != on) Log(on ? "knock props: bodies only on contact ([weight] props_on_contact) - a prop or the surface under it becomes a physics body only when something could reach "
+                            "it, the weapons only near props, nothing stepped at rest (when the weight library has it; the world is made anew)"
+                          : "knock props: bodies on contact off ([weight] props_on_contact=0) - every listed prop and surface a physics body at once, as before");
 }
 
 void ConfigureHeft(bool on) {
@@ -1256,13 +1271,15 @@ void Tick(const Frame& fr) {
     std::vector<D2rpKnock> knocks;
     unsigned steps = 0, late = 0;
     double stepUs = 0, worstUs = 0;
+    int bodiesMost = -1;
     {
         std::lock_guard<std::mutex> l(g_outMutex);
         knocks.swap(g_out.knocks);
         if (nowMs - g_reportAt >= 10000) {
-            steps = g_out.steps; late = g_out.late; stepUs = g_out.stepUs; worstUs = g_out.worstUs; moving = g_out.moving;
+            steps = g_out.steps; late = g_out.late; stepUs = g_out.stepUs; worstUs = g_out.worstUs; moving = g_out.moving; bodiesMost = g_out.bodiesMost;
             g_out.steps = g_out.late = 0;
             g_out.stepUs = g_out.worstUs = 0;
+            g_out.bodiesMost = -1;
         }
     }
     static uint64_t pulsedAt[2] = {0, 0};
@@ -1318,10 +1335,12 @@ void Tick(const Frame& fr) {
     snprintf(g_status, sizeof g_status, "running: %u props in reach, %u moving", g_lastSeen, moving);
     if (nowMs - g_reportAt >= 10000) {
         g_reportAt = nowMs;
+        char bodies[96] = "";   // [weight] props_on_contact: standing among props nobody touches it says 0 (a library with D2rpBodyCount only)
+        if (bodiesMost >= 0) snprintf(bodies, sizeof bodies, "; Box3D bodies most=%d (bodies on contact %s)", bodiesMost, g_onContact.load() ? "on" : "off");
         LogF("knock props: ten seconds - %u props in reach (%u catalogued near of %u entities, %u prefabs' by id, %u ids at other places; scan %.1f ms%s%s), physics %u steps at %.0f Hz (%.0f us each, worst %.0f us, %u times behind), "
-             "%u moving now; knocks %u; writes %u, settles %u, lost %u, passes %u",
+             "%u moving now; knocks %u; writes %u, settles %u, lost %u, passes %u%s",
              g_lastSeen, g_lastMatched, g_lastNearby, g_lastById, g_lastElsewhere, g_lastScanMs, *g_lastWhy ? ", " : "", g_lastWhy, steps, 1.0 / kStep, steps ? stepUs / steps : 0.0, worstUs, late, moving,
-             g_knocks.exchange(0), g_writes.exchange(0), g_settles.exchange(0), g_lost.exchange(0), g_passes.exchange(0));
+             g_knocks.exchange(0), g_writes.exchange(0), g_settles.exchange(0), g_lost.exchange(0), g_passes.exchange(0), bodies);
     }
 }
 

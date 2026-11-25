@@ -614,7 +614,10 @@ inline Scene Compose(const Model& m, const Hit& hover, const ComposeOptions& opt
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.go", "F3"), {Kind::Tab, kPageF3, 0}, false, true, Role::Accent);
     if (m.page == kPageView && ViewSubPage(m.View()) == kPageF1)
         b.Button(kPreviewBtn, uitext::Tr("vr.hset.f1.go", "F1"), {Kind::Tab, kPageF1, 0}, false, true, Role::Accent);
+    if (m.page == kPageView && ViewSubPage(m.View()) == kPageF2)   // (F2: the corner map's [hud_third] keys, VR F2)
+        b.Button(kPreviewBtn, uitext::Tr("vr.hset.f2.go", "F2"), {Kind::Tab, kPageF2, 0}, false, true, Role::Accent);
     if (m.page == kPageF3) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f3.back", "View"), {Kind::Tab, kPageView, 0});
+    if (m.page == kPageF2) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f2.back", "View"), {Kind::Tab, kPageView, 0});
     if (m.page == kPageF1) b.Button(kPreviewBtn, uitext::Tr("vr.hset.f1.back", "View"), {Kind::Tab, kPageView, 0});
 
     const std::string line = opt.status ? std::string(opt.status) : StatusLine(m, opt.window);

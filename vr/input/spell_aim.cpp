@@ -222,6 +222,88 @@ bool LeapLookup(uintptr_t ret, int skill, void** unit) {
     return true;
 }
 
+// ---- [gameplay] whirlwind_stick_steer (vr/unleashed_whirl_steer.h, MPL 2.0 from D2R VR Unleashed 09c3093 by Berk) --------------------------------
+// The Barbarian's Whirlwind steered by the walk stick, VR F4. A whirl cannot turn once it has begun (the game's server holds the hero to its spot and
+// refuses every command until it ends; a held button's repeat then starts the next whirl at once), so the stick steers between whirls: while it is
+// pushed past the game's own walk dead zone, each Whirlwind cast - a press, or a repeat of the held button - goes whirlsteer::AheadCells (10) cells
+// where that push would walk (our view's right and ahead on the ground, as ViewStickToGame turns the walk; [hands] left_handed's swap is made before
+// the pad's report). Only the answers to the game's own questions about the cast are ours, as leap_by_gaze's: its four target lookups answer none (no
+// monster: the stick wins over the one near the aim) and the resolver's AttackPoint is the stick's spot. Nothing is pressed or held; the cast, its mana,
+// its hits and its path are the game's. At rest, unticked, F1 - F3, the flat game, a menu, a Whirlwind armed for a touch ([melee_armed]) or the shield:
+// the game's aim, as before. One decision a cast, made at its first question and kept for the others (200 ms at most, until the click has asked).
+std::atomic<int32_t> g_whirlStick{0};      // the pad's left stick (x low word, y high word), as TurnStick last read it from the pad the game uses
+std::atomic<ULONGLONG> g_whirlStickAt{0};  // ... when (0: never)
+void WhirlStickNote(int16_t lx, int16_t ly) {
+    g_whirlStick.store((int32_t)(((uint32_t)(uint16_t)ly << 16) | (uint16_t)lx), std::memory_order_relaxed);
+    g_whirlStickAt.store(GetTickCount64(), std::memory_order_relaxed);
+}
+struct WhirlAim { bool ok = false, done = false; ULONGLONG at = 0; float gx = 0.0f, gy = 0.0f, sx = 0.0f, sy = 0.0f; };
+SRWLOCK g_whirlLock = SRWLOCK_INIT;
+WhirlAim g_whirlAim;
+
+bool WhirlSteerOn() {
+    return g_set.whirlStickSteer.load() && viewgate::F4() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen() && !shieldsmite::Casting() &&
+           !meleetouch::TargetPending();
+}
+// This cast's decision: the stick's way on the grid, or not ok (the stick at rest or stale, no view): the game's aim.
+WhirlAim WhirlAimNow() {
+    namespace ws = unleashed::whirlsteer;
+    const ULONGLONG now = GetTickCount64();
+    AcquireSRWLockShared(&g_whirlLock);
+    const WhirlAim last = g_whirlAim;
+    ReleaseSRWLockShared(&g_whirlLock);
+    if (!last.done && last.at && now - last.at < 200) return last;   // this cast's, asked again (at rest too: the cast's lookups agree)
+    WhirlAim a;
+    a.at = now;
+    const int32_t packed = g_whirlStick.load(std::memory_order_relaxed);
+    a.sx = (float)(int16_t)(packed & 0xFFFF) / 32767.0f;
+    a.sy = (float)(int16_t)((uint32_t)packed >> 16) / 32767.0f;
+    float wx = 0.0f, wz = 0.0f;
+    if (ws::Fresh(g_whirlStickAt.load(std::memory_order_relaxed), now, 250)) {
+        AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+        if (f.valid && ws::GroundWay(a.sx, a.sy, f.camR, f.camF, &wx, &wz)) {
+            AcquireSRWLockShared(&g_calLock); const Calib c = g_cal; ReleaseSRWLockShared(&g_calLock);
+            aimpoint::GridDir(atan2f(wz, wx), xr::Running(), c.ok, c.mirror != 0, c.angle, &a.gx, &a.gy);   // the world's way onto the grid, as the hand's and the gaze's
+            a.ok = std::isfinite(a.gx) && std::isfinite(a.gy);
+        }
+    }
+    AcquireSRWLockExclusive(&g_whirlLock);
+    g_whirlAim = a;
+    ReleaseSRWLockExclusive(&g_whirlLock);
+    return a;
+}
+// One of the game's target lookups (as LeapLookup): true when it is a steered Whirlwind's - its answer none. skill: the controller's skill where the hook has it.
+bool WhirlLookup(uintptr_t ret, int skill, void** unit) {
+    const int which = ret == g_dispatchTargetRet ? 0 : ret == g_spellTargetRet || ret == g_spellHoverRet ? 1 : ret == g_clickTargetRet ? 2 : -1;
+    if (which < 0 || !WhirlSteerOn() || !g_heroUnit.load()) return false;
+    if (skill < 0) skill = SpellSkill(g_heroUnit.load());
+    if (skill != unleashed::whirlsteer::kWhirlwind) return false;
+    const WhirlAim a = WhirlAimNow();
+    if (which == 2) {   // the click has asked: the cast is on its way, the next (a repeat) decides anew
+        AcquireSRWLockExclusive(&g_whirlLock);
+        if (g_whirlAim.at == a.at) g_whirlAim.done = true;
+        ReleaseSRWLockExclusive(&g_whirlLock);
+        if (a.ok) g_spellClick = {};
+    }
+    if (!a.ok) return false;   // at rest: the game's own answers
+    *unit = nullptr;
+    return true;
+}
+// The resolver's AttackPoint for a steered Whirlwind: AheadCells out from `from` along the stick's way. False: the game's own point stays (the map's edge).
+bool WhirlPointFor(const float from[2], const float game[2], float gx, float gy, float* px, float* py) {
+    namespace ws = unleashed::whirlsteer;
+    const bool ok = aimpoint::Point(from[0], from[1], gx, gy, ws::AheadCells, px, py);
+    static ULONGLONG lastLog = 0;
+    if (GetTickCount64() - lastLog > 500) {
+        lastLog = GetTickCount64();
+        AcquireSRWLockShared(&g_whirlLock); const WhirlAim a = g_whirlAim; ReleaseSRWLockShared(&g_whirlLock);
+        LogF("whirlwind stick steer: Whirlwind aimed %.0f cells where the walk stick points (stick %.2f %.2f in the view, grid way %.2f %.2f) -> the point (%.1f, %.1f)%s; "
+             "the game's own point was %.1f cells out ([gameplay] whirlwind_stick_steer)", ws::AheadCells, a.sx, a.sy, gx, gy, ok ? *px : game[0], ok ? *py : game[1],
+             ok ? "" : " - REFUSED (the map's edge): the game's own point stays", std::hypot(game[0] - from[0], game[1] - from[1]));
+    }
+    return ok;
+}
+
 // "skill 54" for the log (a static buffer: the game's thread only)
 const char* SkillWord(int skill) {
     static char b[24];
@@ -277,6 +359,11 @@ void HookSpellResolve(void* mgr, void* unit, bool assist, float* x, float* y) {
         // [gameplay] leap_by_gaze, teleport_circle: the game's lookups answer the gaze's monster or none (LeapLookup), the aim assist is off, the point is the gaze's (or the circle's)
         const LeapAim a = LeapAimNow(skill);
         if (a.ok) { cast.directed = cast.leap = true; cast.gx = a.gx; cast.gy = a.gy; }
+    } else if (WhirlAim w; unit && x && y && WhirlSteerOn() && (IsHeroUnit(unit) || unit == g_heroUnit.load()) &&
+               (skill = SpellSkill(unit)) == unleashed::whirlsteer::kWhirlwind && (w = WhirlAimNow()).ok) {
+        // [gameplay] whirlwind_stick_steer: the walk stick pushed - the lookups answer none (WhirlLookup), the aim assist is off, the point is the stick's
+        // (WhirlPointFor, by HookAttackPoint). At rest: the branches below, as before.
+        cast.directed = cast.whirl = true; cast.gx = w.gx; cast.gy = w.gy;
     } else if (viewgate::F4() && SpellAimWanted(drawn) && unit && x && y && AimByVector() &&
         !gamestate::MenuOpen() && (heroByAim || IsHeroUnit(unit)) && (skill = SpellSkill(unit)) >= 0)
         cast = SpellCastFor(skill, drawn);
@@ -507,6 +594,7 @@ int LookupOf(uintptr_t ret) {
 
 void* SpellTargetFor(void* mgr, int skill, uintptr_t ret) {
     if (void* leap = nullptr; LeapLookup(ret, skill, &leap)) return leap;   // [gameplay] leap_by_gaze: the gaze's monster, or none
+    if (void* none = nullptr; WhirlLookup(ret, skill, &none)) return none;   // [gameplay] whirlwind_stick_steer: none, the stick's spot instead
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(skill);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellTarget(mgr, skill);   // asked anyway while a shot is traced: to say what the game found
@@ -537,6 +625,7 @@ void* HookSpellTarget(void* mgr, int skill) {
 
 void* SpellHoverFor(int index, uintptr_t ret) {
     if (void* leap = nullptr; LeapLookup(ret, -1, &leap)) return leap;   // [gameplay] leap_by_gaze, as SpellTargetFor
+    if (void* none = nullptr; WhirlLookup(ret, -1, &none)) return none;   // [gameplay] whirlwind_stick_steer, as SpellTargetFor
     if (ret == g_dispatchTargetRet) {
         const bool off = DispatchTargetOff(-1);
         void* t = off && !shottrace::Active() ? nullptr : OrigSpellHover(index);
@@ -765,7 +854,7 @@ void InstallSlotSkillHook() {
 }
 
 void InstallSpellAimHooks() {
-    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (FlatRules() && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load()) ||
+    if (!g_ctx || g_spellAimHook.load() != 0 || !(g_set.spellAim.load() || g_set.whirlStickSteer.load() || g_set.bowAim.load() || g_set.throwAim.load() || g_set.throwGesture.load() || bowdrawwire::On() || shieldsmite::On() || g_set.meleeTouch.load() || g_set.vrBodyPickHand.load() || g_set.pointPickup.load() || (FlatRules() && g_set.flatBodyTarget.load() && g_set.flatBodyPick.load()) ||
                                                    (FlatRules() && (g_set.flatPickupKeyOn.load() || g_set.flatItemHitbox.load())) ||
                                                    (g_set.flatShotAtCrosshair.load() && FlatRules())) || !OrigAttackPoint) return;   // the point's hook in first ([input] flat_body_target: flat, the map click's lookup answered; [input] flat_shot_at_crosshair: for the hover lookup)
     if (!Matches(RVA_SPELL_RESOLVE, kSigSpellResolve, sizeof kSigSpellResolve) || !Matches(RVA_SPELL_TARGET, kSigSpellTarget, sizeof kSigSpellTarget) ||

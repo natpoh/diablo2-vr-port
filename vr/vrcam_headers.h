@@ -64,6 +64,7 @@
 #include "sky/three_skies.h"     // [sky] three_skies: the dome as three pictures - day, night, dawn / dusk - at their own brightnesses
 #include "sky_dome.h"      // [sky] game_sky: our painted sky as the game's own dome (the pure parts)
 #include "game_ceiling.h"  // [ceiling] game_ceiling: the cave ceiling as the game's own lit rock slab (the pure parts, shared with Settings)
+#include "ceiling_floor.h"      // [ceiling] follow_floor: the ceiling a step up where the floor under it rises (the pure parts)
 #include "ceiling_measures.h"   // [ceiling] height_from_walls, game_ceiling_beams: the rooms measured from the game's own models
 
 namespace probe {
@@ -168,7 +169,7 @@ namespace memdiff { void Step(uintptr_t base, const std::wstring& outPath, void 
 namespace hud { void Register(); void SetHide(int mode); void SetInterfaceScale(float s); void SetToolbarCut(float upPct, float downPct, bool tint); void SetMenuOpen(bool open); void SetPanelOut(bool out); void PollMenuReader(); bool FlatVrTakesMenu(); void SetMenuPlace(float widthM, float distanceM, float belowM, uint32_t laser, uint32_t window); int FlatVrLaserState(); void SetMapMode(int mode); bool LayerFound(); void SetLogger(void (*log)(const char*)); void SetLook(const FlatVRGameHudLook& look); void SetMapCorner(int corner); void SetMapDirection(bool want, bool wholeScreen); void SetMapHeading(float x, float y); void SetMapTurnHeading(float x, float y); bool ToggleMapShown();
                 void SetPointer(uint32_t mode); void SetPointerDepth(float base, float tilt, float curve, float topScale); int Anchor(int panel); void SetForearm(int panel, bool valid, const float elbow[3], const float wrist[3], const float across[3]);
                 void SetClassicView(bool on); void SetViewBar(bool on, float sideCm, float liftCm, float widthM); void SetPictureMapInward(bool inward); void SetPictureZoom(float bar, float map); bool PictureWanted(); void SetPictureReady(bool ready); bool PictureReady();
-                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(int style); bool PictureCompass(float box[4], float* crop, int* style, float* bearing); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y);
+                bool PictureNow(int i, float box[4], uint64_t* srv); void SetMapRotateFlat(bool on); int MapTurnState(); void SetMapFlatHeading(float x, float y); bool PictureMapTurn(float circle[4], float hero[2], float m[4], bool* whole); void SetMapTurnWhole(bool whole); void SetMapCompassFlat(int style); bool PictureCompass(float box[4], float* crop, int* style, float* bearing); void SetPictureBarMoved(bool moved); void SetPictureBarOffset(float x, float y); void SetPictureMapMoved(bool moved); void SetPictureMapOffset(float x, float y); void SetPictureMapKeepOn(bool on);
                 void SetLabels(bool on); bool LabelsNow(float keepBar[4], float keepMap[4], uint64_t* srv); void SetUiMask(bool on); void SetUiMaskInMenu(bool on); bool UiMaskNow();
                 void SetGlobes(bool want); bool GlobesNow(float* fit, uint64_t* srv); int GlobesWhy(); }
 #include "d2rcam.h"
@@ -181,7 +182,7 @@ namespace skillwheel { void Init(const D2RL::PluginContext* ctx); void Tick(); v
 namespace skillwheel { bool Enabled(); }
 namespace wheelgame { void Tick(bool on, bool open); }   // the wheel's reads of the controller's skill slots (wheel_game.cpp): a throw by gesture keeps them going for the Throw slot
 namespace gamestate { void Init(const D2RL::PluginContext* ctx); void Tick(); uint32_t WeaponClass(); uint32_t WeaponSet(); uint32_t WeaponType(); uint32_t HandsHeld(); uint32_t TwoHanded(); uint32_t WeaponHand(); uint32_t HandKind(int side); uint32_t HandCode(int side); void SetWantHeroStrength(bool on); int HeroStrength(); int HandRequiredStrength(int side); uint32_t HandsKey(); bool MenuOpen(); void SetLaserPanels(bool on); uint64_t TitleScreenAt(); uint64_t LocalPlayer(); void SetViewMode(uint32_t mode); bool AutoMapOpen(); int MapMode(); bool SetAutoMap(bool open); void SetMapSide(int corner); void SetMapSideFlat(int corner); void SetMapPlaceFlat(int mode); void SetFlatMapZoom(int steps); bool FlatMapZoomSeen(float* game, float* drawn, int* mode); int FlatMapZoomHooks(); void PollPlate(); bool PlateRect(int32_t out[4]); bool PlateReadAt(uintptr_t* unit, float px[2]); bool PlateAnchor(int32_t out[2]); void PollDurability(); bool DurabilityRect(int32_t panel[4], int32_t widget[4], bool* widgetRead); void PollNotice(); bool NoticeRect(int32_t out[4]); bool SkillAimed(int skill); void BeltCodes(uint32_t out[4]); void BeltIds(uint32_t out[4]); }
-namespace gamestate { bool CinemaPlaying(); void SetCinemaEnabled(bool on); void CinemaWorldDrawn(uint64_t now); void CinemaTick(uint64_t now); }   // [cinema] world_screen (vr/unleashed_cinema_screen.h, gamestate.cpp)
+namespace gamestate { bool CinemaPlaying(); void SetCinemaEnabled(bool on); void CinemaWorldDrawn(uint64_t now); void CinemaTick(uint64_t now); uint64_t CinemaCount(); }   // [cinema] world_screen (vr/unleashed_cinema_screen.h, gamestate.cpp)
 namespace gamestate { int HandThrust(int side); }   // hit by touch's thrust: the item's class in the game's data, 1 a thrust (1ht, 2ht), 0 not, -1 not known
 namespace gamestate { bool HandIsThrowPotion(int side); }   // the held item is one of the six throwing potions (gamestate.cpp)
 namespace gamestate { bool InventoryOnly(); }   // [openxr] hand_inventory: every menu open is the inventory (gamestate.cpp)
@@ -257,6 +258,7 @@ namespace gamestate { int HeadSide(); }   // [shield] heads_hang: the hand slot 
 #include "sky/world_light.h"  // M8: the game's light and fog (day and night, its fogs taken out, the cave light, the lights near the hero)
 #include "aim_point.h"
 #include "leap_gaze.h"     // [gameplay] leap_by_gaze: Leap and Leap Attack where the head looks
+#include "unleashed_whirl_steer.h"   // [gameplay] whirlwind_stick_steer: Whirlwind aimed along the pushed walk stick (MPL 2.0)
 #include "leap_air_aim.h"  // [gameplay] leap_air_aim: the next leap aimed in the air
 #include "under_camera.h"  // [body] under_camera: the drawn body under the camera while the game's camera trails the hero
 #include "smooth_follow.h" // [camera] smooth_follow: VR F4's anchor eased over a jerk of the look-at (a bump, a step, a shove)

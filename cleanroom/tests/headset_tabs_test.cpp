@@ -439,6 +439,7 @@ struct World {
         if (page == hset::kPageMap) s = ClickSheet(hset::kPreviewBtn);     // the HUD page's Map button (Map is that tab's second page)
         if (page == hset::kPageF3) s = ClickSheet(hset::kPreviewBtn);      // the View page's F3 button (F3 is that tab's second page; VR F3 and view 0)
         if (page == hset::kPageF1) s = ClickSheet(hset::kPreviewBtn);      // the View page's F1 button (F1 is that tab's second page in VR F1)
+        if (page == hset::kPageF2) s = ClickSheet(hset::kPreviewBtn);      // the View page's F2 button (F2 is that tab's second page in VR F2)
         return s;
     }
     void Run(int frames) {
@@ -1392,8 +1393,8 @@ struct Pads {   // a frame's sticks and grips for the pure flipper
 };
 
 static void TestFlipper() {
-    CHECK(kFlipPlaces == 28 && kFlipPlaces == 1 + hset::PageCount());
-    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(27, 1) == 27 && FlipTo(27, -1) == 26 - kWalkHidden && FlipTo(2, 0) == 2);
+    CHECK(kFlipPlaces == 29 && kFlipPlaces == 1 + hset::PageCount());
+    CHECK(FlipTo(0, -1) == 0 && FlipTo(0, 1) == 1 && FlipTo(2, 1) == 3 && FlipTo(2, -1) == 1 && FlipTo(28, 1) == 28 && FlipTo(28, -1) == 27 - kWalkHidden && FlipTo(2, 0) == 2);
     auto step = [](Flipper& f, double t, const Pads& p) { return f.Step(t, p.x, p.y, p.g); };
     {   // a flick right is one step forward, left one back; the stick's coming back to the middle re-arms it
         Flipper f;
@@ -2335,6 +2336,7 @@ static void TestViews() {
         for (int p : allPages) CHECK(PageShown(p, view));
         CHECK(PageShown(kPageF3, view) == (view == 0 || view == 3));   // F3's page ([table] full_width, draw_distance): VR F3 only (0: Settings' own)
         CHECK(PageShown(kPageF1, view) == (view == 0 || view == 1));   // F1's page ([top] perspective, tilt, distance): VR F1 only (0: Settings' own)
+        CHECK(PageShown(kPageF2, view) == (view == 0 || view == 2));   // F2's page ([hud_third] map_x / map_y / map_size): VR F2 only (0: Settings' own)
         int tabs = 0;
         for (int t = 0; t < kTabCount; ++t) tabs += TabShown(t, view) ? 1 : 0;
         CHECK(tabs == (flat ? (f5 ? 10 : 8) : 17 - kWalkHidden));   // View, F5, Options, Video, Controls, HUD, Co-op, Guide (VR F5: + Life, Look) - or all seventeen
@@ -2355,9 +2357,9 @@ static void TestViews() {
         CHECK(RowsOn(kPageView, view) == RowsOn(kPageView) && RowsOn(kPageKeysL, view) == (flat ? 6 : 7) && RowsOn(kPageKeysR, view) == 6);   // (F4: Left-handed under the bindings)
         for (int r = 0; KeyAt(kPageOptions, r, view) >= 0; ++r) CHECK(!flat || KeyAt(kPageOptions, r, view) != IndexOf(L"openxr", L"menu_3d"));
         // the flips: Skills and the pages shown (Party with it, while it is on)
-        const int f3Page = (view == 0 || view == 3 ? 1 : 0) + (view == 0 || view == 1 ? 1 : 0);   // (F3's page: VR F3 only, and 0; F1's: VR F1 only, and 0)
+        const int f3Page = (view == 0 || view == 3 ? 1 : 0) + (view == 0 || view == 1 ? 1 : 0) + (view == 0 || view == 2 ? 1 : 0);   // (F3's page: VR F3 only, and 0; F1's: VR F1 only, and 0; F2's: VR F2, and 0)
         const int lifePages = f5 ? 2 : 0;   // (VR F5: Life and Look)
-        CHECK(FlipCount(view) == (flat ? 11 : kFlipPlaces - 2 - kWalkHidden) + f3Page + lifePages && FlipCount(view, false) == (flat ? 10 : kFlipPlaces - 3 - kWalkHidden) + f3Page + lifePages);
+        CHECK(FlipCount(view) == (flat ? 11 : kFlipPlaces - 3 - kWalkHidden) + f3Page + lifePages && FlipCount(view, false) == (flat ? 10 : kFlipPlaces - 4 - kWalkHidden) + f3Page + lifePages);
     }
     // Controls: one tab, two pages, a button each on top
     CHECK(TabOf(kPageKeysL) == TabOf(kPageKeysR) && TabPage(kTabControls) == kPageKeysL && !std::strcmp(kTabNames[kTabControls], "Controls") && HasSubRow(kPageKeysR));
@@ -2409,27 +2411,29 @@ static void TestViews() {
         CHECK(w.c.ViewNow().tab == Tab::Settings && w.c.SettingsModel().View() == view && w.c.SettingsModel().page == kPageView);
         const bool f3 = view == 3;   // VR F3: the View tab's second page, F3 ([table] full_width, draw_distance), comes next
         const bool f1 = view == 1;   // VR F1: the View tab's second page, F1 ([top] perspective, tilt, distance), comes next
+        const bool f2 = view == 2;   // VR F2: the View tab's second page, F2 ([hud_third] map_x / map_y / map_size), comes next
         const bool f5 = view == kViewF5;   // VR F5: Life and Look after HUD (F4's vignette, shared)
-        CHECK(w.c.ViewNow().flipCount == (f3 || f1 ? 12 : 11) + (f5 ? 2 : 0) && w.c.ViewNow().flipAt == 1);
+        CHECK(w.c.ViewNow().flipCount == (f3 || f1 || f2 ? 12 : 11) + (f5 ? 2 : 0) && w.c.ViewNow().flipAt == 1);
         const std::vector<uint32_t> viewPic = Paint(w.c.ViewNow());
         std::vector<int> along = {kPageView, kPageF5, kPageOptions, kPageVideo, kPageKeysL, kPageKeysR, kPageHud, kPageCoop, kPageParty, kPageGuide};
         if (f3) along.insert(along.begin() + 1, kPageF3);
+        if (f2) along.insert(along.begin() + 1, kPageF2);
         if (f1) along.insert(along.begin() + 1, kPageF1);
         if (f5) along.insert(std::find(along.begin(), along.end(), kPageHud) + 1, {kPageLife, kPageLook});
         for (size_t i = 1; i < along.size(); ++i) {
             Flick(w, 1.0f);
             CHECK(w.c.SettingsModel().page == along[i] && w.c.ViewNow().flipAt == (int)i + 1);
-            if (along[i] == kPageF3 || along[i] == kPageF1) CHECK(Paint(w.c.ViewNow()) != viewPic);   // its own picture: its rows
+            if (along[i] == kPageF3 || along[i] == kPageF1 || along[i] == kPageF2) CHECK(Paint(w.c.ViewNow()) != viewPic);   // its own picture: its rows
         }
-        if (f3 || f1) {   // the View page's F3 (F1) button opens it, its View button goes back
+        if (f3 || f1 || f2) {   // the View page's F3 (F1, F2) button opens it, its View button goes back
             w.ClickSheet(hset::TabRect(hset::TabOf(kPageView), view));
             CHECK(w.c.SettingsModel().page == kPageView);
             w.ClickSheet(hset::kPreviewBtn);
-            CHECK(w.c.SettingsModel().page == (f1 ? kPageF1 : kPageF3));
+            CHECK(w.c.SettingsModel().page == (f1 ? kPageF1 : f2 ? kPageF2 : kPageF3));
             w.ClickSheet(hset::kPreviewBtn);
             CHECK(w.c.SettingsModel().page == kPageView);
             w.ClickPage(kPageGuide);
-        } else {   // ... and in F2 no such button: the View page stays
+        } else {   // ... and in F5 no such button: the View page stays
             w.ClickSheet(hset::TabRect(hset::TabOf(kPageView), view));
             w.ClickSheet(hset::kPreviewBtn);
             CHECK(w.c.SettingsModel().page == kPageView);
@@ -2469,7 +2473,7 @@ static void TestViews() {
         w.LongPress();
         w.Run(2);
         w.ClickTab(1);
-        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces - 2 - kWalkHidden);   // (all but the View tab's second pages F1 and F3)
+        CHECK(w.c.SettingsModel().View() == 4 && w.c.ViewNow().flipCount == kFlipPlaces - 3 - kWalkHidden);   // (all but the View tab's second pages F1, F2 and F3)
         w.ClickSheet(kTab(TabOf(kPageMelee)));
         CHECK(w.c.SettingsModel().page == kPageMelee);
     }

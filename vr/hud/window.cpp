@@ -4,6 +4,7 @@
 #include "../exit_end.h"    // [openxr] end_session_on_exit: which window messages are the game's quit
 #include "../menu_ready.h"  // no window move and no mouse message before the game's menus exist (crash group J)
 #include "../key_capture_wire.h"   // the overlays' "press a key"
+#include "../render_window.h"   // [openxr] square_window_one_step: vrres::g_windowFollow (SquareFollowNow below)
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -350,6 +351,40 @@ void BigWindowTick() {
                          side < asked ? " - no monitor holds more: a bigger square needs one (BodyWalk's Virtual Monitor) of a higher resolution" : "");
 }
 
+// [openxr] square_window_one_step (default on; 2026-11-25): every render size change froze twice - the game's swap chain resize (~400 ms), then
+// ~1.6 s later this file's tick moving the square window after it (~300 ms). vrres's Handle (render_window.h) calls this on the window's own thread
+// as it hands the game the new size: the square is made that size here and now (SetWindowPos, not posted), and its WM_SIZE - rewritten to the
+// render size by Handle - is the game's one resize. Only what BigWindowTick would do on the monitor the window is on (square_window,
+// square_window_follow, native OpenXR, in a game, not minimized / maximized, the monitor holds it); anything else - a move onto another monitor -
+// is left to the tick, as before. Off: the tick follows ~2 s later, as before (two freezes).
+bool SquareFollowNow(HWND h, vrres::Size next) {
+    if (!h || h != g_gameWnd || GetWindowThreadProcessId(h, nullptr) != GetCurrentThreadId()) return false;
+    if (!IniB(L"openxr", L"square_window_one_step", true)) return false;
+    if (g_set.platform.load() != 1 || !IniB(L"openxr", L"square_window", false) || !IniB(L"openxr", L"square_window_follow", false) || !xr::On()) return false;
+    if (IsIconic(h) || IsZoomed(h) || !gamestate::LocalPlayer() || !g_inWorld.load()) return false;
+    int asked = std::clamp((int)std::max(next.w, next.h), 320, 4000);
+    if (const int most = (int)IniF(L"openxr", L"square_window_max", 0.0f); most >= 320 && most < asked) asked = most;
+    RECT c{}, r{};
+    if (!GetClientRect(h, &c) || !GetWindowRect(h, &r)) return false;
+    const int fw = (r.right - r.left) - c.right, fh = (r.bottom - r.top) - c.bottom;
+    MONITORINFO mi{};
+    mi.cbSize = sizeof mi;
+    if (!GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mi)) return false;
+    const RECT wa = mi.rcWork;
+    if (std::min((int)(wa.right - wa.left) - fw, (int)(wa.bottom - wa.top) - fh) < asked) return false;   // (another monitor: the tick's two steps)
+    const int side = asked;
+    const int x = std::clamp((int)r.left, (int)wa.left, std::max((int)wa.left, (int)wa.right - (side + fw)));
+    const int y = (int)wa.top;
+    if (c.right == side && c.bottom == side && r.left == x && r.top == y) return false;
+    const ULONGLONG t0 = GetTickCount64();
+    if (!SetWindowPos(h, nullptr, x, y, side + fw, side + fh, SWP_NOZORDER | SWP_NOACTIVATE)) return false;
+    static int told = 0;
+    if (told++ < 8)
+        LogF("vrcam: square window - made %dx%d (was %dx%d) in the same step as the render size %ux%u: one freeze, not two "
+             "([openxr] square_window_one_step; %.0f ms)", side, side, (int)c.right, (int)c.bottom, next.w, next.h, (double)(GetTickCount64() - t0));
+    return true;
+}
+
 // [render] vr_resolution is asked for only once the hero has stood in a world 3 s, as the square window is: the game died
 // when its screen grew very tall while it built one (its title screen, 2026-10-11). Once asked it stays through the menus.
 bool HeroSettled() {
@@ -437,6 +472,7 @@ void HookGameWindow() {
         const uint64_t seen = GetTickCount64();
         g_gameWndSeenAt.store(seen ? seen : 1);
         vrres::Attach(h);   // [render] vr_resolution: a size may be asked for this window now
+        vrres::g_windowFollow.store(&SquareFollowNow);   // [openxr] square_window_one_step: the square made with the render size, one freeze
     }
 }
 

@@ -14,6 +14,7 @@
 #include "../ar_view.h"   // [mode] f5_ar_view: VR F5 for AR glasses
 #include "../f5_toolbar.h"   // [hud] f5_toolbar: F5's toolbar low in front
 #include "../f5_hud.h"       // [hud] f5_map / f5_allies: F5's map and allies' portraits off the picture's corners
+#include "../f2_map.h"       // [hud_third] map_x / map_y / map_size: F2's corner map moved and sized
 #include "../quick_blow.h"   // [gameplay] quick_blow_min_ms: its default
 #include "../render_bench.h"   // [render] bench_skip_*: the keys, one per game stage
 #include "../trigger_roles_wire.h"   // [gestures] trigger_left / trigger_right
@@ -100,6 +101,15 @@ void LoadSettings() {
         LogF("vrcam: F5's allies' portraits %s ([hud] f5_allies)", a ? "moved right and down from the top left (f5_allies_x / _y)" : "as every view's (allies_x / allies_y)");
     if (const bool tb = IniB(L"hud", L"f5_toolbar", false); tb != g_set.f5Toolbar.exchange(tb))
         LogF("vrcam: F5's toolbar %s ([hud] f5_toolbar)", tb ? "low in front, under the body (its own height and distance)" : "in the picture, as flat F3's");
+    // [hud_third] bar_low (vr/f5_toolbar.h WantedF2): VR F2's toolbar low under the camera as F5's, at its own height and distance
+    g_set.f2BarBelow.store(f5bar::Clamp(IniF(L"hud_third", L"bar_low_below_cm", f5bar::kDefaultBelowCm), f5bar::kBelowMin, f5bar::kBelowMax));
+    g_set.f2BarAhead.store(f5bar::Clamp(IniF(L"hud_third", L"bar_low_ahead_cm", f5bar::kDefaultAheadCm), f5bar::kAheadMin, f5bar::kAheadMax));
+    // [hud_third] allies_x / allies_y (vr/f2_map.h): VR F2's allies' portraits moved right and down, as F5's f5_allies_x / _y
+    g_set.f2AlliesRight.store(f2map::Clamp(IniF(L"hud_third", L"allies_x", 0.0f), f2map::kAlliesMin, f2map::kAlliesMax));
+    g_set.f2AlliesDown.store(f2map::Clamp(IniF(L"hud_third", L"allies_y", 0.0f), f2map::kAlliesMin, f2map::kAlliesMax));
+    if (const int bl = std::clamp((int)IniF(L"hud_third", L"bar_low", 0.0f), 0, 1); bl != g_set.f2BarLow.exchange(bl))
+        LogF("vrcam: VR F2's toolbar %s ([hud_third] bar_low=%d)", bl ? "low under the camera, as F5's (its own height and distance; with [hud_third] classic 0)"
+                                                                      : "in front, in the picture, as before", bl);
     {
         int v = (int)IniF(L"mode", L"vr_mode", 0.0f);
         bool write = false;
@@ -142,6 +152,7 @@ void LoadSettings() {
     g_set.jumpFrom.store(std::clamp(IniF(L"camera", L"jump_from", 0.3f), 0.0f, 3.0f));
     g_set.smoothFollow.store(IniB(L"camera", L"smooth_follow", true));
     g_set.smoothFollowMs.store(smoothfollow::Ms(IniF(L"camera", L"smooth_follow_ms", smoothfollow::kDefMs)));
+    g_set.entryFacing.store(IniB(L"camera", L"entry_facing", false));
     g_set.pitch.store(std::clamp(IniF(L"camera", L"pitch", -60.0f), -150.0f, 60.0f));
     g_set.flatShiftX.store(flatshift::Clamp(IniF(L"camera", L"flat_shift_x", 0.0f)));
     g_set.flatShiftY.store(flatshift::Clamp(IniF(L"camera", L"flat_shift_y", 0.0f)));
@@ -391,6 +402,10 @@ void LoadSettings() {
     g_set.mapNearFloor.store(std::clamp(IniF(L"hud_floor", L"map_near", 0.0f), -20.0f, 20.0f));
     g_set.mapXFloor.store(std::clamp(IniF(L"hud_floor", L"map_x", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.mapYFloor.store(-std::clamp(IniF(L"hud_floor", L"map_y", 0.0f), -100.0f, 100.0f) * 0.01f);
+    // [hud_third] map_x / map_y / map_size (vr/f2_map.h): F2's corner map toward the middle, down, and its size - live, 0 / 0 / 100 = as now
+    g_set.mapInThird.store(f2map::Clamp(IniF(L"hud_third", L"map_x", 0.0f), f2map::kShiftMin, f2map::kShiftMax));
+    g_set.mapDownThird.store(f2map::Clamp(IniF(L"hud_third", L"map_y", 0.0f), f2map::kShiftMin, f2map::kShiftMax));
+    g_set.mapSizeThird.store(f2map::Clamp(IniF(L"hud_third", L"map_size", f2map::kSizeDefault), f2map::kSizeMin, f2map::kSizeMax));
     g_set.labelsAlphaFloor.store(std::clamp(IniF(L"hud_floor", L"labels_alpha", 0.5f), 0.0f, 1.0f));
     g_set.labelsSizeFloor.store(std::clamp(IniF(L"hud_floor", L"labels_size", 100.0f), 20.0f, 150.0f) * 0.01f);
     g_set.labelsNativeFloor.store(IniF(L"hud_floor", L"labels_native", 1.0f) != 0.0f);
@@ -723,6 +738,7 @@ void LoadSettings() {
         // only noted: a capture begins on a change while the game runs.
         // [autotune] enabled: the "Auto" graphics tuning (its button in the headset's Video page and in D2R VR Settings); run / keep / undo:
         // Settings' buttons write a new value - a run starts, its result is kept / undone on a change while the game runs (vr/auto_tune_run.h)
+        autotunerun::SetCleanMeasure(IniB(L"autotune", L"clean_measure", true));   // (before Configure: a run asked now measures the new way)
         autotunerun::Configure(g_iniPath, IniB(L"autotune", L"enabled", true), (int)IniF(L"autotune", L"run", 0.0f), (int)IniF(L"autotune", L"keep", 0.0f),
                                (int)IniF(L"autotune", L"undo", 0.0f));
         static int lastDiag = INT_MIN;
@@ -1066,6 +1082,7 @@ void LoadSettings() {
     g_set.gameCeilingBeams.store(IniB(L"ceiling", L"game_ceiling_beams", false));
     g_set.holesPatch.store(IniB(L"holes", L"patch_world", false));
     g_set.ceilFromWalls.store(IniB(L"ceiling", L"height_from_walls", true));   // (a room with no height of its own: on its walls)
+    g_set.ceilFollowFloor.store(IniB(L"ceiling", L"follow_floor", false));   // (Serg 2026-11-25: the ceiling steps with the floor; live)
     g_set.ceilHeadroomM.store(std::clamp(IniF(L"ceiling", L"min_headroom_m", 1.0f), 0.0f, 3.0f));   // (Serg 2026-11-10: never at the eyes)
     g_set.gameCeilingDome.store(IniB(L"ceiling", L"game_ceiling_dome", false));
     g_set.gameCeilingDomesTall.store(IniB(L"ceiling", L"game_ceiling_worldstone_dome", false));
@@ -1408,6 +1425,7 @@ void LoadSettings() {
     g_set.aimNoChase.store(IniB(L"gameplay", L"aim_no_chase", true));
     g_set.leapByGaze.store(IniB(L"gameplay", L"leap_by_gaze", true));
     meleetouch::SetLeapWanted(g_set.leapByGaze.load());   // Leap Attack's monster under the gaze: the monsters near the hero are read (a Barbarian in F4)
+    g_set.whirlStickSteer.store(IniB(L"gameplay", L"whirlwind_stick_steer", false));   // (unticked: Whirlwind aims as before)
     g_set.teleportCircle.store(IniB(L"gameplay", L"teleport_circle", true));
     g_set.leapArc.store(IniB(L"gameplay", L"leap_arc", false));
     g_set.leapArcHead.store(IniB(L"gameplay", L"leap_arc_head", false));
@@ -1651,6 +1669,8 @@ void LoadSettings() {
     g_set.strikeMeasure.store(IniB(L"debug", L"strike_measure", false));   // [debug] strike_measure: each strike on a body measured into the log
     soundtrace::SetWanted(IniB(L"debug", L"sound_trace", false));   // [debug] sound_trace: the game's sounds by name (to find its shield-hit sound)
     clashsound::SetWanted(IniB(L"weight", L"clash_sound", true));   // [weight] clash_sound: the two weapons of a pair, a parry - the game's block sound by how hard
+    // [weight] clash_sound_min_mps / clash_sound_gap_s: the weapon on the hero's own shield and the pair's knock heard only this hard, this far apart (0 / 0: as before)
+    weight::SetClashSoundGate(IniF(L"weight", L"clash_sound_min_mps", 0.0f), IniF(L"weight", L"clash_sound_gap_s", 0.0f));
     PoseShareConfigure();   // [multiplayer] pose_share
     meleetouch::SetSwayView(IniB(L"debug", L"monster_ragdoll_view", false));   // [weight] monster_ragdoll's view (drawn as melee_boxes, which it switches on)
     meleeboxes::SetWanted(IniB(L"debug", L"melee_boxes", false) || thrustdebugwire::Wanted() || IniB(L"debug", L"monster_ragdoll_view", false) ||
@@ -1943,6 +1963,7 @@ void LoadSettings() {
         knockprops::Configure(knock, IniF(L"weight", L"knock_strength_pct", 100.0f), std::clamp(IniF(L"weight", L"knock_haptic_pct", 35.0f), 0.0f, 100.0f) / 100.0f);
         potionhide::WantHooksForProps(knock);
         knockprops::ConfigureHeft(IniB(L"weight", L"prop_heft", true));   // [weight] prop_heft: a prop's mass by its kind and size, the knock's tick or thud (live)
+        knockprops::ConfigureOnContact(IniB(L"weight", L"props_on_contact", false));   // [weight] props_on_contact: props physics bodies only on contact (Berk's idea, 632ddf0)
         knockprops::SetTrace(IniB(L"debug", L"knock_props_trace", false));   // [debug] knock_props_trace: a log line per knock and per scan
         knockprops::SetGlow(IniB(L"debug", L"knock_props_glow", false), 0.6f);   // [debug] knock_props_glow: the props found, lit (h 0.6: x1.6 bright)
         g_set.weightGrabProps.store(IniB(L"weight", L"grab_props", false));   // [weight] grab_props: the props in the hand (its own box; with knock_props)
@@ -2061,6 +2082,18 @@ void LoadSettings() {
     g_set.spearShaftAxis.store(std::clamp((int)IniF(L"hands", L"spear_shaft_axis", -2.0f), -3, 3));
     g_set.bodyYawDeg.store(std::clamp(IniF(L"body", L"yaw", 0.0f), -180.0f, 180.0f));
     g_set.wrist.store(IniB(L"hands", L"wrist", true));
+    {   // [hands] palm_from_knuckle (vr/palm_knuckle.h; live): told once, and again when it changes
+        const bool knuckle = IniB(L"hands", L"palm_from_knuckle", false);
+        g_set.palmKnuckle.store(knuckle);
+        static int told = -1;
+        if (told != (int)knuckle) {
+            told = knuckle;
+            LogF(knuckle ? "vrcam settings: [hands] palm_from_knuckle=1 - a hand is placed by its palm's middle half way to the middle finger's knuckle as the rig's "
+                           "bones tell it (the Amazon's, the Paladin's, the Druid's hand ~2 cm back onto the controller's grip; the other heroes the same)"
+                         : "vrcam settings: [hands] palm_from_knuckle=0 - the palm's middle half way to the middle finger's first bone, as before (on the Amazon's, "
+                           "the Paladin's and the Druid's rig a bone inside the palm: their hand sits ~2 cm past the grip)");
+        }
+    }
     g_set.wristPitch.store(std::clamp(IniF(L"hands", L"pitch", 0.0f), -180.0f, 180.0f));
     g_set.wristYaw.store(std::clamp(IniF(L"hands", L"yaw", 0.0f), -180.0f, 180.0f));
     g_set.wristRoll.store(std::clamp(IniF(L"hands", L"roll", 0.0f), -180.0f, 180.0f));

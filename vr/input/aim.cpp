@@ -837,6 +837,7 @@ void HookUnitFacing(void* unit, float* out) {
 thread_local SpellCast g_spellCast;   // the resolution under way on this thread
 uintptr_t g_spellPointRet = 0;        // where the resolver's AttackPoint call returns (set before its hook goes in)
 bool LeapPointFor(const float from[2], const float game[2], float* px, float* py);   // [gameplay] leap_by_gaze, by the spell resolver
+bool WhirlPointFor(const float from[2], const float game[2], float gx, float gy, float* px, float* py);   // [gameplay] whirlwind_stick_steer, by the spell resolver
 
 // The point the attack goes to: AttackPoint (RVA 0x18BAD0, (manager, float
 // out[2], unit, float2 from, float2 dir)) = from + dir * range, with range the
@@ -1034,6 +1035,12 @@ float* HookAttackPoint(void* mgr, float* out, void* unit, uint64_t from, uint64_
         float f[2]; memcpy(f, &from, sizeof f);
         float px, py;   // none: the game's own point stays
         if (LeapPointFor(f, out, &px, &py)) { out[0] = px; out[1] = py; }
+        return r;
+    }
+    if (out && g_spellCast.whirl && (uintptr_t)_ReturnAddress() == g_spellPointRet) {   // [gameplay] whirlwind_stick_steer: the whirl goes where the walk stick points
+        float f[2]; memcpy(f, &from, sizeof f);
+        float px, py;   // none (the map's edge): the game's own point stays
+        if (WhirlPointFor(f, out, g_spellCast.gx, g_spellCast.gy, &px, &py)) { out[0] = px; out[1] = py; }
         return r;
     }
     if (out && g_spellCast.directed && g_spellCast.point && (uintptr_t)_ReturnAddress() == g_spellPointRet) {   // bow_aim's, throw_aim's shot

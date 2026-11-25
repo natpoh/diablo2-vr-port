@@ -141,6 +141,9 @@ void SetHaptic(HapticFn fn);
 // vr/clash_loud.h) and which knocked (for the log). vrcam registers the game's block sound (vr/clash_sound.h); unregistered, the knock is only felt.
 using ClashSoundFn = void (*)(float speedMps, uint32_t gameVolume, const char* who);
 void SetClashSound(ClashSoundFn fn);
+// [weight] clash_sound_min_mps / clash_sound_gap_s (vr/clash_loud.h clashloud::Gate): which knocks of the weapon on the hero's own shield and of the two
+// weapons of a pair are heard - at least this fast, at least this long after the last one heard. The pulse stays. vrcam's read of the ini (live); 0 / 0 = as before.
+void SetClashSoundGate(float minMps, float gapS);
 // [weight] cleave (cleanroom/heft/hold.h Settings::cleave): a strong strike goes on through a body into the next. The numbers are times the weapon's own strike
 // threshold (vr/strike_force.h, by its family and steel - the strike_force_* numbers, whether strike_by_force is on or not): over - the arrival a body must
 // take to be cut through; cost - what each body gone through spends of the stroke's force (its first body's arrival); minSpeed - the blade's speed into the

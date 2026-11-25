@@ -37,5 +37,9 @@ int32_t HandAt(void* world, int32_t hand, D2rpHandOut* out);
 // [weight] prop_heft: a prop's own mass - the optional D2rpSetPropMass (a library without it: HasPropMass false, every prop weighs its material, one log line says so).
 bool HasPropMass();
 int32_t SetPropMass(void* world, uint32_t id, float kg);
+// [weight] props_on_contact: a library that has bodies only on contact (D2rpParams.onContact) - it has the optional D2rpBodyCount that came with it (a library without:
+// HasOnContact false, the field is not read, every listed prop a body as before). BodyCount: the props' and surfaces' Box3D bodies now (-1: no such export).
+bool HasOnContact();
+int32_t BodyCount(void* world);
 
 }  // namespace propslib

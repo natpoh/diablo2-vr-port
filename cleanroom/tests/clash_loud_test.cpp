@@ -62,6 +62,42 @@ int main() {
 		std::printf("  a light tap 1 m/s: %u/255 (%.0f %%), pulse %.2f %d ms; a blow 3 m/s: %u/255 (%.0f %%), pulse %.2f %d ms\n", tap.gameVolume, tap.volume * 100.0f, tap.pulse, tap.pulseMs,
 		            blow.gameVolume, blow.volume * 100.0f, blow.pulse, blow.pulseMs);
 	}
+	// [weight] clash_sound_min_mps / clash_sound_gap_s (clashloud::Gate): which of the hero's own knocks are heard
+	{
+		// the defaults (0, 0): every knock the site sounds is heard - as before, even two in the same millisecond
+		clashloud::Gate g;
+		const clashloud::GateSettings old;
+		EXPECT(g.Pass(old, 0.5f, 1000) && g.Pass(old, 0.6f, 1000) && g.Pass(old, 1.0f, 1001) && g.Pass(old, 4.0f, 1100), "defaults: every knock heard");
+	}
+	{
+		// Bear's values (3 m/s, 0.5 s): the threshold
+		clashloud::Gate g;
+		const clashloud::GateSettings bear{3.0f, 0.5f};
+		EXPECT(!g.Pass(bear, 2.99f, 1000) && !g.Pass(bear, 1.0f, 1000) && !g.Pass(bear, NAN, 1000), "under 3 m/s: silent");
+		EXPECT(g.Pass(bear, 3.0f, 1000), "3 m/s: heard");
+		// ... and the gap: a knock under the threshold does not start it, one heard does
+		EXPECT(!g.Pass(bear, 6.0f, 1001) && !g.Pass(bear, 6.0f, 1499), "within 0.5 s of the last heard: silent");
+		EXPECT(g.Pass(bear, 3.5f, 1500), "0.5 s after: heard again");
+		EXPECT(!g.Pass(bear, 2.0f, 2100) && g.Pass(bear, 3.0f, 2101), "a soft one past the gap stays silent and does not start a gap");
+		// a scepter clattering on the shield, a touch every 30 ms at 3-5 m/s for 2 s: at most one in 0.5 s (4 of 67)
+		g.Reset();
+		int heard = 0;
+		for (uint64_t t = 10000; t < 12000; t += 30) heard += g.Pass(bear, 3.0f + (t % 7) * 0.3f, t) ? 1 : 0;
+		EXPECT(heard == 4, "clatter: %d heard in 2 s (one a 0.5 s, the first at once)", heard);
+	}
+	{
+		// the threshold alone, the gap alone
+		clashloud::Gate g;
+		EXPECT(!g.Pass({2.0f, 0.0f}, 1.9f, 0) && g.Pass({2.0f, 0.0f}, 2.0f, 0) && g.Pass({2.0f, 0.0f}, 2.0f, 0), "min 2 m/s, no gap");
+		clashloud::Gate h;
+		EXPECT(h.Pass({0.0f, 0.25f}, 0.5f, 100) && !h.Pass({0.0f, 0.25f}, 4.0f, 349) && h.Pass({0.0f, 0.25f}, 0.5f, 350), "gap 0.25 s, any speed");
+	}
+	{
+		// out-of-range numbers clamped: never a gate that silences everything for good
+		const clashloud::GateSettings c = clashloud::Clamp({-3.0f, NAN}), d = clashloud::Clamp({99.0f, 99.0f});
+		EXPECT(c.minMps == 0.0f && c.gapS == 0.0f && d.minMps == clashloud::kGateMaxMps && d.gapS == clashloud::kGateMaxGapS, "clamped: %.1f %.1f / %.1f %.1f", c.minMps, c.gapS,
+		       d.minMps, d.gapS);
+	}
 	std::printf(g_fails ? "clash_loud_test: %d FAILED\n" : "clash_loud_test: all passed\n", g_fails);
 	return g_fails ? 1 : 0;
 }

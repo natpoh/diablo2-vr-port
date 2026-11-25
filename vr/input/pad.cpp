@@ -78,6 +78,7 @@ void F5ControllerStick(float* rx, float* ry) {
     const float x = p.rx / 32767.0f, y = p.ry / 32767.0f;
     if (x * x + y * y > *rx * *rx + *ry * *ry) { *rx = x; *ry = y; }
 }
+void WhirlStickNote(int16_t lx, int16_t ly);   // [gameplay] whirlwind_stick_steer (vr/input/spell_aim.cpp)
 std::atomic<ULONGLONG> g_pad0At{0};   // pad 0 last answered the game's poll (XDetour): another pad's report is not kept meanwhile (padpresence::KeepsReport)
 void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
     if (!s || !g_enabled.load()) return;
@@ -92,6 +93,9 @@ void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
         g_aHeld.store((in.wButtons & XINPUT_GAMEPAD_A) != 0 && !gamestate::MenuOpen());
         // (the right trigger too: the game's RT slot - [openxr] skill_rt_a's trigger, BodyWalk's RT - vr/pad_skill.h)
         g_skillHeld.store(padskill::Pressed(in.wButtons, in.bRightTrigger) && !gamestate::MenuOpen());
+        // [gameplay] whirlwind_stick_steer: the walk stick as the pad has it, in our view's frame, before any turn (the walk's stick in direct mode,
+        // [hands] left_handed's swap already made) - the spell resolver aims a Whirlwind along it (vr/input/spell_aim.cpp WhirlAimNow)
+        WhirlStickNote(in.sThumbLX, in.sThumbLY);
     }
     const bool lt = in.bLeftTrigger >= 128, rt = in.bRightTrigger >= 128;
     if (lt && walkpath::PushedRaw(in.sThumbLX, in.sThumbLY)) {
@@ -351,8 +355,8 @@ bool FlatPressSink(const char* what) {
     in.menuOpen = gamestate::MenuOpen();
     in.chatOpen = ChatOpen();
     if (walkflat::Decide(in) != walkflat::Verdict::Walk) return false;
-    LogF("vrcam: VR F1-F3, no BodyWalk running: %s pressed - nothing of the plugin takes it here: [direct] flat_controller=0 (Settings: \"Play with the controllers in F1, F2, F3 "
-         "without BodyWalk\") - it does the left stick's walk and the belt's trigger + flick only", what);
+    LogF("vrcam: VR F1-F3, no BodyWalk running: %s pressed - nothing of the plugin takes it here: [direct] flat_controller_off=1 (a test switch, "
+         "no Settings control) - it does the left stick's walk and the belt's trigger + flick only", what);
     return true;
 }
 

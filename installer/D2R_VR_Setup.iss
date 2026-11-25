@@ -115,6 +115,9 @@ SelectDirBrowseLabel=If this is not your game's folder, click Browse.
 [Files]
 ; D2R VR Authentic Settings beside D2R.exe (the launcher's START and Settings button name it there)
 Source: "payload\plugins\D2R_VR_Settings.exe"; DestDir: "{app}"; Flags: ignoreversion
+; ... and the same program once more, never installed: unpacked into {tmp} before an update to back up the installed build (build_backup.inc; the
+; installed program may be too old to know how). Inno stores the one file once.
+Source: "payload\plugins\D2R_VR_Settings.exe"; DestName: "D2R_VR_Settings_backup.exe"; Flags: dontcopy
 ; ... and D2R VR Headset Report beside it (tools/headset_report): a player whose headset picture is wrong runs it, or Settings' Home does
 ; ([support] headset_report). These two are the mod's only files outside its folder; the uninstaller takes both.
 Source: "payload\plugins\D2R_VR_Headset_Report.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -141,6 +144,11 @@ Source: "payload\bodywalk\profile.json"; DestDir: "{localappdata}\BodyWalkVR\plu
 Source: "payload\bodywalk_portable\*"; DestDir: "{#PortableDir}"; Excludes: "force_lite_mode.txt,imgui.ini"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: UsePortable
 Source: "payload\bodywalk_portable\imgui.ini"; DestDir: "{#PortableDir}"; Flags: onlyifdoesntexist; Check: UsePortable
 Source: "payload\bodywalk_portable\force_lite_mode.txt"; DestDir: "{#PortableDir}"; Flags: ignoreversion; Check: PortableFresh
+
+[Tasks]
+; an update only (a build of the mod is there): the installed build backed up first, into mods\D2R-VR\build_backups (build_backup.inc). Ticked unless
+; the player's d2r_vr.ini says [support] build_backup_before_update=0 (CurPageChanged sets it from there when the page first shows for a folder)
+Name: "buildbackup"; Description: "Back up the installed D2R VR build first (about 250 MB) - D2R VR Settings > Home > Build backups can put it back"; GroupDescription: "Update:"; Check: BuildInstalledHere
 
 #ifdef RoomsPlugin
 [Tasks]
@@ -507,6 +515,52 @@ end;
 // D2RLoader needs the Visual C++ 2015-2022 runtime (x64): its DLLs looked for in System32 on the folder page (vc_redist offered, never forced)
 #include "vc_runtime.inc"
 
+// ---------------------------------------------------------------- the build backup before an update
+// The installed build into mods\D2R-VR\build_backups by this Setup's own settings program (build_backup.inc), on the Ready page's Next - before
+// anything is written. Shown as the task "buildbackup" (only on an update); its start comes from the player's d2r_vr.ini.
+#include "build_backup.inc"
+
+var
+  BuildBackupPage: TOutputProgressWizardPage;
+  BuildTaskDir: String;   // the folder the task's start was last set for
+
+function BuildInstalledHere: Boolean;
+begin
+  Result := BuildThere(WizardDirValue);
+end;
+
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  if (CurPageID = wpSelectTasks) and (CompareText(BuildTaskDir, WizardDirValue) <> 0) then
+  begin
+    BuildTaskDir := WizardDirValue;   // (once per folder: the player's own tick or untick stays when they come back to the page)
+    if BuildThere(WizardDirValue) then
+      if BuildBackupDefault(WizardDirValue) then WizardSelectTasks('buildbackup') else WizardSelectTasks('!buildbackup');
+  end;
+end;
+
+// False: the backup failed and the player chose not to go on (Setup stays on the Ready page).
+function BackupBeforeUpdate(Dir: String): Boolean;
+var
+  Code: Integer;
+begin
+  Result := True;
+  if not BuildThere(Dir) or not WizardIsTaskSelected('buildbackup') then Exit;
+  if WizardSilent and not BuildBackupDefault(Dir) then Exit;   // (a silent update never saw the page: the ini's word)
+  BuildBackupPage.SetText('Backing up the installed D2R VR build into mods\D2R-VR\build_backups...', 'A few seconds: about 250 MB is copied.');
+  BuildBackupPage.SetProgress(0, 1);
+  BuildBackupPage.Show;
+  try
+    Code := BackupInstalledBuild(Dir);
+  finally
+    BuildBackupPage.Hide;
+  end;
+  if (Code = 0) or (Code = 2) then Exit;
+  if SuppressibleMsgBox('Setup could not back up the installed D2R VR build: ' + BuildBackupFailText(Code) + '.' + #13#10#13#10 +
+                        'Install the new version anyway, without a backup?', mbConfirmation, MB_YESNO, IDYES) = IDNO then
+    Result := False;
+end;
+
 // ---------------------------------------------------------------- wizard
 
 procedure InitializeWizard;
@@ -518,6 +572,7 @@ begin
   ModePage.Add('VR: in the headset, with BodyWalk and FlatVR');
   ModePage.Values[1] := True;
   DownloadPage := CreateDownloadPage('Downloading', 'Setup is downloading what D2R VR needs.', nil);
+  BuildBackupPage := CreateOutputProgressPage('Backing up', 'Setup backs up the installed D2R VR build before it installs the new one.');
   // An update offers the folder of the last install; if the game is no longer there (moved), the folder the game's
   // own installer names now (Steam, Battle.net) is offered instead.
   if not IsGameDir(WizardForm.DirEdit.Text) then
@@ -597,6 +652,12 @@ begin
   if CurPageID = wpReady then
   begin
     Dir := WizardDirValue;
+    // the installed build first, before anything is decided or written (the task "buildbackup", build_backup.inc)
+    if not BackupBeforeUpdate(Dir) then
+    begin
+      Result := False;
+      Exit;
+    end;
     DecideIni(Dir);
     ReShadeSetup := '';
     BodyWalkSetup := '';

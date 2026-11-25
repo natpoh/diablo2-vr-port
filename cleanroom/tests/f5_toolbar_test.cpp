@@ -61,6 +61,21 @@ static void TestWanted() {   // only in VR F5 with the box ticked
     CHECK(f5bar::kAnchor == 3);   // FlatVRGameHudLook.bar_anchor: low in front
 }
 
+static void TestF2BarLow() {   // [hud_third] bar_low: VR F2's toolbar low under the camera, as F5's
+    CHECK(f5bar::WantedF2(1, true, true));
+    CHECK(!f5bar::WantedF2(0, true, true));    // 0 = in front, in the picture: as before
+    CHECK(!f5bar::WantedF2(1, false, true));   // not VR F2 (F1, F3, F4, F5, the flat game)
+    CHECK(!f5bar::WantedF2(1, true, false));   // "Hung in the room (as F4)": F4's places, untouched
+    CHECK(!f5bar::WantedF2(2, true, true) && !f5bar::WantedF2(-1, true, true));   // an unknown value: as before
+    // F2's own sliders while F2 wants it, F5's otherwise - and the same defaults land at the same place
+    const f5bar::At f2 = f5bar::Placed(f5bar::OffsetNow(true, 50.0f, 70.0f, 33.0f, 32.0f));
+    CHECK(Near(f2.upCm, -50.0f) && Near(f2.backCm, -70.0f));
+    const f5bar::At f5 = f5bar::Placed(f5bar::OffsetNow(false, 50.0f, 70.0f, 33.0f, 32.0f));
+    CHECK(Near(f5.upCm, -33.0f) && Near(f5.backCm, -32.0f));
+    const f5bar::At def = f5bar::Placed(f5bar::OffsetNow(true, f5bar::kDefaultBelowCm, f5bar::kDefaultAheadCm, 0.0f, 0.0f));
+    CHECK(Near(def.upCm, -33.0f) && Near(def.backCm, -32.0f));
+}
+
 static void TestMapAndAllies() {   // vr/f5_hud.h: [hud] f5_map / f5_allies
     using namespace f5hud;
     // the corner: off = flat F3's own choice untouched; on = "as in the game's options" becomes flat_map_corner's corner, a choice stays
@@ -100,6 +115,7 @@ int main() {
     TestSlidersLandWhereTheySay();
     TestClamped();
     TestWanted();
+    TestF2BarLow();
     TestMapAndAllies();
     std::printf("f5_toolbar_test: %d/%d checks passed\n", g_checks - g_failures, g_checks);
     return g_failures ? 1 : 0;

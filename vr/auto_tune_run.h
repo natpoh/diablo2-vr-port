@@ -27,9 +27,15 @@ bool Forced(const wchar_t* sec, const wchar_t* key, float* v);
 // The run changed its values: the settings are read again now (true once a change).
 bool TakeReload();
 
-// xr.cpp, each xrEndFrame: its time (us), what xrWaitFrame blocked this frame (us), the headset's display period (ns), and
-// whether the frame counts (the game in a world, F4).
-void OnFrame(double nowUs, double waitUs, double periodNs, bool counts);
+// xr.cpp, each xrEndFrame: its time (us), what xrWaitFrame blocked this frame (us), what xrEndFrame itself took (us), the headset's display
+// period (ns), and whether the frame counts (the game in a world, F4).
+void OnFrame(double nowUs, double waitUs, double submitUs, double periodNs, bool counts);
+// [autotune] clean_measure (LoadSettings, default on): a window is measured without the runtime's holds - the median of the frame's own time
+// (interval less xrWaitFrame and xrEndFrame) and of the interval, a window with a held frame / a hitch / a resize measured again, a run that
+// finds no clean window for long stops and says so (vr/auto_tune_measure.h). Off: frames counted over the window, as before.
+void SetCleanMeasure(bool on);
+// The game's swap chain is resized (effects.cpp, before the game's ResizeBuffers): a window it falls in is not counted.
+void NoteResize();
 // What the knobs are made from that the ini does not say. The headset's recommended eye size (xr.cpp, once a session): with
 // [render] vr_resolution=1 its longer side is the render size to step down from.
 void SetRecommended(uint32_t w, uint32_t h);
@@ -51,6 +57,9 @@ struct View {
     int measured = 0, left = 0;  // measures so far, still to come (rough)
     bool reached = false, aborted = false;
     bool belowMin = false;       // the ladder's last rung (Potato, 1200 px) still short: the PC is below the minimum here
+    bool noisy = false;          // [autotune] clean_measure: no clean window for too long - NOT concluded, nothing changed (Waiting: Undo / Keep close it)
+    std::string noisyWhy;        // ... what spoilt the last window (English, for the log; the page has its own words)
+    int noisyN = 0;              // ... how many windows in a row
     int limit = 0;               // ... held back by: 1 the graphics card (GPU), 2 the processor (CPU)
     float targetFps = 0, hz = 0, startFps = 0, nowFps = 0;
     std::vector<Row> rows;       // the measured steps (probes, down, up, final)

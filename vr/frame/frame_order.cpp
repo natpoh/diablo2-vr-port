@@ -7,6 +7,8 @@
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
 #include "../f5_toolbar.h"  // [hud] f5_toolbar: F5's toolbar low in front
 #include "../f5_hud.h"      // [hud] f5_map: F5's map toward the middle
+#include "pace_clock.h"     // a pass's "since the last one" clock: started again when the path changes or a cinematic came between (no 422 s "hitches")
+#include "../f2_map.h"      // [hud_third] map_x / map_y / map_size: F2's map toward the middle, down, its size
 namespace gamestate { bool InventoryOpen(); }   // [render] ui_band_16x9 2 (vr/gamestate.cpp: the inventory among the open panels)
 
 using namespace D2RL;
@@ -200,6 +202,11 @@ bool NativePairBegin() {
     return native;
 }
 
+// Which path each top-level DrawGameScreen took (vr/frame/pace_clock.h): a path's clock counts from its own last pass only while the frames in between were
+// all its own and no cinematic came between - the first pass after two passes, a menu's plain frames or a movie starts the clock again and tells nothing.
+paceclock::Epoch g_paceEpoch;
+uint64_t PaceFrame(paceclock::Path p) { return g_paceEpoch.Frame(p, gamestate::CinemaCount()); }
+
 // A pair (or, by turns, a pass) that takes more than 80 ms: one line, at most one a second, with where its
 // time went - after bearstonem/d2r-pcvr's "Frame hitch" line (MIT), made of our own clocks (vr/frame_hitch.h).
 // It tells a headset asleep, a stream stalled and a slow pass from each other, which the 10 s averages
@@ -273,8 +280,10 @@ uintptr_t DrawByTurns(int a) {
     static int eye = 1;
     static D2RVR_Shared held;
     static bool told = false;
-    static double lastEnd = 0.0;   // the long-pass line (PairHitch)
+    static paceclock::Clock clock;   // the long-pass line (PairHitch): this path's last pass, valid in its epoch only
+    const uint64_t epoch = PaceFrame(paceclock::Path::kTurns);
     const double t0 = pairtime::UsNow();
+    const double lastEnd = clock.Last(epoch, t0);
     const D2RVR_Shared* live = link::Head();
     if (live) { memcpy(&held, live, sizeof held); g_pairShared.store(&held); }
     TurnTick();
@@ -301,15 +310,28 @@ uintptr_t DrawByTurns(int a) {
     const double t2 = pairtime::UsNow();
     if (lastEnd > 0.0) PairHitch(t2 - lastEnd, t0 - lastEnd, tb - t0, tr - tb, 0.0, t2 - tr, native, true);
     if (lastEnd > 0.0) PairTrace(t2 - lastEnd, t0 - lastEnd, tb - t0, tr - tb, 0.0, t2 - tr, -1.0, native, true);   // [debug] frame_trace (the draw thread's CPU is not measured by turns)
-    lastEnd = t2;
+    clock.End(epoch, t2);
     if (live || native) g_pairShared.store(nullptr);
     g_pairNow.store(false);
     if (!told && native) { told = true; Log("vrcam: openxr - eyes by turns ON - one pass a game frame, left and right in turn"); }
     return r;
 }
 
+// The game draw being drawn, told to what is posed inside it (skel::SetGameDraw): one number for the outer call - a pair's two passes (the
+// second a pass of the same game frame), the one pass by turns, a plain frame - and 0 once it is over. [flail] chain steps once by it, so
+// both eyes of a pair see one chain (flailchain::FrameHold).
+struct GameDrawSpan {
+    bool outer;
+    explicit GameDrawSpan(bool o) : outer(o) {
+        static uint64_t serial = 0;   // (the draw thread's alone)
+        if (outer) skel::SetGameDraw(++serial);
+    }
+    ~GameDrawSpan() { if (outer) skel::SetGameDraw(0); }
+};
+
 uintptr_t HookDrawGameScreen(int a) {
     static thread_local int depth = 0;
+    const GameDrawSpan span(depth == 0);
     static bool told = false, toldWhy = false;
     // [game_patches] (vr/unleashed_game_patches.h): the frame before is drawn, this one's first pass not begun - the only place a patch of
     // the game's render code goes in or out. Every pass below is Alone unless the pair's two game passes say otherwise.
@@ -334,14 +356,16 @@ uintptr_t HookDrawGameScreen(int a) {
             toldWhy = true;
             Log("vrcam: pair per game frame NOT possible - the frame time was not where expected (another build?); eyes go by turns");
         }
+        const uint64_t epoch = depth ? 0 : PaceFrame(paceclock::Path::kPlain);   // (every plain frame: the pair's and by turns' clocks start again after it)
         if (!depth && frametrace::On()) {   // [debug] frame_trace: a plain game frame (no pair: a menu, FlatVR's own eyes) is a pass too
-            static double lastEnd = 0.0;
+            static paceclock::Clock clock;
             frametrace::MarkDrawThread();
             const double t0 = pairtime::UsNow();
+            const double lastEnd = clock.Last(epoch, t0);
             const uintptr_t plain = OrigDrawGameScreen(a);
             const double t1 = pairtime::UsNow();
             if (lastEnd > 0.0 && t0 - lastEnd < 5e6) PairTrace(t1 - lastEnd, t0 - lastEnd, 0.0, t1 - t0, 0.0, 0.0, -1.0, false, true);
-            lastEnd = t1;
+            clock.End(epoch, t1);
             return plain;
         }
         return OrigDrawGameScreen(a);
@@ -362,9 +386,12 @@ uintptr_t HookDrawGameScreen(int a) {
     if (const D2RVR_Shared* hs = Shared())
         flog::Line("S,%u,%.4f,%.3f,%.3f,%.3f,%.3f,%u", flog::Pass(), flog::Dt(), g_heldYaw.load(), hs->headYawDeg, hs->headPitchDeg, hs->headRollDeg, hs->sampleStamp);
 
-    static double lastEnd = 0.0, sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
+    static paceclock::Clock pairClock;   // this path's last pair, valid in its epoch only (pace_clock.h)
+    const uint64_t paceEpoch = PaceFrame(paceclock::Path::kPair);
+    static double sumGap = 0.0, sumPass[2] = {}, sumPresent[2] = {}, sumEff[2] = {}, maxPair = 0.0, sumCpu = 0.0, sumWall = 0.0;
     static double sumBegin = 0.0;   // the XR begin inside "left" (xrWaitFrame's block and the frame's start: waiting, mostly - not the game's pass)
     const double t0 = pairtime::UsNow(), c0 = pairtime::CpuUs();
+    const double lastEnd = pairClock.Last(paceEpoch, t0);
     pairtime::g_drawThread.store(GetCurrentThreadId());
     frametrace::MarkDrawThread();   // [debug] frame_trace: the probes on this thread are told apart
     const double gapUs = lastEnd > 0.0 ? t0 - lastEnd : 0.0;   // ([debug] perf_sweep: this pair's game frame)
@@ -440,7 +467,7 @@ uintptr_t HookDrawGameScreen(int a) {
     if (lastEnd > 0.0) PairHitch(t2 - lastEnd, t0 - lastEnd, tb - t0, t1 - tb, tr - t1, t2 - tr, native, false);
     if (lastEnd > 0.0) PairTrace(t2 - lastEnd, t0 - lastEnd, tb - t0, t1 - tb, tr - t1, t2 - tr, pairtime::CpuUs() - c0, native, false);   // [debug] frame_trace
     if (lastEnd > 0.0) maxPair = std::max(maxPair, t2 - lastEnd);
-    lastEnd = t2;
+    pairClock.End(paceEpoch, t2);
     const double cpuUs = pairtime::CpuUs() - c0;
     sumCpu += cpuUs; sumWall += t2 - t0;
     perfsweep::OnPair(cpuUs, t1 - tb, t2 - t1, gapUs, viewgate::F4());   // [debug] perf_sweep: nothing unless a run measures
@@ -659,8 +686,11 @@ static DWORD UpdateThreadBody() {
         // the picture, at their own size; on the hands only in first person.
         hud::SetClassicView(ClassicNow());
         {   // [hud] f5_toolbar (vr/f5_toolbar.h): in VR F5 the toolbar's strip out of the picture, low in front at F5's own height and distance
-            const f5bar::Offset o = f5bar::OffsetFor(g_set.f5BarBelow.load(), g_set.f5BarAhead.load());
-            hud::SetViewBar(f5bar::Wanted(g_set.f5Toolbar.load(), ArView()), o.sideCm, o.liftCm, g_set.f5BarWidth.load());
+            // ... and [hud_third] bar_low: VR F2's the same way, at F2's own height and distance, while F2's interface is in the picture
+            const bool vrF2 = g_set.platform.load() == 1 && f2map::IsF2(g_enabled.load(), TopPersp(), TableView(), ThirdPerson(), ArView());
+            const bool f2 = f5bar::WantedF2(g_set.f2BarLow.load(), vrF2, ClassicNow());
+            const f5bar::Offset o = f5bar::OffsetNow(f2, g_set.f2BarBelow.load(), g_set.f2BarAhead.load(), g_set.f5BarBelow.load(), g_set.f5BarAhead.load());
+            hud::SetViewBar(f2 || f5bar::Wanted(g_set.f5Toolbar.load(), ArView()), o.sideCm, o.liftCm, g_set.f5BarWidth.load());
         }
         MapDirectionTick();   // [hud] map_direction
         MapRotateFlatTick();  // [hud] map_rotate_flat
@@ -683,15 +713,21 @@ static DWORD UpdateThreadBody() {
         // ... and on the floor (F3) its own size, depth and place, as the toolbar's
         // ([hud] f5_map_size, vr/f5_hud.h: VR F5's map with f5_map - % of that corner map size)
         const float insideMap = F5MapNow() ? f5hud::MapZoom(g_set.mapZoomInside.load(), g_set.f5MapSize.load()) : g_set.mapZoomInside.load();
-        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? insideMap : TableView() ? g_set.mapSizeFloor.load() : 1.0f);
+        // ([hud_third] map_size, vr/f2_map.h: F2's corner map at a size of its own)
+        const bool f2Map = F2MapNow();
+        hud::SetPictureZoom(BarSizeNow(), InsideFree() ? insideMap : TableView() ? g_set.mapSizeFloor.load() : f2Map ? f2map::Zoom(g_set.mapSizeThird.load()) : 1.0f);
         hud::SetPictureBarMoved(BarNearWanted());
         hud::SetPictureMapMoved(MapNearWanted());
         if (ClassicNow() && TableView()) hud::SetPictureMapOffset(g_set.mapXFloor.load(), g_set.mapYFloor.load());
         else if (ClassicNow() && F5MapNow()) {   // [hud] f5_map (vr/f5_hud.h): VR F5's corner map toward the middle and down (x turned round for a left corner)
             const f5hud::Uv u = f5hud::MapShiftUv(g_set.f5MapIn.load(), g_set.f5MapDown.load());
             hud::SetPictureMapOffset(u.x, u.y);
+        } else if (ClassicNow() && f2Map) {   // [hud_third] map_x / map_y (vr/f2_map.h): F2's corner map toward the middle and down (x turned round for a left corner)
+            const f2map::Uv u = f2map::ShiftUv(g_set.mapInThird.load(), g_set.mapDownThird.load());
+            hud::SetPictureMapOffset(u.x, u.y);
         } else hud::SetPictureMapOffset(0.0f, 0.0f);
-        hud::SetPictureMapInward(ClassicNow() && !TableView() && F5MapNow());
+        hud::SetPictureMapInward(ClassicNow() && !TableView() && (F5MapNow() || f2Map));
+        hud::SetPictureMapKeepOn(ClassicNow() && !TableView() && f2Map);   // ... and F2's held inside the picture, whatever the sliders say
         {   // [hud_*] bar_x / bar_y: the toolbar somewhere else on the screen
             float bx = 0.0f, by = 0.0f;
             if (ClassicNow()) BarOffsetNow(&bx, &by);
@@ -923,6 +959,7 @@ static DWORD UpdateThreadBody() {
             PortalOvalTick();           // [input] flat_portal_no_oval (flat), [render] portal_no_oval (VR)
             InstallRoomHeightHook();    // [render] room_stitch, once asked for
             InstallTerrainHeightHook(); // [render] terrain_heights, once asked for
+            InstallCeilingFloor();      // [ceiling] follow_floor, once asked for
             straywalk::Install();   // the guard on the game's command funnel, once block_stray_walk asks for it
             attackpath::Install();   // [gameplay] flat_attack_path: once asked for
             moveattack::Install();   // [gameplay] move_while_attacking: the server's attack gate and frame trigger, the controller's update - once asked for

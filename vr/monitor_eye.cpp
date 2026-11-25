@@ -1,6 +1,7 @@
 // [render] monitor_eye: the window shows one eye - see vr/monitor_eye.h. bearstonem/d2r-pcvr's idea (MIT).
 
 #include "monitor_eye.h"
+#include "fence_wait.h"   // WaitFence: not ended by a wake meant for an older wait
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -10,6 +11,7 @@
 #include <d3dcompiler.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdarg>
 #include <cstdio>
 #include <cmath>
@@ -168,11 +170,13 @@ D3D12_RESOURCE_BARRIER Tr(ID3D12Resource* r, D3D12_RESOURCE_STATES from, D3D12_R
     return b;
 }
 
+// (one auto-reset event for every wait: a wait that ran out leaves its arming, and the next wait must not end on that older wake - fence_wait.h, as xr.cpp)
 bool WaitFence(UINT64 v, DWORD ms) {
     if (!g_fence || g_fence->GetCompletedValue() >= v) return true;
-    g_fence->SetEventOnCompletion(v, g_event);
-    WaitForSingleObject(g_event, ms);
-    return g_fence->GetCompletedValue() >= v;
+    return fencewait::WaitValue(
+        v, (unsigned)ms, [] { return g_fence->GetCompletedValue(); },
+        [](uint64_t x) { ResetEvent(g_event); g_fence->SetEventOnCompletion(x, g_event); }, [](unsigned m) { WaitForSingleObject(g_event, m); },
+        [] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count(); });
 }
 
 // Everything of a device gone (another device came: the old one's work is done or lost with it).

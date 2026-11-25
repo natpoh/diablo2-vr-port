@@ -25,6 +25,7 @@ extern "C" {
 #endif
 
 #define D2RP_ABI_VERSION 1
+#define D2RP_HAVE_ON_CONTACT 1   /* this header has D2rpParams.onContact and D2rpBodyCount */
 
 /* The library defines D2RP_BUILD_DLL before including this to export the functions; the mod never does. */
 #if defined(D2RP_BUILD_DLL) && defined(_WIN32)
@@ -66,6 +67,9 @@ typedef struct D2rpParams {
     float moveLimit;        /* s: a prop never moves longer than this */
     float strength;         /* the hands' drive x this (1 = the weight library's own numbers) */
     float propMass;         /* the props as heavy as their stuff x this (1) */
+    /* ---- read only when size covers it (a shorter struct, or a library before it: 0) ---- */
+    int32_t onContact;      /* 1: bodies only on contact - a listed prop or surface is data until something could reach it, the weapons are bodies only while something
+                               moves, and at rest nothing is stepped (0: every listed prop and surface a body at once, the weapons always: as before). The knocks are the same. */
 } D2rpParams;
 
 /* A prop as the mod sees it: id (the game's entity), its body's place, and its bounds in its body's own frame (centre and half extents). */
@@ -209,6 +213,11 @@ typedef int32_t (*D2rpHandAtFn)(void* world, int32_t hand, D2rpHandOut* out);
  * is added again weighs its material until it is told again). 1 set, 0 no such prop, < 0 an error (no world, kg not a positive number). */
 typedef int32_t (*D2rpSetPropMassFn)(void* world, uint32_t id, float kg);
 
+/* ---- How many Box3D bodies the props hold - an OPTIONAL export (the ABI stays 1) ----
+ * The props' and their surfaces' bodies in the world now (the floor, the weapons and the hands not counted). With D2rpParams.onContact standing among props nobody touches
+ * it is 0; every listed prop and surface otherwise. >= 0, < 0 an error (no world). */
+typedef int32_t (*D2rpBodyCountFn)(void* world);
+
 D2RP_API int32_t D2rpAbi(void);
 D2RP_API void* D2rpCreate(const D2rpParams* params);
 D2RP_API void D2rpDestroy(void* world);
@@ -223,6 +232,7 @@ D2RP_API int32_t D2rpMoverAt(void* world, int32_t slot, D2rpMoverOut* out);
 D2RP_API int32_t D2rpSetHands(void* world, const D2rpHand* hands, int32_t n);
 D2RP_API int32_t D2rpHandAt(void* world, int32_t hand, D2rpHandOut* out);
 D2RP_API int32_t D2rpSetPropMass(void* world, uint32_t id, float kg);
+D2RP_API int32_t D2rpBodyCount(void* world);
 
 #ifdef __cplusplus
 }

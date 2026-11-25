@@ -430,6 +430,14 @@ camera never looks into it.
 player's own game archives; that part was not ported in 0.172 (the walls and stairs drawn two-sided were:
 `vr/roof_sides.h`, [render] roofs_two_sided). Also not ported: a VR "ENTER SEWERS" prompt.
 
+**What was done (test 0.223.x, 2026-11-25; Serg's "texture under the Bazaar's ground" of that day was another piece,
+the stray terrain-mask plane - `[holes] bazaar_mask_hidden`, `shared/bazaar_mask.h`):** the
+backdrop ported (`[holes] sewer_backdrop`, on; Settings > World): D2R_VR_Settings stands two faces of the game's own
+black panel (act4_fort_stairs/black_square01) half a unit behind the stairs' open floor end, measured from the game's
+stairs model, in the four presets burbssewer0/1 and metrosewer0/1 (`shared/unleashed_sewer_backdrop.h`, MPL 2.0;
+`tools/settings/sewer_assets.cpp`; `unleashed_sewer_backdrop_test`). The game's stairs measure 7.98 x 9.18 units; the wall
+is 12.0 x 9.2. To check in the headset.
+
 ---
 
 ### 28. Monster corpses flicker after a ragdoll death [repo]

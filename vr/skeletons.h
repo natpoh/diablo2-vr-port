@@ -353,6 +353,11 @@ struct Input {
     // Paladin's, the Druid's; the Assassin's ring and little finger) starts with a bone inside the palm, which is not bent. Off = from the chain's first bone
     // unless its name says "metacarpal" (up to 0.215: those three rigs' palms folded in half as the hand closed).
     bool fistKnuckle = true;
+    // [hands] palm_from_knuckle (vr/palm_knuckle.h): every hand placed by its palm (on the controller's grip point, a shaft, a held body, the
+    // crossbow's fore-grip) takes the palm's middle half way to the middle finger's KNUCKLE as the rig's own bones tell it - on the Amazon's,
+    // the Paladin's and the Druid's rig the finger's first bone lies inside the palm and the hand sat ~2 cm past the grip. Off = half way to
+    // the finger's first bone, as before. The other five rigs are the same either way.
+    bool palmKnuckle = false;
     // >= 0: the hand closes at most this far (a part, as fistClose) - a belt potion in it ([hands] belt_hold_close)
     float fistCap[2] = {-1.0f, -1.0f};
     float staffGrabM = 0.15f;   // the grip takes the staff only with the left hand this close to it (metres)
@@ -426,6 +431,12 @@ struct Input {
     // right hand alone). vrcam: F4 only, the box ticked, drawnhand::Decide says carry; the pose confirms the game shows the right bone (drawnhand::Shown) before it carries.
     bool leftSlotDrawn = false;
     bool leftSlotShieldRight = false;
+    // [hands] shield_fist for that right slot's shield: asked for (box ticked, F4) while leftSlotShieldRight - the fist on the hand of the forearm it is strapped to
+    // (the right one; the left while the right hand alone holds the weapon). nikswat, 0.223.0, spear in the left slot, shield in the right: "the right hand is
+    // positioned as if holding a weapon shaft" and "when I press the grip while holding a weapon and a shield, the hands don't clench into a fist" - the right
+    // hand kept the game's animation, which grips a weapon there (the game animates a lone left-slot weapon as a right-hand one), and shield_fist looked at the
+    // left slot only.
+    bool shieldFistRightSlot = false;
     int weaponType = 0;         // D2RVR_WeaponType in hand (d2r_vr_state.h); a new one takes a new grip
     bool holdGrip = false;      // mode 2: the weapon keeps one grip, not the animation's (vrcam: every weapon, 2026-10-05)
     bool attacking = false;     // a skill button is down: no grip is taken from the animation then
@@ -804,6 +815,8 @@ void FlailHit(int side);
 // flail model learned since the last call (its chains, or why it has none). Empty when none.
 const char* FlailStatus();
 std::string FlailTakeNote();
+// ... and every 10 s while it is posed, how its poses met the game frames (FrameHold: one step a frame, the other eye of a pair laid again); empty otherwise.
+std::string FlailFramesLine();
 // [shield] heads_hang, for vrcam's log: what the last pose of the hero's head did ("posed - ..." or why not; a fixed string), and one line for
 // each head model learned since the last call (where it hangs from, how long its cord is, or why it cannot hang). Empty when none.
 const char* HeadStatus();
@@ -976,6 +989,9 @@ void SetMonsterPoseSource(MonsterPoseFn fn);
 // vr/body/pose_views.h AnyAllowed, the update thread each tick (PushArms): false in VR F1 / F3 - the pose hook writes nothing there (the hero, his gear, a
 // struck monster, the other heroes) and the skinning is handed none of our poses (headshadow::SetPoseView)
 void SetPoseView(bool allowed);
+// vrcam's HookDrawGameScreen: the game draw being drawn (a stereo pair's two passes one number; eyes by turns, a plain frame one each), 0 when it is over.
+// What is posed inside it once a game frame goes by it ([flail] chain: both eyes of a pair get one chain). Any thread.
+void SetGameDraw(uint64_t serial);
 // ... the same by a world pose the game hands its skinning (Pose::poseCur / posePrev, else Pose::skel and the pose's matrices; meleetouch::MonsterPosesForSkin): the skinning composite draws a struck
 // monster from a turned copy of its pose (headshadow::SetDollSkin; vr/head_shadow.h) - the pose hook then leaves the game's pose as it made it.
 using MonsterPoseByWorldFn = int (*)(uintptr_t skeleton, uintptr_t worldPose, dollpose::Pose* out, int max, bool* exact);

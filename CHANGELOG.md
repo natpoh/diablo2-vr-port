@@ -1,5 +1,56 @@
 # What's new in D2R VR
 
+## 0.224.0
+
+Fewer freezes, backups of the build and your settings, caves whose ceiling steps up with the floor, the F2 corner map where you want it, and ports from other authors.
+
+- **Fewer freezes** (native OpenXR): a render size change freezes once instead of twice (`[openxr] square_window_one_step`); the
+  interface's shader and the first-use swapchains are made ahead, not on the first frame that needs them (`[openxr] prewarm`); retired
+  swapchains are freed again (a wait could end on an older wake and keep them); Auto graphics tuning measures without the runtime's holds
+  and refuses noisy windows (`[autotune] clean_measure`); no more false "frame hitch" lines of hundreds of seconds after a mode switch or
+  a video.
+- **Backups of the build and of your settings** (D2R VR Settings > Home > Backups): keep the D2R VR build you are happy with and go back
+  to it after an update. "Back up the build" copies the mod, D2R VR Settings, the language files, the game data the mod made, BodyWalk Game
+  Link and all your settings (about 250 MB, not your characters) into `mods\D2R-VR\build_backups\<version>_<date>`; "Save settings" copies
+  only your settings. A Windows list under Restore... / Delete... shows every backup (Build, Settings, Auto; version, date to the second, size): the row under the mouse lights up, pick one, then Restore puts it back (a double click too; with the game closed; what
+  is there now is backed up first; D2R VR Settings opens again as the restored version). D2R VR Setup backs up the installed build before
+  an update (a ticked box; `[support] build_backup_before_update`, the last `build_backup_keep` = 3 Auto backups kept), so the old build can
+  come back even if you forgot.
+- **The F2 corner map where you want it** (`[hud_third] map_x` / `map_y` / `map_size`; D2R VR Settings, VR "F2 behind" and the
+  flat game's F2): move the corner map toward the middle and down, and size it. A player asked for it. New installs start with the
+  author's F2 layout: the map 21% in, 34% down, 44% of its size, and a smaller toolbar (`bar_size` 39, `bar_near` 2.4, `bar_y` 17).
+- **VR F2: the toolbar low under the camera, as in F5** (`[hud_third] bar_low`, a choice on UI: F2 behind; in front as before by default),
+  and **the allies' portraits moved** in from the corner (`[hud_third] allies_x` / `allies_y`, 0 / 0 = as before).
+- **Cave ceilings step up with the floor** (`[ceiling] follow_floor`, on): the game's cave ceiling no longer floats at one height over
+  the hero - where the floor under it rises, the ceiling rises with it in a step, fixed in the world. VR F4. 0 = as before.
+- **Kurast Bazaar: no grey plane under the ground** (`[holes] bazaar_mask_hidden`, on): a stray terrain plane deep under the Bazaar,
+  which first person saw through the grass, is taken out of the scenery (D2R VR Settings makes the file inside the mod).
+- **Kurast sewer stairs closed at their far end** (`[holes] sewer_backdrop`, on): the game's black panel stands at the open end, so
+  first person no longer sees the sky through the bottom of the stairwell.
+- **Two weapons, or a weapon and a shield, in either hand**: with a weapon in the left hand the left controller's grip chords take the
+  free right grip; a shield in the RIGHT slot beside a left-slot weapon clenches its fist with your grip. Thanks to nikswat for the report.
+- **New, off by default** (each with its own switch in D2R VR Settings):
+  - Barbarian: the walk stick steers Whirlwind (`[gameplay] whirlwind_stick_steer`);
+  - the view faces into the area when you arrive - a town toward its act's people, another area away from its entrance
+    (`[camera] entry_facing`, VR F4);
+  - the palm placed on the grip measured to the knuckles (`[hands] palm_from_knuckle`);
+  - the clash of your weapon on your own shield, or of your two weapons, heard only this hard and this far apart
+    (`[weight] clash_sound_min_mps`, `clash_sound_gap_s`);
+  - props become physics bodies only when touched (`[weight] props_on_contact`, a test);
+  - the act videos on the big screen in 3D, every VR view (`[cinema] video_3d`): a small depth network (ZipDepth, MIT) guesses each
+    frame's depth while the video plays and each eye gets its own picture; nothing is prepared at install.
+- **The VR controllers always play VR F1 - F3 without BodyWalk**, and a real Xbox gamepad works together with them as a second layer: the
+  Home box "Use an Xbox controller (gamepad) in VR" and the Stereo box "Play with the controllers in F1, F2, F3 without BodyWalk" are gone -
+  the Home box turned the controllers' buttons off unnoticed (`[direct] flat_controller` is no longer read).
+- **Fix: a flail's chain** moves one step a game frame, so both eyes of a two-pass stereo pair see the same chain.
+- Thanks to Berk (bearstonem) for the Whirlwind stick (https://github.com/bearstonem/d2r-pcvr/commit/09c3093ae312eeb6549a2302f76fa461e3dff35e),
+  the palm on the grip (https://github.com/bearstonem/d2r-pcvr/commit/12bd172), the clash sound limits
+  (https://github.com/bearstonem/d2r-pcvr/commit/1a11dd7), the flail chain fix (https://github.com/bearstonem/d2r-pcvr/commit/81f753f),
+  props on contact (https://github.com/bearstonem/d2r-pcvr/commit/632ddf0) and the Kurast sewer backdrop
+  (https://github.com/bearstonem/d2r-pcvr/commit/4f3a6a3).
+- Thanks to Piotr Kożuch (ptkk73) for facing into the area on arrival (bearstonem/d2r-pcvr PR #602,
+  https://github.com/bearstonem/d2r-pcvr/commit/f5ecd55098f05c8c498a36efba8465fb67ee07af).
+
 ## 0.223.0
 
 A smooth camera over bumps and steps, belt potions that drink again with the trigger, a fix for graphics card hangs on 6 - 8 GB cards, and Report a problem.

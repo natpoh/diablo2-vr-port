@@ -29,6 +29,16 @@ Source: "{#PayloadDir}\plugins\d2r_vr_walk.dll"; DestDir: "{app}\{#ModDir}\d2rlo
 ; D2R VR Crash Reporter ([support] crash_reports / send_logs, shared\d2r_vr_crash_watch.h; built in the private vjoy repository, a binary only).
 ; Beside the libraries; nothing runs it unless the player ticks one of the two (both off as shipped). Without it the two ticks are greyed out.
 Source: "{#PayloadDir}\plugins\D2R_VR_Crash_Reporter.exe"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+; The 3D cinematics library ([cinema] video_3d; vr\video3d_lib.cpp looks in d2r_vr_libs, then beside the plugin): closed, binary only, optional.
+; ONNX Runtime and DirectML beside it - the library loads them from its own folder (Windows 11 has older ones in System32), the ZipDepth network
+; (MIT) and the licences. Without them the videos stay flat.
+Source: "{#PayloadDir}\video3d\d2r_vr_video3d.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\onnxruntime.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\DirectML.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\zipdepth_base_512x288.onnx"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\ZipDepth-MIT.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\onnxruntime-MIT.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\video3d\DirectML-LICENSE.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 ; The player's own settings stay through an update (IniChoice in [Code]); the
 ; shipped defaults go beside them as d2r_vr.default.ini, which tells the next
 ; update whether the player changed anything.

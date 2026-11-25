@@ -265,6 +265,151 @@ void InstallTerrainHeightHook() {
            : "vrcam: terrain heights: hook FAILED - the ground's tiles stay at the hero's floor");
 }
 
+// ---- [ceiling] follow_floor (shared/ceiling_floor.h): the floor under each tile of the game's cave ceiling ----
+// The render thread (engitem::CeilingFrame) says each frame whether it wants the floors and round which place (Ask); on the game's thread,
+// after each LevelTranslationLayer::SimulationTick (d2rcam::SetLevelTickCallback - drawdist's hook, in since the render distance's), the
+// window's tiles not known yet - nearest the hero first - are asked of the game's floor world: kSide x kSide vertical rays each, the
+// physics manager's closest ray with the layer's floor filter (the ray the game casts for the hero's floor, TerrainFloor, only straight
+// down), kBudgetRays a tick. Kept per world tile for the area (ceilfloor::Keeper): forgotten when the area's biome changes, the tile size
+// changes, or the hero jumps far (a waypoint, another level). Visual only: nothing of the game's is written.
+namespace ceilfloorwire {
+SRWLOCK g_lock = SRWLOCK_INIT;
+ceilfloor::Keeper g_keeper;            // written on the game's thread (under g_lock), read by the render thread (Window, shared)
+std::atomic<bool> g_want{false};
+std::atomic<float> g_tile{40.0f}, g_heroX{0.0f}, g_heroY{0.0f}, g_heroZ{0.0f};
+std::atomic<bool> g_clear{false};
+std::atomic<int> g_state{0};           // 0 not in yet, 1 in, 2 not possible
+std::atomic<uint32_t> g_tick{0};
+// what the rays did, for the render thread's log line (taken and reset there)
+std::atomic<uint32_t> g_rays{0}, g_hits{0}, g_offLine{0}, g_tiles{0};
+std::atomic<int64_t> g_spentQpc{0};
+std::atomic<uint32_t> g_ticksWorked{0};
+
+// The vertical ray through (x, z) from yTop down to yBottom: the hit's point; false when nothing was hit (or it faulted)
+bool FloorDown(void* layer, float x, float z, float yTop, float yBottom, float out[3]) noexcept {
+    const uintptr_t phys = d2rsig::Addr(RVA_PHYSICS), cast = d2rsig::Addr(RVA_RAYCAST);
+    uint64_t filter = 0;
+    if (!phys || !cast || !layer || !SafeRead(&filter, (const uint8_t*)layer + terrainheights::kLayerFloorFilter, sizeof filter)) return false;
+    alignas(16) uint8_t in[ceilfloor::kRayInputSize];
+    alignas(16) uint8_t res[ceilfloor::kRayOutSize] = {};
+    ceilfloor::RayInput(x, z, yTop, yBottom, filter, in);
+    bool hit = false;
+    __try {
+        void* mgr = ((PhysicsFn)phys)();
+        hit = mgr && ((RayCastFn)cast)(mgr, res, in, 0);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    memcpy(out, res, 3 * sizeof(float));
+    return hit;
+}
+
+void Tick(void* layer) {
+    const uint32_t tick = g_tick.fetch_add(1) + 1;
+    if (!layer || !g_want.load(std::memory_order_relaxed)) return;
+    const float tile = g_tile.load(std::memory_order_relaxed), hx = g_heroX.load(), hy = g_heroY.load(), hz = g_heroZ.load();
+    if (!(tile > 0.0f) || !std::isfinite(hx + hy + hz)) return;
+    if (g_clear.exchange(false)) {
+        AcquireSRWLockExclusive(&g_lock); g_keeper.Clear(); ReleaseSRWLockExclusive(&g_lock);
+    }
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+    const int x0 = ceilfloor::WindowFirst(hx, tile), z0 = ceilfloor::WindowFirst(hz, tile);
+    int tx[ceilfloor::kWindow], tz[ceilfloor::kWindow];
+    const int n = g_keeper.Pick(x0, z0, tick, ceilfloor::kBudgetRays / ceilfloor::kRays, tx, tz);   // (the game's thread alone writes: no lock to read)
+    if (!n) return;
+    const float yTop = hy + ceilfloor::kRayReach, yBottom = hy - ceilfloor::kRayReach;
+    uint32_t rays = 0, hits = 0, offLine = 0;
+    for (int i = 0; i < n; ++i) {
+        float h[ceilfloor::kRays];
+        int got = 0;
+        for (int k = 0; k < ceilfloor::kRays; ++k) {
+            float x, z, o[3] = {}, y;
+            ceilfloor::RayAt(tx[i], tz[i], tile, k, &x, &z);
+            ++rays;
+            if (!FloorDown(layer, x, z, yTop, yBottom, o)) continue;
+            if (ceilfloor::Hit(o, x, z, yTop, yBottom, &y)) { h[got++] = y; ++hits; }
+            else ++offLine;
+        }
+        AcquireSRWLockExclusive(&g_lock);
+        g_keeper.Put(tx[i], tz[i], h, got, tick);
+        ReleaseSRWLockExclusive(&g_lock);
+    }
+    QueryPerformanceCounter(&t1);
+    g_rays.fetch_add(rays);
+    g_hits.fetch_add(hits);
+    g_offLine.fetch_add(offLine);
+    g_tiles.fetch_add((uint32_t)n);
+    g_spentQpc.fetch_add(t1.QuadPart - t0.QuadPart);
+    g_ticksWorked.fetch_add(1);
+}
+
+// The render thread, every frame of CeilingFrame: wanted or not, the tile size and the hero's place. The area's biome changed, the tile
+// size changed or the hero jumped far since the last ask: what is kept is forgotten (on the game's thread, before its next rays).
+void Ask(bool want, float tile, const float hero[3]) {
+    static float lastTile = -1.0f, last[3] = {};
+    static bool had = false;
+    static std::string biome;
+    std::string now;
+    AcquireSRWLockShared(&g_biomeLock); now = g_biome; ReleaseSRWLockShared(&g_biomeLock);
+    const bool jump = had && (std::fabs(hero[0] - last[0]) > 200.0f || std::fabs(hero[2] - last[2]) > 200.0f || std::fabs(hero[1] - last[1]) > 200.0f);
+    if (want && (now != biome || tile != lastTile || jump)) g_clear.store(true);
+    if (want) { biome = now; lastTile = tile; std::memcpy(last, hero, sizeof last); had = true; }
+    g_tile.store(tile);
+    g_heroX.store(hero[0]);
+    g_heroY.store(hero[1]);
+    g_heroZ.store(hero[2]);
+    g_want.store(want && g_state.load() == 1);
+}
+
+// The window starting at world tile (x0, z0): each tile's floor and whether it is known; how many are
+int Window(int x0, int z0, float* floor, bool* known) {
+    int n = 0;
+    AcquireSRWLockShared(&g_lock);
+    for (int i = 0; i < ceilfloor::kWindow; ++i) {
+        const ceilfloor::Tile* t = g_keeper.Find(x0 + i % ceilfloor::kAcross, z0 + i / ceilfloor::kAcross);
+        known[i] = t && t->known;
+        floor[i] = known[i] ? t->floor : 0.0f;
+        n += known[i];
+    }
+    ReleaseSRWLockShared(&g_lock);
+    return n;
+}
+
+bool Ready() { return g_state.load() == 1; }
+
+// What the rays did since the last call: rays, hits, hits off the ray's line, tiles asked, microseconds a tick that asked, tiles kept
+void Took(uint32_t* rays, uint32_t* hits, uint32_t* offLine, uint32_t* tiles, double* usTick, size_t* kept) {
+    *rays = g_rays.exchange(0);
+    *hits = g_hits.exchange(0);
+    *offLine = g_offLine.exchange(0);
+    *tiles = g_tiles.exchange(0);
+    const int64_t qpc = g_spentQpc.exchange(0);
+    const uint32_t ticks = g_ticksWorked.exchange(0);
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    *usTick = ticks ? (double)qpc * 1e6 / (double)f.QuadPart / ticks : 0.0;
+    AcquireSRWLockShared(&g_lock); *kept = g_keeper.Size(); ReleaseSRWLockShared(&g_lock);
+}
+
+// Once [ceiling] follow_floor asks for it: the physics manager's ray as known, then the level tick's callback (drawdist's hook)
+void Install() {
+    static int misses = 0;
+    if (!g_ctx || g_state.load() != 0 || !g_set.ceilFollowFloor.load()) return;
+    if (!Matches(RVA_PHYSICS, kSigPhysics, sizeof kSigPhysics) || !Matches(RVA_RAYCAST, kSigRayCast, sizeof kSigRayCast)) {
+        if (g_inWorld.load() && ++misses >= 20) {
+            g_state.store(2);
+            Log("vrcam: ceiling follows the floor - the game's floor ray NOT as known (0x7E65A0 / 0x7E7DD0 - another build?): the ceiling at one "
+                "height, as before ([ceiling] follow_floor)");
+        }
+        return;
+    }
+    d2rcam::SetLevelTickCallback(&Tick);
+    g_state.store(1);
+    Log("vrcam: ceiling follows the floor - in: the floor under each tile of the cave ceiling asked of the game's floor, after each level "
+        "tick ([ceiling] follow_floor)");
+}
+}  // namespace ceilfloorwire
+void InstallCeilingFloor() { ceilfloorwire::Install(); }
+
 // [render] rings and model_radius into cleanroom/drawdist (the old
 // renderdistance plugin's job); the radius retries until its hook is in.
 // big_radius apart (D2R VR Unleashed's Big objects, cleanroom/drawdist/unleashed_big_objects.cpp, MPL): its hook goes in only once it is

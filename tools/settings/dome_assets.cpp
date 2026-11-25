@@ -710,15 +710,21 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
     // tick is live in the game) - each by its path in the mod and the receipt's name ('/' between the parts). `lod` -1: the unit.
     // And the barracks' beams ([ceiling] game_ceiling_beams: kind -1, five models and a unit) and the rooms' measures (kind -2: the walls'
     // top, the beams' frame - [ceiling] height_from_walls), made with them so the ticks are live.
-    struct Piece { std::string rel; int kind; bool wall; int lod; };
+    // ([ceiling] follow_floor: a natural cave's tile of its rock too - five models and a unit - made with the slab, so the tick is live)
+    struct Piece { std::string rel; int kind; bool wall; int lod; bool patch = false; };
     std::vector<Piece> pieces;
-    for (int k = 0; k < gameceiling::kKindCount; ++k)
+    for (int k = 0; k < gameceiling::kKindCount; ++k) {
         for (const bool wall : {false, true}) {
             const char* file = wall ? gameceiling::kKinds[k].wall : gameceiling::kKinds[k].slab;
             if (!file) continue;
             for (int lod = 0; lod < 5; ++lod) pieces.push_back({gameceiling::LodPath(file, lod), k, wall, lod});
             pieces.push_back({gameceiling::UnitPath(k, wall), k, wall, -1});
         }
+        if (const char* patch = gameceiling::kKinds[k].patch) {
+            for (int lod = 0; lod < 5; ++lod) pieces.push_back({gameceiling::LodPath(patch, lod), k, false, lod, true});
+            pieces.push_back({gameceiling::PatchUnitPath(k), k, false, -1, true});
+        }
+    }
     for (int lod = 0; lod < 5; ++lod) pieces.push_back({gameceiling::LodPath(gameceiling::kBeamModelFile, lod), -1, false, lod});
     pieces.push_back({gameceiling::kBeamUnit, -1, false, -1});
     // and the vaults ([ceiling] game_ceiling_dome: the cathedral's, slot 0; game_ceiling_worldstone_dome: the rest - kind -10 - slot, five
@@ -922,7 +928,7 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
             continue;
         } else if (piece.lod >= 0) {
             const gameceiling::Kind& kind = gameceiling::kKinds[piece.kind];
-            if (!piece.wall && meshKind != piece.kind) {   // (each kind its own relief, and its own bytes: the flat kinds' slabs are one mesh)
+            if (!piece.wall && !piece.patch && meshKind != piece.kind) {   // (each kind its own relief, and its own bytes: the flat kinds' slabs are one mesh)
                 mesh = grannyremesh::CeilingMesh(gameceiling::kTile, gameceiling::kTilesHalf, gameceiling::kCells, kind.relief);
                 grannyremesh::Salt(&mesh, gameceiling::SaltOf(piece.kind, false));
                 meshKind = piece.kind;
@@ -931,19 +937,22 @@ Result PrepareCeiling(const std::wstring& game, const std::wstring& modRoot, boo
             if (piece.wall) {
                 ownWall = wallMesh;
                 grannyremesh::Salt(&ownWall, gameceiling::SaltOf(piece.kind, true));
+            } else if (piece.patch) {   // [ceiling] follow_floor: one tile of the kind's rock, from its corner (the slab's relief and uv there)
+                ownWall = grannyremesh::CeilingPatchMesh(gameceiling::kTile, 1, gameceiling::kCells, kind.relief);
+                grannyremesh::Salt(&ownWall, gameceiling::PatchSaltOf(piece.kind));
             }
             const grannyremesh::Renames maps = {{gameceiling::kMaps[0].from, gameceiling::MapPath(kind, "ALB")},   // the rock's maps: the kind's
                                                 {gameceiling::kMaps[1].from, gameceiling::MapPath(kind, "NRM")},
                                                 {gameceiling::kMaps[2].from, gameceiling::MapPath(kind, "ORM")}};
             grannyremesh::File f;
             std::string why;
-            if (!grannyremesh::Read(rock, &f, &why) || !grannyremesh::Remesh(f, piece.wall ? ownWall : mesh, maps, piece.lod, nullptr, &why)) {
+            if (!grannyremesh::Read(rock, &f, &why) || !grannyremesh::Remesh(f, piece.wall || piece.patch ? ownWall : mesh, maps, piece.lod, nullptr, &why)) {
                 r.text = lang::TX(L"ceiling.refused", L"the game's cave rock model is not as known ({why}): no game cave ceiling", {{L"why", Wide(why)}});
                 return r;
             }
             made = grannyremesh::Write(f);
         } else {
-            made = gameceiling::UnitJson(piece.kind, piece.wall);
+            made = piece.patch ? gameceiling::PatchUnitJson(piece.kind) : gameceiling::UnitJson(piece.kind, piece.wall);
         }
         const std::string& rel = piece.rel;
         const std::string name = "mods/D2R-VR/D2R-VR.mpq/" + rel;

@@ -145,6 +145,8 @@ void TurnTick() {
     const float dt = (float)std::min(now - last, 0.1);
     last = now;
     struct Unlock { ~Unlock() { ReleaseSRWLockExclusive(&g_turnLock); } } unlock;
+    // [camera] entry_facing: an arrival's turn into the area, once, on the body turn as the stick's - before a pair holds it, so both eyes take it
+    if (const float entry = TakeEntryTurn(); entry != 0.0f && std::isfinite(entry)) { g_turnYaw.store(WrapDeg(g_turnYaw.load() + entry)); g_gen.fetch_add(1); }
     if (!g_enabled.load() || !g_set.rightTurn.load()) { g_rightX.store(0.0f); g_rightY.store(0.0f); return; }
     // [camera] stick_pitch_f2 (VR F2): the stick's up / down tilts, at the turn's dead zone; a push more sideways than up / down
     // is a turn and does not tilt (vr/stick_pitch.h). Off: the tilt forgotten, the camera as before.

@@ -643,7 +643,10 @@ void LoadSettings(const wchar_t* ini) {
                        "(movement only: no attack, button, gesture or panel there; BodyWalk running = its pad as before)"
                      : "vrcam: direct input - [direct] walk_flat_views=0: VR F1, F2, F3 keep BodyWalk's input alone (no walking without it)");
     }
-    const bool flatCtl = GetPrivateProfileIntW(L"direct", L"flat_controller", 1, ini) != 0;
+    // Always on since 0.224 (Serg 2026-11-25: Home's Xbox box turned the VR controllers off in F1-F3 unnoticed; a real Xbox pad is merged
+    // in as a second layer anyway - vr/pad_presence.h). [direct] flat_controller is no longer read; flat_controller_off=1 is a hidden test
+    // switch only (no Settings control, not in the shipped ini) for the tests of the walk-alone path.
+    const bool flatCtl = GetPrivateProfileIntW(L"direct", L"flat_controller_off", 0, ini) == 0;
     g_flatCtl.store(flatCtl);
     static int toldCtl = -1;
     if (on && (int)flatCtl != toldCtl) {
@@ -889,6 +892,7 @@ void Feed(D2RVR_XrInput* in, bool menu, const uint32_t touches[2]) {
     // still leans for the clicks: Controls::lean)
     Controls raw = ControlsOf(*in, touches);
     raw.lean[0] = lean[0]; raw.lean[1] = lean[1];
+    for (int h = 0; h < 2; ++h) raw.chordOtherGrip[h] = (take[h] & kChordOtherGrip) != 0;   // (this hand's grip holds the weapon: its chords take the other grip)
     // [hands] left_handed (vr/hand_swap.h): the two sticks traded - the layout walks by the right stick and turns by the left, each click (and its
     // long press, its touch, its lean, a gesture's take of it) with its stick; every other button its own; the gestures above had each controller as it is
     if (swapped) handswap::SwapSticks(&raw, taken);

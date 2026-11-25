@@ -74,14 +74,22 @@ struct Kind {
     float relief;          // its rock's relief (CeilingMesh), model units; 0 flat
     const char* slab;      // its model, under data/hd/env/model/Tests/, without "_lod<n>.model"
     const char* wall;      // the wall at its rim's model, or nullptr (rooms: their own walls)
+    // [ceiling] follow_floor (shared/ceiling_floor.h): one tile of its rock (CeilingPatchMesh) - laid under the slab where the floor is
+    // lower, and stood upright as the step faces - or nullptr (no steps: the slab at one height, as before). The natural caves only. At
+    // the Arcane Sanctuary's collision helper meshes' paths: named by the game's LOD table and by none of its 7741 other JSON files (the
+    // installed game, 2026-11-25 scan), never used by us before.
+    const char* patch = nullptr;
 };
 constexpr Kind kKinds[] = {
     // reference D2R_Ceiling_act1_caves_walls (Serg saw this one in the headset: "всё отлично")
-    {"cave", "data/hd/env/texture/terrain/act1/caves/act1_caves_rock01", kRelief, "test_detailnormal/cliffside01", "test_detailnormal/decal01"},
+    {"cave", "data/hd/env/texture/terrain/act1/caves/act1_caves_rock01", kRelief, "test_detailnormal/cliffside01", "test_detailnormal/decal01",
+     "@act2/arcane/act2_arcane_collision/_10x10"},
     // the other caves (caves are the game's by default): their own act's rock
     // (2026-10-29: off Tests/pillar01, Pillar_02, Pillar_03 - the sky's act 2 - 4 domes took the same three the same day, d6068c32)
-    {"jungle_cave", "data/hd/env/texture/terrain/act3/jungle/act3_jungle_dungeon_rocky01", kRelief, "test_cloth/cloth02", "test_cloth/cloth04"},
-    {"ice_cave", "data/hd/env/texture/terrain/expansion/icecave/Act5_Rocky_Floor", kRelief, "test_cloth/rope_test01/rope_test01", "testy"},
+    {"jungle_cave", "data/hd/env/texture/terrain/act3/jungle/act3_jungle_dungeon_rocky01", kRelief, "test_cloth/cloth02", "test_cloth/cloth04",
+     "@act2/arcane/act2_arcane_collision/_60x60"},
+    {"ice_cave", "data/hd/env/texture/terrain/expansion/icecave/Act5_Rocky_Floor", kRelief, "test_cloth/rope_test01/rope_test01", "testy",
+     "@act2/arcane/act2_arcane_collision/_80x80"},
     // reference D2R_Ceiling_act1_crypt (tall stone slabs): act 4's tall stone tiles in columns
     {"crypt", "data/hd/env/texture/terrain/act4/mesa/act4_mesa_stonetile01", 0.0f, "vertblend_house", nullptr},
     // reference D2R_Ceiling_act1_barracks_smooth (smooth dark stone; the barracks' and the catacombs'): the Arcane Sanctuary's dark grunge
@@ -203,6 +211,12 @@ inline std::string UnitPath(int kind, bool wall) {
     if (kind == 0) return wall ? kWallUnit : kUnit;
     return std::string("data/hd/env/model/d2r_vr/ceiling/") + kKinds[kind].name + (wall ? "_wall_unit.json" : "_ceiling_unit.json");
 }
+// [ceiling] follow_floor: a kind's tile's unit (only the natural caves have a tile)
+inline std::string PatchUnitPath(int kind) { return std::string("data/hd/env/model/d2r_vr/ceiling/") + kKinds[kind].name + "_patch_unit.json"; }
+// its mesh's bytes its own too (Salt; past every slab's and wall's)
+inline unsigned PatchSaltOf(int kind) { return 1u + 2u * (unsigned)kKindCount + (unsigned)kind; }
+// its mesh: one tile of kCells x kCells cells, two triangles a cell, both windings
+constexpr unsigned kPatchIndexCount = 12u * kCells * kCells;
 
 struct In {
     bool ticked = false;   // [ceiling] game_ceiling
@@ -436,6 +450,11 @@ inline std::string UnitJson(int kind, bool wall) {
     return UnitJsonOf(name, ModelPath(wall ? k.wall : k.slab), k.maps);
 }
 inline std::string UnitJson(bool wall = false) { return UnitJson(0, wall); }   // (the act 1 cave's)
+// [ceiling] follow_floor: a kind's tile's unit, naming its own model and the kind's maps
+inline std::string PatchUnitJson(int kind) {
+    const Kind& k = kKinds[kind];
+    return UnitJsonOf(std::string(k.name) + "_patch", ModelPath(k.patch), k.maps);
+}
 // The barracks' beams' unit: the grid's model at its test path, the frame's own maps
 inline std::string BeamUnitJson() { return UnitJsonOf("barracks_beams", ModelPath(kBeamModelFile), kBeamMaps); }
 // A vault's unit: its slot's model, its room's kind's maps (the cathedral's: slot 0, the cathedral's stone, as it was)

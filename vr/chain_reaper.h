@@ -66,6 +66,9 @@ class Reaper {
         return ms < top ? ms : top;
     }
     unsigned RanOut() const { return ranOut_; }
+    // Counts for the log's 10 s line (never reset by Sweep / All): destroyed after a drain, drains that came back, drains that ran out.
+    struct Totals { std::size_t destroyed = 0, drained = 0, ranOut = 0; };
+    const Totals& Total() const { return total_; }
 
     // The drain's outcome. Drained: every one minAgeMs old is handed to destroy (oldest first) and the count returned; the younger wait on. Not: none, and no
     // try before retryMs.
@@ -75,15 +78,18 @@ class Reaper {
             const bool atMost = l.drainMaxMs > l.drainMs && DrainMs(l) >= l.drainMaxMs;   // the longest wait ran out too: not paid every retryMs
             nextTryAt_ = nowMs + (atMost ? l.retryAtMaxMs : l.retryMs);
             ++ranOut_;
+            ++total_.ranOut;
             return 0;
         }
         ranOut_ = 0;
+        ++total_.drained;
         std::size_t n = 0, keep = 0;
         for (const Item& i : items_) {
             if (nowMs - i.at >= l.minAgeMs) { destroy(i.h); ++n; }
             else items_[keep++] = i;
         }
         items_.resize(keep);
+        total_.destroyed += n;
         nextTryAt_ = 0.0;
         if (items_.empty()) told_ = false;
         return n;
@@ -114,6 +120,7 @@ class Reaper {
     double nextTryAt_ = 0.0;
     bool told_ = false;
     unsigned ranOut_ = 0;   // drains in a row that ran out
+    Totals total_;
 };
 
 }  // namespace chainreap

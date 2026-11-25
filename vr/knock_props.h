@@ -33,6 +33,12 @@ bool Wanted();
 // whose weapon sets one going feels it - a light tick for a light thing, a knock and a thud for a heavy one; the trace names the mass. A library without
 // D2rpSetPropMass: only the pulse. Off: no call, the props weigh their material, every knock the same short pulse, as before.
 void ConfigureHeft(bool on);
+// [weight] props_on_contact (off by default; switched, the props world is made anew): bodies only on contact - the idea is Berk's (bearstonem/d2r-pcvr, "Props are physics
+// bodies only on contact", https://github.com/bearstonem/d2r-pcvr/commit/632ddf0), done in the weight library our own way (D2rpParams.onContact): a listed prop or the
+// surface under it is data until a weapon, a moving prop or a hand could reach it, the weapons are bodies only near props or while one moves, and at rest no step is
+// taken. The knocks are the same (the library's twin tests). A library without it (no D2rpBodyCount): every prop a body, as before. The ten-second log line then says
+// how many bodies the props held at most. Off: as before.
+void ConfigureOnContact(bool on);
 // [debug] knock_props_trace (live): a log line for every knock and every scan (what is near, what each stands on). The log only.
 void SetTrace(bool on);
 // [debug] knock_props_glow (live, off): every prop in the props world (the catalogued ones within 3 m) lit with the game's own hover highlight, h (vr/belt_glow.h) - to see

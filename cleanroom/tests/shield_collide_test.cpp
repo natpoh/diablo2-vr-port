@@ -296,6 +296,9 @@ void TestContact() {
 	const Drive soft = Run(true, 0.5f, 0.4f, false);
 	const Drive rest = Run(true, 0.12f, 0.3f, false);
 	const Drive push = Run(true, 1.0f, 0.95f, false, true);   // (laid along the blade: the whole blade on it, it cannot slide off its edge first)
+	weight::SetClashSoundGate(3.0f, 0.0f);   // [weight] clash_sound_min_mps=3 (Bear's hard-knock-only): the same 2 m/s blow
+	const Drive gated = Run(true, 2.0f, 0.4f, false);
+	weight::SetClashSoundGate(0.0f, 0.0f);
 	weight::SetClashSound(nullptr);
 	std::printf("  a sword driven 40 cm into a tower shield at 2 m/s: off - its hand %.0f cm behind the controller (it passes); on - %.0f cm behind (it stops on the face), "
 	            "pulses %d / %d, %zu block sound(s)%s; slid along the face it went on %.0f cm of 33\n", off.held * 100.0f, hit.held * 100.0f, hit.pulses[0], hit.pulses[1], hit.heard.size(),
@@ -311,6 +314,8 @@ void TestContact() {
 	EXPECT(hit.slid > 0.15f, "slid along the face it glances on (%.2f m)", hit.slid);
 	EXPECT(soft.held > 0.2f && soft.pulses[0] > 0 && soft.heard.empty(), "0.5 m/s: stopped, felt, silent (%.2f m, %d, %zu)", soft.held, soft.pulses[0], soft.heard.size());
 	EXPECT(rest.held > 0.1f && rest.pulses[0] == 0 && rest.heard.empty(), "laid on gently: stopped, unfelt, silent (%.2f m, %d, %zu)", rest.held, rest.pulses[0], rest.heard.size());
+	EXPECT(gated.held > 0.2f && gated.pulses[0] == hit.pulses[0] && gated.pulses[1] == hit.pulses[1] && gated.heard.empty(),
+	       "clash_sound_min_mps=3: the 2 m/s blow stopped and felt as before, silent (%.2f m, %d / %d, %zu)", gated.held, gated.pulses[0], gated.pulses[1], gated.heard.size());
 	EXPECT(push.most <= shieldcollide::kGiveM + 0.05f && push.most > 0.5f && push.held < 0.1f && push.through,
 	       "pressed on 95 cm: the hand gives way up to about 60 cm (%.2f), then the sword goes through (%.2f m at the end)", push.most, push.held);
 	EXPECT(!weight::Reached(shieldcollide::kId, 2000) && weight::Blocked(shieldcollide::kId, 2000) <= 1, "the shield is never a body reached (no strike)");

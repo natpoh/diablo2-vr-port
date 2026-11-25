@@ -1866,7 +1866,10 @@ struct Slab { std::string what, unit, model; std::atomic<unsigned>* indices = nu
               const char* tag = "game ceiling", *madeWhile = "[ceiling] game_ceiling is the game's",
                           *modelNote = " - the game's lit rock model with this kind's own terrain maps, lightMask 19, shadowMask 0";
               Shared def{}, inst{}; uint32_t root = 0xFFFFFFFFu; bool loadTried = false, parked = true; int tries = 0;
-              ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?"; };
+              ULONGLONG loadedAt = 0, placedAt = 0, modelAt = 0; std::string told = "?";
+              // [ceiling] follow_floor's pools (many pieces, world-fixed): laid only when their matrix changes (and once a second), their
+              // model looked for only until it is there, and - but the first - nothing of theirs in the log
+              bool lazy = false, quiet = false, hadModel = false, laidOk = false; float laid[16] = {}; ULONGLONG laidAt = 0; };
 std::atomic<unsigned> g_slabIndices[gameceiling::kKindCount], g_wallIndices[gameceiling::kKindCount];
 Slab g_slabs[gameceiling::kKindCount], g_walls[gameceiling::kKindCount];
 // [ceiling] game_ceiling_beams: the barracks' own frame in a grid (one unit), laid 2 x 2 round the hero under the slab
@@ -1931,6 +1934,43 @@ DWORD WINAPI ChapelThread(void* arg) {
     return 0;
 }
 std::atomic<bool> g_slabGivenUp[gameceiling::kKindCount];
+// [ceiling] follow_floor (shared/ceiling_floor.h): a natural cave's tiles of its rock under the slab where the floor is lower, and the same
+// tile stood upright as the step faces - one pool a kind (kMaxTiles tiles, then kMaxFaces faces), placed as they are first needed, kept
+// for the run (an area change takes their entities: placed again), laid only when they move. The first of a pool loads the unit; the
+// rest share its definition.
+bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const float m[16], const float away[16]);   // (below)
+std::vector<Slab> g_patchPool[gameceiling::kKindCount];
+std::atomic<unsigned> g_patchIndices[gameceiling::kKindCount];
+std::vector<Slab>& PatchPool(int kind) {
+    std::vector<Slab>& pool = g_patchPool[kind];
+    if (pool.empty() && gameceiling::kKinds[kind].patch) {
+        pool.resize(ceilfloor::kMaxTiles + ceilfloor::kMaxFaces);
+        g_patchIndices[kind].store(gameceiling::kPatchIndexCount);
+        for (size_t i = 0; i < pool.size(); ++i) {
+            Slab& s = pool[i];
+            s.what = std::string(gameceiling::kKinds[kind].name) + " ceiling's tiles";
+            s.unit = gameceiling::PatchUnitPath(kind);
+            s.model = gameceiling::ModelPath(gameceiling::kKinds[kind].patch);
+            s.indices = &g_patchIndices[kind];
+            s.modelNote = " - one tile of the kind's rock: under the slab where the floor is lower, upright as the step faces ([ceiling] follow_floor)";
+            s.lazy = true;
+            s.quiet = i > 0;
+        }
+    }
+    return pool;
+}
+// A pool piece's frame: its definition the first one's (once that one has loaded it)
+bool PatchFrame(std::vector<Slab>& pool, size_t i, bool want, const char* why, const float hero[3], const float m[16], const float away[16]) {
+    Slab& p = pool[i];
+    if (i > 0 && !p.loadTried) {
+        if (want && !pool[0].loadTried) PieceFrame(pool[0], true, why, hero, away, away);   // (the first loads the unit - laid away for now)
+        if (!pool[0].def.p) return false;
+        p.loadTried = true;
+        p.def = pool[0].def;
+        p.loadedAt = pool[0].loadedAt;
+    }
+    return PieceFrame(p, want, why, hero, m, away);
+}
 // (named once, on the first frame: the table's)
 void NamePieces() {
     static bool named = false;
@@ -2018,7 +2058,14 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
     if (!p.def.p) return false;
     const ULONGLONG nowMs = GetTickCount64();
     // a placing whose entities got no model in 3 s (its file still loading): laid away and placed again, 4 times at most (as the dome's)
-    if (want && p.inst.p && !HasModel(p.inst.p) && nowMs - p.placedAt > 3000) {
+    // (a lazy piece: looked for only until its model is there)
+    bool noModel = false;
+    if (want && p.inst.p && !(p.lazy && p.hadModel)) {
+        const bool has = (!p.lazy || nowMs - p.placedAt > 100) && HasModel(p.inst.p);
+        if (has) p.hadModel = true;
+        noModel = !has;
+    }
+    if (noModel && nowMs - p.placedAt > 3000) {
         if (p.tries < 4) {
             Lay(p.inst.p, p.root, away);
             g_slabOld.push_back(p.inst);
@@ -2038,7 +2085,9 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
             p.root = RootOf(p.inst.p);
             p.parked = false;
             p.placedAt = nowMs;
-            LogF("vrcam: %s - the %s placed (instance %p, root entity %X) at the hero %.1f %.1f %.1f", p.tag, p.what.c_str(), p.inst.p, p.root, hero[0], hero[1], hero[2]);
+            p.hadModel = p.laidOk = false;
+            if (!p.quiet)
+                LogF("vrcam: %s - the %s placed (instance %p, root entity %X) at the hero %.1f %.1f %.1f", p.tag, p.what.c_str(), p.inst.p, p.root, hero[0], hero[1], hero[2]);
         } else {
             LogF("vrcam: %s - PlaceInstance gave nothing for the %s - not asked again this run", p.tag, p.what.c_str());
             p.tries = 5;
@@ -2047,14 +2096,19 @@ bool PieceFrame(Slab& p, bool want, const char* why, const float hero[3], const 
     }
     if (!p.inst.p) return false;
     if (p.root == 0xFFFFFFFFu) p.root = RootOf(p.inst.p);
-    if (!Lay(p.inst.p, p.root, want ? m : away)) {   // its entity is gone (an area change): let go, placed again next frame
-        LogF("vrcam: %s - the %s's entity is gone (an area change): let go, placed again", p.tag, p.what.c_str());
+    const float* const at = want ? m : away;
+    const bool same = p.lazy && p.laidOk && nowMs - p.laidAt < 1000 && std::memcmp(p.laid, at, sizeof p.laid) == 0;
+    if (!same && !Lay(p.inst.p, p.root, at)) {   // its entity is gone (an area change): let go, placed again next frame
+        if (!p.quiet) LogF("vrcam: %s - the %s's entity is gone (an area change): let go, placed again", p.tag, p.what.c_str());
         ReleaseInstance(&p.inst, &g_areaTally);
         p.inst = {};
         p.root = 0xFFFFFFFFu;
+        p.laidOk = false;
         return false;
     }
+    if (!same) { std::memcpy(p.laid, at, sizeof p.laid); p.laidOk = true; p.laidAt = nowMs; }
     p.parked = !want;
+    if (p.quiet) return want;
     if (std::string(why) != p.told) {
         p.told = why;
         if (want) LogF("vrcam: %s - the %s shown at %.1f %.1f %.1f, scale %.2f round / %.2f down; its model: %s", p.tag, p.what.c_str(), m[12], m[13], m[14],
@@ -2076,7 +2130,9 @@ void CeilingFrame() {
         for (int k = 0; k < gameceiling::kKindCount; ++k) parked = parked && g_slabs[k].parked && g_walls[k].parked;
         for (const Slab& b : g_beams) parked = parked && b.parked;
         for (const Slab& v : g_vaults) parked = parked && v.parked;
-        if (parked) { g_slabShown.store(false); return; }
+        for (const std::vector<Slab>& pool : g_patchPool)
+            for (const Slab& s : pool) parked = parked && (s.parked || !s.inst.p);
+        if (parked) { g_slabShown.store(false); ceilfloorwire::Ask(false, 1.0f, g_heroPosNow); return; }
     }
     const int kind = g_gameCeilKind.load();
     in.f4 = GameDrawnView();   // (VR F4, or the flat game with [render] game_drawn_flat)
@@ -2097,6 +2153,24 @@ void CeilingFrame() {
     // the room's own height_<biome> when set; else [ceiling] height_from_walls: on the area's walls' top (a rock that hangs lower rests its
     // lowest on them); else 18
     const float tile = gameceiling::TileWorld(g_set.ceilScale.load());
+    // [ceiling] follow_floor (Serg 2026-11-25: where the floor rises, the ceiling over it rises in a step at the same place - not the hero's
+    // floor): the floor under each tile of the slab's window, asked of the game's floor on its thread (ceilfloorwire) and kept for the area;
+    // a natural cave's kind (its tile model made), its tiles not given up on
+    const bool followTick = g_set.ceilFollowFloor.load();
+    const bool followKind = kind >= 0 && gameceiling::kKinds[kind].patch != nullptr;
+    ceilfloorwire::Ask(want && followTick && followKind, tile, hero);
+    std::vector<Slab>* pool = followKind ? &PatchPool(kind) : nullptr;
+    const bool poolGivenUp = pool && gameceiling::GivenUp((*pool)[0].loadTried, (*pool)[0].def.p != nullptr, (*pool)[0].tries);
+    const bool follow = want && followTick && followKind && ceilfloorwire::Ready() && !poolGivenUp;
+    const int fx0 = ceilfloor::WindowFirst(hero[0], tile), fz0 = ceilfloor::WindowFirst(hero[2], tile);
+    float tileFloor[ceilfloor::kWindow];
+    bool tileKnown[ceilfloor::kWindow];
+    int known = 0;
+    if (follow) known = ceilfloorwire::Window(fx0, fz0, tileFloor, tileKnown);
+    // the floor under the hero: his tile's (the guard's "the floor the ceiling stands on" there), else the area's
+    const int heroTile = (ceilfloor::TileOf(hero[2], tile) - fz0) * ceilfloor::kAcross + (ceilfloor::TileOf(hero[0], tile) - fx0);
+    const bool heroTileOk = follow && heroTile >= 0 && heroTile < ceilfloor::kWindow;
+    const float heroFloor = heroTileOk && tileKnown[heroTile] ? tileFloor[heroTile] : floorAt;
     const float walls = g_set.ceilFromWalls.load() && ownHeight <= 0.0f ? g_wallsTopHere.load() : 0.0f;
     const float roomHeight = gameceiling::HeightOf(ownHeight, g_set.ceilFromWalls.load(), g_wallsTopHere.load(),
                                                    kind >= 0 ? gameceiling::kKinds[kind].relief : 0.0f, tile / gameceiling::kTile);
@@ -2104,7 +2178,7 @@ void CeilingFrame() {
     // under the eyes + that many metres; what that needs is held for the area (only ever up, in half-unit steps: no breathing, no sliding)
     const float hang = kind >= 0 ? gameceiling::kKinds[kind].relief * tile / gameceiling::kTile : 0.0f;
     static gameceiling::HeadroomHold headroom;
-    const float headroomHeld = gameceiling::HeadroomHeld(&headroom, g_biomeGen.load(), want ? CeilingHeadroomNeed(hero[1] - floorAt, hang) : 0.0f);
+    const float headroomHeld = gameceiling::HeadroomHeld(&headroom, g_biomeGen.load(), want ? CeilingHeadroomNeed(hero[1] - heroFloor, hang) : 0.0f);
     const float height = gameceiling::Guarded(roomHeight, headroomHeld);
     {
         static float toldHeld = -1.0f;
@@ -2112,7 +2186,7 @@ void CeilingFrame() {
             toldHeld = headroomHeld;
             LogF("vrcam: game ceiling - raised for headroom: its top %.1f over the area's floor, not the room's %.1f - its lowest (%.1f of rock "
                  "hanging) kept %.2f m over the eyes ([ceiling] min_headroom_m; the hero %.1f over the floor it stands on, his eyes %.1f + the "
-                 "head %.1f over them)", height, roomHeight, hang, g_set.ceilHeadroomM.load(), hero[1] - floorAt, ViewHeight(),
+                 "head %.1f over them)", height, roomHeight, hang, g_set.ceilHeadroomM.load(), hero[1] - heroFloor, ViewHeight(),
                  g_headOverStand.load());
         }
     }
@@ -2123,8 +2197,48 @@ void CeilingFrame() {
     const bool beamTick = g_set.gameCeilingBeams.load(), beams = want && beamTick && g_beamsHere.load();
     const char* beamWhy = !want ? why : !beamTick ? "[ceiling] game_ceiling_beams=0" : !beams ? "not the barracks, or their frame not measured (D2R_VR_Settings)" : "";
     const float slabTop = beams ? gameceiling::BeamSlabHeight(height, beam.bottom, beam.top) : height;
+    // follow_floor: each tile's top its floor + the height (one not known yet: its known neighbours' highest, none: the area's floor); the
+    // slab at the highest of the window, the tiles under it and the step faces (ceilfloor::Lay)
+    float tops[ceilfloor::kWindow];
+    ceilfloor::Layout fl;
+    if (follow) {
+        ceilfloor::Tops(tileFloor, tileKnown, height, floorAt, tops);
+        fl = ceilfloor::Lay(tops, fx0, fz0);
+    }
     static float toldHeight = -1.0f, toldTile = -1.0f, toldReach = -1.0f, toldTop = -1.0f;
     static int toldKind = -2;
+    {   // follow_floor: what the window holds now, at each change of its tops' shape (and what the rays cost, with it)
+        static int toldTiles = -1, toldFaces = -1, toldKnown = -1;
+        static float toldSlab = 0.0f;
+        static ULONGLONG toldAt = 0;
+        const ULONGLONG nowLog = GetTickCount64();
+        if (follow && ((int)fl.tiles.size() != toldTiles || (int)fl.faces.size() != toldFaces || fl.slab != toldSlab ||
+                       (known != toldKnown && nowLog - toldAt > 5000)) && nowLog - toldAt > 1000) {
+            toldTiles = (int)fl.tiles.size();
+            toldFaces = (int)fl.faces.size();
+            toldSlab = fl.slab;
+            toldKnown = known;
+            toldAt = nowLog;
+            uint32_t rays = 0, hits = 0, off = 0, asked = 0;
+            double us = 0.0;
+            size_t kept = 0;
+            ceilfloorwire::Took(&rays, &hits, &off, &asked, &us, &kept);
+            LogF("vrcam: game ceiling - follows the floor: %d of the %d tiles' floors known (%zu kept for the area); the slab's top %.2f (the "
+                 "highest), %d tile(s) under it, %d step face(s)%s, its tops %.2f .. %.2f; the floor under the hero %.2f%s, he stands at %.2f; "
+                 "rays since: %u (%u met a floor, %u off their line) for %u tile(s), %.0f us a tick that asked ([ceiling] follow_floor)",
+                 known, ceilfloor::kWindow, kept, fl.slab, toldTiles, toldFaces,
+                 fl.facesLeft ? (" (" + std::to_string(fl.facesLeft) + " more left out)").c_str() : "", fl.lowest, fl.slab, heroFloor,
+                 heroTileOk && tileKnown[heroTile] ? "" : " (not known yet: the area's)", hero[1], rays, hits, off, asked, us);
+        }
+        static bool toldWhyNot = false;
+        if (want && followTick && !follow && !toldWhyNot) {
+            toldWhyNot = true;
+            LogF("vrcam: game ceiling - does NOT follow the floor here: %s - one height over the area's floor, as before",
+                 !followKind ? "not a natural cave (no tile of its rock made)" : poolGivenUp ? "its tiles' unit refused or never shown"
+                 : "the game's floor ray not in (yet)");
+        }
+        if (follow) toldWhyNot = false;
+    }
     if (want && (height != toldHeight || tile != toldTile || (wall ? reach : -1.0f) != toldReach || kind != toldKind || slabTop != toldTop)) {
         toldHeight = height;
         toldTile = tile;
@@ -2221,12 +2335,18 @@ void CeilingFrame() {
              size, dome.radius, sizeWhy, rise, riseBy, dome.top, baseY, dome.rise, rise / dome.rise, gameceiling::VaultHalf(dome.half) * size);
     }
     // [body] leap_camera_up_pct: the slab's lowest in the world (its top less its rock's hang, the barracks' frame under it), for the leap's camera
-    if (want) {   // (hang: the rock's, above)
-        g_slabLowestY.store(floorAt + std::min(beams ? height : slabTop, slabTop - hang));
+    if (want) {   // (hang: the rock's, above; follow_floor: the top over the hero's own tile)
+        if (follow && heroTileOk) g_slabLowestY.store(tops[heroTile] - hang);
+        else g_slabLowestY.store(floorAt + std::min(beams ? height : slabTop, slabTop - hang));
     }
     float m[16], w[16], away[16], v[16];
-    gameceiling::Matrix(hero, floorAt, slabTop, tile, want, m);
-    gameceiling::WallMatrix(hero, floorAt, height, tile, reach, wall, w);
+    if (follow) {   // the slab at the window's highest top; the rim's wall from there down to floor_depth under its lowest floor
+        gameceiling::Matrix(hero, 0.0f, fl.slab, tile, want, m);
+        gameceiling::WallMatrix(hero, 0.0f, fl.slab, tile, gameceiling::WallReach(fl.slab - (fl.lowest - height), g_set.ceilFloor.load()), wall, w);
+    } else {
+        gameceiling::Matrix(hero, floorAt, slabTop, tile, want, m);
+        gameceiling::WallMatrix(hero, floorAt, height, tile, reach, wall, w);
+    }
     gameceiling::Matrix(hero, 0.0f, 0.0f, 1.0f, false, away);
     gameceiling::VaultMatrix(hero, found.world[0] + dome.centreX - dome.anchor[0], found.world[2] + dome.centreZ - dome.anchor[2], floorAt + slabTop, rise,
                              dome.rise, size, vault, v);
@@ -2248,6 +2368,41 @@ void CeilingFrame() {
         float b[16];
         gameceiling::BeamMatrix(hero, floorAt, height, beam.periodX, beam.periodZ, beam.cols, beam.rows, beam.bottom, i, beams, b);
         PieceFrame(g_beams[i], beams, beamWhy, hero, b, away);
+    }
+    // follow_floor: the tiles under the slab and the step faces from the area's kind's pool; the rest of it, and every other kind's, put
+    // away (a fixed place under the hero's 256-unit square: not laid again every frame as he walks)
+    {
+        float awayPool[16];
+        const float snapped[3] = {std::floor(hero[0] / 256.0f) * 256.0f, hero[1], std::floor(hero[2] / 256.0f) * 256.0f};
+        gameceiling::Matrix(snapped, 0.0f, 0.0f, 1.0f, false, awayPool);
+        awayPool[13] = std::floor(hero[1] / 256.0f) * 256.0f - 5000.0f;
+        const bool lay = follow && !vaultShown;
+        const float k = tile / gameceiling::kTile;
+        for (int kk = 0; kk < gameceiling::kKindCount; ++kk) {
+            std::vector<Slab>& pl = g_patchPool[kk];
+            if (pl.empty()) continue;
+            size_t used = 0;
+            if (lay && kk == kind) {
+                float pm[16];
+                for (int i : fl.tiles) {
+                    ceilfloor::TileMatrix(fx0 + i % ceilfloor::kAcross, fz0 + i / ceilfloor::kAcross, tile, k, tops[i], pm);
+                    PatchFrame(pl, used++, true, why, hero, pm, awayPool);
+                }
+                used = ceilfloor::kMaxTiles;   // (the faces from their own part of the pool: a tile never becomes a face)
+                for (const ceilfloor::Face& f : fl.faces) {
+                    ceilfloor::FaceMatrix(f, tile, k, gameceiling::kTile, pm);
+                    PatchFrame(pl, used++, true, why, hero, pm, awayPool);
+                }
+                for (size_t j = fl.tiles.size(); j < (size_t)ceilfloor::kMaxTiles; ++j)
+                    if (pl[j].inst.p) PatchFrame(pl, j, false, "not needed now", hero, awayPool, awayPool);
+                for (size_t j = used; j < pl.size(); ++j)
+                    if (pl[j].inst.p) PatchFrame(pl, j, false, "not needed now", hero, awayPool, awayPool);
+            } else {
+                const char* whyOff = !want ? why : !followTick ? "[ceiling] follow_floor=0" : kk != kind ? "another kind's area" : "not following here";
+                for (size_t j = 0; j < pl.size(); ++j)
+                    if (pl[j].inst.p) PatchFrame(pl, j, false, whyOff, hero, awayPool, awayPool);
+            }
+        }
     }
     g_slabShown.store(shown);
 }

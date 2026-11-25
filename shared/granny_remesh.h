@@ -510,6 +510,50 @@ inline Mesh CeilingMesh(float tile, int tilesHalf, int cells, float relief) {
     return m;
 }
 
+// [ceiling] follow_floor (shared/ceiling_floor.h): `tiles` x `tiles` tiles of CeilingMesh's rock from its corner - x and z from 0 to
+// tiles * tile, not round the origin - the same relief, normals, tangents and uv as the slab at the same place on the world's grid of whole
+// tiles (CeilingRelief has whole frequencies only): laid on a whole tile, it meets the slab and its own kind with no seam. A tile under the
+// slab where the floor is lower, and stood upright on an edge, the step face between two heights.
+inline Mesh CeilingPatchMesh(float tile, int tiles, int cells, float relief) {
+    Mesh m;
+    const int n = tiles * cells, row = n + 1;
+    const double span = (double)tile * tiles, step = (double)tile / cells;
+    m.scale = (float)(span > relief ? span : relief);
+    const int16_t w = (int16_t)std::lround(std::log2(m.scale) / 13.0 * 32767.0);
+    for (int k = 0; k < 3; ++k) { m.mn[k] = 1e30f; m.mx[k] = -1e30f; }
+    auto y = [&](double x, double z) { return -relief * CeilingRelief(x / tile, -z / tile); };
+    const double e = step * 0.25;
+    for (int i = 0; i <= n; ++i)
+        for (int j = 0; j <= n; ++j) {
+            const double x = j * step, z = i * step, py = y(x, z);
+            const double dx = (y(x + e, z) - y(x - e, z)) / (2.0 * e), dz = (y(x, z + e) - y(x, z - e)) / (2.0 * e);
+            const double nl = std::sqrt(dx * dx + 1.0 + dz * dz), tl = std::sqrt(1.0 + dx * dx);
+            const double p[3] = {x, py, z};
+            Vertex v{};
+            for (int k = 0; k < 3; ++k) {
+                v.pos[k] = (int16_t)std::lround(p[k] / m.scale * 32767.0);
+                if (p[k] < m.mn[k]) m.mn[k] = (float)p[k];
+                if (p[k] > m.mx[k]) m.mx[k] = (float)p[k];
+            }
+            v.pos[3] = w;
+            v.normal[0] = Snorm8((float)(dx / nl)); v.normal[1] = Snorm8((float)(-1.0 / nl)); v.normal[2] = Snorm8((float)(dz / nl));
+            v.tangent[0] = Snorm8((float)(1.0 / tl)); v.tangent[1] = Snorm8((float)(dx / tl)); v.tangent[2] = 0; v.tangent[3] = -127;
+            v.uv[0] = Half((float)(x / tile));
+            v.uv[1] = Half((float)(-z / tile));
+            m.v.push_back(v);
+        }
+    for (int i = 0; i < n; ++i)
+        for (int j = 0; j < n; ++j) {
+            const uint16_t a = (uint16_t)(i * row + j), b = (uint16_t)(i * row + j + 1), c = (uint16_t)((i + 1) * row + j), d = (uint16_t)((i + 1) * row + j + 1);
+            const uint16_t tris[2][3] = {{a, b, c}, {b, d, c}};
+            for (const auto& t : tris) {
+                m.idx.insert(m.idx.end(), {t[0], t[1], t[2]});
+                m.idx.insert(m.idx.end(), {t[0], t[2], t[1]});   // and the other way round
+            }
+        }
+    return m;
+}
+
 // [ceiling] game_ceiling_dome: a flat slab round the origin, `half` units each way (at least), with a dome in its middle - an even half
 // ellipsoid `radius` round rising `rise` over y 0 - seen from below as CeilingMesh: normals down (in, under the dome), both windings, the uv
 // one picture a `tile` along +x and -z. A grid of cells about `cell` across whose square rings round the middle bend into circles inside

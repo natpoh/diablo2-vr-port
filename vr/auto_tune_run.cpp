@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "auto_tune.h"
+#include "auto_tune_measure.h"   // [autotune] clean_measure: a window measured without the runtime's holds
 #include "auto_tune_run.h"
 #include "frame_cap.h"     // shared/: [stereo] headset_rate 0..4 as Hz (the rate when no display period was seen)
 #include "foveation.h"   // [render] foveated live: hooked at the start and VRS tier 2 (the ladder's foveation rung)
@@ -288,6 +289,13 @@ int g_settlePending = -1;                // ms to settle, from the next frame on
 double g_settleUntil = 0, g_windowFrom = 0, g_windowMs = 3000, g_lastUs = 0, g_waitSum = 0, g_maxGap = 0, g_periodNs = 0;
 uint32_t g_frames = 0;
 bool g_spoilt = false;
+// [autotune] clean_measure (vr/auto_tune_measure.h): the window, the resizes counted (any thread), unclean windows in a row of one set and in the run
+std::atomic<bool> g_clean{true};
+std::atomic<uint32_t> g_resizes{0};
+autotunemeasure::Window g_win;
+int g_noisyInRow = 0, g_noisyRun = 0;
+bool g_noisy = false;          // the run stopped on noise: Waiting with nothing changed (under g_mu)
+std::string g_noisyWhy;
 
 std::vector<Over> OverridesOf(const std::vector<int>& lv) {
     std::vector<Over> o;
@@ -303,6 +311,7 @@ void Apply(const std::vector<int>& lv) {
     for (size_t i = 0; i < lv.size(); ++i)
         if (g_applied.size() != lv.size() || g_applied[i] != lv[i]) settle = std::max(settle, g_knobs[i].settleMs);
     g_applied = lv;
+    g_noisyInRow = 0;   // (a new set: its own unclean windows)
     SetOverrides(OverridesOf(lv));
     g_step = Step::Settle;
     g_settlePending = settle;   // (timed on the XR clock from the next frame)
@@ -341,6 +350,9 @@ void Begin() {
     for (const auto& d : g_knobs) ks.push_back(d.k);
     g_tuner = std::make_unique<autotune::Tuner>(std::move(ks), o);
     g_applied.clear();
+    g_noisy = false;
+    g_noisyWhy.clear();
+    g_noisyInRow = g_noisyRun = 0;
     g_state.store((int)State::Running);
     LogF("vrcam: auto tune - started: %s%s%s; frame generation left as it is", LevelsText(g_tuner->Want()).c_str(), skipped.empty() ? "" : "; not tuned:",
          skipped.c_str());
@@ -391,6 +403,9 @@ void NoteGpu(double depthFogMs, double distBlurMs, bool fogBeforeFxHooked) {
     g_fogFxHooked.store(fogBeforeFxHooked);
 }
 
+void SetCleanMeasure(bool on) { g_clean.store(on); }
+void NoteResize() { g_resizes.fetch_add(1); }
+
 void SetRecommended(uint32_t w, uint32_t h) {
     g_recW.store(w);
     g_recH.store(h);
@@ -403,7 +418,24 @@ void Start() {
     Begin();
 }
 
-void OnFrame(double nowUs, double waitUs, double periodNs, bool counts) {
+namespace {
+// No clean window for too long (the runtime holding frames, freezes, resizes): nothing is picked from such numbers - everything as it was, and the
+// page says why (under g_mu).
+void RefuseNoisy(const autotunemeasure::Result& r) {
+    g_tuner->Abort();
+    SetOverrides({});
+    g_noisy = true;
+    g_noisyWhy = autotunemeasure::WhyName(r.why);
+    LogF("vrcam: auto tune - NOT concluded: %d window(s) in a row (%d in this run) were not clean - the last: %s (%u held frame(s), %u hitch(es), the "
+         "longest %.0f ms in %u frames). No preset is picked from such numbers: everything as it was. On Virtual Desktop the stream holds frames ~100 ms "
+         "at times (its codec, bitrate, Wi-Fi): try Auto again when it is steady ([autotune] clean_measure)",
+         g_noisyInRow, g_noisyRun, g_noisyWhy.c_str(), r.held, r.hitches, r.worstUs / 1000.0, r.frames);
+    g_state.store((int)State::Waiting);
+    g_rev.fetch_add(1);
+}
+}  // namespace
+
+void OnFrame(double nowUs, double waitUs, double submitUs, double periodNs, bool counts) {
     g_floor.Note(periodNs);   // (every frame, run or not: the session's first frames are at the headset's own rate)
     if (g_state.load(std::memory_order_relaxed) != (int)State::Running) return;
     std::lock_guard lk(g_mu);
@@ -421,21 +453,45 @@ void OnFrame(double nowUs, double waitUs, double periodNs, bool counts) {
         g_waitSum = 0;
         g_maxGap = 0;
         g_spoilt = false;
+        g_win.Start(nowUs, g_resizes.load());
         return;
     }
     ++g_frames;
     g_waitSum += waitUs;
     g_maxGap = std::max(g_maxGap, gap);
     if (!counts) g_spoilt = true;
+    g_win.Add(nowUs, waitUs, submitUs, counts, g_resizes.load());
     const double spanUs = nowUs - g_windowFrom;
     if (spanUs < g_windowMs * 1000.0) return;
 
     autotune::Measure m;
     const double s = spanUs / 1e6;
     const autotune::Rate rate = autotune::HeadsetRate(g_floor.Shortest(), g_iniHz.load());
-    m.valid = !g_spoilt && g_frames >= 15 && g_maxGap < 250e3 && rate.hz > 0;   // a load, a menu, a freeze in the window: measured again
-    m.fps = (float)(g_frames / s);
-    m.busyMs = (float)(spanUs / g_frames / 1000.0 - g_waitSum / g_frames / 1000.0);
+    const bool clean = g_clean.load();
+    const autotunemeasure::Result win = g_win.Take();
+    if (clean) {   // [autotune] clean_measure: the medians of a clean window; a window the runtime / a freeze / a resize spoilt is measured again, not fed
+        m.valid = win.Valid() && rate.hz > 0;
+        m.fps = win.fps;
+        m.busyMs = win.busyMs;
+        if (autotunemeasure::Noisy(win.why)) {
+            ++g_noisyInRow;
+            ++g_noisyRun;
+            LogF("vrcam: auto tune - %s %s: not counted - %s (%u held frame(s), %u hitch(es), the longest %.0f ms in %u frames; median %.1f frames/s, "
+                 "%.2f ms of our own) - measured again (%d of %d in a row)", autotune::PhaseName(g_tuner->phase()), LevelsText(g_tuner->Want()).c_str(),
+                 autotunemeasure::WhyName(win.why), win.held, win.hitches, win.worstUs / 1000.0, win.frames, win.fps, win.busyMs, g_noisyInRow,
+                 autotunemeasure::kNoisyInRow);
+            if (g_noisyInRow >= autotunemeasure::kNoisyInRow || g_noisyRun >= 3 * autotunemeasure::kNoisyInRow) { RefuseNoisy(win); return; }
+            g_step = Step::Settle;
+            g_settlePending = win.why == autotunemeasure::Why::Resize ? 3000 : 500;   // (a resize: the window's freeze may follow it)
+            g_rev.fetch_add(1);
+            return;
+        }
+        g_noisyInRow = 0;
+    } else {
+        m.valid = !g_spoilt && g_frames >= 15 && g_maxGap < 250e3 && rate.hz > 0;   // a load, a menu, a freeze in the window: measured again
+        m.fps = (float)(g_frames / s);
+        m.busyMs = (float)(spanUs / g_frames / 1000.0 - g_waitSum / g_frames / 1000.0);
+    }
     m.hz = rate.hz;   // the headset's own - not 1e9 / g_periodNs, which SteamVR stretches while the game is slow
     if (!g_rateTold && rate.hz > 0) {   // once a run: where the target comes from, and the period the runtime gives now
         g_rateTold = true;
@@ -446,8 +502,9 @@ void OnFrame(double nowUs, double waitUs, double periodNs, bool counts) {
     const std::vector<int> was = g_tuner->Want();
     const size_t rowsWas = g_tuner->Log().size();
     g_tuner->Feed(m);
-    LogF("vrcam: auto tune - %s %s: %.1f frames/s, %.2f ms a frame of our own (headset %.0f Hz)%s", autotune::PhaseName(ph), LevelsText(was).c_str(),
-         m.fps, m.busyMs, m.hz, m.valid ? "" : g_spoilt ? " - not counted (out of the world / F4), again" : " - not counted (a freeze or too few frames), again");
+    LogF("vrcam: auto tune - %s %s: %.1f frames/s, %.2f ms a frame of our own (headset %.0f Hz)%s%s", autotune::PhaseName(ph), LevelsText(was).c_str(),
+         m.fps, m.busyMs, m.hz, clean ? " (medians of a clean window)" : "",
+         m.valid ? "" : g_spoilt ? " - not counted (out of the world / F4), again" : " - not counted (a freeze or too few frames), again");
     for (size_t r = rowsWas; r < g_tuner->Log().size(); ++r) {   // a tried rung (eyes by turns before Low / Potato): what stayed, and why
         const autotune::LogRow& row = g_tuner->Log()[r];
         if (row.phase == autotune::Phase::Up && row.knob >= 0 && row.knob < (int)g_knobs.size()) {   // the climb (room to spare: back up a little)
@@ -523,6 +580,14 @@ void Keep() {
     {
         std::lock_guard lk(g_mu);
         if (g_state.load() != (int)State::Waiting || !g_tuner || g_writing.load()) return;
+        if (g_noisy) {   // not concluded: nothing to write - Keep only closes it, as Undo
+            LogF("vrcam: auto tune - Keep on a run that was not concluded: nothing written, everything as it was");
+            SetOverrides({});
+            g_noisy = false;
+            g_state.store((int)State::Idle);
+            g_rev.fetch_add(1);
+            return;
+        }
         o = OverridesOf(g_tuner->Result());
         const autotune::Tuner& t = *g_tuner;
         char b[256];
@@ -586,7 +651,10 @@ View Now() {
     v.left = t.Remaining();
     v.reached = t.Reached();
     v.aborted = t.Aborted();
-    v.belowMin = v.state == State::Waiting && g_belowMin;
+    v.belowMin = v.state == State::Waiting && g_belowMin && !g_noisy;
+    v.noisy = v.state == State::Waiting && g_noisy;
+    v.noisyWhy = g_noisyWhy;
+    v.noisyN = g_noisyInRow;
     v.limit = g_limit;
     v.targetFps = t.Target();
     v.hz = t.Hz();

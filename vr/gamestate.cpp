@@ -1040,8 +1040,10 @@ std::atomic<bool> g_createPanel{false};   // CharacterCreatePanel open (NameBox:
 std::mutex g_cinemaLock;
 cinema::Tracker g_cinemaTracker;
 std::atomic<bool> g_cinema{false}, g_cinemaOn{false};
+std::atomic<uint64_t> g_cinemaCount{0};   // cinematics begun (CinemaCount: the frame clocks start again after one - vr/frame/pace_clock.h)
 void TellCinema(const cinema::Change& c, const char* target, const char* command) {
     if (!c.changed) return;
+    if (c.playing) ++g_cinemaCount;
     char b[300];
     if (c.playing) snprintf(b, sizeof b, "gamestate: a cinematic plays ('%s' '%s') - %s", target, command,
                             g_cinemaOn.load() ? "on the big screen in the world ([cinema] world_screen=1)" : "left as it was ([cinema] world_screen=0)");
@@ -1364,6 +1366,8 @@ int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 // [cinema] world_screen (vr/unleashed_cinema_screen.h): one of the game's cinematics plays and goes on the big screen in the world.
 bool CinemaPlaying() { return g_cinemaOn.load() && g_cinema.load(); }
+// Cinematics begun so far, whatever the key (vr/frame/pace_clock.h: no DrawGameScreen while one plays - the pass after it is not a freeze).
+uint64_t CinemaCount() { return g_cinemaCount.load(); }
 void SetCinemaEnabled(bool on) {
     static int said = -1;   // (the start's value said once, then each change)
     g_cinemaOn.store(on);

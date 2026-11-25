@@ -79,7 +79,7 @@ bool FreshHands(skel::Input* in) {
             in->grabUpm = std::max(1.0f, ViewHeight()) / UserEyeHeightM();
         }
     }
-    if (in->shieldFist || (in->shieldHolster && in->shieldStow) || in->rangedHolster) {
+    if (in->shieldFist || in->shieldFistRightSlot || (in->shieldHolster && in->shieldStow) || in->rangedHolster) {
         float raw[2];
         if (weightwire::RawGrips(raw)) { in->shieldRaw[0] = raw[0]; in->shieldRaw[1] = raw[1]; }
     }
@@ -282,6 +282,7 @@ void PushArms() {
     }
     for (int c = 0; c < 8; ++c) { in.fistClose[c] = g_set.fistClose[c].load() * 0.01f; in.fistOpen[c] = g_set.fistOpen[c].load() * 0.01f; }
     in.fistKnuckle = g_set.fistKnuckle.load();   // [fist] from_knuckle (every view the fist acts in: it is the same fist, bent at the right bones)
+    in.palmKnuckle = g_set.palmKnuckle.load();   // [hands] palm_from_knuckle (the hands on the controllers are placed in VR F4 only)
     for (int side = 0; side < 2; ++side) in.fistCap[side] = engitem::FistCap(side);   // a belt potion in it: round the bottle, not a full fist
     {
         const uint32_t held = gamestate::HandsHeld(), type = gamestate::WeaponType();
@@ -549,6 +550,7 @@ void PushArms() {
         const bool on = own && in.mode == 2 && viewgate::F4() && g_set.leftSlotDrawn.load();
         in.leftSlotDrawn = on && plan.carry;
         in.leftSlotShieldRight = in.leftSlotDrawn && plan.shieldToRight;
+        in.shieldFistRightSlot = in.leftSlotShieldRight && g_set.shieldFist.load();   // [hands] shield_fist: the right slot's shield (F4 by leftSlotDrawn)
         static int told = -1;   // what the slots say, once a change (the pose tells whether it carried)
         const int key = !on ? 0 : 1 + (int)plan.why * 2 + (plan.shieldToRight ? 1 : 0);
         if (key != told && (told != -1 || key != 0)) {
@@ -636,6 +638,7 @@ void PushArms() {
         const char* now = in.flailChain ? skel::FlailStatus() : nullptr;
         if (now != told) { told = now; if (now) LogF("vrcam: flail chain: %s", now); }
         if (in.flailChain) { const std::string note = skel::FlailTakeNote(); if (!note.empty()) Log(("vrcam: " + note).c_str()); }
+        if (in.flailChain) { const std::string frames = skel::FlailFramesLine(); if (!frames.empty()) Log(("vrcam: " + frames).c_str()); }   // one step a game frame
     }
     {   // [shield] heads_hang: once for each change, what the hero's head does; which head models were learned and where they hang from, once each
         static const char* told = nullptr;

@@ -40,4 +40,39 @@ inline Clash Of(float speedMps) {
     return c;
 }
 
+// [weight] clash_sound_min_mps / clash_sound_gap_s: which knocks of the hero's own steel - the weapon on his own shield ([weight] shield_collide), the two
+// weapons of a pair ([weight] dual_collide) - are HEARD. The pulse is not asked: every knock is felt as before. An idea from Berk (bearstonem)'s D2R VR
+// Unleashed, https://github.com/bearstonem/d2r-pcvr/commit/1a11dd7 (his owner heard 128 clanks on 203 touches of a scepter on the shield; his fix: only a
+// clank of 3 m/s and up, at most one every 0.5 s) - our own code, the two numbers made settings. 0 and 0 (the defaults) are as before: each site's own
+// threshold (0.5 m/s the pair, 1 m/s the shield) and no gap; Bear's values are 3 and 0.5. Pure: tested in clash_loud_test.
+struct GateSettings {
+    float minMps = 0.0f;   // a knock under this is silent (on top of the site's own threshold); 0 = only the site's own
+    float gapS = 0.0f;     // at least this long after the last knock heard before the next one is; 0 = no gap
+};
+constexpr float kGateMaxMps = 10.0f, kGateMaxGapS = 5.0f;
+inline GateSettings Clamp(GateSettings s) {
+    s.minMps = std::isfinite(s.minMps) ? std::clamp(s.minMps, 0.0f, kGateMaxMps) : 0.0f;
+    s.gapS = std::isfinite(s.gapS) ? std::clamp(s.gapS, 0.0f, kGateMaxGapS) : 0.0f;
+    return s;
+}
+// One gate for both sites (a scepter on the shield and on the other weapon is the same clatter). Ask it only for a knock the site would sound; true =
+// sound it now (and the gap starts from now). One thread (the weight thread).
+class Gate {
+public:
+    bool Pass(GateSettings s, float speedMps, uint64_t nowMs) {
+        s = Clamp(s);
+        if (!(speedMps >= s.minMps)) return false;   // (NaN: silent)
+        const uint64_t gapMs = static_cast<uint64_t>(std::lround(s.gapS * 1000.0f));
+        if (played_ && nowMs - lastMs_ < gapMs) return false;
+        played_ = true;
+        lastMs_ = nowMs;
+        return true;
+    }
+    void Reset() { played_ = false; lastMs_ = 0; }
+
+private:
+    bool played_ = false;
+    uint64_t lastMs_ = 0;
+};
+
 }  // namespace clashloud

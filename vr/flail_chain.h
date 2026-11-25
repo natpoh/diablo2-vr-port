@@ -567,4 +567,50 @@ inline int Separate(Sim* sims, int count, float minDist, const V3* restHeads, in
     return pushed;
 }
 
+// ---- one frame of one flail, as the pose hook runs it, and the same frame posed again ------------------------------------------------------
+
+// Every chain of one flail one frame on: each driven (Drive), then Khalim's three balls kept apart (Separate) and the chains laid again where they
+// are. head: the model's ball (Khalim's: no ball known, not kept apart). True when a chain started afresh where the game has it.
+inline bool DriveAll(const ChainRig* rig, Sim* sim, int chains, const Head& head, const Mat& toSim, const Mat& fromSim, float dt, V3 gravity, float jump,
+                     bool kick, const Params& p, Mat* pose) {
+    bool started = false;
+    for (int c = 0; c < chains; ++c) started = Drive(rig[c], sim[c], toSim, fromSim, dt, gravity, jump, kick, p, pose) == Done::Started || started;
+    if (chains > 1 && head.ok) {
+        V3 restHeads[kMaxChains];
+        for (int c = 0; c < chains; ++c) restHeads[c] = RestHead(rig[c], pose, toSim);
+        const float scale = Length(Row(toSim, 0));
+        if (Separate(sim, chains, 2.0f * head.radius * scale * 0.95f, restHeads, p.iterations, head.along * scale) > 0)
+            for (int c = 0; c < chains; ++c) Repose(rig[c], sim[c], fromSim, pose);
+    }
+    return started;
+}
+
+// One game frame, however many times the game poses the flail in it. With a stereo pair drawn as two passes of one game frame (the default since
+// 0.214: [stereo] pair_per_tick, no replay) the game's whole draw runs twice, the right eye's with the frame time held, and the pose hook is called
+// in each pass. Stepped at every pose (by the time since the last one), the chain was one step further on in the right eye than in the left - the
+// eyes saw two chains. Now the first pose of a frame steps it and lays its bones; any other pose of that frame lays the very same bones again,
+// byte for byte, with no step, no hit taken and no time counted (the next frame steps by the time since this frame's first pose). The bones are in
+// the item's model space, which both passes draw in the same place, so both eyes see one chain.
+// Found and fixed first by Berk (bearstonem) in D2R VR Unleashed - thank you: https://github.com/bearstonem/d2r-pcvr/commit/81f753f ("Flails: one
+// step a stereo pair, both eyes laid the same chain"). Written again here for our chain (no code taken).
+// frame: the game draw being drawn (skel::SetGameDraw: a pair's two passes one number, eyes by turns and a plain frame one each); 0 not known
+// (posed outside a draw) - every such pose steps by the time, as before.
+struct FrameHold {
+    enum class Is { First, Again, Refused };
+    uint64_t frame = 0;              // the frame whose first pose came (0: none)
+    bool laid = false;               // ... and laid the chain (false: it was left to the game, and so is every other pose of that frame)
+    int lowest = 0, highest = -1;    // the bones it wrote
+    Mat bones[kMaxBones];
+    Is Of(uint64_t f) const { return f && f == frame ? (laid ? Is::Again : Is::Refused) : Is::First; }
+    void Begin(uint64_t f) { frame = f; laid = false; }   // the frame's first pose: refused unless Keep says otherwise
+    void Keep(const Mat* pose, int lo, int hi) {
+        if (lo < 0 || hi >= kMaxBones || hi < lo) { laid = false; return; }
+        lowest = lo; highest = hi;
+        for (int i = lo; i <= hi; ++i) bones[i] = pose[i];
+        laid = true;
+    }
+    void Lay(Mat* pose) const { for (int i = lowest; i <= highest && laid; ++i) pose[i] = bones[i]; }
+    void Forget() { frame = 0; laid = false; }
+};
+
 }  // namespace flailchain

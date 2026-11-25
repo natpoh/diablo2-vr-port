@@ -84,6 +84,7 @@
 #include "notice_card.h"  // [hud] notice_card: the box of the game's quest / level-up notice in that layer
 #include "minimap_box.h"  // which scissor box is the corner map, at any layer size, shape and interface size
 #include "map_direction.h"   // [hud] map_direction: the arrow on the hero's marker of the game's map (rows of pixels)
+#include "f2_map.h"          // [hud_third] map_x / map_y / map_size: F2's corner map held inside the picture (KeepOnScreen)
 #include "map_turn.h"        // [hud] map_rotate_flat: the corner map on the screen, round about the hero and turned (RoundOnScreen)
 #include "hud_native.h"
 #include "plate_world.h"   // [hud] monster_bar_room: where the plate stands in the layer (BoxOf)
@@ -131,6 +132,7 @@ bool BarOffset() { return std::abs(g_barOffX.load()) > 0.0005f || std::abs(g_bar
 bool BarZoomed() { return std::abs(g_barZoom.load() - 1.0f) > 0.005f || g_barMoved.load() || BarOffset(); }
 std::atomic<bool> g_mapMoved{false};   // [hud_floor] map_near: the map nearer or farther in stereo (the shader shifts it per eye)
 std::atomic<float> g_mapOffX{0.0f}, g_mapOffY{0.0f};   // [hud_floor] map_x / map_y: the map elsewhere on the screen, uv (+y down)
+std::atomic<bool> g_mapKeepOn{false};   // [hud_third] map_x / map_y (vr/f2_map.h): F2's moved map held inside the picture (SetPictureMapKeepOn)
 std::atomic<bool> g_mapInward{false};   // [hud] f5_map: the x above is for a map in the right corner - turned round for one in the left (SetPictureMapInward)
 bool MapOffset() { return std::abs(g_mapOffX.load()) > 0.0005f || std::abs(g_mapOffY.load()) > 0.0005f; }
 // [hud] map_rotate_flat (vr/map_turn.h RoundOnScreen): the corner map in the picture turned so the camera's way is up - taken out and drawn
@@ -856,7 +858,8 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     if (g_pic.on[kMap]) {
         const bool left = mapBox.left + mapBox.right < (int32_t)w;
         ZoomedUv(mapBox, (float)(left ? mapBox.left : mapBox.right), (float)mapBox.top, g_mapZoom.load(), w, h, g_pic.box[kMap]);
-        const float dx = g_mapInward.load() && left ? -g_mapOffX.load() : g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole (F5: toward the middle)
+        float dx = g_mapInward.load() && left ? -g_mapOffX.load() : g_mapOffX.load(), dy = g_mapOffY.load();   // then moved, whole (F5: toward the middle)
+        if (g_mapKeepOn.load()) f2map::KeepOnScreen(g_pic.box[kMap], &dx, &dy);   // (F2: never off the picture, whatever the sliders say)
         g_pic.box[kMap][0] += dx; g_pic.box[kMap][2] += dx;
         g_pic.box[kMap][1] += dy; g_pic.box[kMap][3] += dy;
     }
@@ -1144,8 +1147,8 @@ void SetViewBar(bool on, float sideCm, float liftCm, float widthM) {
     g_viewBarLift.store(liftCm);
     g_viewBarWidth.store(widthM);
     if (g_viewBar.exchange(on) != on)
-        LogF("vrcam: hud - F5's toolbar %s ([hud] f5_toolbar)", on ? "cut out of the picture and hung low in front (its own height and distance)"
-                                                                   : "back where the view has it");
+        LogF("vrcam: hud - the toolbar %s ([hud] f5_toolbar in VR F5, [hud_third] bar_low in VR F2)", on ? "cut out of the picture and hung low in front (its own height and distance)"
+                                                                                                        : "back where the view has it");
 }
 // The toolbar is to stand nearer or farther than the game puts it (AFR stereo): taken out for that too.
 void SetPictureBarMoved(bool moved) { g_barMoved.store(moved); }
@@ -1157,6 +1160,7 @@ void SetPictureMapMoved(bool moved) { g_mapMoved.store(moved); }
 void SetPictureMapOffset(float x, float y) { g_mapOffX.store(std::clamp(x, -1.0f, 1.0f)); g_mapOffY.store(std::clamp(y, -1.0f, 1.0f)); }
 // [hud] f5_map (vr/f5_hud.h): the offset's x is "toward the middle" for a map in the right corner - turned round when the map is in the left one.
 void SetPictureMapInward(bool inward) { g_mapInward.store(inward); }
+void SetPictureMapKeepOn(bool on) { g_mapKeepOn.store(on); }
 // Some piece is to be drawn back at another size: vrcam keeps the effect on for it.
 bool PictureWanted() { return (g_classic.load() && ((BarZoomed() && !g_viewBar.load()) || MapZoomed())) || g_labels.load(); }
 // From above in stereo, with a tilt or a depth for them: the labels on their plane (vrcam decides when).
