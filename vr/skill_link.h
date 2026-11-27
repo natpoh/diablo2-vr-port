@@ -25,6 +25,7 @@ constexpr uint64_t kCastSeenMs = 500;         // a press on the spare slot is a 
 constexpr int kPressTries = 2;                // a press with no cast after it is pressed once more, then given up (logged either way)
 constexpr uint64_t kPublishMs = 1000;         // the Skills block is written again at least this often (BodyWalk takes 3 s still as gone)
 constexpr uint32_t kTapMs = 65, kAltRowMs = 180;   // a slot's press: the left trigger's row needs the longer one (shield_smite.h PulseMs)
+constexpr uint32_t kAltLeadMs = 90;           // a second-row slot: the left trigger alone this long before its button (Presser below)
 constexpr uint32_t kHeldMs = 80;              // a held skill's press is renewed every tick, and runs out this long after the last
 constexpr int kDefaultSpareSlot = 7;          // LT + RB: the slot a skill on no slot is put on before its cast ([gestures] skill_link_slot)
 
@@ -72,6 +73,70 @@ inline Press SlotPress(int slot) {
     p.ms = d.alt ? kAltRowMs : kTapMs;
     return p;
 }
+
+// A slot's press in the order the game reads it. The game takes the left trigger apart from the button, about a tick first (wheel_cast.h
+// kLeadS, slot_controls.h, throw_cast.h, trigger_roles.h - all lead with it): LT and the button in the same poll are read on the FIRST row,
+// and the base slot's skill is cast instead (Serg, 0.225.0: a voice gesture's Town Portal on LT + A cast another skill - "the previous bind").
+// So a second-row slot (LT + B / X / Y / RB / A / RT) gets the left trigger alone kAltLeadMs first, held on through its press, and its button
+// after; a first-row slot is pressed at once. Our own left trigger held long enough already (a held skill renewed every tick) needs no lead
+// again. A new press replaces a button still waiting. The caller sends each Pulse (directinput::PadPulse) and calls Step every tick.
+class Presser {
+    uint64_t ltSince_ = 0, ltUntil_ = 0;   // our own left trigger pulse: from when, until when
+    int dueSlot_ = -1;                     // the button waiting for the lead, its press length, when it goes
+    uint32_t dueMs_ = 0;
+    uint64_t dueAt_ = 0;
+
+public:
+    struct Pulse {
+        bool send = false;
+        skilllink::Press p;   // (qualified: Presser::Press is the member below)
+        uint32_t ms = 0;   // how long the pulse holds
+        int slot = -1;     // the slot this is the press of (-1: the left trigger alone, the lead)
+    };
+    bool Waiting() const { return dueSlot_ >= 0; }
+    void Reset() { *this = Presser{}; }
+
+    // ms 0: the slot's own press length (SlotPress).
+    Pulse Press(int slot, uint32_t ms, uint64_t now) {
+        Pulse u;
+        const skilllink::Press p = SlotPress(slot);
+        if (!p.buttons && !p.lt && !p.rt) return u;
+        const uint32_t hold = ms ? ms : p.ms;
+        dueSlot_ = -1;
+        const bool ltOn = now < ltUntil_;
+        if (p.lt && !(ltOn && now >= ltSince_ + kAltLeadMs)) {   // the lead first: the left trigger alone, held through the button's press
+            if (!ltOn) ltSince_ = now;
+            dueSlot_ = slot;
+            dueMs_ = hold;
+            dueAt_ = ltSince_ + kAltLeadMs;
+            const uint64_t until = dueAt_ + hold;
+            if (until > ltUntil_) ltUntil_ = until;
+            u.send = true;
+            u.p.lt = 255;
+            u.ms = (uint32_t)(ltUntil_ - now);
+            return u;
+        }
+        if (p.lt && now + hold > ltUntil_) ltUntil_ = now + hold;
+        u.send = true;
+        u.p = p;
+        u.ms = hold;
+        u.slot = slot;
+        return u;
+    }
+
+    // The waiting button once its lead is over (nothing otherwise).
+    Pulse Step(uint64_t now) {
+        Pulse u;
+        if (dueSlot_ < 0 || now < dueAt_) return u;
+        u.send = true;
+        u.p = SlotPress(dueSlot_);
+        u.ms = dueMs_;
+        u.slot = dueSlot_;
+        if (now + dueMs_ > ltUntil_) ltUntil_ = now + dueMs_;
+        dueSlot_ = -1;
+        return u;
+    }
+};
 
 // The Skills block's content (everything after the header) from the snapshot; the record wish and the revision are the caller's.
 // heroName may be null. Returns false when there is nothing to list (no hero read).

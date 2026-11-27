@@ -144,6 +144,33 @@ size_t DyingNear(Read&& read, uintptr_t table, float px, float pz, float reach, 
     return n;
 }
 
+// [multiplayer] pose_share_grab: where the living monsters `ids` (n of them) stand, game WORLD units, however far from the hero - a body another player's
+// hand holds is often beyond our scans' 24 units (2026-11-27: the joined PC held Kashya; the host's scans never had her, "not near here"). xz[i] and found[i]
+// for ids[i]; a dying or dead one, an id not met, a place not read: found false. How many were found.
+template <class Read>
+int PlacesOf(Read&& read, uintptr_t table, const uint32_t* ids, int n, float (*xz)[2], bool* found) {
+    if (!ids || !xz || !found || n <= 0) return 0;
+    for (int i = 0; i < n; ++i) found[i] = false;
+    if (!table) return 0;
+    int got = 0;
+    EachUnit(read, table, kMonster, [&](uintptr_t, const Unit& u) {
+        const uint32_t id = Field32(u, kOffId);
+        const uint32_t mode = Field32(u, kOffMode);
+        for (int i = 0; i < n; ++i) {
+            if (found[i] || !ids[i] || ids[i] != id) continue;
+            if (mode == 0 || mode == 12) return true;   // dying, dead
+            float x, z;
+            if (!Place(read, u, &x, &z)) return true;
+            xz[i][0] = x;
+            xz[i][1] = z;
+            found[i] = true;
+            ++got;
+        }
+        return got < n;
+    });
+    return got;
+}
+
 // The MonStats rows, asked of the game once per class. A row that read stays for good; one that did not (the table was not ready, a
 // call that faulted) is asked again after kRetryMs - never remembered as "no row" for the rest of the session, which would leave that
 // kind of monster out of every scan until the game restarted. ask(bank, class, &MonsterRow) -> bool is the game's getter.

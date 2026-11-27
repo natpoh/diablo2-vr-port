@@ -1035,6 +1035,18 @@ framevr::keyboard::NameBox g_nameBox;
 std::atomic<bool> g_keyboard{false};
 std::atomic<uint32_t> g_keyboardEpoch{0};
 std::atomic<bool> g_createPanel{false};   // CharacterCreatePanel open (NameBox::PanelOpen)
+// [frontend] a panel of D2RLoader's own open (D2RLoaderMultiplayerPanel - the D2R Rooms window -, D2RLoaderSettingsPanel - the cog -, ...): laid out
+// on the whole picture, not the 16:9 band the main menu's own panels take (the rooms window ran far below the band; Serg 2026-11-26)
+std::atomic<bool> g_loaderPanel{false};
+// [openxr] multiplayer_keyboard: D2RLoader's Multiplayer window (D2RLoaderMultiplayerPanel: Direct Join's address and password, a hosted game's
+// name and password, D2R Rooms' room name) is open - its text boxes take the VR keyboard; each opening counts into the keyboard's epoch
+std::atomic<bool> g_multiPanel{false};
+std::atomic<uint32_t> g_multiEpoch{0};
+// [campfire] 3D character creation: the hero the game itself says is under its pointer ('CharacterCreate' 'Hover' / 'Unhover') and the one picked
+// ('Select' / 'Unselect'), as their place in the row left to right (kCreateHeroes), -1 none - the hand's pick checks itself against them
+constexpr const char* kCreateHeroes[8] = {"Amazon", "Assassin", "Necromancer", "Barbarian", "Paladin", "Sorceress", "Warlock", "Druid"};
+std::atomic<int> g_createHover{-1}, g_createSelect{-1};
+int CreateHeroIndex(const char* text) { for (int i = 0; i < 8; ++i) if (!strcmp(text, kCreateHeroes[i])) return i; return -1; }
 // [cinema] world_screen (vr/unleashed_cinema_screen.h): the tracker under its lock - messages on the UI thread, world draws on the draw
 // thread, the cap on the update timer; g_cinema the answer for all. It runs whatever the key; CinemaPlaying() answers only with it on.
 std::mutex g_cinemaLock;
@@ -1098,8 +1110,16 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
     CinemaMessage(ctx, target, command, text);   // [cinema] world_screen
     if (g_keyboard.exchange(g_nameBox.Shown()) != g_nameBox.Shown())
         Log(g_nameBox.Shown() ? "gamestate: the name box up (a hero picked) - the VR keyboard may show ([openxr] name_keyboard)" : "gamestate: the name box gone");
-    g_keyboardEpoch.store(g_nameBox.Epoch());
+    g_keyboardEpoch.store(g_nameBox.Epoch() + g_multiEpoch.load());
     g_createPanel.store(g_nameBox.PanelOpen());
+    if (strcmp(target, "CharacterCreate") == 0) {
+        const int who = CreateHeroIndex(text);
+        if (!strcmp(command, "Hover")) g_createHover.store(who);
+        else if (!strcmp(command, "Unhover")) { int was = who; g_createHover.compare_exchange_strong(was, -1); }
+        else if (!strcmp(command, "Select")) g_createSelect.store(who);
+        else if (!strcmp(command, "Unselect")) { int was = who; g_createSelect.compare_exchange_strong(was, -1); }
+    }
+    if (!g_nameBox.PanelOpen()) { g_createHover.store(-1); g_createSelect.store(-1); }
     if (strcmp(target, "PanelManager") == 0) {
         if (!g_panelManagerSpoke.exchange(true)) Log("gamestate: the game's UI system is up (its panel manager's first message): its menus may take the mouse");
         const bool before = g_menu.load() != 0;
@@ -1116,6 +1136,17 @@ SharedEvents::UiMessageAction __cdecl OnUiMessage(const PluginContext* ctx, cons
             g_pause.store(pause);
         }
         noticecard::SetOpen(g_panels.count("NotificationPanel") != 0);
+        {
+            bool loader = false;
+            for (const std::string& n : g_panels) if (n.rfind("D2RLoader", 0) == 0) loader = true;
+            g_loaderPanel.store(loader);
+            const bool multi = g_panels.count("D2RLoaderMultiplayerPanel") != 0;
+            if (multi != g_multiPanel.exchange(multi)) {
+                if (multi) g_multiEpoch.fetch_add(1);
+                g_keyboardEpoch.store(g_nameBox.Epoch() + g_multiEpoch.load());
+                Log(multi ? "gamestate: the Multiplayer window up - the VR keyboard may show ([openxr] multiplayer_keyboard)" : "gamestate: the Multiplayer window gone");
+            }
+        }
         bool menu = false, invOnly = true, invOpen = false;
         for (const std::string& n : g_panels)
             if (IsMenuPanel(n)) { menu = true; if (!handinv::IsInventoryPanel(n.c_str())) invOnly = false; else invOpen = true; }
@@ -1366,6 +1397,8 @@ int HeadSide() { return g_headSide.load(); }
 bool MenuOpen() { return g_menu.load() != 0; }
 // [cinema] world_screen (vr/unleashed_cinema_screen.h): one of the game's cinematics plays and goes on the big screen in the world.
 bool CinemaPlaying() { return g_cinemaOn.load() && g_cinema.load(); }
+// ... a cinematic plays, whatever [cinema] world_screen says (the VR keyboard never hangs under a film: vr/xr.cpp KeyboardWanted)
+bool CinemaFilmNow() { return g_cinema.load(); }
 // Cinematics begun so far, whatever the key (vr/frame/pace_clock.h: no DrawGameScreen while one plays - the pass after it is not a freeze).
 uint64_t CinemaCount() { return g_cinemaCount.load(); }
 void SetCinemaEnabled(bool on) {
@@ -1691,6 +1724,11 @@ void PollCursor() {
 int CursorHeld() { return GetTickCount64() - g_cursorAt.load() <= 400 ? g_cursorHeld.load() : -1; }
 bool KeyboardShown() { return g_keyboard.load(); }          // [openxr] name_keyboard: a new character's name box is up
 bool CreatePanelOpen() { return g_createPanel.load(); }     // ... the creation screen is up (a hero picked or not)
+int CreateHover() { return g_createHover.load(); }           // [campfire] the hero under the game's pointer in creation (0..7 left to right; -1 none)
+int CreateSelected() { return g_createSelect.load(); }       // ... and the one picked
+const char* CreateHeroName(int i) { return i >= 0 && i < 8 ? kCreateHeroes[i] : "none"; }
+bool LoaderPanelOpen() { return g_loaderPanel.load(); }     // [frontend] a panel of D2RLoader's own is open (the rooms window, the cog's)
+bool MultiplayerPanelOpen() { return g_multiPanel.load(); } // [openxr] multiplayer_keyboard: D2RLoader's Multiplayer window is open
 uint32_t KeyboardEpoch() { return g_keyboardEpoch.load(); }  // ... and each time it comes up anew
 
 // [openxr] hand_inventory: vrcam's walk with the inventory up (the stick's own walk command) on the game's UI thread - where the game's

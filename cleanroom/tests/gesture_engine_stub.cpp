@@ -2,6 +2,8 @@
 // the test tree (never shipped): the mod's loader, wiring and Gestures tab are built and tested against it before the real engine lands. It keeps
 // gestures in memory per class (no files), takes a glyph or motion while its pen is held after a FRESH press (an armed take ignores a trigger already
 // held), a pose at the pen's press, and in play a stroke over 10 frames casts the first recorded gesture of that hand's class whose type is a glyph.
+// Voice (BWGE_VoiceSet / BWGE_VoiceGet): a press of the frame's `talk` stands for a word heard - three during a voice take save it (its word "fire"),
+// one in play casts the first recorded voice gesture.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -25,6 +27,7 @@ struct Row {
     uint32_t rgba = 0xFF3C3CE6u;
     float threshold = 80.0f;
     std::string name;
+    std::string word;   // a voice gesture's
 };
 
 struct Engine {
@@ -45,6 +48,9 @@ struct Engine {
     uint32_t castStamp = 0;
     float lastPercent = -1;
     uint32_t lastGesture = 0, lastStamp = 0;
+    // voice
+    bool voiceOn = false, holdToTalk = false, talkWas = false;
+    uint32_t heard = 0, heardStamp = 0, heardGesture = 0;
 
     void Say(const char* s) { if (log) log(s); }
     std::vector<Row>& Rows() { return rows[set]; }
@@ -58,7 +64,9 @@ struct Engine {
         auto& r = Rows();
         const bool valid = idx >= 0 && idx < (int)r.size();
         const bool onePoint = valid && r[idx].type == BW_LINK_GT_POSE;
-        const bool ok = valid && (onePoint ? points > 0 : points > 10);
+        const bool voice = valid && r[idx].type == BW_LINK_GT_VOICE;
+        const bool ok = valid && (voice ? heard >= 3 : onePoint ? points > 0 : points > 10);
+        if (ok && voice) r[idx].word = "fire";
         state = ok ? BW_LINK_REC_SAVED : started ? BW_LINK_REC_FAILED : BW_LINK_REC_CANCELLED;
         if (ok) r[idx].review = true;
         else if (valid && madeNew) { r.erase(r.begin() + idx); ++revision; }
@@ -99,7 +107,18 @@ __declspec(dllexport) void __cdecl BWGE_Feed(void* p, const BWGE_Frame* f) {
     Engine* e = static_cast<Engine*>(p);
     if (!e || !f || f->size < sizeof(BWGE_Frame) || e->set.empty()) return;
     bool pen[2] = {Pressed(f, 0), Pressed(f, 1)};
-    if (e->active) {
+    const bool talkEdge = f->talk && !e->talkWas;   // (a word heard)
+    e->talkWas = f->talk != 0;
+    if (e->active && e->Rows()[e->idx].type == BW_LINK_GT_VOICE) {   // a voice take: three words heard save it
+        if (talkEdge) {
+            ++e->heard;
+            e->started = true;
+            e->drawing = true;
+            e->state = BW_LINK_REC_DRAWING;
+            ++e->revision;
+            if (e->heard >= 3) e->EndTake();
+        }
+    } else if (e->active) {
         auto& r = e->Rows();
         const Row& row = r[e->idx];
         const int hs[2] = {row.hand == BW_LINK_GH_RIGHT ? 1 : 0, row.hand == BW_LINK_GH_LEFT ? 0 : 1};
@@ -120,6 +139,15 @@ __declspec(dllexport) void __cdecl BWGE_Feed(void* p, const BWGE_Frame* f) {
         } else if (e->drawing) {
             e->EndTake();
         }
+    } else if ((f->flags & BWGE_FRAME_PLAY) && e->voiceOn && talkEdge) {   // play: a word heard casts the first recorded voice gesture
+        ++e->heardStamp;
+        e->heardGesture = 0;
+        for (const Row& r : e->Rows())
+            if (r.recorded && r.type == BW_LINK_GT_VOICE) {
+                e->casts.push_back({r.skill, r.id, 88.0f, ++e->castStamp});
+                e->heardGesture = r.id;
+                break;
+            }
     } else if (f->flags & BWGE_FRAME_PLAY) {   // play: a stroke over 10 frames casts the first recorded glyph of that hand
         for (int h = 0; h < 2; ++h) {
             if (pen[h]) { ++e->stroke[h]; continue; }
@@ -152,7 +180,7 @@ __declspec(dllexport) int __cdecl BWGE_Record(void* p, uint32_t gesture, uint8_t
         if (r[i].type == BW_LINK_GT_BUTTON) return BW_LINK_GR_BAD;
         e->madeNew = false;
     } else {
-        if (type < BW_LINK_GT_GLYPH || type > BW_LINK_GT_MOTION) return BW_LINK_GR_BAD;
+        if ((type < BW_LINK_GT_GLYPH || type > BW_LINK_GT_MOTION) && !(type == BW_LINK_GT_VOICE && e->voiceOn)) return BW_LINK_GR_BAD;
         Row n;
         n.id = e->nextId++;
         n.type = type;
@@ -169,6 +197,7 @@ __declspec(dllexport) int __cdecl BWGE_Record(void* p, uint32_t gesture, uint8_t
     e->active = e->armed = true;
     e->drawing = e->started = false;
     e->points = 0;
+    e->heard = 0;
     e->state = BW_LINK_REC_READY;
     e->heldAtArm[0] = e->prevPen[0];   // a pen held as the take is armed does not start it
     e->heldAtArm[1] = e->prevPen[1];
@@ -266,6 +295,7 @@ __declspec(dllexport) uint32_t __cdecl BWGE_List(void* p, BW_LinkGestures* out) 
         g.joints[0][1] = 0.72f;
         g.joints[1][1] = 0.42f;
         if (r[i].type == BW_LINK_GT_BUTTON) std::snprintf(g.button, sizeof g.button, "%s", "Left Y");
+        if (r[i].type == BW_LINK_GT_VOICE) std::snprintf(g.button, sizeof g.button, "%s", r[i].word.c_str());
     }
     out->recordState = e->state;
     out->recordGesture = e->takeGesture;
@@ -299,6 +329,35 @@ __declspec(dllexport) uint32_t __cdecl BWGE_Trail(void* p, BW_LinkVrRune* out, u
     (void)out;
     (void)max;
     return 0;   // (the stub draws no trail)
+}
+
+__declspec(dllexport) int __cdecl BWGE_VoiceSet(void* p, const BWGE_VoiceConfig* c) {
+    Engine* e = static_cast<Engine*>(p);
+    if (!e || !c || c->size < sizeof(BWGE_VoiceConfig)) return BW_LINK_GR_BAD;
+    e->voiceOn = c->on != 0;
+    e->holdToTalk = c->holdToTalk != 0;
+    char line[160];
+    std::snprintf(line, sizeof line, "stub voice %s, language '%.15s'", e->voiceOn ? "on" : "off", c->lang);
+    e->Say(line);
+    return BW_LINK_GR_OK;
+}
+__declspec(dllexport) int __cdecl BWGE_VoiceGet(void* p, BWGE_VoiceState* out) {
+    Engine* e = static_cast<Engine*>(p);
+    if (!e || !out || out->size < sizeof(BWGE_VoiceState)) return BW_LINK_GR_BAD;
+    const uint32_t size = out->size;
+    std::memset(out, 0, sizeof *out);
+    out->size = size;
+    out->state = e->voiceOn ? BWGE_VOICE_LISTENING : BWGE_VOICE_OFF;
+    out->level = 37;
+    out->model = 1;
+    std::snprintf(out->modelName, sizeof out->modelName, "%s", "stub-model");
+    out->takeHeard = e->heard;
+    if (e->heard >= 3) std::snprintf(out->takeText, sizeof out->takeText, "%s", "fire");
+    out->heardStamp = e->heardStamp;
+    out->heardGesture = e->heardGesture;
+    out->heardPercent = 88.0f;
+    std::snprintf(out->heardText, sizeof out->heardText, "%s", "fire");
+    return BW_LINK_GR_OK;
 }
 
 }  // extern "C"

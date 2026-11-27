@@ -29,5 +29,7 @@ bool Aiming(int* hand, int32_t* skill);
 int CastHand();
 // A Select glyph armed this hand's slot (skilllinkwire's): its trigger casts it from now on.
 void SetArmed(int hand, bool armed);
+// A Talk trigger is held now (the voice gestures with [gestures] voice_hold cast only then). Any thread.
+bool Talking();
 
 }  // namespace trigroleswire

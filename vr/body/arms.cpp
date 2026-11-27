@@ -7,6 +7,7 @@
 #include "../skill_wheel.h"   // [weight] grab_items_empty_grip: the skill panel (its gestures tab) keeps the grip
 #include "../gesture_play_wire.h"   // the Gestures tab's Play: the take moves the drawn arms (F4, visual only)
 #include "../client_verdict.h"      // [world] town_heads_look: IsTown
+#include "../blade_shape.h"         // [weight] shield_collide_unheld: an orb's or a claw's blade axis and thickness
 
 using namespace D2RL;
 using namespace vrc;   // as in vrcam.cpp
@@ -339,6 +340,28 @@ void PushArms() {
         // right one beside a weapon alone in the left slot)
         w.shieldCode = gamestate::LeftShield() ? gamestate::HandCode(1) : gamestate::RightShield() ? gamestate::HandCode(0) : 0u;
         w.shieldCollide = g_set.weightShieldCollide.load() && viewgate::F4() && w.shieldCode != 0;
+        // [weight] shield_collide_unheld (vr/shield_push.h): an orb or a claw is never the weight model's (kindOf: -1), so it went through the shield whatever
+        // shield_collide said - with this tick its drawn hand is held back off the shield's face by the skeleton. Its blade is hit by touch's (the same ends).
+        w.shieldNeverThrough = g_set.weightShieldNeverThrough.load();   // [weight] shield_never_through: no way through it
+        w.shieldUnheld = false;
+        if (w.shieldCollide && !w.on && g_set.weightShieldUnheld.load() && own && in.mode == 2 && (type == D2RVR_TYPE_ORB || type == D2RVR_TYPE_CLAW)) {
+            const int side = (int)(gamestate::WeaponHand() & 1u);
+            float unitM = 0.0f;
+            {
+                skel::PosedWeaponPose pw;
+                if (skel::PosedWeapon(pw) && pw.blade[side].ok) unitM = pw.blade[side].unitM;
+            }
+            const meleetouch::BladeExtent be = meleetouch::BladeFor(gamestate::HandCode(side), type, false, unitM);
+            const bladeshape::Shape ks = bladeshape::ForKind(type, false);   // (the axis and the thickness: a claw lies along its bone's Z)
+            if (be.tipM + be.buttM > 0.02f) {
+                w.shieldUnheld = true;
+                w.unheldSide = side;
+                w.unheldTipM = be.tipM;
+                w.unheldButtM = be.buttM;
+                w.unheldTipAxis = (be.tipSign < 0 ? -1 : 1) * (ks.axis + 1);
+                w.unheldR = ks.radius;
+            }
+        }
         if (w.on) {
             w.kind = kind;
             w.twoHanded = (two & D2RVR_TWO_HANDED) != 0;

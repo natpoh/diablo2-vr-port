@@ -1199,6 +1199,32 @@ static void TestEnginePure() {
     CHECK(e.hand[1].valid && Near(e.hand[1].pos[0], 0.3f) && Near(e.trigger[1], 0.9f) && e.pen[1] == 1 && e.pen[0] == 0);
     CHECK(!e.hand[0].valid && Near(e.grip[0], 0.4f) && !e.chest.valid);
     CHECK(!(gengine::FrameOf(f, false, p2).flags & BWGE_FRAME_PLAY));
+
+    // [gestures] voice_all_views: where the engine is fed - F4 everything; another VR view (1, 2, 3, 5) the voice only with the key and the voice
+    // on; the flat game (0) and anything else never
+    using W = gengine::Where;
+    CHECK(gengine::WhereFed(true, 4, false, false) == W::Full && gengine::WhereFed(true, 4, true, true) == W::Full);
+    for (int v : {1, 2, 3, 5}) {
+        CHECK(gengine::WhereFed(false, v, true, true) == W::VoiceOnly);
+        CHECK(gengine::WhereFed(false, v, false, true) == W::Off);   // the key off: F4 only, as before
+        CHECK(gengine::WhereFed(false, v, true, false) == W::Off);   // no voice: nothing to feed there
+    }
+    CHECK(gengine::WhereFed(false, 0, true, true) == W::Off && gengine::WhereFed(false, 6, true, true) == W::Off && gengine::WhereFed(false, -1, true, true) == W::Off);
+    // its play: focused, no game menu (the view's own kInMenu / kOtherView do not count), no skill panel
+    const uint32_t other = directinput::kFocused | directinput::kInMenu | directinput::kOtherView;
+    CHECK(gengine::VoiceOnlyPlay(other, false));
+    CHECK(!gengine::VoiceOnlyPlay(other | directinput::kGameMenu, false));
+    CHECK(!gengine::VoiceOnlyPlay(other, true));
+    CHECK(!gengine::VoiceOnlyPlay(directinput::kInMenu | directinput::kOtherView, false));
+    // what may cast there: a voice gesture's skill (cast mode) or tome / scroll; never a glyph, a pose, a motion, a select, a key / pad / act
+    CHECK(gengine::VoiceOnlyCast(BW_LINK_GT_VOICE, false, false, 0));
+    CHECK(gengine::VoiceOnlyCast(BW_LINK_GT_VOICE, true, true, 0));
+    CHECK(!gengine::VoiceOnlyCast(BW_LINK_GT_VOICE, false, false, 1));
+    CHECK(!gengine::VoiceOnlyCast(BW_LINK_GT_VOICE, true, false, 0));
+    for (uint8_t t : {(uint8_t)BW_LINK_GT_GLYPH, (uint8_t)BW_LINK_GT_POSE, (uint8_t)BW_LINK_GT_MOTION, (uint8_t)0}) {
+        CHECK(!gengine::VoiceOnlyCast(t, false, false, 0));
+        CHECK(!gengine::VoiceOnlyCast(t, true, true, 0));
+    }
 }
 
 // gelib as gengine::Do's engine (the plugin's gesture_engine_wire.cpp Calls)
@@ -1225,6 +1251,8 @@ struct EngineFlow {
     bool shown = true, play = true, have = true;
     bool clickTrigger = false;   // the pointing (right) hand's trigger, the click
     float penL = 0, penR = 0;    // the player's triggers as pens
+    bool talk = false;           // a Talk trigger held (the stub hears a word at each press)
+    BWGE_VoiceState voice{};     // the engine's listener (the tab's In::voice)
     double t = 1.0;
     float u = -1, v = -1;
     wheel::Skill catalog[3];
@@ -1260,6 +1288,11 @@ struct EngineFlow {
         in.triggers = trig[0] > 0.3f || trig[1] > 0.3f;
         in.catalog = catalog;
         in.catalogCount = 3;
+        if (have && gelib::HasVoice()) {   // (as skill_wheel.cpp: the listener's state, Voice offered while it is on)
+            gelib::VoiceGet(&voice);
+            in.voiceOk = voice.state != BWGE_VOICE_OFF;
+            in.voice = in.voiceOk ? &voice : nullptr;
+        }
         last = m.Step(in);
         if (last.send) {
             LibCalls calls;
@@ -1301,7 +1334,7 @@ struct EngineFlow {
                 f.hand[h].grip.pos[2] = -0.10f;
             }
         }
-        gelib::Feed(gengine::FrameOf(f, play && !shown, pen));
+        gelib::Feed(gengine::FrameOf(f, play && !shown, pen, talk));
         BWGE_Cast c[4];
         const int n = gelib::PollCasts(c, 4);
         for (int i = 0; i < n; ++i) casts.push_back(c[i]);
@@ -1326,6 +1359,12 @@ struct EngineFlow {
         Click(gov::kChoice0 + 0);
         Click(gov::kChoice0 + handChoice);
         Click(skillCell);
+    }
+    void Say() {   // a word (the stub: a Talk press)
+        talk = true;
+        Run(2);
+        talk = false;
+        Run(2);
     }
     void Draw(int frames, bool right = true) {
         (right ? penR : penL) = 0.9f;
@@ -1444,6 +1483,84 @@ static void TestEngineStub() {
         f.clickTrigger = false;
         f.Run(3);
         CHECK(f.ops.size() == 1 && f.V().recordState == BW_LINK_REC_READY);
+    }
+    {   // voice gestures ([gestures] voice): with the engine's voice on, NEW GESTURE offers Voice (four choices); it has no hand (the skills next);
+        // the take is the word said three times, the review has no Play, the row says its word, a word in play casts its skill
+        EngineFlow f;
+        f.Run(2);
+        f.Click(gov::kNew);
+        CHECK(f.V().screen == gov::Screen::NewType && f.V().choices == 3 && !f.V().voiceOk);   // (voice off: as before)
+        f.Click(gov::kBack);
+        BWGE_VoiceConfig vc{};
+        vc.size = sizeof vc;
+        vc.on = 1;
+        std::snprintf(vc.lang, sizeof vc.lang, "%s", "enUS");
+        CHECK(gelib::HasVoice() && gelib::VoiceSet(vc) == BW_LINK_GR_OK);
+        f.Run(2);
+        CHECK(f.V().voiceOk && f.V().voice.state == BWGE_VOICE_LISTENING && f.V().voice.level10 == 3 && f.V().voice.model == 1);
+        f.Click(gov::kNew);
+        CHECK(f.V().screen == gov::Screen::NewType && f.V().choices == 4);
+        for (int i = 0; i < 4; ++i) CHECK(gov::ChoiceRect(i, 4).b < gov::kNoteLine.t && (i == 0 || gov::ChoiceRect(i, 4).t > gov::ChoiceRect(i - 1, 4).b));
+        CHECK(gov::TypeOfChoice(3) == BW_LINK_GT_VOICE && gov::TypeOfChoice(0) == BW_LINK_GT_GLYPH);
+        f.Click(gov::kChoice0 + 3);
+        CHECK(f.V().screen == gov::Screen::NewSkill && f.V().newType == BW_LINK_GT_VOICE);
+        f.Click(gov::kBack);   // (back: the types again, no hand screen between)
+        CHECK(f.V().screen == gov::Screen::NewType);
+        f.Click(gov::kChoice0 + 3);
+        f.Click(gov::kGrid0 + 1);   // Fire Ball
+        f.Run(2);
+        CHECK(f.V().screen == gov::Screen::Recording && f.V().recType == BW_LINK_GT_VOICE && f.V().recordState == BW_LINK_REC_READY);
+        f.Say();
+        CHECK(f.V().recordState == BW_LINK_REC_DRAWING && f.V().voice.takeHeard == 1);
+        f.Say();
+        f.Say();
+        CHECK(f.V().screen == gov::Screen::Review && f.V().haveReview && f.V().review.g.type == BW_LINK_GT_VOICE && std::strcmp(f.V().review.g.button, "fire") == 0);
+        int cells[5];
+        const int nc = gov::FooterCells(f.V(), cells);
+        bool play = false;
+        for (int i = 0; i < nc; ++i) play = play || cells[i] == gov::kPlay;
+        CHECK(nc == 3 && !play);   // (a word has nothing to play here)
+        const int countBefore = f.V().count;
+        f.Click(gov::kKeep);
+        f.Run(2);
+        const gov::Row* vr = nullptr;   // (the class has the glyphs of the blocks before: the voice row is the one of its type)
+        for (int i = 0; i < f.V().rows; ++i)
+            if (f.V().row[i].g.type == BW_LINK_GT_VOICE) vr = &f.V().row[i];
+        CHECK(f.V().count == countBefore && vr && (vr->g.flags & BW_LINK_GF_RECORDED) && !gov::PartUsable(vr->g, gov::kPic) && !gov::PartUsable(vr->g, gov::kHand) &&
+              gov::PartUsable(vr->g, gov::kThrMore) && gov::PartUsable(vr->g, gov::kRowRerecord));
+        // in play a word casts its skill; the list says what was heard
+        f.shown = false;
+        f.Run(3);
+        const size_t before = f.casts.size();
+        f.Say();
+        CHECK(f.casts.size() == before + 1 && f.casts.back().skill == 47);
+        f.shown = true;
+        f.Run(2);
+        CHECK(f.V().voice.heardStamp == 1 && std::strcmp(f.V().voice.heardText, "fire") == 0 && f.V().voice.heardName[0]);
+        vc.on = 0;
+        gelib::VoiceSet(vc);
+        f.Run(2);
+        CHECK(!f.V().voiceOk);
+    }
+    {   // the Triggers screen's five roles (Talk the fifth) fit the window, its cells clear of the actions'
+        for (int row = 0; row < 2; ++row)
+            for (int role = 0; role < gov::kTrigRoles; ++role) {
+                const gov::R r = gov::TrigRoleRect(row, role);
+                CHECK(r.l >= 0.0f && r.r <= (float)gov::kW && (role == 0 || r.l > gov::TrigRoleRect(row, role - 1).r));
+            }
+        CHECK(trigroles::RoleOf(4) == trigroles::Role::Talk && trigroles::RoleOf(5) == trigroles::Role::AsBefore);
+        trigroles::Hand h;
+        trigroles::In in;
+        in.allowed = true;
+        in.trigger = 0.9f;
+        trigroles::Out o = h.Step(trigroles::Role::Talk, 1, in);
+        CHECK(o.talk && o.take && !o.pen && !o.rt && !o.lt && !o.castTap);   // (held: talking, nothing to the game)
+        in.trigger = 0.0f;
+        o = h.Step(trigroles::Role::Talk, 1, in);
+        CHECK(!o.talk && o.take);
+        in.allowed = false;
+        in.trigger = 0.9f;
+        CHECK(!h.Step(trigroles::Role::Talk, 1, in).talk);   // (in a menu: as before)
     }
     gelib::Shutdown();
     CHECK(!gelib::Loaded() && gelib::List(nullptr) == 0);
@@ -2601,6 +2718,62 @@ static void TestPaint(const char* dumpDir) {
         const std::vector<uint32_t> ba = ShotOf("gestures_bind_actions", br.V());
         CHECK(br.V().bindTab == 1 && Differ(two, ba, gov::GridRect(0)) > 2000 && Differ(two, ba, gov::BindTabRect(1)) > 500);
         CHECK(gr.V().screen == gov::Screen::Review && Differ(two, rg, gov::SwatchRect(2, false)) > 500);
+    }
+    {   // voice gestures: NEW GESTURE with Voice, a voice take, its review (sounds like another word), the list with a word heard, Talk on Triggers
+        static gov::View vv;
+        Rig vr;
+        vr.Step();
+        vv = vr.V();
+        vv.voiceOk = true;
+        vv.voice.state = BWGE_VOICE_LISTENING;
+        vv.voice.model = 1;
+        vv.voice.level10 = 6;
+        vv.voice.speaking = true;
+        vv.screen = gov::Screen::NewType;
+        vv.choices = 4;
+        const std::vector<uint32_t> nt = ShotOf("gestures_voice_new_type", vv);
+        CHECK(Differ(two, nt, gov::ChoiceRect(3, 4)) > 2000);
+        vv.screen = gov::Screen::Recording;
+        vv.choices = 0;
+        vv.recType = BW_LINK_GT_VOICE;
+        vv.recordState = BW_LINK_REC_DRAWING;
+        vv.live = true;
+        vv.voice.takeHeard = 2;
+        std::snprintf(vv.recSkill, sizeof vv.recSkill, "%s", "Fire Ball");
+        const std::vector<uint32_t> vrec = ShotOf("gestures_voice_recording", vv);
+        CHECK(Differ(two, vrec, gov::kRecState) > 1000);
+        vv.screen = gov::Screen::Review;
+        vv.live = false;
+        vv.haveReview = true;
+        vv.review.g = G(41, BW_LINK_GT_VOICE, 47, "Fire Ball voice");
+        vv.review.g.flags = BW_LINK_GF_REVIEW;
+        std::snprintf(vv.review.g.button, sizeof vv.review.g.button, "%s", "fire ball");
+        std::snprintf(vv.review.skill, sizeof vv.review.skill, "%s", "Fire Ball");
+        std::snprintf(vv.voice.similarName, sizeof vv.voice.similarName, "%s", "Fire Bolt voice");
+        const std::vector<uint32_t> vrev = ShotOf("gestures_voice_review", vv);
+        CHECK(Differ(two, vrev, gov::kReviewPic) > 5000);
+        vv = vr.V();   // the list: its second row a voice gesture, a word heard
+        vv.voiceOk = true;
+        vv.voice.state = BWGE_VOICE_LISTENING;
+        vv.voice.model = 1;
+        vv.voice.heardStamp = 3;
+        vv.voice.heardPercent = 86.0f;
+        std::snprintf(vv.voice.heardText, sizeof vv.voice.heardText, "%s", "fire ball");
+        std::snprintf(vv.voice.heardName, sizeof vv.voice.heardName, "%s", "Fire Ball voice");
+        vv.row[1].g = G(41, BW_LINK_GT_VOICE, 47, "Fire Ball voice");
+        vv.row[1].g.flags = BW_LINK_GF_RECORDED | BW_LINK_GF_LIVE;
+        vv.row[1].g.threshold = 82.0f;
+        std::snprintf(vv.row[1].g.button, sizeof vv.row[1].g.button, "%s", "fire ball");
+        std::snprintf(vv.row[1].skill, sizeof vv.row[1].skill, "%s", "Fire Ball");
+        const std::vector<uint32_t> vl = ShotOf("gestures_voice_list", vv);
+        CHECK(Differ(list, vl, gov::PicRect(1)) > 300);
+        Rig tr;
+        tr.Step();
+        tr.ClickCell(gov::kTriggers);
+        vv = tr.V();
+        vv.trigRole[1] = 4;
+        const std::vector<uint32_t> tt = ShotOf("gestures_triggers_talk", vv);
+        CHECK(vv.screen == gov::Screen::Triggers && Differ(two, tt, gov::TrigRoleRect(1, 4)) > 500);
     }
     // the missing pieces, each with its words (and its button where there is a fix)
     for (gov::Missing m : {gov::Avail::LinkOff, gov::Avail::NotRunning, gov::Avail::Starting, gov::Avail::NoGameLink, gov::Avail::NoSkills, gov::Avail::NoGestures}) {

@@ -5,6 +5,7 @@
 //   Glyphs    it draws the strokes and casts the skill a Select glyph armed on THIS hand - nothing else reaches the game from it
 //   Shift     the game's Shift (its second layer / stand still): pad LT held while the trigger is
 //   Action    an action of the gestures' list (vr/gesture_actions.h) held while the trigger is, or done once at the press (an item)
+//   Talk      held: the voice gestures listen ([gestures] voice with voice_hold: a word casts only while a Talk trigger is held) - nothing reaches the game
 // A trigger with a role other than AsBefore is the role's alone: the layout never sees it.
 //
 // A Glyphs trigger is both a pen and a cast control. Two rules tell them apart ([gestures] glyph_cast_hold):
@@ -29,8 +30,8 @@
 
 namespace trigroles {
 
-enum class Role : uint8_t { AsBefore = 0, Glyphs = 1, Shift = 2, Action = 3 };
-inline Role RoleOf(int v) { return v == 1 ? Role::Glyphs : v == 2 ? Role::Shift : v == 3 ? Role::Action : Role::AsBefore; }
+enum class Role : uint8_t { AsBefore = 0, Glyphs = 1, Shift = 2, Action = 3, Talk = 4 };
+inline Role RoleOf(int v) { return v == 1 ? Role::Glyphs : v == 2 ? Role::Shift : v == 3 ? Role::Action : v == 4 ? Role::Talk : Role::AsBefore; }
 
 constexpr float kOn = 0.55f, kOff = 0.35f;   // the trigger pressed / let go (hysteresis)
 constexpr float kStrokeM = 0.06f;            // moved this far: a stroke
@@ -67,6 +68,7 @@ struct Out {
     bool actionHeld = false;   // Action: down now
     bool aiming = false;       // Release: held still with a skill armed - its aim line drawn, the cast's point along this hand
     bool aimEnd = false;       // ... the aim just ended (the cast's point keeps this hand a moment after: the host's)
+    bool talk = false;         // Talk: held now (the voice gestures may cast)
 };
 
 // One hand's trigger.
@@ -100,6 +102,9 @@ public:
             o.actionDown = edgeDown;
             o.actionUp = edgeUp;
             o.actionHeld = down_;
+            return o;
+        case Role::Talk:
+            o.talk = down_;
             return o;
         default: break;
         }

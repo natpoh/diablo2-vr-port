@@ -261,6 +261,7 @@ static void TestModFiles() {
         CHECK(UnleashedFile("d2rl-pcvr.dll", false) && UnleashedFile("pcvr-install.json", false) && UnleashedFile("D2R_Frame_ReShade.ini", false));
         CHECK(UnleashedFile("some_Unleashed_thing.txt", false));
         CHECK(!UnleashedFile("D2R_FogEase_Unleashed.fxh", false));
+        CHECK(!UnleashedFile("D2R_Frontend_Unleashed.fxh", false));   // ([frontend] the main menu's sky, MPL 2.0)
         CHECK(UnleashedFile("openxr_loader.dll", true) && !UnleashedFile("openxr_loader.dll", false));
         CHECK(!UnleashedFile("d2rl-vrcam.dll", false));
     }

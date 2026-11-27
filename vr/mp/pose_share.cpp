@@ -29,12 +29,30 @@ std::atomic<bool> g_poseHeld{false};
 // [multiplayer] pose_share_grab (vr/grab_share.h): a body our hand holds for the knock-down library ([weight] grab_throw) goes out as a hold - the monster, the limb,
 // the touch point, the palm - and the others' holds are drawn by our own library: their held bodies hang from their hands here, thrown as they let go (F4; live)
 std::atomic<bool> g_poseGrab{false};
+// [multiplayer] pose_share_grab_any_view: the others' holds and knocks drawn in every view (VR F1-F3, F5, the flat game), not only VR F4 - our own still go
+// out from VR F4 alone (Serg, 2026-11-26: «Захват в сети показывает везде»; live)
+std::atomic<bool> g_poseGrabAny{false};
+// [multiplayer] pose_share_facing: a player not in VR F4 whose drawn hero our mod turns to his camera ([body] turn_third: flat, VR F1-F3) sends that turn, and the
+// others turn his hero to it instead of the game's facing (vr/remote_pose.h FacingOnly; Serg, 2026-11-27: the flat player "looks at me, on my PC his back"; live)
+std::atomic<bool> g_poseFacing{false};
 void PoseShareConfigure() {
+    {
+        const bool facing = IniB(L"multiplayer", L"pose_share_facing", false);
+        if (g_poseFacing.exchange(facing) != facing)
+            LogF("vrcam: pose share - the way a hero not in VR F4 is drawn turned %s ([multiplayer] pose_share_facing)",
+                 facing ? "goes to the others (our camera's turn, flat and VR F1-F3), and theirs turns their heroes here" : "is not shared (the game's own facing)");
+    }
     {
         const bool grab = IniB(L"multiplayer", L"pose_share_grab", false);
         if (g_poseGrab.exchange(grab) != grab)
             LogF("vrcam: pose share - a body held in the hand (grab_throw) %s ([multiplayer] pose_share_grab)",
                  grab ? "goes to the others, and theirs hang from their hands here, drawn by our own ragdoll (F4)" : "is not shared");
+    }
+    {
+        const bool any = IniB(L"multiplayer", L"pose_share_grab_any_view", false);
+        if (g_poseGrabAny.exchange(any) != any)
+            LogF("vrcam: pose share - the bodies the other players hold and knock %s ([multiplayer] pose_share_grab_any_view)",
+                 any ? "are drawn in every view (VR F1-F3, F5, the flat game too; ours still go out from VR F4 alone)" : "are drawn in VR F4 only");
     }
     {
         const bool self = IniB(L"debug", L"pose_share_legs_self", false);
@@ -218,8 +236,22 @@ bool PropForPose(int side, const float L[3], float heading, float upm, poseshare
     return true;
 }
 
+// [multiplayer] pose_share_facing: not VR F4 with the body - our hero's drawn turn alone, while our mod turns his whole body to the camera (remotepose::FacingOnly:
+// no joint, the heading of the camera's forward on the ground - the F4 pose's own convention - and the eye height). False: the game's own facing, nothing sent.
+bool PoseShareFacing(poseshare::Pose* p) {
+    if (!g_poseFacing.load() || !skel::HeroTurnedWhole(200)) return false;
+    AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
+    if (!f.valid || !(f.camF[0] * f.camF[0] + f.camF[2] * f.camF[2] > 1e-8f)) return false;
+    *p = poseshare::Pose{};
+    p->heading = poseshare::HeadingOf(f.camF);
+    p->eyeM = UserEyeHeightM();
+    return remotepose::FacingOnly(*p);
+}
+
 bool PoseShareOwn(poseshare::Pose* p) {
-    if (!g_enabled.load() || !g_inWorld.load() || !FullBody() || ThirdPerson() || !g_eyeOk.load()) return false;
+    if (!g_enabled.load() || !g_inWorld.load()) return false;
+    if (!FullBody() || ThirdPerson()) return PoseShareFacing(p);   // ([multiplayer] pose_share_facing; else nothing, as before)
+    if (!g_eyeOk.load()) return false;
     const D2RVR_Shared* sh = Shared();
     if (!sh || sh->version != D2RVR_SHARED_VERSION || !sh->headValid) return false;
     AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
@@ -432,18 +464,24 @@ void PoseShareHeroTick(ULONGLONG now) {
     if (now < next) return;
     next = now + 11;
     if (!PoseShareHeroWanted()) {
-        if (had) { skel::SetRemoteHeroes(nullptr, 0); had = false; }
+        if (had) { skel::SetRemoteHeroes(nullptr, 0); skel::SetRemoteFacings(nullptr, 0); had = false; }
         return;
     }
     posewire::Remote r[8];
     const size_t n = posewire::Remotes(r, 8);
     AcquireSRWLockShared(&g_poseSpotsLock); const PoseSpots spots = g_poseSpots; ReleaseSRWLockShared(&g_poseSpotsLock);
-    remotepose::Target t[remotepose::kMaxHeroes];
-    int nt = 0;
+    remotepose::Target t[remotepose::kMaxHeroes], fc[remotepose::kMaxHeroes];
+    int nt = 0, nf = 0;
+    const bool facing = g_poseFacing.load();
     const bool legs = g_poseLegs.load() && gaitlib::Ensure();   // (the library loaded here, the plugin's thread, never in the pose hook)
     const float eyeUnits = std::max(1.0f, ViewHeight());
     for (size_t i = 0; i < n && nt < remotepose::kMaxHeroes; ++i) {
         if (r[i].unit == spots.own) continue;
+        if (remotepose::FacingOnly(r[i].pose)) {   // [multiplayer] pose_share_facing: his drawn turn alone (not VR F4) - his rig turned to it (skel::SetRemoteFacings)
+            for (size_t j = 0; facing && nf < remotepose::kMaxHeroes && j < spots.n; ++j)
+                if (spots.p[j].id == r[i].unit && remotepose::FromFacing(r[i].pose, r[i].unit, spots.p[j].x, spots.p[j].z, &fc[nf])) { ++nf; break; }
+            continue;
+        }
         for (size_t j = 0; j < spots.n; ++j)
             if (spots.p[j].id == r[i].unit && remotepose::FromPose(r[i].pose, r[i].unit, spots.p[j].x, spots.p[j].z, &t[nt])) {
                 t[nt].legs = legs;
@@ -453,6 +491,7 @@ void PoseShareHeroTick(ULONGLONG now) {
             }
     }
     skel::SetRemoteHeroes(t, nt);
+    skel::SetRemoteFacings(fc, nf);
     had = true;
 }
 
@@ -563,24 +602,39 @@ void PoseShareGrabTick(ULONGLONG now, uint32_t unit) {
     static ULONGLONG lineAt = 0;
     if (now < next) return;
     next = now + 11;
-    const bool on = PoseShareGrabWanted() && unit && FullBody() && !ThirdPerson() && viewgate::F4();
-    if (!on) {
-        if (was) {
-            const int k = viewer.ReleaseAll(bodies);
-            sender = grabshare::Sender{};
-            knocks = grabshare::KnockSender{};
-            posewire::SetOwnGrabs(nullptr, 0);
-            if (k) LogF("vrcam: pose share - %d bodies the other players held let go here (not F4, out of the game, or [multiplayer] pose_share_grab off)", k);
-        }
+    // VR F4: ours out and theirs drawn; [multiplayer] pose_share_grab_any_view: theirs drawn in the other views too (grabshare::GateFor)
+    const grabshare::Gate gate = grabshare::GateFor(PoseShareGrabWanted() && unit, FullBody() && !ThirdPerson() && viewgate::F4(), g_poseGrabAny.load());
+    static int wasMode = 0;   // 0 off, 1 F4, 2 drawn outside F4: a change lets go of what the other mode drew (the knock-down library starts afresh too)
+    const int mode = !gate.view ? 0 : gate.flat ? 2 : 1;
+    if (was && mode != wasMode) {
+        const int k = viewer.ReleaseAll(bodies);
+        if (k) LogF("vrcam: pose share - %d bodies the other players held let go here (%s)", k,
+                    mode ? "the view changed: F4 and the other views draw their own" : "not F4, out of the game, or [multiplayer] pose_share_grab off");
+    }
+    if (!gate.send && mode != wasMode) {   // (ours go out from VR F4 alone: stopped as F4 is left)
+        sender = grabshare::Sender{};
+        knocks = grabshare::KnockSender{};
+        posewire::SetOwnGrabs(nullptr, 0);
+    }
+    if (mode != wasMode && mode == 2) LogF("vrcam: pose share - the bodies the other players hold drawn outside VR F4 here ([multiplayer] pose_share_grab_any_view)");
+    wasMode = mode;
+    if (!gate.view) {
         was = false;
         return;
     }
     was = true;
-    float L[3];
-    AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
-    const float eyeUnits = std::max(1.0f, ViewHeight());
+    float L[3], eyeUnits = 0.0f;
+    if (gate.flat) {   // outside F4: the hero where the update thread has him, the world's scale from his own eyes (as the flat deaths: the knock-down's frame there)
+        float eye = 0.0f, lift = 0.0f;
+        if (!skel::HeroEye(&eye, &lift) || !(eye > 1.0f) || !std::isfinite(g_heroPosNow[0] + g_heroPosNow[1] + g_heroPosNow[2])) return;
+        memcpy(L, g_heroPosNow, sizeof L);
+        eyeUnits = eye;
+    } else {
+        AcquireSRWLockShared(&g_lookLock); memcpy(L, g_lookAt, sizeof L); ReleaseSRWLockShared(&g_lookLock);
+        eyeUnits = std::max(1.0f, ViewHeight());
+    }
     const float upmOurs = eyeUnits / UserEyeHeightM();
-    {   // ours
+    if (gate.send) {   // ours
         AcquireSRWLockShared(&g_stickLock); const StickFrame f = g_stickFrame; ReleaseSRWLockShared(&g_stickLock);
         grabshare::Own own[2];
         if (f.valid) {
@@ -732,11 +786,11 @@ void PoseShareTick() {
         if (!first && (drawn || away))
             LogF("vrcam: pose share - markers: %u player-frames drawn, %u of a player not in our area (last 5 s); our unit %u", drawn, away, unit);
         const skel::RemoteHeroCount rh = skel::TakeRemoteHeroCount();
-        if (!first && PoseShareHeroWanted() && (rh.posed || rh.unmatched || rh.unposable || rh.legsNoPose)) {   // (LogF cuts at 256: these are longer)
+        if (!first && PoseShareHeroWanted() && (rh.posed || rh.unmatched || rh.unposable || rh.legsNoPose || rh.facing)) {   // (LogF cuts at 256: these are longer)
             char b[520];
             snprintf(b, sizeof b, "vrcam: pose share - other heroes (5 s): %u posed from a pose (%u turned by the world heading, %u weapon slots placed as drawn, %u hands placed as drawn - "
-                     "out of the arm's reach up to %.1f cm, %u legs stepped), %u legs stepped with no pose; %u rigs with no pose near (within %.0f units), %u not posable (no bind pose / bones)",
-                     rh.posed, rh.yawFromWorld, rh.weapon, rh.handsDrawn, rh.reachMissCm, rh.legs, rh.legsNoPose, rh.unmatched, remotepose::kMatchUnits, rh.unposable);
+                     "out of the arm's reach up to %.1f cm, %u legs stepped), %u legs stepped with no pose, %u turned by the facing he sends; %u rigs with no pose near (within %.0f units), %u not posable (no bind pose / bones)",
+                     rh.posed, rh.yawFromWorld, rh.weapon, rh.handsDrawn, rh.reachMissCm, rh.legs, rh.legsNoPose, rh.facing, rh.unmatched, remotepose::kMatchUnits, rh.unposable);
             Log(b);
         }
         if (const unsigned own = skel::TakeOwnLegs(); !first && own)

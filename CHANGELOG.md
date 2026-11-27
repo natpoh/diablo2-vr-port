@@ -1,5 +1,60 @@
 # What's new in D2R VR
 
+## 0.225.0
+
+The main menu and character creation in 3D, voice gestures, Direct hit for joined co-op players, allies who see what you hold, a weapon that never goes through your shield, and last release's ports switched on.
+
+- **The main menu in 3D** (`[frontend] scene_3d`, on; D2R VR Settings, "Main menu in 3D"; native OpenXR): the title screen and the
+  character list stand round you as a scene from the act of the hero picked - Act 1's forest, Act 2's road out of the city, Act 3's docks,
+  Act 4's River of Flame, Act 5's highlands - and the menu itself is a board in front of you: point with the laser and pull the trigger.
+  D2R VR Settings builds the scenes from your own game (Setup does it too). If a scene cannot be shown, the flat menu comes back by itself.
+  Ported from Kudlatytrue's 3D main menu in D2R VR Unleashed (MPL 2.0; PR #583, merged by Berk/bearstonem) - thank you:
+  <https://github.com/bearstonem/d2r-pcvr/pull/583>.
+- **Voice gestures** (`[gestures] voice`, on; the headset's Gestures tab, a new kind: Voice): say a word three times to record it, bind it
+  to a skill or a game action, and from then on saying it in play casts it the game's own way, as a glyph does (VR F4, never in a menu or
+  with the skill panel open). Every word is checked twice - a speech model for your language (English and Russian come with Setup) must read
+  it and your recordings must sound like it - so other words, the game's voices and noise rarely cast. A new trigger role, Talk, and
+  `voice_hold` let a word cast only while that trigger is held. Nothing you say leaves your PC; the listener (`d2r_vr_libs\voice`) runs
+  beside the game, not in it. The idea is Piotr Kożuch's (ptkk73) and Berk's voice casting in D2R VR Unleashed - thank you:
+  <https://github.com/bearstonem/d2r-pcvr/pull/624> (our own code).
+- **Direct hit for joined co-op players** (`[gameplay] melee_direct_client_host`, on; Strikes; who hosts decides): a joined VR player's
+  direct hit is sent to the host as the touch itself and the host strikes it with the game's server attack - no walking up to a far monster.
+  The ping is put back: the host checks the touch where the monster and the hero were when the player saw it (the monster alive and
+  hostile, no wall between, within the weapon's reach, never faster than the hero's attack). A touch that fails a check is the normal attack.
+  Works with the host in any view, flat too. A new box for a host that does not strike them: `melee_direct_client_stand_still` (off) sends a
+  far blow in place, as the game's Stand Still does.
+- **Allies see what you hold in every view** (`[multiplayer] pose_share_grab_any_view`, on, with `pose_share_grab`): a monster or a town
+  NPC you hold, knock down or throw is drawn on the other players' screens in VR F1-F3, F5 and the flat game, not only in VR F4. Only the
+  picture: nothing changes on the server.
+- **Last release's ports, now on**: the view faces into the area when you arrive (`[camera] entry_facing`, Piotr Kożuch), the walk stick
+  steers each Whirlwind (`[gameplay] whirlwind_stick_steer`, Berk), the palm laid from the knuckles on the grip (`[hands] palm_from_knuckle`,
+  Berk), the weapon clash sound only on hard knocks and at most every 0.5 s (`[weight] clash_sound_min_mps` 3, `clash_sound_gap_s` 0.5,
+  Berk), and props that become physics bodies only when something touches them (`[weight] props_on_contact`, Berk's idea, our own library
+  code - entering a room with many props costs far less).
+- **Character creation in 3D** (`[campfire] enabled`, on; "Character creation in 3D"): Create New opens the camp round a fire with the
+  heroes standing in it - point the beam at a hero to light him up, pull the trigger to pick him. The creation screen hangs in front of you
+  like our in-game menus, whole (the game type at the top, the name, Create and Back), under our day sky. The VR keyboard for the name
+  (`[openxr] name_keyboard`, on) types into the game whatever your Windows keyboard layout is. Ported from Kudlatytrue's and Berk's (bearstonem) 3D
+  character creation and Kudlatytrue's name keyboard in D2R VR Unleashed (MPL 2.0; PR #518) - thank you:
+  <https://github.com/bearstonem/d2r-pcvr/pull/518>.
+- **The VR keyboard in the game's look** (`[openxr] keyboard_game_look`, on): the keys drawn as the game's own buttons, with a row of
+  digits, a dot, a colon and Space; it also hangs under D2RLoader's Multiplayer window (`[openxr] multiplayer_keyboard`, on) for the game's
+  name, password and address. It shows only there and in character creation - never in a cinematic or in a game.
+- **The 3D menu runs smoother**: the headset gets a picture at every game frame in the menu scenes (`[campfire] frame_per_eye`), and a
+  headset lying asleep on the desk no longer slows the whole game to 10 frames a second, music included (`[openxr] asleep_free`). The menu
+  board is 16:9 by default (`[frontend] menu_16x9`; the square / 16:9 icons over it switch it), the character list and D2RLoader's windows
+  sit in it, the PC monitor shows it, and a cinematic plays on the cinema screen instead of over the frozen scene.
+- **Your weapon never goes through your own shield** (`[weight] shield_never_through`, on), and an orb or a claw strikes it too
+  (`[weight] shield_collide_unheld`, on): the hand gives way, the weapon stays on the shield's face.
+- **Voice gestures in every VR view** (`[gestures] voice_all_views`, on: F1, F2, F3, F5 too), and a gesture or a word bound to a skill on
+  the second row (LT + a button) casts that skill, no longer the first row's.
+- **D2R Rooms 0.9.16**: recognises D2R VR Unleashed players and their version, opens and takes clicks in the VR main menu, a wide window
+  with the rooms in a table, and a guide to run your own room server (the board page's "Run your own server").
+- **The 3D videos' code is open**: the act videos in 3D now run from the plugin's own code (`vr/video3d`); ONNX Runtime, DirectML and the
+  ZipDepth network stay separate files with their licences in `d2r_vr_libs`. Nothing changes for you.
+
+Co-op: everyone in the game needs the same version - please all update to 0.225.0.
+
 ## 0.224.1
 
 The act videos in 3D, now on for everyone.

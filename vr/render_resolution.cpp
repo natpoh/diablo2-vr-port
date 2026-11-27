@@ -115,12 +115,20 @@ void Setup() {
 }
 
 std::atomic<bool> g_uiBand{false};   // [render] ui_band_16x9
+// [frontend] / [campfire]: the menu scene round you - the band answered from the window's own size too, no render size in force (the main menu
+// had none: the band never reached its layout, laid out on the square window - narrow, and cut off below the band; Serg 2026-11-26)
+std::atomic<bool> g_bandNoSize{false};
+// [frontend] scene_3d: the menu scenes at the size picked, as soon as the menus' scene has stood a while - a render size in force there as in a
+// game (else the main menu kept the window's own size until a game had been entered), so the 16:9 band reaches its layout by the game's own path
+std::atomic<bool> g_menusPicked{false};
 std::atomic<uint32_t> g_clientSizeTold{0};   // [render] vr_resolution_ui: said once for the interface (1) and the cursor (2)
 
 }  // namespace
 
 uint64_t ClientSizeAnswer(Asker asker, uint64_t native, bool on) {
-    const uint64_t answer = CanvasAnswer(asker, g_window.Logical(g_attached.load()), native, on, g_uiBand.load());
+    Size game = g_window.Logical(g_attached.load());
+    if (!game && g_bandNoSize.load() && g_uiBand.load()) game = FromNative(native);   // (the cursor's answer stays the window's own then)
+    const uint64_t answer = CanvasAnswer(asker, game, native, on, g_uiBand.load());
     if (answer != native) {   // said once for the interface and once for the cursor
         const uint32_t bit = asker == Asker::Ui ? 1u : 2u;
         if (!(g_clientSizeTold.fetch_or(bit) & bit)) {
@@ -167,6 +175,21 @@ void PickUiBandMode(int mode) {
             mode == 1 ? "in a 16:9 band always" : mode == 2 ? "in a 16:9 band while the inventory is open" : "over the whole picture");
 }
 int UiBandMode() { return g_uiBandMode.load(); }
+void SetMenusAtPickedSize(bool on) { g_menusPicked.store(on); }
+std::atomic<bool> g_bandHelpers{false};
+void SetBandForHelpers(bool on) {
+    if (g_bandHelpers.exchange(on) == on) return;
+    g_clientSizeTold.store(0);
+    Say("vrcam: render size - the interface <-> client helpers %s ([frontend] band_all)", on ? "answered the 16:9 band too (the main menu laid out 16:9)" : "answered the whole picture again");
+    if (g_uiBand.load()) ClientSizeReflow();
+}
+bool BandForHelpers() { return g_bandHelpers.load() && g_uiBand.load(); }
+bool RenderSizeInForce() { return (bool)g_window.Logical(g_attached.load()); }
+void SetBandWithoutSize(bool on) {
+    if (g_bandNoSize.exchange(on) == on) return;
+    g_clientSizeTold.store(0);
+    if (g_uiBand.load()) ClientSizeReflow();   // (laid out again with the new answer)
+}
 bool UiBandActive() { return g_uiBand.load(); }
 void UiBandTick(bool inventoryOpen) {
     const int m = g_uiBandMode.load();
@@ -250,7 +273,8 @@ void Update(HWND window, bool running, Size recommended, Size maximum, Size outp
                 recommended.w, recommended.h, maximum.w, maximum.h);
     }
     const uint64_t now = GetTickCount64();
-    const Ask ask = g_menuWide.Step(now, menuWide, g_frontend.load(), g_hero.load(), sel, wide, g_ctl.InForce());
+    const Ask ask = g_menusPicked.load() && g_frontend.load() && sel ? Ask{sel, true}
+                                                                    : g_menuWide.Step(now, menuWide, g_frontend.load(), g_hero.load(), sel, wide, g_ctl.InForce());
     if (ask.want == wide && wide && wide != toldWide)
         Say("vrcam: render size - the game's menus at 16:9: %ux%u ([render] menu_wide; %s in a game)", wide.w, wide.h,
             sel ? "the size picked" : "the window's own size");

@@ -190,6 +190,7 @@ uniform float SkySun < hidden = true; > = 0.5;          // 0 = no sun
 uniform float SkyClouds < hidden = true; > = 0.7;       // cover 0..1
 uniform float SkyStars < hidden = true; > = 0.0;
 uniform float SkyBrightness < hidden = true; > = 1.0;
+uniform float SkySaturation < hidden = true; > = 1.0;   // [frontend] (Unleashed PR #583, MPL 2.0): the painted sky's colour kept (0 = grey)
 uniform float SkyTex < hidden = true; > = 0.0;        // 0 = drawn here, 1..6 = painted: act 1-5, act 5 snow
 uniform bool SkyCapOn < hidden = true; > = true;       // the painted sky has its zenith picture
 uniform float Timer < source = "timer"; >;
@@ -545,7 +546,10 @@ float3 Sky(float3 dir)
 #if D2R_ARCANE_SKY
     if (ArcaneSkyOn) return ArcaneSky(dir);
 #endif
-    if (SkyTex > 0.5) return PaintedSky(dir) * SkyBrightness;
+    if (SkyTex > 0.5) {   // ([frontend] SkySaturation: Unleashed PR #583, MPL 2.0)
+        const float3 pc = PaintedSky(dir);
+        return lerp(dot(pc, float3(0.2126, 0.7152, 0.0722)).xxx, pc, SkySaturation) * SkyBrightness;
+    }
     const float h = dir.y;
     float3 c = SkyGradient(h);
     const float cs = saturate(dot(dir, normalize(SunDir)));
@@ -1448,6 +1452,9 @@ bool DomeAt(float2 uv, int eye, float d)
 // only (GameFogTrue; Serg: our own fog stays as it was) and shipped off - far objects came out see-through (0.188.4, 53.webp). vrcam
 // sets it in the open air with an act's sky and the game's fog drawn only.
 uniform bool FogIntoSky < hidden = true; > = false;
+// [frontend] fog: a drawn pixel fogged by its own depth, not the farthest of its five - a leaf's edge against the act's far backdrop took the
+// backdrop's full fog and stood as a bright fringe round every branch (Serg 2026-11-26)
+uniform bool FogOwnDepth < hidden = true; > = false;
 float3 SkyBehind(float3 dir)
 {
     const float3 s = Sky(dir);
@@ -1594,6 +1601,9 @@ float3 LightFog(float2 uv, int eye, float3 colour, float d)
     return FogOn ? lerp(colour, fogColour, FogAmount(0.0)) : colour;
 }
 
+// [frontend] the main menu's act scenes under our sky: D2R VR Unleashed's (Kudlatytrue, PR #583; MPL 2.0), in a file of its own beside
+// this one; DepthFogWorld calls it at the places marked [frontend].
+#include "D2R_Frontend_Unleashed.fxh"
 float3 DepthFogWorld(float4 pos, float2 uv, int eye)
 {
     const float3 colour = tex2D(FogColorSmp, uv).rgb;
@@ -1639,6 +1649,17 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         // A rim pixel with no depth of its own but a drawn neighbour takes the neighbour's:
         // left out, the cut shapes stayed outlined in black on the vault.
         const float dPt = d > 1e-6 ? d : dNear;
+        // [frontend] (D2R_Frontend_Unleashed.fxh, MPL 2.0): the main menu's sky looked up ONCE for all its places below, and only while
+        // one of them is on (in a game none is) - each Sky() is the whole sky inlined (Unleashed 9a276e5: four made the build 2.5 times longer)
+        const bool frontOn = FrontSkyWanted();
+        float3 frontSky = float3(0.0, 0.0, 0.0);
+        [branch] if (frontOn) frontSky = Sky(dir) + dither;
+        if (frontOn && dPt > 1e-6) {   // [frontend] cut: another act's scene beside this one's goes to our sky
+            float3 frontC;
+            const float3 offC = (eye == 0 ? v.x * CamRight0 + v.y * CamUp0 + v.z * CamBack0
+                                          : v.x * CamRight1 + v.y * CamUp1 + v.z * CamBack1) * (NearPlane / dPt);
+            if (FrontCut(uv, duv, px, offC, dPt, colour, frontSky, frontC)) return frontC;
+        }
         // What the ceiling is wanted for here, and as far along the ray as: 1 a cut point, 2 a point
         // behind a wall at the floor's edge, 3 the void. ONE call of Ceiling for all three - three of
         // them inlined made the shader take 164 s to build (2026-10-07).
@@ -1679,6 +1700,10 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
         bool rim = false;
         if (ceilMode == 0 && dNear > 1e-6 && d <= 1e-6 && SkyOn && SkyOverRims)
             rim = (d1 > 1e-6 ? 1 : 0) + (d2 > 1e-6 ? 1 : 0) + (d3 > 1e-6 ? 1 : 0) + (d4 > 1e-6 ? 1 : 0) <= 2;
+        if (frontOn && ceilMode == 0) {   // [frontend] sky_edges: an edge against the void, the rest of the pixel sky
+            float3 frontC;
+            if (FrontEdge(uv, px, d, d1, d2, d3, d4, dNear, colour, frontSky, frontC)) return frontC;
+        }
         if (ceilMode == 0 && (dNear <= 1e-6 || rim)) {
             if (SkyOn) {
                 sky = Sky(dir);
@@ -1707,7 +1732,12 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
             }
             if (ceilMode == 3) { back = got; sky = cc; }
         }
+        if (frontOn && !back && ceilMode == 0) {   // [frontend] sky_blend: the painted sky's dark edge, far off, into our sky
+            float3 frontC;
+            if (FrontBlend(d, dir, colour, frontSky, frontC)) return frontC;
+        }
         if (back) {
+            if (frontOn && FrontVoidCut(dir)) return sky + dither;   // [frontend] cut: another act's sky card, by its direction
             const float luma = dot(colour, float3(0.2126, 0.7152, 0.0722));
             // A rim is dim as what it rims (about 0.1): the sky takes it unless it is clearly light - a glow's edge beside a brazier
             // stays, laid over the sky as below.
@@ -1779,7 +1809,7 @@ float3 DepthFogWorld(float4 pos, float2 uv, int eye)
     // averaged whole, the far water beside a man got a share of his near-nothing
     // and stood round him as a dark rim FogBlur pixels wide (2026-10-05). The far
     // ground's holes and specks melt as before - their fog is the same.
-    float t = FogAmount(dFar);
+    float t = FogAmount(FogOwnDepth && d > 1e-6 ? d : dFar);
     if (FogBlur >= 0.5) {
         const float t0 = t;
         float sum = 0.0, wsum = 0.0;

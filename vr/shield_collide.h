@@ -35,9 +35,11 @@ constexpr uint32_t kId = 0xFFFFFFF1u;   // the shield's capsules among the weigh
 // its controller now; gapM: how far the weapon is from the shield (its pieces' surfaces; under 0 inside).
 class Pass {
 public:
-    bool Step(bool touching, float lagM, float gapM) {
+    // never ([weight] shield_never_through): it never goes through - the hand gives way however far the controller goes (one already through still comes back
+    // when clear, as before).
+    bool Step(bool touching, float lagM, float gapM, bool never = false) {
         if (!through_) {
-            if (touching && lagM >= kGiveM) {
+            if (!never && touching && lagM >= kGiveM) {
                 through_ = true;
                 ++count_;
             }

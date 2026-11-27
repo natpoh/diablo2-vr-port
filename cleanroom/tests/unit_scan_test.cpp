@@ -152,6 +152,28 @@ void TheDyingAndTheDead() {
     Check(unitscan::DyingNear(g, 0, 200.0f, 400.0f, 3.0f * kUpm, out, 8) == 0, "no table: none");
 }
 
+// [multiplayer] pose_share_grab: the places of the monsters another player holds, by id, however far - the dying, the dead and the other rows not.
+void PlacesById() {
+    Game g;
+    g.Add(unitscan::kMonster, 9, 5, 1, 160.0f, 230.0f);      // Kashya, 60 cells from the hero: out of any scan's reach
+    g.Add(unitscan::kMonster, 137, 5, 1, 101.0f, 200.0f);    // the same chain as 9 (137 & 0x7F == 9)
+    g.Add(unitscan::kMonster, 3, 63, 12, 102.0f, 199.0f);    // dead
+    g.Add(unitscan::kPlayer, 4, 0, 1, 50.0f, 50.0f);         // a player with the id asked: not a monster
+    const uint32_t ids[4] = {9, 3, 4, 77};
+    float xz[4][2] = {};
+    bool found[4] = {true, true, true, true};
+    const int n = unitscan::PlacesOf(g, Game::kTable, ids, 4, xz, found);
+    Check(n == 1 && found[0] && !found[1] && !found[2] && !found[3], "only the living monster asked is found (the dead one, a player's id, an id not there: not)");
+    Check(Near1(xz[0][0], 320.0f) && Near1(xz[0][1], 460.0f), "its place in game world units (twice the cell), as the scans read it");
+    const uint32_t two[2] = {137, 9};
+    float xz2[2][2] = {};
+    bool f2[2] = {};
+    Check(unitscan::PlacesOf(g, Game::kTable, two, 2, xz2, f2) == 2 && Near1(xz2[0][0], 202.0f) && Near1(xz2[1][0], 320.0f), "two on one chain: each its own");
+    Check(unitscan::PlacesOf(g, 0, ids, 4, xz, found) == 0 && !found[0], "no table: none found");
+    g.broken = true;
+    Check(unitscan::PlacesOf(g, Game::kTable, ids, 4, xz, found) == 0 && !found[0], "memory that does not read: none found");
+}
+
 void OtherRowsAreNotMonsters() {
     Game g;
     g.Add(unitscan::kPlayer, 7, 1, 1, 100.5f, 200.0f);       // the hero himself: the player row
@@ -250,6 +272,7 @@ int main() {
     AtTheEndOfALongChain();
     WhatIsLeftOut();
     TheDyingAndTheDead();
+    PlacesById();
     OtherRowsAreNotMonsters();
     AFailedRowIsAskedAgain();
     TheNearestAreKept();

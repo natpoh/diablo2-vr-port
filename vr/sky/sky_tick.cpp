@@ -144,8 +144,9 @@ void SkyTick() {
     else if (EffectsPaused()) why = "a menu is open";   // (a menu as a panel, menu_3d: the world as without one)
     // [campfire] sky (default off; Unleashed's CampfireSky): our sky with Act 5's palette (Harrogath's - the campfire is its west gate) in
     // the creation scene's void, over the player and above its band of mountains; fog and the rest stay off there
-    static const int kCampfirePalette = SkyPaletteFor("expansion", true);
-    g_skyPalette.store(campfire::SkyWanted() && g_set.skyOn.load() && kCampfirePalette >= 0 ? kCampfirePalette : why ? -1 : palette);
+    // [frontend] sky (default off; Unleashed PR #583's CampfireSkyPalette): the main menu's act scene under its own act's palette
+    const int campfirePalette = campfire::SkyWanted() && g_set.skyOn.load() ? SkyPaletteFor(campfire::SkyPart(), true) : -1;
+    g_skyPalette.store(campfirePalette >= 0 ? campfirePalette : why ? -1 : palette);
     {   // [sky] arcane_sky: the pictures looked for every 2 s (D2R_VR_Settings may make them while the game runs)
         static ULONGLONG lookedAt = 0;
         static bool toldReady = false;

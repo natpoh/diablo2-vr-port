@@ -59,6 +59,7 @@
 #include "table_rows.h"   // a value read from the game checked against the table it indexes (a hero rig's parents)
 #include "weapon_extents.h"   // melee by touch: the weapon model's unit in metres as drawn (PosedBlade::unitM)
 #include "shield_shape.h"   // [weight] shield_collide: the shield's face (vr/shield_parts.h) where the game draws it
+#include "shield_push.h"    // [weight] shield_collide_unheld: an orb's or a claw's drawn hand held back off that face
 #include "grip_rig.h"
 #include "grab_bodies.h"   // [weight] grab_wrap: the palm laid on a held body without the grip library (LayPalm)
 #include "skeletons.h"
@@ -434,6 +435,19 @@ std::string g_twistNote;                // [hands] forearm_twist: the last rig's
 std::atomic<int> g_shieldStrapped{0};   // [shield] forearm: 1 strapped this pose, -1 asked but not (hidden, no bind pose), 0 not asked
 std::atomic<float> g_shieldAdjSeen[6] = {};                       // [shield] x y z (cm) pitch yaw roll (deg) as the last strap was given them (ShieldAdjNote)
 std::atomic<float> g_shieldAdjMoveCm{0.0f}, g_shieldAdjTurnDeg{0.0f};   // ... and how far they moved / turned the shield from the plain strap
+// [weight] shield_collide_unheld (vr/shield_push.h): an orb's or a claw's blade and the shield's face as the last pose drew them, each in the frame of the
+// controller that carries it (the weapon's drawn hand, the shield's arm) - put back on this sample's controllers before the pose, where the weapon's hand is
+// held back off the face (ShieldUnheldStep). The pose thread's own (the hero's rig only, never one posed along).
+struct UnheldShield {
+    shieldpush::Local weapon;
+    shieldpush::Local face[weight::kShieldParts];
+    int nFace = 0, side = 0, arm = 1;
+    uint32_t code = 0;
+    ULONGLONG at = 0;
+};
+UnheldShield g_unheld;
+shieldpush::Hand g_unheldHand;
+shieldpush::Teller g_unheldTeller;
 #endif
 #if D2RVR_FIRST_PERSON
 std::atomic<int> g_gunAxis{0};   // GunAxis
@@ -6169,6 +6183,39 @@ void PoseBody(uintptr_t self, const Hero& h, const Input& given, const weight::O
             }
         }
         weight::SetDrawnShield(np > 0 ? &parts[0][0] : nullptr, np, arm, in.weight.shieldCode);
+        // [weight] shield_collide_unheld (vr/shield_push.h): an orb's or a claw's blade where this pose draws it (hit by touch's ends on the drawn weapon bone) and
+        // the face just told, each kept in the frame of the controller that carries it - the next sample holds the weapon's hand back off the face (ShieldUnheldStep)
+        g_unheld.nFace = 0;
+        const int uSide = in.weight.unheldSide & 1;
+        const int uBone = h.weapon[axesSide];
+        if (in.weight.shieldUnheld && !wo.on && np > 0 && uSide != arm && axesSide == uSide && uBone >= 0 && uBone < n && (in.handsValid & (1u << uSide)) &&
+            (in.handsValid & (1u << arm)) && (in.haveEye || h.head >= 0)) {
+            const V3 eye = in.haveEye ? V3{in.eyeModel[0], in.eyeModel[1], in.eyeModel[2]} : Pos(newW[h.head]);
+            const float upm = std::clamp(eye.y / std::max(0.8f, in.userHeadM), 2.0f, 8.0f) * in.scale;
+            const int ax = std::clamp(std::abs(in.weight.unheldTipAxis), 1, 3) - 1;
+            const float sign = in.weight.unheldTipAxis < 0 ? -1.0f : 1.0f;
+            const float* m = newW[uBone].m;
+            const float rl = std::sqrt(m[ax * 4] * m[ax * 4] + m[ax * 4 + 1] * m[ax * 4 + 1] + m[ax * 4 + 2] * m[ax * 4 + 2]);
+            if (rl > 1e-6f && std::isfinite(rl)) {
+                const shieldshape::V o{m[12], m[13], m[14]}, d{m[ax * 4] / rl * sign, m[ax * 4 + 1] / rl * sign, m[ax * 4 + 2] / rl * sign};
+                const shieldshape::V e{eye.x, eye.y, eye.z}, off{in.handOffset[0], in.handOffset[1], in.handOffset[2]};
+                const shieldshape::V tip = shieldshape::ModelToHands(shieldshape::Add(o, shieldshape::Mul(d, in.weight.unheldTipM * upm)), e, upm, c, s, off);
+                const shieldshape::V butt = shieldshape::ModelToHands(shieldshape::Sub(o, shieldshape::Mul(d, in.weight.unheldButtM * upm)), e, upm, c, s, off);
+                if (shieldshape::Finite(tip) && shieldshape::Finite(butt)) {
+                    const shieldcollide::Seg blade{{butt.x, butt.y, butt.z}, {tip.x, tip.y, tip.z}, in.weight.unheldR};
+                    g_unheld.weapon = shieldpush::ToLocal(blade, in.hand[uSide], in.rot[uSide]);
+                    for (int i = 0; i < np; ++i) {
+                        const shieldcollide::Seg f{{parts[i][0], parts[i][1], parts[i][2]}, {parts[i][3], parts[i][4], parts[i][5]}, parts[i][6]};
+                        g_unheld.face[i] = shieldpush::ToLocal(f, in.hand[arm], in.rot[arm]);
+                    }
+                    g_unheld.nFace = np;
+                    g_unheld.side = uSide;
+                    g_unheld.arm = arm;
+                    g_unheld.code = in.weight.shieldCode;
+                    g_unheld.at = GetTickCount64();
+                }
+            }
+        }
     }
     // ... and the weapon's drawn bone set again where it was carried: a step since (a hand laid on a body it holds) may have moved the right wrist, which carries it
     if (carriedB >= 0) {
@@ -9187,6 +9234,13 @@ ULONGLONG g_remoteAt = 0;
 std::atomic<unsigned> g_remotePosed{0}, g_remoteUnmatched{0}, g_remoteUnposable{0};
 std::atomic<float> g_heroYawInModel{0.0f};   // the camera's yaw in our own hero's model space, as his arms were last posed (HeroYawInModel)
 std::atomic<ULONGLONG> g_heroYawAt{0};
+// [multiplayer] pose_share_facing: the players who send only their drawn body's turn (SetRemoteFacings, under g_remoteLock), and how many rigs were turned by it
+remotepose::Target g_facing[remotepose::kMaxHeroes];
+int g_nFacing = 0;
+ULONGLONG g_facingAt = 0;
+std::atomic<bool> g_facingAny{false};
+std::atomic<unsigned> g_otherFacing{0};
+std::atomic<ULONGLONG> g_heroTurnedAt{0};   // our own hero's whole drawn body turned to the camera (HeroTurnedWhole)
 
 // The rig of a player who is not us: if a target's hero stands where it does, its upper body turned to the look (PoseBody's turn about spine_01), each arm
 // to its controller (Elbow / AimChain, the wrist as the controller holds it: PlanWrist / ApplyWrist - the weapon in hand comes along, it hangs under
@@ -9491,11 +9545,30 @@ bool HeadDown(uintptr_t self, const Hero& h) {
 std::atomic<bool> g_otherLegs{false};   // SetOtherHeroes (vrcam)
 std::atomic<bool> g_selfLegs{false};    // [debug] pose_share_legs_self: our own hero's legs by the same gait (a one-PC test of the legs; SetSelfLegs)
 std::atomic<unsigned> g_otherLegsNoPose{0};
-void PoseLegsOnly(uintptr_t self, const Hero& h) {
-    if (!gaitlib::Loaded() || !h.bindOk || h.head < 0 || h.leg[0][2] < 0 || h.leg[1][2] < 0) return;
+// [multiplayer] pose_share_facing: `others` (another player's rig): a facing he sends (remotepose::FacingOnly - he is not VR F4, our mod turns his drawn hero to his
+// camera) turns his whole body to it instead of the game's facing, with or without `legs`; with neither, nothing of ours (the game's own pose).
+void PoseLegsOnly(uintptr_t self, const Hero& h, bool legs = true, bool others = false) {
+    const bool gait = legs && gaitlib::Loaded() && h.leg[0][2] >= 0 && h.leg[1][2] >= 0;
+    const bool facing = others && g_facingAny.load(std::memory_order_relaxed);
+    if ((!gait && !facing) || !h.bindOk || h.head < 0) return;
     float x = 0.0f, z = 0.0f;
     Mat M{};
     if (!ecs::BodyPlace(self, &x, &z, nullptr, 500, M.m)) return;
+    float tx = M.m[8], tz = M.m[10];   // the game's facing (the model's forward in the world: its matrix's z row)
+    bool sent = false;
+    if (facing) {
+        remotepose::Target f[remotepose::kMaxHeroes];
+        int nf = 0;
+        AcquireSRWLockShared(&g_remoteLock);
+        if (g_nFacing > 0 && GetTickCount64() - g_facingAt <= 300) {
+            nf = g_nFacing;
+            for (int i = 0; i < nf; ++i) f[i] = g_facing[i];
+        }
+        ReleaseSRWLockShared(&g_remoteLock);
+        const int at = nf ? remotepose::Match(x, z, f, nf) : -1;
+        if (at >= 0) { remotepose::AheadOfHeading(f[at].heading, &tx, &tz); sent = true; }
+    }
+    if (!gait && !sent) return;
     uintptr_t world = 0, mats = 0;
     int32_t n = 0;
     if (!Get(self + 0x20, &world) || !Get(world, &n) || !Get(world + 4, &mats) || n != h.count) return;
@@ -9511,7 +9584,7 @@ void PoseLegsOnly(uintptr_t self, const Hero& h) {
         LegsMem& m = g_legsMem[self];
         const float dt = m.faceAt && tick > m.faceAt ? std::min(0.25f, (float)(tick - m.faceAt) * 0.001f) : 0.0f;
         if (!m.faceAt || tick - m.faceAt > 500) { m.faceX = m.faceZ = 0.0f; }
-        remotepose::TurnToward(&m.faceX, &m.faceZ, M.m[8], M.m[10], 6.0f * dt);
+        remotepose::TurnToward(&m.faceX, &m.faceZ, tx, tz, 6.0f * dt);   // (or the facing he sends: pose_share_facing)
         m.faceAt = tick;
         const float fx = m.faceX, fz = m.faceZ;
         ReleaseSRWLockExclusive(&g_legsLock);
@@ -9520,13 +9593,14 @@ void PoseLegsOnly(uintptr_t self, const Hero& h) {
     const float c = cosf(yaw), s = sinf(yaw);
     Mat T{}; T.m[0] = c; T.m[2] = -s; T.m[5] = 1; T.m[8] = s; T.m[10] = c; T.m[15] = 1;
     if (yaw != 0.0f) for (int i = 0; i < n; ++i) newW[i] = Mul(newW[i], T);
-    RemoteLegs(self, h, nullptr, x, z, c, s, T, &M, newW, oldW);
+    if (gait) RemoteLegs(self, h, nullptr, x, z, c, s, T, &M, newW, oldW);
     for (int i = 0; i < n; ++i)
         for (int j = 0; j < 16; ++j)
             if (!std::isfinite(newW[i].m[j])) { newW[i] = oldW[i]; break; }
     SafeWrite((void*)mats, newW.data(), sizeof(Mat) * n);
     PublishRemoteRig(self, newW);
-    g_otherLegsNoPose.fetch_add(1, std::memory_order_relaxed);
+    if (gait) g_otherLegsNoPose.fetch_add(1, std::memory_order_relaxed);
+    if (sent) g_otherFacing.fetch_add(1, std::memory_order_relaxed);
 }
 
 #endif
@@ -9573,6 +9647,95 @@ void NoteTrail(uintptr_t self, const Hero& hero) {
     ReleaseSRWLockExclusive(&g_trailLock);
     g_trailNoted.fetch_add(1, std::memory_order_relaxed);
 }
+
+#if D2RVR_FIRST_PERSON
+// [weight] shield_collide_unheld (vr/shield_push.h): an orb or a claw - never the weight model's - stops on the hero's own shield: the face and the blade as the
+// last pose drew them (g_unheld, each on its controller) put on this sample's controllers, and the weapon's hand (Input::hand) held back off the face - it slides
+// along it, gives way up to 60 cm, then goes through until clear (shieldcollide's rules). A knock as shield_collide's (weight::KnockOwnShield). Stepped once per
+// head sample (the pair's second eye gets the same hand). Lines: on / off with why, through / clear, and the contact at most every few seconds.
+void ShieldUnheldStep(Input& in, const weight::Out& wo) {
+    static uint32_t sampleWas = 0;
+    static bool haveSample = false;
+    static double offWas[3] = {};
+    static int sideWas = -1;
+    static LARGE_INTEGER stepAt{};
+    static int toldKey = -1;
+    static const char* lastKnock = "none yet";
+    const UnheldShield& u = g_unheld;
+    const ULONGLONG nowMs = GetTickCount64();
+    const bool asked = in.weight.shieldUnheld && in.mode == 2;
+    const bool fresh = u.nFace > 0 && nowMs - u.at <= 200;
+    const bool on = asked && !wo.on && fresh && u.side == (in.weight.unheldSide & 1) && u.arm != u.side && (in.handsValid & (1u << u.side)) && (in.handsValid & (1u << u.arm));
+    {   // on / off, told when it changes, with why
+        const int key = on ? 1 : asked ? 2 : 0;
+        if (key != toldKey) {
+            char b[360];
+            if (on) {
+                const char c4[5] = {(char)(u.code & 0xFF), (char)(u.code >> 8 & 0xFF), (char)(u.code >> 16 & 0xFF), (char)(u.code >> 24 & 0xFF), 0};
+                snprintf(b, sizeof b, "shield_collide_unheld: the %s hand's %s (not the weight model's) meets the %s arm's shield ('%s', %d capsule(s)): its drawn hand is held back off "
+                         "the face and slides along it - %s", u.side == 0 ? "right" : "left",
+                         in.weaponType == D2RVR_TYPE_CLAW ? "claw" : "orb", u.arm == 0 ? "right" : "left", c4, u.nFace,
+                         in.weight.shieldNeverThrough ? "never through, however far the controller goes (shield_never_through)" : "giving way up to 60 cm, then through until clear");
+                weight::Say(b);
+            } else if (toldKey == 1) {
+                snprintf(b, sizeof b, "shield_collide_unheld: left out (%s)", !asked ? "off, no orb or claw, no shield, or not F4" : wo.on ? "the weight model holds the weapon (shield_collide's own way)"
+                         : !fresh ? "the shield's face or the blade not drawn lately (put away, hidden, the blade on the other wrist)" : u.arm == u.side ? "the weapon is on the shield's arm"
+                         : "a controller not tracked");
+                weight::Say(b);
+            }
+            toldKey = key;
+        }
+    }
+    if (!on) {
+        g_unheldHand.Reset();
+        haveSample = false;
+        sideWas = -1;
+        shieldpush::Teller::Counts tc;
+        g_unheldTeller.Step(shieldpush::Tell::None, false, 0.0, 0.0, nowMs, &tc);   // (a last line for a contact that just ended)
+        return;
+    }
+    if (haveSample && in.sample == sampleWas && sideWas == u.side) {   // the pair's second eye: the same hand
+        for (int k = 0; k < 3; ++k) in.hand[u.side][k] += (float)offWas[k];
+        return;
+    }
+    LARGE_INTEGER now, f;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&f);
+    const double dt = stepAt.QuadPart ? (double)(now.QuadPart - stepAt.QuadPart) / (double)f.QuadPart : 0.0;
+    stepAt = now;
+    shieldcollide::Seg face[weight::kShieldParts];
+    const double armAt[3] = {in.hand[u.arm][0], in.hand[u.arm][1], in.hand[u.arm][2]};
+    for (int i = 0; i < u.nFace; ++i) face[i] = shieldpush::FromLocal(u.face[i], armAt, in.rot[u.arm]);
+    g_unheldHand.SetNeverThrough(in.weight.shieldNeverThrough);   // [weight] shield_never_through
+    const shieldpush::Result r = g_unheldHand.Step(&u.weapon, 1, in.hand[u.side], in.rot[u.side], face, u.nFace, dt);
+    for (int k = 0; k < 3; ++k) {
+        in.hand[u.side][k] += (float)r.off[k];
+        offWas[k] = r.off[k];
+    }
+    sampleWas = in.sample;
+    haveSample = true;
+    sideWas = u.side;
+    if (r.fresh) lastKnock = weight::KnockOwnShield(u.side, u.arm, (float)r.approach);
+    char b[400];
+    if (r.wentThrough) {
+        snprintf(b, sizeof b, "shield_collide_unheld: pressed on through the shield - the hand %.0f cm off its controller at most (%.0f): the weapon goes through until it is %.0f cm clear (%u time(s))",
+                 shieldcollide::kGiveM * 100.0f, shieldcollide::kGiveM * 100.0f, shieldcollide::kClearM * 100.0f, g_unheldHand.Throughs());
+        weight::Say(b);
+    } else if (r.cleared) {
+        snprintf(b, sizeof b, "shield_collide_unheld: the weapon is clear of the shield again (%.0f cm off it): it meets the shield again", r.gap * 100.0);
+        weight::Say(b);
+    }
+    const shieldpush::Tell tell = shieldpush::TellOf(r.touch, r.through, r.slide);
+    shieldpush::Teller::Counts tc;
+    if (g_unheldTeller.Step(tell, r.fresh, r.lag, r.approach, nowMs, &tc)) {
+        snprintf(b, sizeof b, "shield contact (an orb or a claw, shield_collide_unheld): now %s; in the last few seconds %u new touch(es) (the hardest %.1f m/s; the last knock %s), samples "
+                 "resting %u, sliding %u, through %u; the hand %.0f cm off its controller at most (%s) - %u time(s) through in all",
+                 shieldpush::TellName(tell), tc.touches, tc.maxApproach, lastKnock, tc.resting, tc.sliding, tc.through, tc.maxLag * 100.0,
+                 in.weight.shieldNeverThrough ? "never through: shield_never_through" : "through past 60 cm", g_unheldHand.Throughs());
+        weight::Say(b);
+    }
+}
+#endif
 
 void Arms(uintptr_t self) {
     Input in;
@@ -9640,7 +9803,10 @@ void Arms(uintptr_t self) {
         // (its head down, OursNow's first test). (His body for our weapon is hit by touch's: melee_touch.cpp PublishBodies, [multiplayer] pose_share_bodies.)
         const bool down = HeadDown(self, *hero);
         if (!down && !hero->form) {   // ([shapeshift] another druid's form: the game's own)
-            if (g_poseView.load(std::memory_order_relaxed) && !PoseRemoteHero(self, *hero, in) && g_otherLegs.load(std::memory_order_relaxed)) PoseLegsOnly(self, *hero);
+            if (g_poseView.load(std::memory_order_relaxed) && !PoseRemoteHero(self, *hero, in)) {   // ([multiplayer] pose_share_facing: or turned to the facing he sends)
+                const bool legs = g_otherLegs.load(std::memory_order_relaxed);
+                if (legs || g_facingAny.load(std::memory_order_relaxed)) PoseLegsOnly(self, *hero, legs, true);
+            }
         }
 #endif
         // The arms are ours on every pose of the hero's rig, whatever the game animates (a leap, a knockback, Whirlwind, a cast, a hit): no
@@ -9691,6 +9857,7 @@ void Arms(uintptr_t self) {
             in.yawInModel = yaw;
 #if D2RVR_FIRST_PERSON
             if (doll == Doll::Ours && in.mode == 2) { g_heroYawInModel.store(yaw); g_heroYawAt.store(GetTickCount64()); }   // [multiplayer] pose_share_hero: for the others
+            if (doll == Doll::Ours && in.bodyTurn == 2) g_heroTurnedAt.store(GetTickCount64());   // [multiplayer] pose_share_facing: his whole body turned to the camera
 #endif
             if (eyeOk) { memcpy(in.eyeModel, eye, sizeof eye); in.haveEye = true; }
         }
@@ -9722,6 +9889,9 @@ void Arms(uintptr_t self) {
     // [weight]: the weapon stepped (once per head sample) and the hands on it moved to where it has them
     weight::Out wo;
     weight::Apply(&in, &wo);
+#if D2RVR_FIRST_PERSON
+    if (!in.along) ShieldUnheldStep(in, wo);   // [weight] shield_collide_unheld: an orb's or a claw's hand held back off the hero's own shield
+#endif
     // [weight] world_contact_hands: a bare hand held at the level's walls (the hands on the weight model's weapon are where the weapon has them: its own contact)
     if (in.mode == 2 && in.wallsOn) if (const WorldHandsFn g = g_worldHands.load()) {
         const bool holds[2] = {wo.on && wo.holds[0], wo.on && wo.holds[1]};
@@ -9750,6 +9920,19 @@ void SetRemoteHeroes(const remotepose::Target* t, int n) {
     g_remoteAt = GetTickCount64();
     ReleaseSRWLockExclusive(&g_remoteLock);
 }
+void SetRemoteFacings(const remotepose::Target* t, int n) {
+    n = t ? std::clamp(n, 0, remotepose::kMaxHeroes) : 0;
+    AcquireSRWLockExclusive(&g_remoteLock);
+    for (int i = 0; i < n; ++i) g_facing[i] = t[i];
+    g_nFacing = n;
+    g_facingAt = GetTickCount64();
+    ReleaseSRWLockExclusive(&g_remoteLock);
+    g_facingAny.store(n > 0);
+}
+bool HeroTurnedWhole(unsigned maxAgeMs) {
+    const ULONGLONG at = g_heroTurnedAt.load();
+    return at && GetTickCount64() - at <= maxAgeMs;
+}
 RemoteHeroCount TakeRemoteHeroCount() {
     RemoteHeroCount c;
     c.posed = g_remotePosed.exchange(0);
@@ -9758,6 +9941,7 @@ RemoteHeroCount TakeRemoteHeroCount() {
     c.weapon = g_remoteWeapon.exchange(0);
     c.legs = g_remoteLegs.exchange(0);
     c.legsNoPose = g_otherLegsNoPose.exchange(0);
+    c.facing = g_otherFacing.exchange(0);
     c.yawFromWorld = g_remoteYawFromWorld.exchange(0);
     c.handsDrawn = g_remoteHandsDrawn.exchange(0);
     c.reachMissCm = (float)g_remoteReachMissMm.exchange(0) * 0.1f;

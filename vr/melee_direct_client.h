@@ -29,7 +29,8 @@
 //   3. Once that time has passed, a touch on the same monster is a direct hit again only for a real swing: the blade's speed where it
 //      touched (melee_direct_client_min_speed, m/s), the strike's force (melee_direct_client_min_force: the weight model's strike
 //      score, N s - vr/strike_force.h) and the swing's length (melee_direct_client_min_length: how far the CONTROLLER itself travelled
-//      in this swing, m - its own path, so a flick of the wrist sweeping a long blade tip does not pass it; not a poke).
+//      in this swing, m - its own path, so a flick of the wrist sweeping a long blade tip does not pass it; not a poke). A force the weight
+//      model did not measure is not held against the swing (its speed and length decide); the cleave below asks a measured one.
 // A TWO-HANDED weapon (the game's own flag of the item) needs both hands on it (the plugin's two-hand grip): in one hand, its touch is
 // the normal attack - no direct hit, no cleave; with both, the length passes when either controller travelled far enough.
 // Another monster is never "too soon" (rule 2 is per monster). Without the cleave box the game still runs one attack at a time.
@@ -187,7 +188,9 @@ inline Why WhyOf(const Gate& g) {
     }
     if (g.first) return Why::SentFirst;                     // rule 1
     if (slow) return Why::TooSlow;                          // rule 3: a real swing again
-    if (weak) return Why::TooWeak;
+    // (rule 3's force: a force the weight model did not measure - its monster bodies off, no strike on that monster - is not held against the
+    // swing: its speed and length still decide. Until 2026-11-26 it counted as weak, and a joined player whose force read -1 never had a repeat.)
+    if (g.t.force >= 0.0f && g.t.force < g.mins.force) return Why::TooWeak;
     if (g.t.length < 0.0f || g.t.length < g.mins.length) return Why::TooShort;
     return Why::Sent;
 }
@@ -410,5 +413,23 @@ void Flush();
 // The timer's thread: a queued command the UI thread found it should not send for the skills (the left skill is no longer
 // the A slot's): the touch goes the key path after all. True with the monster and hand.
 bool TakeFallback(uint32_t* monsterId, int* hand);
+
+// ---- [gameplay] melee_direct_client_host (vr/coop_strike.h): the touch to the host, struck there with the time put back ----
+// Joined, while the HOST says it strikes (who hosts decides: its box, coopstrikewire::HostStrikes): a touch the rules above send - a direct hit,
+// or a two-handed cleave's further monster - goes to the host as the touch itself (the monster, the hand, the swing, our hero's and the monster's
+// places, its age), NOT as the game's command: no walk-up, no attack-rate wait, no second blow. Not sent (the channel down): as without it.
+//
+// [gameplay] melee_direct_client_stand_still (its own box, off by default; our own, not the host's): the command for a touch on a monster BEYOND
+// the game's own reach (its range test 0x348650 with the hero's melee range 0x34AA90, on the client's units) is the left skill AT the monster's
+// cell (cmd 5, the way the game's own Stand Still click sends it) instead of "on the unit" (cmd 6, which walks the hero up to it). Within the
+// reach: cmd 6 as ever. The game's reach test unreadable or faulting: cmd 6 as ever (off for the session after a fault).
+constexpr int kCmdLeftAtPoint = 5;
+void SetStandStill(bool on);
+// The plugin network's channel for vr/coop_strike_wire.cpp: a joined client's send to the host (the game's UI / app thread only; false: not
+// connected), the host's send to one joined peer (D2RLoader's callbacks or the app thread), the client's connection now, the host's cleave box.
+bool NetSendToHost(uint16_t id, const void* data, uint32_t size);
+bool NetSendToClient(uint64_t peer, uint16_t id, const void* data, uint32_t size);
+bool Connected();
+bool CleaveBox();
 
 }   // namespace meleedirectclient

@@ -38,6 +38,7 @@ std::mutex g_actionLock;
 char g_action[2][32] = {};          // (under g_actionLock)
 std::atomic<bool> g_registered{false};
 std::atomic<bool> g_pen[2] = {{false}, {false}};
+std::atomic<bool> g_talk[2] = {{false}, {false}};
 std::atomic<bool> g_armed[2] = {{false}, {false}};
 std::atomic<int> g_lastStroke{-1};
 std::atomic<uint64_t> g_lastStrokeAt{0};
@@ -64,7 +65,7 @@ void ItemAction(const gact::Def& d) {
 
 void OnFrame(const di::Frame& f, void*) {
     const int roles[2] = {g_role[0].load(), g_role[1].load()};
-    if (!roles[0] && !roles[1]) { g_pen[0] = g_pen[1] = false; return; }
+    if (!roles[0] && !roles[1]) { g_pen[0] = g_pen[1] = false; g_talk[0] = g_talk[1] = false; return; }
     const bool allowed = viewgate::F4() && (f.flags & di::kFocused) && (f.flags & (di::kDirect | di::kUiUp | di::kOtherView | di::kInMenu)) == di::kDirect &&
                          !skillwheel::IsOpen();
     const ULONGLONG now = GetTickCount64();
@@ -84,6 +85,7 @@ void OnFrame(const di::Frame& f, void*) {
         const trigroles::Press before = g_hand[h].State();
         const trigroles::Out o = g_hand[h].Step(role, h, in);
         g_pen[h] = o.pen;
+        g_talk[h] = o.talk;
         if (o.aiming) {
             g_aimHand = h;
             g_aimSkill = armedSkill;
@@ -149,8 +151,8 @@ void Recognised(double time) { g_recognisedAt = time; }
 
 void Configure(int roleLeft, int roleRight, const char* actionLeft, const char* actionRight, bool castHold) {
     g_castHold = castHold;
-    g_role[0] = std::clamp(roleLeft, 0, 3);
-    g_role[1] = std::clamp(roleRight, 0, 3);
+    g_role[0] = std::clamp(roleLeft, 0, 4);   // (4: Talk)
+    g_role[1] = std::clamp(roleRight, 0, 4);
     {
         std::lock_guard<std::mutex> l(g_actionLock);
         std::snprintf(g_action[0], sizeof g_action[0], "%s", actionLeft ? actionLeft : "");
@@ -170,6 +172,7 @@ const char* ActionOf(int hand) {
     return out;
 }
 bool Pen(int hand) { return g_pen[hand & 1].load(); }
+bool Talking() { return g_talk[0].load() || g_talk[1].load(); }
 bool Aiming(int* hand, int32_t* skill) {
     const int h = g_aimHand.load();
     if (h < 0) return false;

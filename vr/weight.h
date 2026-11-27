@@ -97,6 +97,10 @@ void SetDrawnHeadParts2(const float* parts, int n);
 // on and the shield is drawn; n 0: none (put away, hidden, no row). The weapon in the other hand stops on it and slides along it.
 constexpr int kShieldParts = 24;
 void SetDrawnShield(const float* parts, int n, int arm, uint32_t code);
+// [weight] shield_collide_unheld (vr/shield_push.h): a weapon the model does not hold (an orb, a claw) came onto the hero's own shield at `mps` (the closing
+// speed): the knock as shield_collide's - a pulse in the weapon's hand and the shield's from shieldcollide::kFeltMps, the game's block sound from kSoundMps
+// (clash_sound, clash_sound_min_mps / clash_sound_gap_s as for the model's knocks). Returns what was heard, for the log. Any thread but the weight model's lock.
+const char* KnockOwnShield(int weaponHand, int shieldArm, float mps);
 // [weight] grip_fit (vr/grip_fit.h): what the skeleton hook did to a hand on the weapon, told on every pose while it is fitted: the weight model logs it once for each
 // take (the log is where the next test sees why a hand did not sit on the shaft). taker: the hand that took the weapon (the fit is snapped and aligned), not the game's slot
 // hand (corrections only). settled: the hand is fully on the weapon. offAxisCm / alignDeg: how far the drawn palm's middle was off the shaft's axis and its knuckle line off the

@@ -106,7 +106,9 @@ int main() {
         g.t.speed = 1.0f;  CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooSlow);   // a poke
         g = Open(); g.t.force = 1.0f;   CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooWeak);
         g = Open(); g.t.length = 0.15f; CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooShort);
-        g = Open(); g.t.force = -1.0f;  CHECK(WhyOf(g) == Why::TooWeak);    // the force not measured: the normal attack
+        g = Open(); g.t.force = -1.0f;  CHECK(WhyOf(g) == Why::Sent);       // the force not measured (2026-11-26): speed and length decide - not held against it
+        g.t.speed = 1.0f;               CHECK(WhyOf(g) == Why::TooSlow);    // ... and they still do
+        g = Open(); g.t.force = -1.0f; g.t.length = 0.1f; CHECK(WhyOf(g) == Why::TooShort);
         g = Open(); g.t.length = -1.0f; CHECK(WhyOf(g) == Why::TooShort);
         g = Open(); g.t = {2.5f, 1.5f, 0.4f}; CHECK(Decide(g) == Route::Command);   // exactly the least: counts
         g = Open(); g.mins = {0.0f, 0.0f, 0.0f}; g.t = {0.0f, 0.0f, 0.0f}; CHECK(Decide(g) == Route::Command);   // the sliders at 0
@@ -129,6 +131,8 @@ int main() {
         CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooSlow);
         g.t.speed = 3.0f; g.t.force = 1.0f;
         CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooWeak);
+        g.t.force = -1.0f;
+        CHECK(Decide(g) == Route::Key && WhyOf(g) == Why::TooWeak);       // the cleave asks a MEASURED force (past the game's one attack at a time)
     }
     // ---- a two-handed weapon: both hands on it, or the normal attack - no direct hit, no cleave ----
     {

@@ -4,6 +4,7 @@
 // Copyright (c) 2026 bearstonem, Kudlatytrue and the D2R VR Unleashed contributors (https://github.com/bearstonem/d2r-pcvr).
 // From D2R VR Unleashed: steamvr/vr_keyboard_test.cpp (Kudlatytrue df1cf3a / 29d29b0, PR #486) as it is, on vr/vr_keyboard_unleashed.h;
 // the few frame_math.h calls it makes are given below. Run: unleashed_vr_keyboard_test.exe
+// Changed in D2R VR Authentic with the keyboard's layout (a row of digits on top; '.', ':' and Space at the bottom): the rows its checks name.
 #include "vr_keyboard_unleashed.h"
 namespace framevr::math {
 using Vec = keyboard::Vec;
@@ -46,6 +47,8 @@ int main(){
     // Every key a name needs, once each, and no key reaching past the board or over another.
     for(char c='a';c<='z';++c)Check(Find(c)>=0,"every letter has a key");
     Check(Find('-')>=0&&Find('_')>=0,"the two marks a name may hold have keys");
+    for(char c='0';c<='9';++c)Check(Find(c)>=0,"every digit has a key");
+    Check(Find('.')>=0&&Find(':')>=0&&Find(' ')>=0,"an address's dot and colon and the space have keys");
     for(auto a:{Action::Backspace,Action::Enter,Action::Shift,Action::Close})Check(Find(a)>=0,"Backspace, Enter, Shift and Close have keys");
     for(int i=0;i<KeyCount;++i) {
         const Key& k=Keys[i];
@@ -84,14 +87,15 @@ int main(){
         }
         Check(!Place(menu,facing,0,1).width&&!Place(menu,facing,1,0).width,"no panel, no keyboard");
     }
-    Check(KeyAt(.1f,.5f/Rows)==-1,"the gap between Q and W hits nothing (no press on the wrong letter)");
-    Check(KeyAt(.2f/Columns,1.5f/Rows)==-1,"the empty half key left of A hits nothing");
-    Check(KeyAt(.05f,.125f)==Find('q')&&KeyAt(.95f,.875f)==Find(Action::Enter),"the corners: Q and Enter");
+    Check(KeyAt(.1f,1.5f/Rows)==-1,"the gap between Q and W hits nothing (no press on the wrong letter)");
+    Check(KeyAt(.2f/Columns,2.5f/Rows)==-1,"the empty half key left of A hits nothing");
+    Check(KeyAt(.05f,.5f/Rows)==Find('1')&&KeyAt(.05f,1.5f/Rows)==Find('q')&&KeyAt(.95f,(Rows-.5f)/Rows)==Find(Action::Enter),"the corners: 1, Q under it, and Enter");
     Check(std::fabs(float(TexelWidth)/TexelHeight-Columns/Rows)<1e-4f,"the picture has the board's aspect");
     // Labels: small letters, capitals while Shift waits; other keys their names.
     Check(Label(Find('k'),false)==L"k"&&Label(Find('k'),true)==L"K","a letter's key shows it small, a capital with Shift");
     Check(Label(Find('-'),true)==L"-"&&Label(Find('_'),false)==L"_","marks the same either way");
     Check(Label(Find(Action::Enter),true)==L"Enter"&&Label(-1,false).empty(),"other keys their name");
+    Check(Label(Find(' '),false)==L"Space"&&Label(Find('7'),true)==L"7"&&Label(Find('.'),true)==L".","Space its name, a digit and the dot the same either way");
 
     // Typing: lower case, Shift once for a capital, Backspace, Enter, Close.
     Typist t;
@@ -107,6 +111,8 @@ int main(){
     out=t.Press(Find('-'));
     Check(out.send==Send::Char&&out.ch==L'-'&&!t.Shifted(),"Shift leaves '-' as it is, and is used up");
     Check(t.Press(Find('_')).ch==L'_',"'_' types itself");
+    t.Press(Find(Action::Shift));
+    Check(t.Press(Find('7')).ch==L'7'&&!t.Shifted()&&t.Press(Find(' ')).ch==L' '&&t.Press(Find('.')).ch==L'.',"a digit, the space and the dot type themselves");
     Check(t.Press(Find(Action::Backspace)).send==Send::Backspace,"Backspace sends Backspace");
     t.Press(Find(Action::Shift));
     Check(t.Press(Find(Action::Enter)).send==Send::Enter&&!t.Shifted(),"Enter sends Enter and drops a waiting Shift");
@@ -129,7 +135,7 @@ int main(){
         Check(px[middle+3]==255&&lit[middle+3]==255,"each key's middle is solid stone");
         Check(lit[middle]+lit[middle+1]+lit[middle+2]>=px[middle]+px[middle+1]+px[middle+2],"the lit copy is no darker");
     }
-    Check(px[3]==0&&px[(size_t(KeyTexels)*TexelWidth+KeyTexels/4)*4+3]==0,"the gaps and the empty half key are clear");
+    Check(px[3]==0&&px[(size_t(2*KeyTexels+KeyTexels/2)*TexelWidth+KeyTexels/4)*4+3]==0,"the gaps and the empty half key are clear");
     // The name box, from the game's UI messages as the 2026-11-06 log has them.
     {
         NameBox box;

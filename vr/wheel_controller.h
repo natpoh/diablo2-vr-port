@@ -124,6 +124,8 @@ struct GesturesIn {
     const gov::In::ModeOf* modeOf = nullptr;   // the gestures in select mode (the engine's)
     int modeOfCount = 0;
     bool modesOk = false;                  // the engine keeps a gesture's mode
+    bool voiceOk = false;                  // [gestures] voice: the engine listens (the tab offers Voice)
+    const BWGE_VoiceState* voice = nullptr;   // ... its listener's state
     uint8_t trigRole[2] = {0, 0};          // each trigger's role ([0] the right, [1] the left)
     const char* trigAction[2] = {nullptr, nullptr};
 };
@@ -524,6 +526,8 @@ public:
                 gi.modeOf = gestures->modeOf;
                 gi.modeOfCount = gestures->modeOfCount;
                 gi.modesOk = gestures->modesOk;
+                gi.voiceOk = gestures->voiceOk;
+                gi.voice = gestures->voice;
                 gi.trigRole[0] = gestures->trigRole[0];
                 gi.trigRole[1] = gestures->trigRole[1];
                 gi.trigAction[0] = gestures->trigAction[0];

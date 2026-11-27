@@ -4,6 +4,12 @@
 // The program's icon: tools/gen_icon.py
 1 ICON "d2r_vr.ico"
 
+// The main menu's 3D act scenes: the scene editor's edits from D2R VR Unleashed (MPL 2.0; frontend_scene_unleashed.cpp reads them)
+#include "frontend_edits_res.h"
+IDR_FRONTEND_EDITS_ACT2 RCDATA "frontend_edits_act2.json"
+IDR_FRONTEND_EDITS_ACT3 RCDATA "frontend_edits_act3.json"
+IDR_FRONTEND_EDITS_ACT5 RCDATA "frontend_edits_act5.json"
+
 // Who this program is, for the shared VR mod launcher and for a support log (the same product, version and mod id as the plugin's).
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION D2RVR_VERSION_RC

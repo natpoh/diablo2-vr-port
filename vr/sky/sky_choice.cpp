@@ -37,7 +37,7 @@ bool FogHereFor(bool game) {
 bool FogHere() { return FogHereFor(g_set.gameFog.load()); }
 // Our effect's fog: [fog] enabled ("Distance fog") and a fog here
 // (never in VR F3 with [table] full_width nor VR F1 with [top] fog: there only the game's own fog pass, no fallback of ours - Serg's "no pass of ours")
-bool OurFogWanted() { return g_set.fogOn.load() && FogHereFor(false) && !GameFogOverhead(); }
+bool OurFogWanted() { return g_frontFog.load() || (g_set.fogOn.load() && FogHereFor(false) && !GameFogOverhead()); }   // ([frontend] fog: the menu's own)
 // The game's fog with our numbers ([fog] game_fog=1): a fog here - whatever [fog] enabled says (Serg 2026-11-08 on Medium: enabled=0 with
 // game_fog=1 left no fog at all, "game fog 0"; our own fog off must never take the game's away)
 bool GameFogWanted() { return g_set.gameFog.load() && FogHereFor(true); }
@@ -47,6 +47,7 @@ bool GameFogWanted() { return g_set.gameFog.load() && FogHereFor(true); }
 // (the game's unable here for good - a view it does not draw in, its frame fog not found: ours instead; vr/sky_paths.h GameFogCannot)
 const char* FogCannot() { return skypaths::GameFogCannot(GameFogDrawnView(), gamefogvr::g_bad.load()); }
 bool FogWanted() {
+    if (g_frontFog.load()) return true;   // [frontend] fog: the main menu's scene, our old fog (no game's fog pass there)
     return skypaths::OurFog(OurFogWanted(), skypaths::GameHolds(g_set.gameFog.load(), FogCannot()), g_arcaneSky.load()) && !gamefogvr::Active() &&
            !GameFogOverhead();   // (VR F3 full width, VR F1 with [top] fog: the game's fog pass or none)
 }
@@ -55,6 +56,9 @@ bool FogWanted() {
 // the act's sky wanted here: the game's dome is laid by it.
 // (VR F3 full width, VR F1 with [top] sky: the game's dome or none - its palette is only wanted there to lay the dome, sky_tick.cpp)
 std::atomic<bool> g_campfireSky{false};   // [campfire] sky in force (vr/campfire_unleashed.cpp Tick sets it)
+std::atomic<bool> g_frontFog{false};
+std::atomic<int> g_frontFogAct{0};
+std::atomic<float> g_frontFogStart{55.0f}, g_frontFogEnd{140.0f};
 bool OurSkyWanted() { return g_skyPalette.load() >= 0 && (g_campfireSky.load() || (!skypaths::GameHolds(g_set.gameSky.load(), engitem::SkyCannot()) && !GameSkyOverhead())); }   // ([campfire] sky: the scene has no dome of the game's)
 // [render] distance_blur (D2R_DepthFog.fx DistBlur*): where our fog could be - first person, in the world, not from above (the ground is
 // all one distance there), not while the effects are paused - and whoever draws the fog: the blur rides on the picture as it is
@@ -77,6 +81,7 @@ bool GameSkyFixWanted() {
 
 bool ArcaneOwnFog() { return g_set.arcaneOwnFog.load() && g_arcaneArea.load(); }
 FogNumbers FogNumbersNow() {
+    if (g_frontFog.load()) return {g_frontFogStart.load(), g_frontFogEnd.load(), g_set.fogCurve.load(), 1.0f};   // [frontend] fog
     if (ArcaneOwnFog())
         return {g_set.arcaneFogStart.load(), g_set.arcaneFogEnd.load(), g_set.arcaneFogCurve.load(), g_set.arcaneFogStrength.load()};
     if (g_underground.load()) return {g_set.fogCaveStart.load(), g_set.fogCaveEnd.load(), g_set.fogCurve.load(), g_set.fogCaveStrength.load()};

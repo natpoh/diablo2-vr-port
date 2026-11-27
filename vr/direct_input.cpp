@@ -124,7 +124,8 @@ std::atomic<uint16_t> g_actSrc[kActionBits];
 std::atomic<uint32_t> g_take[2];                      // this frame's takes: Button bits | kTakeTrigger | kTakeSqueeze
 std::atomic<uint32_t> g_takenLast[2];                 // the takes of the frame before: what TakenLastFrame says
 
-struct Pulse { uint16_t buttons; uint8_t lt, rt; ULONGLONG until; };
+struct Pulse { uint16_t buttons; uint8_t lt, rt; ULONGLONG until; bool anyView; };   // anyView: PadPulseAnyView's (every VR view)
+bool AnyVrView() { const int v = viewgate::Number(); return v >= 1 && v <= 5; }
 SRWLOCK g_pulseLock = SRWLOCK_INIT;
 Pulse g_pulses[kPulses];
 std::atomic<ULONGLONG> g_pulseLatest{0};   // the latest expiry: the XInput detour's poll costs one load when no gesture pulses
@@ -486,8 +487,7 @@ void Action(uint32_t actBits, bool down, Source src) {
         if (actBits & (1u << i)) { if (down) g_actSrc[i].fetch_or(bit); else g_actSrc[i].fetch_and((uint16_t)~bit); }
 }
 
-void PadPulse(const PadPress& p, uint32_t holdMs) {
-    if ((!p.buttons && !p.lt && !p.rt) || !ViewOk()) return;
+void AddPulse(const PadPress& p, uint32_t holdMs, bool anyView) {
     const ULONGLONG now = GetTickCount64(), until = now + std::max<uint32_t>(holdMs, 30);
     AcquireSRWLockExclusive(&g_pulseLock);
     int slot = 0;
@@ -495,9 +495,19 @@ void PadPulse(const PadPress& p, uint32_t holdMs) {
         if (g_pulses[i].until <= now) { slot = i; break; }
         if (g_pulses[i].until < g_pulses[slot].until) slot = i;
     }
-    g_pulses[slot] = {p.buttons, p.lt, p.rt, until};
+    g_pulses[slot] = {p.buttons, p.lt, p.rt, until, anyView};
     if (until > g_pulseLatest.load()) g_pulseLatest.store(until);
     ReleaseSRWLockExclusive(&g_pulseLock);
+}
+
+void PadPulse(const PadPress& p, uint32_t holdMs) {
+    if ((!p.buttons && !p.lt && !p.rt) || !ViewOk()) return;
+    AddPulse(p, holdMs, false);
+}
+
+void PadPulseAnyView(const PadPress& p, uint32_t holdMs) {
+    if ((!p.buttons && !p.lt && !p.rt) || !(ViewOk() || AnyVrView())) return;
+    AddPulse(p, holdMs, true);
 }
 
 void PadPulseEnd(const PadPress& p) {
@@ -1040,10 +1050,12 @@ bool PadPulses(uint16_t* buttons, uint8_t* lt, uint8_t* rt) {
     *buttons = 0; *lt = 0; *rt = 0;
     bool any = false;
     const ULONGLONG now = GetTickCount64();
-    if (now >= g_pulseLatest.load() || !ViewOk()) return false;
+    if (now >= g_pulseLatest.load()) return false;
+    const bool f4 = ViewOk();
+    if (!f4 && !AnyVrView()) return false;   // (the flat game: none)
     AcquireSRWLockShared(&g_pulseLock);
     for (const Pulse& p : g_pulses) {
-        if (p.until <= now) continue;
+        if (p.until <= now || (!f4 && !p.anyView)) continue;   // (another VR view: only PadPulseAnyView's)
         any = true;
         *buttons |= p.buttons;
         *lt = std::max(*lt, p.lt);

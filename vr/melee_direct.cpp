@@ -69,6 +69,7 @@ const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
 std::atomic<bool> g_wanted{false}, g_faulted{false};
 std::atomic<bool> g_remote{false};   // [gameplay] melee_direct_client_cleave as the host: the joined players' extra hits
+std::atomic<bool> g_clientHost{false};   // [gameplay] melee_direct_client_host as the host: the joined players' touches, judged by vr/coop_strike_wire.cpp
 std::atomic<bool> g_quick{false};    // [gameplay] quick_blow: the reach of a quick attack's own blow (QuickReachBegin), the hooks go in for it
 std::atomic<bool> g_byRules{false};  // [gameplay] melee_direct 2: by the rules (melee_direct_client.h)
 std::atomic<bool> g_byHand{false};   // [gameplay] melee_direct_by_hand: the left weapon's blow as the game's "Left Hand Swing"
@@ -247,7 +248,8 @@ void Strike(const Request& r) noexcept {
         if (++told <= 12) LogF("melee direct: a %s on monster %u was not struck - %s", r.remote ? "joined player's extra hit" : "touch", r.monsterId, Name(v));
         return;
     }
-    if (r.remote) {   // a joined player's extra hit: within the game's own reach (loosely) and not twice on one monster within kRemoteGapMs
+    if (r.remote && !r.checked) {   // a joined player's extra hit: within the game's own reach (loosely) and not twice on one monster within kRemoteGapMs
+                                    // (a touch the host judged with the time put back - checked - had its reach and pace judged there, where the units WERE)
         int out = 0;
         int inReach = 0;
         const bool rangeOk = g_origRange && CallRangeRaw(g_origRange, player, monster, kRemoteReach, &out, &inReach);
@@ -295,7 +297,8 @@ void Strike(const Request& r) noexcept {
     if (r.remote) ++g_n.remoteCalled;
     static unsigned toldCall = 0;
     if (++toldCall <= 12 || (r.remote && toldCall <= 40))
-        LogF(r.remote ? "melee direct: the game's attack called on monster %u for a joined player's hero %u (an extra hit of his swing)" : "melee direct: the game's attack called on monster %u",
+        LogF(r.checked ? "melee direct: the game's attack called on monster %u for a joined player's hero %u (his touch, judged with the time put back)"
+             : r.remote ? "melee direct: the game's attack called on monster %u for a joined player's hero %u (an extra hit of his swing)" : "melee direct: the game's attack called on monster %u",
              r.monsterId, r.heroId);
 }
 
@@ -312,7 +315,8 @@ void __cdecl Apply(const PluginContext*, void* user) noexcept {
             --g_count;
         }
         if (g_faulted.load()) continue;
-        if (q.r.remote ? !g_remote.load() : (!g_wanted.load() || !viewgate::F4())) continue;   // (our own touch: F4 only - a request found in another view is not struck)
+        // (our own touch: F4 only - a request found in another view is not struck; a joined player's: the host's box for it, any view)
+        if (q.r.remote ? !(q.r.checked ? g_clientHost.load() : g_remote.load()) : (!g_wanted.load() || !viewgate::F4())) continue;
         if (GetTickCount64() - q.at > kStaleMs) { ++g_n.stale; continue; }
         Strike(q.r);
     }
@@ -398,6 +402,11 @@ void SetRemoteWanted(bool on) {
         Log(on ? "melee direct: the joined players' extra hits are struck on this PC when it hosts ([gameplay] melee_direct_client_cleave)"
                : "melee direct: the joined players' extra hits are not struck here");
 }
+void SetClientHostWanted(bool on) {
+    if (g_clientHost.exchange(on) != on)
+        Log(on ? "melee direct: the joined players' touches are struck on this PC when it hosts, judged with the time put back ([gameplay] melee_direct_client_host; any view, no headset needed)"
+               : "melee direct: the joined players' touches are not struck here ([gameplay] melee_direct_client_host off)");
+}
 void SetMinIntervalMs(uint32_t ms) { g_minMs.store(ms); }
 void SetQuickWanted(bool on) {
     if (g_quick.exchange(on) != on)
@@ -424,7 +433,7 @@ void Install() {
     static unsigned tries = 0;
     Report(GetTickCount64());
     if (g_wanted.load()) AskSlot(GetTickCount64());   // the attack slot's skill, fresh for Plan (Gate::slotPlain)
-    if ((!g_wanted.load() && !g_remote.load() && !g_quick.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
+    if ((!g_wanted.load() && !g_remote.load() && !g_quick.load() && !g_clientHost.load()) || g_state.load() != 0 || !g_ctx || GetTickCount64() < retryAt) return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
     const uintptr_t attack = d2rsig::Addr(RVA_ATTACK), target = d2rsig::Addr(RVA_TARGET), range = d2rsig::Addr(RVA_RANGE);
     const uintptr_t call1 = d2rsig::Addr(RVA_CALL1), call2 = d2rsig::Addr(RVA_CALL2);

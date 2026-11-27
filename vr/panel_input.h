@@ -24,6 +24,17 @@ bool Ready();
 void OwnPointer();
 // The pad navigates the panel (a stick, a face button): the focus is the pad's again.
 void UseController();
+// [campfire] 3D character creation: the pad's layout not kept while the hand's pick is the mouse there - kept, the game's own pad focus took the
+// hover off the hero under the pointer every frame (measured 2026-11-27: Hover / Unhover 10 ms apart; not kept, the hover held) and a click
+// picked nothing (Serg: "луч не попадает на персонажа"). vr/campfire_unleashed.cpp Tick.
+void SetPadLayoutFree(bool on);
+// [openxr] multiplayer_keyboard: the VR keyboard hangs under D2RLoader's Multiplayer window (the draw thread, every such frame; a lease of
+// 500 ms). The pad's layout is not kept meanwhile and the pad is hidden from the game (vr/input/pad.cpp) - in the controller layout the
+// window's text boxes take no typed letter, and a typed key's own lease (laser_typing, 300 ms) came too late or went with the next pad
+// report: "не могу ничего вписать в окна названия игры и прочие" (Serg 2026-11-27). The laser's mouse puts the game in its mouse layout
+// by itself then, as on a desktop: a click gives the box the focus, the keys type.
+void TextBoxesOpen();
+bool TextBoxesNow();
 // The game's own answer to "is the interface in controller layout" (IsControllerLayout 0x77E10 - its original, past our hook): 1 controller, 0 keyboard
 // and mouse, -1 not known (another build, a fault). The update thread (the HUD layout the toolbar's globes are cut by: hud_globes.h).
 int ControllerLayoutNow();

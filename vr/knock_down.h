@@ -42,6 +42,7 @@ struct Settings {
     bool deathOn = false;       // [weight] death_ragdoll: a humanoid the game kills falls as our ragdoll and lies as it fell (vr/death_ragdoll.h; and the bodies)
     bool leapOn = false;        // [weight] leap_landing_scatter: the humanoids round a Leap's landing thrown apart (vr/leap_scatter.h; and the bodies)
     bool steady = false;        // [weight] grab_hold_steady: a body a hand took is held to the world and laid on its bones as taken (docs/notes/grab_hold_flicker.md)
+    bool remoteAnyView = false; // [multiplayer] pose_share_grab_any_view: the other players' holds and knocks (RemoteTake / RemoteKnock) drawn in every view, not only VR F4
 };
 void Configure(const Settings& s);
 // [weight] leap_landing_scatter: the hero's model just landed from a Leap or a Leap Attack at `at` (world units; leapscatter::Landing on his matrix's lift over
@@ -59,6 +60,8 @@ bool Wanted();        // either of them on
 bool ThrowWanted();
 bool DeathWanted();   // [weight] death_ragdoll (F4) / death_ragdoll_flat (the other views): the touch's scan lists the dying and the dead (Tick's dead)
 bool DeathFlatWanted();   // [weight] death_ragdoll_flat: meleetouch::DeathTick keeps the bodies outside F4 for it
+bool RemoteAnyViewWanted();   // [multiplayer] pose_share_grab_any_view: the others' holds and knocks drawn outside VR F4 too
+bool FlatWanted();   // outside F4 the bodies kept and the library stepped: DeathFlatWanted() or RemoteAnyViewWanted()
 
 // The weight model's thread: a push it gave body id (N s, render world; point in it); swingMs the weapon's own speed into the body, heftKg the steel and the arm
 // behind it (vr/knock_trigger.h: a blow needs both a fast swing and a hard push).
@@ -77,6 +80,10 @@ bool IsDown(uint32_t id);
 // Where the units of the bodies drawn out of the game's pose last stood (x, z: their rigs' roots, world units), up to max: the scans keep them in reach
 // (vr/scan_reach.h) - a body whose unit leaves the scans is let go of, its drawing back at the unit far off (0.196.0: «монстры исчезают»). How many.
 int FarPlaces(float (*out)[2], int max);
+// [multiplayer] pose_share_grab: the monsters other players hold that RemoteTake could not find here lately ("not near here"), up to max, and his palm for each
+// (render metres; palm may be null) - meleetouch finds their units by id wherever they stand, else reaches round his palm, and keeps those places in the
+// scans' reach (as FarPlaces); RemoteTake then takes the unit of that id, or the humanoid nearest his palm. How many.
+int RemoteFarIds(uint32_t* out, int max, float (*palm)[3] = nullptr);
 
 // The grab's (vr/grab_wire.cpp, the pose's thread): hand `side` (0 right, 1 left) took body id at `point`, its palm at `palm` (render world) - the
 // library holds it from now on; false: not a body it can (not a humanoid read lately, the library absent or full). HandAt each step while the grip holds;

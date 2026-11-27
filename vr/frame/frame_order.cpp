@@ -5,6 +5,7 @@
 #include "../vrcam_headers.h"
 #include "../billboards.h"   // [stereo] portal_once
 #include "../view_keys.h"   // [view] keys: which F keys pick the view
+#include "../skill_wheel.h"  // [gestures] voice_all_views: no voice cast with the skill panel up (skillwheel::IsOpen)
 #include "../f5_toolbar.h"  // [hud] f5_toolbar: F5's toolbar low in front
 #include "../f5_hud.h"      // [hud] f5_map: F5's map toward the middle
 #include "pace_clock.h"     // a pass's "since the last one" clock: started again when the path changes or a cinematic came between (no 422 s "hitches")
@@ -780,7 +781,13 @@ static DWORD UpdateThreadBody() {
         {   // [gestures] skill_link: the skills to BodyWalk, its casts back - every ~10 ms, the casts are pad presses (off: the list emptied once, then nothing)
             static ULONGLONG linkAt = 0;
             const ULONGLONG t = GetTickCount64();
-            if (t - linkAt >= 10) { linkAt = t; skilllinkwire::Tick(FullBody() && g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen(), HeroAnimMode()); }
+            if (t - linkAt >= 10) {
+                linkAt = t;
+                const bool world = g_enabled.load() && g_inWorld.load() && !gamestate::MenuOpen();
+                // [gestures] voice_all_views: a voice gesture's cast in any VR view - the same rules, and never with the skill panel up
+                const bool voicePlay = world && gengine::VoiceAllViews() && viewgate::Number() >= 1 && !skillwheel::IsOpen();
+                skilllinkwire::Tick(FullBody() && world, HeroAnimMode(), voicePlay);
+            }
         }
         if (shieldsmite::Watching()) {   // [gameplay] shield_smite: a hard bash of the left shield casts the game's own Smite (and [debug] melee_boxes draws it)
             uintptr_t hero = (uintptr_t)g_heroUnit.load();
@@ -816,6 +823,7 @@ static DWORD UpdateThreadBody() {
         }
         flatmenu::Tick(nowMs, g_inWorld.load());   // [hud] game_menu_settings: the overlay's callback with the key, the host's rules asked in a game
         hitshare::Tick(nowMs, g_inWorld.load(), moveattack::HeroId());   // [multiplayer] share_hit_outcomes: the host's sends; joined, the hello for our blows' outcomes
+        coopstrikewire::Tick(nowMs, g_inWorld.load());   // [gameplay] melee_direct_client_host: as the host, the joined players' touches (history, pings, verdicts) - any view
 #if D2RVR_FIRST_PERSON
         fx::PoseShareTick();   // [multiplayer] pose_share: our pose to the others, their places for the markers (F4 only: first-person builds)
 #endif
@@ -920,7 +928,15 @@ static DWORD UpdateThreadBody() {
             // (0.214: 1 - always - is no longer offered: the toolbar hung mid-view in the world; a 1 left in an ini is 2, with the inventory open)
             {
                 const int band = (int)IniF(L"render", L"ui_band_16x9", 0.0f);
-                vrres::SetUiBandMode(campfire::Now() ? 1 : band == 1 ? 2 : band);
+                // [frontend] the main menu: not forced into the band (d4652271's band without a render size undone - the character list came up empty and
+                // D2RLoader's panels ran below the band; Serg 2026-11-26): its layout as the player's own setting, as every menu of ours in the game
+                vrres::SetBandWithoutSize(false);
+                // ... its own switch instead, [frontend] menu_16x9 (the square / 16:9 icons over its panel): the band by the game's own path, a render
+                // size in force in the menus as in a game (SetMenusAtPickedSize) - none to be had: square
+                vrres::SetMenusAtPickedSize(campfire::MenusKeepSize());
+                const bool frontWide = campfire::FrontMenuWide() && vrres::RenderSizeInForce();
+                vrres::SetUiBandMode(campfire::Now() && (!campfire::Frontend() || frontWide) ? 1 : band == 1 ? 2 : band);
+                vrres::SetBandForHelpers(frontWide && campfire::FrontBandAll());
             }
             InstallLabelWidthGuard();   // the hover label's SetMaxSize: no negative width (a hung game), whatever made it
             ApplyRender();
@@ -972,7 +988,7 @@ static DWORD UpdateThreadBody() {
             stowedblock::Install();   // only once [hands] shield_stow_no_block asks for it
             spatialaudio::Install(g_inWorld.load());   // only once [audio] head_follow asks for it (and at the plugin's load, below)
             soundtrace::Install();                     // [debug] sound_trace: only once it is ticked
-            if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::BowWanted() || g_set.leapByGaze.load() || meleetouch::StatusWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim, a bow's pitch, leap_by_gaze or the wrist status asks for it
+            if (meleetouch::Wanted() || meleetouch::ThrowWanted() || meleetouch::BowWanted() || g_set.leapByGaze.load() || meleetouch::StatusWanted() || meleetouch::CoopWanted()) meleetouch::Install();   // only once melee_touch, a throw's auto-aim, a bow's pitch, leap_by_gaze or the wrist status asks for it
             engitem::InstallHook();   // only once belt_models or [debug] engine_unit asks for it
             beltglow::Install();      // only once [hands] belt_inner_glow or belt_empty_bottle (darker) asks for it
             auraview::Install();      // [render] aura_centre: its hook goes in once the option is ticked (vr/aura_view.cpp)

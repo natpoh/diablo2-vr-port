@@ -137,12 +137,19 @@ def make_payload(tag, dll, defaults, version, libs=True, settings_exe=None):
     if libs:
         put(payload / "plugins/d2r_vr_weight.dll", b"MZ weight library " + tag.encode() + NOISE[:5000])
         put(payload / "plugins/d2r_vr_grip.dll", b"MZ grip library " + tag.encode() + NOISE[5000:9000])
+        # the voice listener's folder (mod_files.inc: voice\ into d2r_vr_libs\voice, its speech models a tree of folders)
+        put(payload / "voice/d2r_vr_voice.exe", b"MZ VOICE LISTENER " + tag.encode())
+        put(payload / "voice/libvosk.dll", b"MZ VOSK " + tag.encode())
+        put(payload / "voice/THIRD-PARTY-NOTICES.txt", "voice notices " + tag + "\n")
+        put(payload / "voice/models/vosk-model-small-ru-0.22/am/final.mdl", b"MODEL " + tag.encode())
+        put(payload / "voice/models/vosk-model-small-ru-0.22/graph/phones/word_boundary.int", b"PHONES " + tag.encode())
     put(payload / "plugins/d2r_vr.ini", defaults)
     put(payload / "plugins/D2R_VR_Settings.exe", Path(settings_exe).read_bytes() if settings_exe else b"MZ SETTINGS " + tag.encode())
     put(payload / "plugins/D2R_VR_Headset_Report.exe", b"MZ HEADSET REPORT " + tag.encode())
     put(payload / "shaders/D2R_DepthFog.fx", "// D2R VR shader " + tag + "\n")
     put(payload / "shaders/D2R_FogEase_Unleashed.fxh", "// D2R VR shader include " + tag + "\n")
     put(payload / "shaders/D2R_Campfire_Unleashed.fxh", "// D2R VR shader include " + tag + "\n")
+    put(payload / "shaders/D2R_Frontend_Unleashed.fxh", "// D2R VR shader include " + tag + "\n")
     put(payload / "license/D2R_VR_LICENSE.txt", (repo / "LICENSE").read_bytes())
     put(payload / "lang/en.txt", "language.name = English\n# " + tag + "\n")
     put(payload / "lang/ru.txt", "language.name = Русский\n# " + tag + "\n")
@@ -710,6 +717,13 @@ def main():
     unlisted = sorted(installed - set(listed) - {"vrmod-manifest.json", "launcher_icon.png", "D2R-VR.mpq/modinfo.json"})
     check(not unlisted and set(listed) <= installed, f"x-mod-files is exactly the files Setup put in the mod (besides the manifest, its icon and modinfo.json) (unlisted: {unlisted})")
     check(listed["d2rloader/d2r_vr_libs/d2r_vr_weight.dll"]["sha256"] == hashlib.sha256(weight_v1).hexdigest() and listed["d2rloader/d2r_vr_libs/d2r_vr_weight.dll"]["optional"], "...the weight library with its hash, optional")
+    VL = "d2rloader/d2r_vr_libs/voice/"   # the voice listener beside d2r_vr_gestures.dll: d2r_vr_voice.exe, its libraries, the models' folder trees
+    vmodel = VL + "models/vosk-model-small-ru-0.22/graph/phones/word_boundary.int"
+    check((game / MOD / VL / "d2r_vr_voice.exe").read_bytes() == (payload / "voice/d2r_vr_voice.exe").read_bytes()
+          and (game / MOD / vmodel).read_bytes() == (payload / "voice/models/vosk-model-small-ru-0.22/graph/phones/word_boundary.int").read_bytes()
+          and (game / MOD / VL / "THIRD-PARTY-NOTICES.txt").is_file(),
+          "the voice listener is in the mod's d2r_vr_libs\\voice with its licences, a speech model's folders as deep as staged (recursesubdirs)")
+    check(vmodel in listed and listed[vmodel]["optional"] and VL + "d2r_vr_voice.exe" in listed, "...and x-mod-files lists them, optional")
     # the launcher's files
     check((game / MOD / "vrmod-manifest.json").read_bytes() == manifest_v1, "vrmod-manifest.json is in the mod, byte for byte the staged one")
     check((game / MOD / "launcher_icon.png").read_bytes() == icon_v1, "launcher_icon.png is in the mod, byte for byte")

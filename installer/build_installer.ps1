@@ -13,9 +13,12 @@
 #   -WeightLibs <dir> where d2r_vr_weight.dll and d2r_vr_grip.dll are (the private weight_physics build)
 #   -GestureEngine <file> d2r_vr_gestures.dll, BodyWalk's gesture engine in the game ([gestures] engine_in_game; the private vjoy build, binary only)
 #   -WalkEngine <file>    d2r_vr_walk.dll, BodyWalk's walk in place in the game ([walk_in_place]; the private vjoy build, binary only)
-#   -Video3D <dir>        the 3D cinematics library ([cinema] video_3d): d2r_vr_video3d.dll (closed, the private flatvr_video3d build: dll\build.bat),
-#                         onnxruntime.dll, DirectML.dll, zipdepth_base_512x288.onnx and their licences - ZipDepth-MIT.txt, onnxruntime-MIT.txt,
+#   -Video3D <dir>        the 3D cinematics' runtime ([cinema] video_3d; the code is the plugin's own, vr\video3d): onnxruntime.dll, DirectML.dll,
+#                         zipdepth_base_512x288.onnx (ZipDepth-base, MIT) and their licences - ZipDepth-MIT.txt, onnxruntime-MIT.txt,
 #                         DirectML-LICENSE.txt (default releases\inputs\video3d; "" = without it)
+#   -Voice <dir>          the voice gestures' listener ([gestures] voice; the private vjoy build's bin\Release\voice, binary only): d2r_vr_voice.exe,
+#                         libvosk.dll + its MinGW runtime, onnxruntime.dll, melspectrogram.onnx, embedding_model.onnx and models\vosk-model-small-*
+#                         (one per language; default releases\inputs\voice; "" = without it). The licences come from installer\voice_licenses.
 #   -CrashReporter <file> D2R_VR_Crash_Reporter.exe ([support] crash_reports / send_logs; the private vjoy build: cpp_src\crash_reporter\build.ps1 -Product d2r_vr)
 #   -Portable <dir>   a BodyWalk Portable folder kept from an earlier build, instead of
 #                     making one from Release_main (which may hold a BodyWalk not released yet)
@@ -59,6 +62,7 @@ param(
     [string]$GestureEngine = "",
     [string]$WalkEngine = "",
     [string]$Video3D = "C:\wsl\d2r_vr\releases\inputs\video3d",
+    [string]$Voice = "C:\wsl\d2r_vr\releases\inputs\voice",
     [switch]$SkipProfileCheck,
     [string]$BuildDir = "",
     [string]$VersionLabel = "",
@@ -175,15 +179,33 @@ if ($GestureEngine -and (Test-Path $GestureEngine)) { Copy-Item $GestureEngine "
 if ($WalkEngine -and (Test-Path $WalkEngine)) { Copy-Item $WalkEngine "$payload\plugins\d2r_vr_walk.dll" } else { Write-Warning "d2r_vr_walk.dll not found ('$WalkEngine', -WalkEngine) - the installer goes without it" }
 # the optional 3D cinematics library ([cinema] video_3d; closed, binary only, with ONNX Runtime + DirectML and the ZipDepth network, MIT): all of it
 # or none - without it the videos stay flat (the log says so). Into d2rloader\d2r_vr_libs (mod_files.inc), never among the plugins.
-$video3dFiles = "d2r_vr_video3d.dll", "onnxruntime.dll", "DirectML.dll", "zipdepth_base_512x288.onnx", "ZipDepth-MIT.txt", "onnxruntime-MIT.txt", "DirectML-LICENSE.txt"   # (DirectML: Microsoft's redistributable, its own terms beside it)
+$video3dFiles = "onnxruntime.dll", "DirectML.dll", "zipdepth_base_512x288.onnx", "ZipDepth-MIT.txt", "onnxruntime-MIT.txt", "DirectML-LICENSE.txt"   # (DirectML: Microsoft's redistributable, its own terms beside it)
 if ($Video3D) {
     $missing = @($video3dFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Video3D $_) -PathType Leaf) })
     if ($missing.Count -eq 0) {
         New-Item -ItemType Directory -Force "$payload\video3d" | Out-Null
         foreach ($f in $video3dFiles) { Copy-Item -LiteralPath (Join-Path $Video3D $f) "$payload\video3d\" }
-        Write-Host ("3D videos: carried from $Video3D - d2r_vr_video3d.dll SHA-256 " + (Get-FileHash -LiteralPath (Join-Path $Video3D "d2r_vr_video3d.dll")).Hash)
+        Write-Host ("3D videos: carried from $Video3D - zipdepth_base_512x288.onnx SHA-256 " + (Get-FileHash -LiteralPath (Join-Path $Video3D "zipdepth_base_512x288.onnx")).Hash)
     } else { Write-Warning ("3D videos: " + ($missing -join ", ") + " not in '$Video3D' (-Video3D) - the installer goes without the library, the videos stay flat") }
 } else { Write-Warning "3D videos: -Video3D empty - the installer goes without the library, the videos stay flat" }
+# the optional voice gestures' listener ([gestures] voice; closed, binary only): d2r_vr_gestures.dll starts voice\d2r_vr_voice.exe from its own folder
+# (mod_files.inc: d2rloader\d2r_vr_libs\voice). All of it or none - at least one speech model in models\ - with the licences of installer\voice_licenses.
+$voiceFiles = "d2r_vr_voice.exe", "libvosk.dll", "libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll", "onnxruntime.dll", "melspectrogram.onnx", "embedding_model.onnx"
+if ($Voice) {
+    $missing = @($voiceFiles | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Voice $_) -PathType Leaf) })
+    $voiceModels = @(Get-ChildItem -LiteralPath (Join-Path $Voice "models") -Directory -Filter "vosk-model-small-*" -ErrorAction SilentlyContinue |
+        Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "am\final.mdl") -PathType Leaf })
+    if ($voiceModels.Count -eq 0) { $missing += "models\vosk-model-small-*\am\final.mdl" }
+    if ($missing.Count -eq 0) {
+        New-Item -ItemType Directory -Force "$payload\voice\models" | Out-Null
+        foreach ($f in $voiceFiles) { Copy-Item -LiteralPath (Join-Path $Voice $f) "$payload\voice\" }
+        foreach ($m in $voiceModels) { Copy-Item -LiteralPath $m.FullName "$payload\voice\models\" -Recurse }
+        Get-ChildItem (Join-Path $PSScriptRoot "voice_licenses") -File -Filter "*.txt" | Copy-Item -Destination "$payload\voice\"
+        $voiceMB = (Get-ChildItem "$payload\voice" -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+        Write-Host ("voice: carried from $Voice - d2r_vr_voice.exe SHA-256 " + (Get-FileHash -LiteralPath (Join-Path $Voice "d2r_vr_voice.exe")).Hash +
+            ", models " + (($voiceModels | ForEach-Object Name) -join ", ") + (", {0:N0} MB" -f $voiceMB))
+    } else { Write-Warning ("voice: " + ($missing -join ", ") + " not in '$Voice' (-Voice) - the installer goes without the listener, no word casts") }
+} else { Write-Warning "voice: -Voice empty - the installer goes without the listener, no word casts" }
 # the optional crash reporter (docs/crash_watchdog.md; a binary only, its source is private): without it the two crash report ticks are greyed out
 if ($CrashReporter -and (Test-Path $CrashReporter)) { Copy-Item $CrashReporter "$payload\plugins\D2R_VR_Crash_Reporter.exe" } else { Write-Warning "D2R_VR_Crash_Reporter.exe not found ($CrashReporter) - the installer goes without it" }
 # BodyWalk's side: its Game Link plugin, the mod's BodyWalk profile beside it, and the game's
@@ -224,6 +246,7 @@ if ($manifest.ExitCode -ne 0 -or -not (Test-Path "$payload\bodywalk\d2r.txt")) {
 Copy-Item (Join-Path $root "reshade\D2R_DepthFog.fx") "$payload\shaders\"
 Copy-Item (Join-Path $root "reshade\D2R_FogEase_Unleashed.fxh") "$payload\shaders\"   # D2R_DepthFog.fx includes it (MPL 2.0, D2R VR Unleashed)
 Copy-Item (Join-Path $root "reshade\D2R_Campfire_Unleashed.fxh") "$payload\shaders\"   # ... and this one: [campfire] sparks (MPL 2.0, D2R VR Unleashed)
+Copy-Item (Join-Path $root "reshade\D2R_Frontend_Unleashed.fxh") "$payload\shaders\"   # ... and this one: [frontend] the main menu's sky (MPL 2.0, D2R VR Unleashed)
 Get-ChildItem (Join-Path $root "reshade\sky") -Filter "D2R_Sky*.png" | Copy-Item -Destination "$payload\sky\"
 # (The cave ceilings' pictures are not shipped any more - Serg, 2026-10-31: "текстуры потолков тоже можно из релиза убрать". The
 # ceilings are the game's own lit stone; our effect's old vault, still selectable, draws its own stone where no picture is found -

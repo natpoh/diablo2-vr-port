@@ -170,8 +170,16 @@ bool MouseMessage(uint64_t target, uint64_t command) {
 }
 
 // The pad's layout is on and the laser owns the pointer: what would leave the layout is skipped.
+std::atomic<bool> g_padLayoutFree{false};   // SetPadLayoutFree: [campfire] creation's pick - the pad's layout not kept
+std::atomic<ULONGLONG> g_textUntil{0};      // TextBoxesOpen: the VR keyboard under the Multiplayer window - not kept either, until then
 bool Keep() {
     if (!Owns() || !g_origIsController()) return false;
+    if (g_padLayoutFree.load()) return false;   // ([campfire] 3D creation: the game may go to its mouse layout - its pad focus reset the hero's hover)
+    if (GetTickCount64() < g_textUntil.load()) {   // [openxr] multiplayer_keyboard: its text boxes take letters only in the mouse layout
+        static std::atomic<bool> toldText{false};
+        if (!toldText.exchange(true)) Log("vrcam: laser - the VR keyboard under the Multiplayer window: the game's controller layout not kept (its text boxes take no letters there)");
+        return false;
+    }
     if (g_typingWanted.load() && g_typing.Active(GetTickCount64())) return false;   // [openxr] laser_typing: the player types
     static std::atomic<bool> told{false};
     if (!told.exchange(true)) Log("vrcam: laser - the game kept in its controller layout while the laser is the mouse");
@@ -374,6 +382,15 @@ void OwnPointer() {
     g_until.store(now + kLeaseMs);
     g_ownedAt.store(now);
 }
+
+void SetPadLayoutFree(bool on) {
+    if (g_padLayoutFree.exchange(on) != on)
+        Log(on ? "vrcam: laser - 3D character creation: the game's controller layout not kept (its pad focus took the hero's hover off) ([campfire])"
+               : "vrcam: laser - the game's controller layout kept again while the laser is the mouse");
+}
+
+void TextBoxesOpen() { g_textUntil.store(GetTickCount64() + 500); }
+bool TextBoxesNow() { return GetTickCount64() < g_textUntil.load(); }
 
 void UseController() {
     g_pointing.store(false);

@@ -81,6 +81,17 @@ void F5ControllerStick(float* rx, float* ry) {
 void WhirlStickNote(int16_t lx, int16_t ly);   // [gameplay] whirlwind_stick_steer (vr/input/spell_aim.cpp)
 std::atomic<ULONGLONG> g_pad0At{0};   // pad 0 last answered the game's poll (XDetour): another pad's report is not kept meanwhile (padpresence::KeepsReport)
 void TurnStick(XINPUT_STATE* s, bool fromBodyWalk, DWORD padIndex) {
+    // [campfire] 3D character creation: the game sees no pad there but its B (Back) - as in Unleashed ("the pad sees nothing here"). The trigger's
+    // pull reached the game as the pad's RT, the game went to its controller layout (InputMethodChanged), put its own focus on the Barbarian and no
+    // longer took the pick's click: "picked none" at every press, the hover walking from hero to hero with the stick (Serg's log 2026-11-27 01:42)
+    // [openxr] multiplayer_keyboard: the same while the VR keyboard hangs under D2RLoader's Multiplayer window (panelinput::TextBoxesNow) - a pad
+    // report with anything pressed took the game back to its controller layout, where the window's text boxes take no letters
+    if (s && (campfire::Creation() || panelinput::TextBoxesNow())) {
+        const WORD back = s->Gamepad.wButtons & XINPUT_GAMEPAD_B;
+        s->Gamepad = XINPUT_GAMEPAD{};
+        s->Gamepad.wButtons = back;
+        return;
+    }
     if (!s || !g_enabled.load()) return;
     // [hands] bow_draw: the string hand's trigger is the draw's while the string is held - BodyWalk's A for it stays from the game
     // (with direct input the layout never gets it: directinput::Take). The draw's own press comes after this, as the release.

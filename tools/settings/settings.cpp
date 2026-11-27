@@ -29,6 +29,7 @@
 #include "menu_assets.h"     // [openxr] skill_panel_game_look: the game's own frames, buttons and sliders for the skill panel, from the player's own game (CascLib)
 #include "allies_place.h"    // [hud] allies_place: where the allies are shown (F4), and the one-time move of the three old ticks
 #include "campfire_assets_unleashed.h"   // [campfire] enabled: character creation's scene from the player's own game (CascLib; MPL 2.0, D2R VR Unleashed)
+#include "frontend_scene_unleashed.h"   // [frontend] scene_3d: the main menu's act scenes from the player's own game (CascLib; MPL 2.0, D2R VR Unleashed PR #583)
 #include "holes_assets.h"    // [holes] patch_world: the world's holes patched from the player's own game (CascLib)
 #include "orb_assets.h"      // [hud] wrist_game_models: the wrist medallions' game models from the player's own game (CascLib)
 #include "bazaar_assets.h"    // [holes] bazaar_mask_hidden: Kurast Bazaar's stray terrain-mask plane cut out, from the player's own game (CascLib)
@@ -1031,27 +1032,45 @@ std::vector<Item> g_items = {
            L"round (F11 puts it in front of you again). Only the film is shown, black round it, and the laser works on it as in a menu "
            L"(click or press the game's skip button to skip). The sound is the game's. Live. Off: the game's whole picture on the flat "
            L"picture close in front of you, as before.")),
-    // [cinema] video_3d (vr/video3d_lib.h, xr.cpp DrawFilm3d): the films in 3D on that screen - the optional library d2r_vr_video3d.dll in d2r_vr_libs
+    // [cinema] video_3d (vr/video3d, xr.cpp DrawFilm3d): the films in 3D on that screen - ONNX Runtime, DirectML and the network from d2r_vr_libs
     Only(kVr, Needs(L"cinema", L"world_screen", 1, Toggle(L"cinema", L"video_3d", L"Videos in 3D", 1,
            L"The videos on the big screen in 3D, in every VR view: a small depth network guesses how far each part of the picture is, "
            L"while the video plays, and each eye gets its own picture from that - near things stand out of the screen, the rest goes "
            L"behind it. Nothing is prepared at install and nothing is waited for: the first moment of a video is flat until its depth is "
-           L"ready. Needs d2r_vr_video3d.dll in d2rloader\\d2r_vr_libs (without it the videos stay flat; the log says so). How strong: "
+           L"ready. Needs onnxruntime.dll and the depth network in d2rloader\\d2r_vr_libs, which Setup puts there (without them the videos stay flat; the log says so). How strong: "
            L"[cinema] video_3d_strength_pct in d2r_vr.ini (2 = 2% of the picture's width). Live. Off: the flat big screen, as before."))),
     // [campfire] enabled (vr/campfire_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue, bearstonem): character creation round you
-    // (0.214: hidden - still broken in the headset, Serg's rule: no half-done feature in a release; Only(kVr, ...) brings it back)
-    Only(0, Toggle(L"campfire", L"enabled", L"Character creation in 3D", 0,
+    // (0.214: hidden - still broken in the headset; shown again 2026-11-27 for Serg's test with the 3D main menu, "Да, включи" - default 0 until he
+    // has tried it; Only(0, ...) hides it again)
+    Only(kVr, Toggle(L"campfire", L"enabled", L"Character creation in 3D", 0,
            L"Native OpenXR: the character creation screen as a 3D scene round you - you stand by the campfire with the heroes. Point at a "
            L"hero with the right hand and pull the trigger (or A) to pick him; the name box, Create and Back are on a board in front of you, "
            L"the picked hero's words on a board over the heroes. A click on the fire throws sparks; the fire crackles. D2R VR Settings "
            L"rebuilds the scene from your game (its clouds taken out, the town round the fire). If the scene cannot be shown, the flat screen "
            L"comes back by itself. Off: the flat character creation screen, as before.")),
+    // [frontend] scene_3d (vr/campfire_unleashed.h, tools/settings/frontend_scene_unleashed.h; MPL 2.0 from D2R VR Unleashed PR #583 by
+    // Kudlatytrue, merged via #584): the main menu round you. Shown for the headset test (hide with Only(0, ...) if not ready for a release).
+    Only(kVr, Toggle(L"frontend", L"scene_3d", L"Main menu in 3D", 0,
+           L"Native OpenXR: the main menu (the title screen and the character list) as a 3D scene round you - you stand in the act of "
+           L"the hero picked: Act 1's forest, Act 2's road out of the city, Act 3's docks, Act 4's River of Flame, Act 5's frozen "
+           L"highlands. The whole menu is on a board in front of you: point at it with the laser and pull the trigger. D2R VR Settings "
+           L"rebuilds the scenes from your game (their clouds taken out, each act's land laid round you). If the scene cannot be shown, "
+           L"the flat menu comes back by itself. Restart the game after changing it. Off: the flat main menu, as before.")),
     // [openxr] name_keyboard (vr/vr_keyboard_unleashed.h, MPL 2.0 from D2R VR Unleashed - Kudlatytrue): letters for the character's name
-    // (0.214: hidden with the 3D character creation - Only(kVr, ...) brings it back)
-    Only(0, Toggle(L"openxr", L"name_keyboard", L"Keyboard for the character's name", 0,
+    // (0.214: hidden with the 3D character creation; shown again 2026-11-27 with it, Serg's test - default 0 until he has tried it)
+    Only(kVr, Toggle(L"openxr", L"name_keyboard", L"Keyboard for the character's name", 0,
            L"Native OpenXR: when a new character's name box is up, a keyboard under the menu - point at a key with the laser and pull the "
            L"trigger. Letters, - and _, Shift for a capital, Back, Enter, Close. In the 3D character creation it comes up as soon as "
            L"a hero is picked. Off: type the name on the real keyboard, as before.")),
+    // [openxr] multiplayer_keyboard / keyboard_game_look (Serg 2026-11-27): the same keyboard under the Multiplayer window; its keys in the game's art
+    Only(kVr, Toggle(L"openxr", L"multiplayer_keyboard", L"Keyboard in the Multiplayer window", 1,
+           L"Native OpenXR: while the Multiplayer window is open, the keyboard under it - click a text box with the laser (Direct Join's "
+           L"address, a game's name or password, a room's name), then point at the keys and pull the trigger. Digits, a dot and a colon "
+           L"for an address, Space. Close hides it until the window is opened again. Off: the real keyboard only, as before.")),
+    Only(kVr, Toggle(L"openxr", L"keyboard_game_look", L"Keyboard in the game's look", 1,
+           L"The keyboard's keys drawn as the game's own buttons, with the game's font and gold letters, on its dark stone. The art is "
+           L"taken from your own game by D2R VR Settings; if it is not there, the keyboard keeps its own look. Off: stone keys with "
+           L"gold rims, as before.")),
     Only(kVr, Slider(L"@bodywalk", L"userHeight", L"My height, m", 1.2f, 2.3f, 0.01f, 1.75f,
            L"Your height: the world is scaled to it (Stereo > Scale and depth > Life-size world). The same number as BodyWalk's "
            L"Mapping > Avatar > Body Height, changed in both places; with BodyWalk not running it is kept here. "
@@ -2395,7 +2414,8 @@ std::vector<Item> g_items = {
            L"wear are the game's; no animation of its own). No repeat on the same monster sooner than the attack takes. A one-handed weapon, or a "
            L"touch too slow or too weak: the normal attack. A TCP/IP game: who hosts decides. The host's box holds for every joined player with "
            L"the same version of the mod; a joined player's own box means nothing there. The host strikes those hits itself, so it works only "
-           L"while the host plays in VR first person with hit by touch on. Unticked: the game's own rule. Live."),
+           L"while the host plays in VR first person with hit by touch on - or, with \"Direct hit for joined players\" ticked on the host (Strikes), in any "
+           L"view of the host. Unticked: the game's own rule. Live."),
     // [gameplay] quick_blow (vr/quick_blow.h, Serg 2026-11-05: «весь функционал под отдельной галочкой», «чтобы эффекта замирания не было при каждом
     // ударе это важно для вр»): who hosts decides, as the boxes above
     Toggle(L"gameplay", L"quick_blow", L"Quick blow: the swing never stops the hero (VR)", 1,
@@ -6221,6 +6241,24 @@ std::vector<Item> g_items = {
            L"it sends the game's own command \"attack this monster\" - the one a click on it sends - and the host's server does the whole attack "
            L"(the host needs nothing for that). Only while the skill on your attack slot is the one in the hero's hand and no melee skill is armed. "
            L"Writes [gameplay] melee_direct, melee_direct_client and melee_direct_scope. Live. F4 only, like hit by touch.")),
+    // [gameplay] melee_direct_client_host (vr/coop_strike.h, Serg 2026-11-26: Bear's principle with the lag put back): who hosts decides; the host may play flat
+    Toggle(L"gameplay", L"melee_direct_client_host", L"Direct hit for joined players: the host strikes their touches (co-op)", 0,
+           L"EXPERIMENTAL - GOES PAST THE GAME'S RULES, LIKE DIRECT HIT ITSELF. A TCP/IP game you HOST: a joined VR player's touch that his Direct hit "
+           L"makes a direct hit is sent to you as the touch itself, and this PC strikes it with the game's server attack for his hero (the hit roll, the "
+           L"damage and the wear are the game's; no animation, no attack-rate wait, no walking up). Ping is put back: the touch is checked where the "
+           L"monster and his hero WERE when he saw it, by this PC's own measure of the round trip - the monster alive, hostile, no wall between, within "
+           L"his weapon's reach, his hero where he says, and never faster than his hero's attack as your server plays it (his attack speed is read "
+           L"here, not taken from him). A two-handed swing's further monsters only with the cleave box (Mechanics). A touch that fails a check comes back "
+           L"to him and is his normal attack. Works with this PC in any view, flat too - no headset needed here. Who hosts decides: the host's box holds "
+           L"for every joined player with the same version of the mod; a joined player's own box means nothing there. Unticked: a joined player's "
+           L"direct hit is the game's own \"attack this monster\" command, as before. Live."),
+    Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2) | (1u << 3), Toggle(L"gameplay", L"melee_direct_client_stand_still",
+           L"Direct hit as a joined player: no walking up to a far monster", 0,
+           L"A TCP/IP game someone else hosts, when the host does NOT strike your touches itself (the box above unticked on the host): your direct hit "
+           L"is the game's own \"attack this monster\" command, and for a monster your blade reached beyond the game's own reach the host's server "
+           L"first walks your hero up to it. On: for a monster beyond the game's reach (the game's own reach test, on your PC) the blow is sent at the "
+           L"monster's place instead, in place - as the game's Stand Still sends it: no walking, and the blow most likely lands on nothing, as in the "
+           L"game. Within the reach: the command as before. Unticked: as before. Live. F4 only, like hit by touch."))),
     Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", 1u << 3, Slider(L"gameplay", L"melee_direct_min_ms", L"Direct hit (fully on): min gap between hits, ms", 0, 1500, 50, 0,
            L"Single player and the host, fully on: 0 = no limit beyond \"a monster is hit once per stroke\". More: after a direct hit, the touches "
            L"within this time do nothing - to keep the rate near the game's own if hits come too fast. Live."))),
@@ -6239,8 +6277,9 @@ std::vector<Item> g_items = {
            L"normal attack (the button). 0: no least speed. Live."))),
     Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Slider(L"gameplay", L"melee_direct_client_min_force", L"Direct hit: least strike force, N s", 0.0f, 10.0f, 0.1f, 1.5f,
            L"How hard the strike must land: the weight model's strike score (the impulse in its first 150 ms, an edge's cut - the same measure as "
-           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on; not measured, it counts as too weak. For a repeat on the "
-           L"same monster, and for the cleave. A weaker touch is the normal attack. 0: no least force. Live."))),
+           L"\"Hit by the strike's force\"). Needs the weapon's weight and the monster bodies on. For a repeat on the same monster, and for the "
+           L"cleave. A weaker touch is the normal attack. Not measured (no weight model, no strike on that monster): a repeat is judged by its speed and "
+           L"length alone, the cleave counts it as too weak. 0: no least force. Live."))),
     Needs(L"gameplay", L"melee_touch", 1, ShowFor(L"@directhit", L"mode", (1u << 1) | (1u << 2), Slider(L"gameplay", L"melee_direct_client_min_length", L"Direct hit: least swing length (the controller's path), m", 0.0f, 1.5f, 0.05f, 0.2f,
            L"How far your CONTROLLER itself must have travelled in this swing - its own path, not the blade's tip, so a flick of the wrist that "
            L"sweeps a long blade a long way does not pass it. A real swing, not a poke. A two-handed weapon: either controller's path counts. "
@@ -6312,21 +6351,40 @@ std::vector<Item> g_items = {
            {L"None (only the Gestures tab's takes)", L"The left trigger", L"The right trigger", L"Both triggers"},
            L"Which triggers draw for the gesture engine while you play: a stroke drawn with one held is read, and one that matches a gesture casts "
            L"its skill. The trigger still does what it does in the game. Live.")),
+    Needs(L"gestures", L"engine_in_game", 1, Toggle(L"gestures", L"voice", L"Voice gestures: say a word to cast (prototype)", 0,
+           L"A new kind of gesture on the headset's Gestures tab: Voice. Pick the skill (or a game action), say your word three times, and from then "
+           L"on saying it casts that skill the game's own way - as a glyph does. The gesture engine's listener runs as a program of its own beside the "
+           L"game (nothing of it loads into the game) and uses your Windows microphone for communications (a headset's microphone). Every word is "
+           L"checked twice: a speech model for your language (when D2R VR Setup put one in) must read your word, and your three recordings must sound "
+           L"like it - so other words, the game's voices and noise rarely cast. Each word's threshold is its own (the arrows on its row). Casts only "
+           L"in VR first person (F4), in play - never in a menu or with the skill panel open. Nothing you say leaves this computer; your recordings are "
+           L"kept with your gestures. Needs the in-game gesture engine. Unticked: no listener runs and nothing listens. Live.")),
+    Needs(L"gestures", L"voice", 1, Toggle(L"gestures", L"voice_hold", L"Voice gestures: only while a Talk trigger is held", 0,
+           L"A word casts only while you hold a trigger whose role is Talk (Right trigger / Left trigger below, or the headset's Gestures tab > "
+           L"Triggers) - a sure way to never cast by talking to friends or on a stream. Unticked: always listening in play. Live.")),
+    Needs(L"gestures", L"voice", 1, Toggle(L"gestures", L"voice_all_views", L"Voice gestures in every VR view", 0,
+           L"Your voice words cast in every VR view - from above (F1), third person (F2), the table (F3) and F5 - not only in first person (F4). "
+           L"The same rules as in F4: in play only, never in a menu or with the skill panel open, and the game casts it its own way (its mana, "
+           L"its cooldown). Outside F4 only the voice gestures act - glyphs, poses and the other game actions stay F4's - and a word bound to a "
+           L"key, a pad button or a select casts there nothing. With \"only while a Talk trigger is held\" ticked, words cast in F4 only (the "
+           L"triggers' roles are F4's). Unticked: F4 only, as before. Live.")),
     Toggle(L"openxr", L"hands_over_panels", L"Your hands in front of the Gestures tab", 1,
            L"In VR first person (F4), while the skill panel is open on its Gestures tab, what is nearer than the window - your hands and arms, the "
            L"weapon you hold - is drawn over it instead of under it, by the scene's depth, so you see your hands while you record and try gestures. "
            L"The Gestures tab only: the panel's other tabs, every other menu and play are as before and this costs nothing there. On the tab it "
            L"costs one small pass a frame and two swapchains (the log says how much). Needs the skill panel. Off: as before. Live."),
-    Choice(L"gestures", L"trigger_right", L"Right trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+    Choice(L"gestures", L"trigger_right", L"Right trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action", L"Talk"},
            L"The right trigger's role in VR first person (F4), in play (the panels' pointer click and the menus are as before). As before: its skill "
            L"slot / the attack. Glyphs: it draws gesture strokes and casts the skill a Select glyph armed on it - nothing else: every press is a "
            L"stroke, and at the release one that matched a glyph is that glyph, anything else casts the armed skill once (see the cast rule below). "
            L"Shift: the game's second layer. Action: the action picked on the "
-           L"headset's Gestures tab (Triggers). With either trigger set, only the glyph triggers draw for the gesture engine. Live."),
-    Choice(L"gestures", L"trigger_left", L"Left trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action"},
+           L"headset's Gestures tab (Triggers). Talk: held, your voice gestures may cast (with Voice gestures: only while a Talk trigger is held); "
+           L"nothing reaches the game. With either trigger set, only the glyph triggers draw for the gesture engine. Live."),
+    Choice(L"gestures", L"trigger_left", L"Left trigger", 0, {L"As before", L"Glyphs", L"Shift", L"Action", L"Talk"},
            L"The left trigger's role in VR first person (F4), in play. As before: the game's Shift. Glyphs: it draws gesture strokes and casts the "
            L"skill a Select glyph armed on it, on the game's LT + RT slot - nothing else, so Shift is gone from it (give Shift to the right trigger "
-           L"or leave it). Shift: as before. Action: the action picked on the headset's Gestures tab (Triggers). Live."),
+           L"or leave it). Shift: as before. Action: the action picked on the headset's Gestures tab (Triggers). Talk: held, your voice gestures "
+           L"may cast - Shift is gone from it. Live."),
     Choice(L"gestures", L"glyph_cast_hold", L"Glyph trigger: when it casts", 0, {L"At the release", L"Still press, hold repeats"},
            L"A trigger set to Glyphs both draws and casts the skill a Select glyph armed on it. At the release (default): hold it and draw - a glyph, "
            L"read when you let go, no cast; hold it with the hand still - you aim: a skill that flies shows its aim line from that hand, one cast "
@@ -6588,6 +6646,20 @@ std::vector<Item> g_items = {
            L"shield's shape is the game's own model, where the game draws it - and the hand on the weapon gives way while your controller goes on, up to 60 cm; "
            L"pressed further, the weapon goes through until it is clear. A knock is felt in both hands, and a hard blow plays the game's own block sound. Only how "
            L"they move, feel and sound - never an attack, a block or anything of the game's. Unticked: the weapon passes through your shield, as before."))),
+    // [weight] shield_never_through: no way through the shield (shieldcollide::Pass never)
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"shield_collide", 1, Toggle(L"weight", L"shield_never_through",
+           L"... the weapon never goes through the shield", 0,
+           L"Live. VR first person (F4) only. The weapon stays on your shield's face however far your controller goes: the hand on the weapon keeps giving way "
+           L"instead. Unticked: pressed further than 60 cm, the weapon goes through the shield until it is clear, as before. Only how they are drawn - nothing "
+           L"of the game's.")))),
+    // [weight] shield_collide_unheld (vr/shield_push.h): an orb or a claw - never the weight model's - on the shield too
+    Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Needs(L"weight", L"shield_collide", 1, Toggle(L"weight", L"shield_collide_unheld",
+           L"An orb or a claw strikes your own shield too", 0,
+           L"Live. VR first person (F4) only. An orb in your palm or a claw on your fist is not held by the weapon's weight, so it passed through your shield even "
+           L"with the option above. Ticked, it stops on the shield's face too: the hand holding it is drawn held back where the orb or claw touches the shield, slides "
+           L"along it while your controller goes on, up to 60 cm; pressed further it goes through until it is clear. A knock is felt in both hands, and a hard blow "
+           L"plays the game's own block sound. Only how they move, feel and sound - never an attack, a block or anything of the game's. Unticked: an orb or a claw "
+           L"passes through your shield, as before.")))),
     Needs(L"arms", L"mode", 2, Needs(L"weight", L"on", 1, Toggle(L"weight", L"clash_sound", L"Steel on steel sounds: the harder the knock, the louder", 1,
            L"Live. The two weapons in your hands striking each other, and a parry's clash (a monster's weapon meeting your weapon or shield), play the game's own "
            L"block sound - as loud as they met hard: a light tap quiet, a hard blow as loud as the game plays it, under 0.5 m/s nothing. The pulse in the hands "
@@ -7294,6 +7366,11 @@ std::vector<Item> g_items = {
            L"With the box above: their legs step along their travel - forward, backward, sideways - while their pelvis faces where they look, the "
            L"game's own walk within \"the game's own walk within +- this\" (Body) of it. The feet stay planted while they bear the body; the knees bend "
            L"only forward. Needs the gait library d2r_vr_gait.dll in d2rloader\\d2r_vr_libs (else the game's own walk). Any view. Live.")),
+    // [multiplayer] pose_share_facing: a hero not in VR F4 that our mod turns to its camera sends that turn (Serg, 2026-11-27: the flat player's back was to him)
+    Needs(L"multiplayer", L"pose_share", 1, Toggle(L"multiplayer", L"pose_share_facing", L"Out of VR F4, my hero faces the others where he faces for me", 0,
+           L"When you play flat or in VR F1 - F3 and your hero is turned to your camera (Body: \"From behind too (the right stick turns him)\"), that turn goes to "
+           L"the others, and theirs turns their heroes for you - so a flat player who faces you in his game faces you in yours, not the game's own way. A "
+           L"few bytes 30 times a second. Needs \"Their heroes move as they do\" on to see theirs. Only the drawn model turns. Live.")),
     Needs(L"multiplayer", L"pose_share", 1, Toggle(L"multiplayer", L"pose_share_held", L"See what their hands hold (potions, items, props) and what they throw", 1,
            L"What your hands have goes to the others with your pose, and theirs is drawn for you: a belt potion in the hand, let fall or emptied, an "
            L"item taken off the ground, a prop of the level - a jar, a book, a cup - in the hand, flying as it was thrown, and where it came to rest. "
@@ -7307,6 +7384,11 @@ std::vector<Item> g_items = {
            L"point it met, how fast it sent the body), and theirs knock your own drawing of it down the same way. Needs \"Lift and throw a humanoid you "
            L"grab\" or \"A hard blow knocks a humanoid off its feet\" on here and the weight library; a monster your game has not got near is not drawn. "
            L"Visual only: the monster's real place and the game stay each game's own. Live. F4 only.")),
+    // [multiplayer] pose_share_grab_any_view: the others' holds and knocks drawn in every view, not only VR F4 (Serg, 2026-11-26)
+    Needs(L"multiplayer", L"pose_share_grab", 1, Toggle(L"multiplayer", L"pose_share_grab_any_view", L"... and see them in every view, flat too", 0,
+           L"With the box above: the bodies the other players hold, knock down and throw are drawn for you in every view - VR F1, F2, F3, F5 and the flat "
+           L"game - not only in VR F4. Your own still go to them only from VR F4 (only there do your hands hold a body). Drawn by your own ragdoll, as in F4; "
+           L"outside F4 it needs only the weight library here. Visual only: the monster's real place and the game stay each game's own. Live.")),
 #endif
     Tab(L"Debug"),
     Group(L"Debug", L"Switches for testers and for finding problems: extra log lines, GPU replay modes, the multiplayer heads-and-hands probe, frame and stutter traces, and reports on why the graphics device was lost. Leave them off for normal play unless asked to send a log."),
@@ -13903,6 +13985,41 @@ void StartCampfireScene() {
     }
 }
 
+// [frontend] scene_3d: the main menu's act scenes made from the player's own game (frontend_scene_unleashed.cpp, after D2R VR Unleashed's
+// prepare_frontend_scene.py, PR #583 by Kudlatytrue: the clouds out, each act's land laid round its camera, the scene editor's edits), into
+// the mod's data folder, on a thread of its own. At the start and when the tick changes (off: ours taken out); the result to the log. The
+// same here and now for Setup's --prepare-assets.
+std::atomic<bool> g_frontendBusy{false};
+std::atomic<bool> g_frontendAgain{false};   // the tick changed while a run was busy: once more when it is done
+
+frontendscene::Result PrepareFrontendNow() {
+    const std::wstring game = GameFolder();
+    const std::wstring modRoot = ModInstall() ? modlayout::ModRoot(game) : std::wstring();
+    return frontendscene::Prepare(game, modRoot, GetPrivateProfileIntW(L"frontend", L"scene_3d", 0, g_ini) != 0);
+}
+
+void StartFrontendScene() {
+    if (g_frontendBusy.exchange(true)) {
+        g_frontendAgain.store(true);
+        return;
+    }
+    try {
+        std::thread([] {
+            do {
+                g_frontendAgain.store(false);
+                frontendscene::Result r = PrepareFrontendNow();
+                if (r.wrote && (ProcessRunning(L"D2RLoader.exe") || ProcessRunning(L"D2R.exe")))
+                    r.text += std::wstring(L" - ") + TR(L"frontend_scene.restart", L"the game running now: restart it to see the change");
+                LogLine(L"main menu scene: " + r.text);
+                g_frontendBusy.store(false);
+            } while (g_frontendAgain.load() && !g_frontendBusy.exchange(true));   // (a tick meanwhile: once more, unless a new run took it)
+        }).detach();
+    } catch (const std::exception&) {
+        g_frontendBusy.store(false);
+        LogLine(L"main menu scene: could not be started");
+    }
+}
+
 void StartGameCeiling() {
     try {
         std::thread([] {
@@ -14060,7 +14177,7 @@ int DataModsState(const datamods::Result& r) {
 }
 
 void DataModsThread(HWND wnd) {
-    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load()); ++i) Sleep(50);   // they write D2R VR's own files into the same folder
+    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load() || g_frontendBusy.load()); ++i) Sleep(50);   // they write D2R VR's own files into the same folder
     const datamods::Result r = SyncDataMods();
     auto* p = new D2RLProgress{g_modRebuilt ? kWarn : DataModsState(r), TRF(L"status.data_mods.result", L"Other mods: {text}", {{L"text", r.text}}), true};
     if (!PostMessageW(wnd, WM_APP_MODS, 0, (LPARAM)p)) delete p;
@@ -14091,7 +14208,7 @@ void OnDataModsDone(D2RLProgress* raw) {
 // on this thread - the game starts with the mods as they are now.
 void DataModsBeforeStart() {
     if (!ModInstall()) return;
-    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load() || g_modsBusy.load()); ++i) Sleep(50);
+    for (int i = 0; i < 600 && (g_boatBusy.load() || g_arcaneBusy.load() || g_campfireBusy.load() || g_frontendBusy.load() || g_modsBusy.load()); ++i) Sleep(50);
     const datamods::Result r = SyncDataMods();
     if (g_headless) {
         StartSay(L"start: other mods: " + r.text);
@@ -15151,6 +15268,7 @@ LRESULT CALLBACK PageProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
                 if (wcscmp(it.section, L"holes") == 0 && wcscmp(it.key, L"bazaar_mask_hidden") == 0) StartBazaar();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"wrist_game_models") == 0) StartOrbs();
                 if (wcscmp(it.section, L"campfire") == 0 && wcscmp(it.key, L"enabled") == 0) StartCampfireScene();
+                if (wcscmp(it.section, L"frontend") == 0 && wcscmp(it.key, L"scene_3d") == 0) StartFrontendScene();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_panel_game_look") == 0) StartMenuArt();
                 if (wcscmp(it.section, L"hud") == 0 && wcscmp(it.key, L"allies_place") == 0) StartPortraits();
                 if (wcscmp(it.section, L"openxr") == 0 && wcscmp(it.key, L"skill_wheel") == 0) StartSkillIcons();
@@ -15218,6 +15336,7 @@ LRESULT CALLBACK WndProc(HWND wnd, UINT msg, WPARAM w, LPARAM l) {
         StartBazaar();
         StartOrbs();
         StartCampfireScene();
+        StartFrontendScene();   // [frontend] scene_3d: the main menu's act scenes (off: ours taken out)
         StartMenuArt();
         StartPortraits();
         StartSkillIcons();
@@ -15568,6 +15687,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"kurast bazaar mask plane", [] { return PrepareBazaarNow().text; });   // [holes] bazaar_mask_hidden: the stray plane under the Bazaar
             timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });   // [hud] wrist_game_models: the medallions' game models
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });     // [campfire] enabled: character creation's scene round the fire
+            timed(L"main menu scene", [] { return PrepareFrontendNow().text; });    // [frontend] scene_3d: the main menu's act scenes round you
             timed(L"skill panel game look", [] { return PrepareMenuArtNow().text; });   // [openxr] skill_panel_game_look: the game's frames beside the plugin
             timed(L"allies' portraits", [] { return PreparePortraitsNow().text; });     // [hud] allies_place: the game's portraits beside the plugin
             timed(L"skill icons", [] { return PrepareSkillIconsNow().text; });          // [openxr] skill_wheel: the game's skill-icon sheets beside the plugin
@@ -15612,6 +15732,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
             timed(L"kurast bazaar mask plane", [] { return PrepareBazaarNow().text; });
             timed(L"wrist medallions by the game", [] { return PrepareOrbsNow().text; });
             timed(L"campfire scene", [] { return PrepareCampfireNow().text; });
+            timed(L"main menu scene", [] { return PrepareFrontendNow().text; });
             if (GetPrivateProfileIntW(L"sky", L"arcane_sky", 1, g_ini) != 0) timed(L"arcane sky", [] { return PrepareArcane().text; });
             const moddata::Check after = moddata::Look(modRoot);
             LogLine(L"restore mod data: done - " + moddata::detail::Wide(moddata::Line(after)));

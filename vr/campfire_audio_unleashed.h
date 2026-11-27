@@ -152,7 +152,7 @@ inline float GameVolume() {
     checkAt = now + 2000;
     wchar_t home[MAX_PATH];
     if (!GetEnvironmentVariableW(L"USERPROFILE", home, MAX_PATH)) return volume = 1.0f;
-    const std::wstring path = std::wstring(home) + L"\Saved Games\Diablo II Resurrected\Settings.json";
+    const std::wstring path = std::wstring(home) + L"\\Saved Games\\Diablo II Resurrected\\Settings.json";
     std::string text;
     FILE* f = nullptr;
     if (_wfopen_s(&f, path.c_str(), L"rb") == 0 && f) { char buf[4096]; size_t n; while ((n = fread(buf, 1, sizeof buf, f)) > 0 && text.size() < 256 * 1024) text.append(buf, n); fclose(f); }

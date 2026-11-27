@@ -145,6 +145,8 @@ struct Request {
     uintptr_t lookup = 0;     // the server's unit lookup (game, type, id)
     bool remote = false;      // [gameplay] melee_direct_client_cleave: a joined player's extra hit, asked of this host (heroId is HIS hero)
     bool leftHand = false;    // [gameplay] melee_direct_by_hand: the blade is the game's left-hand weapon (LeftSwing) - struck as the game's "Left Hand Swing"
+    bool checked = false;     // [gameplay] melee_direct_client_host: a joined player's touch the host already judged with the time put back
+                              // (vr/coop_strike.h: the reach, the hero's place, the pace) - the cleave's reach and gap below are not asked again
 };
 
 // [gameplay] melee_direct_client_cleave, the host's side: a joined player's extra hit is struck only within this reach of the
@@ -171,6 +173,9 @@ void SetMinIntervalMs(uint32_t ms);
 // [gameplay] melee_direct_client_cleave on THIS PC as the host: the joined players' extra hits are struck here (the hooks go in for it
 // even with melee_direct off; those requests are struck in any view - the host may be in another one).
 void SetRemoteWanted(bool on);
+// [gameplay] melee_direct_client_host on THIS PC as the host: the joined players' touches judged by vr/coop_strike_wire.cpp are struck here (the
+// hooks go in for it with melee_direct off and in any view - the host may play flat). Only requests with `checked` come this way.
+void SetClientHostWanted(bool on);
 // [gameplay] melee_direct_by_hand (every read): a blow of the left-hand weapon is the game's "Left Hand Swing" (LeftSwing above). Off: the
 // right weapon, as before.
 void SetByHand(bool on);

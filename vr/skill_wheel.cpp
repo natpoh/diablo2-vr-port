@@ -415,6 +415,9 @@ void OnFrame(const directinput::Frame& f, void*) {
         gestures.modeOf = g_modeOf.empty() ? nullptr : g_modeOf.data();
         gestures.modeOfCount = (int)g_modeOf.size();
         gestures.modesOk = engine && gengine::HasModes();
+        static BWGE_VoiceState voice;   // [gestures] voice: the engine's listener (the Gestures tab offers Voice, shows what it heard)
+        gestures.voiceOk = engine && gengine::Voice(&voice);
+        gestures.voice = gestures.voiceOk ? &voice : nullptr;
         {   // the triggers' roles, as configured ([0] the right, [1] the left)
             static char acts[2][32];
             for (int row = 0; row < 2; ++row) {

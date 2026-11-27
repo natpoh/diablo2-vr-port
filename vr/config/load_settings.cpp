@@ -1528,6 +1528,16 @@ void LoadSettings() {
         wipwire::Configure(w);
     }
     gengine::Configure(IniB(L"gestures", L"engine_in_game", false), (int)std::lround(IniF(L"gestures", L"engine_pen", 3.0f)));   // (before the skill link: SetEngine)
+    {   // [gestures] voice (vr/gesture_engine_wire.h ConfigureVoice): voice gestures - a word said casts, the engine's own listener; F4, needs engine_in_game
+        wchar_t mic[128] = {}, lang[64] = {};
+        GetPrivateProfileStringW(L"gestures", L"voice_mic", L"", mic, 128, g_iniPath);
+        GetPrivateProfileStringW(L"gestures", L"voice_language", L"auto", lang, 64, g_iniPath);
+        char um[384] = {}, ul[192] = {};
+        WideCharToMultiByte(CP_UTF8, 0, mic, -1, um, (int)sizeof um, nullptr, nullptr);
+        WideCharToMultiByte(CP_UTF8, 0, lang, -1, ul, (int)sizeof ul, nullptr, nullptr);
+        gengine::ConfigureVoice(IniB(L"gestures", L"voice", false), IniB(L"gestures", L"voice_hold", false), um, ul);
+        gengine::ConfigureVoiceViews(IniB(L"gestures", L"voice_all_views", false));   // the voice gestures in every VR view (off: F4 only)
+    }
     {   // [gestures] trigger_left / trigger_right (vr/trigger_roles.h): each trigger's role - as before, glyphs, Shift, an action; F4
         wchar_t a[2][64] = {};
         GetPrivateProfileStringW(L"gestures", L"trigger_left_action", L"", a[0], 64, g_iniPath);
@@ -1637,6 +1647,11 @@ void LoadSettings() {
         meleedirectclient::SetCleave(cleave);
         meleedirect::SetRemoteWanted(cleave);   // as the host: the joined players' extra hits are struck here
     }
+    // [gameplay] melee_direct_client_host (vr/coop_strike.h): as the host, a joined player's direct-hit touch is struck here with the time put back -
+    // who hosts decides (joined, the host's box; ours means nothing there). Off: the joined players' touches are the game's command, as before.
+    coopstrikewire::SetHostBox(IniB(L"gameplay", L"melee_direct_client_host", false));
+    // [gameplay] melee_direct_client_stand_still: joined, a touch beyond the game's reach sends the blow at the monster's cell (no walk-up) - our own box
+    meleedirectclient::SetStandStill(IniB(L"gameplay", L"melee_direct_client_stand_still", false));
     {   // [hud] game_menu_settings (vr/flat_menu.h): the flat game's settings from the pause menu, the host's rules' list ([hud] host_rules_key) -
         // and our own values of the host's rules (vr/host_rules.h: what we answer a joined player's mod as the host, what our own game shows)
         flatmenu::Configure(IniB(L"hud", L"game_menu_settings", false), (int)IniF(L"hud", L"game_menu_key", 1.0f), (int)IniF(L"hud", L"host_rules_key", 1.0f),
@@ -1866,6 +1881,8 @@ void LoadSettings() {
     g_set.weightSecondLetsGo.store(IniB(L"weight", L"second_lets_go", true));
     g_set.weightDualCollide.store(IniB(L"weight", L"dual_collide", true));
     g_set.weightShieldCollide.store(IniB(L"weight", L"shield_collide", true));   // [weight] shield_collide: the weapon on the hero's own shield (off: as before)
+    g_set.weightShieldNeverThrough.store(IniB(L"weight", L"shield_never_through", false));   // [weight] shield_never_through: no way through the shield (off: the 60 cm rule)
+    g_set.weightShieldUnheld.store(IniB(L"weight", L"shield_collide_unheld", false));   // [weight] shield_collide_unheld: an orb or a claw on it too (off: they pass, as before)
     weightwire::ConfigureGripNoChord(IniB(L"weight", L"weapon_grip_no_chord", false));   // a grip on the weapon is no modifier of the panels' chords and the A / RT slot controls (vr/weight_wire.h)
     shoulderwire::SetDraw(g_set.shoulderDraw.load() && (g_set.weightOn.load() || g_set.shieldStow.load() || g_set.rangedHolster.load()));   // [hands] shoulder_draw: a weapon to draw (the weight model) or the shield to put away
     g_set.weightFeel.store(std::clamp(IniF(L"weight", L"feel", 50.0f), 0.0f, 300.0f));
@@ -2017,6 +2034,8 @@ void LoadSettings() {
         ks.leapOn = g_set.weightMonsterBodies.load() && IniB(L"weight", L"leap_landing_scatter", true);   // [weight] leap_landing_scatter: a Leap's landing throws them apart (vr/leap_scatter.h)
         ks.balance = IniB(L"weight", L"grab_balance", true);   // [weight] grab_balance: a pulled humanoid steps to keep its feet (on for the test; off: it falls, as 0.192.34)   // ([weight] strength: the hands holding a body, as on the weapon and the props)
         ks.steady = IniB(L"weight", L"grab_hold_steady", false);   // [weight] grab_hold_steady: a body a hand took held to the world, on its bones as taken (docs/notes/grab_hold_flicker.md)
+        ks.remoteAnyView = IniB(L"multiplayer", L"pose_share", true) && IniB(L"multiplayer", L"pose_share_grab", false) &&
+                           IniB(L"multiplayer", L"pose_share_grab_any_view", false);   // [multiplayer] pose_share_grab_any_view: the others' holds and knocks drawn in every view
         knockdown::Configure(ks);
         grabmove::SetWanted(ks.throwOn && IniB(L"weight", L"grab_moves_unit", false));   // [weight] grab_moves_unit: what grab_throw carries and throws, moved by the game (host / single player)
         grabmove::SetHoldWanted(ks.throwOn && IniB(L"weight", L"grab_holds_unit", false));   // [weight] grab_holds_unit: the unit a hand holds kept in the game's own hit recovery (host / single player)
@@ -2026,7 +2045,7 @@ void LoadSettings() {
     }
     headshadow::WantForDoll((g_set.weightMonsterBodies.load() && g_set.weightMonsterRagdoll.load() && IniB(L"weight", L"monster_ragdoll_pose", false)) ||
                             knockdown::Wanted());   // ... through the skinning composite ([weight] knock_down draws its bodies the same way)
-    headshadow::SetDollAnyView(knockdown::DeathFlatWanted());   // [weight] death_ragdoll_flat: the dead's poses in VR F1 / F3 too (Serg's exception to F4 only)
+    headshadow::SetDollAnyView(knockdown::FlatWanted());   // [weight] death_ragdoll_flat, [multiplayer] pose_share_grab_any_view: the dead's and the others' held bodies' poses in VR F1 / F3 too (Serg's exceptions to F4 only)
     headshadow::SetAttachWriter(knockdown::Wanted() ? &knockdown::OnXform : nullptr);   // [weight] knock_down: a knocked-down body's weapon stays in its hand
     headshadow::SetBeforeDraw(knockdown::Wanted() ? &knockdown::BeforeDraw : nullptr);  // ... its bounds grown again just before each draw collect of it
     headshadow::SetBeforeCull(knockdown::Wanted() ? &knockdown::BeforeCull : nullptr);  // ... and just before the game culls each pass: the write that counts

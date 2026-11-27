@@ -570,6 +570,8 @@ struct Settings {
     std::atomic<bool>  weightSecondLetsGo{true};   // [weight] second_lets_go (read once at load: arms.cpp asked the ini file on every tick - half a core on a player's PC)
     std::atomic<bool>  weightDualCollide{true};    // [weight] dual_collide (the same)
     std::atomic<bool>  weightShieldCollide{false}; // [weight] shield_collide (the same)
+    std::atomic<bool>  weightShieldNeverThrough{false};   // [weight] shield_never_through: the weapon never goes through the shield (off: through past 60 cm, as before)
+    std::atomic<bool>  weightShieldUnheld{false};  // [weight] shield_collide_unheld: an orb or a claw (not the weight model's) meets the shield too (vr/shield_push.h)
     std::atomic<float> weightFeel{50.0f};   // [weight] feel: % of the weapon's mass
     std::atomic<float> weightStrength{100.0f};   // [weight] strength: % of the hands' strength
     std::atomic<float> weightGravity{100.0f};    // [weight] gravity_pct: % of g (0 = no gravity, only inertia)

@@ -10,7 +10,7 @@
 // an older build ignores both ids (its host counts them as bad and drops them, its client drops any id it does not know), and its poses are untouched - the
 // pose format (poseshare::kVersion, kToken) is not bumped, so builds with and without this still share poses.
 //
-// What a viewer does (vr/mp/pose_share.cpp, F4 only): plays the holds back as far behind as the holder's poses (GrabTrack), puts the palm in its own world
+// What a viewer does (vr/mp/pose_share.cpp; VR F4, and with [multiplayer] pose_share_grab_any_view every other view too - VR F1-F3, F5, the flat game: GateFor): plays the holds back as far behind as the holder's poses (GrabTrack), puts the palm in its own world
 // beside the holder's hero (FeetOf, as the pose's markers), and hands it to its own library (knockdown::RemoteTake / RemoteHandAt / RemoteLetGo through Viewer):
 // the body taken at the same limb and point, held at the palm each tick, let go with the palm's velocity. A viewer whose game has not got that monster near (not
 // loaded, too far, not a humanoid it read) takes nothing - it tries again a few times a second while the hold lasts and lets the hold pass.
@@ -657,5 +657,39 @@ private:
     }
     std::array<Slot, 2 * poseshare::kMaxPeers> slots_{};
 };
+
+// ---- where it runs: [multiplayer] pose_share_grab_any_view --------------------------------------------------------------------------------------
+// What this PC's grab share does in the view it is in. wanted: pose_share_grab on, the channel up, in a game, our hero known; f4Hands: VR F4 (the full body,
+// first person) - the only view where our hands hold or our blows knock; anyView: [multiplayer] pose_share_grab_any_view (Serg, 2026-11-26: «Захват в сети
+// показывает везде»). send: our holds and knocks go out (F4 alone makes any); view: the others' are drawn by our own library; flat: drawn outside F4 - the
+// hero's own place and his eyes' scale are the frame (the update thread's hero, skel::HeroEye), as the flat deaths', not F4's look-at and camera height.
+// A body another player holds whose unit id is not read here (Serg: «мы договаривались, что там точка хвата берётся»; «а комп сам моделирует куклу»): the
+// body read here nearest his palm across the ground, within maxM - each body's pelvis (pelvis[i], the same frame as the palm), usable[i] false for one
+// taken already (held, down). -1: none that near.
+inline int NearestTo(const float palm[3], const float (*pelvis)[3], const bool* usable, int n, float maxM) {
+    if (!palm || !pelvis || n <= 0 || !(maxM > 0.0f) || !std::isfinite(palm[0] + palm[2])) return -1;
+    int best = -1;
+    float bestD = maxM;
+    for (int i = 0; i < n; ++i) {
+        if (usable && !usable[i]) continue;
+        const float d = std::hypot(pelvis[i][0] - palm[0], pelvis[i][2] - palm[2]);
+        if (std::isfinite(d) && d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+struct Gate {
+    bool send = false;
+    bool view = false;
+    bool flat = false;
+};
+inline Gate GateFor(bool wanted, bool f4Hands, bool anyView) {
+    Gate g;
+    if (!wanted) return g;
+    g.send = f4Hands;
+    g.view = f4Hands || anyView;
+    g.flat = !f4Hands && anyView;
+    return g;
+}
 
 }  // namespace grabshare

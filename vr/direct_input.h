@@ -209,6 +209,9 @@ struct PadPress {
     uint8_t lt, rt;
 };
 void PadPulse(const PadPress& p, uint32_t holdMs = 65);
+// The same pulse, also in the other VR views (F1, F2, F3, F5: viewgate::Number 1..5 - over BodyWalk's pad there), never in the flat game. Only for
+// a voice gesture's cast under [gestures] voice_all_views (vr/skill_link_wire.cpp), whose caller has checked the game area, no menu, no panel.
+void PadPulseAnyView(const PadPress& p, uint32_t holdMs = 65);
 // Ends at once every pulse of exactly these buttons and triggers (the game has taken the press: no need to hold it longer).
 void PadPulseEnd(const PadPress& p);
 

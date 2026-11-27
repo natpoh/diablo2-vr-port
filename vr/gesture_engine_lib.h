@@ -65,5 +65,9 @@ int SetHand(uint32_t gesture, uint8_t hand);
 bool HasModes();
 int SetMode(uint32_t gesture, uint8_t mode);
 int GetMode(uint32_t gesture, uint8_t* out);
+// Voice gestures (the optional BWGE_VoiceSet / BWGE_VoiceGet); HasVoice false without them.
+bool HasVoice();
+int VoiceSet(const BWGE_VoiceConfig& cfg);
+int VoiceGet(BWGE_VoiceState* out);
 
 }  // namespace gelib

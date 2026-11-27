@@ -75,15 +75,39 @@ const char* TypeWord(uint8_t type) {
     case BW_LINK_GT_POSE: return uitext::Tr("vr.gestures.type_pose", "Hand pose");
     case BW_LINK_GT_MOTION: return uitext::Tr("vr.gestures.type_motion", "Body motion");
     case BW_LINK_GT_BUTTON: return uitext::Tr("vr.gestures.type_button", "Button");
+    case BW_LINK_GT_VOICE: return uitext::Tr("vr.gestures.type_voice", "Voice");
     default: return "?";
     }
 }
+// A gesture's kind in a few words: its type and hand - a voice gesture its word ("as recorded" when the speech model could not spell it).
+std::string KindLine(const BW_LinkGesture& g);
 const char* HandWord(uint8_t hand, uint8_t type = BW_LINK_GT_POSE) {
     switch (hand) {
     case BW_LINK_GH_LEFT: return uitext::Tr("vr.gestures.hand_left", "Left hand");
     case BW_LINK_GH_RIGHT: return uitext::Tr("vr.gestures.hand_right", "Right hand");
     default: return type == BW_LINK_GT_GLYPH ? uitext::Tr("vr.gestures.hand_either", "Either hand") : uitext::Tr("vr.gestures.hand_both", "Both hands");
     }
+}
+
+std::string KindLine(const BW_LinkGesture& g) {
+    if (g.type == BW_LINK_GT_VOICE)
+        return g.button[0] ? uitext::TrF("vr.gestures.voice_word", "Voice: \"{word}\"", {{"word", std::string(g.button, strnlen(g.button, sizeof g.button))}})
+                           : std::string(uitext::Tr("vr.gestures.voice_takes", "Voice: as recorded"));
+    return std::string(TypeWord(g.type)) + " - " + HandWord(g.hand, g.type);
+}
+
+// A microphone: a capsule on a stand (a voice gesture's picture).
+void DrawMic(Canvas& cv, Rect box, bool big, Col ink) {
+    const float w = box.r - box.l, h = box.b - box.t, s = std::min(w, h);
+    const float cx = 0.5f * (box.l + box.r), top = box.t + 0.5f * (h - 0.80f * s), cw = 0.26f * s, ch = 0.42f * s, lw = big ? 6.0f : 2.5f;
+    RoundRect(cv, Rect{cx - 0.5f * cw, top, cx + 0.5f * cw, top + ch}, 0.5f * cw, ink, 0.95f, Col{0, 0, 0}, 0.6f, big ? 3.0f : 1.5f);
+    const float ar = 0.30f * s, ay = top + 0.55f * ch;   // the cradle: a half ring under the capsule
+    for (int k = 0; k < 18; ++k) {
+        const float a0 = 3.14159f * k / 18.0f, a1 = 3.14159f * (k + 1) / 18.0f;
+        Seg(cv, cx - ar * std::cos(a0), ay + ar * std::sin(a0), cx - ar * std::cos(a1), ay + ar * std::sin(a1), lw, ink);
+    }
+    Seg(cv, cx, ay + ar, cx, top + 0.80f * s, lw, ink);
+    Seg(cv, cx - 0.18f * s, top + 0.80f * s, cx + 0.18f * s, top + 0.80f * s, lw, ink);
 }
 
 // The stick figure: its bones in `ink`, its head a ring, a closed hand a fist (a filled disc), an open one a small ring; a hand BodyWalk did not
@@ -242,6 +266,13 @@ void DrawGesturePicture(Canvas& cv, Fonts& fonts, const BW_LinkGesture& g, Rect 
         if (hot && !big && playT < 0.0f) PlayMark(cv, box, big);
         break;
     }
+    case BW_LINK_GT_VOICE: {   // a microphone, the word under it
+        const float h = box.b - box.t;
+        DrawMic(cv, Rect{box.l, box.t + 4.0f, box.r, box.b - (big ? 0.26f : 0.30f) * h}, big, hot ? InkHot() : InkGold());
+        const std::string word = g.button[0] ? "\"" + std::string(g.button, strnlen(g.button, sizeof g.button)) + "\"" : std::string("...");
+        GLine(cv, fonts, word, Rect{box.l + 4, box.b - (big ? 0.26f : 0.32f) * h, box.r - 4, box.b - 4}, big ? 46 : 18, false, Ink(), hset::Align::Center);
+        break;
+    }
     case BW_LINK_GT_BUTTON: {   // its name in a key frame
         const float w = box.r - box.l, h = box.b - box.t;
         const Rect key{box.l + 0.12f * w, box.t + 0.24f * h, box.r - 0.12f * w, box.b - 0.24f * h};
@@ -342,7 +373,7 @@ void DrawGestureRows(Canvas& cv, Fonts& fonts, const gov::View& v) {
         {   // the type and hand (a glyph's hand: a click steps it)
             const bool handHot = v.hover == gov::RowCell(i, gov::kHand);
             if (handHot) RoundRect(cv, GR(gov::TypeRect(i)), 6.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);
-            GLine(cv, fonts, std::string(TypeWord(g.type)) + " - " + HandWord(g.hand, g.type), GR(gov::TypeRect(i)), 22, false, handHot ? InkHot() : Ink(), hset::Align::Center);
+            GLine(cv, fonts, KindLine(g), GR(gov::TypeRect(i)), 22, false, handHot ? InkHot() : Ink(), hset::Align::Center);
         }
         if (g.type != BW_LINK_GT_BUTTON) {   // the threshold, with its arrows
             if (g.type == BW_LINK_GT_POSE)   // (a hand pose: its zone's size, in cm)
@@ -381,10 +412,11 @@ void DrawGestureChoices(Canvas& cv, Fonts& fonts, const gov::View& v) {
         GField(cv, r, hot);
         std::string word, text;
         if (v.screen == gov::Screen::NewType) {
-            word = TypeWord(uint8_t(BW_LINK_GT_GLYPH + i));
+            word = TypeWord(gov::TypeOfChoice(i));
             text = i == 0 ? uitext::Tr("vr.gestures.about_glyph", "A shape drawn in the air - the trigger held is the pen")
                  : i == 1 ? uitext::Tr("vr.gestures.about_pose", "Where your hands are and how they are closed - taken at the trigger's press")
-                          : uitext::Tr("vr.gestures.about_motion", "A movement - the trigger starts it, the trigger again ends it");
+                 : i == 2 ? uitext::Tr("vr.gestures.about_motion", "A movement - the trigger starts it, the trigger again ends it")
+                          : uitext::Tr("vr.gestures.about_voice", "A word you say - said three times to record it; saying it casts");
         } else {
             word = HandWord(gov::HandOfChoice(i), v.newType);
             text = v.newType == BW_LINK_GT_POSE ? uitext::Tr("vr.gestures.about_hand_pose", "The trigger of this hand takes the pose")
@@ -454,14 +486,15 @@ void DrawGestureGrid(Canvas& cv, Fonts& fonts, const gov::View& v) {
 void DrawGestureRecording(Canvas& cv, Fonts& fonts, const gov::View& v) {
     std::string title = v.recName[0] ? uitext::TrF("vr.gestures.rec_again", "Re-recording {name}", {{"name", v.recName}})
                                      : uitext::TrF("vr.gestures.rec_new", "Recording: {type}", {{"type", TypeWord(v.recType)}});
-    title += " - " + std::string(HandWord(v.recHand, v.recType));
+    if (v.recType != BW_LINK_GT_VOICE) title += " - " + std::string(HandWord(v.recHand, v.recType));
     if (v.recSkill[0]) title += " - " + uitext::TrF("vr.gestures.for_skill", "for {skill}", {{"skill", v.recSkill}});
     GLine(cv, fonts, title, GR(gov::kRecTitle), 36, true, InkGold(), hset::Align::Center);
     // which trigger is the pen: the hand chosen (a pose of both hands: either)
     const std::string trigger = v.recHand == BW_LINK_GH_LEFT ? uitext::Tr("vr.gestures.trigger_left", "the LEFT trigger")
                               : v.recHand == BW_LINK_GH_RIGHT ? uitext::Tr("vr.gestures.trigger_right", "the RIGHT trigger")
                                                               : uitext::Tr("vr.gestures.trigger_either", "a trigger");
-    const std::string how = v.recType == BW_LINK_GT_GLYPH ? uitext::TrF("vr.gestures.how_glyph2", "Hold {trigger} and draw the shape in the air in front of you. Let go to finish.", {{"trigger", trigger}})
+    const std::string how = v.recType == BW_LINK_GT_VOICE ? std::string(uitext::Tr("vr.gestures.how_voice", "Say the word three times, with a short pause after each. A word or two that sounds unlike your other voice gestures."))
+                          : v.recType == BW_LINK_GT_GLYPH ? uitext::TrF("vr.gestures.how_glyph2", "Hold {trigger} and draw the shape in the air in front of you. Let go to finish.", {{"trigger", trigger}})
                           : v.recType == BW_LINK_GT_POSE  ? uitext::TrF("vr.gestures.how_pose2", "Hold the pose - your hands where you want them, a fist closed for a grab - then press {trigger}. It is taken at once.", {{"trigger", trigger}})
                                                           : uitext::TrF("vr.gestures.how_motion2", "Press {trigger}, make the movement, press it again.", {{"trigger", trigger}});
     UseFace(fonts, false, how.c_str());
@@ -470,7 +503,17 @@ void DrawGestureRecording(Canvas& cv, Fonts& fonts, const gov::View& v) {
     // the state on a plate, a red light while it records
     const Rect plate = GR(gov::kRecState);
     GField(cv, plate, false);
-    const char* state = v.failed ? uitext::Tr("vr.gestures.state_failed", "Not taken - try again")
+    std::string voiceState;   // a voice take: how many times heard; a failed one: why
+    if (v.recType == BW_LINK_GT_VOICE) {
+        voiceState = v.failed && v.voice.takeWhy[0] ? std::string(v.voice.takeWhy)
+                   : uitext::TrF("vr.gestures.state_heard", "Heard {n} of 3", {{"n", std::to_string(v.voice.takeHeard)}});
+        const Rect meter{gov::kRecState.l, gov::kRecState.b + 24.0f, gov::kRecState.r, gov::kRecState.b + 44.0f};   // the microphone's level
+        RoundRect(cv, meter, 6.0f, Col{10, 10, 12}, 0.9f, InkGold(), 0.6f, 1.5f);
+        if (v.voice.level10) Bar(cv, meter.l + 3.0f, meter.t + 3.0f, meter.l + 3.0f + (meter.r - meter.l - 6.0f) * v.voice.level10 / 10.0f, meter.b - 3.0f,
+                                 v.voice.speaking ? Col{90, 220, 110} : Col{150, 150, 160}, 0.95f);
+    }
+    const char* state = v.recType == BW_LINK_GT_VOICE && (v.recordState == BW_LINK_REC_READY || v.recordState == BW_LINK_REC_DRAWING || v.failed) ? voiceState.c_str()
+                      : v.failed ? uitext::Tr("vr.gestures.state_failed", "Not taken - try again")
                       : v.queued ? uitext::Tr("vr.gestures.state_letgo", "Let go of the trigger...")
                       : v.recordState == BW_LINK_REC_NONE ? uitext::Tr("vr.gestures.state_asking", "Asking BodyWalk...")
                       : v.recordState == BW_LINK_REC_DRAWING ? (v.recType == BW_LINK_GT_GLYPH ? uitext::Tr("vr.gestures.state_drawing", "Drawing...") : uitext::Tr("vr.gestures.state_moving", "Recording..."))
@@ -480,7 +523,7 @@ void DrawGestureRecording(Canvas& cv, Fonts& fonts, const gov::View& v) {
     const float cy = 0.5f * (plate.t + plate.b);
     Disc(cv, plate.l + 60.0f, cy, 20.0f, Col{0, 0, 0}, 0.7f);
     Disc(cv, plate.l + 60.0f, cy, 16.0f, v.failed ? Col{120, 120, 120} : drawing ? Col{240, 50, 40} : Col{150, 40, 32});
-    GLine(cv, fonts, state, Rect{plate.l + 100.0f, plate.t, plate.r - 30.0f, plate.b}, 48, true, v.failed ? InkDim() : drawing ? (g_game ? kGameGoldBright : kRedBright) : InkHot(),
+    GLine(cv, fonts, state, Rect{plate.l + 100.0f, plate.t, plate.r - 30.0f, plate.b}, v.failed && v.recType == BW_LINK_GT_VOICE ? 28 : 48, true, v.failed ? InkDim() : drawing ? (g_game ? kGameGoldBright : kRedBright) : InkHot(),
           hset::Align::Center);
 }
 
@@ -510,6 +553,7 @@ const char* TrigRoleWord(int role) {
     case 1: return uitext::Tr("vr.gestures.trig_glyphs", "Glyphs");
     case 2: return uitext::Tr("vr.gestures.trig_shift", "Shift");
     case 3: return uitext::Tr("vr.gestures.trig_action", "Action");
+    case 4: return uitext::Tr("vr.gestures.trig_talk", "Talk");
     default: return uitext::Tr("vr.gestures.trig_before", "As before");
     }
 }
@@ -524,11 +568,12 @@ void DrawGestureTriggers(Canvas& cv, Fonts& fonts, const gov::View& v) {
                                        : uitext::Tr("vr.gestures.trig_about_glyphs_l", "draws glyphs and casts the skill a Select glyph armed on it (its LT + RT slot) - no Shift"))
                : role == 2 ? uitext::Tr("vr.gestures.trig_about_shift", "the game's Shift")
                : role == 3 ? uitext::TrF("vr.gestures.trig_about_action", "does {action}", {{"action", v.trigAction[row][0] ? gact::NameOf(v.trigAction[row]) : "?"}})
+               : role == 4 ? uitext::Tr("vr.gestures.trig_about_talk", "held: your voice gestures may cast (with Voice: hold to talk)")
                            : (row == 0 ? uitext::Tr("vr.gestures.trig_about_before_r", "as before (its skill slot / the attack)")
                                        : uitext::Tr("vr.gestures.trig_about_before_l", "as before (the game's Shift)"));
         GLine(cv, fonts, label, GR(gov::TrigLabelRect(row)), 28, false, Ink(), hset::Align::Center);
         for (int r = 0; r < gov::kTrigRoles; ++r)
-            GButton(cv, fonts, GR(gov::TrigRoleRect(row, r)), TrigRoleWord(r), v.hover == gov::kTrigRole0 + row * gov::kTrigRoles + r || role == r, true, 28,
+            GButton(cv, fonts, GR(gov::TrigRoleRect(row, r)), TrigRoleWord(r), v.hover == gov::kTrigRole0 + row * gov::kTrigRoles + r || role == r, true, 26,
                     role == r ? kGameGoldBright : kGameText);
         if (role == 3)
             GButton(cv, fonts, GR(gov::TrigActionRect(row)), uitext::Tr("vr.gestures.trig_choose", "Choose its action"), v.hover == gov::kTrigAction0 + row, true, 24);
@@ -541,7 +586,7 @@ void DrawGestureReview(Canvas& cv, Fonts& fonts, const gov::View& v) {
     if (gov::HasRay(v.review.g)) DrawSwatches(cv, v, v.review.g.rgba, false);   // the ray's colour, right here
     GLine(cv, fonts, v.review.g.name[0] ? std::string(v.review.g.name) : std::string(TypeWord(v.review.g.type)), GR(gov::kReviewName), 40, true, InkGold(), hset::Align::Center);
     // the line in two halves: the type and hand (a glyph's hand steps there), what it does (a skill's mode steps there)
-    const std::string kindLine = std::string(TypeWord(v.review.g.type)) + " - " + HandWord(v.review.g.hand, v.review.g.type);
+    const std::string kindLine = KindLine(v.review.g);
     const std::string doesLine = v.review.action[0] ? uitext::TrF("vr.gestures.does", "does {action}", {{"action", gact::NameOf(v.review.action)}})
                                : v.review.skill[0] ? (v.review.mode ? uitext::TrF("vr.gestures.arms", "arms {skill} on the trigger", {{"skill", v.review.skill}})
                                                                     : uitext::TrF("vr.gestures.casts", "casts {skill}", {{"skill", v.review.skill}}))
@@ -550,6 +595,14 @@ void DrawGestureReview(Canvas& cv, Fonts& fonts, const gov::View& v) {
     if (v.hover == gov::kRevMode) RoundRect(cv, GR(gov::kReviewModeHalf), 8.0f, Col{0, 0, 0}, 0.0f, InkHot(), 0.9f, 2.0f);
     GLine(cv, fonts, kindLine, GR(gov::kReviewHandHalf), 28, false, v.hover == gov::kRevHand ? InkHot() : Ink(), hset::Align::Right);
     GLine(cv, fonts, doesLine, GR(gov::kReviewModeHalf), 28, false, v.hover == gov::kRevMode ? InkHot() : v.review.mode ? InkGold() : Ink(), hset::Align::Left);
+    if (v.review.g.type == BW_LINK_GT_VOICE) {   // how the word was read, and a warning when it sounds like another
+        const std::string read = v.review.g.button[0] ? uitext::Tr("vr.gestures.voice_read", "The speech model reads it - it and your takes must agree to cast")
+                                                      : uitext::Tr("vr.gestures.voice_unread", "The speech model cannot spell it - your takes alone match it (say it as you recorded it)");
+        GLine(cv, fonts, read, Rect{160, 784, 1440, 808}, 22, false, InkDim(), hset::Align::Center);
+        if (v.voice.similarName[0])
+            GLine(cv, fonts, uitext::TrF("vr.gestures.voice_similar", "Sounds like {name} - choose another word, or raise its threshold", {{"name", v.voice.similarName}}),
+                  Rect{160, 808, 1440, 834}, 22, false, g_game ? kGameGoldBright : kRedBright, hset::Align::Center);
+    }
     if (v.review.g.type == BW_LINK_GT_POSE) {   // its zone's size, "< Zone 12 cm >"
         const float r = v.review.zone[v.review.g.hand == BW_LINK_GH_LEFT ? 0 : 1];
         GLine(cv, fonts, uitext::TrF("vr.gestures.zone_size", "Zone {cm} cm", {{"cm", std::to_string((int)std::lround(100.0f * r))}}), GR(gov::kZoneText), 30, false,
@@ -620,6 +673,11 @@ void DrawGestureLines(Canvas& cv, Fonts& fonts, const gov::View& v) {
              : v.lastPercent >= 0.0f ? uitext::TrF("vr.gestures.last_none", "Last stroke: no match (best {percent})", {{"percent", Percent(v.lastPercent)}})
                                      : std::string();
     }
+    if (note.empty() && v.screen == gov::Screen::List && v.voiceOk && v.voice.heardStamp) {   // the last word heard, what came of it
+        const std::string heard = v.voice.heardText[0] ? "\"" + std::string(v.voice.heardText) + "\"" : std::string(uitext::Tr("vr.gestures.voice_a_sound", "a sound"));
+        note = v.voice.heardName[0] ? uitext::TrF("vr.gestures.voice_heard_match", "Heard {heard}: {name} {percent}", {{"heard", heard}, {"name", v.voice.heardName}, {"percent", Percent(v.voice.heardPercent)}})
+                                    : uitext::TrF("vr.gestures.voice_heard_none", "Heard {heard}: {why}", {{"heard", heard}, {"why", v.voice.heardWhy}});
+    }
     if (note.empty() && v.screen == gov::Screen::List && v.pages > 1)
         note = uitext::TrF("vr.tiles.page", "Page {page} of {pages}", {{"page", std::to_string(v.page + 1)}, {"pages", std::to_string(v.pages)}});
     const tiles::PRect rl = tiles::kRedLine;
@@ -633,8 +691,20 @@ void DrawGestureLines(Canvas& cv, Fonts& fonts, const gov::View& v) {
         hint = v.setKey[0] ? uitext::TrF("vr.gestures.hint_list3", "{count} gestures for {set} - a picture plays it, a skill's line: cast once or arm the trigger",
                                          {{"count", std::to_string(v.count)}, {"set", v.setKey}})
                            : std::string(uitext::Tr("vr.gestures.hint_none", "Your BodyWalk gestures, per class"));
+        if (v.voiceOk) {   // the listener's state (casts only in play: here it only shows what it heard)
+            const char* st = v.voice.state == BWGE_VOICE_LISTENING ? (v.voice.model == 1 ? uitext::Tr("vr.gestures.voice_listening", "Voice: listening (in play it casts)")
+                                                                                          : uitext::Tr("vr.gestures.voice_takes_only", "Voice: listening - no speech model for your language, your takes alone"))
+                           : v.voice.state == BWGE_VOICE_NO_MIC ? uitext::Tr("vr.gestures.voice_no_mic", "Voice: no microphone")
+                           : v.voice.state == BWGE_VOICE_NO_HELPER ? uitext::Tr("vr.gestures.voice_no_helper", "Voice: its listener is not installed - run D2R VR Setup again")
+                           : v.voice.state == BWGE_VOICE_ERROR ? uitext::Tr("vr.gestures.voice_error", "Voice: the listener stopped")
+                                                               : uitext::Tr("vr.gestures.voice_starting", "Voice: starting...");
+            hint = st;
+        }
         break;
-    case gov::Screen::Recording: hint = uitext::Tr("vr.gestures.hint_rec", "The trigger is BodyWalk's now - B or Y stops"); break;
+    case gov::Screen::Recording:
+        hint = v.recType == BW_LINK_GT_VOICE ? uitext::Tr("vr.gestures.hint_rec_voice", "Listening for your word - B or Y stops")
+                                             : uitext::Tr("vr.gestures.hint_rec", "The trigger is BodyWalk's now - B or Y stops");
+        break;
     case gov::Screen::Review:
         hint = v.haveReview && v.review.g.type == BW_LINK_GT_GLYPH
                    ? uitext::Tr("vr.gestures.hint_review_glyph", "Keep it, record it again, or drop this take - its hand line steps Right / Left / Either")

@@ -552,6 +552,52 @@ int main() {
         CHECK(Near(body, 0.0f, 1e-6f) && Near(upper, 0.3f, 1e-6f));   // (within the waist's turn: the trunk alone, the legs walk as the game has them)
     }
 
+    // [multiplayer] pose_share_facing: a facing pose (no joint, a heading, an eye height) is no pose to pose a hero by, but a turn - and the turn it gives a rig is
+    // the camera's forward the sender drew his hero to (HeadingOf -> AheadOfHeading -> the rig's model yaw, the same as ModelYawOfHeading)
+    {
+        Pose f;
+        f.eyeM = 1.65f;
+        const float camF[3] = {0.6f, 0.0f, -0.8f};
+        f.heading = poseshare::HeadingOf(camF);
+        CHECK(FacingOnly(f));
+        Target t;
+        CHECK(!FromPose(f, 5, 1.0f, 2.0f, &t));   // never posed from: no head
+        CHECK(FromFacing(f, 5, 1.0f, 2.0f, &t) && t.unit == 5 && t.x == 1.0f && t.z == 2.0f && Near(t.heading, f.heading, 1e-6f) && t.flags == 0);
+        float ax = 0.0f, az = 0.0f;
+        AheadOfHeading(f.heading, &ax, &az);
+        CHECK(Near(ax, 0.6f, 1e-5f) && Near(az, -0.8f, 1e-5f));
+        // a rig the game faces the other way (its model turned 172 deg from that forward, uniform scale 3): turned by about 172 deg, as his own PC drew him
+        const float g = std::atan2(0.6f, -0.8f) + 172.0f * kPi / 180.0f, c = std::cos(g), s = std::sin(g), u = 3.0f;
+        float M[16] = {};
+        M[0] = c * u; M[2] = -s * u; M[5] = u; M[8] = s * u; M[10] = c * u; M[15] = 1.0f;
+        float y1 = 0.0f, y2 = 0.0f;
+        CHECK(ModelYawOfDir(M, ax, az, &y1) && ModelYawOfHeading(M, f.heading, &y2) && Near(y1, y2, 1e-5f));
+        CHECK(Near(std::fabs(y1), 172.0f * kPi / 180.0f, 1e-3f));
+        Pose withHead = f;
+        withHead.flags = poseshare::kHead;
+        CHECK(!FacingOnly(withHead) && !FromFacing(withHead, 5, 0, 0, &t));   // a pose with a head is never a facing
+        Pose bad = f;
+        bad.eyeM = 0.0f;
+        CHECK(!FacingOnly(bad));
+        bad = f;
+        bad.heading = NAN;
+        CHECK(!FacingOnly(bad));
+        // on the wire it is the bare 48 bytes, its heading kept to the quantum
+        uint8_t buf[256];
+        const uint32_t nb = poseshare::PackPose(f, buf);
+        Pose back;
+        CHECK(nb == poseshare::kPoseBytes && poseshare::UnpackPose(buf, nb, &back) == nb && FacingOnly(back) && Near(back.heading, f.heading, 2e-4f));
+        // ... the receiver's playback keeps it one (a facing blended with a facing)
+        Pose f2 = f;
+        f2.heading = f.heading + 0.2f;
+        const Pose mid = poseshare::Blend(f, f2, 0.5f);
+        CHECK(FacingOnly(mid) && Near(mid.heading, f.heading + 0.1f, 1e-5f));
+        // ... and draws no marker
+        float a[8][4], b[8][4];
+        const float feet[3] = {}, eye[3] = {};
+        CHECK(poseshare::Markers(f, feet, 10.0f, eye, poseshare::MarkerKinds{}, a, b, 8) == 0);
+    }
+
     std::printf("remote_pose_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

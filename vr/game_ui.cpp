@@ -228,6 +228,34 @@ const Sheet* PlateSprite(int piece) {
     return sheets[piece].Ok() ? &sheets[piece] : nullptr;
 }
 
+namespace {
+Sheet g_alone[(int)Sprite::Count];   // SpriteAlone's own copies (under g_lock)
+bool g_aloneTried[(int)Sprite::Count] = {};
+}  // namespace
+
+const Sheet* SpriteAlone(Sprite s) {
+    Sheet* sheets = g_alone;
+    bool* tried = g_aloneTried;
+    const int i = (int)s;
+    if (i < 0 || i >= (int)Sprite::Count) return nullptr;
+    std::lock_guard<std::mutex> lock(g_lock);
+    if (g_ready && g_sheets[i].Ok()) return &g_sheets[i];
+    if (!tried[i]) {
+        tried[i] = true;
+        if (g_dir.empty()) g_dir = DefaultDir();
+        std::string bytes;
+        const char* why = "not there";
+        if (!ReadAll(std::filesystem::path(g_dir) / gameuifiles::kFiles[i].leaf, &bytes) || !Decode(bytes, &sheets[i], &why)) {
+            sheets[i] = Sheet{};
+            char line[220];
+            std::snprintf(line, sizeof line, "vrcam: game look - the game's %ls %s (d2r_vr_game_ui beside the plugin, made by D2R VR Authentic Settings)",
+                          gameuifiles::kFiles[i].leaf, why);
+            if (LogFn log = g_log.load()) log(line);
+        }
+    }
+    return sheets[i].Ok() ? &sheets[i] : nullptr;
+}
+
 bool Covers(const wchar_t* face, const std::wstring& text) {
     if (!face) return false;
     if (text.empty()) return true;
@@ -251,6 +279,8 @@ void SetDir(const std::wstring& dir) {
     g_dir = dir;
     g_tried = g_ready = false;
     for (Sheet& s : g_sheets) s = Sheet{};
+    for (Sheet& s : g_alone) s = Sheet{};
+    for (bool& t : g_aloneTried) t = false;
 }
 
 }  // namespace gameui

@@ -48,6 +48,26 @@ inline void Pens(const PenIn& in, uint8_t pen[2]) {
     pen[1] = (in.playPens & kPenRight) != 0;
 }
 
+// [gestures] voice_all_views (Serg, 2026-11-26: "и 3д на всех видах"): where the engine is fed. VR first person (F4): everything, as ever. With the
+// key ticked and the voice gestures on, in the other VR views (F1, F2, F3, F5 - viewgate::Number 1..5) for the voice gestures ONLY: no pen, and
+// of what it recognises only a voice gesture's skill (or its tome / scroll) goes to the game. Anywhere else (the flat game, no headset): nothing.
+enum class Where : uint8_t { Off, Full, VoiceOnly };
+inline Where WhereFed(bool f4, int vrView, bool allViews, bool voiceOn) {
+    if (f4) return Where::Full;
+    return allViews && voiceOn && vrView >= 1 && vrView <= 5 ? Where::VoiceOnly : Where::Off;
+}
+// The engine's play flag there: the session focused, no game menu (another view's frames carry kInMenu for the views' sake - its own menu bit is
+// kGameMenu), the skill panel not up.
+inline bool VoiceOnlyPlay(uint32_t frameFlags, bool panelOpen) {
+    return (frameFlags & directinput::kFocused) && !(frameFlags & directinput::kGameMenu) && !panelOpen;
+}
+// A cast recognised there: may it go to the game? Only a voice gesture's; a skill cast (mode 0 - a select would put it on an F4 trigger), or the
+// tome / scroll action (an Item: cast as a skill is). The other game actions (a key, a pad button, an act) act in F4 only.
+inline bool VoiceOnlyCast(uint8_t type, bool isAction, bool isItemAction, uint8_t mode) {
+    if (type != BW_LINK_GT_VOICE) return false;
+    return isAction ? isItemAction : mode == 0;
+}
+
 inline BWGE_Pose PoseOf(const directinput::Pose& p) {
     BWGE_Pose o{};
     for (int i = 0; i < 3; ++i) o.pos[i] = p.pos[i];
@@ -56,7 +76,7 @@ inline BWGE_Pose PoseOf(const directinput::Pose& p) {
     return o;
 }
 // The engine's frame: the head, both controllers as held, triggers, grips, the pens; `play` sets BWGE_FRAME_PLAY (a recognised stroke may cast).
-inline BWGE_Frame FrameOf(const directinput::Frame& f, bool play, const uint8_t pen[2]) {
+inline BWGE_Frame FrameOf(const directinput::Frame& f, bool play, const uint8_t pen[2], bool talk = false) {
     BWGE_Frame o{};
     o.size = sizeof o;
     o.flags = play ? BWGE_FRAME_PLAY : 0u;
@@ -69,6 +89,7 @@ inline BWGE_Frame FrameOf(const directinput::Frame& f, bool play, const uint8_t 
         o.grip[h] = f.hand[h].squeeze;
         o.pen[h] = pen[h];
     }
+    o.talk = talk ? 1 : 0;   // a Talk trigger held (the voice gestures with hold-to-talk)
     return o;   // (chest / pelvis: none - valid 0)
 }
 

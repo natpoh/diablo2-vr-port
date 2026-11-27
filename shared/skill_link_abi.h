@@ -126,6 +126,7 @@ enum {
     BW_LINK_GT_POSE = 2,      // a pose held (hands where they are, a grab): taken at the trigger's press
     BW_LINK_GT_MOTION = 3,    // a movement: the trigger starts it, the trigger again ends it
     BW_LINK_GT_BUTTON = 4,    // a controller button (chosen in BodyWalk; not recorded)
+    BW_LINK_GT_VOICE = 5,     // a word said (the gesture engine's voice gestures: its word in the list's `button`)
 };
 enum { BW_LINK_GH_LEFT = 0, BW_LINK_GH_RIGHT = 1, BW_LINK_GH_BOTH = 2 };
 enum {
@@ -205,6 +206,12 @@ typedef struct BW_LinkGestureCmds {
 #pragma pack(pop)
 
 #endif  // BW_LINK_GESTURES_VERSION
+
+// A voice gesture (the gesture engine's voice gestures, BW_LINK_GT_VOICE in BodyWalk's header from claude/voice-gestures): an SDK whose list is
+// older has no such name - the same number here.
+#ifndef BW_LINK_GT_VOICE
+#define BW_LINK_GT_VOICE 5
+#endif
 
 // The wire, whichever header defined it.
 static_assert(sizeof(BW_LinkSkill) == 60, "BW_LinkSkill is a wire format");

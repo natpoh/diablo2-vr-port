@@ -40,6 +40,9 @@ bool Covers(const wchar_t* face, const std::wstring& text);
 // [hud] monster_names_own: a piece of the game's target plate (gameuifiles::PlatePiece) read from the cache the first time it is asked, nullptr while
 // it is not there (our plate's own frame then). Any thread.
 const Sheet* PlateSprite(int piece);
+// One sprite of the look's own list, whatever skill_panel_game_look says ([openxr] keyboard_game_look: the VR keyboard's keys): the whole look's
+// copy when that was read, else the one file read from the cache the first time it is asked; nullptr while it is not there. Any thread.
+const Sheet* SpriteAlone(Sprite s);
 
 // Tests: the cache's folder (default: d2r_vr_game_ui beside this DLL); forgets what was read.
 void SetDir(const std::wstring& dir);

@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace gelib {
@@ -50,6 +51,8 @@ struct Fns {
     BWGE_SetHandFn setHand = nullptr;       // (optional)
     BWGE_SetModeFn setMode = nullptr;       // (optional, the two together)
     BWGE_GetModeFn getMode = nullptr;
+    BWGE_VoiceSetFn voiceSet = nullptr;     // (optional, the two together: voice gestures)
+    BWGE_VoiceGetFn voiceGet = nullptr;
 } g_fn;
 
 void Say(const char* fmt, const char* a = "", const char* b = "") {
@@ -207,6 +210,9 @@ bool Ensure(const char* dataDir) {
     f.setMode = Get<BWGE_SetModeFn>(mod, "BWGE_SetMode");   // (optional: cast once / select)
     f.getMode = Get<BWGE_GetModeFn>(mod, "BWGE_GetMode");
     if (!f.setMode || !f.getMode) f.setMode = nullptr, f.getMode = nullptr;
+    f.voiceSet = Get<BWGE_VoiceSetFn>(mod, "BWGE_VoiceSet");   // (optional: voice gestures - a word said casts)
+    f.voiceGet = Get<BWGE_VoiceGetFn>(mod, "BWGE_VoiceGet");
+    if (!f.voiceSet || !f.voiceGet) f.voiceSet = nullptr, f.voiceGet = nullptr;
     if (!f.abi || !f.open || !f.close || !f.setSet || !f.feed || !f.record || !f.stop || !f.keep || !f.discard || !f.clear || !f.bind || !f.color ||
         !f.threshold || !f.list || !f.poll || !f.trail) {
         Say("vrcam: gesture engine - d2r_vr_gestures.dll lacks some of its BWGE_* exports: not used");
@@ -300,5 +306,18 @@ int GetAction(uint32_t gesture, char* out, uint32_t cap) {
 int PollCasts2(BWGE_Cast2* out, int max) { return g_engine && g_fn.poll2 && out && max > 0 ? g_fn.poll2(g_engine, out, max) : 0; }
 int GetTake(uint32_t gesture, BWGE_TakeSample* out, int max) { return g_engine && g_fn.getTake && out && max > 0 ? g_fn.getTake(g_engine, gesture, out, max) : 0; }
 int SetPoseZone(uint32_t gesture, float radiusM) { return g_engine && g_fn.setZone ? Refused(g_fn.setZone(g_engine, gesture, radiusM)) : BW_LINK_GR_BAD; }
+bool HasVoice() { return g_engine && g_fn.voiceSet; }
+int VoiceSet(const BWGE_VoiceConfig& cfg) {
+    if (!g_engine || !g_fn.voiceSet) return BW_LINK_GR_BAD;
+    BWGE_VoiceConfig c = cfg;
+    c.size = sizeof c;
+    return g_fn.voiceSet(g_engine, &c);
+}
+int VoiceGet(BWGE_VoiceState* out) {
+    if (!out) return BW_LINK_GR_BAD;
+    std::memset(out, 0, sizeof *out);
+    out->size = sizeof *out;
+    return g_engine && g_fn.voiceGet ? g_fn.voiceGet(g_engine, out) : BW_LINK_GR_BAD;
+}
 
 }  // namespace gelib

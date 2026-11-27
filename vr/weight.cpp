@@ -39,6 +39,7 @@
 #include "parry.h"   // [weight] parry_feel: the knock's ease (Knock)
 #include "clash_loud.h"   // [weight] clash_sound: how loud and how hard the knock of the two weapons is
 #include "shield_collide.h"   // [weight] shield_collide: the weapon on the hero's own shield - through past 60 cm, the knock
+#include "shield_push.h"      // ... the contact's log line (shieldpush::Teller), as for an orb or a claw
 #include "stick_strength.h"
 #include "strike_measure.h"
 #include "strike_force.h"   // [weight] cleave: the weapon's strike threshold the cleave's numbers are times
@@ -650,6 +651,8 @@ unsigned g_shieldTold = 0;
 uint64_t g_shieldToldKey = 0;   // (the shield and the weapon told: a line when either changes)
 // The weight model's own pieces among the bodies (the pair's other weapon, the shield): never a strike, never a monster.
 inline bool OwnPiece(uint32_t id) { return id == kDualId || id == shieldcollide::kId; }
+constexpr double kShieldNeverPullM = 0.45;   // [weight] shield_never_through: the farthest the hand pulls the weapon past where it is drawn, on the shield
+double g_shieldRealLag = 0.0;               // ... how far the weapon's controller is from its drawn hand (the log's; the pull is capped)
 // The shield's face where it is drawn now, into the room, with each capsule's velocity from where it was the step before (t: the step's clock, s).
 void NoteShieldPieces(const Head& head, double t) {
     const float ident[4] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -725,6 +728,20 @@ void ShieldKnock(const hh::Hold& h) {
              approach, k.amplitude, k.ms,
              !k.heard ? "silent (under 1 m/s)" : !sound ? "no sound registered" : gated ? "silent (clash_sound_min_mps / clash_sound_gap_s)" : "the game's block sound");
     }
+}
+
+// [weight] shield_collide_unheld: the knock of a weapon the model does not hold (the skeleton's drawn hand, vr/shield_push.h) - the same rules as ShieldKnock's.
+const char* KnockOwnShieldLocked(int weaponHand, int shieldArm, float mps) {
+    const shieldcollide::Knock k = shieldcollide::KnockOf(mps);
+    if (!k.felt) return "not felt (under 0.25 m/s)";
+    if (const HapticFn pulse = g_haptic.load()) {
+        pulse(weaponHand & 1, k.amplitude, k.ms);
+        if ((shieldArm & 1) != (weaponHand & 1)) pulse(shieldArm & 1, k.amplitude, k.ms);
+    }
+    const ClashSoundFn sound = k.heard ? g_clashSound.load() : nullptr;
+    const bool gated = sound && !ClashHeard(mps, GetTickCount64());
+    if (sound && !gated) sound(mps, k.gameVolume, "an orb or a claw on the hero's own shield");
+    return !k.heard ? "felt, silent (under 1 m/s)" : !sound ? "felt, no sound registered" : gated ? "felt, silent (clash_sound_min_mps / clash_sound_gap_s)" : "felt and heard (the game's block sound)";
 }
 
 // A knock of the two: a new touch of the one hold's weapon on the other's pieces at least clashloud::kQuietMps fast (the closing speed) - the game's block sound
@@ -1457,7 +1474,18 @@ void Apply(skel::Input* in, Out* out) {
             const double lag = heft::Len(heft::Sub(hi[weaponHand].pose.pos, g_out[weaponHand].pose.pos));
             const bool wasThrough = g_shieldPass.Through();
             const double gap = ShieldGap(g_hold);
-            shieldMeets = g_shieldPass.Step(g_shieldTouch, (float)lag, (float)gap);
+            shieldMeets = g_shieldPass.Step(g_shieldTouch, (float)lag, (float)gap, wt.shieldNeverThrough);
+            // [weight] shield_never_through: on the shield (or a moment ago) the hand that holds the weapon pulls it toward a point at most kShieldNeverPullM past where
+            // it is drawn, toward its controller - not the controller itself: pulled harder than the 60 cm the old rule ever let it, the blade sank through the face's
+            // thin capsules (contact.cpp eases a deep one out 3 cm a round; shield_collide_test caught it ending 51 cm back, not 80). The drawn hand still gives way
+            // however far the controller goes, and slides along the face the way the controller leads it.
+            static ULONGLONG shieldTouchAt = 0;
+            if (g_shieldTouch) shieldTouchAt = GetTickCount64();
+            g_shieldRealLag = lag;
+            if (wt.shieldNeverThrough && shieldMeets && GetTickCount64() - shieldTouchAt <= 250 && lag > kShieldNeverPullM) {
+                const V3 drawnAt = g_out[weaponHand].pose.pos;
+                hi[weaponHand].pose.pos = heft::Add(drawnAt, heft::Mul(heft::Sub(hi[weaponHand].pose.pos, drawnAt), kShieldNeverPullM / lag));
+            }
             if (g_shieldPass.Through() && !wasThrough)
                 LogF("vrcam: weight - shield_collide: pressed on through the shield - the hand %.0f cm off its controller (%.0f at most): the weapon goes through until it is clear (%u time(s))",
                      lag * 100.0, shieldcollide::kGiveM * 100.0, g_shieldPass.Count());
@@ -1477,14 +1505,41 @@ void Apply(skel::Input* in, Out* out) {
                     for (int i = 0; i < g_shieldDrawn.n; ++i) { rLo = std::min(rLo, (double)g_shieldDrawn.part[i][6]); rHi = std::max(rHi, (double)g_shieldDrawn.part[i][6]); }
                     const char c4[5] = {(char)(g_shieldDrawn.code & 0xFF), (char)(g_shieldDrawn.code >> 8 & 0xFF), (char)(g_shieldDrawn.code >> 16 & 0xFF), (char)(g_shieldDrawn.code >> 24 & 0xFF), 0};
                     LogF("vrcam: weight - shield_collide: the %s arm's shield ('%s') is a face of %d capsule(s), r %.1f - %.1f cm, where the game's mesh is drawn: the %s hand's %s stops on it "
-                         "and slides along it, its hand giving way up to %.0f cm", HandName(shieldArm), c4, g_shieldDrawn.n, rLo * 100.0, rHi * 100.0, HandName(weaponHand),
-                         hh::KindName(g_hold.WeaponKind()), shieldcollide::kGiveM * 100.0);
+                         "and slides along it, %s", HandName(shieldArm), c4, g_shieldDrawn.n, rLo * 100.0, rHi * 100.0, HandName(weaponHand),
+                         hh::KindName(g_hold.WeaponKind()), wt.shieldNeverThrough ? "never through, however far the controller goes (shield_never_through)"
+                                                                                  : "its hand giving way up to 60 cm, then through until clear");
                 } else if (g_shieldToldKey >> 40) {
                     LogF("vrcam: weight - shield_collide: the shield is left out (%s)", !wt.shieldCollide ? "off, or no shield, or not F4" : !shieldFresh ? "its face not drawn lately (put away, hidden, no table row)"
                          : wt.second ? "a weapon in each hand" : !g_hold.Held() ? "no weapon in a hand" : weaponHand == shieldArm ? "the weapon is in the shield's hand" : "the shield's hand is on the weapon too");
                 }
                 g_shieldToldKey = tellKey;
             }
+        }
+        {   // [weight] shield_collide: the contact itself, a line at most every few seconds while there is one (resting on the face, sliding along it, gone through) - so
+            // a run shows whether the weapon met the shield at all, and why it went through (shieldpush::Teller; the same line for an orb or a claw: vr/skeletons.cpp)
+            static shieldpush::Teller teller;
+            static V3 handWas{};
+            static bool handHad = false;
+            double slide = 0.0;
+            const bool touchNow = shieldOn && g_shieldTouch && !g_shieldPass.Through();
+            if (shieldOn && weaponHand >= 0) {
+                const V3 hp = g_out[weaponHand].pose.pos;
+                if (handHad && touchNow && dt > 1e-4) slide = heft::Len(heft::Sub(hp, handWas)) / dt;
+                handWas = hp;
+                handHad = true;
+            } else {
+                handHad = false;
+            }
+            const shieldpush::Tell tell = shieldpush::TellOf(touchNow, shieldOn && g_shieldPass.Through(), slide);
+            const double lagNow = shieldOn && weaponHand >= 0 ? g_shieldRealLag : 0.0;   // (the controller's, not the capped pull's)
+            static bool touchWas = false;
+            shieldpush::Teller::Counts tc;
+            if (teller.Step(tell, touchNow && !touchWas, lagNow, 0.0, GetTickCount64(), &tc))
+                LogF("vrcam: weight - shield contact (the weight model's %s): now %s; in the last few seconds %u new touch(es), samples resting %u, sliding %u, through %u; the hand "
+                     "%.0f cm off its controller at most (%s) - %u time(s) through in all",
+                     hh::KindName(g_hold.WeaponKind()), shieldpush::TellName(tell), tc.touches, tc.resting, tc.sliding, tc.through, tc.maxLag * 100.0,
+                     wt.shieldNeverThrough ? "never through: shield_never_through" : "through past 60 cm, back once 3 cm clear", g_shieldPass.Count());
+            touchWas = touchNow;
         }
         {
             static heft::contact::Capsule withDual[monsterbodies::kMax];
@@ -2063,6 +2118,13 @@ void SetDrawnHeadParts2(const float* parts, int n) {
     ReleaseSRWLockExclusive(&g_lock);
 }
 
+const char* KnockOwnShield(int weaponHand, int shieldArm, float mps) {
+    AcquireSRWLockExclusive(&g_lock);   // (the clash gate is the weight thread's too)
+    const char* r = KnockOwnShieldLocked(weaponHand, shieldArm, mps);
+    ReleaseSRWLockExclusive(&g_lock);
+    return r;
+}
+
 void SetDrawnShield(const float* parts, int n, int arm, uint32_t code) {
     DrawnShield d;
     d.arm = arm & 1;
@@ -2251,6 +2313,7 @@ void SetDrawnHead2(const float*, const float*, float) {}
 void SetDrawnHeadParts(const float*, int) {}
 void SetDrawnHeadParts2(const float*, int) {}
 void SetDrawnShield(const float*, int, int, uint32_t) {}
+const char* KnockOwnShield(int, int, float) { return ""; }
 bool LastThrow(ThrowOutcome* out) { if (out) *out = ThrowOutcome{}; return false; }
 void SetHaptic(HapticFn) {}
 void SetClashSound(ClashSoundFn) {}

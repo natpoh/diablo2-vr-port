@@ -102,6 +102,17 @@ Third-party parts, each under its own licence:
     https://github.com/bearstonem/d2r-pcvr/commit/18b04ed25bbd84935f68e9312e5161206b5044eb
     https://github.com/bearstonem/d2r-pcvr/commit/1b223a03b90d694f464034b9b98dd2c84cd06a37
     https://github.com/bearstonem/d2r-pcvr/commit/b57ed57c5458d87fb12f04e832faadc715a022b2)
+    reshade/D2R_Frontend_Unleashed.fxh, tools/settings/frontend_scene_unleashed.h, tools/settings/frontend_scene_unleashed.cpp,
+    tools/settings/frontend_edits_act2.json, tools/settings/frontend_edits_act3.json, tools/settings/frontend_edits_act5.json,
+    cleanroom/tests/frontend_scene_unleashed_test.cpp - the main menu in 3D ([frontend]; by Kudlatytrue, PR #583 "Main menu in
+    full 3D: character select acts 1-5 as standing scenes, per-act skies, scene editor", merged by bearstonem via PR #584 with
+    Berk's 9a276e5 - thank you: https://github.com/bearstonem/d2r-pcvr/pull/583
+    https://github.com/bearstonem/d2r-pcvr/commit/a645967 https://github.com/bearstonem/d2r-pcvr/commit/863697f
+    https://github.com/bearstonem/d2r-pcvr/commit/8f25454 https://github.com/bearstonem/d2r-pcvr/commit/7bd5a0a
+    https://github.com/bearstonem/d2r-pcvr/commit/35395da https://github.com/bearstonem/d2r-pcvr/commit/7b73d3f
+    https://github.com/bearstonem/d2r-pcvr/commit/9a276e5; the scene editor's edits frontend_edits_actN.json are its data as
+    committed there; the parts of vr/campfire_unleashed.*, vr/render/effects/effects.cpp and reshade/D2R_DepthFog.fx marked
+    [frontend] are from it too)
 - MinHook - BSD 2-clause, Copyright (C) 2009-2017 Tsuda Kageyu.
 - ReShade SDK headers - BSD 3-clause, Copyright (C) 2014 Patrick Mours.
 - ReShade FX compiler (reshadefx, third_party/reshadefx: the effect's preprocessor, parser and HLSL generator, linked into the plugin
@@ -112,6 +123,11 @@ Third-party parts, each under its own licence:
 - Box3D (in d2r_vr_weight.dll, the knockable and grabbed props' physics) - MIT, Copyright (c) 2026 Erin Catto.
 - pybg3's BitKnit2 decoder (rans.h, third_party/pybg3, from github.com/eiz/pybg3 at commit 3b02e59bb4484c27e49e51ee9d83e8a9d09df4ed:
   reads the game's own Granny model files on the player's PC, for the sky dome) - MIT, Copyright (c) 2024 Mackenzie Straight.
+- The voice gestures' listener (d2rloader\d2r_vr_libs\voice, a program of its own beside the gesture engine) carries, unmodified: Vosk
+  (Alpha Cephei; with Kaldi and OpenFst inside, Apache 2.0, and CLAPACK, BSD) and Alpha Cephei's speech models (Apache 2.0),
+  openWakeWord's two feature models (Apache 2.0, David Scripka; the embedding model is Google's speech_embedding, Apache 2.0), ONNX
+  Runtime (MIT, Microsoft) and the MinGW-w64 runtime Vosk is built with (GCC's libstdc++ / libgcc: GPL 3 with the GCC Runtime Library
+  Exception 3.1; winpthreads: MIT). Each is named with its full licence text in that folder (THIRD-PARTY-NOTICES.txt and the texts beside it).
 
 Diablo II: Resurrected is Blizzard Entertainment's. This project is not
 affiliated with or endorsed by Blizzard and ships none of the game's files.

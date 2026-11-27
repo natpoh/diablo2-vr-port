@@ -17,6 +17,8 @@ Type: files; Name: "{app}\d2rloader\plugins\d2r_vr_settings.exe"
 ; it goes first and D2R_VR_Settings.exe comes in under its own name. Only these EXACT names: the player's own copies and backups of the program
 ; (D2R_VR_Settings.exe.before_...) and of the ini (d2r_vr.ini.before_..., moved into the mod with the ini) are never matched by a wildcard here.
 Type: files; Name: "{app}\d2r_vr_settings.exe"
+; the closed 3D video library of 0.224.0 / 0.224.1: the plugin does it itself since its code was opened (vr\video3d), nothing loads it now
+Type: files; Name: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\d2r_vr_video3d.dll"
 
 [UninstallDelete]
 ; the mod's own files that it wrote while running: its settings

@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #include <D2RLPlugin/api.h>
@@ -42,6 +43,20 @@ bool g_setTold = false;
 BW_LinkSkills g_skills;              // (12 KB: not on the stack)
 BW_LinkVrRune g_trailNow[BW_LINK_VRRUNES_MAX];
 std::string g_dataDir;
+
+// [gestures] voice: the settings (any thread writes, the frame thread tells the engine) and the engine's voice state (the frame thread reads it)
+// (Voice gestures: the idea is D2R VR Unleashed's voice casting by Piotr Kożuch (ptkk73) and Berk (bearstonem),
+// https://github.com/bearstonem/d2r-pcvr/pull/624 - thank you. Our own code: the listener is the gesture engine's, its casts the glyphs' path.)
+SRWLOCK g_voiceLock = SRWLOCK_INIT;
+BWGE_VoiceConfig g_voiceCfg{};
+uint32_t g_voiceRev = 1, g_voiceTold = 0;
+bool g_voiceOn = false;
+std::atomic<bool> g_hasVoice{false};
+BWGE_VoiceState g_voiceState{};
+std::string g_voiceStatus;           // (the frame thread's: a change is logged)
+uint32_t g_voiceStateWas = ~0u;
+std::atomic<bool> g_allViews{false};  // [gestures] voice_all_views (ConfigureVoiceViews)
+Where g_whereWas = Where::Off;        // (the frame thread's: a change is logged)
 
 SRWLOCK g_trailLock = SRWLOCK_INIT;  // the trail's copy for the runes layer
 BW_LinkVrRune g_trail[BW_LINK_VRRUNES_MAX];
@@ -80,7 +95,7 @@ void ClearTrail() {
 // down is let go 80 ms later (g_actUp).
 uint32_t g_actBits = 0;
 ULONGLONG g_actUpAt = 0;
-void DoAction(const char* id, uint32_t gesture) {
+void DoAction(const char* id, uint32_t gesture, bool anyView = false) {   // anyView: a voice gesture's in another VR view (only an Item comes here then)
     const gact::Def* d = gact::All().Find(id);
     if (!d) {
         LogF("vrcam: gesture engine - gesture %u does '%.31s', an action this build does not know: nothing done", gesture, id);
@@ -98,7 +113,7 @@ void DoAction(const char* id, uint32_t gesture) {
             LogF("vrcam: gesture engine - gesture %u: %s - the hero has no tome or scroll for it (the HUD says so)", gesture, d->name);
             return;
         }
-        skilllinkwire::CastFromEngine(found);
+        skilllinkwire::CastFromEngine(found, anyView);
         LogF("vrcam: gesture engine - gesture %u: %s - skill %d cast the game's way", gesture, d->name, (int)found);
         return;
     }
@@ -138,6 +153,14 @@ int DrawingHand(uint32_t gesture) {
     const int last = trigroleswire::LastStrokeHand(&at);
     return last >= 0 && GetTickCount64() - at < 2000 ? last : 1;
 }
+// A gesture's type (BW_LINK_GT_*, 0 not in the list). The listener's own thread.
+uint8_t TypeOf(uint32_t gesture) {
+    static BW_LinkGestures list;   // (large: not on the stack)
+    gelib::List(&list);
+    for (uint32_t i = 0; i < std::min<uint32_t>(list.count, BW_LINK_GESTURES_MAX); ++i)
+        if (list.g[i].id == gesture) return list.g[i].type;
+    return 0;
+}
 // (the listener's own thread: the engine is open here)
 uint8_t ModeOfLocked(uint32_t gesture) {
     uint8_t m = 0;
@@ -156,20 +179,66 @@ struct Calls {   // gelib as gengine::Do's engine
 };
 
 // Once per headset frame on the draw thread.
+// The voice settings to the engine when they changed (or the engine is new), its state read back; a change of what it says goes to the log.
+void StepVoice() {
+    BWGE_VoiceConfig cfg;
+    uint32_t rev;
+    AcquireSRWLockShared(&g_voiceLock);
+    cfg = g_voiceCfg;
+    rev = g_voiceRev;
+    ReleaseSRWLockShared(&g_voiceLock);
+    if (!gelib::HasVoice()) { g_hasVoice.store(false); return; }
+    if (rev != g_voiceTold) {
+        g_voiceTold = rev;
+        const int r = gelib::VoiceSet(cfg);
+        LogF("vrcam: gesture engine - voice gestures %s (microphone '%.60s', language '%.15s'%s): %d", cfg.on ? "on" : "off", cfg.mic, cfg.lang,
+             cfg.holdToTalk ? ", only while a Talk trigger is held" : "", r);
+    }
+    g_hasVoice.store(cfg.on != 0);
+    BWGE_VoiceState s;
+    gelib::VoiceGet(&s);
+    if (s.state != g_voiceStateWas || g_voiceStatus != s.status) {
+        g_voiceStateWas = s.state;
+        g_voiceStatus = s.status;
+        if (cfg.on) LogF("vrcam: gesture engine - voice: state %u, model '%.63s', microphone '%.100s': %.150s", s.state, s.modelName, s.micName, s.status);
+    }
+    AcquireSRWLockExclusive(&g_voiceLock);
+    g_voiceState = s;
+    ReleaseSRWLockExclusive(&g_voiceLock);
+}
+
 void OnFrame(const directinput::Frame& f, void*) {
     if (!g_on.load()) {
         if (gelib::Loaded()) {
             gelib::Shutdown();
             g_active.store(false);
+            g_hasVoice.store(false);
+            g_voiceTold = 0;
             g_setTold = false;
             ClearTrail();
         }
         return;
     }
-    if (!viewgate::F4()) {   // F4 only: in any other view nothing is fed (a take the tab started is stopped by the tab itself)
+    // F4: everything. Another view: nothing (a take the tab started is stopped by the tab itself) - or, with [gestures] voice_all_views, the voice
+    // gestures only (gesture_engine.h WhereFed)
+    bool voiceWanted;
+    AcquireSRWLockShared(&g_voiceLock);
+    voiceWanted = g_voiceOn;
+    ReleaseSRWLockShared(&g_voiceLock);
+    const Where where = WhereFed(viewgate::F4(), viewgate::Number(), g_allViews.load(), voiceWanted);
+    if (where != g_whereWas) {
+        if (where == Where::VoiceOnly || g_whereWas == Where::VoiceOnly)
+            LogF("vrcam: gesture engine - %s", where == Where::VoiceOnly ? "another VR view: the voice gestures only ([gestures] voice_all_views) - no pen, no pose"
+                                             : where == Where::Full     ? "VR first person (F4): every gesture again"
+                                                                        : "not fed (not VR F4, and the voice gestures are not for this view)");
+        g_whereWas = where;
+    }
+    if (where == Where::Off) {
         ClearTrail();
         return;
     }
+    const bool voiceOnly = where == Where::VoiceOnly;
+    if (voiceOnly) ClearTrail();   // (nothing is drawn there)
     if (g_dataDir.empty()) g_dataDir = DataDir();
     const bool open = gelib::Ensure(g_dataDir.c_str());
     g_active.store(open);
@@ -201,13 +270,45 @@ void OnFrame(const directinput::Frame& f, void*) {
     pi.rolePen[1] = trigroleswire::Pen(1);
     uint8_t pen[2];
     Pens(pi, pen);
-    gelib::Feed(FrameOf(f, pi.play && !pi.panelOpen, pen));
+    bool enginePlay = pi.play && !pi.panelOpen;
+    if (voiceOnly) {   // another VR view: no pen, play by its own flags (the frame's kInMenu is the view's there)
+        pen[0] = pen[1] = 0;
+        enginePlay = VoiceOnlyPlay(f.flags, pi.panelOpen);
+    }
+    StepVoice();   // (before the frame: the engine knows whether it listens)
+    gelib::Feed(FrameOf(f, enginePlay, pen, trigroleswire::Talking()));
     // what it recognised: the game's own cast (skill_link_wire's caster, F4 / play only)
     if (g_actBits && GetTickCount64() >= g_actUpAt) {   // an action held for a tap: let go
         directinput::Action(g_actBits, false);
         g_actBits = 0;
     }
     int n = 0;
+    if (voiceOnly) {   // another VR view: a voice gesture's skill or tome / scroll only (gesture_engine.h VoiceOnlyCast); the rest is dropped, said
+        BWGE_Cast2 casts[8];
+        const bool actions = gelib::HasActions();
+        BWGE_Cast plain[8];
+        n = actions ? gelib::PollCasts2(casts, 8) : gelib::PollCasts(plain, 8);
+        for (int i = 0; i < n; ++i) {
+            if (!actions) {
+                casts[i] = BWGE_Cast2{};
+                casts[i].gesture = plain[i].gesture;
+                casts[i].skill = plain[i].skill;
+            }
+            casts[i].action[sizeof casts[i].action - 1] = 0;
+            const gact::Def* d = casts[i].action[0] ? gact::All().Find(casts[i].action) : nullptr;
+            const uint8_t type = TypeOf(casts[i].gesture);
+            const uint8_t mode = gelib::HasModes() ? ModeOfLocked(casts[i].gesture) : 0;
+            if (!VoiceOnlyCast(type, casts[i].action[0] != 0, d && d->kind == gact::Kind::Item, mode)) {
+                LogF("vrcam: gesture engine - gesture %u recognised in VR view %d: not cast - %s", casts[i].gesture, viewgate::Number(),
+                     type != BW_LINK_GT_VOICE ? "only the voice gestures act outside F4 ([gestures] voice_all_views)"
+                                              : "a select, a key, a pad button or an act acts in F4 only (a skill or a tome / scroll does here)");
+                continue;
+            }
+            if (casts[i].action[0]) DoAction(casts[i].action, casts[i].gesture, true);
+            else if (casts[i].skill >= 0) skilllinkwire::CastFromEngine(casts[i].skill, true);
+        }
+        return;   // (no flash, no trail, no trigger's glyph: nothing is drawn there)
+    }
     if (gelib::HasActions()) {   // skills and game actions (vr/gesture_actions.h)
         BWGE_Cast2 casts[8];
         n = gelib::PollCasts2(casts, 8);
@@ -258,6 +359,49 @@ void Configure(bool on, int playPens) {
         LogF("vrcam: gesture engine - %s ([gestures] engine_in_game; pens in play: %s)",
              on ? "on: the gestures are recorded and recognised in the game (d2r_vr_gestures.dll), F4" : "off", kPens[g_playPens.load()]);
     }
+}
+
+void ConfigureVoice(bool on, bool hold, const char* mic, const char* language) {
+    BWGE_VoiceConfig c{};
+    c.size = sizeof c;
+    c.on = on ? 1u : 0u;
+    c.holdToTalk = hold ? 1u : 0u;
+    std::snprintf(c.mic, sizeof c.mic, "%s", mic ? mic : "");
+    std::string lang = language ? language : "";
+    if (lang.empty() || lang == "auto") {   // Windows' language: "ru-RU" -> "ruRU" (the game's codes)
+        wchar_t loc[LOCALE_NAME_MAX_LENGTH] = {};
+        char u[LOCALE_NAME_MAX_LENGTH * 3] = {};
+        if (GetUserDefaultLocaleName(loc, LOCALE_NAME_MAX_LENGTH) > 0) WideCharToMultiByte(CP_UTF8, 0, loc, -1, u, (int)sizeof u, nullptr, nullptr);
+        lang.clear();
+        for (const char* p = u; *p; ++p)
+            if (*p != '-') lang += *p;
+        if (lang.size() > 4) lang.resize(4);
+    }
+    std::snprintf(c.lang, sizeof c.lang, "%s", lang.c_str());
+    AcquireSRWLockExclusive(&g_voiceLock);
+    const bool same = std::memcmp(&c, &g_voiceCfg, sizeof c) == 0;
+    if (!same) {
+        g_voiceCfg = c;
+        ++g_voiceRev;
+    }
+    g_voiceOn = on;
+    ReleaseSRWLockExclusive(&g_voiceLock);
+}
+
+void ConfigureVoiceViews(bool allViews) {
+    if (g_allViews.exchange(allViews) != allViews)
+        LogF("vrcam: gesture engine - [gestures] voice_all_views %s", allViews ? "on: the voice gestures cast in every VR view (F1, F2, F3, F5 too), nothing else does there"
+                                                                              : "off: the gestures, the voice ones too, in VR first person (F4) only");
+}
+bool VoiceAllViews() { return g_allViews.load() && HasVoice(); }
+
+bool HasVoice() { return Active() && g_hasVoice.load(); }
+bool Voice(BWGE_VoiceState* out) {
+    if (!out || !HasVoice()) return false;
+    AcquireSRWLockShared(&g_voiceLock);
+    *out = g_voiceState;
+    ReleaseSRWLockShared(&g_voiceLock);
+    return true;
 }
 
 bool On() { return g_on.load(); }

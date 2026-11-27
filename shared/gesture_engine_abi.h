@@ -37,7 +37,8 @@ typedef struct BWGE_Frame {
     BWGE_Pose head, hand[2];   // [0] left, [1] right (the controllers' grip poses)
     float trigger[2], grip[2]; // 0..1
     uint8_t pen[2];    // the game says which trigger is a pen now (1): only these draw / take; 0 = the game's own control this frame
-    uint8_t reserved[6];
+    uint8_t talk;      // 1: the player holds the talk button (voice gestures with holdToTalk cast only then)
+    uint8_t reserved[5];
     BWGE_Pose chest, pelvis;   // optional (valid 0): a body tracker's, when there is one
 } BWGE_Frame;
 enum { BWGE_FRAME_PLAY = 1u << 0 };   // a game area, no menu, F4: recognised strokes may cast (else only takes are recorded)
@@ -141,11 +142,51 @@ typedef int(__cdecl* BWGE_SetHandFn)(void* engine, uint32_t gesture, uint8_t han
 typedef int(__cdecl* BWGE_SetModeFn)(void* engine, uint32_t gesture, uint8_t mode);   // 0 cast, 1 select; others BW_LINK_GR_BAD
 typedef int(__cdecl* BWGE_GetModeFn)(void* engine, uint32_t gesture, uint8_t* out);
 
+// Voice gestures (optional exports; BW_LINK_GT_VOICE): a word said casts as a glyph drawn does - its cast comes through BWGE_PollCasts2 with the
+// gesture's skill or action, and the game does it its own way. The engine's listener is a process of its own (voice\d2r_vr_voice.exe beside the
+// library, started and watched by the engine; nothing of it loads into the game) and the frame only looks at what it heard - it never waits.
+// A voice gesture is recorded as the others: BWGE_Record(0, BW_LINK_GT_VOICE, BW_LINK_GH_RIGHT, skill) arms a take that starts at once (no pen):
+// the word said three times; the list's recordState goes READY -> DRAWING (heard once) -> SAVED / FAILED, then Keep / Discard. The list carries a
+// voice gesture's word in `button` ("" when the speech model could not read it: its takes alone match it) and its percent in `threshold`
+// (BWGE_SetThreshold sets it, 50 .. 95). Audio never leaves the computer; the takes are kept beside the gestures.
+#pragma pack(push, 8)
+typedef struct BWGE_VoiceConfig {
+    uint32_t size;          // sizeof(BWGE_VoiceConfig)
+    uint32_t on;            // 1: listen (a word casts in play, BWGE_FRAME_PLAY); 0: the listener ends
+    uint32_t holdToTalk;    // 1: a word casts only while the frame's `talk` is 1
+    char mic[128];          // a capture device's name or a part of it (UTF-8); "" = Windows' default microphone for communications
+    char lang[16];          // the game's language ("enUS", "ruRU" ...): which speech model; or a model folder's own name
+} BWGE_VoiceConfig;
+typedef struct BWGE_VoiceState {
+    uint32_t size;          // sizeof(BWGE_VoiceState), set by the caller
+    uint32_t state;         // BWGE_VOICE_*
+    uint32_t level;         // the microphone, 0..100
+    uint32_t speaking;      // 1 while a sound goes on
+    uint32_t listening;     // 1 when a word said now would cast
+    uint32_t model;         // 0 no speech model for the language (words matched by their takes alone), 1 one in use, 2 it would not load
+    char modelName[64];
+    char micName[128];
+    uint32_t takeHeard;     // a take running: how many times the word was heard (of 3)
+    char takeText[48];      // the take's word as read ("" none read)
+    char takeWhy[96];       // a failed take: why
+    uint32_t takeSimilar;   // the new take sounds like this gesture (0 none)
+    uint32_t heardStamp;    // + for every sound heard
+    uint32_t heardGesture;  // it matched this gesture (0 none)
+    float heardPercent;     // how near its takes
+    char heardText[48];     // what the speech model read
+    char heardWhy[64];      // no match: why
+    char status[160];       // a line for the player
+} BWGE_VoiceState;
+#pragma pack(pop)
+enum { BWGE_VOICE_OFF = 0, BWGE_VOICE_STARTING = 1, BWGE_VOICE_LISTENING = 2, BWGE_VOICE_NO_MIC = 3, BWGE_VOICE_NO_HELPER = 4, BWGE_VOICE_ERROR = 5 };
+typedef int(__cdecl* BWGE_VoiceSetFn)(void* engine, const BWGE_VoiceConfig* cfg);   // BW_LINK_GR_OK, BAD
+typedef int(__cdecl* BWGE_VoiceGetFn)(void* engine, BWGE_VoiceState* out);          // BW_LINK_GR_OK, BAD
+
 // The exports, by these names:
 //   BWGE_Abi BWGE_Open BWGE_Close BWGE_SetSet BWGE_Feed BWGE_Record BWGE_Stop BWGE_Keep BWGE_Discard BWGE_Clear BWGE_Bind BWGE_SetColor
 //   BWGE_SetThreshold BWGE_List BWGE_PollCasts BWGE_Trail
 //   optional: BWGE_GetPoseZone BWGE_SetPoseZone BWGE_BindAction BWGE_GetAction BWGE_PollCasts2 BWGE_GetTake BWGE_SetHand BWGE_SetMode
-//             BWGE_GetMode
+//             BWGE_GetMode BWGE_VoiceSet BWGE_VoiceGet
 
 #ifdef __cplusplus
 }

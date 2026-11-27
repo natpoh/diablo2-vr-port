@@ -861,8 +861,17 @@ uint64_t HookClientSize() {
     if (map) {
         TellPointerReach(native);
         if (g_clientSizeMapOn.load(std::memory_order_relaxed)) asker = vrres::Asker::Cursor;
+        // [frontend] band_all: the main menu laid out 16:9 - the interface <-> client helpers answered the band too (else the character list's
+        // entries and the game's own Multiplayer frame laid out for the whole picture, the rest in the band: the list clipped empty, the frame
+        // off D2RLoader's window; Serg 2026-11-27)
+        if (vrres::BandForHelpers()) asker = vrres::Asker::Ui;
     }
     if (asker == vrres::Asker::Other && !map) TellOtherCaller(from, native);
+    // ([frontend] band_all: the game's other callers too - its own Multiplayer frame was laid out for the WINDOW's 1280 square, centred at x 640
+    // of the picture, off D2RLoader's window laid out in the band; Serg 2026-11-27)
+    // ... and the cursor's own two callers: every answer the band, so nothing of the main menu lays out by the whole picture (its Multiplayer frame
+    // hung below the band with only those left; the cursor's conversion stays the identity, all callers alike)
+    if (vrres::BandForHelpers()) asker = vrres::Asker::Ui;
     return asker == vrres::Asker::Other ? native : vrres::ClientSizeAnswer(asker, native, g_clientSizeOn.load());
 }
 // The target of a relative CALL (E8) or JMP (E9) at `site` when it is one (0 otherwise).
@@ -1097,7 +1106,7 @@ int D2rvrWristUnitsState() { return engitem::WristUnitsState(); }   // (xr.cpp: 
 
 // The start without ReShade (LoadReShade: no ReShade loaded or joined since 0.203): vr/plugin/reshade_load.cpp
 
-static const char g_info_version[] = "0.224.1";
+static const char g_info_version[] = "0.225.0";
 
 // Who this is. D2RLoader prints "<name> <version> by <author>" for every plugin, and d2r-pcvr (a fork of our 0.152) carries the
 // same id, name and author as we did - "vrcam ... by BodyWalkVR" told a support log nothing. The id stays (the log file
@@ -1454,6 +1463,7 @@ D2RL_PLUGIN_EXPORT bool D2RLoaderLoadPlugin(const PluginContext* ctx) noexcept {
     attackpath::InitNet(ctx);   // [gameplay] flat_attack_path: a joined player's channel to the host
     flatmenu::Init(ctx, g_iniPath);   // [hud] game_menu_settings: the host's rules channel "HR" (always: D2RLoader takes channels at the load only) and the console's "vrrules"
     meleedirectclient::InitNet(ctx);   // [gameplay] melee_direct_client_cleave: who hosts decides - the channel always (D2RLoader takes it at the load only)
+    coopstrikewire::Init(ctx);   // [gameplay] melee_direct_client_host: rides melee_direct_client's channel (registered above)
     hitshare::Init(ctx);   // [multiplayer] share_hit_outcomes: the channel "HS" always (D2RLoader takes it at the load only); the host's box is live
     skillwheel::Init(ctx);
     lowhp::Init(ctx);   // [hud] low_hp_vignette reads the hero's life on the UI thread

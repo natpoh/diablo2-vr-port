@@ -52,6 +52,14 @@ void ClientSizeReflow();
 void SetUiBand(bool on);
 // [render] ui_band_16x9: 0 never, 1 always, 2 only while the inventory is open (UiBandTick, every frame on the draw thread: the band follows it).
 void SetUiBandMode(int mode);
+// [frontend] / [campfire]: the band reaches the game's layout without a render size in force too (the menu scene round you)
+void SetBandWithoutSize(bool on);
+// [frontend] scene_3d: the menu scenes asked the size picked as soon as they have stood a while (as in a game); a render size in force now
+void SetMenusAtPickedSize(bool on);
+bool RenderSizeInForce();
+// [frontend] band_all: while the main menu is laid out in the 16:9 band, the client-size query's interface <-> client helpers answered the band too
+void SetBandForHelpers(bool on);
+bool BandForHelpers();
 void UiBandTick(bool inventoryOpen);
 // [render] ui_band_corner_icons (xr.cpp, the laser on the icons over a menu's panel): `mode` in force at once, held over the ini's older value until the
 // ini says it too (5 s at most: the write failed) - the next UiBandTick lays the interface out for it.

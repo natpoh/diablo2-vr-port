@@ -1,0 +1,1159 @@
+{
+ "act": 5,
+ "base": "v3",
+ "moved": {
+  "spearwall01_01": {
+   "right": -29.77,
+   "ahead": 21.02,
+   "turn": 15
+  },
+  "snow_grunge_01_01": {
+   "right": 10.22,
+   "ahead": 19.44,
+   "y": 0.6
+  },
+  "path_grunge01_01": {
+   "right": 0.63,
+   "ahead": 45.73
+  },
+  "terrain_act5_01": {
+   "y": 0.25
+  },
+  "ui_pebbles_cluster03_19": {
+   "y": 0.4
+  },
+  "grunge_dungeon_rocks01_100_02": {
+   "y": 0.25
+  },
+  "grunge_dungeon_rocks01_100_05": {
+   "y": 0
+  },
+  "grunge_blood_splatter03_150_01": {
+   "y": 0.3
+  },
+  "rock_pile02_12": {
+   "y": 0.2
+  },
+  "grunge_dungeon_rocks01_100_08": {
+   "y": 0
+  },
+  "expansion_grass_moorland03_02": {
+   "y": 0
+  },
+  "grunge_tracks_puddle01_05": {
+   "y": 0.3
+  },
+  "grunge_tracks_puddle01_06": {
+   "right": -2.77,
+   "ahead": 11.78,
+   "y": 0.3
+  },
+  "grunge_tracks_puddle01_07": {
+   "y": 0.3
+  },
+  "grunge_tracks_puddle01_08": {
+   "y": 0.3
+  },
+  "rocks_snowy_d01_02": {
+   "right": 0.99,
+   "ahead": 8.3,
+   "y": 0
+  },
+  "expansion_shrub02_09": {
+   "y": 1
+  },
+  "expansion_shrub02_10": {
+   "y": 0.8
+  },
+  "expansion_bush_shad01_06": {
+   "y": 0.5
+  },
+  "expansion_grass_moorland03_06": {
+   "y": 1
+  },
+  "grunge_dungeon_rocks01_100_09": {
+   "right": 1.43,
+   "ahead": 17.81,
+   "y": 0.4
+  },
+  "slope_b03_02": {
+   "right": 6.74,
+   "ahead": 52.97
+  },
+  "expansion_bush_dogwood03_02": {
+   "right": 10.99,
+   "ahead": 53.82
+  },
+  "ui_vista_act5_vignette_mountain01_02": {
+   "right": 178.72,
+   "ahead": 347.09
+  },
+  "ui_imposter_act1_plate03_07": {
+   "right": 53.24,
+   "ahead": 128.63
+  },
+  "ui_imposter_act1_plate03_08": {
+   "right": -75.92,
+   "ahead": 121.9,
+   "turn": 35
+  },
+  "ui_vista_act5_vignette_mountain01_06": {
+   "right": 12.36,
+   "ahead": 291.21
+  },
+  "ui_act5_frontend_foliage_ui_expansion_trees_foreground01_02": {
+   "right": 15.59,
+   "ahead": 36.03
+  },
+  "slush_pile_04_03_pcvr_r90": {
+   "y": 0.8
+  },
+  "slush_pile_04_04_pcvr_r90": {
+   "y": 0.45
+  },
+  "slush_pile_04_05_pcvr_r90": {
+   "y": 1.95
+  },
+  "slush_pile_04_06_pcvr_r90": {
+   "y": 0.45
+  },
+  "expansion_tree_dead09_01_pcvr_r90": {
+   "right": -70.83,
+   "ahead": -29.34
+  },
+  "snow_grunge_01_01_pcvr_r90": {
+   "right": -19.41,
+   "ahead": 10.25,
+   "y": 0.7
+  },
+  "slush_pile_04_20_pcvr_r90": {
+   "right": -36.86,
+   "ahead": -10.7,
+   "y": 0.6
+  },
+  "slush_pile_04_21_pcvr_r90": {
+   "y": 0.8
+  },
+  "ui_pebbles_cluster03_14_pcvr_r90": {
+   "y": 0.4
+  },
+  "expansion_shrub02_04_pcvr_r90": {
+   "y": 0
+  },
+  "slush_pile_04_08_pcvr_r90": {
+   "y": 0.3
+  },
+  "terrain_act5_01_pcvr_r90": {
+   "right": -29.04,
+   "ahead": 10.73,
+   "y": 0.1
+  },
+  "ui_pebbles_cluster03_15_pcvr_r90": {
+   "y": 0.4
+  },
+  "ui_pebbles_cluster03_18_pcvr_r90": {
+   "right": -17.59,
+   "ahead": -4.36,
+   "y": 0.4
+  },
+  "ui_pebbles_cluster03_19_pcvr_r90": {
+   "y": 0.35
+  },
+  "ui_pebbles_cluster02_03_pcvr_r90": {
+   "y": 0.4
+  },
+  "rock_pile02_08_pcvr_r90": {
+   "y": 0.45
+  },
+  "rock_pile02_10_pcvr_r90": {
+   "y": 0.45
+  },
+  "rock_pile02_12_pcvr_r90": {
+   "y": 0.35
+  },
+  "expansion_grass_moorland03_02_pcvr_r90": {
+   "y": 0.88
+  },
+  "snow_pile05_01_pcvr_r90": {
+   "y": 0.3
+  },
+  "slush_pile_04_07_pcvr_r90": {
+   "y": 0.6
+  },
+  "rocks_snowy_d01_02_pcvr_r90": {
+   "y": 0
+  },
+  "expansion_shrub02_09_pcvr_r90": {
+   "y": 0
+  },
+  "expansion_shrub02_10_pcvr_r90": {
+   "y": 0
+  },
+  "expansion_bush_shad01_06_pcvr_r90": {
+   "right": -5.8,
+   "ahead": 3.19,
+   "y": 0
+  },
+  "expansion_grass_moorland03_06_pcvr_r90": {
+   "y": 0
+  },
+  "rock_pile02_15_pcvr_r90": {
+   "y": 0.4
+  },
+  "rock_pile02_16_pcvr_r90": {
+   "right": -14.2,
+   "ahead": -4.44,
+   "y": 0.35
+  },
+  "ui_pebbles_cluster01_02_pcvr_r90": {
+   "right": -64.46,
+   "ahead": -17.47
+  },
+  "expansion_bush_dogwood03_03_pcvr_r90": {
+   "right": -93.78,
+   "ahead": -28.26
+  },
+  "expansion_bush_shad01_05_pcvr_r90": {
+   "y": 1.68
+  },
+  "ui_expansion_tree_dead05_02_pcvr_r90": {
+   "right": -25.04,
+   "ahead": -11
+  },
+  "slush_pile_04_02_pcvr_r180": {
+   "y": 0.55
+  },
+  "slush_pile_04_09_pcvr_r180": {
+   "y": 0.45
+  },
+  "slush_pile_04_10_pcvr_r180": {
+   "y": 0.45
+  },
+  "snow_grunge_01_01_pcvr_r180": {
+   "right": -10.22,
+   "ahead": -19.34,
+   "y": 0.1
+  },
+  "slush_pile_04_12_pcvr_r180": {
+   "y": 1.04
+  },
+  "slush_pile_04_13_pcvr_r180": {
+   "y": 0.93
+  },
+  "slush_pile_04_14_pcvr_r180": {
+   "y": 0.85
+  },
+  "slush_pile_04_15_pcvr_r180": {
+   "y": 1.15
+  },
+  "ui_pebbles_cluster02_02_pcvr_r180": {
+   "y": 0.4
+  },
+  "rocks_snowy_h01_01_pcvr_r180": {
+   "right": -15.47,
+   "ahead": -14.49
+  },
+  "slush_pile_04_25_pcvr_r180": {
+   "y": 0.45
+  },
+  "expansion_shrub02_04_pcvr_r180": {
+   "y": 0.11
+  },
+  "slush_pile_04_26_pcvr_r180": {
+   "y": 0.86
+  },
+  "terrain_act5_01_pcvr_r180": {
+   "y": 0.25
+  },
+  "ui_pebbles_cluster03_15_pcvr_r180": {
+   "y": 0.35
+  },
+  "ui_pebbles_cluster03_16_pcvr_r180": {
+   "y": 0.4
+  },
+  "ui_pebbles_cluster03_18_pcvr_r180": {
+   "y": 0.4
+  },
+  "ui_pebbles_cluster03_19_pcvr_r180": {
+   "y": 0.35
+  },
+  "expansion_shrub02_08_pcvr_r180": {
+   "y": 0.16
+  },
+  "ui_pebbles_cluster02_03_pcvr_r180": {
+   "y": 0.35
+  },
+  "rock_pile02_05_pcvr_r180": {
+   "y": 0.45
+  },
+  "rock_pile02_06_pcvr_r180": {
+   "y": 0.45
+  },
+  "rock_pile02_07_pcvr_r180": {
+   "y": 0.45
+  },
+  "rock_pile02_08_pcvr_r180": {
+   "y": 0.35
+  },
+  "rock_pile02_09_pcvr_r180": {
+   "y": 0.45
+  },
+  "rock_pile02_10_pcvr_r180": {
+   "y": 0.35
+  },
+  "rock_pile02_11_pcvr_r180": {
+   "y": 0.5
+  },
+  "rock_pile02_12_pcvr_r180": {
+   "y": 0.15
+  },
+  "expansion_grass_moorland03_02_pcvr_r180": {
+   "y": 0.7
+  },
+  "expansion_shrub01_03_pcvr_r180": {
+   "y": 0.8
+  },
+  "expansion_shrub01_05_pcvr_r180": {
+   "y": -0.08
+  },
+  "rocks_snowy_d01_02_pcvr_r180": {
+   "y": 0.41
+  },
+  "expansion_shrub02_09_pcvr_r180": {
+   "y": -0.04
+  },
+  "expansion_shrub02_10_pcvr_r180": {
+   "y": 0.28
+  },
+  "expansion_bush_shad01_06_pcvr_r180": {
+   "y": 0
+  },
+  "expansion_grass_moorland03_06_pcvr_r180": {
+   "y": 1.22
+  },
+  "rock_pile02_15_pcvr_r180": {
+   "y": 0.4
+  },
+  "rock_pile02_16_pcvr_r180": {
+   "y": 0.4
+  },
+  "ui_vista_act5_vignette_mountain01_05_pcvr_r180": {
+   "right": -162.85,
+   "ahead": -97.13,
+   "y": 4.12,
+   "turn": -75,
+   "scale_by": 0.697,
+   "tilt_x": 5
+  },
+  "snow_grunge_01_01_pcvr_r270": {
+   "right": 19.14,
+   "ahead": -10.22,
+   "y": 0.6
+  },
+  "rocks_snowy_h01_01_pcvr_r270": {
+   "right": 14.53,
+   "ahead": -15.44
+  },
+  "terrain_act5_01_pcvr_r270": {
+   "y": 0.1
+  },
+  "ui_pebbles_cluster03_20_pcvr_r270": {
+   "y": 0.4
+  },
+  "ui_pebbles_cluster03_22_pcvr_r270": {
+   "y": 0.4
+  },
+  "rock_pile02_05_pcvr_r270": {
+   "y": 0.4
+  },
+  "rock_pile02_06_pcvr_r270": {
+   "y": 0.4
+  },
+  "rock_pile02_07_pcvr_r270": {
+   "y": 0.35
+  },
+  "rock_pile02_09_pcvr_r270": {
+   "y": 0.35
+  },
+  "ui_pebbles_cluster02_04_pcvr_r270": {
+   "y": 0.35
+  },
+  "rock_pile02_12_pcvr_r270": {
+   "y": 0.4
+  },
+  "snow_pile05_01_pcvr_r270": {
+   "y": 0.4
+  },
+  "rocks_snowy_d01_02_pcvr_r270": {
+   "y": 0.3
+  },
+  "expansion_shrub02_09_pcvr_r270": {
+   "y": 0.08
+  },
+  "expansion_shrub02_10_pcvr_r270": {
+   "y": 0.4
+  },
+  "expansion_bush_shad01_06_pcvr_r270": {
+   "y": 0.2
+  },
+  "expansion_grass_moorland03_06_pcvr_r270": {
+   "y": 1.2
+  },
+  "ui_vista_act5_vignette_mountain01_02_pcvr_r270": {
+   "right": -126.2,
+   "ahead": 222.78,
+   "y": 15,
+   "turn": 110,
+   "tilt_x": -10
+  },
+  "ui_vista_act5_vignette_mountain01_06_pcvr_r270": {
+   "right": -172.01,
+   "ahead": 98.9,
+   "y": 5.8,
+   "turn": 95,
+   "scale_by": 0.6359
+  }
+ },
+ "deleted": [
+  "expansion_tree_bristlekit08_04_pcvr_r90",
+  "expansion_tree_dead09_01_pcvr_r180",
+  "slush_pile_04_22_pcvr_r180",
+  "ui_pebbles_cluster01_01_pcvr_r180",
+  "rocks_snowy_e01_04_pcvr_r180",
+  "expansion_grass03_06_pcvr_r180",
+  "ui_pebbles_cluster01_02_pcvr_r180",
+  "expansion_bush_dogwood03_03_pcvr_r180",
+  "expansion_tree_bristlekit08_04_pcvr_r180",
+  "ui_vista_act5_vignette_mountain01_02_pcvr_r180",
+  "ui_vista_act5_vignette_mountain01_06_pcvr_r180",
+  "ui_vista_act5_vignette_mountain01_07_pcvr_r180",
+  "ui_vista_act5_vignette_mountain01_05_pcvr_r270",
+  "ui_vista_act5_vignette_mountain01_07_pcvr_r270"
+ ],
+ "added": [
+  {
+   "name": "pcvr_ed_5_mwitr1te1",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/wall_stone_corner_c01_d.model",
+   "right": 43.03,
+   "ahead": -20.6,
+   "y": 1.3,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwitr9pf2",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/wall_stone_corner_c01_e.model",
+   "right": 29.66,
+   "ahead": -28.32,
+   "y": 1.3,
+   "yaw": -140,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwitrnd83",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/wall_stone_corner_c01_f.model",
+   "right": 6.76,
+   "ahead": -43.36,
+   "y": 1.3,
+   "yaw": -150,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwiuetg38",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/slope_a_stairs02.model",
+   "right": 29.28,
+   "ahead": 17.37,
+   "y": 1.06,
+   "yaw": -50,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjrlf9n0",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/slope_b02.model",
+   "right": 21.14,
+   "ahead": 34.61,
+   "y": 1.43,
+   "yaw": -52.4,
+   "scale": 0.597
+  },
+  {
+   "name": "pcvr_ed_5_mwjrpgrn1",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/slope_a01_blank.model",
+   "right": 23.73,
+   "ahead": 28.49,
+   "y": 0.86,
+   "yaw": -50,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjrq40q2",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/slope_a_corner_int01.model",
+   "right": 37.76,
+   "ahead": 12.51,
+   "y": 1.52,
+   "yaw": -55,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjrr8id3",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_large01.model",
+   "right": 29.82,
+   "ahead": -26.48,
+   "y": 77,
+   "yaw": -125,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs0vb04",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_large01_b.model",
+   "right": 42.17,
+   "ahead": -15.81,
+   "y": 77,
+   "yaw": -120,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs19ev5",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_large01_c.model",
+   "right": 50.55,
+   "ahead": -8.61,
+   "y": 77,
+   "yaw": -125,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs1lam6",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_medium01_b.model",
+   "right": 80.05,
+   "ahead": 4.05,
+   "y": 78,
+   "yaw": -80,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs1sdf7",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_medium01_c.model",
+   "right": 91.38,
+   "ahead": 12.67,
+   "y": 78,
+   "yaw": -80,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs24bl8",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_ramp01.model",
+   "right": -8.13,
+   "ahead": -53.76,
+   "y": 76.2,
+   "yaw": -150,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjs2n0a9",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_small01.model",
+   "right": -17.23,
+   "ahead": -56.13,
+   "y": 77.1,
+   "yaw": -135,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjsaxky13",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_d.model",
+   "right": 95.62,
+   "ahead": 15.66,
+   "y": 2.27,
+   "yaw": -405,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjsb46f14",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 111.98,
+   "ahead": 31.07,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjsc0p115",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/slope_a01_blank.model",
+   "right": 43.72,
+   "ahead": 2.52,
+   "y": 0.86,
+   "yaw": -55,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjsj2id16",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_wallpikes/pikes04.model",
+   "right": 24.93,
+   "ahead": 31.67,
+   "y": 2.35,
+   "yaw": 108.4,
+   "scale": 1,
+   "tilt_z": 25
+  },
+  {
+   "name": "pcvr_ed_5_mwjsjlsb17",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_wallpikes/pikes03.model",
+   "right": 28.36,
+   "ahead": 25.38,
+   "y": 3.68,
+   "yaw": -227.9,
+   "scale": 1,
+   "tilt_z": 20
+  },
+  {
+   "name": "pcvr_ed_5_mwjsr44w18",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_pikes_unique01.model",
+   "right": 38.6,
+   "ahead": 8,
+   "y": 1.56,
+   "yaw": -15,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjt1be719",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_pits/expansion_siege_pits_pit_corner_ext01_bloody_a.model",
+   "right": -28.53,
+   "ahead": -2.21,
+   "y": 4.27,
+   "yaw": 85,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjthh0w24",
+   "model": "data/hd/env/model/ui/ui_imposter/act1_plate03.model",
+   "right": -27.659999999999997,
+   "ahead": 174.02,
+   "y": 0.58,
+   "yaw": -90,
+   "scale": 28.373
+  },
+  {
+   "name": "pcvr_ed_5_mwjti9wr25",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -31.92,
+   "ahead": -77.62,
+   "y": 1.1,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtihh426",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -46.04,
+   "ahead": -90.55,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtijap27",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -59.54,
+   "ahead": -104.74,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtimuc28",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -78.89,
+   "ahead": -117.49,
+   "y": 1.82,
+   "yaw": -415,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtiwaf29",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -95.76,
+   "ahead": -129.19,
+   "y": 1.82,
+   "yaw": -415,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtiyen30",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -111.36,
+   "ahead": -140.12,
+   "y": 1.82,
+   "yaw": -415,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtj06j31",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": -126.27,
+   "ahead": -151.23,
+   "y": 1.82,
+   "yaw": -415,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtlhei32",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_rock_large01.model",
+   "right": 12.13,
+   "ahead": -40.29,
+   "y": 77,
+   "yaw": -125,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtmoog34",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a01_b.model",
+   "right": -46.97,
+   "ahead": -56.69,
+   "y": 0.92,
+   "yaw": -140,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtmrqq35",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a01_c.model",
+   "right": -51.34,
+   "ahead": -48.58,
+   "y": 1.28,
+   "yaw": -150,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtmuq036",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a02.model",
+   "right": -55.56,
+   "ahead": -41.97,
+   "y": 0.74,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtmx5i37",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a02_a.model",
+   "right": -59.35,
+   "ahead": -35.38,
+   "y": 0.92,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtnpgp38",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a02_b.model",
+   "right": -64.94,
+   "ahead": -27.13,
+   "y": 1.61,
+   "yaw": -150,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjto00439",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a02_c.model",
+   "right": -75.37,
+   "ahead": -11.87,
+   "y": 0.81,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjto8oh41",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_b01_a.model",
+   "right": -81.36,
+   "ahead": -4.54,
+   "y": 0.86,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtohac42",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_b01_c.model",
+   "right": -87.64,
+   "ahead": 2.44,
+   "y": 0.93,
+   "yaw": -140,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjtrdkl43",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_pits/expansion_siege_pits_side01_bloody_b.model",
+   "right": 38.03,
+   "ahead": -3.54,
+   "y": 6.1,
+   "yaw": -140,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwju5oc444",
+   "model": "data/hd/env/model/ui/ui_imposter/act1_plate03.model",
+   "right": -99.46,
+   "ahead": 90.29,
+   "y": 0.58,
+   "yaw": -55,
+   "scale": 28.373
+  },
+  {
+   "name": "pcvr_ed_5_mwju5q4945",
+   "model": "data/hd/env/model/ui/ui_imposter/act1_plate03.model",
+   "right": -126.33,
+   "ahead": 60.83,
+   "y": 0.58,
+   "yaw": -55,
+   "scale": 28.373
+  },
+  {
+   "name": "pcvr_ed_5_mwjut2q046",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a01_b.model",
+   "right": -40.58,
+   "ahead": -64.21,
+   "y": 0.92,
+   "yaw": -140,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjut7kh47",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_fences/fence_stone_a02_c.model",
+   "right": -70.05,
+   "ahead": -19.46,
+   "y": 0.81,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuufs748",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall_damaged_c01_b.model",
+   "right": 107.64,
+   "ahead": 83.69,
+   "y": 8.39,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuume149",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall_endpiece01.model",
+   "right": 93.47,
+   "ahead": 101.73,
+   "y": 7.46,
+   "yaw": -50,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuuyms50",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_forts_damaged/wall_damaged_a01.model",
+   "right": 89.61,
+   "ahead": 103.34,
+   "y": 7.46,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuv53c51",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_forts_damaged/wall_damaged_d01.model",
+   "right": 81.88,
+   "ahead": 113.32,
+   "y": 8.19,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuvk7c52",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_forts_damaged/wall_damaged_g01.model",
+   "right": 112.47,
+   "ahead": 80.15,
+   "y": 7.46,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjuw3hr53",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_forts/wall_pillar01.model",
+   "right": 117.95,
+   "ahead": 73.71,
+   "y": 7.92,
+   "yaw": -55,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2gi254",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 127,
+   "ahead": 48.58,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2kbk55",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 142.66,
+   "ahead": 65.44,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2mb456",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 157.03,
+   "ahead": 81.98,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2o7u57",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 172.05,
+   "ahead": 99.49,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2r1s58",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 187.39,
+   "ahead": 118.93,
+   "y": 1.82,
+   "yaw": -400,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv2w6r59",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 200.15,
+   "ahead": 141.27,
+   "y": 1.82,
+   "yaw": -325,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv30va60",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 154.3,
+   "ahead": 197.1,
+   "y": 1.82,
+   "yaw": -325,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv35r661",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 188.64,
+   "ahead": 155.03,
+   "y": 1.82,
+   "yaw": -325,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv39kv62",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 179.3,
+   "ahead": 167.27,
+   "y": 1.82,
+   "yaw": -325,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjv3e0v63",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_cliffs/cliff_wall_stone_medium01_e.model",
+   "right": 169.96,
+   "ahead": 178.54,
+   "y": 1.82,
+   "yaw": -325,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvm1wj64",
+   "model": "data/hd/env/model/global/prop/expansion/siege/expansion_siege_stones/boulder04.model",
+   "right": 31.87,
+   "ahead": -14.6,
+   "y": 3.17,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvp8og65",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_tower01.model",
+   "right": -93.1,
+   "ahead": 10.06,
+   "y": 1.5,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvpksw66",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_tower01.model",
+   "right": -104.73,
+   "ahead": 22.34,
+   "y": 1.5,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvpy2n67",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall01.model",
+   "right": -89.57,
+   "ahead": 1.24,
+   "y": 0.68,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvpyk268",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall01.model",
+   "right": -107.43,
+   "ahead": 24.94,
+   "y": 0.68,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvpyyp69",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall01.model",
+   "right": -110.85,
+   "ahead": 28.75,
+   "y": 0.68,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvpzdv70",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall01.model",
+   "right": -114.27,
+   "ahead": 32.75,
+   "y": 0.68,
+   "yaw": 40,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvrbcb71",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_pits/expansion_siege_pits_side01_bloody_c.model",
+   "right": 30.04,
+   "ahead": -9.37,
+   "y": 6.1,
+   "yaw": -145,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjvwlq772",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_wall01.model",
+   "right": -117.58,
+   "ahead": 37.16,
+   "y": 0.68,
+   "yaw": 35,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw06uj73",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_wallpikes/pikes02.model",
+   "right": -59,
+   "ahead": 42.42,
+   "y": 4.04,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw0ct774",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_wallpikes/pikes03.model",
+   "right": -60.4,
+   "ahead": 53.6,
+   "y": 4.43,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw1qby75",
+   "model": "data/hd/env/model/global/prop/expansion/siege/expansion_siege_wood_props/spike_wall01.model",
+   "right": -78.61,
+   "ahead": 36.12,
+   "y": 1.09,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw1tx576",
+   "model": "data/hd/env/model/global/prop/expansion/siege/expansion_siege_wood_props/spike_wall02.model",
+   "right": -78.29,
+   "ahead": 45.25,
+   "y": 0.98,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw1vav77",
+   "model": "data/hd/env/model/global/prop/expansion/siege/expansion_siege_wood_props/spike_wall03.model",
+   "right": -70.3,
+   "ahead": 28.99,
+   "y": 0.98,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw1z9b78",
+   "model": "data/hd/env/model/global/prop/expansion/siege/expansion_siege_wood_props/stake_tied02.model",
+   "right": -71.9,
+   "ahead": 36.28,
+   "y": 1.05,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwjw21ns79",
+   "model": "data/hd/env/model/ui/ui_act5_frontend/architecture/ui_pikes_unique01.model",
+   "right": -84.29,
+   "ahead": 45.02,
+   "y": 1.81,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwl3h7mn0",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_ridges_staged/bridge_vegetation02_zflipped.model",
+   "right": -78.39,
+   "ahead": 60.89,
+   "y": 1,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwl3hsr11",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_craters/crater01.model",
+   "right": -88.05,
+   "ahead": 57.67,
+   "y": 0,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwl3jh0f2",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/expansion_siege_hills_slope_a01_noskirt.model",
+   "right": -118.85,
+   "ahead": 41.63,
+   "y": 1.34,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwl45ooh3",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_craters/crater04_grunge_dark.model",
+   "right": -100.36,
+   "ahead": 46.12,
+   "y": 0.58,
+   "yaw": 60,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_5_mwl469at4",
+   "model": "data/hd/env/model/expansion/siege/expansion_siege_hills/expansion_siege_hills_slope_a01_noskirt.model",
+   "right": -111.09,
+   "ahead": 73.14,
+   "y": 1.34,
+   "yaw": -35,
+   "scale": 1
+  }
+ ],
+ "road": null,
+ "road_half": null
+}

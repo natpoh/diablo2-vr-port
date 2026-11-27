@@ -217,6 +217,15 @@ struct Input {
         // shieldCode is the shield's item code (gamestate::HandCode of its slot; 0: no shield).
         bool shieldCollide = false;
         uint32_t shieldCode = 0;
+        // [weight] shield_collide_unheld (vr/shield_push.h): a weapon the weight model does not hold - an orb, a claw - meets the shield too: the drawn hand of
+        // unheldSide is held back off the shield's face. Its blade as hit by touch has it (melee_touch BladeFor): unheldTipM ahead of the weapon bone's origin,
+        // unheldButtM behind it (negative: a fist weapon's blade starts ahead), along the bone's axis unheldTipAxis (+-1..3, x y z), unheldR thick.
+        bool shieldUnheld = false;
+        // [weight] shield_never_through: the weapon never goes through the shield (shield_collide and shield_collide_unheld) - the hand gives way however far the
+        // controller goes; false: through past shieldcollide::kGiveM until clear, as before
+        bool shieldNeverThrough = false;
+        int unheldSide = 0, unheldTipAxis = 2;
+        float unheldTipM = 0.0f, unheldButtM = 0.0f, unheldR = 0.045f;
         int secondTipAxis = 2;
         float shaft2TipM = 0.0f, shaft2ButtM = 0.0f;
         // ... and with [gameplay] melee_head_volume, each weapon's head as its own volume - the capsules of vr/weapon_head_parts.h where its mesh is (an axe's blade
@@ -1036,8 +1045,15 @@ bool HeroPosedLately(unsigned ms);
 // (off); a list older than 300 ms is not used. Visual only: the drawn bones of those rigs.
 void SetRemoteHeroes(const remotepose::Target* t, int n);
 // What was done since the last call, for the log: rigs posed, players' rigs with no target near them, rigs not posed (no bind pose read / bones missing).
-struct RemoteHeroCount { unsigned posed = 0, unmatched = 0, unposable = 0, weapon = 0, legs = 0, legsNoPose = 0, yawFromWorld = 0, handsDrawn = 0; float reachMissCm = 0.0f; };   // handsDrawn: hands placed as the sender draws them (format 6), reachMissCm the most one was out of the arm's reach   // weapon: slots placed as the sender draws them   // yawFromWorld: turned by the world heading through his rig   // legsNoPose: a player who sends no pose, his legs stepped all the same   // loose: a weapon hung where the sender's lies; legs: stepped by the gait
+struct RemoteHeroCount { unsigned posed = 0, unmatched = 0, unposable = 0, weapon = 0, legs = 0, legsNoPose = 0, yawFromWorld = 0, handsDrawn = 0, facing = 0; float reachMissCm = 0.0f; };   // handsDrawn: hands placed as the sender draws them (format 6), reachMissCm the most one was out of the arm's reach   // weapon: slots placed as the sender draws them   // yawFromWorld: turned by the world heading through his rig   // legsNoPose: a player who sends no pose, his legs stepped all the same   // facing: of those, turned by the facing he sends ([multiplayer] pose_share_facing)   // loose: a weapon hung where the sender's lies; legs: stepped by the gait
 RemoteHeroCount TakeRemoteHeroCount();
+// [multiplayer] pose_share_facing (vr/remote_pose.h FacingOnly): the other players who send only their drawn body's turn (not VR F4, our mod turning their hero to
+// their camera), as targets with unit, place and heading - each such rig is turned whole to it instead of the game's facing (PoseLegsOnly). n 0 = none; older
+// than 300 ms not used. Visual only.
+void SetRemoteFacings(const remotepose::Target* t, int n);
+// Our own hero's whole drawn body was turned to the camera (PoseBody's bodyTurn 2: [body] turn_third from behind, VR F1 - F3, flat) within maxAgeMs - what
+// [multiplayer] pose_share_facing sends. Not VR F4 with the body (that sends the whole pose).
+bool HeroTurnedWhole(unsigned maxAgeMs);
 // The camera's yaw in our own hero's model space as his arms were last posed by it (radians, PoseBody's convention) - what the other players turn our
 // pose into our hero's model by. False when not posed so in the last maxAgeMs (not VR F4, no body).
 bool HeroYawInModel(float* yaw, unsigned maxAgeMs);

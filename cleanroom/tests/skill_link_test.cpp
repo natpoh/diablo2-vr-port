@@ -275,6 +275,65 @@ static void TestCastWatch() {
     CHECK(skilllink::kSettleMs < 150 && skilllink::kPressTries == 2);
 }
 
+// A second-row slot's press: the left trigger alone first, the button kAltLeadMs later (together the game read the first row: Serg's voice
+// Town Portal on LT + A, 0.225.0, cast another skill). A first-row slot at once; a held press renewed with our left trigger still down, at once.
+static void TestPresser() {
+    using P = skilllink::Presser;
+    const uint32_t lead = skilllink::kAltLeadMs, alt = skilllink::kAltRowMs;
+    CHECK(lead >= 60 && lead <= 120);   // about a game tick and a half (25 polls a second), as wheel_cast.h's 90 ms
+    P pr;
+    // LT + A (10): the left trigger alone, held through the lead and the press; no button yet
+    P::Pulse u = pr.Press(10, 0, 1000);
+    CHECK(u.send && u.slot == -1 && u.p.lt == 255 && u.p.buttons == 0 && u.p.rt == 0 && u.ms == lead + alt);
+    CHECK(pr.Waiting());
+    CHECK(!pr.Step(1000).send && !pr.Step(1000 + lead - 1).send);
+    u = pr.Step(1000 + lead);
+    CHECK(u.send && u.slot == 10 && u.p.buttons == wheel::kPadA && u.p.lt == 255 && u.ms == alt);
+    CHECK(!pr.Waiting() && !pr.Step(1000 + lead + 10).send);
+    // a step late (a slow tick): the button then, its whole press
+    pr.Reset();
+    pr.Press(4, 0, 2000);
+    u = pr.Step(2000 + lead + 25);
+    CHECK(u.send && u.slot == 4 && u.p.buttons == wheel::kPadB && u.p.lt == 255 && u.ms == alt);
+    // LT + RT (11): the right trigger is its button
+    pr.Reset();
+    u = pr.Press(11, 0, 3000);
+    CHECK(u.send && u.slot == -1 && u.p.lt == 255 && u.p.rt == 0);
+    u = pr.Step(3000 + lead);
+    CHECK(u.send && u.slot == 11 && u.p.lt == 255 && u.p.rt == 255 && u.p.buttons == 0);
+    // first-row slots at once: X, A, RT
+    pr.Reset();
+    u = pr.Press(1, 0, 4000);
+    CHECK(u.send && u.slot == 1 && u.p.buttons == wheel::kPadX && !u.p.lt && u.ms == skilllink::kTapMs && !pr.Waiting());
+    u = pr.Press(8, 0, 4100);
+    CHECK(u.send && u.slot == 8 && u.p.buttons == wheel::kPadA && !u.p.lt);
+    u = pr.Press(9, 0, 4200);
+    CHECK(u.send && u.slot == 9 && u.p.rt == 255 && !u.p.lt);
+    // a held second-row skill renewed every 20 ms (kHeldMs): the lead once, then each press at once while our left trigger stays down
+    pr.Reset();
+    const uint32_t held = skilllink::kHeldMs;
+    u = pr.Press(5, held, 5000);
+    CHECK(u.send && u.slot == -1 && u.ms == lead + held);
+    u = pr.Press(5, held, 5020);   // within the lead: still the left trigger only, the button at the same moment as before
+    CHECK(u.send && u.slot == -1 && pr.Waiting());
+    CHECK(!pr.Step(5000 + lead - 1).send);
+    u = pr.Step(5000 + lead);
+    CHECK(u.send && u.slot == 5 && u.ms == held);
+    u = pr.Press(5, held, 5000 + lead + 20);
+    CHECK(u.send && u.slot == 5 && u.p.lt == 255 && u.p.buttons == wheel::kPadX && !pr.Waiting());
+    // ... and once our left trigger has run out, the lead again
+    u = pr.Press(5, held, 5000 + lead + 20 + held + 5);
+    CHECK(u.send && u.slot == -1 && pr.Waiting());
+    // a new press replaces a button still waiting; a first-row one goes at once and nothing stays waiting
+    pr.Reset();
+    pr.Press(10, 0, 6000);
+    u = pr.Press(2, 0, 6030);
+    CHECK(u.send && u.slot == 2 && !pr.Waiting() && !pr.Step(6000 + lead).send);
+    // no such slot: nothing
+    pr.Reset();
+    CHECK(!pr.Press(-1, 0, 7000).send && !pr.Press(12, 0, 7000).send && !pr.Waiting());
+}
+
 int main() {
     TestLayout();
     TestGestureLayout();
@@ -283,6 +342,7 @@ int main() {
     TestCastReader();
     TestCaster();
     TestCastWatch();
+    TestPresser();
     std::printf("%s: %d checks, %d failures\n", g_failures ? "FAILED" : "passed", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

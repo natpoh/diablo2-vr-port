@@ -44,6 +44,7 @@ bool NoticePiece(NativePiece* out, bool* encoded);
 // the whole interface copied out (kNativePanel) and the layer emptied, the world drawn without it.
 // vrcam, on the draw thread at each pair's start.
 void SetPanelOut(bool out);
+void SetMenuScene(bool on);   // [campfire] / [frontend]: a menu scene round you - no toolbar, map or globes cut out
 // FlatVR's side of it: its reader block looked at (vrcam's timer), whether a FlatVR that hangs a menu
 // panel is drawing now, and where it is to hang it (the native panel's width and distance).
 void PollMenuReader();

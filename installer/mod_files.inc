@@ -29,16 +29,28 @@ Source: "{#PayloadDir}\plugins\d2r_vr_walk.dll"; DestDir: "{app}\{#ModDir}\d2rlo
 ; D2R VR Crash Reporter ([support] crash_reports / send_logs, shared\d2r_vr_crash_watch.h; built in the private vjoy repository, a binary only).
 ; Beside the libraries; nothing runs it unless the player ticks one of the two (both off as shipped). Without it the two ticks are greyed out.
 Source: "{#PayloadDir}\plugins\D2R_VR_Crash_Reporter.exe"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
-; The 3D cinematics library ([cinema] video_3d; vr\video3d_lib.cpp looks in d2r_vr_libs, then beside the plugin): closed, binary only, optional.
-; ONNX Runtime and DirectML beside it - the library loads them from its own folder (Windows 11 has older ones in System32), the ZipDepth network
-; (MIT) and the licences. Without them the videos stay flat.
-Source: "{#PayloadDir}\video3d\d2r_vr_video3d.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+; The 3D cinematics' runtime ([cinema] video_3d; vr\video3d\depth_net.cpp loads them from d2r_vr_libs, then beside the plugin): optional, binaries only.
+; ONNX Runtime and DirectML, loaded by their full paths from there at run time (Windows 11 has older ones in System32; nothing links against
+; them), the ZipDepth network (MIT) and the licences. Without them the videos stay flat.
 Source: "{#PayloadDir}\video3d\onnxruntime.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\video3d\DirectML.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\video3d\zipdepth_base_512x288.onnx"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\video3d\ZipDepth-MIT.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\video3d\onnxruntime-MIT.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#PayloadDir}\video3d\DirectML-LICENSE.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs"; Flags: ignoreversion skipifsourcedoesntexist
+; The voice gestures' listener ([gestures] voice): d2r_vr_gestures.dll starts voice\d2r_vr_voice.exe from its own folder (closed, the private vjoy
+; build) - Vosk with its MinGW runtime, ONNX Runtime, openWakeWord's two feature models, a speech model per language in models\ and the licences
+; (installer\voice_licenses). Optional, binaries only: without the folder the Gestures tab says the listener is missing and no word casts.
+Source: "{#PayloadDir}\voice\d2r_vr_voice.exe"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\libvosk.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\libstdc++-6.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\libgcc_s_seh-1.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\libwinpthread-1.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\onnxruntime.dll"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\melspectrogram.onnx"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\embedding_model.onnx"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\*.txt"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#PayloadDir}\voice\models\*"; DestDir: "{app}\{#ModDir}\d2rloader\d2r_vr_libs\voice\models"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 ; The player's own settings stay through an update (IniChoice in [Code]); the
 ; shipped defaults go beside them as d2r_vr.default.ini, which tells the next
 ; update whether the player changed anything.
@@ -48,6 +60,7 @@ Source: "{#PayloadDir}\shaders\D2R_DepthFog.fx"; DestDir: "{app}\{#ModDir}\resha
 ; ... and the file it includes (D2R VR Unleashed's fog ease, MPL 2.0): without it the effect does not build
 Source: "{#PayloadDir}\shaders\D2R_FogEase_Unleashed.fxh"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
 Source: "{#PayloadDir}\shaders\D2R_Campfire_Unleashed.fxh"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
+Source: "{#PayloadDir}\shaders\D2R_Frontend_Unleashed.fxh"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Shaders"; Flags: ignoreversion
 Source: "{#PayloadDir}\sky\*.png"; DestDir: "{app}\{#ModDir}\reshade\reshade-shaders\Textures\D2R_Sky_ours"; Flags: ignoreversion
 ; The game sky dome's painted act skies ([sky] game_sky), where its units (made by D2R VR Settings, tools\settings\dome_assets.cpp) name them
 Source: "{#PayloadDir}\skydome\*.dds"; DestDir: "{app}\{#ModDir}\D2R-VR.mpq\data\hd\env\texture\d2r_vr\sky"; Flags: ignoreversion skipifsourcedoesntexist

@@ -139,6 +139,7 @@ bool CampfireOn();
 bool CampfireBoardHit();      // the laser on the scene's menu board (the board clicks, not the hand's pick)
 bool CampfireBoardFailed();   // the board not to be had this visit: the menu as the game draws it
 uint32_t CampfireNoFrame();   // the campfire's presents in a row that found no frame open
+bool CampfireWaiting();       // the headset away for now (off, not shown, no input focus, the head not tracked): no failure of the scene's
 bool OpenCampfireFrame();     // the camera thread; true: a frame is open and PairEyes gives the head's eyes
 // A hand's aim ray (origin, direction) in PairEyes' head frame, its trigger and BW_LINK_XRB_* buttons (inside a campfire frame)
 bool CampfireAim(int hand, float o[3], float d[3], float* trigger, uint32_t* buttons);

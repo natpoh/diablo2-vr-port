@@ -28,7 +28,8 @@
 
 #include <D2RLPlugin/api.h>
 
-#include "app_thread.h"   // which thread the network SDK's client calls come from (the log) - these ones are in UI jobs already
+#include "app_thread.h"
+#include "coop_strike_wire.h"   // [gameplay] melee_direct_client_host: the touch to the host instead of the command; its messages on this channel   // which thread the network SDK's client calls come from (the log) - these ones are in UI jobs already
 #include "log_async.h"   // [debug] log_async: the plugin's log lines through a ring and a writer thread (vr/log_queue.h); off = ctx->LogInfo as ever
 #include "melee_direct_client.h"
 #include "sigscan.h"
@@ -45,6 +46,9 @@ constexpr uint64_t RVA_PLAYER_COMMAND = 0xFABE0, RVA_FIND_UNIT = 0x9A5D0, RVA_LO
                    RVA_SLOT_SKILL = 0x117D20, RVA_CLIENT_GAME_TYPE = 0x2A233F4, RVA_LAUNCH_GAME_TYPE = 0x32EF888, RVA_UNIT_LEFT_SKILL = 0x34A540;
 // code whose bytes prove the layout read below (found = the offsets are the build's): a skill node's row at +0, the row's id at +0
 constexpr uint64_t RVA_SKILL_NODE_LAYOUT = 0x33DD09;
+// [gameplay] melee_direct_client_stand_still: the game's reach test (attacker, defender, range, out; the sewer stairs ask it on the client's units too)
+// and the unit's melee range it is given (docs/DIRECT_HIT_DAMAGE.md: Range 0x348650(att, def, 0x34AA90(att) + ...); Zeal's the same, without more)
+constexpr uint64_t RVA_RANGE = 0x348650, RVA_MELEE_RANGE = 0x34AA90;
 // push rbp; push rbx; push r13; push r14; push r15; lea rbp, [rsp-0x37]; sub rsp, 0xA0 (as vr/stray_walk_wire.cpp hooks it)
 const uint8_t kSigPlayerCommand[16] = {0x40, 0x55, 0x53, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57, 0x48, 0x8D, 0x6C, 0x24, 0xC9, 0x48, 0x81};
 
@@ -54,6 +58,8 @@ using IndexFn = int (*)();
 using PlayerFn = uintptr_t (*)(int index);
 using SlotSkillFn = int (*)(int slot);
 using LeftSkillFn = uintptr_t (*)(uintptr_t unit);
+using RangeFn = int (*)(uintptr_t attacker, uintptr_t defender, int range, void* out);
+using MeleeRangeFn = int (*)(uintptr_t unit);
 
 const PluginContext* g_ctx = nullptr;
 const ThreadService* g_threads = nullptr;
@@ -65,6 +71,8 @@ uint64_t g_joinedSince = 0;          // the timer's thread only
 std::atomic<bool> g_leftIsSlot{false};
 std::atomic<float> g_minSpeed{2.5f}, g_minForce{1.5f}, g_minLength{0.2f};   // [gameplay] melee_direct_client_min_speed (m/s) / _min_force (N s) / _min_length (m)
 std::atomic<bool> g_cleave{false};      // [gameplay] melee_direct_client_cleave: the rule of our own game (single player, the host)
+std::atomic<bool> g_standStill{false};  // [gameplay] melee_direct_client_stand_still: beyond the game's reach, the blow at the monster's cell (no walk-up)
+std::atomic<bool> g_standFault{false};  // ... its reach test faulted: cmd 6 as ever for the session
 std::atomic<uint64_t> g_canStrikeAt{0}; // the host: when melee_touch last said it can strike for a joined player (0: never / it cannot)
 std::atomic<bool> g_ruleBox{false}, g_ruleCan{false};   // joined: the host's last rule (CleaveRule) ...
 std::atomic<uint64_t> g_ruleAt{0};      // ... and when it came (0: none, or the connection lost)
@@ -125,6 +133,26 @@ bool CallLeftSkill(uintptr_t unit, uintptr_t* out) noexcept {
     if (!fn || !unit) return false;
     __try { *out = reinterpret_cast<LeftSkillFn>(fn)(unit); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// [gameplay] melee_direct_client_stand_still: the game's own reach test for the hero on the monster, with the hero's own melee range. *in the answer.
+bool CallReach(uintptr_t hero, uintptr_t monster, int* range, bool* in) noexcept {
+    const uintptr_t rangeFn = d2rsig::Addr(RVA_RANGE), meleeFn = d2rsig::Addr(RVA_MELEE_RANGE);
+    if (!rangeFn || !meleeFn || !hero || !monster) return false;
+    __try {
+        *range = reinterpret_cast<MeleeRangeFn>(meleeFn)(hero);
+        if (*range < 0 || *range > 30) return false;   // not a reach (another build?): not trusted
+        *in = reinterpret_cast<RangeFn>(rangeFn)(hero, monster, *range, nullptr) != 0;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// A client unit's place in cells: its path's 16.16 coordinates (unit + 0x38, as unit_scan.h Place).
+bool CellOf(uintptr_t unit, float* x, float* y) {
+    uintptr_t path = 0;
+    uint16_t p[4] = {};
+    if (!Read(&path, unit + 0x38, sizeof path) || !Read(p, path, sizeof p) || (!p[1] && !p[3])) return false;
+    *x = p[1] + p[0] / 65536.0f;
+    *y = p[3] + p[2] / 65536.0f;
+    return true;
+}
 bool CallCommand(int cmd, uintptr_t unit, int a1, int a2) noexcept {
     const uintptr_t fn = d2rsig::Addr(RVA_PLAYER_COMMAND);
     if (!fn) return false;
@@ -161,6 +189,8 @@ struct Request {
     int hand = 0;
     ULONGLONG at = 0;
     bool extra = false;   // [gameplay] melee_direct_client_cleave: asked of the host's server attack, not sent as the command
+    Touch t;              // [gameplay] melee_direct_client_host: the touch as measured, and the weapon - for the host's log and its cleave rule
+    bool twoHanded = false, twoHandsOn = false;
 };
 constexpr size_t kQueue = 6;
 constexpr ULONGLONG kStaleMs = 250;   // a touch not sent within this is not sent late (never a backlog)
@@ -173,6 +203,7 @@ std::atomic<uint64_t> g_fallback{0};   // a request handed back to the key path:
 struct Counters {
     unsigned asked = 0, sent = 0, stale = 0, faults = 0, back = 0;
     unsigned extra = 0, extraPlain = 0, remoteTaken = 0, remoteRefused = 0;   // extra hits asked of the host / sent plain (no connection); the host's side
+    unsigned toHost = 0, standStill = 0;   // [gameplay] melee_direct_client_host: touches sent to the host; melee_direct_client_stand_still: blows at the cell
     unsigned refused[8] = {};
     unsigned key[static_cast<int>(Why::kCount)] = {};   // the touches by Why (the timer's thread)
 } g_n;   // racy between the two threads and harmless: counts for a log line
@@ -181,18 +212,20 @@ ULONGLONG g_reportAt = 0;
 void Report(ULONGLONG now) {
     if (now - g_reportAt < 10000) return;
     g_reportAt = now;
-    bool any = g_n.asked != 0 || g_n.remoteTaken != 0 || g_n.remoteRefused != 0;
+    bool any = g_n.asked != 0 || g_n.remoteTaken != 0 || g_n.remoteRefused != 0 || g_n.toHost != 0;
     for (const unsigned k : g_n.key) any = any || k != 0;
     if (!any) return;
     LogF("melee direct (client): %u asked, %u sent as the game's command, %u too old, %u back to the key; not sent: %u no hero, %u hero's mode, %u no monster, "
          "%u dying, %u skills unread; the normal attack took %u (another skill on the left), %u (a skill armed), %u (too soon on the same monster), %u (too slow), "
          "%u (too weak), %u (too short), %u (one-handed extra); "
-         "extra hits: %u asked of the host, %u sent plain (no connection); as the host: %u taken, %u refused",
+         "extra hits: %u asked of the host, %u sent plain (no connection); as the host: %u taken, %u refused; %u touches struck by the host (no command), "
+         "%u blows at the monster's cell (beyond the game's reach)",
          g_n.asked, g_n.sent, g_n.stale, g_n.back, g_n.refused[static_cast<int>(Verdict::NoHero)], g_n.refused[static_cast<int>(Verdict::HeroMode)],
          g_n.refused[static_cast<int>(Verdict::NoMonster)], g_n.refused[static_cast<int>(Verdict::MonsterDying)],
          g_n.refused[static_cast<int>(Verdict::NoSkills)], g_n.key[static_cast<int>(Why::OtherSkill)], g_n.key[static_cast<int>(Why::Armed)],
          g_n.key[static_cast<int>(Why::TooSoon)], g_n.key[static_cast<int>(Why::TooSlow)], g_n.key[static_cast<int>(Why::TooWeak)],
-         g_n.key[static_cast<int>(Why::TooShort)], g_n.key[static_cast<int>(Why::OneHanded)], g_n.extra, g_n.extraPlain, g_n.remoteTaken, g_n.remoteRefused);
+         g_n.key[static_cast<int>(Why::TooShort)], g_n.key[static_cast<int>(Why::OneHanded)], g_n.extra, g_n.extraPlain, g_n.remoteTaken, g_n.remoteRefused,
+         g_n.toHost, g_n.standStill);
     g_n = {};
 }
 
@@ -222,6 +255,28 @@ void SendOne(const Request& r) noexcept {
         if (++told <= 12) LogF("melee direct (client): a touch on monster %u was not sent - %s", r.monsterId, Name(v));
         return;
     }
+    // [gameplay] melee_direct_client_host: the host strikes our touches (its rule) - the touch itself goes to it, with our hero's and the monster's places
+    // as the client has them, and NO command (no second blow, no walk-up). Not sent (the channel down): on as without it below.
+    if (coopstrikewire::HostStrikes(GetTickCount64())) {
+        coopstrike::Swing s;
+        s.hand = static_cast<uint8_t>(r.hand & 1);
+        s.extra = r.extra;
+        s.twoHanded = r.twoHanded;
+        s.twoHandsOn = r.twoHandsOn;
+        s.hero = r.heroId;
+        s.monster = r.monsterId;
+        s.speed = r.t.speed;
+        s.force = r.t.force;
+        s.length = r.t.length;
+        s.skill = static_cast<int16_t>(f.left);
+        if (CellOf(hero, &s.heroX, &s.heroY)) {
+            if (!CellOf(monster, &s.monX, &s.monY)) s.monX = s.monY = -1.0f;
+            if (coopstrikewire::SendSwing(s, r.at, GetTickCount64())) {
+                ++g_n.toHost;
+                return;
+            }
+        }
+    }
     if (r.extra) {   // [gameplay] melee_direct_client_cleave: asked of the host's server attack (the game would drop a second command now)
         uint8_t b[kStrikeBytes];
         const uint32_t n = BuildStrike(r.heroId, r.monsterId, b, sizeof b);
@@ -235,6 +290,31 @@ void SendOne(const Request& r) noexcept {
         ++g_n.extraPlain;   // no connection to the host's channel: the plain command, as without the box (the game decides)
         static unsigned toldPlain = 0;
         if (++toldPlain <= 6) LogF("melee direct (client): an extra hit on monster %u could not be asked of the host (%u) - sent as the plain command", r.monsterId, static_cast<unsigned>(res));
+    }
+    // [gameplay] melee_direct_client_stand_still: a monster beyond the game's own reach - the blow at its cell, in place (cmd 5, as the game's Stand Still
+    // click sends it), not "on the unit" (cmd 6: the server would walk the hero up to it first)
+    if (g_standStill.load() && !g_standFault.load()) {
+        int range = 0;
+        bool in = true;
+        float mx = 0.0f, my = 0.0f;
+        if (!CallReach(hero, monster, &range, &in)) {
+            static unsigned toldReach = 0;
+            if (++toldReach <= 3) Log("melee direct (client): stand still - the game's reach test could not be asked (another build?) - the command on the unit, as ever");
+            if (toldReach >= 3) g_standFault.store(true);
+        } else if (!in && CellOf(monster, &mx, &my)) {
+            if (!CallCommand(kCmdLeftAtPoint, hero, static_cast<int>(mx), static_cast<int>(my))) {
+                ++g_n.faults;
+                g_faulted.store(true);
+                Log("melee direct (client): the game's command faulted - the option is OFF for this session (the touch goes on with the game's own key)");
+                return;
+            }
+            ++g_n.standStill;
+            static unsigned toldStand = 0;
+            if (++toldStand <= 12)
+                LogF("melee direct (client): monster %u is beyond the game's reach (range %d) - the blow at its cell %d, %d, in place (stand still: no walk-up)", r.monsterId, range,
+                     static_cast<int>(mx), static_cast<int>(my));
+            return;
+        }
     }
     if (!CallCommand(kCmdLeftOnUnit, hero, kUnitMonster, static_cast<int>(r.monsterId))) {
         ++g_n.faults;
@@ -336,9 +416,11 @@ void __cdecl OnHost(const PluginContext*, nw::ChannelHandle, nw::PeerHandle peer
     if (id == kMsgHello) {   // who hosts decides: the answer to a joined client's hello is our rule
         uint32_t helloHero = 0;
         if (!ParseHello(data, size, &helloHero)) return;
+        coopstrikewire::OnHello(peer, helloHero);   // [gameplay] melee_direct_client_host: bound, and its rule answered too
         Rule r;
         r.box = g_cleave.load();
-        r.canStrike = CanStrike(GetTickCount64());
+        // (or the joined players' touches are struck here - [gameplay] melee_direct_client_host: the server's game known and Direct hit's hooks in, any view)
+        r.canStrike = CanStrike(GetTickCount64()) || coopstrikewire::HostCanStrike(GetTickCount64());
         uint8_t b[kRuleBytes];
         if (const uint32_t n = BuildRule(r, b, sizeof b); n && g_net && g_ctx) g_net->sendToClient(g_ctx, g_channel, peer, kMsgRule, b, n);
         static std::atomic<int> told{0};
@@ -351,6 +433,7 @@ void __cdecl OnHost(const PluginContext*, nw::ChannelHandle, nw::PeerHandle peer
                                : "ticked, but this PC cannot strike now (hit by touch not running on a game of ours: not VR F4?) - off for them until it can");
         return;
     }
+    if (id >= coopstrike::kMsgSwing && id <= coopstrike::kMsgSwingRule) { coopstrikewire::HostMessage(peer, id, data, size); return; }
     if (id != kMsgStrike) return;
     uint32_t hero = 0, monster = 0;
     if (!ParseStrike(data, size, &hero, &monster)) return;
@@ -406,6 +489,7 @@ void Tell(const char* role, uint32_t monsterId, Why w, uint64_t since, const Gat
 
 // Joined: the host's rule, the answer to our hello (who hosts decides; our own box means nothing here).
 void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, const void* data, uint32_t size, void*) noexcept {
+    if (!g_netDead.load() && id >= coopstrike::kMsgSwing && id <= coopstrike::kMsgSwingRule) { coopstrikewire::ClientMessage(id, data, size); return; }
     Rule r;
     if (g_netDead.load() || id != kMsgRule || !ParseRule(data, size, &r)) return;
     g_ruleBox.store(r.box);
@@ -423,6 +507,10 @@ void __cdecl OnClient(const PluginContext*, nw::ChannelHandle, uint16_t id, cons
 void __cdecl OnConnection(const PluginContext*, const nw::ConnectionEvent* ev, void*) noexcept {
     if (g_netDead.load() || !nw::HasConnectionEventField(ev, nw::ConnectionEventRequiredSize)) return;
     if (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected) g_ruleAt.store(0);   // (joined: no rule without the host)
+    if (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected) {
+        if (ev->peer != nw::InvalidPeerHandle) coopstrikewire::PeerGone(ev->peer);
+        else coopstrikewire::HostGone();
+    }
     if (ev->peer != nw::InvalidPeerHandle && (ev->state == nw::ConnectionState::Disconnected || ev->state == nw::ConnectionState::Rejected)) {
         std::lock_guard<std::mutex> lock(g_remoteLock);
         g_peers.Forget(ev->peer);
@@ -584,7 +672,7 @@ bool Send(uint32_t heroId, uint32_t monsterId, int hand, bool melee, bool armed,
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         if (g_count >= kQueue) return false;
-        g_queue[g_count] = {heroId, monsterId, hand, static_cast<ULONGLONG>(nowMs), extra};
+        g_queue[g_count] = {heroId, monsterId, hand, static_cast<ULONGLONG>(nowMs), extra, t, twoHanded, twoHandsOn};
         ++g_count;
     }
     NoteDirect(monsterId, nowMs, extra);
@@ -618,6 +706,22 @@ bool HostRules(uint32_t monsterId, const Touch& t, bool twoHanded, bool twoHands
     NoteDirect(monsterId, nowMs, *extra);
     return true;
 }
+
+void SetStandStill(bool on) {
+    if (g_standStill.exchange(on) != on)
+        Log(on ? "melee direct (client): stand still - as a joined player, a touch on a monster beyond the game's reach sends the blow at its cell (no walk-up)"
+               : "melee direct (client): stand still off - the command on the unit for every touch (the host's server walks up to a far one)");
+}
+bool NetSendToHost(uint16_t id, const void* data, uint32_t size) {
+    if (g_netDead.load() || !g_connected.load() || !g_net || !g_ctx || g_channel == nw::InvalidChannelHandle) return false;
+    return g_net->sendToHost(g_ctx, g_channel, id, data, size) == nw::Result::Success;
+}
+bool NetSendToClient(uint64_t peer, uint16_t id, const void* data, uint32_t size) {
+    if (g_netDead.load() || !g_net || !g_ctx || g_channel == nw::InvalidChannelHandle || peer == nw::InvalidPeerHandle) return false;
+    return g_net->sendToClient(g_ctx, g_channel, static_cast<nw::PeerHandle>(peer), id, data, size) == nw::Result::Success;
+}
+bool Connected() { return g_connected.load(); }
+bool CleaveBox() { return g_cleave.load(); }
 
 bool TakeFallback(uint32_t* monsterId, int* hand) {
     const uint64_t v = g_fallback.exchange(0);

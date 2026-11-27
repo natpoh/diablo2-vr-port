@@ -594,6 +594,7 @@ bool CopyLayer(command_list* cl, resource layer, uint32_t w, uint32_t h) {
 // it into its swapchain on the game's queue after the pair, and shared as the toolbar is for FlatVR
 // (slot kMenuSlot). Under g_lock.
 std::atomic<bool> g_panelOut{false};
+std::atomic<bool> g_menuScene{false};   // [campfire] / [frontend]: a menu scene round you (SetMenuScene)
 struct Panel { resource tex{}; HANDLE handle = nullptr; uint32_t w = 0, h = 0; bool fresh = true; };
 Panel g_panel;
 std::atomic<bool> g_panelNow{false};    // copied out (and the layer emptied) by the last interface pass
@@ -807,15 +808,16 @@ void Publish(command_list* cl, resource layer, uint32_t w, uint32_t h, int hide)
     ++g_frames;
     device* dev = cl->get_device();
     DrainRetired(dev);
-    const bool menu = g_menu.load() || g_panelOut.load(), classic = g_classic.load();   // a menu's panel takes the toolbar with it (the big map does not: it stays where it hangs)
+    const bool scene = g_menuScene.load();   // ([campfire] / [frontend]: nothing of a game's interface cut out - SetMenuScene)
+    const bool menu = g_menu.load() || g_panelOut.load() || scene, classic = g_classic.load();   // a menu's panel takes the toolbar with it (the big map does not: it stays where it hangs)
     const bool barRoom = BarToRoom();   // (F5's toolbar low in front: to the room though the view keeps the rest in the picture)
     bool bar = false, map = false;
     const rect barBox = ToolbarRect(w, h);
     rect mapBox{};
     if (hide >= 1 && !menu) bar = CopyOut(cl, layer, barBox, kBar);
-    if (g_globesWant.load() && g_picReady.load()) CopyGlobes(cl, layer, w, h);   // (the layer is left as it is: the toolbar stays or goes by [hud] hide)
+    if (g_globesWant.load() && g_picReady.load() && !scene) CopyGlobes(cl, layer, w, h);   // (the layer is left as it is: the toolbar stays or goes by [hud] hide)
     else { g_glb.on = false; g_globesWhy.store(1); }
-    const bool drawn = g_mapDrawn;
+    const bool drawn = g_mapDrawn && !scene;
     g_mapDrawn = false;
     g_mapSeenPasses = drawn ? std::min(g_mapSeenPasses + 1, 1000u) : 0;   // [hud] map_direction: the arrow only on a map drawn a few passes running
     g_fullPasses = g_dirFull.load() && !drawn ? std::min(g_fullPasses + 1, 1000u) : 0;
@@ -903,7 +905,9 @@ bool OnClear(command_list* cl, resource_view rtv, const float c[4], uint32_t, co
     device* dev = cl->get_device();
     if (!IsLayerClear(dev, rtv, c)) return false;
     g_panelRuns.store(0);
-    g_frameMap.store(MapNow());
+    // ([campfire] / [frontend] a menu scene: no map box redirected - the main menu's character list, in what the map finder took for the map's box,
+    // was drawn into the map's own target, so neither the panel nor the hand had it; Serg 2026-11-27 "их вообще не надо вырезать")
+    g_frameMap.store(g_menuScene.load() ? 0 : MapNow());
     if (g_frameMap.load() == 1) {   // the frame's interface starts: so does the map's
         const resource_desc d = dev->get_resource_desc(dev->get_resource_from_view(rtv));
         std::lock_guard<std::mutex> g(g_lock);
@@ -1371,6 +1375,14 @@ bool NoticePiece(NativePiece* out, bool* encoded) {
     return true;
 }
 
+// [campfire] / [frontend]: a menu scene round you (vr/campfire_unleashed.h Now) - none of a game's pieces is cut out of the interface there (the map's
+// box, the toolbar, the globes): the whole menu stays on its panel. The main menu's character list was taken for the map's box and went into the
+// left hand's map orb (Serg 2026-11-27, 16:9 main menu with a render size in force)
+void SetMenuScene(bool on) {
+    if (g_menuScene.exchange(on) != on)
+        Log(on ? "hud: a menu scene round you - no toolbar, map or globes cut out of the interface ([campfire] / [frontend])"
+               : "hud: the menu scene left - the toolbar, the map and the globes as before");
+}
 void SetPanelOut(bool out) {
     if (g_panelOut.exchange(out) != out)
         Log(out ? "hud: a menu open - the interface goes out of the picture as a panel ([openxr] menu_3d)"

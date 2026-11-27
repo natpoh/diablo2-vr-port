@@ -35,6 +35,7 @@ constexpr const wchar_t* kReceipts[] = {
     L"bazaar_mask.json",     // [holes] bazaar_mask_hidden: the Kurast Bazaar tile (bazaar_assets.cpp)
     L"wrist_orbs.json",      // [hud] wrist_game_models (orb_assets.cpp)
     L"campfire_scene.json",  // [campfire] enabled (campfire_assets_unleashed.cpp)
+    L"frontend_scene.json",  // [frontend] scene_3d: the main menu's preset (frontend_scene_unleashed.cpp)
     L"reshade\\reshade-shaders\\Textures\\D2R_Arcane\\made.json",   // [sky] arcane_sky: its visual files in the .mpq (arcane_assets.cpp)
 };
 constexpr const char* kMpqPrefix = "mods/D2R-VR/D2R-VR.mpq/";   // a receipt's name of a file in the .mpq

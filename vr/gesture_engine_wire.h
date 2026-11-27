@@ -20,6 +20,19 @@ namespace gengine {
 void Init(const D2RL::PluginContext* ctx);
 // The settings load: [gestures] engine_in_game, engine_pen (gesture_engine.h kPen*).
 void Configure(bool on, int playPens);
+// The settings load: [gestures] voice (voice gestures: a word said casts, F4), voice_hold (only while a Talk trigger is held), voice_mic (a part of
+// the microphone's name; "" Windows' default for communications), voice_language ("auto" Windows' language; else a game language code such as
+// "ruRU", or a speech model folder's own name). Told to the engine when it is open and has voice (its optional BWGE_VoiceSet).
+void ConfigureVoice(bool on, bool hold, const char* mic, const char* language);
+// The settings load: [gestures] voice_all_views (off by default; Serg 2026-11-26 "и 3д на всех видах"): the voice gestures cast in every VR view
+// (F1, F2, F3, F5 too), voice ONLY there (no pen, no pose, no other game action), under F4's rules - a game area, no menu, no skill panel.
+// Off: the engine is fed in F4 only, as before.
+void ConfigureVoiceViews(bool allViews);
+// voice_all_views on and the voice gestures listening: the skill link's tick lets a voice cast through in another VR view. Any thread.
+bool VoiceAllViews();
+// The engine listens for voice gestures (on, and the library has them): the Gestures tab offers Voice. Its state (the last frame's copy). Any thread.
+bool HasVoice();
+bool Voice(BWGE_VoiceState* out);
 bool On();
 // On and the engine open: the Gestures tab is the engine's.
 bool Active();

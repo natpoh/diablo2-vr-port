@@ -150,6 +150,30 @@ inline bool OnHand(const float hand[16], const float relP[3], const float relR[3
     return true;
 }
 
+// [multiplayer] pose_share_facing (2026-11-27, Serg in VR, the other player flat: "he looks at me, but on my PC he stands with his back to me"): a player who does
+// not play VR F4 sends no pose - but our mod turns his drawn hero whole to his camera ([body] turn_third: cam-in-model 172 deg in his log), on his PC only, while
+// every other PC drew the game's facing. Such a player now sends a FACING pose: no joint at all (flags 0, no head - FromPose takes none of it), only his drawn
+// body's turn as the world heading (HeadingOf his camera's forward, the F4 pose's own convention) and his eye height. The receiver turns that hero's whole body
+// to it instead of the game's facing (skeletons.cpp PoseLegsOnly). A pose with a head is never one.
+inline bool FacingOnly(const poseshare::Pose& p) {
+    return !(p.flags & poseshare::kHead) && poseshare::Plausible(p) && std::isfinite(p.heading);
+}
+inline bool FromFacing(const poseshare::Pose& p, uint32_t unit, float gridX, float gridZ, Target* t) {
+    if (!t || !FacingOnly(p)) return false;
+    *t = Target{};
+    t->unit = unit;
+    t->x = gridX;
+    t->z = gridZ;
+    t->heading = p.heading;
+    t->eyeM = p.eyeM;
+    return true;
+}
+// The heading's way ahead on the ground (pose_share.h: ahead is (-sin h, 0, -cos h)) - the world direction the hero is turned to.
+inline void AheadOfHeading(float heading, float* x, float* z) {
+    *x = -std::sin(heading);
+    *z = -std::cos(heading);
+}
+
 // Which target is this rig's: the one nearest it within kMatchUnits; -1 none.
 inline int Match(float rigX, float rigZ, const Target* t, int n) {
     int best = -1;

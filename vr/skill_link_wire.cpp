@@ -43,6 +43,7 @@ BW_LinkSkills g_latest;            // LatestSkills (under g_lock)
 uint32_t g_latestRev = 0;
 bool g_haveLatest = false;
 int32_t g_engineCasts[16];         // CastFromEngine's, not yet taken by the tick (under g_lock)
+bool g_engineCastAny[16];          // ... a voice gesture's in another VR view ([gestures] voice_all_views)
 int g_engineCastCount = 0;
 int32_t g_engineArms[8];           // ArmFromEngine's (under g_lock)
 int g_engineArmHands[8];
@@ -86,16 +87,30 @@ bool g_wasOn = false;
 
 const char* SlotName(int slot) { return slot >= 0 && slot < wheel::kSlotCount ? wheel::kSlotDefs[slot].label : "?"; }
 
-void Press(int slot, uint32_t ms) {
-    const skilllink::Press p = skilllink::SlotPress(slot);
+skilllink::Presser g_presser;  // a second-row slot's left trigger first, its button kAltLeadMs later (the game reads them apart)
+bool g_dueAny = false;         // the button the presser keeps waiting is a voice cast's in another VR view
+bool g_casterAny = false;      // the caster's cast under way is one (set at each Start)
+bool g_watchAny = false;       // ... the watched press's
+
+// anyView: a voice gesture's cast under [gestures] voice_all_views - its pulses go in every VR view (directinput::PadPulseAnyView)
+void Send(const skilllink::Presser::Pulse& u, bool anyView) {
+    if (!u.send) return;
     // the cast itself: point cast lets it through to the game as it is (taken for its arc, it came out late, as its own second press - himbrat, 2026-11-19)
-    pointwire::SkipPress(slot, ms ? ms : p.ms);
-    directinput::PadPulse({p.buttons, p.lt, p.rt}, ms ? ms : p.ms);
+    if (u.slot >= 0) pointwire::SkipPress(u.slot, u.ms);
+    if (anyView) directinput::PadPulseAnyView({u.p.buttons, u.p.lt, u.p.rt}, u.ms);
+    else directinput::PadPulse({u.p.buttons, u.p.lt, u.p.rt}, u.ms);
+}
+
+void Press(int slot, uint32_t ms, bool anyView = false) {
+    const skilllink::Presser::Pulse u = g_presser.Press(slot, ms, GetTickCount64());
+    if (g_presser.Waiting()) g_dueAny = anyView;
+    Send(u, anyView);
 }
 
 void Reset() {
     g_reader.Reset();
     g_caster.Reset();
+    g_presser.Reset();
     g_haveSent = false;
     g_assignSeq = 0;
 }
@@ -131,9 +146,12 @@ bool LatestSkills(BW_LinkSkills* out, uint32_t* revision) {
     return true;
 }
 
-void CastFromEngine(int32_t skill) {
+void CastFromEngine(int32_t skill, bool anyView) {
     std::lock_guard<std::mutex> lock(g_lock);
-    if (g_engineCastCount < 16) g_engineCasts[g_engineCastCount++] = skill;
+    if (g_engineCastCount < 16) {
+        g_engineCastAny[g_engineCastCount] = anyView;
+        g_engineCasts[g_engineCastCount++] = skill;
+    }
 }
 
 void ArmFromEngine(int32_t skill, int hand) {
@@ -158,7 +176,7 @@ uint32_t RecordState(int32_t* skill) {
     return g_recState;
 }
 
-void Tick(bool play, int heroMode) {
+void Tick(bool play, int heroMode, bool voicePlay) {
     const bool on = g_on.load(), engine = g_engine.load();
     if (!on && g_wasOn) {   // the list emptied for BodyWalk: no set, nothing to bind or cast
         g_wasOn = false;
@@ -175,6 +193,10 @@ void Tick(bool play, int heroMode) {
     }
     g_wasOn = on;
     const uint64_t now = GetTickCount64();
+    // a second-row press's button, its left trigger's lead over (out of play meanwhile: dropped, as every press here is)
+    // (a voice cast's in another VR view: while voicePlay - a game area, no menu, no panel)
+    if (play || (g_dueAny && voicePlay)) Send(g_presser.Step(now), g_dueAny);
+    else if (g_presser.Waiting()) g_presser.Reset();
     // the skill panel's reads of the game (its UI thread): kept going while the panel itself is off
     if (!skillwheel::Enabled()) wheelgame::Tick(true, false);
     wheelgame::Latest(&g_snap, &g_snapRev);
@@ -207,21 +229,28 @@ void Tick(bool play, int heroMode) {
     // the gesture engine's casts (the game's own way, as BodyWalk's below)
     {
         int32_t casts[16];
+        bool any[16];
         int n = 0;
         {
             std::lock_guard<std::mutex> lock(g_lock);
             n = g_engineCastCount;
-            for (int i = 0; i < n; ++i) casts[i] = g_engineCasts[i];
+            for (int i = 0; i < n; ++i) { casts[i] = g_engineCasts[i]; any[i] = g_engineCastAny[i]; }
             g_engineCastCount = 0;
         }
         for (int i = 0; i < n; ++i) {
-            if (!play || !g_snap.ready) {
+            // a voice gesture's in another VR view ([gestures] voice_all_views): the same rules there - a game area, no menu, no panel
+            const bool other = any[i] && !play && voicePlay;
+            if ((!play && !other) || !g_snap.ready) {
                 LogF("vrcam: skill link - the gesture engine's cast of skill %d dropped: %s", casts[i],
-                     !viewgate::F4() ? "not in VR first person (F4)" : !g_snap.ready ? "the game's skills are not read" : "a menu is open");
+                     !g_snap.ready ? "the game's skills are not read"
+                     : any[i]      ? "a menu or the skill panel is open, or not in a game area"
+                     : !viewgate::F4() ? "not in VR first person (F4)" : "a menu is open");
                 continue;
             }
-            LogF("vrcam: skill link - the gesture engine recognised a gesture for skill %d: cast", casts[i]);
+            LogF("vrcam: skill link - the gesture engine recognised a gesture for skill %d: cast%s", casts[i],
+                 other ? " (a voice gesture in another VR view, [gestures] voice_all_views)" : "");
             g_caster.Start(casts[i], now);
+            g_casterAny = other;
         }
     }
 
@@ -323,8 +352,10 @@ void Tick(bool play, int heroMode) {
             }
             if (fresh[i].source == BW_LINK_CAST_GESTURE) runeflash::Shared().Trigger(now);   // (a drawn gesture recognised: its trail flashes)
             g_caster.Start(fresh[i].skill, now);
+            g_casterAny = false;
         }
     }
+    const bool casterMay = play || (g_casterAny && voicePlay);   // (a voice cast's in another VR view: while voicePlay)
 
     // the cast under way: the slot pressed, or the skill put on the spare slot first
     if (g_caster.Busy()) {
@@ -338,9 +369,10 @@ void Tick(bool play, int heroMode) {
         const skilllink::Plan p = g_caster.Step(g_snap, now, g_spare.load(), refused, g_settle.load() ? skilllink::kSettleMs : 0);
         switch (p.what) {
             case skilllink::Plan::Do::Press:
-                if (play) {
-                    Press(p.slot, 0);
+                if (casterMay) {
+                    Press(p.slot, 0, g_casterAny);
                     if (p.settledMs >= 0) {
+                        g_watchAny = g_casterAny;
                         LogF("vrcam: skill link - skill %d: the game's %s pressed %lld ms after the game's table showed it there%s", skill, SlotName(p.slot),
                              (long long)p.settledMs, g_settle.load() ? " ([gestures] skill_link_settle)" : " (no settle)");
                         g_watch.Start(now, heroMode);   // and watched: did it turn into a cast?
@@ -350,7 +382,8 @@ void Tick(bool play, int heroMode) {
                         g_pressAt = now;
                         g_watchShownMs = p.settledMs;
                     } else
-                        LogF("vrcam: skill link - skill %d cast: the game's %s pressed", skill, SlotName(p.slot));
+                        LogF("vrcam: skill link - skill %d cast: the game's %s pressed%s", skill, SlotName(p.slot),
+                             skilllink::SlotPress(p.slot).lt ? " (its left trigger alone first, the button 90 ms later)" : "");
                 }
                 break;
             case skilllink::Plan::Do::Assign: {
@@ -376,11 +409,11 @@ void Tick(bool play, int heroMode) {
                  g_watchSkill, (unsigned long long)(now - g_pressAt), g_watchTry, (long long)g_watchShownMs);
             break;
         case skilllink::CastWatch::Ev::NoCast:
-            if (g_watchTry < skilllink::kPressTries && play) {
+            if (g_watchTry < skilllink::kPressTries && (play || (g_watchAny && voicePlay))) {
                 LogF("vrcam: skill link - skill %d REFUSED? no cast within %llu ms of press %d (pressed %lld ms after the table showed it): pressed again",
                      g_watchSkill, (unsigned long long)skilllink::kCastSeenMs, g_watchTry, (long long)g_watchShownMs);
                 if (skilllink::SlotOf(g_snap, g_watchSkill) == g_watchSlot) {
-                    Press(g_watchSlot, 0);
+                    Press(g_watchSlot, 0, g_watchAny);
                     ++g_watchTry;
                     g_watchShownMs += (long long)(now - g_pressAt);
                     g_pressAt = now;

@@ -208,10 +208,16 @@ def mod_files_from_payload(payload, inc=MOD_FILES_INC):
         rel_dir = dst[len(_DST_PREFIX):].replace("\\", "/").strip("/")
         flags = set(f.get("Flags", "").replace(",", " ").split())
         check = f.get("Check", "")
+        base = None
         if "*" in rel_src:
             folder, pattern = rel_src.rsplit("/", 1)
-            staged = sorted(p for p in (payload / folder).glob(pattern) if p.is_file())
+            base = payload / folder
+            # recursesubdirs: the pattern in every folder below too, each file into the same sub-folder of DestDir (as Inno Setup does)
+            found = base.rglob(pattern) if "recursesubdirs" in flags else base.glob(pattern)
+            staged = sorted(p for p in found if p.is_file())
             if not staged:
+                if "skipifsourcedoesntexist" in flags:
+                    continue
                 raise ManifestError(f"nothing staged for {rel_src!r} (looked in {payload})")
         else:
             p = payload / rel_src
@@ -222,7 +228,8 @@ def mod_files_from_payload(payload, inc=MOD_FILES_INC):
             staged = [p]
         for p in staged:
             name = f.get("DestName") or p.name
-            path = (rel_dir + "/" if rel_dir else "") + name
+            sub = p.parent.relative_to(base).as_posix() if base is not None and p.parent != base else ""
+            path = "/".join(x for x in (rel_dir, sub, name) if x)
             e = {"path": path, "sha256": sha256_file(p), "optional": "skipifsourcedoesntexist" in flags or "IsVR" in check}
             if "onlyifdoesntexist" in flags:
                 e["user_edits"] = True
@@ -499,6 +506,20 @@ def selftest():
         m4 = json.loads(make(t / "e", payload=pay2).read_text(encoding="utf-8"))
         expect(not any("d2r_vr_weight" in e["path"] or "d2r_vr_grip" in e["path"] for e in m4["x-mod-files"]) and len(m4["x-mod-files"]) == len(m3["x-mod-files"]) - 2,
                "a build without the weight and grip libraries does not list them (Setup does not ship them either)")
+        # the voice listener's folder: its speech models are installed with recursesubdirs (a model is a tree of folders)
+        V = L + "voice/"
+        mdl = pay / "voice/models/vosk-model-small-xx/am/final.mdl"
+        mdl.parent.mkdir(parents=True, exist_ok=True)
+        mdl.write_bytes(b"staged model")
+        m5 = {e["path"]: e for e in json.loads(make(t / "v", payload=pay).read_text(encoding="utf-8"))["x-mod-files"]}
+        expect(V + "models/vosk-model-small-xx/am/final.mdl" in m5 and m5[V + "models/vosk-model-small-xx/am/final.mdl"]["optional"]
+               and V + "d2r_vr_voice.exe" in m5, "the voice folder is listed, a model's file at its own depth (recursesubdirs), optional")
+        # ... and a build without the voice folder lists none of it (its lines skip what is not staged, wildcards too)
+        pay_nv = t / "payload_novoice"
+        stage(pay_nv, skip={r for r in (f["Source"][len(_SRC_PREFIX):].replace("\\", "/") for f in parse_mod_files_inc(MOD_FILES_INC.read_text(encoding="utf-8")))
+                            if r.startswith("voice/")})
+        m6 = json.loads(make(t / "w", payload=pay_nv).read_text(encoding="utf-8"))
+        expect(not any("/voice/" in e["path"] for e in m6["x-mod-files"]), "a build without the voice folder does not list it")
         # a build with a file missing that Setup needs
         pay3 = t / "payload3"
         stage(pay3, skip=("plugins/d2rl-vrcam.dll",))

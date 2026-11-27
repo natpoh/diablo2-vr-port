@@ -9,8 +9,9 @@
 //   List      - a row per gesture of the class: its picture | its name and the skill it casts | its type, hand and threshold (< 80 % >) |
 //               Re-record, Clear (asks once more), Bind (a skill picker); NEW GESTURE at the foot; Previous / Next past six. A click on a
 //               glyph's or a motion's picture gives it the next colour.
-//   NewType   - Glyph / Hand pose / Body motion;  NewHand - Left / Right (a pose also Both);  NewSkill - the class's skills, a grid of tiles:
-//               the pick asks BodyWalk to RECORD a new gesture of that type and hand for that skill.
+//   NewType   - Glyph / Hand pose / Body motion (/ Voice: [gestures] voice and an engine with voice gestures);  NewHand - Left / Right (a pose also
+//               Both; a voice gesture has no hand: straight to the skills);  NewSkill - the class's skills, a grid of tiles: the pick asks BodyWalk to
+//               RECORD a new gesture of that type and hand for that skill. A voice take is the word said three times (no pen).
 //   BindSkill - the same grid for a gesture already there (and No skill).
 //   Recording - what to do for the type, how BodyWalk's recording stands (READY -> DRAWING). While it records the trigger is BodyWalk's
 //               pen: the window takes no click and the beam is hidden; the window stays where it is, the trail drawn over it (xr.cpp);
@@ -32,6 +33,7 @@
 
 #include "gesture_actions.h"
 #include "gesture_cmds.h"
+#include "gesture_engine_abi.h"   // BWGE_VoiceState: the voice gestures' listener, as the engine says
 #include "pose_zones.h"
 #include "skill_link_abi.h"
 #include "wheel_types.h"   // wheel::Skill: the hero's skills, as the skill panel's snapshot has them
@@ -72,8 +74,8 @@ enum : int {
     kRevMode = 19,   // Review of a gesture with a skill: cast once / select, a click the other
     kTriggers = 24,  // List: the Triggers screen (each trigger's role: as before / glyphs / Shift / an action)
     kTrigRole0 = 40, // Triggers: kTrigRole0 + hand row * 4 + role (row 0 the right trigger, 1 the left)
-    kTrigAction0 = 48,   // Triggers: an Action trigger's action, row 0 / 1 (the actions' grid)
-    kChoice0 = 20,   // NewType / NewHand: the big choices, 20..22
+    kTrigAction0 = 50,   // Triggers: an Action trigger's action, row 0 / 1 (the actions' grid)
+    kChoice0 = 20,   // NewType / NewHand: the big choices, 20..23
     kSwatch0 = 30,   // Colour (and a glyph's / motion's review): the ray's colours, 30..39
     kRow0 = 100,     // List: kRow0 + row * 10 + part
     kGrid0 = 200,    // the grids: kGrid0 + 0..23
@@ -123,18 +125,19 @@ inline R FooterRect(int index, int count) {
     const float total = count * w + (count - 1) * kButtonGap, l = 0.5f * (kW - total) + index * (w + kButtonGap);
     return {l, kFootT, l + w, kFootB};
 }
-// Triggers: per trigger (row 0 the right, 1 the left) its name, its four roles, and an Action trigger's action.
-constexpr int kTrigRoles = 4;
+// Triggers: per trigger (row 0 the right, 1 the left) its name, its five roles (as before, glyphs, Shift, an action, talk), and an Action trigger's action.
+constexpr int kTrigRoles = 5;
+static_assert(kTrigRole0 + 2 * kTrigRoles <= kTrigAction0, "the roles' cells end before the actions'");
 inline R TrigLabelRect(int row) { const float t = 196.0f + row * 300.0f; return {120.0f, t, 1480.0f, t + 50.0f}; }
 inline R TrigRoleRect(int row, int role) {
-    const float w = 300.0f, gap = 24.0f, l = 0.5f * (kW - (kTrigRoles * w + (kTrigRoles - 1) * gap)) + role * (w + gap), t = 256.0f + row * 300.0f;
+    const float w = 264.0f, gap = 20.0f, l = 0.5f * (kW - (kTrigRoles * w + (kTrigRoles - 1) * gap)) + role * (w + gap), t = 256.0f + row * 300.0f;
     return {l, t, l + w, t + 74.0f};
 }
 inline R TrigActionRect(int row) { const float t = 346.0f + row * 300.0f; return {460.0f, t, 1140.0f, t + 60.0f}; }
 
-// NewType / NewHand: big choices, one under another, in the middle.
+// NewType / NewHand: big choices, one under another, in the middle (four: a little lower each).
 inline R ChoiceRect(int i, int n) {
-    const float h = 150.0f, gap = 32.0f, total = n * h + (n - 1) * gap, top = 150.0f + 0.5f * (680.0f - total);
+    const float h = n > 3 ? 140.0f : 150.0f, gap = n > 3 ? 22.0f : 32.0f, total = n * h + (n - 1) * gap, top = (n > 3 ? 162.0f : 150.0f) + 0.5f * (680.0f - total);
     return {320.0f, top + i * (h + gap), 1280.0f, top + i * (h + gap) + h};
 }
 
@@ -210,6 +213,26 @@ enum class Note : uint8_t {
     ClearAgain, ChooseReview, NoSkills, Failed, Cancelled, Stopped,
 };
 
+// The voice gestures' listener as the tab shows it (the engine's BWGE_VoiceState cut down; the microphone's level in tenths, so the view changes when
+// it moves a tenth, not every frame).
+struct VoiceView {
+    uint8_t state;                 // BWGE_VOICE_*
+    uint8_t level10;               // 0..10
+    bool speaking, listening;
+    uint8_t model;                 // 0 no speech model (the takes alone), 1 one in use, 2 it would not load
+    uint8_t takeHeard;             // a take running: heard so far (of 3)
+    uint32_t heardStamp;           // + for each sound heard
+    float heardPercent;
+    char modelName[64];
+    char micName[64];
+    char takeText[48];             // the take's word as read
+    char takeWhy[96];              // a failed take: why
+    char similarName[48];          // the new take sounds like this gesture (its name; "" none)
+    char heardText[48];            // the last sound: what the speech model read ...
+    char heardWhy[64];             // ... no cast: why
+    char heardName[48];            // ... the gesture it matched ("" none)
+};
+
 struct Row {
     BW_LinkGesture g;
     char skill[wheel::kNameLen];   // the skill it casts, in the game's words (empty: none / not known)
@@ -263,6 +286,8 @@ struct View {
     bool lastShown;                // a stroke was read since BodyWalk started: the hint line says how it went
     float lastPercent;
     char lastName[48];             // the gesture it matched (empty: none over its threshold)
+    bool voiceOk;                  // voice gestures: on, and the engine has them (NewType offers Voice)
+    VoiceView voice;
 };
 
 inline void Zero(View& v) { std::memset(&v, 0, sizeof v); v.hover = kNone; v.bindSkill = -1; v.lastPercent = -1.0f; }
@@ -280,7 +305,10 @@ inline int FooterCells(const View& v, int* out) {
         if (v.failed) { out[n++] = kRetry; out[n++] = kBack; }
         else out[n++] = kStop;
         break;
-    case Screen::Review: out[n++] = kKeep; out[n++] = kRerecord; out[n++] = kDiscard; out[n++] = kPlay; break;
+    case Screen::Review:
+        out[n++] = kKeep; out[n++] = kRerecord; out[n++] = kDiscard;
+        if (!(v.haveReview && v.review.g.type == BW_LINK_GT_VOICE)) out[n++] = kPlay;   // (a word has no take to play here)
+        break;
     case Screen::Colour: out[n++] = kBack; break;
     case Screen::Triggers: out[n++] = kBack; break;
     }
@@ -306,7 +334,7 @@ inline bool FooterEnabled(const View& v, int cell) {
 inline bool HasRay(const BW_LinkGesture& g) { return g.type == BW_LINK_GT_GLYPH || g.type == BW_LINK_GT_MOTION; }
 inline bool PartUsable(const BW_LinkGesture& g, int part) {
     switch (part) {
-    case kPic: return g.type != BW_LINK_GT_BUTTON && (g.flags & (BW_LINK_GF_RECORDED | BW_LINK_GF_REVIEW));   // (Play: a take to play)
+    case kPic: return g.type != BW_LINK_GT_BUTTON && g.type != BW_LINK_GT_VOICE && (g.flags & (BW_LINK_GF_RECORDED | BW_LINK_GF_REVIEW));   // (Play: a take to play)
     case kColour: return g.type == BW_LINK_GT_GLYPH || g.type == BW_LINK_GT_MOTION;
     case kHand: return g.type == BW_LINK_GT_GLYPH;
     case kMode: return g.type != BW_LINK_GT_BUTTON && g.skill >= 0;   // (a skill: an action is done once)
@@ -337,8 +365,10 @@ inline const char* StateName(uint32_t st) {
 // NewHand's choices, top down: Right (most players' pen hand), Left, and a third - Both for a pose, Either for a glyph (BW_LINK_GH_BOTH: a glyph
 // drawn by either hand, its pen either trigger).
 inline uint8_t HandOfChoice(int i) { return uint8_t(i == 0 ? BW_LINK_GH_RIGHT : i == 1 ? BW_LINK_GH_LEFT : BW_LINK_GH_BOTH); }
+// NewType's choices: Glyph, Hand pose, Body motion, and Voice when the engine listens.
+inline uint8_t TypeOfChoice(int i) { return uint8_t(i < 3 ? BW_LINK_GT_GLYPH + i : BW_LINK_GT_VOICE); }
 inline int ChoiceCount(const View& v) {
-    if (v.screen == Screen::NewType) return 3;
+    if (v.screen == Screen::NewType) return v.voiceOk ? 4 : 3;
     if (v.screen == Screen::NewHand) return v.newType == BW_LINK_GT_POSE || v.newType == BW_LINK_GT_GLYPH ? 3 : 2;
     return 0;
 }
@@ -506,6 +536,8 @@ struct In {
         uint32_t id;
         uint8_t mode;
     };
+    bool voiceOk = false;         // voice gestures on and the engine has them (gengine::HasVoice)
+    const BWGE_VoiceState* voice = nullptr;   // ... their listener's state (null none)
     const ModeOf* modeOf = nullptr;   // the gestures in select mode (absent: cast once)
     int modeOfCount = 0;
     bool modesOk = false;         // the engine keeps a gesture's mode (BWGE_SetMode)
@@ -877,7 +909,7 @@ public:
             switch (screen_) {
             case Screen::NewType: screen_ = Screen::List; break;
             case Screen::NewHand: screen_ = Screen::NewType; break;
-            case Screen::NewSkill: screen_ = Screen::NewHand; break;
+            case Screen::NewSkill: screen_ = newType_ == BW_LINK_GT_VOICE ? Screen::NewType : Screen::NewHand; break;
             case Screen::BindSkill:
                 screen_ = bindTrigger_ ? Screen::Triggers : Screen::List;
                 bindTrigger_ = 0;
@@ -987,9 +1019,15 @@ private:
             break;
         case Screen::NewType:
             if (h == kBack) screen_ = Screen::List;
-            else if (h >= kChoice0 && h < kChoice0 + 3) {
-                newType_ = uint8_t(BW_LINK_GT_GLYPH + (h - kChoice0));
-                screen_ = Screen::NewHand;
+            else if (h >= kChoice0 && h < kChoice0 + ChoiceCount(v_)) {
+                newType_ = TypeOfChoice(h - kChoice0);
+                if (newType_ == BW_LINK_GT_VOICE) {   // a word has no hand: the skill next
+                    newHand_ = BW_LINK_GH_RIGHT;
+                    OpenPicker(in, Screen::NewSkill);
+                    if (!pickCount_) Say(Note::NoSkills, in.time);
+                } else {
+                    screen_ = Screen::NewHand;
+                }
             }
             break;
         case Screen::NewHand:
@@ -1004,7 +1042,7 @@ private:
         case Screen::NewSkill:
         case Screen::BindSkill:
             if (h == kBack) {
-                screen_ = screen_ == Screen::NewSkill ? Screen::NewHand : bindTrigger_ ? Screen::Triggers : Screen::List;
+                screen_ = screen_ == Screen::NewSkill ? (newType_ == BW_LINK_GT_VOICE ? Screen::NewType : Screen::NewHand) : bindTrigger_ ? Screen::Triggers : Screen::List;
                 bindTrigger_ = 0;
             } else if (h == kBindTabSkills || h == kBindTabActions) bindTab_ = h == kBindTabActions || bindTrigger_ ? 1 : 0;   // (a trigger's: actions only)
             else if (screen_ == Screen::BindSkill && bindTrigger_ && h >= kGrid0 && h < kGrid0 + v_.actCount) {   // a trigger's action: the host keeps it
@@ -1129,6 +1167,7 @@ private:
         static View n;   // (one model per process; ~9 KB, not on the stack)
         Zero(n);
         n.screen = screen_;
+        n.voiceOk = in.voiceOk;   // (NewType's choices count it)
         n.avail = avail;
         n.canStart = canStart_;
         n.zonesShown = in.zonesShown;
@@ -1244,6 +1283,27 @@ private:
             n.lastShown = true;
             n.lastPercent = std::isfinite(g->lastPercent) ? g->lastPercent : -1.0f;
             if (const BW_LinkGesture* lg = Find(g, g->lastGesture)) std::snprintf(n.lastName, sizeof n.lastName, "%.47s", lg->name);
+        }
+        // the voice gestures' listener (n.voiceOk: set with the screen, before the choices are counted)
+        if (in.voiceOk && in.voice) {
+            const BWGE_VoiceState& s = *in.voice;
+            VoiceView& vv = n.voice;
+            vv.state = (uint8_t)std::min<uint32_t>(s.state, 255u);
+            vv.level10 = (uint8_t)std::min<uint32_t>(s.level / 10u, 10u);
+            vv.speaking = s.speaking != 0;
+            vv.listening = s.listening != 0;
+            vv.model = (uint8_t)std::min<uint32_t>(s.model, 255u);
+            vv.takeHeard = (uint8_t)std::min<uint32_t>(s.takeHeard, 9u);
+            vv.heardStamp = s.heardStamp;
+            vv.heardPercent = std::isfinite(s.heardPercent) ? std::round(s.heardPercent) : 0.0f;
+            std::snprintf(vv.modelName, sizeof vv.modelName, "%.63s", s.modelName);
+            std::snprintf(vv.micName, sizeof vv.micName, "%.63s", s.micName);
+            std::snprintf(vv.takeText, sizeof vv.takeText, "%.47s", s.takeText);
+            std::snprintf(vv.takeWhy, sizeof vv.takeWhy, "%.95s", s.takeWhy);
+            std::snprintf(vv.heardText, sizeof vv.heardText, "%.47s", s.heardText);
+            std::snprintf(vv.heardWhy, sizeof vv.heardWhy, "%.63s", s.heardWhy);
+            if (const BW_LinkGesture* sg = s.takeSimilar ? Find(g, s.takeSimilar) : nullptr) std::snprintf(vv.similarName, sizeof vv.similarName, "%.47s", sg->name);
+            if (const BW_LinkGesture* hg = s.heardGesture ? Find(g, s.heardGesture) : nullptr) std::snprintf(vv.heardName, sizeof vv.heardName, "%.47s", hg->name);
         }
         n.revision = v_.revision;
         if (std::memcmp(&n, &v_, sizeof n) != 0) {

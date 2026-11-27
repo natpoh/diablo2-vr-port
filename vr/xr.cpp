@@ -58,7 +58,7 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "campfire_unleashed.h"   // [campfire] the creation scene's boards (MPL 2.0, from D2R VR Unleashed)
 #include "vr_keyboard_unleashed.h"   // [openxr] name_keyboard (MPL 2.0, from D2R VR Unleashed)
 #include "unleashed_cinema_screen.h"   // [cinema] world_screen: the big screen's part of the frame and its place (MPL 2.0, from D2R VR Unleashed)
-#include "video3d_lib.h"   // [cinema] video_3d: the films in 3D on the big screen - the optional library d2r_vr_video3d.dll (shared/d2r_vr_video3d.h)
+#include "video3d/video3d.h"   // [cinema] video_3d: the films in 3D on the big screen (vr/video3d: depth network at run time, the eyes from it)
 #include "hand_space.h"      // [openxr] hand_space: a grip the room's locate gives no whole pose for, looked for elsewhere (the pure rule)
 #include "hand_keep.h"       // [openxr] hands_kept / bare_hand_poses / panels_key: the hands and the panels when the runtime gives no controllers
 #include "xr_failure.h"   // when the runtime fails and the session is given up (xr_failure.h)
@@ -118,6 +118,7 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "near_overlay.h"   // [openxr] hands_over_panels: the near pixels (hands, weapon) over the skill panel
 #include "skill_wheel.h"   // [openxr] skill_wheel: the skill wheel in the headset (vr/xr_skill_wheel.h is its layer)
 #include "game_ui.h"       // [openxr] skill_panel_game_look: the skill panel drawn with the game's own art (vr/tiles_paint.cpp)
+#include "keyboard_game_look.h"   // [openxr] keyboard_game_look: the VR keyboard's keys in the game's own art
 #include "rune_shader.h"   // [openxr] runes_draw: BodyWalk's gesture runes in the headset (vr/xr_runes.h is their layer; rune_geom.h the maths)
 #include "wheel_paint.h"
 #include "monitor_layers.h"   // [render] monitor_panels: this frame's quads noted for the monitor's picture (drawn at the window's present)
@@ -139,12 +140,12 @@ int D2rvrWristUnitsState();   // vrcam.cpp: engitem::WristUnitsState (shared/wri
 #include "headset_clip.h"   // [headset_shot] video: 10 s of the eyes as submitted, to an .mp4 (ClipFrame, in CloseFrame)
 #include "headset_grid.h"   // [headset_shot] grid: the calibration grid in each eye's picture (GridOnEye, TurnFinishLocked)
 
-namespace gamestate { bool CinemaPlaying(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
+namespace gamestate { bool CinemaPlaying(); bool CinemaFilmNow(); }   // [cinema] world_screen: one of the game's cinematics plays, the screen on (vr/gamestate.cpp)
 namespace vrc { extern std::atomic<bool> g_inWorld; }   // a game area is loaded (vr/sky/sky_tick.cpp): [openxr] prewarm makes its swapchains only outside one (a loading screen)
 namespace gamecmd { void Tap(uint32_t cmd); }   // vr/gamecmd.cpp: one press of a game command, as its key's ([hud] allies_merc_click: 0x36, the Mercenary key)
 namespace gamestate { bool MercPanelAlone(); }   // [hud] allies_merc_click: the merc's inventory panel open outside the pad's tabbed menu (vr/gamestate.cpp)
 namespace gamestate { void SetStickBits(uint32_t bits); void SetMapBig(bool big); }   // the thumbstick check's verdict for D2R VR Settings (vr/gamestate.cpp, the state block); [hud] map_click_big
-namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); bool KeyboardShown(); uint32_t KeyboardEpoch(); bool CreatePanelOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
+namespace gamestate { int CursorHeld(); bool AutoMapOpen(); void SetBigMapZoom(float wanted); float BigMapZoomDrawn(); bool KeyboardShown(); uint32_t KeyboardEpoch(); bool CreatePanelOpen(); bool LoaderPanelOpen(); bool MultiplayerPanelOpen(); }   // [openxr] hand_inventory: 1 an item on the game's cursor, 0 none, -1 not known (vr/gamestate.cpp)
 
 namespace xr {
 void GuardSet();
@@ -184,6 +185,7 @@ struct Cfg {
     bool stopFlatVrWatch = true;   // stop_flatvr_watch: ... and stopped again when it starts while the session runs (vr/flatvr_gate.h Watch); 0 = only at the start
     bool busyGuard = true;    // busy_guard: the runtime's blocking calls with a limit, no session over a FlatVR that holds the headset (unticked: as before)
     unsigned waitFrameMs = 150;   // wait_frame_ms: how long the draw thread waits for xrWaitFrame (and xrBeginSession) before the VR frame is left out
+    bool asleepFree = true;       // asleep_free: a sleeping headset's empty frames on a thread of their own - the game not held at their 10 a second
     bool endOnExit = false;   // end_session_on_exit: the game's quit to Windows ends the session first (vr/exit_end.h); 0 = left to the game's exit, as before. Live
     float quadM = 2.0f;       // outside a pair: the flat picture this far ahead, metres
     float panelM = 1.6f;      // and while a panel is open in a game ([screen] menu_distance_m), 0 = quadM
@@ -236,6 +238,8 @@ struct Cfg {
     bool mapStickZoom = false;  // [hud] map_stick_zoom: the right stick zooms the map the right laser is on (vr/map_zoom.h); live
     bool mapClickBig = false; // [hud] map_click_big: the right laser on the map in the hand, a click makes it the game's big map in front (vr/map_laser.h); live
     bool nameKeyboard = false; // name_keyboard: the VR keyboard under the menu while a new character's name box is up (vr/vr_keyboard_unleashed.h)
+    bool multiKeyboard = true; // multiplayer_keyboard: ... and while D2RLoader's Multiplayer window is open (its address, name and password boxes)
+    bool keyboardGameLook = true;   // keyboard_game_look: its keys in the game's own art (vr/keyboard_game_look.h); 0 = its own stone plaques
     bool menu3d = true;       // menu_3d: a menu in F4 as a panel of its own, the world in stereo behind it (HangPanel); on since tested (2026-10-13)
     bool bandIcons = false;   // [render] ui_band_corner_icons: a square and a 16:9 icon over that panel's top right corner switch [render] ui_band_16x9 (vr/band_icons.h); live
     bool vrResUi = true;      // [render] vr_resolution_ui: the band needs its hook - no icons without it
@@ -434,6 +438,23 @@ std::atomic<DWORD> g_presentTid{0};     // the thread of the game's presents (On
 // waits for them g_cfg.waitFrameMs and leaves the VR frame out if they have not come (the game goes on flat), and takes the result when they do. One runner each for a
 // session: a call stuck in one is left to it (and the session is not destroyed under it: Teardown).
 struct WaitOut { XrResult r = XR_ERROR_RUNTIME_FAILURE; XrFrameState fs{XR_TYPE_FRAME_STATE}; };
+// [openxr] asleep_free: the headset asleep (off the head for a minute or two) - the runtime then gives a frame only every 100 ms and
+// wants none drawn, and run in the game's own frame those empty frames held the WHOLE game at 10 frames a second: the monitor's picture, and
+// the game's music with it ("у меня музыка даже тормозит", "падает до 12 фпс", Serg 2026-11-27; his log: 10.0 presents a second for 90 s,
+// "not to render 100", begin to end 87 ms, the draw thread at 5 %). While it sleeps the empty frames (xrWaitFrame, xrBeginFrame,
+// xrEndFrame with no layer) run on a thread of their own, one after the other, and the game's frame makes no call of the runtime's frame;
+// the first of them that is to be drawn again ends it, and the frames are the game's own again from the next one.
+struct IdleOut { XrResult wait = XR_ERROR_RUNTIME_FAILURE, begin = XR_ERROR_RUNTIME_FAILURE, end = XR_ERROR_RUNTIME_FAILURE; XrFrameState fs{XR_TYPE_FRAME_STATE}; };
+bounded::Runner<IdleOut>* g_idleRunner = nullptr;
+bool g_asleep = false;        // the runtime's frames are slow and not to be drawn: they run on g_idleRunner (under g_lock)
+int g_asleepSlow = 0;         // slow frames not to be drawn in a row (CloseFrame)
+constexpr double kAsleepFrameUs = 40000.0;   // a frame not to be drawn that took this long, wait and all, is a sleeping headset's
+// A frame of g_idleRunner's still out is waited for a little (the session about to end or go: its calls done first).
+void IdleDrain(unsigned ms) {
+    if (!g_idleRunner || !g_idleRunner->Busy()) return;
+    IdleOut o;
+    g_idleRunner->Run([] { return IdleOut{}; }, ms, &o);   // (nothing started: one runs or waits to be taken)
+}
 bounded::Runner<WaitOut>* g_waitRunner = nullptr;
 bounded::Runner<XrResult>* g_beginRunner = nullptr;
 bool g_beginPending = false;       // xrBeginSession asked for and not answered yet
@@ -639,6 +660,7 @@ std::atomic<bool> g_campfireBoardHit{false};  // the laser on the campfire's men
 std::atomic<bool> g_campfireBoardFailed{false};   // the board not to be had for 90 frames: the menu stays as the game draws it until the scene is left
 int g_campfireBoardMissing = 0;                   // (frames in a row the board wanted but not hung)
 std::atomic<bool> g_campfireIdle{false};          // the last open asked for nothing to be drawn (shouldRender false)
+std::atomic<bool> g_campfireFresh{false};         // the scene just came up: an eye not drawn in it yet is not shown (CloseFrame)
 std::atomic<bool> g_campfireFrame{false};         // the frame open now is one OpenCampfireFrame opened (only that one is ended when the scene goes)
 views3d::Anchor g_winAnchor;    // where F1's window stands (held to the gaze first, brought round after a second 60 degrees off)
 views3d::Window g_win{};
@@ -693,7 +715,9 @@ std::atomic<bool> g_hsOpen{false};
 wchar_t g_iniPath[MAX_PATH] = L"";   // d2r_vr.ini, as LoadSettings was given it
 // crop: what part of the window the quad shows, as fractions of it (l, t, r, b) - all of it but for the inventory cut out on the hand
 // ([openxr] hand_inventory), where the laser's point on the quad is the cut's place in the window.
-struct FlatShown { XrPosef pose; XrExtent2Df size; bool ok; float crop[4] = {0.0f, 0.0f, 1.0f, 1.0f}; };
+// hole: rows of the quad (its own 0..1, top down) the laser passes through to what lies behind - [campfire] board_as_menus: the creation strip's empty
+// middle, where the heroes stand (the hand's pick there, not the board); {-1, -1}: none
+struct FlatShown { XrPosef pose; XrExtent2Df size; bool ok; float crop[4] = {0.0f, 0.0f, 1.0f, 1.0f}; float hole[2] = {-1.0f, -1.0f}; };
 FlatShown g_flatShown{};
 // [openxr] menu_3d: where a menu's panel hangs in a pair's frame (HangPanel) - the flat picture's
 // rules, kept apart from it; anchored again at a recentre.
@@ -1899,6 +1923,11 @@ void BandSaveRun() {
 // The laser's click on an icon over the menu's panel: the square the whole picture, the 16:9 icon the band as last used - in force at once
 // (vrres::PickUiBandMode, the interface laid out again by the next UiBandTick), written to the ini behind it. The lit icon: nothing.
 void BandIconClick(bandicons::Icon icon) {
+    if (campfire::Frontend()) {   // [frontend] the main menu: its own key, [frontend] menu_16x9 (the square / the 16:9 icon)
+        if (icon == bandicons::kNone) return;
+        campfire::SetFrontMenuWide(icon != bandicons::kSquare);
+        return;
+    }
     const int mode = vrres::UiBandMode();
     const int lastNow = g_bandLast.load();
     const int last = bandicons::RectMode(lastNow >= 0 ? lastNow : g_cfg.bandLast);
@@ -2448,7 +2477,8 @@ void Teardown() {   // under g_lock or before the session exists
     monitorlayers::Forget();   // ([render] monitor_panels: the frame noted shows images about to go)
     gpufault::Note("xr: teardown");
     // a live end (not the game's closing): the runtime's handles go on a thread of their own, never in the game's present (vr/session_end.h)
-    const bool stuckCall = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running());
+    IdleDrain(400);   // [openxr] asleep_free: an empty frame out with the runtime comes back first (a sleeping headset's takes 100 ms)
+    const bool stuckCall = (g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running()) || (g_idleRunner && g_idleRunner->Running());
     const sessionend::Plan plan = sessionend::PlanFor(g_final, gpufault::Removed(), stuckCall, g_requestExit);
     g_requestExit = false;
     g_deferDestroy = plan.offThread;
@@ -2588,6 +2618,8 @@ void Teardown() {   // under g_lock or before the session exists
         g_inst = XR_NULL_HANDLE;
     }
     delete g_waitRunner; g_waitRunner = nullptr;   // (a call still stuck in one finishes on its own, nobody collects it)
+    delete g_idleRunner; g_idleRunner = nullptr;
+    g_asleep = false; g_asleepSlow = 0;
     delete g_beginRunner; g_beginRunner = nullptr;
     g_beginPending = false; g_waitPendingAt = 0.0;
     if (g_session) { xrDestroySession(g_session); g_session = XR_NULL_HANDLE; }
@@ -3295,8 +3327,9 @@ bool MakePointerImage(HCURSOR cur) {
 // ([render] ui_band_16x9: the band of a menu's panel) - the pointer hidden past it; none: the whole window.
 bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out, const float* crop = nullptr) {
     static int why = -1;   // the reason it is not shown, to the log when it changes
+    static ULONGLONG whyAt = 0;   // ... and no oftener than once a second (a pointer crossing a band's edge to and fro; the state said is the one in force then)
     auto no = [&](int w, const char* said) {
-        if (w != why) { why = w; LogF("vrcam: openxr - mouse pointer not shown: %s", said); }
+        if (w != why && GetTickCount64() - whyAt >= 1000) { why = w; whyAt = GetTickCount64(); LogF("vrcam: openxr - mouse pointer not shown: %s", said); }
         return false;
     };
     if (!g_wnd) return no(1, "no game window known");
@@ -3307,7 +3340,15 @@ bool PointerQuad(const XrCompositionLayerQuad& pic, XrCompositionLayerQuad* out,
     RECT rc{};
     if (!ScreenToClient(g_wnd, &p) || !GetClientRect(g_wnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return no(4, "the window has no size");
     if (p.x < 0 || p.y < 0 || p.x >= rc.right || p.y >= rc.bottom) return no(5, "outside the game's window");
-    if (why != 0) { why = 0; Log("vrcam: openxr - mouse pointer shown on the flat picture"); }
+    {   // (the part of the window the quad shows, tested before "shown" is said: said first, a pointer resting below a menu's 16:9 band wrote
+        // "shown" and "not shown" at every frame - 300 lines each in his 13:48 run of 2026-11-27, up to 59 a second, a millisecond each
+        // with [debug] log_async off)
+        static const float kAll[4] = {0.0f, 0.0f, 1.0f, 1.0f};
+        const float* cr = crop ? crop : kAll;
+        const float qx = (float)p.x / rc.right, qy = (float)p.y / rc.bottom;
+        if (qx < cr[0] || qx > cr[2] || qy < cr[1] || qy > cr[3]) return no(6, "outside the part of the window the panel shows (the 16:9 band)");
+    }
+    if (why != 0 && GetTickCount64() - whyAt >= 1000) { why = 0; whyAt = GetTickCount64(); Log("vrcam: openxr - mouse pointer shown on the flat picture"); }
     if (ci.hCursor != g_ptr.shape && (GetTickCount64() < g_ptrRetryAt || !MakePointerImage(ci.hCursor))) return false;
     if (!g_ptr.ok) return false;
     const float W = pic.size.width, H = pic.size.height, n = (float)g_ptr.n;
@@ -3821,7 +3862,7 @@ bool DrawHud(HudOut& o, ID3D12Resource* src, bool orb, const float cb[12], uint3
     return Ok(xrReleaseSwapchainImage(o.sc, &ri), "xrReleaseSwapchainImage(interface)");
 }
 
-// -- [cinema] video_3d: the film in 3D (vr/video3d_lib.h) ---------------------------
+// -- [cinema] video_3d: the film in 3D (vr/video3d/video3d.h) -----------------------
 // The film's pixels in the flat picture: the movie player draws at the window's own size in the frame's top left (MovieBand), the film's 16:9 in the middle of
 // that (FilmIn). Shared by the drawing below and the big screen in CloseFrame, so both take the same rectangle.
 cinema::Crop FilmNow() {
@@ -3833,21 +3874,21 @@ bool g_film3dShown = false;        // this frame's screen has its two eyes
 cinema::Crop g_film3dFilm{};       // ... drawn from this rectangle of the frame
 bool g_film3dWasPlaying = false;   // a film played the frame before (a new one forgets the last one's depth)
 
-// While a film plays with [cinema] video_3d on: the film of this back buffer through the library into g_film3d. False: the screen stays flat this frame
-// (the key off, no library, a format it cannot read, no image) - never an empty screen.
+// While a film plays with [cinema] video_3d on: the film of this back buffer in 3D into g_film3d (vr/video3d). False: the screen stays flat this frame
+// (the key off, no pipeline, a format it cannot read, no image) - never an empty screen.
 bool DrawFilm3d(ID3D12Resource* bb) {
     const bool playing = g_cfg.video3d && gamestate::CinemaPlaying();
-    if (playing && !g_film3dWasPlaying) video3dlib::Reset();
+    if (playing && !g_film3dWasPlaying) video3d::Reset();
     g_film3dWasPlaying = playing;
     if (!playing || !bb || !g_dev || !g_queue || gpufault::Removed()) return false;
-    if (!video3dlib::Start(g_dev, g_queue)) return false;
+    if (!video3d::Start(g_dev, g_queue)) return false;
     const D3D12_RESOURCE_DESC bd = bb->GetDesc();
     DXGI_FORMAT view = DXGI_FORMAT_UNKNOWN;
-    uint32_t enc = D2RV3_SRC_LINEAR;
+    uint32_t enc = video3d::kSrcLinear;
     switch (Family(bd.Format)) {   // what sampling the back buffer gives: linear light through an _SRGB view; a 10-bit buffer has no such twin
         case 1: view = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB; break;
         case 2: view = DXGI_FORMAT_B8G8R8A8_UNORM_SRGB; break;
-        case 3: view = DXGI_FORMAT_R10G10B10A2_UNORM; enc = D2RV3_SRC_GAMMA; break;
+        case 3: view = DXGI_FORMAT_R10G10B10A2_UNORM; enc = video3d::kSrcGamma; break;
         case 4: view = DXGI_FORMAT_R16G16B16A16_FLOAT; break;
         default: return false;
     }
@@ -3862,8 +3903,7 @@ bool DrawFilm3d(ID3D12Resource* bb) {
     if (!l || idx >= g_film3d.img.size()) { xrReleaseSwapchainImage(g_film3d.sc, &ri); return false; }
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += (SIZE_T)(g_film3d.rtv0 + (int)idx) * g_rtvInc;
-    D2rv3Frame f{};
-    f.size = sizeof f;
+    video3d::Frame f;
     f.src = bb;
     f.srcState = D3D12_RESOURCE_STATE_PRESENT;
     f.srcViewFormat = view;
@@ -3875,9 +3915,9 @@ bool DrawFilm3d(ID3D12Resource* bb) {
     f.outH = film.h;
     f.strengthPct = g_cfg.video3dPct;
     f.convergence = g_cfg.video3dConv;
-    const int r = video3dlib::Record(l, &f);
+    const int r = video3d::Record(l, f);
     SubmitList();   // (an open list is always handed over: the allocator ring counts on it)
-    if (r >= 0) video3dlib::Submitted();
+    if (r >= 0) video3d::Submitted();
     const bool released = Ok(xrReleaseSwapchainImage(g_film3d.sc, &ri), "xrReleaseSwapchainImage(3D film)");
     if (r < 0 || !released) return false;
     g_film3dFilm = film;
@@ -4546,7 +4586,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
             onPlane = true;
             u = local.x / g_flatShown.size.width + 0.5f;
             v = 0.5f - local.y / g_flatShown.size.height;
-            L.hit = u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f;
+            L.hit = u >= 0.0f && u < 1.0f && v >= 0.0f && v < 1.0f && !(v >= g_flatShown.hole[0] && v < g_flatShown.hole[1]);
             if (L.hit) { L.at = Plus(L.from, Times(L.dir, t)); L.len = t; }
         }
         float tb = 0.0f;
@@ -4579,7 +4619,7 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
             L.len = tk;
             g_kbLit = framevr::keyboard::KeyAt(lk.x / g_kbShown.w + 0.5f, 0.5f - lk.y / g_kbShown.h);
         }
-        if (!L.hit && !L.btn && !L.kb && !L.lay) L.len = g_campfire.load() ? std::clamp(campfire::BoardsNow().pointerM, 0.3f, 30.0f) : kBeamM;   // ([campfire]: to where the pick's point lies)
+        if (!L.hit && !L.btn && !L.kb && !L.lay) L.len = g_campfire.load() && !campfire::Frontend() ? std::clamp(campfire::BoardsNow().pointerM, 0.3f, 30.0f) : kBeamM;   // ([campfire]: to where the pick's point lies)
     }
     // the quad's point as the window's: the cut's own place in it ([openxr] hand_inventory), the whole window otherwise
     const float* crop = g_flatShown.crop;
@@ -4751,6 +4791,9 @@ void LaserStep(D2RVR_XrInput& in, bool focused) {
             Log("vrcam: openxr - the VR keyboard closed until the name box comes up anew");
         } else if (typed.send != framevr::keyboard::Send::None) {
             static bool told = false;
+            // (the typing rule's lease from now, not from the key's arrival at the window: the game's own look at the key could come first, and
+            // each of the keyboard's keys is a lone press - no second one inside the lease as from a real keyboard)
+            panelinput::Typed(framevr::keyboard::KeyboardKeyTag);
             if (!framevr::keyboard::SendKey(typed, g_wnd)) Log("vrcam: openxr - a VR keyboard key could not be sent (not on this keyboard layout, or SendInput refused)");
             else if (!told) { told = true; Log("vrcam: openxr - the VR keyboard typing into the game"); }
         }
@@ -5441,8 +5484,9 @@ void EndSessionNow(const char* why, bool callEnd) {
     directinput::SessionEnd();   // what the session held in the game is let go
     g_pairYawAt.store(0);
     const bool wasRunning = g_running.exchange(false);
+    if (wasRunning) IdleDrain(400);   // [openxr] asleep_free: the empty frame out with the runtime done before the session ends
     if (wasRunning && g_session && callEnd) {
-        if ((g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running()))
+        if ((g_waitRunner && g_waitRunner->Running()) || (g_beginRunner && g_beginRunner->Running()) || (g_idleRunner && g_idleRunner->Running()))
             Log("vrcam: openxr - xrEndSession left out: a runtime call of ours has not returned");
         else
             Ok(xrEndSession(g_session), "xrEndSession");
@@ -5673,6 +5717,38 @@ bool OpenFrame(Kind kind) {
     if (g_kind != kNone || !g_session) return false;
     Poll();
     if (!g_running.load() || !g_session) return false;
+    // [openxr] asleep_free: the sleeping headset's empty frames, on their own thread - none of the runtime's frame calls here meanwhile
+    if (g_idleRunner && !g_cfg.asleepFree && !g_idleRunner->Busy()) g_asleep = false;   // (switched off: the frames the game's own again)
+    if ((g_asleep && g_cfg.asleepFree) || (g_idleRunner && g_idleRunner->Busy())) {
+        if (!g_idleRunner) g_idleRunner = new bounded::Runner<IdleOut>();
+        const XrSession s = g_session;
+        IdleOut o;
+        const bounded::Wait got = g_idleRunner->Run([s]() {
+            IdleOut w;
+            XrFrameWaitInfo wi{XR_TYPE_FRAME_WAIT_INFO};
+            w.wait = xrWaitFrame(s, &wi, &w.fs);
+            if (XR_FAILED(w.wait)) return w;
+            XrFrameBeginInfo bi{XR_TYPE_FRAME_BEGIN_INFO};
+            w.begin = xrBeginFrame(s, &bi);
+            if (XR_FAILED(w.begin)) return w;
+            XrFrameEndInfo ei{XR_TYPE_FRAME_END_INFO};
+            ei.displayTime = w.fs.predictedDisplayTime;
+            ei.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+            w.end = xrEndFrame(s, &ei);
+            return w;
+        }, 0u, &o);
+        if (got == bounded::Wait::Pending) return false;   // out with the runtime: the game goes on, flat on the monitor
+        ++g_st.frames;
+        ++g_st.noRender;
+        const bool failed = XR_FAILED(o.wait) || XR_FAILED(o.begin) || XR_FAILED(o.end);
+        if (g_asleep && (failed || o.fs.shouldRender || !g_cfg.asleepFree)) {
+            g_asleep = false;
+            g_asleepSlow = 0;
+            LogF("vrcam: openxr - the headset %s: the frames are the game's own again ([openxr] asleep_free)",
+                 failed ? "gave a frame call back failed while asleep (the game's own frame deals with it)" : o.fs.shouldRender ? "is awake" : "- asleep_free switched off");
+        }
+        if (g_asleep) return false;   // still asleep: the next call starts the next empty frame
+    }
     static int crumbs = 0;   // the first frames' calls to the log as they are made: a crash there says where
     const bool crumb = crumbs < 3;
     if (crumb) LogF("vrcam: openxr - frame %d (%s): xrWaitFrame", ++crumbs, kind == kPair ? "pair" : "flat");
@@ -6166,17 +6242,18 @@ uint32_t HangBandIcons(const XrCompositionLayerBaseHeader** layers, uint32_t nl,
     g_layShown.ok = false;
     bandicons::Facts f;
     f.keyOn = g_cfg.bandIcons;
-    f.f4 = viewgate::F4();
+    const bool front = campfire::Frontend();   // [frontend] the main menu: the icons switch its [frontend] menu_16x9
+    f.f4 = viewgate::F4() || front;
     f.inFront = true;   // (HangPanel's own place, never the hand's cut)
     f.vrResUi = g_cfg.vrResUi;
-    f.campfire = g_campfire.load();
+    f.campfire = g_campfire.load() && !front;
     f.w = w; f.h = h;
     if (nl >= max || !bandicons::Shown(f)) return nl;
     BandIconImages();
     const Sticker& i = g_layImg;
     if (!StickerShown(i)) return nl;
     const bandicons::Strip s = bandicons::Place(panel.size.width, panel.size.height);
-    const int row = bandicons::Lit(vrres::UiBandMode()) == bandicons::kSquare ? 0 : 1;
+    const int row = (front ? !campfire::FrontMenuWide() : bandicons::Lit(vrres::UiBandMode()) == bandicons::kSquare) ? 0 : 1;
     XrCompositionLayerQuad& q = g_layLayer;
     q = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
@@ -6245,8 +6322,16 @@ bool HangPanelOnHand(const hud::NativePiece& src, const HudOut& o, const handinv
 // laser lit a hair in front of it. The laser hits the board itself (LaserStep): no game cursor there, a pull on a key types it. Close
 // hides it until the box comes up anew. In the 3D character creation it comes up only once the name box on the board was clicked.
 bool KeyboardWanted() {
-    // ([campfire]: while the creation screen is up at all - typing waits for no pick there, 0.213.7)
-    if (!g_cfg.nameKeyboard || !(gamestate::KeyboardShown() || (g_campfire.load() && gamestate::CreatePanelOpen()))) { g_kbCampfireOpen = false; return false; }
+    // The keyboard's two places and no other (Serg 2026-11-27: "она должна показываться только в 2 местах"):
+    //   1. character creation - a new character's name box (flat: the creation panel with a hero picked; the 3D scene: the creation panel up
+    //      at all - typing waits for no pick there, 0.213.7);
+    //   2. D2RLoader's Multiplayer window ([openxr] multiplayer_keyboard: a room's name, Direct Join's address, a game's name and password).
+    // Neither up: hidden at once. And never in a game (a panel's name left behind by a message that never came cannot raise it there) nor
+    // under a cinematic (a new character's intro plays with the creation panel still loaded: "клавиатура висит даже в синематик").
+    const bool creation = g_cfg.nameKeyboard && (gamestate::KeyboardShown() || (g_campfire.load() && gamestate::CreatePanelOpen()));
+    const bool multiplayer = g_cfg.multiKeyboard && gamestate::MultiplayerPanelOpen();
+    const bool place = (creation || multiplayer) && !vrc::g_inWorld.load() && !gamestate::CinemaFilmNow();
+    if (!place) { g_kbCampfireOpen = false; return false; }
     if (g_kbClosed && gamestate::KeyboardEpoch() != g_kbClosedEpoch) g_kbClosed = false;
     return !g_kbClosed;   // ([campfire] too: as soon as a hero is picked - the board's name box was hard to hit, 0.213.6)
 }
@@ -6255,12 +6340,28 @@ uint32_t HangKeyboard(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
     namespace kb = framevr::keyboard;
     static bool was = false;
     const bool want = KeyboardWanted() && g_flatShown.ok && nl + 2 <= max;
-    if (want != was) { was = want; g_kbTypist.Reset(); Log(want ? "vrcam: openxr - the VR keyboard shown (the name box is up; [openxr] name_keyboard)" : "vrcam: openxr - the VR keyboard hidden"); }
+    if (want != was) {
+        was = want; g_kbTypist.Reset();
+        Log(!want ? "vrcam: openxr - the VR keyboard hidden" : gamestate::MultiplayerPanelOpen() ? "vrcam: openxr - the VR keyboard shown (the Multiplayer window is up; [openxr] multiplayer_keyboard)"
+                                                                                                    : "vrcam: openxr - the VR keyboard shown (the name box is up; [openxr] name_keyboard)");
+    }
     if (!want) { g_kbShown.ok = false; g_kbLit = -1; return nl; }
     static std::vector<uint32_t> px;
+    static bool paintedLook = false;
+    if (g_kbPainted && paintedLook != g_cfg.keyboardGameLook) g_kbPainted = false;   // (the look changed in Settings: painted anew)
     if (!g_kbPainted) {
         g_kbPainted = true;
-        const std::vector<uint8_t> rgba = kb::PaintAtlas();
+        paintedLook = g_cfg.keyboardGameLook;
+        g_kbUploaded = false;
+        // [openxr] keyboard_game_look: the keys in the game's own art (the player's game's, from the cache beside the plugin); none: its own look
+        std::vector<uint8_t> rgba;
+        if (paintedLook) {
+            rgba = kblook::PaintAtlas();
+            Log(rgba.empty() ? "vrcam: openxr - the VR keyboard's game look: the game's art is not beside the plugin (d2r_vr_game_ui, made by D2R VR Authentic Settings) - its own look"
+                             : "vrcam: openxr - the VR keyboard painted in the game's look ([openxr] keyboard_game_look)");
+        }
+        if (rgba.empty()) rgba = kb::PaintAtlas();
+        px.clear();
         if (rgba.empty()) Log("vrcam: openxr - the VR keyboard could not be painted (GDI): it stays hidden");
         else { px.resize(rgba.size() / 4); memcpy(px.data(), rgba.data(), rgba.size()); }
     }
@@ -6282,6 +6383,8 @@ uint32_t HangKeyboard(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
     board.subImage.imageRect = {{0, (capitals ? 2 : 0) * kb::TexelHeight}, {kb::TexelWidth, kb::TexelHeight}};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&board;
     g_kbShown = KbShown{board.pose, b.width, b.height, true};
+    // [openxr] multiplayer_keyboard: under the Multiplayer window the game is let into its mouse layout and sees no pad (vr/panel_input.h)
+    if (g_cfg.multiKeyboard && gamestate::MultiplayerPanelOpen()) panelinput::TextBoxesOpen();
     if (g_kbLit >= 0) {
         const kb::Spot spot = kb::KeySpot(b, g_kbLit);
         const kb::Rect r = kb::KeyTexelRect(g_kbLit);
@@ -6330,8 +6433,10 @@ uint32_t HangCampfire(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
         const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
         const XrVector3f head{0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)};
         const XrQuaternionf q = Yaw(YawOf(g_views[0].pose.orientation));
-        const float distance = b.menuDistance, drop = b.menuDrop;
-        const float a = -atan2f(drop, distance);   // tilted up to the eyes
+        // ([campfire] board_as_menus: the whole 16:9 band where our menus' panel shows it - their width and distance, its middle at the eyes, upright)
+        const float distance = b.asMenus ? FlatDistance(false) : b.menuDistance;
+        const float drop = b.asMenus ? 0.0f : b.menuDrop;
+        const float a = b.asMenus ? 0.0f : -atan2f(drop, distance);   // tilted up to the eyes (as our menus: upright)
         P.board.orientation = Mul(q, XrQuaternionf{sinf(0.5f * a), 0.0f, 0.0f, cosf(0.5f * a)});
         P.board.position = Plus(head, Rot(q, {0.0f, -drop, -distance}));
         P.caption.orientation = q;
@@ -6343,7 +6448,9 @@ uint32_t HangCampfire(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
     }
     const float band = std::clamp((float)src.w * 9.0f / 16.0f / (float)src.h, 0.1f, 1.0f);   // the band's height, a share of the picture's
     const int bandBottom = std::clamp((int)(band * (float)src.h), 2, (int)src.h);
-    const int y0 = std::clamp((int)(band * b.menuTop * (float)src.h), 0, bandBottom - 2);
+    // ([campfire] board_as_menus: the whole band - the game-type selector at its top, the hero's words, the name box, Create and Back; Serg 2026-11-27:
+    // the strip alone was "очень маленькое, сплющенное", the selector cut off)
+    const int y0 = b.asMenus ? 0 : std::clamp((int)(band * b.menuTop * (float)src.h), 0, bandBottom - 2);
     board = {XR_TYPE_COMPOSITION_LAYER_QUAD};
     board.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
     board.space = g_space;
@@ -6351,11 +6458,16 @@ uint32_t HangCampfire(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
     board.subImage.swapchain = o.sc;
     board.subImage.imageRect = {{0, y0}, {(int32_t)src.w, bandBottom - y0}};
     board.pose = P.board;
-    board.size = {b.menuWidth, b.menuWidth * (float)(bandBottom - y0) / (float)src.w};
+    const float boardW = b.asMenus ? g_cfg.quadWidthM : b.menuWidth;   // ([campfire] board_as_menus: our menus' width)
+    board.size = {boardW, boardW * (float)(bandBottom - y0) / (float)src.w};
     layers[nl++] = (const XrCompositionLayerBaseHeader*)&board;
     g_campfireBoardMissing = 0;
     FlatShown s{board.pose, board.size, true};   // the laser points at it: its point is the strip's place in the window
     s.crop[0] = 0.0f; s.crop[1] = (float)y0 / (float)src.h; s.crop[2] = 1.0f; s.crop[3] = (float)bandBottom / (float)src.h;
+    if (b.asMenus) {   // the band's empty middle (below the hero's words, above the name box): the laser through to the heroes - the hand's pick
+        s.hole[0] = std::clamp(b.captionRect[3], 0.0f, 1.0f);
+        s.hole[1] = std::clamp(b.menuTop, s.hole[0], 1.0f);
+    }
     g_flatShown = s;
     g_panelTexW = src.w; g_panelTexH = src.h;
     if (b.caption && nl < max) {
@@ -6375,7 +6487,10 @@ uint32_t HangCampfire(const XrCompositionLayerBaseHeader** layers, uint32_t nl, 
             layers[nl++] = (const XrCompositionLayerBaseHeader*)&caption;
         }
     }
-    if (nl < max && PointerQuad(board, &pointer)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
+    // (the pointer on the board's own crop: on the whole picture it stood elsewhere than the laser - Serg 2026-11-27 "кружочек ... не попадает туда, куда идет луч")
+    // ([campfire] board_as_menus: only while the laser is on the board - through its middle the pick moves the game's cursor onto the heroes as the game's
+    // camera sees them, and drawn on the board that point stood beside the beam, Serg 2026-11-27)
+    if (nl < max && (!b.asMenus || g_campfireBoardHit.load()) && PointerQuad(board, &pointer, s.crop)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&pointer;
     return nl;
 }
 
@@ -6402,9 +6517,17 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     // [render] ui_band_16x9 in force on a canvas taller than 16:9: the game's veil over its whole interface taken out (vr/vr_resolution.h VeilOf) and,
     // in front, only the band shown (below) - the dark backing round the menus gone (Serg, 0.214.1). The square layout (the whole canvas): the veil
     // taken out too with [render] menu_unveil (0.214.4; never cropped - its panels reach anywhere), as the game draws it without.
+    // [frontend] the main menu in 3D: laid out as the player's own [render] ui_band_16x9 says, like every menu of ours in the game (forcing the band
+    // without a render size left the character list empty; Serg 2026-11-26), and no veil hunted - the main menu lays none, and its own dark art was
+    // taken for one and divided out
+    const bool frontMenu = campfire::Frontend();
+    // ... but a panel of D2RLoader's own (the D2R Rooms window, the cog's) is laid out on the whole picture: then the whole canvas, lowered so the
+    // menu's band stays where it was (vrres::BandLowerShare); the laser maps the same canvas (the rooms plugin learns its clicks from the presses)
+    // (not with [frontend] band_all: then D2RLoader's panels lay out in the band as well - measured 2026-11-27, its Multiplayer window in its frame)
+    const bool frontWhole = frontMenu && gamestate::LoaderPanelOpen() && !vrres::BandForHelpers();
     const uint32_t bandRows = vrres::BandRows({src.w, src.h});
-    const bool band = vrres::UiBandActive() && bandRows && bandRows < src.h;
-    const uint32_t unveilRows = vrres::UnveilRows({src.w, src.h}, vrres::UiBandActive(), g_cfg.menuUnveil);
+    const bool band = !frontWhole && vrres::UiBandActive() && bandRows && bandRows < src.h;
+    const uint32_t unveilRows = frontMenu ? 0u : vrres::UnveilRows({src.w, src.h}, vrres::UiBandActive(), g_cfg.menuUnveil);
     if (!DrawHud(o, src.tex, false, cb, 0, 0, nullptr, unveilRows)) return nl;
     {
         static int told = -1;
@@ -6468,11 +6591,23 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     } else if (!g_pgrab.Carrying()) {
         g_panelSpot = panelgrab::Panel{};   // (the key unticked: HangPanel's own place again)
     }
-    const bool atSpot = g_cfg.panelGrab && viewgate::F4() && g_panelSpot.ok;
+    const bool atSpot = !frontMenu && g_cfg.panelGrab && viewgate::F4() && g_panelSpot.ok;
     float off = yawNow - P.yaw;
     off = atan2f(sinf(off), cosf(off));
     bool anchor = fresh || !P.anchored || !g_anchorReady;   // ([openxr] menus_wait_tracking: held to the gaze until the head is tracked)
-    if (!anchor && fabsf(off) > 1.05f && !atSpot) {
+    // [frontend]: the panel stands between you and the hero - placed once as the scene faces you toward its hero (campfire::FaceGen: the
+    // arrival, and the title screen's camera turning to character select's), never brought round nor moved while the menu is up (Serg
+    // 2026-11-26: "не перескакивало пусть всегда стоит между зрителем и персонажем")
+    static uint32_t frontFaced = ~0u;
+    if (frontMenu) {
+        const uint32_t gen = campfire::FaceGen();
+        if (!g_anchorReady) anchor = true;   // (the head not tracked yet: held to the gaze, as every menu; placed for good once it is)
+        else {
+            anchor = gen != frontFaced || !P.anchored;
+            if (anchor) frontFaced = gen;
+        }
+    }
+    if (!frontMenu && !anchor && fabsf(off) > 1.05f && !atSpot) {
         if (P.offSince <= 0.0) P.offSince = t;
         else if (t - P.offSince > 1e6) { anchor = true; Log("vrcam: openxr - the menu's panel brought round in front of the gaze"); }
     } else {
@@ -6497,6 +6632,8 @@ uint32_t HangPanel(const XrCompositionLayerBaseHeader** layers, uint32_t nl, uin
     panel.pose.orientation = q;
     panel.pose.position = Plus(P.pos, ahead);
     panel.size = {g_cfg.quadWidthM, g_cfg.quadWidthM * (float)src.h / (float)src.w};
+    if (frontWhole && vrres::UiBandActive())   // [frontend] a D2RLoader panel: the whole canvas, its top band where the band stood
+        panel.pose.position = Plus(panel.pose.position, Rot(q, {0.0f, -panel.size.height * vrres::BandLowerShare({src.w, src.h}), 0.0f}));
     if (atSpot) {   // [openxr] panel_grab: at its spot, turned to the eyes; nearer than all of it in sight, its size in view kept (narrower)
         const XrVector3f& ea = g_views[0].pose.position, &eb = g_views[1].pose.position;
         const panelgrab::V3 eyes{0.5f * (ea.x + eb.x), 0.5f * (ea.y + eb.y), 0.5f * (ea.z + eb.z)};
@@ -7002,8 +7139,11 @@ void CloseFrame() {
             if (g_copied[e])   // drawn with these (runtime_fov's crop: the swapchain is the box - whole, with the box's fov)
                 g_lastEye[e] = g_cropped[e] ? LastEye{g_views[e].pose, g_cropFov[e], g_eyeChain[e].sc, true, eyefov::Window{}}
                                             : LastEye{g_views[e].pose, g_fovUsed[e], g_eyeChain[e].sc, true, g_winUsed[e]};
-    // eyes by turns: this frame's eye and the other's last, still in its swapchain
-    const bool turns = g_cfg.byTurns && (g_copied[0] || g_copied[1]) && g_lastEye[0].ok && g_lastEye[1].ok &&
+    // ([campfire]: the scene just come up - an eye not drawn in it yet has another scene's picture in its swapchain: not shown)
+    if (g_campfireFresh.exchange(false))
+        for (int e = 0; e < 2; ++e) if (!g_copied[e]) g_lastEye[e].ok = false;
+    // eyes by turns: this frame's eye and the other's last, still in its swapchain ([campfire] frame_per_eye: the menu scenes so in every mode)
+    const bool turns = (g_cfg.byTurns || (g_campfire.load() && campfire::FramePerEye())) && (g_copied[0] || g_copied[1]) && g_lastEye[0].ok && g_lastEye[1].ok &&
                        g_lastEye[0].sc == g_eyeChain[0].sc && g_lastEye[1].sc == g_eyeChain[1].sc;
     if (g_fs.shouldRender && g_kind == kPair && ((g_copied[0] && g_copied[1]) || turns) && g_viewsOk) {
         if (g_pairMode == kViewsWindow && g_winOk) {
@@ -7059,17 +7199,21 @@ void CloseFrame() {
             if (Pointer3dQuad(eyes, g_views[0].pose.orientation, &ptr3d)) layers[nl++] = (const XrCompositionLayerBaseHeader*)&ptr3d;
         }
         // a menu in front, the world in stereo behind it (menu_3d); what is nearer lies over it, in this order
-        if (g_campfire.load()) nl = HangCampfire(layers, nl, most, quad, campfireCaption, pointer);   // [campfire]: the menu's board and the caption in the scene
-        else if (g_cfg.menu3d && !g_mapClick.Big()) nl = HangPanel(layers, nl, most, quad, pointer);   // (the big map has the interface's picture: HangBigMap)
+        if (g_campfire.load() && !campfire::Frontend()) nl = HangCampfire(layers, nl, most, quad, campfireCaption, pointer);   // [campfire]: the menu's board and the caption in the scene
+        // [frontend] the main menu in 3D: its menu as every menu of ours in the game - the menu_3d panel (placed, sized and followed as they
+        // are, its 16:9 band, the laser and the pointer on it; Serg 2026-11-26: the campfire's low board was at his feet, cut, the laser off it)
+        else if ((g_cfg.menu3d || campfire::Frontend()) && !g_mapClick.Big()) nl = HangPanel(layers, nl, most, quad, pointer);   // (the big map has the interface's picture: HangBigMap)
         const bool laser = (g_cfg.menu3d || g_campfire.load()) && g_flatShown.ok;   // (the beam and the dot only over a menu's panel, or the campfire's board)
         const uint32_t zonesMax = most - std::min<uint32_t>(most - nl, (laser ? 4 : 2) + hsRoom);   // room kept for those below
         nl = HangZones(layers, nl, zonesMax);   // the belt's balls
         const bool runesOverPanel = skillwheel::GestureRecording();   // ([openxr] gesture_overlay: a recording from the skill panel - the trail over the panel, below)
         if (!runesOverPanel) nl = HangRunes(layers, nl, zonesMax);   // BodyWalk's gesture runes and the hand's trail (F4, [openxr] runes_draw)
-        nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
-        nl = HangBigMap(layers, nl, most);   // [hud] map_click_big: the game's big map in front, its Rotate button
-        nl = HangAllyPortraits(layers, nl, most);   // [hud] ally_portraits: the allies' portraits under the map (F4)
-        nl = HangMapLaser(layers, nl, most);   // ... and the laser on the map / the big map
+        if (!campfire::Now()) {   // ([campfire] / [frontend]: a menu scene - none of a game's pieces; the menu whole on its panel, hud::SetMenuScene)
+            nl = HangHud(layers, nl, most);   // the toolbar and the map, where FlatVR hung them
+            nl = HangBigMap(layers, nl, most);   // [hud] map_click_big: the game's big map in front, its Rotate button
+            nl = HangAllyPortraits(layers, nl, most);   // [hud] ally_portraits: the allies' portraits under the map (F4)
+            nl = HangMapLaser(layers, nl, most);   // ... and the laser on the map / the big map
+        }
         nl = HangPlate(layers, nl, most);   // the targeted monster's health bar over its head ([hud] monster_bar_room)
         nl = HangNotice(layers, nl, most);  // the game's quest / level-up notice on a card ([hud] notice_card)
         if (g_flatShown.ok) nl = HangKeyboard(layers, nl, most, kbBoard, kbLit); else g_kbShown.ok = false;   // [openxr] name_keyboard under a menu's panel / the campfire's board
@@ -7292,6 +7436,16 @@ void CloseFrame() {
     const double now = UsNow();
     g_st.frameUs += now - g_beginUs;
     ++g_st.frames;
+    // [openxr] asleep_free: three frames in a row not to be drawn and slow (the runtime's 100 ms of a sleeping headset) - the next ones go
+    // on a thread of their own (OpenFrame)
+    if (!g_fs.shouldRender && now - g_beginUs + g_lastWaitUs > kAsleepFrameUs) {
+        if (++g_asleepSlow >= 3 && g_cfg.asleepFree && !g_asleep) {
+            g_asleep = true;
+            LogF("vrcam: openxr - the headset is asleep: the runtime gives a frame every %.0f ms and wants none drawn - those empty frames now run on a thread of "
+                 "their own, the game at its own rate on the monitor ([openxr] asleep_free; in the game's frame they held it at %.0f frames a second)",
+                 (now - g_beginUs + g_lastWaitUs) / 1000.0, 1e6 / (now - g_beginUs + g_lastWaitUs));
+        }
+    } else g_asleepSlow = 0;
     autotunerun::OnFrame(now, g_lastWaitUs, g_clock.submit, (double)g_fs.predictedDisplayPeriod, viewgate::F4());   // ([autotune]: nothing unless a run measures)
     g_kind = kNone;
     if (!g_st.since) g_st.since = GetTickCount64();
@@ -7312,7 +7466,7 @@ void CloseFrame() {
 // [hud] map_compass_flat: the same compass picture for the flat map's strip (vr/render/effects/effects.cpp uploads it into D2R_DepthFog.fx).
 std::vector<uint32_t> CompassPixels() { return PaintCompass(); }
 
-void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); video3dlib::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
+void SetLogger(void (*log)(const char*)) { g_log = log; framegenlib::SetLog(log); video3d::SetLog(log); directinput::SetLogger(log); roomwalkwire::SetLogger(log); haptics::SetLogger(log); vrres::SetLogger(log); }
 void SetWindow(HWND wnd) { g_wnd = wnd; }
 
 // The start guard (2026-10-10): players' games died starting native OpenXR - their runtime's own
@@ -7409,6 +7563,7 @@ void LoadSettings(const wchar_t* ini) {
     g_cfg.stopFlatVrWatch = f(L"stop_flatvr_watch", 1.0f) != 0.0f;   // (live)
     g_cfg.busyGuard = f(L"busy_guard", 1.0f) != 0.0f;   // the runtime's blocking calls with a limit; no session over a FlatVR that cannot be stopped
     g_cfg.waitFrameMs = (unsigned)std::clamp(f(L"wait_frame_ms", 150.0f), 20.0f, 2000.0f);
+    g_cfg.asleepFree = f(L"asleep_free", 1.0f) != 0.0f;   // [openxr] asleep_free
     g_cfg.endOnExit = f(L"end_session_on_exit", 0.0f) != 0.0f;   // (live: read when the game quits)
     g_reapDrainMaxMs.store(std::clamp(f(L"reap_drain_max_ms", 200.0f), 20.0f, 500.0f));   // (chain_reaper.h DrainMs; 20 = as before)
     g_prewarm.store(f(L"prewarm", 1.0f) != 0.0f);   // [openxr] prewarm: the interface's shader / swapchains made ahead (live; the shader at a session's start)
@@ -7809,6 +7964,8 @@ void LoadSettings(const wchar_t* ini) {
                                  : "vrcam: openxr - a menu's panel over the whole canvas as the game draws it, its dark veil kept ([render] menu_unveil=0)");
         }
         g_cfg.nameKeyboard = f(L"name_keyboard", 0.0f) != 0.0f;   // [openxr] name_keyboard (live)
+        g_cfg.multiKeyboard = f(L"multiplayer_keyboard", 1.0f) != 0.0f;   // [openxr] multiplayer_keyboard (live)
+        g_cfg.keyboardGameLook = f(L"keyboard_game_look", 1.0f) != 0.0f;  // [openxr] keyboard_game_look (live)
         static int said = -1;
         if (on && (int)g_cfg.menu3d != said) {
             said = g_cfg.menu3d;
@@ -8172,7 +8329,7 @@ void PairOver() { g_pairSpent = false; }   // the draw thread, after a pair's la
 // [campfire] (vr/campfire_unleashed.h)
 void SetCampfire(bool on) {
     if (g_campfire.exchange(on) == on) return;
-    if (on) { g_campfireGen.fetch_add(1); g_campfireBoardMissing = 0; g_campfireBoardFailed.store(false); }   // the boards placed afresh
+    if (on) { g_campfireGen.fetch_add(1); g_campfireBoardMissing = 0; g_campfireBoardFailed.store(false); g_campfireFresh.store(true); }   // the boards placed afresh
     else g_campfireBoardHit.store(false);
     g_campfireNoFrame.store(0);
     if (!on && g_campfireFrame.exchange(false)) EndPair();   // a frame the scene left open: ended (never a world's pair)
@@ -8181,6 +8338,7 @@ bool CampfireOn() { return g_campfire.load(); }
 bool CampfireBoardHit() { return g_campfire.load() && g_campfireBoardHit.load(); }
 bool CampfireBoardFailed() { return g_campfireBoardFailed.load(); }
 uint32_t CampfireNoFrame() { return g_campfireNoFrame.load(); }
+bool CampfireWaiting() { return g_campfireIdle.load() || g_ss != XR_SESSION_STATE_FOCUSED || !g_anchorReady; }
 bool OpenCampfireFrame() {
     if (!g_campfire.load() || !On() || g_state.load() != kCreated || !g_running.load() || DeviceLost()) return false;
     if (g_stopWanted.load()) return false;
@@ -8190,7 +8348,7 @@ bool OpenCampfireFrame() {
         g_clock = PairTiming{};
         const bool open = OpenFrame(kPair);
         ok = open && g_viewsOk && g_fs.shouldRender;
-        g_campfireIdle.store(open && !g_fs.shouldRender);   // (the headset off or the session not shown: no failure of the scene's)
+        g_campfireIdle.store((open && !g_fs.shouldRender) || g_asleep);   // (the headset off, asleep or the session not shown: no failure of the scene's)
         if (open && !ok) { CloseFrame(); g_kind = kNone; }   // nothing to draw for: an empty frame
         if (ok) { g_pairOpen.store(true); g_pairMissed.store(false); g_campfireFrame.store(true); }
     }
@@ -8200,7 +8358,10 @@ bool OpenCampfireFrame() {
 // The right hand's aim (or `hand`'s), trigger and buttons, in the frame PairEyes gives the head's eyes in (kViewsHead): the campfire's
 // pick lays its ray into the scene as it lays the eyes. False: no frame open, or no pose for the hand.
 bool CampfireAim(int hand, float o[3], float d[3], float* trigger, uint32_t* buttons) {
-    if (g_kind != kPair || !g_viewsOk) return false;
+    // ([campfire] frame_per_eye: no frame stays open between a present and the next eye's camera, where the pick asks - the last frame's time
+    // and input then, a frame old at most)
+    const bool lately = g_campfire.load() && campfire::FramePerEye() && g_running.load() && g_session && !DeviceLost() && g_fs.predictedDisplayTime > 0;
+    if ((g_kind != kPair && !lately) || !g_viewsOk) return false;
     if (hand < 0) hand = g_cfg.laserHand ? 1 : 0;   // the laser's hand ([openxr] laser_hand): its beam is the one drawn
     if (hand > 1) return false;
     const D2RVR_XrHand& h = g_inNow.hand[hand];
@@ -8853,7 +9014,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     {   // [render] vr_resolution: the render size the game is asked for (a post, never a wait), on every present
         if (bb) { const D3D12_RESOURCE_DESC d = bb->GetDesc(); g_outputSize.store(vrres::Pack({(uint32_t)d.Width, d.Height})); }
         vrres::Update(g_wnd, g_running.load() && g_state.load() == kCreated, vrres::Unpack(g_vrRecommended.load()), vrres::Unpack(g_vrMaximum.load()),
-                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide && !g_campfire.load());   // ([campfire]: the eyes' own size)
+                      vrres::Unpack(g_outputSize.load()), g_cfg.on ? g_cfg.vrPick : rendersize::Pick{}, g_cfg.on && g_cfg.menuWide && !g_campfire.load() && !campfire::MenusKeepSize());   // ([campfire]: the eyes' own size; [frontend]: kept through creation too)
     }
     g_presentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     if (DeviceLost()) return;
@@ -8861,7 +9022,9 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     if (g_campfire.load() && pairEye >= 0) {   // [campfire]: this present is one eye of the frame the camera opened; the right one ends it
         if (g_kind == kPair) {
             if (bb) CopyEye(pairEye, bb);
-            if (pairEye == 1) { g_campfireFrame.store(false); EndPair(); }
+            // ([campfire] frame_per_eye: either eye ends it - a frame to the headset at every game frame, the other eye as last drawn (CloseFrame's
+            // turns); the next eye's camera opens the next frame, with its own fresh poses)
+            if (pairEye == 1 || campfire::FramePerEye()) { g_campfireFrame.store(false); EndPair(); }
             g_campfireNoFrame.store(0);
         } else {
             if (!g_campfireIdle.load() && g_ss == XR_SESSION_STATE_FOCUSED) g_campfireNoFrame.fetch_add(1);   // (an idle or unfocused headset is no failure)

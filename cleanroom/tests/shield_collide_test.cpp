@@ -150,6 +150,8 @@ void TestRules() {
 	EXPECT(!p.Step(false, 0.62f, 0.10f), "clear of it but the hand still far off: still through");
 	EXPECT(!p.Step(false, 0.10f, 0.01f), "the hand back, the weapon 1 cm off the shield: still through");
 	EXPECT(p.Step(false, 0.10f, 0.05f) && !p.Through(), "the hand back and the weapon clear: the shield is met again");
+	shieldcollide::Pass never;   // [weight] shield_never_through
+	EXPECT(never.Step(true, 0.61f, -0.01f, true) && never.Step(true, 1.5f, -0.01f, true) && !never.Through() && never.Count() == 0, "never through: met at 61 cm and 1.5 m");
 	const shieldcollide::Knock slow = shieldcollide::KnockOf(0.2f), soft = shieldcollide::KnockOf(0.6f), hard = shieldcollide::KnockOf(3.0f);
 	EXPECT(!slow.felt && !slow.heard, "0.2 m/s: resting, neither felt nor heard");
 	EXPECT(soft.felt && !soft.heard && soft.amplitude >= 0.6f, "0.6 m/s: felt (%.2f), silent", soft.amplitude);
@@ -247,12 +249,15 @@ struct Drive {
 	int pulses[2] = {};
 	std::vector<ClashHeard> heard;
 	bool through = false;
+	std::vector<std::string> log;
+	std::string trace;
 };
 // The right hand driven across (toward -x) `metres` at `speed` m/s into the shield, held there, then (slide) along the face (-z) 33 cm.
-Drive Run(bool on, float speed, float metres, bool slide, bool lengthwise = false) {
+Drive Run(bool on, float speed, float metres, bool slide, bool lengthwise = false, bool never = false) {
 	Drive d;
 	Rig r;
 	r.in.weight.shieldCollide = on;
+	r.in.weight.shieldNeverThrough = never;   // [weight] shield_never_through
 	r.Steps(5);   // placed: the sword in the right hand
 	float butt[3], tip[3];
 	EXPECT(weight::ShaftEnds(butt, tip), "the sword's ends");
@@ -268,6 +273,9 @@ Drive Run(bool on, float speed, float metres, bool slide, bool lengthwise = fals
 		r.in.hand[0][0] = x0 - std::min(metres, speed * 0.011f * (float)(i + 1));
 		r.Step();
 		d.most = std::max(d.most, r.drawn.hand[0][0] - r.in.hand[0][0]);
+		char tb[48];
+		snprintf(tb, sizeof tb, " %.2f", r.drawn.hand[0][0] - r.in.hand[0][0]);
+		d.trace += tb;
 	}
 	r.Steps(10);
 	d.held = r.drawn.hand[0][0] - r.in.hand[0][0];   // how far the drawn right hand stayed behind its controller
@@ -284,6 +292,7 @@ Drive Run(bool on, float speed, float metres, bool slide, bool lengthwise = fals
 		d.slid = z0 - r.drawn.hand[0][2];
 	}
 	for (const std::string& l : g_log) d.through = d.through || l.find("pressed on through the shield") != std::string::npos;
+	d.log = g_log;
 	r.in.weight.on = false;
 	r.Step();
 	return d;
@@ -296,6 +305,8 @@ void TestContact() {
 	const Drive soft = Run(true, 0.5f, 0.4f, false);
 	const Drive rest = Run(true, 0.12f, 0.3f, false);
 	const Drive push = Run(true, 1.0f, 0.95f, false, true);   // (laid along the blade: the whole blade on it, it cannot slide off its edge first)
+	const Drive pushNever = Run(true, 1.0f, 0.95f, false, true, true);   // [weight] shield_never_through: the same press, never through
+	const Drive hardNever = Run(true, 2.0f, 1.5f, false, true, true);    // ... and 1.5 m at 2 m/s (past any arm's reach)
 	weight::SetClashSoundGate(3.0f, 0.0f);   // [weight] clash_sound_min_mps=3 (Bear's hard-knock-only): the same 2 m/s blow
 	const Drive gated = Run(true, 2.0f, 0.4f, false);
 	weight::SetClashSoundGate(0.0f, 0.0f);
@@ -318,6 +329,15 @@ void TestContact() {
 	       "clash_sound_min_mps=3: the 2 m/s blow stopped and felt as before, silent (%.2f m, %d / %d, %zu)", gated.held, gated.pulses[0], gated.pulses[1], gated.heard.size());
 	EXPECT(push.most <= shieldcollide::kGiveM + 0.05f && push.most > 0.5f && push.held < 0.1f && push.through,
 	       "pressed on 95 cm: the hand gives way up to about 60 cm (%.2f), then the sword goes through (%.2f m at the end)", push.most, push.held);
+	EXPECT(!pushNever.through && pushNever.held > shieldcollide::kGiveM + 0.15f && pushNever.most > shieldcollide::kGiveM + 0.15f, "shield_never_through: pressed on 95 cm the sword stays on the face, its hand %.2f m behind (%s)",
+	       pushNever.held, pushNever.through ? "went through" : "held");
+	EXPECT(!hardNever.through && hardNever.held > 1.2f, "shield_never_through: pressed on 1.5 m at 2 m/s it stays on the face, its hand %.2f m behind", hardNever.held);
+	std::printf("  shield_never_through: 1.5 m at 2 m/s - %.0f cm behind at the end, %s\n", hardNever.held * 100.0f, hardNever.through ? "THROUGH" : "never through");
+	if (pushNever.held <= shieldcollide::kGiveM + 0.15f) {
+		std::printf("  trace:%s\n", pushNever.trace.c_str());
+		for (const std::string& l : pushNever.log) std::printf("  log: %s\n", l.c_str());
+	}
+	std::printf("  shield_never_through: the same 95 cm press - %.0f cm behind at the end, %s\n", pushNever.held * 100.0f, pushNever.through ? "THROUGH" : "never through");
 	EXPECT(!weight::Reached(shieldcollide::kId, 2000) && weight::Blocked(shieldcollide::kId, 2000) <= 1, "the shield is never a body reached (no strike)");
 	bool told = false;
 	for (const std::string& l : g_log) told = told || l.find("shield_collide") != std::string::npos;

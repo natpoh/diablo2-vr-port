@@ -35,6 +35,11 @@ bool ArcaneOwnFog();          // [fog] arcane_own, in the Arcane Sanctuary: its 
 bool ArcaneHazeFog();         // the fog's colour is the Arcane Sanctuary's sky behind each point (its sky shown; arcane_into_sky with its own fog)
 bool OurSkyWanted();          // our post pass's act sky
 extern std::atomic<bool> g_campfireSky;   // [campfire] sky: the creation scene's void under our sky (vr/campfire_unleashed.cpp)
+// [frontend] fog: our effect's old fog in the main menu's act scene, whatever [fog] enabled / game_fog say (the menu has no world for the game's
+// fog pass; Serg 2026-11-26 "лучше старый") - its act (the colour) and distances; vr/campfire_unleashed.cpp Tick sets them
+extern std::atomic<bool> g_frontFog;
+extern std::atomic<int> g_frontFogAct;
+extern std::atomic<float> g_frontFogStart, g_frontFogEnd;
 bool DistanceBlurWanted();    // [render] distance_blur: the far picture blurred behind a pane (our post pass, whoever draws the fog)
 bool GameSkyFixWanted();      // a fix of ours on the game's dome or fog that reads the scene's depth (its colour, its night, its horizon, the fog's match)
 bool CeilWanted();            // a cave ceiling wanted here ([ceiling] enabled, first person, a ceiling biome, no menu)

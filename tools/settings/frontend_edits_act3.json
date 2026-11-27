@@ -1,0 +1,235 @@
+{
+ "act": 3,
+ "base": "v2",
+ "moved": {
+  "stairs01_01": {
+   "right": 15.13,
+   "ahead": 34.99
+  },
+  "stone01_03": {
+   "right": 12.25,
+   "ahead": 42.82
+  },
+  "act3_roots_hanging03_13": {
+   "right": -9.64,
+   "ahead": 44
+  },
+  "water01_01": {
+   "y": -3
+  },
+  "riverbank_raft01_01": {
+   "right": 20.85,
+   "ahead": 37.37
+  },
+  "pcvr_town_3_tusk03_02": {
+   "right": 210.9,
+   "ahead": 27.46
+  },
+  "pcvr_town_3_railing01_05": {
+   "right": 79.06,
+   "ahead": 24.47
+  },
+  "pcvr_town_3_grunge_scum_side01_50_01": {
+   "right": 211.99,
+   "ahead": 35.16
+  },
+  "pcvr_townwater_3_-4_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-4_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-4_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-4_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-4_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-3_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-3_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-3_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-3_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-3_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-2_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-2_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-2_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-2_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-2_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-1_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-1_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-1_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_-1_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_0_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_0_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_0_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_0_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_1_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_1_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_1_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_1_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_1_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_2_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_2_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_2_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_2_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_2_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_3_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_3_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_3_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_3_0": {
+   "right": -3.1,
+   "ahead": -177.67,
+   "y": -3
+  },
+  "pcvr_townwater_3_3_1": {
+   "right": -101.43,
+   "ahead": -177.14,
+   "y": -3
+  },
+  "pcvr_townwater_3_4_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_4_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_4_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_4_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_4_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_5_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_5_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_5_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_5_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_5_1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_6_-3": {
+   "y": -3
+  },
+  "pcvr_townwater_3_6_-2": {
+   "y": -3
+  },
+  "pcvr_townwater_3_6_-1": {
+   "y": -3
+  },
+  "pcvr_townwater_3_6_0": {
+   "y": -3
+  },
+  "pcvr_townwater_3_6_1": {
+   "y": -3
+  }
+ },
+ "deleted": [
+  "pcvr_town_3_support_post01_19",
+  "pcvr_town_3_hanging_rope02_11"
+ ],
+ "added": [
+  {
+   "name": "pcvr_ed_3_mwgynvbs1",
+   "model": "data/hd/env/model/act3/docktown/act3_docktown_pillars/pillar_carved02.model",
+   "right": 7.74,
+   "ahead": 46.58,
+   "y": 1.78,
+   "yaw": -89.2,
+   "scale": 1.068
+  },
+  {
+   "name": "pcvr_ed_3_mwgz5fhg2",
+   "model": "data/hd/env/foliage/global/model/act3_roots/act3_roots_climbing01.model",
+   "right": 10.6,
+   "ahead": 41.23,
+   "y": 5.5,
+   "yaw": 0,
+   "scale": 1
+  },
+  {
+   "name": "pcvr_ed_3_mwgzz6h23",
+   "model": "data/hd/env/foliage/global/model/act3_hanging_vines/act3_hanging_vines02.model",
+   "right": 8.4,
+   "ahead": 42.74,
+   "y": 0.9,
+   "yaw": 180,
+   "scale": 1
+  }
+ ],
+ "road": null,
+ "road_half": null
+}

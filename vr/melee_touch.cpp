@@ -57,6 +57,7 @@
 #include "melee_boxes.h"
 #include "player_bodies.h"   // [multiplayer] pose_share_bodies: the other players among the bodies (their ids, their capsule)
 #include "melee_direct.h"
+#include "coop_strike_wire.h"   // [gameplay] melee_direct_client_host: a joined player's touch struck by the host (refusals pressed, hits buzzed)
 #include "melee_direct_client.h"   // [gameplay] melee_direct_client: a joined TCP/IP player's touch sent as the game's own command for the monster
 #include "move_attack_wire.h"   // [gameplay] quick_blow: the touch is the game's attack (moveattack::QuickWanted)
 #include "quick_blow.h"
@@ -119,6 +120,8 @@ std::atomic<ULONGLONG> g_liveAt{0};   // the last time Tick had a weapon it swin
 std::atomic<uint32_t> g_liveKind{0};  // ... and its D2RVR_WeaponType
 std::atomic<bool> g_throwWanted{false};   // [hands] throw_autoaim_deg: the monsters near the hero are wanted for a throw's auto-aim
 std::atomic<bool> g_wallsWanted{false};   // [weight] wall_contact_mode 2 (Bear's): the server's game and the hero's unit are wanted for the wall cells (vr/unleashed_wall_cells.cpp)
+std::atomic<bool> g_coopWanted{false};    // [gameplay] melee_direct_client_host: the server's game is wanted for the joined players' touches (vr/coop_strike_wire.cpp)
+std::atomic<uint32_t> g_coopHeroId{0};    // ... and a joined hero's id it is learned by too (a flat host scans no hero of its own)
 std::atomic<bool> g_moveWanted{false};    // [weight] grab_moves_unit: the server's game is wanted for the knockback (vr/grab_move.cpp)
 std::atomic<bool> g_bowWanted{false};     // [bow] pitch_aim: ... and for a bow's or crossbow's shot aimed by its line (vr/bow_pitch_wire.cpp)
 std::atomic<bool> g_leapWanted{false};    // [gameplay] leap_by_gaze: ... and for the monster a Barbarian's Leap Attack looks at
@@ -419,7 +422,9 @@ uintptr_t HookLookup(uintptr_t game, int type, uint32_t id) {
     const uintptr_t unit = g_origLookup(game, type, id);
     trace.Resume();
     const uint32_t statusHero = g_statusHeroId.load(std::memory_order_relaxed);
-    if (type == 0 && unit && (id == g_heroId.load(std::memory_order_relaxed) || (statusHero && id == statusHero)) && game != g_serverGame.load(std::memory_order_relaxed) &&
+    const uint32_t coopHero = g_coopHeroId.load(std::memory_order_relaxed);
+    if (type == 0 && unit && (id == g_heroId.load(std::memory_order_relaxed) || (statusHero && id == statusHero) || (coopHero && id == coopHero)) &&
+        game != g_serverGame.load(std::memory_order_relaxed) &&
         g_learnGame.load(std::memory_order_relaxed)) {
         uintptr_t back = 0;
         uint32_t head[3];
@@ -743,6 +748,54 @@ int g_swayArrowAt = 0;
 // The bodies of the hostile monsters of the last scan, from their skeletons as they stand now.
 std::atomic<bool> g_playerBodies{false};   // [multiplayer] pose_share_bodies: the other players among the bodies (SetPlayerBodies)
 playerbodies::PlayerSlots g_playerSlots;    // (the timer's thread only)
+// [multiplayer] pose_share_grab: the units of the bodies other players hold that our scans have not got (knockdown::RemoteFarIds), found by id wherever they
+// stand (unitscan::PlacesOf) - their places join the kept ones, so the scans reach them and read their skeletons (2026-11-27: Kashya held on the joined PC,
+// beyond the host's 24 units: "not near here"). Looked up every 100 ms at most (the timer's thread). Render x, z on the hero's floor, as the kept roots.
+int RemoteHeldPlaces(float (*out)[2], int max, const float heroRender[3], float upm, ULONGLONG now) {
+    static ULONGLONG at = 0, toldAt = 0;
+    static float places[4][2];
+    static int n = 0;
+    if (!out || max <= 0 || !heroRender) return 0;
+    if (now - at >= 100 || now < at) {
+        at = now;
+        n = 0;
+        uint32_t ids[4];
+        float palm[4][3] = {};
+        const int ni = knockdown::RemoteFarIds(ids, 4, palm);
+        if (ni > 0) {
+            float xz[4][2] = {};
+            bool found[4] = {};
+            unitscan::PlacesOf([](void* d, uintptr_t s, size_t b) { return Read(d, s, b); }, d2rsig::Addr(RVA_UNITS), ids, ni, xz, found);
+            float farM = 0.0f;
+            int byId = 0;
+            for (int i = 0; i < ni; ++i) {
+                float x = palm[i][0] * upm, z = palm[i][2] * upm;   // (no unit of that id here: round his palm - the humanoid nearest it is taken in its place)
+                if (found[i]) {
+                    const stroke::Vec r = RenderGround({xz[i][0], 0.0f, xz[i][1]}, heroRender[1]);
+                    x = r.x;
+                    z = r.z;
+                    ++byId;
+                }
+                if (!std::isfinite(x + z)) continue;
+                places[n][0] = x;
+                places[n][1] = z;
+                ++n;
+                farM = std::max(farM, std::hypot(x - heroRender[0], z - heroRender[2]) / std::max(upm, 1e-3f));
+            }
+            if (now - toldAt >= 2000) {
+                toldAt = now;
+                LogF("melee touch: %d bodies other players hold, not read here - %d found by their units, %d looked for round his hand (the farthest %.1f m off); "
+                     "the scans reach for them ([multiplayer] pose_share_grab)", ni, byId, n - byId, farM);
+            }
+        }
+    }
+    const int k = std::min(n, max);
+    for (int i = 0; i < k; ++i) {
+        out[i][0] = places[i][0];
+        out[i][1] = places[i][1];
+    }
+    return k;
+}
 void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
     g_rigsAt = now;
     if (heroRender) std::memcpy(g_knockHero, heroRender, sizeof g_knockHero);
@@ -750,9 +803,11 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
     QueryPerformanceCounter(&t0);
     static skel::MonsterRig rigs[16];   // (the timer's thread only)
     // [weight] knock_down: the bodies drawn away keep their units in reach, wherever the hands took them - out of both scans the library lets a body go
-    // and its drawing goes back to the unit far off (0.196.0: «монстры исчезают, когда я их поднимаю»; vr/scan_reach.h)
-    float keep[8][2];
-    const int nKeep = knockdown::FarPlaces(keep, 8);
+    // and its drawing goes back to the unit far off (0.196.0: «монстры исчезают, когда я их поднимаю»; vr/scan_reach.h); [multiplayer] pose_share_grab: and
+    // the units of the bodies other players hold that our scans have not got yet (RemoteHeldPlaces)
+    float keep[12][2];
+    int nKeep = knockdown::FarPlaces(keep, 8);
+    nKeep += RemoteHeldPlaces(keep + nKeep, 12 - nKeep, heroRender, upm, now);
     g_unitReach = scanreach::Reach(24.0f, heroRender[0], heroRender[2], keep, nKeep, upm);
     {   // said when the scans first reach out for a body drawn away, and how far at most (once a second at most while it lasts)
         static float most = 0.0f;
@@ -938,8 +993,10 @@ void RepublishBodies(ULONGLONG now, const float heroRender[3], float upm) {
 // press asks its own verdict at the touch (Verdicted below, in the strike path), which this does not change.
 std::atomic<bool> g_npcBodies{false};
 void PublishBodies(const Scan& s, ULONGLONG now, const float heroRender[3], float upm) {
-    if (!BodiesWanted() && !(knockdown::DeathFlatWanted() && !viewgate::F4())) return;   // ([weight] death_ragdoll_flat: the bodies outside F4, for the deaths alone)
-    const bool npcs = g_npcBodies.load() || g_grabWanted.load();   // ([weight] grab_bodies: an ally is grabbed too - Bodies leaves them out for the rest)
+    const bool flat = !viewgate::F4();
+    if (!BodiesWanted() && !(knockdown::FlatWanted() && flat)) return;   // ([weight] death_ragdoll_flat, [multiplayer] pose_share_grab_any_view: the bodies outside F4)
+    const bool npcs = g_npcBodies.load() || g_grabWanted.load() ||   // ([weight] grab_bodies: an ally is grabbed too - Bodies leaves them out for the rest)
+                      (flat && knockdown::RemoteAnyViewWanted());   // ([multiplayer] pose_share_grab_any_view: an NPC another player holds, drawn here)
     size_t order[std::tuple_size<decltype(Scan::c)>::value];
     bool hostile[std::tuple_size<decltype(Scan::c)>::value];
     size_t n = 0;
@@ -1223,6 +1280,12 @@ void LatencyPoll(ULONGLONG now) {
 // swung: a Barbarian's second blade, a weapon drawn into the left hand.
 // [gameplay] melee_direct_client: the force of the weight model's live strike on monster `id` (vr/strike_force.h Score, the strongest of its strikes on it now), N s;
 // -1 when it measures none (the weight model off, no monster bodies, no strike on that monster yet).
+// The weight model hands its live strikes for 100 ms only: a touch the swing engine counts a frame or two after the strike on that monster ended
+// found none and read -1, which the rules count as weak - so the strongest one measured on each monster is kept for kForceKeepMs and answered
+// when no live one is there.
+constexpr ULONGLONG kForceKeepMs = 400;
+struct ForceKept { uint32_t id = 0; float score = -1.0f; ULONGLONG at = 0; };
+std::array<ForceKept, 8> g_forceKept;   // (the timer's thread: TouchOf and the strike statistics)
 float ForceNow(uint32_t id) {
     weight::LiveStrike ls[8];
     const int n = weight::LiveStrikes(ls, 8);
@@ -1233,7 +1296,17 @@ float ForceNow(uint32_t id) {
         const strikeforce::Strike k{ls[i].s.id, ls[i].s.serial, ls[i].s.hands, ls[i].s.window, ls[i].s.cut, ls[i].s.recent, ls[i].s.startS, ls[i].s.along};
         best = std::max(best, strikeforce::Score(s, strikeforce::FamilyOf(ls[i].kind), k));
     }
-    return best;
+    const ULONGLONG now = GetTickCount64();
+    ForceKept* slot = &g_forceKept[0];
+    for (ForceKept& k : g_forceKept) {
+        if (k.id == id) { slot = &k; break; }
+        if (k.at < slot->at) slot = &k;
+    }
+    if (best >= 0.0f) {
+        if (slot->id != id || now - slot->at > kForceKeepMs || best > slot->score) *slot = {id, best, now};
+        return best;
+    }
+    return slot->id == id && now - slot->at <= kForceKeepMs ? slot->score : -1.0f;
 }
 
 // [debug] melee_touch_no_attack: the touch counted, but the game's attack is not asked for - the drawing says where it struck, the log tells the first few
@@ -1965,7 +2038,7 @@ void SetGrabWanted(bool on) {
 // at its own place - and back once the menu closes (0.199.0, sangee1234: «the corpses are moving ... best when I open the inventory»).
 void DeathTick(bool ok, const float heroRender[3], float upm) {
     const bool f4 = viewgate::F4();
-    if (!ok || !(f4 ? knockdown::Wanted() && BodiesWanted() : knockdown::DeathFlatWanted()) || !heroRender ||
+    if (!ok || !(f4 ? knockdown::Wanted() && BodiesWanted() : knockdown::FlatWanted()) || !heroRender ||
         !std::isfinite(heroRender[0] + heroRender[1] + heroRender[2]))
         return;
     const ULONGLONG now = GetTickCount64();
@@ -2424,6 +2497,11 @@ void Tick(const Frame& f) {
         uint32_t backId = 0;
         int backHand = 0;
         if (meleedirectclient::TakeFallback(&backId, &backHand) && viewgate::F4()) PressKey(backId, true, backHand, now);
+        // [gameplay] melee_direct_client_host, joined: the host refused a touch of ours in time - the normal attack for it (never nothing); it struck one -
+        // the hand that struck buzzes the hit (the instant buzz of the touch itself went at the touch: haptics::Touched)
+        if (coopstrikewire::TakeRefused(&backId, &backHand) && viewgate::F4()) PressKey(backId, true, backHand, now);
+        for (int hitHand = 0; coopstrikewire::TakeConfirm(&hitHand);)
+            if (viewgate::F4()) haptics::Play(haptics::Event::Hit, haptics::FromSkel(hitHand));
         // [gameplay] melee_direct_client_cleave, the host: a joined player's extra hit - the server's attack for his hero (vr/melee_direct.cpp);
         // whether it can be struck here at all goes into the answer to the joined players' hello (who hosts decides)
         meleedirectclient::SetHostCanStrike(g_serverGame.load() != 0 && meleedirect::Ready(), now);
@@ -3477,7 +3555,8 @@ bool PressDown() {
 void Install() {
     static ULONGLONG retryAt = 0;
     static unsigned tries = 0;
-    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_pickWanted.load() && !g_statusWanted.load() && !g_moveWanted.load() && !g_wallsWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
+    if ((!g_wanted.load() && !g_throwWanted.load() && !g_bowWanted.load() && !g_leapWanted.load() && !g_pickWanted.load() && !g_statusWanted.load() && !g_moveWanted.load() && !g_wallsWanted.load() &&
+         !g_coopWanted.load()) || g_serverHook.load() == 1 || !g_ctx ||
         GetTickCount64() < retryAt)
         return;
     retryAt = GetTickCount64() + (tries < 30 ? 2000 : 30000);   // the server's code is decrypted as it runs: tried again
@@ -3506,6 +3585,9 @@ ULONGLONG g_thrScanAt = 0;   // the timer's thread only
 void SetThrowWanted(bool on) { g_throwWanted.store(on); }
 void SetMoveWanted(bool on) { g_moveWanted.store(on); }
 void SetWallsWanted(bool on) { g_wallsWanted.store(on); }
+void SetCoopWanted(bool on) { g_coopWanted.store(on); }
+bool CoopWanted() { return g_coopWanted.load(); }
+void SetCoopHero(uint32_t id) { g_coopHeroId.store(id, std::memory_order_relaxed); }
 uint32_t HeroId() { return g_heroId.load(); }
 bool ThrowWanted() { return g_throwWanted.load(); }
 void SetBowWanted(bool on) { g_bowWanted.store(on); }

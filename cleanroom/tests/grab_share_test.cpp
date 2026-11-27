@@ -473,6 +473,33 @@ int main() {
         CHECK(q.Due(60100, delay100, got, 4) == 0 && q.Due(60110, delay100, got, 4) == 1);
     }
 
+    {   // [multiplayer] pose_share_grab_any_view: where it runs (GateFor)
+        const Gate off = GateFor(false, true, true);   // not wanted (pose_share_grab off, no channel, out of a game, no hero): nothing, whatever the view
+        CHECK(!off.send && !off.view && !off.flat);
+        const Gate f4 = GateFor(true, true, false);    // VR F4, the key off: as before - ours out, theirs drawn in F4's frame
+        CHECK(f4.send && f4.view && !f4.flat);
+        const Gate f4Any = GateFor(true, true, true);  // VR F4, the key on: the same (F4 keeps its own frame)
+        CHECK(f4Any.send && f4Any.view && !f4Any.flat);
+        const Gate flatOld = GateFor(true, false, false);   // flat / VR F1-F3 / F5, the key off: nothing (the old F4-only behaviour)
+        CHECK(!flatOld.send && !flatOld.view && !flatOld.flat);
+        const Gate flatAny = GateFor(true, false, true);    // flat / VR F1-F3 / F5, the key on: theirs drawn in the hero's frame, nothing of ours goes out
+        CHECK(!flatAny.send && flatAny.view && flatAny.flat);
+    }
+
+    {   // a body whose unit id is not read here: the one nearest his palm across the ground, within the limit (NearestTo)
+        const float palm[3] = {10.0f, 1.2f, 20.0f};
+        const float pelvis[4][3] = {{10.4f, 0.9f, 20.0f}, {10.0f, 0.9f, 20.9f}, {9.9f, 5.0f, 20.1f}, {14.0f, 0.9f, 20.0f}};
+        bool usable[4] = {true, true, true, true};
+        CHECK(NearestTo(palm, pelvis, usable, 4, 1.5f) == 2);   // (across the ground: the height apart is not counted)
+        usable[2] = false;                                       // (held or down already)
+        CHECK(NearestTo(palm, pelvis, usable, 4, 1.5f) == 0);
+        CHECK(NearestTo(palm, pelvis, usable, 4, 0.3f) == -1);  // none that near
+        CHECK(NearestTo(palm, pelvis + 3, nullptr, 1, 1.5f) == -1);   // only a far one
+        CHECK(NearestTo(palm, pelvis, nullptr, 0, 1.5f) == -1);
+        const float nan[3] = {std::nanf(""), 0.0f, 0.0f};
+        CHECK(NearestTo(nan, pelvis, nullptr, 4, 1.5f) == -1);
+    }
+
     std::printf("grab_share_test: %d checks, %d failed\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

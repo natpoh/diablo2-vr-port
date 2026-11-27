@@ -53,6 +53,11 @@ bool ServerLookup(uintptr_t* game, uintptr_t* lookup);
 void SetMoveWanted(bool on);
 // [weight] wall_contact_mode 2 (Bear's) (vr/wall_collide.cpp): the lookup hook is put in for it too - the game's wall cells are read from the hero's server room.
 void SetWallsWanted(bool on);
+// [gameplay] melee_direct_client_host (vr/coop_strike_wire.cpp): the lookup hook is put in for it too, and learns the server's game by a JOINED hero's id too
+// (SetCoopHero, 0 none) - a host that plays flat has no scan of its own hero, so his id may never be known here. CoopWanted: vrcam's install asks.
+void SetCoopWanted(bool on);
+bool CoopWanted();
+void SetCoopHero(uint32_t id);
 // The hero's unit id as the scan last read it (0: none) - the server's unit of the hero is looked up by it (grab_move: the hero in a knockback's way).
 uint32_t HeroId();
 // The server's game learned is dropped: leaving a game frees it, and the next game is another one. Called when the client's own player read

@@ -7,6 +7,10 @@
 // and label stamp (steamvr/respec_button.h PaintFace / Stamp, steamvr/stats_button.h StoneNoise) and the GDI label
 // (steamvr/transport.cpp RespecLabel) beside it, and the key sent as a real keyboard's (transport.cpp SendKeyboard). math:: replaced by
 // the few lines below. Used by vr/xr.cpp ([openxr] name_keyboard). The rest of D2R VR Authentic is MIT; this file stays MPL 2.0.
+// Changed in D2R VR Authentic (2026-11-27, Serg: "надо точки добавить, чтобы адрес вводить и цифры"): a row of digits on top and '.', ':'
+// and Space at the bottom (Keys, Rows 5; Label names the Space key) - the Multiplayer window's address, room name and password
+// ([openxr] multiplayer_keyboard); SendKey sends a character the layout has no key for as the character itself. Its look in the game's own
+// art is apart, in vr/keyboard_game_look.cpp ([openxr] keyboard_game_look).
 //
 // The VR keyboard: letters for the game's text boxes - a new character's name first - without taking the headset off. D2R shows no
 // on-screen keyboard of its own there (tested 2026-11-05: the name box does nothing under native controller navigation in VR). Its own
@@ -167,26 +171,32 @@ struct Key {
     char ch;              // Action::Char: the lower-case letter, '-' or '_'
     const wchar_t* label;
 };
-// Character names take letters and one '-' or '_' (the game checks the rest),
-// so no digits and no space. Ten keys a row.
+// Character names take letters and one '-' or '_' (the game checks the rest). D2R VR Authentic: the digits, '.', ':' and Space as well -
+// an address (192.168.1.5, an IPv6 one), a room's name and password in the Multiplayer window; a name box refuses them itself.
+// Ten keys a row.
 inline constexpr Key Keys[]={
-    {0,0,1,Action::Char,'q',L"Q"},{1,0,1,Action::Char,'w',L"W"},{2,0,1,Action::Char,'e',L"E"},
-    {3,0,1,Action::Char,'r',L"R"},{4,0,1,Action::Char,'t',L"T"},{5,0,1,Action::Char,'y',L"Y"},
-    {6,0,1,Action::Char,'u',L"U"},{7,0,1,Action::Char,'i',L"I"},{8,0,1,Action::Char,'o',L"O"},
-    {9,0,1,Action::Char,'p',L"P"},
-    {.5f,1,1,Action::Char,'a',L"A"},{1.5f,1,1,Action::Char,'s',L"S"},{2.5f,1,1,Action::Char,'d',L"D"},
-    {3.5f,1,1,Action::Char,'f',L"F"},{4.5f,1,1,Action::Char,'g',L"G"},{5.5f,1,1,Action::Char,'h',L"H"},
-    {6.5f,1,1,Action::Char,'j',L"J"},{7.5f,1,1,Action::Char,'k',L"K"},{8.5f,1,1,Action::Char,'l',L"L"},
-    {0,2,1.5f,Action::Shift,0,L"Shift"},
-    {1.5f,2,1,Action::Char,'z',L"Z"},{2.5f,2,1,Action::Char,'x',L"X"},{3.5f,2,1,Action::Char,'c',L"C"},
-    {4.5f,2,1,Action::Char,'v',L"V"},{5.5f,2,1,Action::Char,'b',L"B"},{6.5f,2,1,Action::Char,'n',L"N"},
-    {7.5f,2,1,Action::Char,'m',L"M"},
-    {8.5f,2,1.5f,Action::Backspace,0,L"Back"},
-    {0,3,2,Action::Close,0,L"Close"},{2,3,1.5f,Action::Char,'-',L"-"},{3.5f,3,1.5f,Action::Char,'_',L"_"},
-    {5,3,5,Action::Enter,0,L"Enter"},
+    {0,0,1,Action::Char,'1',L"1"},{1,0,1,Action::Char,'2',L"2"},{2,0,1,Action::Char,'3',L"3"},
+    {3,0,1,Action::Char,'4',L"4"},{4,0,1,Action::Char,'5',L"5"},{5,0,1,Action::Char,'6',L"6"},
+    {6,0,1,Action::Char,'7',L"7"},{7,0,1,Action::Char,'8',L"8"},{8,0,1,Action::Char,'9',L"9"},
+    {9,0,1,Action::Char,'0',L"0"},
+    {0,1,1,Action::Char,'q',L"Q"},{1,1,1,Action::Char,'w',L"W"},{2,1,1,Action::Char,'e',L"E"},
+    {3,1,1,Action::Char,'r',L"R"},{4,1,1,Action::Char,'t',L"T"},{5,1,1,Action::Char,'y',L"Y"},
+    {6,1,1,Action::Char,'u',L"U"},{7,1,1,Action::Char,'i',L"I"},{8,1,1,Action::Char,'o',L"O"},
+    {9,1,1,Action::Char,'p',L"P"},
+    {.5f,2,1,Action::Char,'a',L"A"},{1.5f,2,1,Action::Char,'s',L"S"},{2.5f,2,1,Action::Char,'d',L"D"},
+    {3.5f,2,1,Action::Char,'f',L"F"},{4.5f,2,1,Action::Char,'g',L"G"},{5.5f,2,1,Action::Char,'h',L"H"},
+    {6.5f,2,1,Action::Char,'j',L"J"},{7.5f,2,1,Action::Char,'k',L"K"},{8.5f,2,1,Action::Char,'l',L"L"},
+    {0,3,1.5f,Action::Shift,0,L"Shift"},
+    {1.5f,3,1,Action::Char,'z',L"Z"},{2.5f,3,1,Action::Char,'x',L"X"},{3.5f,3,1,Action::Char,'c',L"C"},
+    {4.5f,3,1,Action::Char,'v',L"V"},{5.5f,3,1,Action::Char,'b',L"B"},{6.5f,3,1,Action::Char,'n',L"N"},
+    {7.5f,3,1,Action::Char,'m',L"M"},
+    {8.5f,3,1.5f,Action::Backspace,0,L"Back"},
+    {0,4,2,Action::Close,0,L"Close"},{2,4,1,Action::Char,'-',L"-"},{3,4,1,Action::Char,'_',L"_"},
+    {4,4,1,Action::Char,'.',L"."},{5,4,1,Action::Char,':',L":"},{6,4,1.5f,Action::Char,' ',L"Space"},
+    {7.5f,4,2.5f,Action::Enter,0,L"Enter"},
 };
 constexpr int KeyCount=int(sizeof Keys/sizeof Keys[0]);
-constexpr float Columns=10,Rows=4;
+constexpr float Columns=10,Rows=5;
 
 // The picture: KeyTexels a key unit, Pad texels of stone-free gap round each
 // key, so the lit copy's crop never shows a neighbour's edge.
@@ -242,7 +252,7 @@ inline Spot KeySpot(const Board& b,int i) {
 inline std::wstring Label(int i,bool capitals) {
     if(i<0||i>=KeyCount)return {};
     const Key& k=Keys[i];
-    if(k.action!=Action::Char)return k.label;
+    if(k.action!=Action::Char||k.ch==' ')return k.label;   // (the Space key: its name)
     return std::wstring(1,wchar_t(capitals&&k.ch>='a'&&k.ch<='z'?k.ch-'a'+'A':k.ch));
 }
 
@@ -317,7 +327,13 @@ inline bool SendKey(const Output& out,HWND gameWindow) {
     WORD vk=0;bool shift=false;
     if(out.send==Send::Char) {
         const SHORT k=VkKeyScanExW(out.ch,layout);
-        if(k==-1||(HIBYTE(k)&6))return false;   // not on this layout, or only with Ctrl / Alt
+        if(k==-1||(HIBYTE(k)&6)) {
+            // (D2R VR Authentic: not on this layout, or only with Ctrl / Alt - a Russian layout has no Latin letters, and every key of the name
+            // was refused, Serg 2026-11-27 - the character itself then, as Windows' own on-screen keyboards send it)
+            INPUT u[2]{};
+            for(int i=0;i<2;++i){u[i].type=INPUT_KEYBOARD;u[i].ki.wScan=WORD(out.ch);u[i].ki.dwFlags=KEYEVENTF_UNICODE|(i?KEYEVENTF_KEYUP:0);u[i].ki.dwExtraInfo=KeyboardKeyTag;}
+            return SendInput(2,u,sizeof(INPUT))==2;
+        }
         vk=LOBYTE(k);shift=(HIBYTE(k)&1)!=0;
     } else if(out.send==Send::Backspace)vk=VK_BACK;
     else if(out.send==Send::Enter)vk=VK_RETURN;

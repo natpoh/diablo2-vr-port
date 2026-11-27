@@ -1,0 +1,3 @@
+# The scene editor's edits from D2R VR Unleashed (MPL 2.0), embedded in D2R_VR_Settings as they are: byte for byte as upstream, no
+# line-ending conversion on checkout.
+frontend_edits_act*.json -text

@@ -1245,12 +1245,13 @@ bool FogColourNow(float rgb[3]) {
     SkyAct fa{};
     CaveFog cave{};
     AcquireSRWLockShared(&g_skyCfgLock);
-    if (const int a = g_fogAct.load(); a > 0) fa = g_skyAct[a];
+    const bool menuFog = fx::g_frontFog.load();   // [frontend] fog: the menu's act (no world's act there), its day colour
+    if (const int a = menuFog ? fx::g_frontFogAct.load() : g_fogAct.load(); a > 0 && a <= 5) fa = g_skyAct[a];
     cave = g_caveFog;
     if (ArcaneOwnFog() && g_arcaneFogColour.set) cave = g_arcaneFogColour;   // [fog] arcane_color (unset: the caves', as before)
     ReleaseSRWLockShared(&g_skyCfgLock);
     if (g_underground.load() && cave.set) { fa.fogSet = true; memcpy(fa.fog, cave.rgb, sizeof fa.fog); }   // caves and dungeons: their own
-    else if (fa.fogSet && !(g_set.fogKeepsColour.load() && gamefogvr::Active())) {   // in the open the act's fog (its day colour) darkens at night with the sky
+    else if (fa.fogSet && !menuFog && !(g_set.fogKeepsColour.load() && gamefogvr::Active())) {   // in the open the act's fog (its day colour) darkens at night with the sky
         // ([fog] fog_keeps_colour: not while the game draws the fog - Serg on 0.188.4, "прозрачнее, а не чернее": the far fades into a light
         // haze of his color_<act>, never toward black; the game's light read 32 - "end of dawn, day" - put act 2's fog at x0.25. Our own
         // effect's fog as it was: Serg, "the old one was good". Since 2026-10-31 he wants it dark at night again - "ночью туман не тёмный",
@@ -1498,7 +1499,7 @@ void PresentCommon(reshade::api::effect_runtime* rt, HWND wnd, ID3D12Device* dev
         // cave's, or no sky: the dark grey) - without one the post pass takes the sky's horizon by the view's direction - and not in the
         // Arcane Sanctuary (its fog is its sky behind the point, ArcaneHaze)
         float ourRgb[3];
-        if (!fp.on && beforeFx && FogWanted() && (FogColourNow(ourRgb) || !OurSkyWanted()) && !ArcaneHazeFog()) {
+        if (!fp.on && beforeFx && FogWanted() && !fx::g_frontFog.load() && (FogColourNow(ourRgb) || !OurSkyWanted()) && !ArcaneHazeFog()) {   // ([frontend] fog: the post pass)
             const FogNumbers n = FogNumbersNow();
             fp.on = fp.ours = fp.ourCurve = true;
             fp.start = n.start;
@@ -2714,8 +2715,11 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     }
     {   // the act's own fog colour; without one the fog takes the sky's horizon, or stays dark
         float rgb[3];
-        SetBool(rt, "FogFixed", FogColourNow(rgb));
+        // ([frontend] fog: no fixed colour - each point fogs toward our day sky's horizon behind it, the void's sky untouched; Act 1's colour_act1
+        // #2F2F35 laid on its far backdrop at full fog made the upper half black, Serg 2026-11-26 "неба нет")
+        SetBool(rt, "FogFixed", FogColourNow(rgb) && !(fx::g_frontFog.load() && OurSkyWanted()));
         SetFloats(rt, "FogColor", rgb, 3);
+        SetBool(rt, "FogOwnDepth", fx::g_frontFog.load());   // ([frontend] fog: no fringe of the far backdrop's fog round the leaves)
         // the game drawing the fog ([fog] game_fog) and our effect the sky (no game dome there - every act but act 1): the sky's low part
         // sinks into the fog's colour as with our own fog, so the fogged land meets the sky without an edge (Serg, 2026-10-28, act 2: a hard
         // line between the tan fogged world and the sky)
@@ -2787,8 +2791,12 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     const char* cannot = g_set.gameSky.load() && pal >= 0 ? engitem::SkyCannot() : nullptr;   // (chosen and unable here for good: ours instead)
     // (VR F3 with [table] full_width: the game's dome or nothing - no sky of ours, not even in its place)
     bool sky = skypaths::OurSky(pal >= 0, skypaths::GameHolds(g_set.gameSky.load(), cannot), arcane, engitem::DomeShown()) && !GameSkyOverhead();   // (VR F1 with [top] sky the same)
+    // [campfire] sky / [frontend] sky: the menu scenes have no dome of the game's (no world to put it in) - ours there whatever [sky] game_sky says
+    // (sky_choice OurSkyWanted the same; Serg 2026-11-26: the main menu's sky black with game_sky=1)
+    if (fx::g_campfireSky.load() && pal >= 0 && !arcane) sky = true;
     {   // who draws the sky now, and why: each change once
         const char* by = arcane ? "our effect - the Arcane Sanctuary's own sky (the game has none there)"
+                         : fx::g_campfireSky.load() && pal >= 0 ? "our effect - a menu scene's void ([campfire] sky / [frontend] sky; no dome of the game's there)"
                          : g_set.gameSky.load() ? (engitem::DomeShown() ? "the game's dome ([sky] game_sky=1; our effect's sky off)"
                                                    : cannot ? "our effect INSTEAD of the game's dome ([sky] game_sky=1)"
                                                             : "nothing yet - the game's dome is chosen ([sky] game_sky=1) and on its way; our effect's sky off")
@@ -2832,6 +2840,24 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     SetBool(rt, "SkyByGame", engitem::DomeShown());
     SetFloat(rt, "SkyDomeDepth", skydome::DomeDepth(engitem::DomeRadius(), g_lastNear.load()));   // (the dome's depth band and the void)
     SetBool(rt, "SkyOverRims", g_set.skyOverRims.load() && viewgate::F4());   // [sky] cover_rims: F4 only, elsewhere the rim as before
+    {   // [frontend] sky=1 in the main menu's act scene (vr/campfire_unleashed.h, reshade/D2R_Frontend_Unleashed.fxh; MPL 2.0 from D2R VR
+        // Unleashed PR #583): the walls between the acts, the edges against the void, the painted card's dark edge; off anywhere else
+        const campfire::FrontSky fs = campfire::FrontSkyNow();
+        SetFloat(rt, "SkySaturation", fs.on ? fs.saturation : 1.0f);
+        SetFloat(rt, "SkyBlendDark", fs.on ? fs.blend : 0.0f);
+        SetFloat(rt, "SkyBlendFar", fs.blendFar);
+        SetFloat(rt, "SkyBlendLo", fs.blendLo);
+        SetFloat(rt, "SkyBlendHi", fs.blendHi);
+        SetBool(rt, "SkyEdgeFix", fs.on && fs.edges);
+        SetBool(rt, "SkyCutOn", fs.on && fs.cut);
+        SetFloats(rt, "SkyCutDir", fs.cutDir, 2);
+        SetFloat(rt, "SkyCutRight", fs.cutRight);
+        SetFloat(rt, "SkyCutLeft", fs.cutLeft);
+        SetFloat(rt, "SkyCutVoidRight", fs.voidRight);
+        SetFloat(rt, "SkyCutVoidLeft", fs.voidLeft);
+        SetFloat(rt, "SkyCutFarRight", fs.farRight);
+        SetFloat(rt, "SkyCutFarAhead", fs.farAhead);
+    }
     // [fog] spare_effects: in VR F4 with our fog on, the game's transparent targets of this frame for the fog to spare
     fogspare::Configure(fogspare::Wanted() && FogWanted() && viewgate::F4() && !fogframe::Armed());
     if constexpr (kReShade) SetBool(rt, "SpareOn", fogspare::Bind(rt));
@@ -4090,7 +4116,10 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
     SetBool(rt, "SkyCapOn", act.capOk);
     // An act with a night picture: the picture itself goes dark (SkyNightMix), the
     // brightness stays; without one the day picture is dimmed.
-    SetFloat(rt, "SkyNightMix", act.nightOk && act.bandOk ? 1.0f - DayNightK() : 0.0f);
+    // [frontend] the main menu's scenes under the day sky, every act (Serg 2026-11-26: "во втором акте почему то ночное небо, поставь дневное на
+    // меню" - the menu has no clock of the game's: it read as night)
+    const bool menuDay = fx::g_campfireSky.load();   // (any menu scene under our sky: the main menu's, character creation's)
+    SetFloat(rt, "SkyNightMix", act.nightOk && act.bandOk && !menuDay ? 1.0f - DayNightK() : 0.0f);
     SetFloat(rt, "SkyDrift", g_set.skyDrift.load() ? 1.0f : 0.0f);
     // [sky] bright_<period> (Serg's own sliders): the sky's brightness each period of the game's day, eased by its light - our old sky and
     // the game's dome alike; 1 while the time of day is not known or not followed
@@ -4170,7 +4199,10 @@ template <class RT> void EffectsBegin(RT* rt, reshade::api::command_list* cl) {
         }
     }
     g_periodMul.store(periodMul, std::memory_order_relaxed);   // (the open-air fog by the same: FogColourNow)
-    SetFloat(rt, "SkyBrightness", (act.nightOk && act.bandOk ? act.bright : act.bright * DayNightMul()) * periodMul);
+    const campfire::FrontSky frontSky = campfire::FrontSkyNow();   // ([frontend] sky_bright: the main menu's act sky brighter, Unleashed PR #583)
+    SetFloat(rt, "SkyBrightness", frontSky.on ? act.bright * frontSky.bright   // ([frontend]: the day's, no period of the game's day)
+                                  : menuDay ? act.bright   // ([campfire] sky: the day's too)
+                                              : (act.nightOk && act.bandOk ? act.bright : act.bright * DayNightMul()) * periodMul);
     if (domeLook) {   // the dome by our sky's numbers: its colours ([sky] dome_true_colour), its night as ours ([sky] day_night - off, or not known: day)
         int light = 0, period = 0;
         const float k = DayNightKRaw(&light, &period);

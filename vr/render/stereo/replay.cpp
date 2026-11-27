@@ -978,7 +978,9 @@ void MonitorHeld(ID3D12Resource* bb) {
 void MonitorPresent(reshade::api::effect_runtime* rt, HWND wnd, ID3D12CommandQueue* q, ID3D12Resource* bb) {
     if ((!monitoreye::On() && !monitorlayers::On()) || !q || !bb) return;   // ([render] monitor_panels: the panels over the window's picture, any eye setting)
     if (SkipWhileStuck("the monitor's eye")) return;
-    const int eye = g_pairNow.load() ? (g_eye.load() & 1) : -1;
+    // ([campfire] / [frontend]: the menu scene's presents carry one eye each too - the window got the raw present without the menu, which was
+    // taken out for the headset's panel; Serg 2026-11-26 "не вижу меню на экране компьютера")
+    const int eye = g_pairNow.load() || campfire::Now() ? (g_eye.load() & 1) : -1;
     const bool was = t_ours;
     t_ours = true;
     if (rt) rt->get_command_queue()->flush_immediate_command_list();

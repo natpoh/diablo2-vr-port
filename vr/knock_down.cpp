@@ -63,6 +63,7 @@ std::atomic<bool> g_on{false}, g_throwOn{false}, g_impaleOn{false}, g_deathOn{fa
 struct Landed { float at[3] = {}; float peak = 0.0f; float way[2] = {}; uint64_t atMs = 0; };
 Landed g_landed;
 std::atomic<bool> g_deathFlatOn{false};   // [weight] death_ragdoll_flat: the same falls in the views with no hands of ours (VR F1-F3, the flat game), by the game's swing
+std::atomic<bool> g_remoteAnyOn{false};   // [multiplayer] pose_share_grab_any_view: the other players' holds and knocks drawn in every view (VR F1-F3, F5, the flat game too)
 std::mutex g_mutex;   // (the settings, the bodies read, the pending knocks - between the weight model's thread and the timer's)
 Settings g_set;
 knocktrigger::Tracker g_tracker;
@@ -135,6 +136,16 @@ struct HandHold {
 HandHold g_hold[2];
 // [multiplayer] pose_share_grab: another player's hand holding a body - our library holds our drawing of it by hand slot `slot` at the palm handed each tick
 // (RemoteHandAt); a let-go waits for the next step (the palm moved on by its velocity that step: the body flies on as his hand left it), then the slot is released.
+// [multiplayer] pose_share_grab: the bodies other players hold that our scans have not got lately (RemoteTake: "not near here") - our scans reach for their
+// units wherever they stand (RemoteFarIds -> meleetouch's RepublishBodies; 2026-11-27: Kashya held on the joined PC, beyond the host's 24 units). (under g_mutex)
+struct WantFar { uint32_t id = 0; uint64_t atMs = 0, sinceMs = 0; float palm[3] = {}; };   // palm: his hand here (render metres) as last asked
+WantFar g_wantFar[4];
+constexpr uint64_t kWantFarMs = 1500;   // asked again a few times a second while he holds it; past this, no longer looked for
+// Serg (2026-11-27): «мы договаривались, что там точка хвата берётся», «а комп сам моделирует куклу» - the body hangs from the point his hand sends, drawn by our
+// own library on our own unit of it. When no unit of that id has been read here for kByPlaceAfterMs (the scans reached for it by id: RemoteFarIds), the
+// humanoid read here nearest his palm within kByPlaceM (across the ground) is taken in its place - its unit here, his grab point and hand on it.
+constexpr uint64_t kByPlaceAfterMs = 400;
+constexpr float kByPlaceM = 1.5f;
 struct RemoteHold {
     uint32_t holder = 0; int side = 0; uint32_t id = 0; int slot = 0;
     float palm[3] = {}; bool letGo = false; float vel[3] = {}; uint64_t sinceMs = 0;
@@ -460,6 +471,12 @@ void SetFormStrength(float factor) {
 void Configure(const Settings& s) {
     const bool was = g_on.exchange(s.on), wasThrow = g_throwOn.exchange(s.throwOn), wasImpale = g_impaleOn.exchange(s.impaleOn), wasDeath = g_deathOn.exchange(s.deathOn);
     const bool wasDeathFlat = g_deathFlatOn.exchange(s.deathFlatOn);
+    if (g_remoteAnyOn.exchange(s.remoteAnyView) != s.remoteAnyView) {
+        if (s.remoteAnyView) falllib::Probe();
+        LogF(s.remoteAnyView ? "knock down: the other players' held and knocked bodies in every view ([multiplayer] pose_share_grab_any_view) - outside VR F4 too "
+                               "(VR F1-F3, F5, the flat game) a body another player's hand holds hangs from his hand here and his blows knock our drawing of it down "
+                               "(only the drawing; nothing of ours pushes or holds there)" : "knock down: the other players' held and knocked bodies in VR F4 only");
+    }
     if (g_leapOn.exchange(s.leapOn) != s.leapOn) {
         if (s.leapOn) falllib::Probe();
         LogF(s.leapOn ? "leap scatter: on ([weight] leap_landing_scatter) - landing from a Leap or a Leap Attack throws the humanoids within %.1f m apart as "
@@ -532,7 +549,8 @@ void Configure(const Settings& s) {
 
 bool Wanted() {
     return g_on.load(std::memory_order_relaxed) || g_throwOn.load(std::memory_order_relaxed) || g_impaleOn.load(std::memory_order_relaxed) ||
-           g_deathOn.load(std::memory_order_relaxed) || g_deathFlatOn.load(std::memory_order_relaxed) || g_leapOn.load(std::memory_order_relaxed);
+           g_deathOn.load(std::memory_order_relaxed) || g_deathFlatOn.load(std::memory_order_relaxed) || g_leapOn.load(std::memory_order_relaxed) ||
+           g_remoteAnyOn.load(std::memory_order_relaxed);
 }
 void OnLeapLanded(const float at[3], float peakUnits, const float way[2]) {
     if (!g_leapOn.load(std::memory_order_relaxed) || !at || !std::isfinite(at[0] + at[1] + at[2])) return;
@@ -546,6 +564,8 @@ void OnLeapLanded(const float at[3], float peakUnits, const float way[2]) {
 bool ThrowWanted() { return g_throwOn.load(std::memory_order_relaxed); }
 bool DeathWanted() { return viewgate::F4() ? g_deathOn.load(std::memory_order_relaxed) : g_deathFlatOn.load(std::memory_order_relaxed); }
 bool DeathFlatWanted() { return g_deathFlatOn.load(std::memory_order_relaxed); }
+bool RemoteAnyViewWanted() { return g_remoteAnyOn.load(std::memory_order_relaxed); }
+bool FlatWanted() { return DeathFlatWanted() || RemoteAnyViewWanted(); }
 
 void OnStabEntered(uint32_t id, int side, float speed) {
     if (!g_impaleOn.load(std::memory_order_relaxed) || !id || side < 0 || side > 1) return;
@@ -783,7 +803,7 @@ bool RemoteTake(uint32_t holder, int side, uint32_t id, int joint, const float l
     *why = "";
     if (side < 0 || side > 1 || !id || !holder || !local || !palm || joint < 0 || joint >= D2RF_JOINTS) { *why = "not a hold"; return false; }
     if (!Wanted()) { *why = "neither [weight] knock_down nor grab_throw is on here"; return false; }
-    if (!viewgate::F4()) { *why = "not VR F4 here"; return false; }
+    if (!viewgate::F4() && !g_remoteAnyOn.load(std::memory_order_relaxed)) { *why = "not VR F4 here ([multiplayer] pose_share_grab_any_view off)"; return false; }
     if (!falllib::Loaded()) { *why = "no knock-down library here"; return false; }
     const uint64_t now = GetTickCount64();
     Info info;
@@ -791,7 +811,45 @@ bool RemoteTake(uint32_t holder, int side, uint32_t id, int joint, const float l
     {
         std::lock_guard<std::mutex> lock(g_mutex);
         const Info* f = InfoOf(id);
-        if (!f || now - f->atMs > kInfoFreshMs) { *why = "that monster is not near here (not loaded, too far, or not a humanoid read lately)"; return false; }
+        if (!f || now - f->atMs > kInfoFreshMs) {
+            WantFar* slot = nullptr;   // (looked for by id from now on, wherever its unit stands, and round his palm: RemoteFarIds)
+            for (auto& w : g_wantFar)
+                if (w.id == id) slot = &w;
+            if (!slot) {
+                for (auto& w : g_wantFar)
+                    if (!slot && (!w.id || now - w.atMs > kWantFarMs)) slot = &w;
+                if (slot) *slot = WantFar{id, now, now};
+            }
+            if (slot) {
+                slot->atMs = now;
+                std::memcpy(slot->palm, palm, sizeof slot->palm);
+            }
+            // ... by place: no unit of that id read here a while - the humanoid read here nearest his palm (not one held, down or ours already)
+            const Info* best = nullptr;
+            float bestD = 0.0f;
+            if (slot && now - slot->sinceMs >= kByPlaceAfterMs) {
+                float pelvis[kMaxInfo][3];
+                bool usable[kMaxInfo];
+                const int ni = std::min(g_nInfo, kMaxInfo);
+                for (int i = 0; i < ni; ++i) {
+                    std::memcpy(pelvis[i], g_info[i].joint[D2RF_PELVIS], sizeof pelvis[i]);
+                    usable[i] = now - g_info[i].atMs <= kInfoFreshMs && !IsBusy(g_info[i].id);
+                }
+                const int b = grabshare::NearestTo(palm, pelvis, usable, ni, kByPlaceM);
+                if (b >= 0) {
+                    best = &g_info[b];
+                    bestD = std::hypot(pelvis[b][0] - palm[0], pelvis[b][2] - palm[2]);
+                }
+            }
+            if (!best) {
+                *why = "that monster is not near here (not loaded, too far, or not a humanoid read lately), and no humanoid read here within 1.5 m of his hand";
+                return false;
+            }
+            LogF("knock down: another player (unit %u) holds %u - no unit of that id read here; %u ('%s'), %.1f m from his hand, taken in its place "
+                 "([multiplayer] pose_share_grab: his grab point on our own body)", holder, id, best->id, best->model, bestD);
+            f = best;
+            id = best->id;
+        }
         info = *f;
         lieS = g_set.lieMs * 0.001f;
     }
@@ -894,7 +952,7 @@ bool RemoteKnock(uint32_t striker, uint32_t id, int joint, const float local[3],
     *why = "";
     if (!striker || !id || !local || !vel || joint < 0 || joint >= D2RF_JOINTS || kind < D2RF_BLOW || kind > D2RF_STAGGER) { *why = "not a knock"; return false; }
     if (!Wanted()) { *why = "neither [weight] knock_down nor grab_throw is on here"; return false; }
-    if (!viewgate::F4()) { *why = "not VR F4 here"; return false; }
+    if (!viewgate::F4() && !g_remoteAnyOn.load(std::memory_order_relaxed)) { *why = "not VR F4 here ([multiplayer] pose_share_grab_any_view off)"; return false; }
     for (int s = 0; s < D2RF_MAX_DOWN; ++s)   // (one falling, lying, getting up or held here takes no blow - as ours)
         if (g_downIds[s].load(std::memory_order_relaxed) == id && Busy(g_downPhase[s].load(std::memory_order_relaxed))) { *why = "it is down or held here already"; return false; }
     const uint64_t now = GetTickCount64();
@@ -919,6 +977,20 @@ bool RemoteKnock(uint32_t striker, uint32_t id, int joint, const float local[3],
     if (g_nPending >= (int)std::size(g_pending)) { *why = "too many knocks at once here"; return false; }
     g_pending[g_nPending++] = q;
     return true;
+}
+
+int RemoteFarIds(uint32_t* out, int max, float (*palm)[3]) {
+    if (!out || max <= 0 || !Wanted()) return 0;
+    const uint64_t now = GetTickCount64();
+    std::lock_guard<std::mutex> lock(g_mutex);
+    int n = 0;
+    for (auto& w : g_wantFar) {
+        if (w.id && now - w.atMs > kWantFarMs) w = WantFar{};
+        if (!w.id || n >= max) continue;
+        if (palm) std::memcpy(palm[n], w.palm, sizeof palm[n]);
+        out[n++] = w.id;
+    }
+    return n;
 }
 
 int RemoteHolds() {
@@ -1041,9 +1113,11 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
     } publish{laid, nLaid};
     const float dt = lastMs ? std::min(0.1f, static_cast<float>(nowMs - lastMs) * 0.001f) : 0.0f;
     lastMs = nowMs;
-    // F4: everything of the knock-down; the other views ([weight] death_ragdoll_flat): the deaths alone (nothing pushes, holds or impales there). A view changed:
-    // every body let go of first - what one view drew is not carried into the other.
+    // F4: everything of the knock-down; the other views ([weight] death_ragdoll_flat): the deaths alone (nothing pushes, holds or impales there), and with
+    // [multiplayer] pose_share_grab_any_view the other players' holds and knocks (RemoteTake / RemoteKnock: only the drawing). A view changed: every body let
+    // go of first - what one view drew is not carried into the other.
     const bool f4 = viewgate::F4(), flatDeaths = !f4 && g_deathFlatOn.load(std::memory_order_relaxed);
+    const bool flatRemote = !f4 && g_remoteAnyOn.load(std::memory_order_relaxed);
     static int lastView = -1;
     if (lastView >= 0 && lastView != (f4 ? 1 : 0)) {
         std::lock_guard<std::mutex> lock(g_lib);
@@ -1051,7 +1125,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         if (g_any || g_corpses.Count()) ResetLocked();
     }
     lastView = f4 ? 1 : 0;
-    if (!Wanted() || !(f4 || flatDeaths) || !(upm > 1e-3f) || !rigs || !units || !rigOf) {
+    if (!Wanted() || !(f4 || flatDeaths || flatRemote) || !(upm > 1e-3f) || !rigs || !units || !rigOf) {
         std::lock_guard<std::mutex> lock(g_lib);
         for (auto& s : g_downSelves) s.store(0);
         for (auto& s : g_deadSelves) s.store(0);
@@ -1224,6 +1298,14 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
         g_nPending = 0;
         if (g_landed.atMs) { landing = g_landed; g_landed = Landed{}; }
         for (int s = 0; s < 2; ++s) { stabs[s] = g_stabIn[s]; g_stabIn[s] = StabIn{}; }
+        if (!f4) {   // outside F4 nothing of ours pushes, lands or stabs: only the other players' knocks are played ([multiplayer] pose_share_grab_any_view)
+            int keep = 0;
+            for (int p = 0; p < np; ++p)
+                if (pending[p].remote) pending[keep++] = pending[p];
+            np = keep;
+            landing = Landed{};
+            for (auto& st : stabs) st = StabIn{};
+        }
         if (g_strongest.atMs && nowMs - g_strongest.atMs >= 1000) { strongest = g_strongest; g_strongest = Strongest{}; }
         lieS = g_set.lieMs * 0.001f;
     }
@@ -1922,7 +2004,7 @@ int Tick(const skel::MonsterRig* rigs, size_t nr, const Unit* units, int nUnits,
                      "hostile, %u with no room in the library", fell, kept, gone, g_corpses.Count(), corpsesDrawn, leftBoss, leftNotSeen, leftNotHostile, leftFull);
             fell = kept = gone = leftBoss = leftNotSeen = leftNotHostile = leftFull = 0;
             const unsigned hangPut = g_hangPut.exchange(0), hangBack = g_hangBack.exchange(0), hangNoStore = g_hangNoStore.exchange(0), hangNoPose = g_hangNoPose.exchange(0);
-            if (!f4) {   // [weight] death_ragdoll_flat: the game's swing kept (the pose hook's weapon bones), what the kills' arc is read from
+            if (flatDeaths) {   // [weight] death_ragdoll_flat: the game's swing kept (the pose hook's weapon bones), what the kills' arc is read from
                 skel::WeaponTrailSample w[48];
                 const int nw = skel::WeaponTrail(w, 48);
                 LogF("death ragdoll flat - the last 5 s: the hero's weapon bones noted on %u of his poses (%d kept now%s)", skel::WeaponTrailNoted(), nw,

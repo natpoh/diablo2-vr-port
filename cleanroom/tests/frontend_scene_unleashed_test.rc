@@ -1,0 +1,5 @@
+// frontend_scene_unleashed_test: the same edits as D2R_VR_Settings embeds (tools/settings/settings.rc), so Prepare reads them as there.
+#include "frontend_edits_res.h"
+IDR_FRONTEND_EDITS_ACT2 RCDATA "../../tools/settings/frontend_edits_act2.json"
+IDR_FRONTEND_EDITS_ACT3 RCDATA "../../tools/settings/frontend_edits_act3.json"
+IDR_FRONTEND_EDITS_ACT5 RCDATA "../../tools/settings/frontend_edits_act5.json"
