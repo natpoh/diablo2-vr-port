@@ -396,6 +396,9 @@ void LoadSettings() {
     g_set.barYTop.store(-std::clamp(IniF(L"hud_top", L"bar_y", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barXThird.store(std::clamp(IniF(L"hud_third", L"bar_x", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barYThird.store(-std::clamp(IniF(L"hud_third", L"bar_y", 0.0f), -100.0f, 100.0f) * 0.01f);
+    // flat F2 its own height: 0.224's shipped bar_y 17 (Serg's VR F2) lifted a flat player's toolbar over the hero, with no slider in flat (london_life,
+    // report 421, 2026-11-28). 0 = the bottom, where the game puts it
+    g_set.barYThirdFlat.store(-std::clamp(IniF(L"hud_third", L"bar_y_flat", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barXFloor.store(std::clamp(IniF(L"hud_floor", L"bar_x", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.barYFloor.store(-std::clamp(IniF(L"hud_floor", L"bar_y", 0.0f), -100.0f, 100.0f) * 0.01f);
     g_set.mapSizeFloor.store(std::clamp(IniF(L"hud_floor", L"map_size", 100.0f), 30.0f, 300.0f) * 0.01f);
@@ -544,7 +547,12 @@ void LoadSettings() {
     g_set.stickSign.store(IniF(L"stick", L"sign", 1.0f) < 0 ? -1.0f : 1.0f);
     g_set.stickSquash.store(std::clamp(IniF(L"stick", L"squash", 1.0f), 0.1f, 4.0f));
     g_set.stickExact.store(IniB(L"stick", L"exact", true));
-    g_set.stickAngleScale.store(std::clamp(IniF(L"stick", L"angle_scale", 1.0f), 0.0f, 4.0f));
+    // [stick] angle_scale is gone (2026-11-28, _tiet_ on Discord: 0.66 made the hero jump left / right when walking with the camera turned round - a share of
+    // the yaw jumps by over 100 degrees where the yaw passes +-180, and after a full turn "forward" was no longer forward). The stick turns by the whole yaw.
+    if (const float oldScale = IniF(L"stick", L"angle_scale", 1.0f); fabsf(oldScale - 1.0f) > 0.001f) {
+        static bool told = false;
+        if (!told) { told = true; LogF("vrcam settings: [stick] angle_scale=%.2f in d2r_vr.ini is no longer read - the left stick turns by the whole camera yaw", oldScale); }
+    }
     g_set.rightTurn.store(IniB(L"turn", L"right_stick", true));
     g_set.turnSpeed.store(turnmode::Speed(IniF(L"turn", L"speed", turnmode::kSpeedDefault)));
     // [turn] smooth is its own key (1 smooth at `speed`, 0 a snap of `snap` degrees); an ini without it keeps its mode: snap=0 is smooth turning
@@ -2127,10 +2135,10 @@ void LoadSettings() {
         handswap::SetWanted(lefty);
     }
     char b[256];
-    snprintf(b, sizeof b, "vrcam settings: fov %.0f distance %.2f height %.1f pitch %.0f | head yaw %s sign %+.0f | stick rotate %s %s sign %+.0f squash %.2f angle x%.2f",
+    snprintf(b, sizeof b, "vrcam settings: fov %.0f distance %.2f height %.1f pitch %.0f | head yaw %s sign %+.0f | stick rotate %s %s sign %+.0f squash %.2f",
              g_set.fov.load(), g_set.distance.load(), g_set.height.load(), g_set.pitch.load(), g_set.headYaw.load() ? "on" : "off",
              g_set.yawSign.load(), g_set.stickRotate.load() ? "on" : "off", g_set.stickExact.load() ? "exact" : "approx",
-             g_set.stickSign.load(), g_set.stickSquash.load(), g_set.stickAngleScale.load());
+             g_set.stickSign.load(), g_set.stickSquash.load());
     Log(b);
     snprintf(b, sizeof b, "vrcam settings: [flatvr] frame_sync %d (late %.2f of a frame) head_level %d head_position %d room_centre %d recenter_on_enter %d%s",
              g_set.flatSync.load(), g_set.flatSyncLate.load(), g_set.flatLevel.load() ? 1 : 0, g_set.flatPosition.load() ? 1 : 0,

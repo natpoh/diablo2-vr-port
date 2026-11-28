@@ -787,8 +787,6 @@ stick.exact.label = Modo exacto
 stick.exact.tip = La palanca pasa por los ejes reales de la cámara; los ajustes de dirección y de diagonal de abajo dejan de usarse.
 stick.sign.label = Invertir la dirección de marcha
 stick.sign.tip = Márcala si, tras girar la cabeza, adelante en la palanca hace andar en la dirección equivocada.
-stick.angle_scale.label = Intensidad del giro
-stick.angle_scale.tip = Modo aproximado: la palanca se gira con el giro de la cámara multiplicado por esto (0,5 = la mitad).
 stick.squash.label = Corrección diagonal
 stick.squash.tip = Por debajo de 1 si las diagonales se desvían tras un giro (el aplastamiento de la pantalla isométrica). 1 = desactivado.
 
@@ -1443,6 +1441,26 @@ group.monster_plate_the_game_on_your_floor = Placa de monstruo, el juego en tu s
 group.monster_plate_the_game_on_your_floor.help = El nombre y la barra de vida sobre el monstruo al que apuntas en el suelo (F3): a la profundidad de su monstruo, para que no se vea doble.
 hud_floor.monster_depth.tip = El nombre y la barra de vida que el juego cuelga sobre el monstruo al que apuntas, en F3, el juego en tu suelo: en estéreo el juego lo dibuja en el mismo punto en ambos ojos, así que flota a la profundidad de la pantalla y se ve doble al mirar al monstruo. Aquí se mueve a la profundidad propia de su monstruo, según el punto sobre la cabeza del monstruo: 100 = exactamente allí, 0 = donde lo deja el juego. Nuestra propia placa (Nombre sobre un monstruo: la nuestra, en todas las vistas) se pone allí por sí sola; esto es para la del juego. En vivo.
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = Interfaz: F1 arriba, F2 detrás
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = Tamaño de la barra (F1, F2)
+group.toolbar_size_f1_f2.help = Qué tamaño tiene la barra de la parte inferior de la pantalla en F1 (la propia cámara del juego) y F2 (tercera persona). 100 = el tamaño propio del juego. Necesita D2R_DepthFog.fx activado en ReShade (vuelve a dibujar la barra); con un panel abierto vuelve la barra propia del juego.
+hud_top.bar_size.label#2 = F1: tamaño de la barra, %
+hud_top.bar_size.tip#2 = La barra en F1, más pequeña o más grande, respecto al centro de su borde inferior. 100 = como la dibuja el juego. El mismo ajuste que el de VR F1 (Interfaz: F1 arriba).
+hud_third.bar_size.label#2 = F2: tamaño de la barra, %
+hud_third.bar_size.tip#2 = La barra en F2, más pequeña o más grande, respecto al centro de su borde inferior. 100 = como la dibuja el juego. El mismo ajuste que el de VR F2 (Interfaz: F2 detrás).
+hud_third.bar_y_flat.label = F2: barra arriba / abajo, %
+hud_third.bar_y_flat.tip = La barra en F2 movida hacia arriba en la pantalla, % de su altura: + arriba, - abajo (en parte fuera de la pantalla); 0 = abajo, donde la pone el juego. Solo F2 plano: VR F2 tiene su propio ajuste en UI: F2 behind. Al momento.
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Mapa en F2 (tercera persona)
+group.map_in_f2_third_person.help = El mapa de esquina en F2: movido hacia el centro de la pantalla y hacia abajo, y su tamaño. Los mismos ajustes que los de VR F2 (UI: F2 desde atrás). Necesita D2R_DepthFog.fx activado en ReShade.
+hud_third.map_x.label#2 = F2: mapa hacia el centro, %
+hud_third.map_y.label#2 = F2: mapa hacia abajo, %
+hud_third.map_size.label#2 = F2: tamaño del mapa, %
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = Interfaz: F3 ojos
 
@@ -1512,21 +1530,6 @@ hud.flat_map_zoom_out_key.choice1 = Num -
 hud.flat_map_zoom_out_key.choice4 = Num 2
 hud.flat_map_zoom_level.label = Paso de zoom del mapa
 hud.flat_map_zoom_level.tip = 0: el mapa como antes (redondo, si gira con la cámara). 1 - 4: más cerca, el juego lo dibuja más grande en cada paso, hasta el doble de su tamaño. -1: fuera del círculo, todo el recuadro del mapa con el zoom propio del juego. -2, -3, -4: el juego lo dibuja más pequeño en cada paso, hasta una cuarta parte de su tamaño, para ver todo el nivel. Las teclas de zoom del juego fijan el mismo paso y lo guardan. En vivo.
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = Tamaño de la barra (F1, F2)
-group.toolbar_size_f1_f2.help = Qué tamaño tiene la barra de la parte inferior de la pantalla en F1 (la propia cámara del juego) y F2 (tercera persona). 100 = el tamaño propio del juego. Necesita D2R_DepthFog.fx activado en ReShade (vuelve a dibujar la barra); con un panel abierto vuelve la barra propia del juego.
-hud_top.bar_size.label#2 = F1: tamaño de la barra, %
-hud_top.bar_size.tip#2 = La barra en F1, más pequeña o más grande, respecto al centro de su borde inferior. 100 = como la dibuja el juego. El mismo ajuste que el de VR F1 (Interfaz: F1 arriba).
-hud_third.bar_size.label#2 = F2: tamaño de la barra, %
-hud_third.bar_size.tip#2 = La barra en F2, más pequeña o más grande, respecto al centro de su borde inferior. 100 = como la dibuja el juego. El mismo ajuste que el de VR F2 (Interfaz: F2 detrás).
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = Mapa en F2 (tercera persona)
-group.map_in_f2_third_person.help = El mapa de esquina en F2: movido hacia el centro de la pantalla y hacia abajo, y su tamaño. Los mismos ajustes que los de VR F2 (UI: F2 desde atrás). Necesita D2R_DepthFog.fx activado en ReShade.
-hud_third.map_x.label#2 = F2: mapa hacia el centro, %
-hud_third.map_y.label#2 = F2: mapa hacia abajo, %
-hud_third.map_size.label#2 = F2: tamaño del mapa, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = Primera persona con ratón y teclado
@@ -6316,6 +6319,8 @@ vr.map.on = Sí
 vr.map.off = No
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+stick.angle_scale.label = Intensidad del giro
+stick.angle_scale.tip = Modo aproximado: la palanca se gira con el giro de la cámara multiplicado por esto (0,5 = la mitad).
 build.picked = elegida
 status.buildbak.count = Copias de seguridad: {count}, {size} en total - haz clic en una para restaurarla o borrarla
 status.buildbak.more = (se muestran las {rows} más recientes: Abrir la carpeta de copias para el resto)

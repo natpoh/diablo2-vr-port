@@ -2132,8 +2132,6 @@ std::vector<Item> g_items = {
     Toggle(L"stick", L"exact", L"Exact mode", 0,
            L"The stick goes through the real camera axes; the direction and diagonal settings below are then unused."),
     Needs(L"stick", L"exact", 0, Invert(L"stick", L"sign", L"Reverse walking direction", -1, L"Tick if after a head turn forward on the stick walks the wrong way.")),
-    Needs(L"stick", L"exact", 0, Slider(L"stick", L"angle_scale", L"Turn strength", 0, 2, 0.01f, 1,
-           L"Approximate mode: the stick is turned by the camera's yaw times this (0.5 = half).")),
     Needs(L"stick", L"exact", 0, Slider(L"stick", L"squash", L"Diagonal correction", 0.1f, 3, 0.01f, 1,
            L"Below 1 if diagonals drift after a turn (the isometric screen squash). 1 = off.")),
     Group(L"Turning (right stick)", L"Turn the body with the right stick: smooth turning at a set speed, or snap turns of a set angle at each flick. Tick reverse if pushing right turns you left."),
@@ -3208,6 +3206,26 @@ std::vector<Item> g_items = {
            L"other screen still go to the flat picture. F1, F2, F3; F4 keeps its own way (Menus as a panel). Live. Off: the flat picture, as before."),
 
 #if D2RVR_FIRST_PERSON
+    // Flat F1 / F2 on a tab of their own (Serg 2026-11-28: "где настройки флат ф2" - "только ф3": the toolbar and map sliders of F1 / F2 sat on the F3 tab, unfindable)
+    Only(kFlat, Tab(L"UI: F1 above, F2 behind")),   // (a title with a word: "UI: F1 / F2" had none, so no translation key)
+    // Flat F1 and F2 draw the toolbar at [hud_top] / [hud_third] bar_size (vrcam BarSizeNow, whatever the platform), whose sliders are on
+    // the VR-only tabs UI: F1 above / UI: F2 behind: a flat player had the shipped 74 / 71 % and no way to change them (2026-10-28).
+    Group(L"Toolbar size (F1, F2)", L"How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back."),
+    Slider(L"hud_top", L"bar_size", L"F1: toolbar size, %", 30, 200, 1, 100,
+           L"The toolbar in F1, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. "
+           L"The same setting as VR F1's (UI: F1 above)."),
+    Slider(L"hud_third", L"bar_size", L"F2: toolbar size, %", 30, 200, 1, 100,
+           L"The toolbar in F2, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. "
+           L"The same setting as VR F2's (UI: F2 behind)."),
+    // [hud_third] bar_y_flat (2026-11-28, london_life / report 421: VR F2's shipped bar_y 17 held flat F2's toolbar over the hero): flat F2's own height
+    Only(kFlat, Slider(L"hud_third", L"bar_y_flat", L"F2: toolbar up / down, %", -30, 100, 1, 0,
+           L"The toolbar in F2 moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, where the game puts it. "
+           L"Flat F2 only: VR F2 has its own on UI: F2 behind. Live.")),
+    // [hud_third] map_x / map_y / map_size (vr/f2_map.h): flat F2's corner map - the same keys as VR F2's (UI: F2 behind)
+    Only(kFlat, Group(L"Map in F2 (third person)", L"The corner map in F2: moved toward the middle of the screen and down, and its size. The same settings as VR F2's (UI: F2 behind). Needs D2R_DepthFog.fx on in ReShade.")),
+    Only(kFlat, Slider(L"hud_third", L"map_x", L"F2: map toward the middle, %", -10, 90, 1, 0, kF2MapXTip)),
+    Only(kFlat, Slider(L"hud_third", L"map_y", L"F2: map down, %", -10, 90, 1, 0, kF2MapYTip)),
+    Only(kFlat, Slider(L"hud_third", L"map_size", L"F2: map size, %", 30, 300, 1, 100, kF2MapSizeTip)),
     Only(kFlat | kF5, Tab(L"UI: F3 eyes")),   // (VR with F5 too: F5 plays as flat F3 - kF5)
     // [body] flat_weapon_adjust (vr/flat_weapon.h): VR's Weapon Adjust is on a VR-only tab; first person on the monitor gets its own, along the view
     // (a Warlock's axe stood upright in the middle of the picture, a player on 0.200.0). Per kind of weapon, in its own [flat_weapon_<kind>] ("@flatweapon") and its own
@@ -3261,20 +3279,6 @@ std::vector<Item> g_items = {
            L"0: the map as before (round, if it turns with the camera). 1 - 4: nearer, the game draws it bigger each step, up to twice its "
            L"size. -1: out of the circle, the map's whole box at the game's own zoom. -2, -3, -4: the game draws it smaller each step, down "
            L"to a quarter of its size, to see the whole level. The zoom keys in the game set the same step and save it. Live.")),
-    // Flat F1 and F2 draw the toolbar at [hud_top] / [hud_third] bar_size (vrcam BarSizeNow, whatever the platform), whose sliders are on
-    // the VR-only tabs UI: F1 above / UI: F2 behind: a flat player had the shipped 74 / 71 % and no way to change them (2026-10-28).
-    Group(L"Toolbar size (F1, F2)", L"How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back."),
-    Slider(L"hud_top", L"bar_size", L"F1: toolbar size, %", 30, 200, 1, 100,
-           L"The toolbar in F1, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. "
-           L"The same setting as VR F1's (UI: F1 above)."),
-    Slider(L"hud_third", L"bar_size", L"F2: toolbar size, %", 30, 200, 1, 100,
-           L"The toolbar in F2, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. "
-           L"The same setting as VR F2's (UI: F2 behind)."),
-    // [hud_third] map_x / map_y / map_size (vr/f2_map.h): flat F2's corner map - the same keys as VR F2's (UI: F2 behind)
-    Only(kFlat, Group(L"Map in F2 (third person)", L"The corner map in F2: moved toward the middle of the screen and down, and its size. The same settings as VR F2's (UI: F2 behind). Needs D2R_DepthFog.fx on in ReShade.")),
-    Only(kFlat, Slider(L"hud_third", L"map_x", L"F2: map toward the middle, %", -10, 90, 1, 0, kF2MapXTip)),
-    Only(kFlat, Slider(L"hud_third", L"map_y", L"F2: map down, %", -10, 90, 1, 0, kF2MapYTip)),
-    Only(kFlat, Slider(L"hud_third", L"map_size", L"F2: map size, %", 30, 300, 1, 100, kF2MapSizeTip)),
     Group(L"First person with mouse and keyboard", L"First person played with mouse and keyboard. The slider makes the corner map in the picture bigger, grown from its own corner; set the game's mini map to the left in its options to have it top left. Needs D2R_DepthFog.fx on in ReShade."),
     Slider(L"hud_inside", L"map_zoom", L"Corner map size", 0.3f, 3, 0.05f, 1,
            L"The corner map in the picture this much bigger (1 = as the game draws it), grown from its own corner. "

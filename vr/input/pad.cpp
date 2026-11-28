@@ -61,7 +61,8 @@ bool ViewStickToGame(float* px, float* py) {
         *px = sx * f.mirX * mag / sm; *py = sy * f.mirY * mag / sm;
         return true;
     }
-    return walkpath::TurnByYaw(px, py, g_camYaw.load(), g_set.stickSign.load(), g_set.stickAngleScale.load(), g_set.stickSquash.load());
+    // (by the whole yaw: a share of it - the old [stick] angle_scale - jumped the walk by over 100 degrees each time the camera passed straight behind)
+    return walkpath::TurnByYaw(px, py, g_camYaw.load(), g_set.stickSign.load(), 1.0f, g_set.stickSquash.load());
 }
 
 bool DirectWalkNow();

@@ -131,6 +131,7 @@ struct Settings {
     std::atomic<float> labelsSizeTop{1.0f}, labelsSizeThird{1.0f}, labelsSizeBody{1.0f};
     // bar_x / bar_y per view: the toolbar moved on the screen, uv (+x right, +y DOWN; the ini's bar_y is + up, %)
     std::atomic<float> barXTop{0.0f}, barYTop{0.0f}, barXThird{0.0f}, barYThird{0.0f}, barXFloor{0.0f}, barYFloor{0.0f};
+    std::atomic<float> barYThirdFlat{0.0f};   // [hud_third] bar_y_flat: flat F2's own (VR F2's bar_y lifted flat players' toolbar mid-screen, 2026-11-28)
     // [hud_floor] map_size / map_near / map_x / map_y: the corner map on the floor (F3), as its toolbar
     std::atomic<float> mapSizeFloor{1.0f}, mapNearFloor{0.0f}, mapXFloor{0.0f}, mapYFloor{0.0f};
     // [hud_third] map_x / map_y / map_size: F2's corner map toward the middle and down (%), and its size (%), vr/f2_map.h; 0, 0, 100 = as the game draws it
@@ -194,7 +195,6 @@ struct Settings {
     std::atomic<float> stickSign{1.0f};     // flip if pushing forward walks backwards after a turn
     std::atomic<float> stickSquash{1.0f};   // vertical squash of the stick after turning (iso screen); 1 = none
     std::atomic<bool>  stickExact{true};    // project through the real camera axes instead of sign/squash
-    std::atomic<float> stickAngleScale{1.0f}; // approximate mode: the stick turns by camera yaw times this
     std::atomic<bool>  rightTurn{true};     // right stick X turns the body (camera + walking)
     std::atomic<float> turnSpeed{120.0f};   // deg/s at full deflection (smooth turn)
     std::atomic<float> snapAngle{0.0f};     // >0: snap turn by this many degrees per flick instead (0 while [turn] smooth is on: turnmode::EffectiveSnapAngle)

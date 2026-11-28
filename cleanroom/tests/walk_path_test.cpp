@@ -156,6 +156,16 @@ static void TestTurnCommutes() {
     Stick s{0, 1};
     TurnByYaw(&s.x, &s.y, 90.0f, 1.0f, 1.0f, 1.0f);
     CHECK(Near(std::fabs(s.x), 1.0f) && Near(s.y, 0.0f));
+    // the camera turned round: just either side of straight behind (+-180) forward walks the same way - no jump (the old [stick] angle_scale 0.66 made
+    // these 122 degrees apart, _tiet_'s left / right jumps on 2026-11-28)
+    Stick l{0, 1}, r{0, 1};
+    TurnByYaw(&l.x, &l.y, 179.5f, -1.0f, 1.0f, 1.0f);
+    TurnByYaw(&r.x, &r.y, -179.5f, -1.0f, 1.0f, 1.0f);
+    CHECK(NearS(l, r, 0.02f));
+    // and a full turn of the camera brings forward back to forward
+    Stick f{0, 1};
+    TurnByYaw(&f.x, &f.y, 360.0f, -1.0f, 1.0f, 1.0f);
+    CHECK(Near(f.x, 0.0f, 0.001f) && Near(f.y, 1.0f, 0.001f));
 }
 
 // -- the path, case by case ---------------------------------------------------------------------------------------------------------------

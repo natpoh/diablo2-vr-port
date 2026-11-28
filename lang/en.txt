@@ -792,8 +792,6 @@ stick.exact.label = Exact mode
 stick.exact.tip = The stick goes through the real camera axes; the direction and diagonal settings below are then unused.
 stick.sign.label = Reverse walking direction
 stick.sign.tip = Tick if after a head turn forward on the stick walks the wrong way.
-stick.angle_scale.label = Turn strength
-stick.angle_scale.tip = Approximate mode: the stick is turned by the camera's yaw times this (0.5 = half).
 stick.squash.label = Diagonal correction
 stick.squash.tip = Below 1 if diagonals drift after a turn (the isometric screen squash). 1 = off.
 
@@ -1448,6 +1446,26 @@ group.monster_plate_the_game_on_your_floor = Monster plate, the game on your flo
 group.monster_plate_the_game_on_your_floor.help = The name and health bar over the monster you target on the floor (F3): at its monster's depth, so it does not look doubled.
 hud_floor.monster_depth.tip = The name and health bar the game hangs over the monster you target, in F3, the game on your floor: in stereo the game draws it on the same spot in both eyes, so it floats at the screen's depth and looks doubled when you look at the monster. Here it is moved to its monster's own depth, by the point over the monster's head: 100 = exactly there, 0 = where the game leaves it. Our own plate (Name over a monster: our own, in every view) stands there by itself; this is for the game's. Live.
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = UI: F1 above, F2 behind
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = Toolbar size (F1, F2)
+group.toolbar_size_f1_f2.help = How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back.
+hud_top.bar_size.label#2 = F1: toolbar size, %
+hud_top.bar_size.tip#2 = The toolbar in F1, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. The same setting as VR F1's (UI: F1 above).
+hud_third.bar_size.label#2 = F2: toolbar size, %
+hud_third.bar_size.tip#2 = The toolbar in F2, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. The same setting as VR F2's (UI: F2 behind).
+hud_third.bar_y_flat.label = F2: toolbar up / down, %
+hud_third.bar_y_flat.tip = The toolbar in F2 moved up the screen, % of its height: + up, - down (partly off the screen); 0 = the bottom, where the game puts it. Flat F2 only: VR F2 has its own on UI: F2 behind. Live.
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Map in F2 (third person)
+group.map_in_f2_third_person.help = The corner map in F2: moved toward the middle of the screen and down, and its size. The same settings as VR F2's (UI: F2 behind). Needs D2R_DepthFog.fx on in ReShade.
+hud_third.map_x.label#2 = F2: map toward the middle, %
+hud_third.map_y.label#2 = F2: map down, %
+hud_third.map_size.label#2 = F2: map size, %
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = UI: F3 eyes
 
@@ -1517,21 +1535,6 @@ hud.flat_map_zoom_out_key.choice1 = Num -
 hud.flat_map_zoom_out_key.choice4 = Num 2
 hud.flat_map_zoom_level.label = Map zoom step
 hud.flat_map_zoom_level.tip = 0: the map as before (round, if it turns with the camera). 1 - 4: nearer, the game draws it bigger each step, up to twice its size. -1: out of the circle, the map's whole box at the game's own zoom. -2, -3, -4: the game draws it smaller each step, down to a quarter of its size, to see the whole level. The zoom keys in the game set the same step and save it. Live.
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = Toolbar size (F1, F2)
-group.toolbar_size_f1_f2.help = How big the toolbar at the bottom of the screen is drawn in F1 (the game's own camera) and F2 (third person). 100 = the game's own size. Needs D2R_DepthFog.fx on in ReShade (it draws the toolbar back); with a panel open the game's own toolbar is back.
-hud_top.bar_size.label#2 = F1: toolbar size, %
-hud_top.bar_size.tip#2 = The toolbar in F1, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. The same setting as VR F1's (UI: F1 above).
-hud_third.bar_size.label#2 = F2: toolbar size, %
-hud_third.bar_size.tip#2 = The toolbar in F2, smaller or larger, about the middle of its bottom edge. 100 = as the game draws it. The same setting as VR F2's (UI: F2 behind).
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = Map in F2 (third person)
-group.map_in_f2_third_person.help = The corner map in F2: moved toward the middle of the screen and down, and its size. The same settings as VR F2's (UI: F2 behind). Needs D2R_DepthFog.fx on in ReShade.
-hud_third.map_x.label#2 = F2: map toward the middle, %
-hud_third.map_y.label#2 = F2: map down, %
-hud_third.map_size.label#2 = F2: map size, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = First person with mouse and keyboard

@@ -787,8 +787,6 @@ stick.exact.label = Mode exact
 stick.exact.tip = Le stick passe par les vrais axes de la caméra ; les réglages de direction et de diagonale ci-dessous ne servent alors plus.
 stick.sign.label = Inverser le sens de marche
 stick.sign.tip = Cochez si, après un virage de la tête, avant sur le stick fait marcher dans le mauvais sens.
-stick.angle_scale.label = Force de rotation
-stick.angle_scale.tip = Mode approximatif : le stick est tourné du lacet de la caméra multiplié par cette valeur (0,5 = la moitié).
 stick.squash.label = Correction des diagonales
 stick.squash.tip = Sous 1 si les diagonales dérivent après un virage (l'écrasement de l'écran isométrique). 1 = désactivé.
 
@@ -1443,6 +1441,26 @@ group.monster_plate_the_game_on_your_floor = Plaque de monstre, le jeu sur votre
 group.monster_plate_the_game_on_your_floor.help = Le nom et la barre de vie au-dessus du monstre que vous ciblez sur le sol (F3) : à la profondeur de son monstre, pour ne pas paraître doublé.
 hud_floor.monster_depth.tip = Le nom et la barre de vie que le jeu accroche au-dessus du monstre ciblé, en F3, le jeu sur votre sol : en stéréo le jeu les dessine au même endroit dans les deux yeux, donc ils flottent à la profondeur de l'écran et paraissent doublés quand vous regardez le monstre. Ici ils sont déplacés à la profondeur propre de leur monstre, d'après le point au-dessus de la tête du monstre : 100 = exactement là, 0 = là où le jeu les laisse. Notre propre plaque (Nom au-dessus d'un monstre : le nôtre, dans toutes les vues) s'y place d'elle-même ; ceci est pour celle du jeu. Immédiat.
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = Interface : F1 dessus, F2 derrière
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = Taille de la barre d'outils (F1, F2)
+group.toolbar_size_f1_f2.help = Taille à laquelle la barre d'outils en bas de l'écran est dessinée en F1 (la caméra du jeu lui-même) et en F2 (troisième personne). 100 = la taille du jeu. Demande D2R_DepthFog.fx activé dans ReShade (il redessine la barre d'outils) ; avec un panneau ouvert, la barre d'outils du jeu revient.
+hud_top.bar_size.label#2 = F1 : taille de la barre d'outils, %
+hud_top.bar_size.tip#2 = La barre d'outils en F1, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F1 (Interface : F1 dessus).
+hud_third.bar_size.label#2 = F2 : taille de la barre d'outils, %
+hud_third.bar_size.tip#2 = La barre d'outils en F2, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F2 (Interface : F2 derrière).
+hud_third.bar_y_flat.label = F2 : barre haut / bas, %
+hud_third.bar_y_flat.tip = La barre en F2 déplacée vers le haut de l'écran, en % de sa hauteur : + haut, - bas (en partie hors de l'écran) ; 0 = en bas, là où le jeu la place. F2 à plat seulement : le F2 VR a son propre réglage dans UI: F2 behind. Immédiat.
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Carte en F2 (troisième personne)
+group.map_in_f2_third_person.help = La carte d'angle en F2 : déplacée vers le milieu de l'écran et vers le bas, et sa taille. Les mêmes réglages que ceux de VR F2 (UI : F2 de dos). Nécessite D2R_DepthFog.fx activé dans ReShade.
+hud_third.map_x.label#2 = F2 : carte vers le milieu, %
+hud_third.map_y.label#2 = F2 : carte vers le bas, %
+hud_third.map_size.label#2 = F2 : taille de la carte, %
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = Interface : F3 yeux
 
@@ -1512,21 +1530,6 @@ hud.flat_map_zoom_out_key.choice1 = Pav. -
 hud.flat_map_zoom_out_key.choice4 = Pav. 2
 hud.flat_map_zoom_level.label = Pas de zoom de la carte
 hud.flat_map_zoom_level.tip = 0 : la carte comme avant (ronde, si elle tourne avec la caméra). 1 - 4 : plus près, le jeu la dessine plus grande à chaque pas, jusqu'au double de sa taille. -1 : hors du cercle, tout le cadre de la carte au zoom propre du jeu. -2, -3, -4 : le jeu la dessine plus petite à chaque pas, jusqu'au quart de sa taille, pour voir tout le niveau. Les touches de zoom en jeu règlent le même pas et l'enregistrent. Immédiat.
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = Taille de la barre d'outils (F1, F2)
-group.toolbar_size_f1_f2.help = Taille à laquelle la barre d'outils en bas de l'écran est dessinée en F1 (la caméra du jeu lui-même) et en F2 (troisième personne). 100 = la taille du jeu. Demande D2R_DepthFog.fx activé dans ReShade (il redessine la barre d'outils) ; avec un panneau ouvert, la barre d'outils du jeu revient.
-hud_top.bar_size.label#2 = F1 : taille de la barre d'outils, %
-hud_top.bar_size.tip#2 = La barre d'outils en F1, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F1 (Interface : F1 dessus).
-hud_third.bar_size.label#2 = F2 : taille de la barre d'outils, %
-hud_third.bar_size.tip#2 = La barre d'outils en F2, plus petite ou plus grande, autour du milieu de son bord inférieur. 100 = comme le jeu la dessine. Le même réglage que celui de VR F2 (Interface : F2 derrière).
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = Carte en F2 (troisième personne)
-group.map_in_f2_third_person.help = La carte d'angle en F2 : déplacée vers le milieu de l'écran et vers le bas, et sa taille. Les mêmes réglages que ceux de VR F2 (UI : F2 de dos). Nécessite D2R_DepthFog.fx activé dans ReShade.
-hud_third.map_x.label#2 = F2 : carte vers le milieu, %
-hud_third.map_y.label#2 = F2 : carte vers le bas, %
-hud_third.map_size.label#2 = F2 : taille de la carte, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = Première personne à la souris et au clavier
@@ -6316,6 +6319,8 @@ vr.map.on = Activée
 vr.map.off = Désactivée
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+stick.angle_scale.label = Force de rotation
+stick.angle_scale.tip = Mode approximatif : le stick est tourné du lacet de la caméra multiplié par cette valeur (0,5 = la moitié).
 build.picked = choisie
 status.buildbak.count = Sauvegardes : {count}, {size} au total - cliquez-en une pour la restaurer ou la supprimer
 status.buildbak.more = (les {rows} plus récentes affichées : Ouvrir le dossier des sauvegardes pour le reste)

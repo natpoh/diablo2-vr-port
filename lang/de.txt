@@ -787,8 +787,6 @@ stick.exact.label = Exakter Modus
 stick.exact.tip = Der Stick geht durch die echten Achsen der Kamera; die Einstellungen für Richtung und Diagonalen darunter werden dann nicht verwendet.
 stick.sign.label = Gehrichtung umkehren
 stick.sign.tip = Anhaken, wenn vorwärts am Stick nach einer Kopfdrehung in die falsche Richtung geht.
-stick.angle_scale.label = Drehstärke
-stick.angle_scale.tip = Näherungsmodus: Der Stick wird um das Gieren der Kamera mal diesen Wert gedreht (0,5 = die Hälfte).
 stick.squash.label = Diagonalkorrektur
 stick.squash.tip = Unter 1, wenn Diagonalen nach einer Drehung abdriften (die isometrische Stauchung des Bildschirms). 1 = aus.
 
@@ -1443,6 +1441,26 @@ group.monster_plate_the_game_on_your_floor = Monster-Plakette, das Spiel auf dei
 group.monster_plate_the_game_on_your_floor.help = Der Name und die Lebensleiste über dem Monster, das du auf dem Boden (F3) anvisierst: in der Tiefe seines Monsters, damit sie nicht doppelt aussieht.
 hud_floor.monster_depth.tip = Der Name und die Lebensleiste, die das Spiel über das anvisierte Monster hängt, in F3, dem Spiel auf deinem Boden: In Stereo zeichnet das Spiel sie in beiden Augen an derselben Stelle, daher schwebt sie in der Tiefe des Bildschirms und sieht doppelt aus, wenn du das Monster ansiehst. Hier wird sie in die eigene Tiefe ihres Monsters verschoben, nach dem Punkt über dem Kopf des Monsters: 100 = genau dort, 0 = wo das Spiel sie lässt. Unsere eigene Plakette (Name über einem Monster: eigener, in jeder Ansicht) steht dort von selbst; dies ist für die des Spiels. Sofort.
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = UI: F1 oben, F2 hinten
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = Größe der Leiste (F1, F2)
+group.toolbar_size_f1_f2.help = Wie groß die Leiste unten am Bildschirm in F1 (die eigene Kamera des Spiels) und F2 (dritte Person) gezeichnet wird. 100 = die eigene Größe des Spiels. Braucht D2R_DepthFog.fx an in ReShade (es zeichnet die Leiste zurück); mit einem offenen Fenster ist die eigene Leiste des Spiels zurück.
+hud_top.bar_size.label#2 = F1: Größe der Leiste, %
+hud_top.bar_size.tip#2 = Die Leiste in F1, kleiner oder größer, um die Mitte ihrer Unterkante. 100 = wie das Spiel sie zeichnet. Dieselbe Einstellung wie bei VR F1 (UI: F1 oben).
+hud_third.bar_size.label#2 = F2: Größe der Leiste, %
+hud_third.bar_size.tip#2 = Die Leiste in F2, kleiner oder größer, um die Mitte ihrer Unterkante. 100 = wie das Spiel sie zeichnet. Dieselbe Einstellung wie bei VR F2 (UI: F2 hinten).
+hud_third.bar_y_flat.label = F2: Leiste hoch / runter, %
+hud_third.bar_y_flat.tip = Die Leiste in F2 auf dem Bildschirm nach oben verschoben, in % seiner Höhe: + hoch, - runter (teils über den Rand); 0 = unten, wo das Spiel sie hinsetzt. Nur flaches F2: VR F2 hat eine eigene Einstellung unter UI: F2 behind. Sofort wirksam.
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Karte in F2 (dritte Person)
+group.map_in_f2_third_person.help = Die Eckkarte in F2: zur Bildschirmmitte und nach unten verschoben, und ihre Größe. Dieselben Einstellungen wie die von VR F2 (UI: F2 von hinten). Braucht D2R_DepthFog.fx an in ReShade.
+hud_third.map_x.label#2 = F2: Karte zur Mitte, %
+hud_third.map_y.label#2 = F2: Karte nach unten, %
+hud_third.map_size.label#2 = F2: Kartengröße, %
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = UI: F3 Augen
 
@@ -1512,21 +1530,6 @@ hud.flat_map_zoom_out_key.choice1 = Num -
 hud.flat_map_zoom_out_key.choice4 = Num 2
 hud.flat_map_zoom_level.label = Zoomstufe der Karte
 hud.flat_map_zoom_level.tip = 0: die Karte wie bisher (rund, wenn sie sich mit der Kamera dreht). 1 - 4: näher, das Spiel zeichnet sie mit jedem Schritt größer, bis auf das Doppelte. -1: aus dem Kreis, der ganze Kartenkasten im normalen Zoom des Spiels. -2, -3, -4: das Spiel zeichnet sie mit jedem Schritt kleiner, bis auf ein Viertel der Größe, um das ganze Level zu sehen. Die Zoomtasten im Spiel setzen dieselbe Stufe und speichern sie. Sofort wirksam.
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = Größe der Leiste (F1, F2)
-group.toolbar_size_f1_f2.help = Wie groß die Leiste unten am Bildschirm in F1 (die eigene Kamera des Spiels) und F2 (dritte Person) gezeichnet wird. 100 = die eigene Größe des Spiels. Braucht D2R_DepthFog.fx an in ReShade (es zeichnet die Leiste zurück); mit einem offenen Fenster ist die eigene Leiste des Spiels zurück.
-hud_top.bar_size.label#2 = F1: Größe der Leiste, %
-hud_top.bar_size.tip#2 = Die Leiste in F1, kleiner oder größer, um die Mitte ihrer Unterkante. 100 = wie das Spiel sie zeichnet. Dieselbe Einstellung wie bei VR F1 (UI: F1 oben).
-hud_third.bar_size.label#2 = F2: Größe der Leiste, %
-hud_third.bar_size.tip#2 = Die Leiste in F2, kleiner oder größer, um die Mitte ihrer Unterkante. 100 = wie das Spiel sie zeichnet. Dieselbe Einstellung wie bei VR F2 (UI: F2 hinten).
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = Karte in F2 (dritte Person)
-group.map_in_f2_third_person.help = Die Eckkarte in F2: zur Bildschirmmitte und nach unten verschoben, und ihre Größe. Dieselben Einstellungen wie die von VR F2 (UI: F2 von hinten). Braucht D2R_DepthFog.fx an in ReShade.
-hud_third.map_x.label#2 = F2: Karte zur Mitte, %
-hud_third.map_y.label#2 = F2: Karte nach unten, %
-hud_third.map_size.label#2 = F2: Kartengröße, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = Erste Person mit Maus und Tastatur
@@ -6316,6 +6319,8 @@ vr.map.on = An
 vr.map.off = Aus
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+stick.angle_scale.label = Drehstärke
+stick.angle_scale.tip = Näherungsmodus: Der Stick wird um das Gieren der Kamera mal diesen Wert gedreht (0,5 = die Hälfte).
 build.picked = gewählt
 status.buildbak.count = Sicherungen: {count}, {size} insgesamt - klicke eine an, um sie wiederherzustellen oder zu löschen
 status.buildbak.more = (die neuesten {rows} gezeigt: Ordner der Sicherungen öffnen für den Rest)

@@ -1,5 +1,19 @@
 # What's new in D2R VR
 
+## 0.225.1
+
+Three fixes from your reports: no freeze on Exit while SteamVR is still starting, walking straight with the camera turned round, and the flat F2 toolbar back at the bottom.
+
+- **No freeze when you quit while SteamVR is still starting the headset**: if SteamVR took long to start the session (one report: over
+  40 s) and you pressed Exit meanwhile, the game froze and Windows closed it. The quit no longer waits for that start.
+- **Walking straight with the camera turned round** (VR and flat, the stick and W A S D): with "Turn strength" under Controls set to
+  anything but 1, the hero jumped left and right when you walked with the camera facing back. That slider is gone: the stick always turns
+  with the whole camera, and an old value in your settings is no longer read.
+- **Flat F2: the toolbar back at the bottom of the screen** (`[hud_third] bar_y_flat`, 0): since 0.224 flat F2 used VR F2's raised
+  toolbar and hung it over your hero, with no slider to move it. Flat F2 now has its own, "F2: toolbar up / down, %", at the bottom by
+  default, on a new flat tab of D2R VR Settings, "UI: F1 above, F2 behind", with the F1 / F2 toolbar size and the F2 map sliders (they sat
+  on the F3 tab, off the window's edge). VR F2 keeps its own.
+
 ## 0.225.0
 
 The main menu and character creation in 3D, voice gestures, Direct hit for joined co-op players, allies who see what you hold, a weapon that never goes through your shield, and last release's ports switched on.

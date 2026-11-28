@@ -70,8 +70,25 @@ void TestWait() {
     CHECK(WaitStep(kBudgetMs, stuck) == Step::GiveUp);
     Progress untaken;
     CHECK(WaitStep(kBudgetMs, untaken) == Step::GiveUp);   // (our own Stop never got the lock in time)
+    // a start still inside the runtime (crash row 423: SteamVR kept xrCreateInstance 41 s): never our own Stop on its lock, the budget still ends the wait
+    Progress starting;
+    starting.starting = true;
+    CHECK(WaitStep(kDrawGraceMs + 10.0, starting) == Step::Wait);
+    CHECK(WaitStep(2000.0, starting) == Step::Wait);
+    CHECK(WaitStep(kBudgetMs, starting) == Step::GiveUp);
+    // the start through: the stop is ours again
+    starting.starting = false;
+    CHECK(WaitStep(kDrawGraceMs + 10.0, starting) == Step::StopHere);
     // the order holds: the grace is shorter than the budget, the budget shorter than the DLL's own wait plus the game's teardown
     CHECK(kDrawGraceMs < kBudgetMs);
+}
+
+void TestTakeStop() {
+    CHECK(TakeStopNow(false));    // no start under way: the draw thread takes the stop between two frames
+    CHECK(!TakeStopNow(true));    // a start holds the lock inside the runtime: the stop stays asked for
+    // the game's end waits for the lock a bounded time, shorter than the process exit's own wait for the end
+    CHECK(kFinalLockMs > 0);
+    CHECK((double)kFinalLockMs < kExitStopMs);
 }
 
 void TestHold() {
@@ -115,6 +132,7 @@ int main() {
     TestDecide();
     TestWait();
     TestHold();
+    TestTakeStop();
     TestProcessExit();
     TestNames();
     std::printf("%d of %d checks passed\n", g_checks - g_fails, g_checks);

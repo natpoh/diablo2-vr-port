@@ -8166,6 +8166,17 @@ void SetPanelOpen(bool open) {
 
 void Stop(bool final);
 void HookProcessExit();
+// The stop asked for, taken now - not while a start is under way (it holds g_lock inside the runtime: vr/exit_end.h TakeStopNow); it stays asked for then.
+bool TakeStop() {
+    if (!g_stopWanted.load()) return false;
+    if (!exitend::TakeStopNow(g_state.load() == kStarting)) {
+        static std::atomic<ULONGLONG> told{0};
+        const ULONGLONG now = GetTickCount64();
+        if (now - told.load() > 5000) { told.store(now); Log("vrcam: openxr - a stop is asked for while the session is still starting: taken once the start is through"); }
+        return false;
+    }
+    return g_stopWanted.exchange(false);
+}
 // The session started on the game's device and queue (a worker thread), once.
 void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
     if (g_state.load() != kIdle || !dev || !queue) return;
@@ -8194,7 +8205,7 @@ void Start(ID3D12Device* dev, ID3D12CommandQueue* queue) {
 }
 
 bool BeginPair(ID3D12Device* dev, ID3D12CommandQueue* queue) {
-    if (g_stopWanted.exchange(false)) Stop(false);
+    if (TakeStop()) Stop(false);
     if (!On()) return false;
     if (gpufault::Check(g_dev, "the start of a pair") && DeviceLost()) { g_pairOpen.store(false); return false; }   // (one call a pair into the runtime: is the device there?)
     if (g_state.load() == kIdle) { if (dev && queue) Start(dev, queue); return false; }
@@ -9018,7 +9029,7 @@ void OnPresent(ID3D12Device* dev, ID3D12CommandQueue* queue, ID3D12Resource* bb,
     }
     g_presentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     if (DeviceLost()) return;
-    if (g_kind != kPair && g_stopWanted.exchange(false)) Stop(false);
+    if (g_kind != kPair && TakeStop()) Stop(false);
     if (g_campfire.load() && pairEye >= 0) {   // [campfire]: this present is one eye of the frame the camera opened; the right one ends it
         if (g_kind == kPair) {
             if (bb) CopyEye(pairEye, bb);
@@ -9085,7 +9096,19 @@ void Stop(bool final) {
     if (g_state.load() == kStarting) Sleep(200);   // (a start under way finishes under the lock)
     if (final)   // the DLL goes after this: a live end still destroying on its own thread is given a short while (vr/session_end.h)
         for (unsigned waited = 0; g_goneBusy.load() > 0 && waited < sessionend::kCloseWaitMs; waited += 10) Sleep(10);
-    AcquireSRWLockExclusive(&g_lock);
+    if (final) {   // the game's end: the lock waited for a bounded time - a start stuck inside the runtime keeps it (vr/exit_end.h kFinalLockMs)
+        bool got = false;
+        for (unsigned waited = 0; !(got = TryAcquireSRWLockExclusive(&g_lock) != 0) && waited < exitend::kFinalLockMs; waited += 10) Sleep(10);
+        if (!got) {
+            g_final = true;
+            g_state.store(kFailed);
+            LogF("vrcam: openxr - the game closes while the session is still starting inside the runtime (the lock not free in %u ms): the plugin goes without "
+                 "destroying the runtime's handles", exitend::kFinalLockMs);
+            return;
+        }
+    } else {
+        AcquireSRWLockExclusive(&g_lock);
+    }
     if (final) g_final = true;
     const bool had = g_session || g_inst;
     if (had) {
@@ -9120,6 +9143,7 @@ DWORD WINAPI ExitEndThread(void* p) {
         const int st = g_state.load();
         pr.sessionGone = st == kIdle || st == kFailed;
         pr.endsBusy = g_goneBusy.load();
+        pr.starting = st == kStarting;
         const double ms = (UsNow() - t0) / 1000.0;
         switch (exitend::WaitStep(ms, pr)) {
             case exitend::Step::Done:
@@ -9127,10 +9151,10 @@ DWORD WINAPI ExitEndThread(void* p) {
                 return 0;
             case exitend::Step::GiveUp:
                 LogF("vrcam: openxr - the game quits (%s): the session's end not through in %.0f ms (%s) - the game goes on closing, as before", exitend::Name(t), ms,
-                     !pr.stopTaken ? "the stop was not taken" : !pr.sessionGone ? "the session still ending" : "the runtime's handles still being destroyed");
+                     pr.starting ? "the session still starting inside the runtime" : !pr.stopTaken ? "the stop was not taken" : !pr.sessionGone ? "the session still ending" : "the runtime's handles still being destroyed");
                 return 0;
             case exitend::Step::StopHere:
-                if (g_stopWanted.exchange(false)) {
+                if (TakeStop()) {
                     how = "ended on our own thread - no present took it";
                     Stop(false);
                     continue;

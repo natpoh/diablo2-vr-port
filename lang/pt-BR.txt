@@ -787,8 +787,6 @@ stick.exact.label = Modo exato
 stick.exact.tip = O analógico passa pelos eixos reais da câmera; as configurações de direção e de diagonal abaixo ficam então sem uso.
 stick.sign.label = Inverter a direção de andar
 stick.sign.tip = Marque se, depois de virar a cabeça, para a frente no analógico anda para o lado errado.
-stick.angle_scale.label = Intensidade da curva
-stick.angle_scale.tip = Modo aproximado: o analógico é girado pelo giro (yaw) da câmera vezes isto (0.5 = metade).
 stick.squash.label = Correção diagonal
 stick.squash.tip = Abaixo de 1 se as diagonais desviam depois de um giro (a compressão isométrica da tela). 1 = desligado.
 
@@ -1443,6 +1441,26 @@ group.monster_plate_the_game_on_your_floor = Placa de monstro, o jogo no seu ch�
 group.monster_plate_the_game_on_your_floor.help = O nome e a barra de vida sobre o monstro que você mira no chão (F3): na profundidade do monstro, para não parecer duplo.
 hud_floor.monster_depth.tip = O nome e a barra de vida que o jogo pendura sobre o monstro que você mira, em F3, o jogo no seu chão: em estéreo o jogo os desenha no mesmo ponto nos dois olhos, então flutuam na profundidade da tela e parecem duplos quando você olha para o monstro. Aqui são movidos para a profundidade própria do monstro, pelo ponto sobre a cabeça dele: 100 = exatamente ali, 0 = onde o jogo os deixa. Nossa própria placa (Nome sobre um monstro: o nosso, em todas as visões) fica ali por conta própria; isto é para a do jogo. Ao vivo.
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = IU: F1 de cima, F2 por trás
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = Tamanho da barra de ferramentas (F1, F2)
+group.toolbar_size_f1_f2.help = O tamanho com que a barra de ferramentas na parte de baixo da tela é desenhada no F1 (a câmera do próprio jogo) e no F2 (terceira pessoa). 100 = o tamanho do próprio jogo. Precisa do D2R_DepthFog.fx ligado no ReShade (ele redesenha a barra de ferramentas); com um painel aberto a barra de ferramentas do próprio jogo volta.
+hud_top.bar_size.label#2 = F1: tamanho da barra de ferramentas, %
+hud_top.bar_size.tip#2 = A barra de ferramentas no F1, menor ou maior, em torno do meio da borda de baixo dela. 100 = como o jogo a desenha. A mesma configuração que a do VR F1 (IU: F1 de cima).
+hud_third.bar_size.label#2 = F2: tamanho da barra de ferramentas, %
+hud_third.bar_size.tip#2 = A barra de ferramentas no F2, menor ou maior, em torno do meio da borda de baixo dela. 100 = como o jogo a desenha. A mesma configuração que a do VR F2 (IU: F2 por trás).
+hud_third.bar_y_flat.label = F2: barra acima / abaixo, %
+hud_third.bar_y_flat.tip = A barra no F2 movida para cima na tela, % da altura dela: + acima, - abaixo (parte fora da tela); 0 = embaixo, onde o jogo a coloca. Só F2 plano: o VR F2 tem o seu próprio em UI: F2 behind. Na hora.
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = Mapa no F2 (terceira pessoa)
+group.map_in_f2_third_person.help = O mapa de canto no F2: movido para o meio da tela e para baixo, e o tamanho dele. As mesmas configurações do VR F2 (UI: F2 por trás). Precisa do D2R_DepthFog.fx ligado no ReShade.
+hud_third.map_x.label#2 = F2: mapa para o meio, %
+hud_third.map_y.label#2 = F2: mapa para baixo, %
+hud_third.map_size.label#2 = F2: tamanho do mapa, %
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = IU: F3 olhos
 
@@ -1512,21 +1530,6 @@ hud.flat_map_zoom_out_key.choice1 = Num -
 hud.flat_map_zoom_out_key.choice4 = Num 2
 hud.flat_map_zoom_level.label = Passo do zoom do mapa
 hud.flat_map_zoom_level.tip = 0: o mapa como antes (redondo, se gira com a câmera). 1 - 4: mais perto, o jogo o desenha maior a cada passo, até o dobro do tamanho. -1: fora do círculo, a caixa inteira do mapa no zoom próprio do jogo. -2, -3, -4: o jogo o desenha menor a cada passo, até um quarto do tamanho, para ver o nível inteiro. As teclas de zoom no jogo definem o mesmo passo e o salvam. Imediato.
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = Tamanho da barra de ferramentas (F1, F2)
-group.toolbar_size_f1_f2.help = O tamanho com que a barra de ferramentas na parte de baixo da tela é desenhada no F1 (a câmera do próprio jogo) e no F2 (terceira pessoa). 100 = o tamanho do próprio jogo. Precisa do D2R_DepthFog.fx ligado no ReShade (ele redesenha a barra de ferramentas); com um painel aberto a barra de ferramentas do próprio jogo volta.
-hud_top.bar_size.label#2 = F1: tamanho da barra de ferramentas, %
-hud_top.bar_size.tip#2 = A barra de ferramentas no F1, menor ou maior, em torno do meio da borda de baixo dela. 100 = como o jogo a desenha. A mesma configuração que a do VR F1 (IU: F1 de cima).
-hud_third.bar_size.label#2 = F2: tamanho da barra de ferramentas, %
-hud_third.bar_size.tip#2 = A barra de ferramentas no F2, menor ou maior, em torno do meio da borda de baixo dela. 100 = como o jogo a desenha. A mesma configuração que a do VR F2 (IU: F2 por trás).
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = Mapa no F2 (terceira pessoa)
-group.map_in_f2_third_person.help = O mapa de canto no F2: movido para o meio da tela e para baixo, e o tamanho dele. As mesmas configurações do VR F2 (UI: F2 por trás). Precisa do D2R_DepthFog.fx ligado no ReShade.
-hud_third.map_x.label#2 = F2: mapa para o meio, %
-hud_third.map_y.label#2 = F2: mapa para baixo, %
-hud_third.map_size.label#2 = F2: tamanho do mapa, %
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = Primeira pessoa com mouse e teclado
@@ -6316,6 +6319,8 @@ vr.map.on = Ligado
 vr.map.off = Desligado
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+stick.angle_scale.label = Intensidade da curva
+stick.angle_scale.tip = Modo aproximado: o analógico é girado pelo giro (yaw) da câmera vezes isto (0.5 = metade).
 build.picked = escolhido
 status.buildbak.count = Backups: {count}, {size} no total - clique em um para restaurá-lo ou apagá-lo
 status.buildbak.more = (os {rows} mais novos mostrados: Abrir a pasta dos backups para o resto)

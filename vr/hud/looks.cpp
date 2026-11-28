@@ -26,7 +26,10 @@ void BarOffsetNow(float* x, float* y) {
     *x = *y = 0.0f;
     if (!g_enabled.load() || TopPersp()) { *x = g_set.barXTop.load(); *y = g_set.barYTop.load(); }
     else if (TableView()) { *x = g_set.barXFloor.load(); *y = g_set.barYFloor.load(); }
-    else if (ThirdPerson()) { *x = g_set.barXThird.load(); *y = g_set.barYThird.load(); }
+    else if (ThirdPerson()) {   // (flat F2: its own height, [hud_third] bar_y_flat - VR F2's bar_y is the headset's)
+        *x = g_set.barXThird.load();
+        *y = g_set.platform.load() == 1 ? g_set.barYThird.load() : g_set.barYThirdFlat.load();
+    }
 }
 
 // From above and behind: the toolbar moved nearer or farther - only real stereo has a depth to move it in.

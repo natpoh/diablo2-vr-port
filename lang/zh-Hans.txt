@@ -787,8 +787,6 @@ stick.exact.label = 精确模式
 stick.exact.tip = 摇杆经过真实的摄像机轴向；下方的方向和对角线设置此时不再使用。
 stick.sign.label = 反转行走方向
 stick.sign.tip = 如果转头后摇杆向前却走向错误的方向，请勾选。
-stick.angle_scale.label = 转向强度
-stick.angle_scale.tip = 近似模式：摇杆按摄像机转向角乘以此值来旋转（0.5 = 一半）。
 stick.squash.label = 对角线修正
 stick.squash.tip = 如果转向后斜向漂移（等距屏幕的压扁），请设为小于 1。1 = 关闭。
 
@@ -1443,6 +1441,26 @@ group.monster_plate_the_game_on_your_floor = 怪物血条，地面上的游戏
 group.monster_plate_the_game_on_your_floor.help = 地面视角（F3）中你所瞄准的怪物头顶的名称和血条：位于其怪物的深度，这样不会显得重影。
 hud_floor.monster_depth.tip = 游戏挂在你所瞄准怪物头顶的名称和血条，在 F3（地面上的游戏）中：立体显示时游戏把它画在两只眼睛的同一位置，因此它漂浮在屏幕深度，当你看向怪物时显得重影。这里按怪物头顶的那个点把它移到其怪物自身的深度：100 = 正好在那里，0 = 保持游戏原有的位置。我们自己的血条（怪物头顶名称：我们自己的，所有视角）会自行位于那里；这个设置针对游戏的血条。即时生效。
 
+# ===== Tab: UI: F1 above, F2 behind =====
+tab.ui_f1_above_f2_behind = 界面：F1 俯视，F2 背后
+
+# --- Toolbar size (F1, F2) ---
+group.toolbar_size_f1_f2 = 工具栏大小（F1、F2）
+group.toolbar_size_f1_f2.help = 屏幕底部的工具栏在 F1（游戏自己的摄像机）和 F2（第三人称）中绘制的大小。100 = 游戏自己的大小。需要在 ReShade 中开启 D2R_DepthFog.fx（由它重新绘制工具栏）；打开面板时，游戏自己的工具栏会回来。
+hud_top.bar_size.label#2 = F1：工具栏大小，%
+hud_top.bar_size.tip#2 = F1 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F1 的设置是同一个（界面：F1 俯视）。
+hud_third.bar_size.label#2 = F2：工具栏大小，%
+hud_third.bar_size.tip#2 = F2 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F2 的设置是同一个（界面：F2 背后）。
+hud_third.bar_y_flat.label = F2：工具栏上移 / 下移，%
+hud_third.bar_y_flat.tip = F2 中工具栏在屏幕上上移，按屏幕高度的 %：+ 向上，- 向下（部分移出屏幕）；0 = 底部，游戏放置的位置。仅限平面 F2：VR F2 在 UI: F2 behind 中有自己的设置。即时生效。
+
+# --- Map in F2 (third person) ---
+group.map_in_f2_third_person = F2 中的地图（第三人称）
+group.map_in_f2_third_person.help = F2 中的角落地图：向屏幕中间和下方移动，以及它的大小。与 VR F2 的设置相同（UI：F2 身后）。需要在 ReShade 中开启 D2R_DepthFog.fx。
+hud_third.map_x.label#2 = F2：地图移向中间，%
+hud_third.map_y.label#2 = F2：地图下移，%
+hud_third.map_size.label#2 = F2：地图大小，%
+
 # ===== Tab: UI: F3 eyes =====
 tab.ui_f3_eyes = 界面：F3 眼前
 
@@ -1512,21 +1530,6 @@ hud.flat_map_zoom_out_key.choice1 = 小键盘 -
 hud.flat_map_zoom_out_key.choice4 = 小键盘 2
 hud.flat_map_zoom_level.label = 地图缩放步数
 hud.flat_map_zoom_level.tip = 0：地图与以前相同（若随镜头旋转则为圆形）。1 - 4：拉近，游戏每一步把它画得更大，最大到原尺寸的两倍。-1：移出圆圈，以游戏自身的缩放显示地图整个方框。-2、-3、-4：游戏每一步把它画得更小，最小到原尺寸的四分之一，以查看整个关卡。游戏中的缩放键设置相同的级别并保存。即时生效。
-
-# --- Toolbar size (F1, F2) ---
-group.toolbar_size_f1_f2 = 工具栏大小（F1、F2）
-group.toolbar_size_f1_f2.help = 屏幕底部的工具栏在 F1（游戏自己的摄像机）和 F2（第三人称）中绘制的大小。100 = 游戏自己的大小。需要在 ReShade 中开启 D2R_DepthFog.fx（由它重新绘制工具栏）；打开面板时，游戏自己的工具栏会回来。
-hud_top.bar_size.label#2 = F1：工具栏大小，%
-hud_top.bar_size.tip#2 = F1 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F1 的设置是同一个（界面：F1 俯视）。
-hud_third.bar_size.label#2 = F2：工具栏大小，%
-hud_third.bar_size.tip#2 = F2 中的工具栏，以其底边中点为中心缩小或放大。100 = 按游戏原样绘制。与 VR F2 的设置是同一个（界面：F2 背后）。
-
-# --- Map in F2 (third person) ---
-group.map_in_f2_third_person = F2 中的地图（第三人称）
-group.map_in_f2_third_person.help = F2 中的角落地图：向屏幕中间和下方移动，以及它的大小。与 VR F2 的设置相同（UI：F2 身后）。需要在 ReShade 中开启 D2R_DepthFog.fx。
-hud_third.map_x.label#2 = F2：地图移向中间，%
-hud_third.map_y.label#2 = F2：地图下移，%
-hud_third.map_size.label#2 = F2：地图大小，%
 
 # --- First person with mouse and keyboard ---
 group.first_person_with_mouse_and_keyboard = 鼠标和键盘的第一人称
@@ -6316,6 +6319,8 @@ vr.map.on = 开
 vr.map.off = 关
 
 # ===== Keys of this file that en.txt does not list (an English used under several keys, worded here for one of them) =====
+stick.angle_scale.label = 转向强度
+stick.angle_scale.tip = 近似模式：摇杆按摄像机转向角乘以此值来旋转（0.5 = 一半）。
 build.picked = 已选
 status.buildbak.count = 备份：{count} 个，共 {size} - 点击一个以恢复或删除
 status.buildbak.more = （显示最新的 {rows} 个：其余的请打开备份文件夹）

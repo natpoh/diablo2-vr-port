@@ -70,14 +70,24 @@ struct Progress {
     bool stopTaken = false;    // the stop asked for was taken (by the draw thread or by us)
     bool sessionGone = false;  // no session any more (Stop is through)
     int endsBusy = 0;          // live ends still destroying on their own threads (xr.cpp g_goneBusy)
+    bool starting = false;     // the start's thread still inside the runtime (it holds the session's lock)
 };
 enum class Step { Wait, StopHere, Done, GiveUp };
 inline Step WaitStep(double elapsedMs, const Progress& p) {
     if (p.stopTaken && p.sessionGone && p.endsBusy <= 0) return Step::Done;
     if (elapsedMs >= kBudgetMs) return Step::GiveUp;
-    if (!p.stopTaken && elapsedMs >= kDrawGraceMs) return Step::StopHere;
+    if (!p.stopTaken && !p.starting && elapsedMs >= kDrawGraceMs) return Step::StopHere;
     return Step::Wait;
 }
+
+// A stop asked for (a quit, [openxr] on to 0, a new FrameGen session) is taken only when no start is under way. The start's thread holds the session's lock
+// for the whole start, and the runtime can keep it there: SteamVR did not return from xrCreateInstance for 41 s (crash row 423, 0.224.1) - the title screen's
+// Exit then had the draw thread wait for the lock in Stop, and Windows ended the frozen game. The stop stays asked for and is taken once the start is through.
+inline bool TakeStopNow(bool starting) { return !starting; }
+
+// The game's own end (Stop(true): the plugin's unload, the process's exit) waits this long at most for the session's lock. A start stuck inside the runtime
+// keeps it: the plugin then goes without destroying the runtime's handles (the runtime is stuck anyway) instead of holding the game's close for ever.
+constexpr unsigned kFinalLockMs = 1000;
 
 // The process's exit (ntdll!RtlExitUserProcess): the last moment before Windows detaches the DLLs - the runtime's first, with d3d11.dll gone before it. With the key
 // on, anything of the runtime's still there is destroyed now: a session or an instance (alive), or an earlier quit's end still destroying on its own thread
